@@ -5,7 +5,7 @@
 - Feature: Name terminal sessions (small), repository `skytuhua-org/Gen-V1`.
 - Revision: 1, 2026-11-21. Planning only; no feature code implemented or behavior verified.
 - Verified baseline: `main` at `8fa907f378127bcfc23d71b55c53625ffc43e8da`.
-- Publication scope: a docs-only branch and source-manifest entry. No issue or PR is created by this assignment; issue-body publication and reviewed merge are subsequent, separately authorized work. No canonical feature issue is assigned here.
+- Publication scope: this plan is published in full as the body of a GitHub plan issue labeled `feature` + `small`, and this file lands through a docs-only PR (reviewed merge, not part of publication). The canonical issue is the one whose body carries this plan; no implementation PR exists.
 - Provenance: batch 11 proposal row 4 and scope check 4: rename an open terminal from its toolbar; names belong to an admitted owner-bound PTY session, survive renderer refresh/reparenting, and never alter the shell. The substantive proposal is reproduced below, so private proposal files are not required to execute this plan.
 - Related boundary: [shell selection #1284](https://github.com/skytuhua-org/Gen-V1/issues/1284) is excluded. Research inspiration: [VS Code empty terminal rename #333933](https://github.com/microsoft/vscode/issues/333933); Gen's fallback is explicitly the static word “Terminal”, not a dynamic process title.
 - Integration status: baseline source and three existing plans inspected; remote open/merged work was not independently searched in this docs-only session. T01 must reconcile concurrent work before implementation, not assume this plan reserves files.
@@ -195,7 +195,7 @@ For this plan branch run `pnpm exec vitest run tests/public-source.test.ts` and 
 
 - Researched: current main source anchors, toolbar/ownership/session persistence, existing tests/fixture runner and design tokens. Read representative earlier plans `ux-chat-header-status.md`, `ux-sidebar-thread-rows.md`, `ux-model-picker-overlap.md` for structure and explicit design depth.
 - Decided for v1: metadata-only, canonical nullable name, short bounded plain text, live-only admission, host durability, revision fencing, inline non-optimistic editor and static fallback. These are executable plan decisions, not claims of existing interfaces.
-- Implemented: nothing. Feature tests and visuals: not run. No feature issue/PR publication or merge authorized by this docs-only assignment. No claim/assignee created, so none to release.
+- Implemented: nothing. Feature tests and visuals: not run. Plan published as an issue plus docs-only PR; merging that PR and implementation are not part of publication. No claim/assignee created, so none to release.
 - Risks: out-of-order reads, stale owner callbacks, accidental output append from rename result, storage failure, host-restart misunderstanding and native platform verification. Specific mitigation/tests are in T02–T05.
 - Next owner: authorized implementing agent, currently unassigned. First action: T01 against then-current main, reconcile issue/PR work and record claim per AGENTS.md. Publication branch ownership ends with docs push, not implementation approval.
 
