@@ -723,6 +723,10 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   // and returns to the empty container; pinned and embedded views stay locked to it.
   const mainDetached=Boolean(detachedThread)&&!pinnedThreadId;
   const thread=mainDetached?undefined:candidateThread;
+  useEffect(() => {
+    if (!desktop?.bridge.setQuickAskConfig) return;
+    void desktop.bridge.setQuickAskConfig({ enabled: preferences.quickAskEnabled, shortcut: preferences.keybindings.quickAsk }).catch(() => {});
+  }, [desktop, preferences.quickAskEnabled, preferences.keybindings.quickAsk]);
   const {overview: sessionBranchOverview, reload: reloadSessionBranch} = useSessionBranchOverview(thread?.id);
   useLayoutEffect(() => {if (thread) host?.selectThread(thread.id); else if(!pinnedThreadId) host?.selectThread(undefined);}, [host, thread?.id, pinnedThreadId]);
   const customConversationLayout=useMemo(()=>{

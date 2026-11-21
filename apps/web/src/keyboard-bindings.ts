@@ -29,6 +29,7 @@ export const KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
   {id: 'toggle-workspace-panel', label: 'Toggle workspace panel', scope: 'Workspace', preference: 'toggleRightPanel', handlers: [module('App.tsx')]},
   {id: 'open-settings', label: 'Open settings', scope: 'Global', preference: 'openSettings', handlers: [module('App.tsx'), module('WorkspaceHost.tsx')]},
   {id: 'stop-run', label: 'Stop active run', scope: 'Global', preference: 'stop', handlers: [module('App.tsx'), module('WorkspaceHost.tsx')]},
+  {id: 'quick-ask', label: 'Quick ask', scope: 'Global', preference: 'quickAsk', handlers: [module('App.tsx')]},
   {id: 'find-in-conversation', label: 'Find in the conversation', scope: 'Conversation', chords: ['Ctrl+F'], handlers: [module('ConversationFind.tsx')]},
   {id: 'find-next-match', label: 'Next match', scope: 'Conversation', chords: ['Enter'], handlers: [module('ConversationFind.tsx')]},
   {id: 'find-previous-match', label: 'Previous match', scope: 'Conversation', chords: ['Shift+Enter'], handlers: [module('ConversationFind.tsx')]},
