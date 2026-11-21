@@ -932,3 +932,416 @@ for (const { name, text, line } of [
 			fullPage: true,
 		});
 	});
+
+// -- T05: Files Markdown preview (issue #1583) ------------------------------
+// Every byte below is synthetic: the fixture serves no real resources and the
+// external link is intercepted, so no test contacts a live service.
+
+const png1x1 = Buffer.from(
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+	"base64",
+);
+const article = (page: Page) => preview(page).locator(".files-preview-article");
+const modeButtons = (page: Page) => preview(page).locator(".files-mode button");
+const imageRequests = (page: Page) => {
+	const urls: string[] = [];
+	page.on("request", (request) => {
+		if (request.url().includes("/file/image?")) urls.push(request.url());
+	});
+	return urls;
+};
+
+/** Text reads resolve from a path map; anything else keeps the fixture default. */
+async function markdownFiles(
+	page: Page,
+	files: Record<
+		string,
+		{ text?: string; binary?: boolean; status?: number; sha?: string }
+	>,
+) {
+	await page.route("**/api/projects/*/file?*", (route) => {
+		const path = new URL(route.request().url()).searchParams.get("path")!,
+			entry = files[path];
+		if (!entry)
+			return route.fulfill({
+				status: 404,
+				json: { error: { code: "NOT_FOUND", message: "No such file" } },
+			});
+		if (entry.status)
+			return route.fulfill({
+				status: entry.status,
+				json: {
+					error: { code: "CAPABILITY_DENIED", message: "Access denied" },
+				},
+			});
+		return route.fulfill({
+			json: {
+				text: entry.text ?? "",
+				binary: entry.binary ?? false,
+				sha256: (entry.sha ?? "a").repeat(64),
+			},
+		});
+	});
+}
+
+test("markdown preview renders headings, lists, code, tables and a mode control", async ({
+	page,
+}, testInfo) => {
+	await fixture(page);
+	await markdownFiles(page, {
+		"README.md": {
+			text: [
+				"# Title",
+				"## Setup",
+				"- one",
+				"- **two**",
+				"",
+				"| a | b |",
+				"| --- | --- |",
+				"| 1 | 2 |",
+				"",
+				"```js",
+				"const x = 1;",
+				"```",
+				"",
+				"inline `code` and **em**",
+			].join("\n"),
+		},
+	});
+	const imageUrls = imageRequests(page);
+	await page.getByRole("button", { name: "README.md", exact: true }).click();
+	await expect(article(page).getByRole("heading", { name: "Title" })).toBeVisible();
+	await expect(article(page).locator("h2")).toHaveText("Setup");
+	await expect(article(page).locator("ul li")).toHaveCount(2);
+	await expect(article(page).locator("table td")).toHaveCount(2);
+	await expect(article(page).locator("pre")).toContainText("const x = 1;");
+	await expect(article(page).locator("code").last()).toHaveText("code");
+	await expect(article(page).locator("strong").last()).toHaveText("em");
+	await expect(
+		modeButtons(page).filter({ hasText: "Preview" }),
+	).toHaveAttribute("aria-pressed", "true");
+	await page.screenshot({
+		path: testInfo.outputPath("markdown-preview-mode.png"),
+		fullPage: true,
+	});
+	await modeButtons(page).filter({ hasText: "Source" }).click();
+	const raw = await preview(page).locator("pre").first().textContent();
+	expect(raw).toContain("# Title\n## Setup");
+	await page.screenshot({
+		path: testInfo.outputPath("markdown-source-mode.png"),
+		fullPage: true,
+	});
+	await modeButtons(page).filter({ hasText: "Preview" }).click();
+	await expect(article(page).locator("h2")).toHaveText("Setup");
+	expect(imageUrls).toEqual([]);
+});
+
+test("local links navigate through the file selection and carry heading fragments", async ({
+	page,
+}) => {
+	await fixture(page);
+	await markdownFiles(page, {
+		"README.md": {
+			text: [
+				"# Home",
+				"## Details",
+				"[same](#details)",
+				"[guide](docs/GUIDE.md#setup)",
+				"[notes](notes.txt)",
+				"[secret](secret.md)",
+			].join("\n"),
+		},
+		"docs/GUIDE.md": {
+			text: "# Guide\n## Setup\nSteps here.\n[top](../TOP.md#intro)",
+		},
+		"TOP.md": { text: "# Top\n## Intro" },
+		"notes.txt": { text: "plain text body" },
+		"secret.md": { status: 403 },
+	});
+	await page.getByRole("button", { name: "README.md", exact: true }).click();
+	// Same-document heading link focuses the heading without re-reading.
+	await article(page).getByRole("button", { name: "same" }).click();
+	await expect
+		.poll(() =>
+			page.evaluate(() => document.activeElement?.id ?? ""),
+		)
+		.toMatch(/-details$/);
+	// Relative file link keeps fragment: GUIDE.md loads and #setup takes focus.
+	await article(page).getByRole("button", { name: "guide" }).click();
+	await expect(preview(page).locator("header strong")).toHaveText("GUIDE.md");
+	await expect
+		.poll(() =>
+			page.evaluate(() => document.activeElement?.id ?? ""),
+		)
+		.toMatch(/-setup$/);
+	// `..` climbs to the worktree root and still carries the fragment.
+	await article(page).getByRole("button", { name: "top" }).click();
+	await expect(preview(page).locator("header strong")).toHaveText("TOP.md");
+	await expect
+		.poll(() =>
+			page.evaluate(() => document.activeElement?.id ?? ""),
+		)
+		.toMatch(/-intro$/);
+	await page.getByRole("button", { name: "README.md", exact: true }).click();
+	await article(page).getByRole("button", { name: "notes" }).click();
+	await expect(preview(page).locator("header strong")).toHaveText("notes.txt");
+	await expect(preview(page).locator("pre")).toContainText("plain text body");
+	await expect(modeButtons(page)).toHaveCount(0);
+	// A denied target surfaces the read error inside the preview.
+	await page.getByRole("button", { name: "README.md", exact: true }).click();
+	await article(page).getByRole("button", { name: "secret" }).click();
+	await expect(page.locator(".files-error[role=status]")).toContainText(
+		"Access denied",
+	);
+});
+
+test("external links keep reply semantics and denied references stay literal", async ({
+	page,
+}) => {
+	const external: string[] = [];
+	await page.route("https://links.example.test/**", (route) => {
+		external.push(route.request().url());
+		return route.fulfill({ body: "synthetic" });
+	});
+	await fixture(page);
+	await markdownFiles(page, {
+		"README.md": {
+			text: [
+				"[site](https://links.example.test/page)",
+				"[drive](file:///etc/passwd)",
+				"[weird](a%2Fb.md)",
+				"[double](docs//GUIDE.md)",
+				"[over](../../TOP.md)",
+				"<script>alert(1)</script>",
+			].join("\n"),
+		},
+	});
+	await page.getByRole("button", { name: "README.md", exact: true }).click();
+	const anchor = article(page).getByRole("link", { name: "site" });
+	await expect(anchor).toHaveAttribute("target", "_blank");
+	await expect(anchor).toHaveAttribute("rel", "noreferrer");
+	await expect(anchor).toHaveAttribute(
+		"href",
+		"https://links.example.test/page",
+	);
+	expect(external).toEqual([]);
+	// Denied or malformed references render their literal markdown spelling.
+	for (const text of [
+		"[drive](file:///etc/passwd)",
+		"[weird](a%2Fb.md)",
+		"[double](docs//GUIDE.md)",
+		"[over](../../TOP.md)",
+	])
+		await expect(article(page)).toContainText(text);
+	// Raw HTML stays inert text; no script element is mounted.
+	await expect(article(page)).toContainText("<script>alert(1)</script>");
+	expect(await article(page).locator("script").count()).toBe(0);
+});
+
+test("images read only through the bound route: dedupe, notes and the eight-image cap", async ({
+	page,
+}) => {
+	await fixture(page);
+	const nine = Array.from(
+		{ length: 7 },
+		(_, index) => `![n${index}](i${index}.png)`,
+	);
+	await markdownFiles(page, {
+		"README.md": {
+			text: [
+				"![one](img%20one.png)",
+				"![one again](img%20one.png)",
+				"![lost](missing.png)",
+				"![fake](mislabeled.png)",
+				"![remote](https://links.example.test/x.png)",
+				"![vector](icon.svg)",
+				"![os](file:///etc/x.png)",
+				...nine,
+			].join("\n"),
+		},
+	});
+	// Registered last so the generic `/file?*` glob cannot shadow image reads.
+	const requested: string[] = [];
+	await page.route("**/api/projects/*/file/image?*", (route) => {
+		const path = new URL(route.request().url()).searchParams.get("path")!;
+		requested.push(path);
+		if (path === "missing.png")
+			return route.fulfill({
+				status: 404,
+				json: { error: { code: "NOT_FOUND", message: "No such file" } },
+			});
+		if (path === "mislabeled.png")
+			return route.fulfill({
+				status: 415,
+				json: { error: { code: "NOT_IMAGE", message: "Not an image" } },
+			});
+		return route.fulfill({ contentType: "image/png", body: png1x1 });
+	});
+	const urls = imageRequests(page);
+	await page.getByRole("button", { name: "README.md", exact: true }).click();
+	// Eight distinct paths are admitted (two share one read); i5/i6 overflow.
+	await expect(article(page).locator("img.files-md-image")).toHaveCount(7);
+	// Duplicate document references share one bound read; percent paths decode once.
+	expect(requested.sort()).toEqual([
+		"i0.png", "i1.png", "i2.png", "i3.png", "i4.png",
+		"img one.png", "missing.png", "mislabeled.png",
+	].sort());
+	for (const url of urls) {
+		const parsed = new URL(url);
+		expect(parsed.origin).toBe("http://127.0.0.1:5521");
+		expect(parsed.pathname.endsWith("/file/image")).toBe(true);
+	}
+	for (const img of await article(page).locator("img.files-md-image").all())
+		expect(await img.getAttribute("src")).toMatch(/^blob:/);
+	for (const note of [
+		"[image: lost — unavailable]",
+		"[image: fake — unavailable]",
+		"[image: remote — external images are not fetched]",
+		"[image: vector — unsupported image type]",
+		"[image: os — not allowed]",
+		"[image: n5 — too many images]",
+		"[image: n6 — too many images]",
+	])
+		await expect(article(page)).toContainText(note);
+	// Source mode performs zero image reads for the same document.
+	await modeButtons(page).filter({ hasText: "Source" }).click();
+	expect(urls).toHaveLength(8);
+});
+
+test("a selection or owner change discards an in-flight image read", async ({
+	page,
+}) => {
+	await fixture(page);
+	await markdownFiles(page, {
+		"README.md": { text: "![slow](slow.png)" },
+		"workspace.test.ts": { text: "const test = 1;" },
+	});
+	const held: (() => void)[] = [];
+	await page.route("**/api/projects/*/file/image?*", async (route) => {
+		await new Promise<void>((resolve) => held.push(resolve));
+		await route
+			.fulfill({ contentType: "image/png", body: png1x1 })
+			.catch(() => {});
+	});
+	await page.getByRole("button", { name: "README.md", exact: true }).click();
+	await expect(article(page)).toContainText("loading");
+	// Selecting another file discards the pending read before it can paint.
+	await page
+		.getByRole("button", { name: "workspace.test.ts", exact: true })
+		.click();
+	await expect(preview(page).locator("header strong")).toHaveText(
+		"workspace.test.ts",
+	);
+	held.shift()!();
+	await settled(page);
+	await expect(article(page)).toHaveCount(0);
+	await expect(article(page).locator("img")).toHaveCount(0);
+	// An owner switch remounts the reader and fences the second held read.
+	await page.getByRole("button", { name: "README.md", exact: true }).click();
+	await expect(article(page)).toContainText("loading");
+	await page.getByRole("button", { name: "Switch project" }).click();
+	held.shift()!();
+	await settled(page);
+	await expect(article(page)).toHaveCount(0);
+	await expect(page.locator("img.files-md-image")).toHaveCount(0);
+});
+
+test("a text search hit on markdown forces source with the matching line highlighted", async ({
+	page,
+}) => {
+	await fixture(page);
+	const lines = Array.from(
+		{ length: 100 },
+		(_, index) =>
+			index === 11 ? "Open the workspace to continue a task." : `# H ${index + 1}`,
+	);
+	await markdownFiles(page, {
+		"docs/README.md": { text: lines.join("\n") },
+	});
+	await projectScope(page);
+	await hits(page).nth(1).click();
+	await expect(page.locator(".files-matching-line")).toHaveText(
+		"Open the workspace to continue a task.",
+	);
+	await expect(
+		modeButtons(page).filter({ hasText: "Source" }),
+	).toHaveAttribute("aria-pressed", "true");
+	await modeButtons(page).filter({ hasText: "Preview" }).click();
+	await expect(article(page)).toHaveCount(1);
+});
+
+test("mixed-case extensions and CRLF bodies still open in Preview", async ({
+	page,
+}) => {
+	await fixture(page);
+	await page.route("**/api/projects/*/files?*", (route) =>
+		route.fulfill({
+			json: {
+				entries: new URL(route.request().url()).searchParams.has("path")
+					? []
+					: [
+							{ name: "Notes.MD", path: "Notes.MD", kind: "file", bytes: 60 },
+						],
+			},
+		}),
+	);
+	await markdownFiles(page, {
+		"Notes.MD": { text: "# Mixed\r\n\r\nbody **bold**\r\n\r\n- item\r\n" },
+	});
+	await page.getByRole("button", { name: "Refresh", exact: true }).click();
+	await page.getByRole("button", { name: "Notes.MD", exact: true }).click();
+	await expect(article(page).locator("h1")).toHaveText("Mixed");
+	await expect(article(page).locator("strong")).toHaveText("bold");
+	await expect(article(page).locator("ul li")).toHaveText("item");
+});
+
+test("markdown over the render bound stays in source with a status note", async ({
+	page,
+}) => {
+	await fixture(page);
+	await markdownFiles(page, {
+		"README.md": { text: "# Big\n" + "x".repeat(300 * 1024) },
+	});
+	await page.getByRole("button", { name: "README.md", exact: true }).click();
+	await expect(preview(page)).toContainText("Too large to render");
+	await expect(preview(page).locator("pre")).toContainText("# Big");
+	await expect(article(page)).toHaveCount(0);
+});
+
+for (const theme of ["dark", "light"])
+	test(`markdown preview fits a 320px pane with reduced motion in ${theme}`, async ({
+		page,
+	}, testInfo) => {
+		await page.emulateMedia({ reducedMotion: "reduce" });
+		await fixture(page, `?width=320&theme=${theme}&motion=reduced`);
+		await markdownFiles(page, {
+			"README.md": {
+				text: "# Narrow\r\n\r\na very long unbroken paragraph abcdefghijklmnopqrstuvwxyz0123456789 and [self](#narrow)",
+			},
+		});
+		await page.getByRole("button", { name: "README.md", exact: true }).click();
+		await expect(article(page).locator("h1")).toHaveText("Narrow");
+		await expect(modeButtons(page)).toHaveCount(2);
+		expect(
+			await page
+				.locator(".files-surface")
+				.evaluate((element) => element.getAnimations({ subtree: true }).length),
+		).toBe(0);
+		expect(
+			await page
+				.locator(".files-surface")
+				.evaluate((element) => element.scrollWidth <= element.clientWidth),
+		).toBe(true);
+		// Keyboard: tab to the local reference, Enter focuses the heading.
+		await article(page).getByRole("button", { name: "self" }).focus();
+		await page.keyboard.press("Enter");
+		await expect
+			.poll(() =>
+				page.evaluate(() => document.activeElement?.tagName),
+			)
+			.toBe("H1");
+		await page.screenshot({
+			path: testInfo.outputPath(`markdown-320-${theme}.png`),
+			fullPage: true,
+		});
+	});
