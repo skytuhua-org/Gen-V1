@@ -352,6 +352,7 @@
     "apps/web/src/useAttention.ts",
     "apps/web/src/useComposerPrediction.ts",
     "apps/web/src/useProjectMemoryPreparation.ts",
+    "apps/web/src/usePromptNavigation.ts",
     "apps/web/src/work-objects.css",
     "apps/web/src/workbench-api.ts",
     "apps/web/src/workbench-input-recovery.ts",
