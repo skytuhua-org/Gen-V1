@@ -6,6 +6,7 @@
 - Repo: `skytuhua-org/Gen-V1`
 - Plan revision: r1, 2026-11-21 (UTC)
 - Baseline: `main` @ `8fa907f378127bcfc23d71b55c53625ffc43e8da` (verified `git rev-parse HEAD`)
+- Canonical issue: [#1636](https://github.com/skytuhua-org/Gen-V1/issues/1636) — this plan is published in full there; implementation needs its own claim on that issue.
 - Size: small. Labels: `bug`, `ui`.
 - Related, not duplicates: #1295 (empty workspace hero), #1131 (Linked PRs dead ends), #1132 (composer crowding) — none covers this caption.
 - Implementation status: NOT_STARTED. Plan only; no app code changed.
@@ -46,8 +47,10 @@ Single-condition change, no new components.
 
 ## EXECUTION_DAG
 
-- T01: Edit `apps/web/src/App.tsx` caption expression and label per DESIGN. done-when: with `unavailable && working`, no CTA renders; with `unavailable && !working`, label matches lifecycle. Tests: update/extend the composer caption UI test discovered in REPO_MAP; assert all three states (working, empty thread, replied thread).
-- T02: Run `pnpm vitest run` on the touched test file(s) plus `pnpm lint apps/web/src/App.tsx` (or repo's lint script). done-when: green.
+Single-worker scope; tasks are sequential, no parallel ownership boundaries.
+
+- T01: Edit `apps/web/src/App.tsx` caption expression and label per DESIGN. Dependencies: none (entry point). Ownership: only file touched is `apps/web/src/App.tsx`; tests touched are the composer-caption spec discovered in REPO_MAP. done-when: with `unavailable && working`, no CTA renders; with `unavailable && !working`, label matches lifecycle. Tests: update/extend the composer caption UI test discovered in REPO_MAP; assert all three states (working, empty thread, replied thread). Handoff: commit on the implementer's feature branch, then T02.
+- T02: Verification, same worker, depends on T01's commit. Per CONTRIBUTING.md's Web UI row: `pnpm typecheck`, `pnpm build`, `pnpm vitest run` on the touched spec file(s), and the scoped Playwright spec for the composer surface (docs/getting-started.md#run-the-checks); plus `pnpm lint apps/web/src/App.tsx` if a lint script exists. done-when: all green; record exact commands and results in the issue checkpoint. Handoff: post RELEASE + finished-work note on #1636 for front-end review.
 
 ## VALIDATION
 
