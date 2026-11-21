@@ -8,3 +8,13 @@
 .chat-scroll-thumb{position:absolute;bottom:auto;left:8px;width:3px;border-radius:2px;background:var(--muted);will-change:transform;pointer-events:auto;transition:background var(--ui-motion-hover) var(--ui-ease-enter)}
 .chat-scroll-indicator:hover .chat-scroll-thumb,.chat-scroll-indicator:focus-visible .chat-scroll-thumb{background:var(--text)}
 @media(max-width:700px){.chat-scroll-indicator{left:0;width:16px}.chat-scroll-track{left:7px;width:1px}.chat-scroll-thumb{left:6px;width:3px}.conversation-frame>.conversation-scroll{padding-left:16px}}
+.prompt-navigation{position:absolute;top:8px;left:4px;display:flex;flex-direction:column;gap:4px;z-index:3}
+.prompt-nav-button{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--control-border);border-radius:6px;background:var(--subtle,var(--surface));color:var(--muted);cursor:pointer}
+.prompt-nav-button:hover:not(:disabled){color:var(--text);background:var(--selection-bg)}
+.prompt-nav-button:disabled{cursor:not-allowed}
+.prompt-nav-button:disabled svg{opacity:.4}
+.prompt-nav-button:focus-visible{outline:2px solid var(--ui-focus-ring,#808080);outline-offset:1px}
+.conversation-frame[data-prompt-nav]>.conversation-scroll{padding-left:36px}
+.conversation-frame[data-prompt-nav]>.chat-scroll-indicator{top:72px}
+@media(max-width:700px){.conversation-frame[data-prompt-nav]>.conversation-scroll{padding-left:36px}}
+@media(forced-colors:active){.prompt-nav-button{forced-color-adjust:none;border-color:ButtonText;color:ButtonText;background:ButtonFace}.prompt-nav-button:disabled{border-color:GrayText;color:GrayText}.prompt-nav-button:hover:not(:disabled){outline:1px solid Highlight}}
