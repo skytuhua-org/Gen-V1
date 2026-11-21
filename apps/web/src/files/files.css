@@ -408,3 +408,91 @@
 		grid-template-columns: minmax(0, 1fr);
 	}
 }
+
+/* Project Files Markdown preview (live-files only; granted Files unchanged). */
+.live-files .files-mode {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	flex-shrink: 0;
+	margin-inline-start: auto;
+}
+.live-files .files-mode button {
+	font-size: 12px;
+	padding: 3px 10px;
+	border-radius: 999px;
+	border: 1px solid transparent;
+	color: var(--muted);
+}
+.live-files .files-mode button:hover:not(:disabled) {
+	color: var(--text);
+}
+.live-files .files-mode button[aria-pressed="true"] {
+	color: var(--text);
+	background: var(--subtle);
+	border-color: var(--border);
+}
+.live-files .files-mode-enter {
+	animation: files-mode-in var(--ui-motion-insert) var(--ui-ease-enter);
+}
+@keyframes files-mode-in {
+	from {
+		opacity: .92;
+	}
+	to {
+		opacity: 1;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.live-files .files-mode-enter {
+		animation: none;
+	}
+}
+.live-files .files-preview-article {
+	max-width: 72ch;
+	padding: var(--files-inset);
+}
+/* Long code and tables scroll inside their own block, not the article. */
+.live-files .files-preview-article pre {
+	width: auto;
+	min-width: 0;
+	max-width: 100%;
+	overflow-x: auto;
+}
+.live-files .files-preview-article :is(h1, h2, h3, h4, h5, h6):focus {
+	outline: none;
+}
+.live-files
+	.files-preview-article
+	:is(h1, h2, h3, h4, h5, h6):focus-visible {
+	outline: 2px solid var(--ui-focus-ring, #808080);
+	outline-offset: 3px;
+	border-radius: 4px;
+}
+.live-files .files-md-reference {
+	color: var(--accent-fg);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+	background: none;
+	border: 0;
+	padding: 0;
+	font: inherit;
+	cursor: pointer;
+	overflow-wrap: anywhere;
+}
+.live-files .files-md-reference:focus-visible {
+	outline: 2px solid var(--ui-focus-ring, #808080);
+	outline-offset: 2px;
+	border-radius: 3px;
+}
+.live-files .files-preview-article .files-md-image {
+	max-width: 100%;
+	height: auto;
+	padding: 0;
+	margin: 8px 0;
+}
+.live-files .files-image-note {
+	color: var(--muted);
+	font-size: .92em;
+	overflow-wrap: anywhere;
+}

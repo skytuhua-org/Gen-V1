@@ -234,6 +234,7 @@
     "apps/web/src/file-checkpoints.css",
     "apps/web/src/files/FilesView.tsx",
     "apps/web/src/files/GrantedFiles.tsx",
+    "apps/web/src/files/MarkdownPreview.tsx",
     "apps/web/src/files/ProjectFiles.tsx",
     "apps/web/src/files/ProjectSearch.tsx",
     "apps/web/src/files/files.css",

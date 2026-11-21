@@ -8,6 +8,8 @@ import {
 } from "react";
 import { authenticated, read } from "../api";
 import { FilesView, type FilesEntry } from "./FilesView";
+import { FilesMarkdownPreview } from "./MarkdownPreview";
+import { isMarkdownFileName } from "./markdown-references";
 import { ProjectSearch } from "./ProjectSearch";
 import {
 	unavailableProjectSearch,
@@ -21,6 +23,8 @@ interface ProjectFile {
 	binary: boolean;
 	sha256: string;
 }
+// Bound on rendered Markdown; larger documents stay in source view.
+const MARKDOWN_RENDER_LIMIT = 256 * 1024;
 interface ProjectFilesProps {
 	base: string;
 	query: string;
@@ -43,7 +47,14 @@ function ProjectFilesReader({
 		[selectedMatch, setSelectedMatch] = useState<ProjectSearchMatch | null>(
 			null,
 		),
-		[searchRefresh, setSearchRefresh] = useState(0);
+		[searchRefresh, setSearchRefresh] = useState(0),
+		[modeOverride, setModeOverride] = useState<"preview" | "source" | null>(
+			null,
+		),
+		[pendingFragment, setPendingFragment] = useState<{
+			path: string;
+			fragment: string;
+		} | null>(null);
 	const matchLine = useRef<HTMLElement>(null);
 	const owner = {
 		projectId: decodeURIComponent(base.split("/").at(-1) ?? ""),
@@ -96,6 +107,39 @@ function ProjectFilesReader({
 				behavior: "instant",
 			});
 	}, [file, selectedMatch, stale, preview.pending]);
+	// A new file resets the default view mode; a pending heading target survives
+	// only while it still names the selected document.
+	useEffect(() => {
+		setModeOverride(null);
+		setPendingFragment((current) =>
+			current && current.path !== selected?.path ? null : current,
+		);
+	}, [selected?.path]);
+	const markdown = !!selected && isMarkdownFileName(selected.name),
+		effectiveMode: "preview" | "source" =
+			selectedMatch?.kind === "text"
+				? "source"
+				: (modeOverride ?? (markdown ? "preview" : "source"));
+	const changeMode = (next: "preview" | "source") => {
+		if (next === "preview") setSelectedMatch(null);
+		setModeOverride(next);
+	};
+	const clearFragment = useCallback(() => setPendingFragment(null), []);
+	// Markdown links navigate through the same Files selection path; the target
+	// keeps the existing read authority, and a fragment resolves after render.
+	const navigate = useCallback(
+		(target: string, fragment: string | null) => {
+			setSelectedMatch(null);
+			setPendingFragment(fragment ? { path: target, fragment } : null);
+			if (target !== selected?.path)
+				setSelected({
+					name: target.split("/").at(-1)!,
+					path: target,
+					kind: "file",
+				});
+		},
+		[selected?.path],
+	);
 	if (folder.errorCode === "PROJECT_NOT_CONNECTED") return fallback;
 	const line =
 		selectedMatch?.kind === "text" && !stale ? selectedMatch.line : undefined;
@@ -132,6 +176,7 @@ function ProjectFilesReader({
 						selected={selectedMatch}
 						onSelect={(match) => {
 							setSelectedMatch(match);
+							setPendingFragment(null);
 							if (selected?.path === match.path) preview.refresh();
 							else
 								setSelected({
@@ -146,8 +191,31 @@ function ProjectFilesReader({
 			}}
 			preview={{
 				...preview,
+				controls:
+					markdown && file && !file.binary && file.text !== null ? (
+						<span
+							className="files-mode"
+							role="group"
+							aria-label="Preview mode"
+						>
+							<button
+								type="button"
+								aria-pressed={effectiveMode === "preview"}
+								onClick={() => changeMode("preview")}
+							>
+								Preview
+							</button>
+							<button
+								type="button"
+								aria-pressed={effectiveMode === "source"}
+								onClick={() => changeMode("source")}
+							>
+								Source
+							</button>
+						</span>
+					) : undefined,
 				body: file ? (
-					<>
+					<div key={effectiveMode} className="files-mode-enter">
 						{stale && (
 							<p className="files-message" role="status">
 								This file changed since the search. Showing current content;
@@ -162,12 +230,37 @@ function ProjectFilesReader({
 						{line && lines && lineIndex < lines.length && (
 							<p className="files-message files-limit">Matching line {line}</p>
 						)}
-						{file.binary ? (
+						{file.binary || file.text === null ? (
 							<p className="files-message">
 								Binary file; no text preview.
 							</p>
 						) : file.text === "" ? (
 							<p className="files-message">Empty text file</p>
+						) : effectiveMode === "preview" && markdown ? (
+							file.text.length > MARKDOWN_RENDER_LIMIT ? (
+								<>
+									<p className="files-message" role="status">
+										Too large to render. Showing source.
+									</p>
+									<pre>{file.text}</pre>
+								</>
+							) : (
+								<FilesMarkdownPreview
+									key={selected!.path}
+									text={file.text}
+									path={selected!.path}
+									base={base}
+									query={query}
+									revision={file}
+									pendingFragment={
+										pendingFragment?.path === selected!.path
+											? pendingFragment.fragment
+											: null
+									}
+									onFragmentHandled={clearFragment}
+									onNavigate={navigate}
+								/>
+							)
 						) : (
 							<pre>
 								{lines && line && lineIndex < lines.length ? (
@@ -184,7 +277,7 @@ function ProjectFilesReader({
 							</pre>
 						)}
 						<small className="files-checksum">SHA-256 {file.sha256}</small>
-					</>
+					</div>
 				) : null,
 			}}
 			limitNote={
@@ -199,6 +292,7 @@ function ProjectFilesReader({
 			}}
 			onSelect={(entry) => {
 				setSelectedMatch(null);
+				setPendingFragment(null);
 				if (selected?.path === entry.path) preview.refresh();
 				else setSelected(entry);
 			}}

@@ -61,7 +61,7 @@ export function FilesView({
 	path: string;
 	folder: FilesRead<{ entries: FilesEntry[] }>;
 	selected: FilesEntry | null;
-	preview: FilesRead<unknown> & { body: ReactNode };
+	preview: FilesRead<unknown> & { body: ReactNode; controls?: ReactNode };
 	selector?: ReactNode;
 	download?: string;
 	limitNote?: string;
@@ -308,6 +308,7 @@ export function FilesView({
 								<strong title={displayFilePath(selected.path)}>
 									{displayFilePath(selected.name)}
 								</strong>
+								{preview.controls}
 								{download && (
 									<a href={download} download={selected.name}>
 										Download
