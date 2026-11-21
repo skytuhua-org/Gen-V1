@@ -3,12 +3,36 @@ import {SentenceReveal} from './SentenceReveal';
 import {CopyButton} from './CopyButton';
 import './markdown.css';
 
-function inline(text: string): ReactNode {
-  return text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/[^\s)]+|#[^\s)]+)\))/g).map((part, index) => {
+/** Opt-in rendering policy for surfaces that authorize local references. Without it the parser, DOM and behavior are unchanged. */
+export interface MarkdownPolicy {
+  /** Allocates a deterministic heading id; headings become programmatically focusable. */
+  headingId?: (text: string) => string;
+  /** Renders a non-HTTP(S) link target; HTTP(S) links always keep the reply anchor behavior. */
+  link?: (target: string, label: string) => ReactNode;
+  /** Renders an image token; image syntax is claimed before link syntax. */
+  image?: (target: string, alt: string) => ReactNode;
+}
+
+function inline(text: string, policy?: MarkdownPolicy): ReactNode {
+  if (!policy)
+    return text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/[^\s)]+|#[^\s)]+)\))/g).map((part, index) => {
+      if (part.startsWith('**') && part.endsWith('**')) return <strong key={index}>{part.slice(2, -2)}</strong>;
+      if (part.startsWith('`') && part.endsWith('`')) return <code key={index}>{part.slice(1, -1)}</code>;
+      const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+|#[^\s)]+)\)$/);
+      if (link) return <a key={index} href={link[2]} target={link[2].startsWith('#') ? undefined : '_blank'} rel="noreferrer">{link[1]}</a>;
+      return <Fragment key={index}>{part}</Fragment>;
+    });
+  return text.split(/(\*\*[^*]+\*\*|`[^`]+`|!\[[^\]]*\]\([^\s)]+\)|\[[^\]]+\]\([^\s)]+\))/g).map((part, index) => {
     if (part.startsWith('**') && part.endsWith('**')) return <strong key={index}>{part.slice(2, -2)}</strong>;
     if (part.startsWith('`') && part.endsWith('`')) return <code key={index}>{part.slice(1, -1)}</code>;
-    const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+|#[^\s)]+)\)$/);
-    if (link) return <a key={index} href={link[2]} target={link[2].startsWith('#') ? undefined : '_blank'} rel="noreferrer">{link[1]}</a>;
+    const image = part.match(/^!\[([^\]]*)\]\(([^\s)]+)\)$/);
+    if (image) return <Fragment key={index}>{policy.image ? policy.image(image[2]!, image[1]!) : part}</Fragment>;
+    const link = part.match(/^\[([^\]]+)\]\(([^\s)]+)\)$/);
+    if (link) {
+      const target = link[2]!;
+      if (/^https?:\/\//i.test(target)) return <a key={index} href={target} target="_blank" rel="noreferrer">{link[1]}</a>;
+      return <Fragment key={index}>{policy.link ? policy.link(target, link[1]!) : part}</Fragment>;
+    }
     return <Fragment key={index}>{part}</Fragment>;
   });
 }
@@ -48,7 +72,7 @@ const fence=(line:string)=>/^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
 const numeric=(value:string)=>/^[+\-−]?\d[\d,]*(?:\.\d+)?(?:\s*(?:%|ms|s|bytes?|[kmg]i?b))?$/i.test(value);
 const startsList=(line:string)=>{const item=marker(line);return item!==null&&item.indent<4;};
 
-function list(lines:string[],start:number,key:string,depth=0):{node:ReactNode;next:number}{
+function list(lines:string[],start:number,key:string,depth=0,policy?:MarkdownPolicy):{node:ReactNode;next:number}{
   const first=marker(lines[start]!)!,items:ReactNode[]=[];let index=start;
   while(index<lines.length){
     const current=marker(lines[index]!);if(!current||current.indent!==first.indent||current.ordered!==first.ordered)break;
@@ -63,18 +87,18 @@ function list(lines:string[],start:number,key:string,depth=0):{node:ReactNode;ne
       }
       if(next){
         if(next.indent<=first.indent)break;
-        if(depth<12){const nested=list(lines,index,`${key}-${items.length}-${children.length}`,depth+1);children.push(nested.node);index=nested.next;continue;}
+        if(depth<12){const nested=list(lines,index,`${key}-${items.length}-${children.length}`,depth+1,policy);children.push(nested.node);index=nested.next;continue;}
       }
       if(heading(line)||fence(line)||tableStart(lines,index))break;
       text+='\n'+line.trim();index++;
     }
-    items.push(<li key={items.length}>{inline(text)}{children}</li>);
+    items.push(<li key={items.length}>{inline(text,policy)}{children}</li>);
   }
   return {node:first.ordered?<ol key={key} className="markdown-list" start={first.start}>{items}</ol>:<ul key={key} className="markdown-list">{items}</ul>,next:index};
 }
 
 /** A small safe block renderer; malformed table rows remain visible as prose. */
-function blocks(text:string):ReactNode[]{
+function blocks(text:string,policy?:MarkdownPolicy):ReactNode[]{
   const lines=text.replaceAll('\r\n','\n').split('\n'),nodes:ReactNode[]=[];let index=0,tableCells=0;
   while(index<lines.length){
     if(!lines[index]!.trim()){index++;continue;}
@@ -86,7 +110,7 @@ function blocks(text:string):ReactNode[]{
       nodes.push(<div key={key} className="markdown-code"><CopyButton text={code} label="Copy code"/><pre><code>{code}</code></pre></div>);if(index<lines.length)index++;continue;
     }
     const title=heading(lines[index]!);
-    if(title){const Heading=`h${title[1]!.length}` as 'h1'|'h2'|'h3'|'h4'|'h5'|'h6';nodes.push(<Heading key={key}>{inline(title[2]!)}</Heading>);index++;continue;}
+    if(title){const Heading=`h${title[1]!.length}` as 'h1'|'h2'|'h3'|'h4'|'h5'|'h6',id=policy?.headingId?.(title[2]!);nodes.push(<Heading key={key} {...(id!==undefined?{id,tabIndex:-1}:{})}>{inline(title[2]!,policy)}</Heading>);index++;continue;}
     const table=tableStart(lines,index);
     if(table){
       const start=index,rows:string[][]=[];let rowCount=0,oversized=table.oversized||tableCells+table.header.length>MAX_TABLE_CELLS;index+=2;
@@ -100,17 +124,17 @@ function blocks(text:string):ReactNode[]{
       if(oversized){nodes.push(<p key={key} className="markdown-table-fallback">{lines.slice(start,index).join('\n')}</p>);continue;}
       tableCells+=(rowCount+1)*table.header.length;
       const align=table.align.map((value,column)=>value??(rows.some(row=>row[column])&&rows.every(row=>!row[column]||numeric(row[column]!))?'right':undefined));
-      nodes.push(<div key={key} className="markdown-table-scroll" role="region" aria-label="Table" tabIndex={0}><table className="markdown-table"><thead><tr>{table.header.map((cell,column)=><th key={column} scope="col" style={{textAlign:align[column]}}>{inline(cell)}</th>)}</tr></thead><tbody>{rows.map((row,item)=><tr key={item}>{row.map((cell,column)=><td key={column} style={{textAlign:align[column]}}>{inline(cell)}</td>)}</tr>)}</tbody></table></div>);continue;
+      nodes.push(<div key={key} className="markdown-table-scroll" role="region" aria-label="Table" tabIndex={0}><table className="markdown-table"><thead><tr>{table.header.map((cell,column)=><th key={column} scope="col" style={{textAlign:align[column]}}>{inline(cell,policy)}</th>)}</tr></thead><tbody>{rows.map((row,item)=><tr key={item}>{row.map((cell,column)=><td key={column} style={{textAlign:align[column]}}>{inline(cell,policy)}</td>)}</tr>)}</tbody></table></div>);continue;
     }
     const first=marker(lines[index]!);
-    if(first&&first.indent<4){const rendered=list(lines,index,key);nodes.push(rendered.node);index=rendered.next;continue;}
+    if(first&&first.indent<4){const rendered=list(lines,index,key,0,policy);nodes.push(rendered.node);index=rendered.next;continue;}
     const paragraph=[lines[index++]!];
     while(index<lines.length&&lines[index]!.trim()&&!fence(lines[index]!)&&!heading(lines[index]!)&&!tableStart(lines,index)&&!startsList(lines[index]!))paragraph.push(lines[index++]!);
-    nodes.push(<p key={key}>{inline(paragraph.join('\n'))}</p>);
+    nodes.push(<p key={key}>{inline(paragraph.join('\n'),policy)}</p>);
   }
   return nodes;
 }
-export const Markdown = memo(function Markdown({ text,animate=false,initialReveal=false }: { text: string;animate?:boolean;initialReveal?:boolean }) {
-  const rendered = useMemo(() => blocks(text), [text]);
+export const Markdown = memo(function Markdown({ text,animate=false,initialReveal=false,policy }: { text: string;animate?:boolean;initialReveal?:boolean;policy?:MarkdownPolicy }) {
+  const rendered = useMemo(() => blocks(text,policy), [text,policy]);
   return <SentenceReveal className="markdown" text={text} animate={animate} initialReveal={initialReveal}>{rendered}</SentenceReveal>;
 });
