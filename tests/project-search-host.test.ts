@@ -193,7 +193,7 @@ it('stops at 10,000 ordinary files, without visiting the next file', async () =>
   const result = await f.search.search(f.projectId, { q: 'needle' });
   expect(result.complete).toBe(false); expect(result.issues).toContainEqual({ path: null, reason: 'file_limit' });
   expect(vi.mocked(withPathGuard).mock.calls.filter(([paths]) => paths[0]!.leaf)).toHaveLength(10_000);
-}, 60_000);
+}, 120_000); // instrumented (coverage) runs are slower on CI runners
 
 it('bounds UTF-8 snapshot and response sizes, reports response_limit, and emits every retained match exactly once', async () => {
   const f = await fixture(); await f.write('hits.txt', ('needle' + '😀'.repeat(512) + '\n').repeat(1000));
