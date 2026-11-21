@@ -68,6 +68,13 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
  });
  app.get('/api/projects/:projectId/files',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path}=querySchema.parse(request.query);return projects.files(projectId,threadId,path);});
  app.get('/api/projects/:projectId/file',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path}=querySchema.parse(request.query);return projects.file(projectId,threadId,z.string().min(1).parse(path));});
+ // Verified static PNG/JPEG bytes for project Files Markdown previews. The image is
+ // sandboxed on direct navigation and never cached; errors keep the JSON envelope.
+ app.get('/api/projects/:projectId/file/image',async(request,reply)=>{
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path}=querySchema.parse(request.query);
+  const image=await projects.fileImage(projectId,threadId,z.string().min(1).parse(path));
+  return reply.header('Content-Type',image.mediaType).header('Cache-Control','no-store').header('X-Content-Type-Options','nosniff').header('Content-Security-Policy','sandbox').send(image.data);
+ });
  app.get('/api/projects/:projectId/pull-requests',async request=>{
   const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,linked}=pullQuerySchema.parse(request.query);if(!linked)return github.list(projectId,threadId);
   await projects.binding(projectId,threadId);const{repo}=await github.repo(projectId,threadId);

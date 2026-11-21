@@ -26,6 +26,54 @@ const equal=(a:Identity,b:Identity)=>a.dev===b.dev&&a.ino===b.ino;
 const pathName=z.string().min(1).max(1024).refine(path=>!path.includes('\0')&&!path.includes(':')&&!/^[\\/]|(?:^|[\\/])\.\.(?:[\\/]|$)/.test(path),'Choose a file inside the project.');
 // Git metadata is never project content, whatever its case or nesting depth.
 const gitSegment=(value:string)=>value.split(/[\\/]/).some(part=>part.toLowerCase()==='.git');
+const PNG_MAGIC=Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),IMAGE_PIXEL_LIMIT=4_000_000;
+const unsupported=(message:string)=>new HarnessError('UNSUPPORTED',message);
+/** Admits only a verified static PNG/JPEG matching its extension; headers inspected, pixels never decoded. */
+function projectImageMediaType(path:string,data:Buffer):'image/png'|'image/jpeg'{
+ const extension=/\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase(),expected=extension==='png'?'image/png':extension==='jpg'||extension==='jpeg'?'image/jpeg':undefined;
+ if(!expected)throw unsupported('Only PNG and JPEG images are previewed.');
+ const detected=data.subarray(0,8).equals(PNG_MAGIC)?'image/png':data.length>2&&data[0]===0xff&&data[1]===0xd8?'image/jpeg':undefined;
+ if(detected!==expected)throw unsupported('The image content does not match its file type.');
+ if(detected==='image/png')inspectPng(data);else inspectJpeg(data);
+ return detected;
+}
+// Signature, IHDR dimensions and a full chunk-table walk to IEND; acTL anywhere marks it animated.
+function inspectPng(data:Buffer){
+ if(data.length<33||data.toString('latin1',12,16)!=='IHDR')throw unsupported('The PNG image is not readable.');
+ const width=data.readUInt32BE(16),height=data.readUInt32BE(20);
+ if(!width||!height)throw unsupported('The PNG image is not readable.');
+ if(width*height>IMAGE_PIXEL_LIMIT)throw new HarnessError('RESOURCE_LIMIT','The image exceeds the preview pixel limit.');
+ for(let offset=8;;){
+  if(offset+8>data.length)throw unsupported('The PNG image is not readable.');
+  const length=data.readUInt32BE(offset),type=data.toString('latin1',offset+4,offset+8),next=offset+12+length;
+  if(next>data.length)throw unsupported('The PNG image is not readable.');
+  if(type==='acTL')throw unsupported('Animated PNG images are not previewed.');
+  offset=next;
+  if(type==='IEND')return;
+ }
+}
+// Marker walk to the first SOF for decoded dimensions; anything without a valid SOF fails closed.
+function inspectJpeg(data:Buffer){
+ for(let offset=2,walked=0;walked<8192;walked++){
+  while(offset<data.length&&data[offset]===0xff)offset++;
+  if(offset>=data.length)break;
+  const marker=data[offset]!;offset++;
+  if(marker===0xd8||marker===0x01||marker>=0xd0&&marker<=0xd7)continue;
+  if(marker===0xd9||marker===0xda)break;
+  if(offset+2>data.length)break;
+  const length=data.readUInt16BE(offset),next=offset+length;
+  if(length<2||next>data.length)break;
+  if(marker>=0xc0&&marker<=0xcf&&marker!==0xc4&&marker!==0xc8&&marker!==0xcc){
+   if(length<8)break;
+   const height=data.readUInt16BE(offset+3),width=data.readUInt16BE(offset+5);
+   if(!width||!height)break;
+   if(width*height>IMAGE_PIXEL_LIMIT)throw new HarnessError('RESOURCE_LIMIT','The image exceeds the preview pixel limit.');
+   return;
+  }
+  offset=next;
+ }
+ throw unsupported('The JPEG image is not readable.');
+}
 async function untrackedDigest(path:string,signal:AbortSignal){
  return withPathGuard([{path,leaf:true,readOnly:true}],signal,async()=>{
   const file=await open(path,'r');try{const info=await file.stat({bigint:true});if(!info.isFile()||info.nlink!==1n)throw new HarnessError('CAPABILITY_DENIED','Changed paths must be ordinary files.');
@@ -201,6 +249,16 @@ export class ProjectTools{
   const{path}=await this.binding(projectId,threadId),target=relativePath?join(path,pathName.parse(relativePath)):path,resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Files stay inside the selected worktree.');
   return withPathGuard([{path:target,leaf:false}],new AbortController().signal,async()=>{const{readdir}=await import('node:fs/promises'),entries=[];for(const item of(await readdir(target,{withFileTypes:true})).slice(0,500)){if(item.name.toLowerCase()==='.git'||item.name==='.harness-directory-guard'||item.isSymbolicLink())continue;entries.push({name:item.name,path:relativePath?relativePath+'/'+item.name:item.name,kind:item.isDirectory()?'directory':'file'});}return{path:relativePath,entries};});
  }
- async file(projectId:string,threadId:string|undefined,relativePath:string){const{path}=await this.binding(projectId,threadId),target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data)};});}
+ // The single authorized-path authority for project byte reads: binding,
+ // path shape, real-path containment and protected-segment rejection.
+ private async projectFile(projectId:string,threadId:string|undefined,relativePath:string,message:string){
+  const{path}=await this.binding(projectId,threadId),target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED',message);return target;
+ }
+ async file(projectId:string,threadId:string|undefined,relativePath:string){const target=await this.projectFile(projectId,threadId,relativePath,'Choose a source file inside this worktree.');return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data)};});}
+ /** Static PNG/JPEG bytes for Files Markdown previews; same authority and guard as file(). */
+ async fileImage(projectId:string,threadId:string|undefined,relativePath:string){
+  const target=await this.projectFile(projectId,threadId,relativePath,'Choose a PNG or JPEG image inside this worktree.');
+  return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{data,mediaType:projectImageMediaType(target,data)};});
+ }
  async dispose(){await Promise.allSettled([...this.queues.values()]);}
 }
