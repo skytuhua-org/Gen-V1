@@ -25,10 +25,6 @@ env:
   GIT_CONFIG_VALUE_0: true
 
 jobs:
-  # Each timeout-minutes is the job's budget: about 1.5x its p95 setup+run time
-  # over the 150-run audit in #1666, capped at the previous timeout. A job that
-  # exceeds it fails; budgets only shrink. Browser (p95 24 min) and installed
-  # memory (p95 43 min) already sat under 1.5x, so they keep 30 and 60.
   # A draft pull request is not reviewable, so its jobs run when it becomes
   # ready for review instead of on every draft push; draft pushes otherwise
   # starve the shared runner pool that required checks depend on.
@@ -120,15 +116,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -B tests/memory_native_checkpoint_worker_v3.py -v
 
-  test:
-    name: Tests (shard ${{ matrix.shard }}/4)
+  # Four literal jobs, not a matrix: GitHub reports a skipped matrix job under its
+  # unexpanded name, so the required "Tests (shard N/4)" checks would never report on PRs.
+  test-1:
+    name: Tests (shard 1/4)
     runs-on: windows-2022
     if: github.event_name != 'pull_request'
     timeout-minutes: 22
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
     defaults:
       run:
         shell: pwsh
@@ -148,7 +142,85 @@ jobs:
         run: pnpm build
 
       - name: Run application regression tests
-        run: pnpm test --maxWorkers=1 --shard=${{ matrix.shard }}/4
+        run: pnpm test --maxWorkers=1 --shard=1/4
+
+  test-2:
+    name: Tests (shard 2/4)
+    runs-on: windows-2022
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 22
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        uses: ./.github/actions/setup
+        with:
+          python: 'true'
+          playwright: 'true'
+
+      - name: Build web application
+        run: pnpm build
+
+      - name: Run application regression tests
+        run: pnpm test --maxWorkers=1 --shard=2/4
+
+  test-3:
+    name: Tests (shard 3/4)
+    runs-on: windows-2022
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 22
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        uses: ./.github/actions/setup
+        with:
+          python: 'true'
+          playwright: 'true'
+
+      - name: Build web application
+        run: pnpm build
+
+      - name: Run application regression tests
+        run: pnpm test --maxWorkers=1 --shard=3/4
+
+  test-4:
+    name: Tests (shard 4/4)
+    runs-on: windows-2022
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 22
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        uses: ./.github/actions/setup
+        with:
+          python: 'true'
+          playwright: 'true'
+
+      - name: Build web application
+        run: pnpm build
+
+      - name: Run application regression tests
+        run: pnpm test --maxWorkers=1 --shard=4/4
 
   browser:
     name: Browser tests

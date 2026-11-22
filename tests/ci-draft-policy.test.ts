@@ -10,7 +10,7 @@ const jobs=starts.map((match,index)=>{
   const shards=/^        shard:\s*(\[[^\]\n]+\])/m.exec(block)?.[1];
   return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',shards:shards?JSON.parse(shards) as number[]:null};
 });
-const requiredJobs=['checks','test/1','test/2','test/3','test/4','browser','installed-memory'];
+const requiredJobs=['checks','test-1','test-2','test-3','test-4','browser','installed-memory'];
 const pullRequestJobs=['checks','select','selected'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
 type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number};
@@ -65,7 +65,7 @@ it('runs every job for a merge queue entry before it reaches main',()=>{
   expect(scheduledJobs({name:'merge_group',ref:'refs/heads/gh-readonly-queue/main/pr-42-'+'a'.repeat(40)})).toEqual(requiredJobs);
 });
 it('reports every failing check in the folded job instead of stopping at the first',()=>{
-  const checks=jobSource.split(/^  checks:\n/m)[1]?.split(/^  test:\n/m)[0]??'';
+  const checks=jobSource.split(/^  checks:\n/m)[1]?.split(/^  \S/m)[0]??'';
   const steps=checks.split(/^      - name:/m).slice(1);
   expect(steps.length).toBeGreaterThan(10);
   for(const step of steps.slice(2))expect(step).toMatch(/^        if: \$\{\{ !cancelled\(\) && steps\.(setup|visuals|build)\.outcome == 'success' \}\}$/m);
@@ -74,7 +74,7 @@ it('reports every failing check in the folded job instead of stopping at the fir
 });
 
 it('does not let a successful visuals package build mask a failed typecheck',()=>{
-  const checks=jobSource.split(/^  checks:\n/m)[1]?.split(/^  test:\n/m)[0]??'';
+  const checks=jobSource.split(/^  checks:\n/m)[1]?.split(/^  \S/m)[0]??'';
   const typecheck=checks.split(/^      - name:/m).find(block=>block.includes('pnpm --dir plugins/personal-visuals typecheck'));
   const build=checks.split(/^      - name:/m).find(block=>block.includes('pnpm --dir plugins/personal-visuals build'));
   expect(typecheck).toBeDefined();
@@ -130,12 +130,22 @@ it('selects pull-request tests from the merge commit diff and keeps the full sui
   expect(selected).toContain('pnpm test --maxWorkers=1 --changed HEAD^1 --shard $env:SHARD');
   expect(selected).toContain('shard: ${{ fromJSON(needs.select.outputs.shards) }}');
   for(const job of [select,selected])expect(job).not.toMatch(/continue-on-error|always\(\)|--passWithNoTests/);
-  for(const id of ['test','browser','installed-memory'])expect(jobs.find(job=>job.id===id)?.condition).toBe("github.event_name != 'pull_request'");
+  for(const id of ['test-1','test-2','test-3','test-4','browser','installed-memory'])expect(jobs.find(job=>job.id===id)?.condition).toBe("github.event_name != 'pull_request'");
 });
 it('books no Windows test runner when the diff reaches no test',()=>{
   expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual(['checks','select']);
 });
 it('fails any job that exceeds its time budget',()=>{
   const budgets=Object.fromEntries(starts.map((match,index)=>[match[1],Number(/^    timeout-minutes: (\d+)$/m.exec(jobSource.slice(match.index,starts[index+1]?.index))?.[1])]));
-  expect(budgets).toEqual({checks:15,test:22,browser:30,'installed-memory':60,select:5,selected:22});
+  expect(budgets).toEqual({checks:15,'test-1':22,'test-2':22,'test-3':22,'test-4':22,browser:30,'installed-memory':60,select:5,selected:22});
+});
+
+it('gives every job skipped on pull requests a literal name so its required check still reports',()=>{
+  const skipped=jobs.filter(job=>!evaluate(job.condition,{name:'pull_request',action:'opened',draft:false}));
+  expect(skipped.map(job=>job.id)).toEqual(expect.arrayContaining(['test-1','test-2','test-3','test-4','browser','installed-memory']));
+  for(const job of skipped){
+    const block=jobSource.slice(jobSource.indexOf('  '+job.id+':\n'));
+    expect(/^    name:\s*(.+)$/m.exec(block)?.[1]).not.toContain('${{');
+    expect(job.shards).toBeNull();
+  }
 });
