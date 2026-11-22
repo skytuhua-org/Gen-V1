@@ -28,6 +28,11 @@ describe('detectAddresses',()=>{
   carry.feed('x'.repeat(20));
   expect(detectAddresses(carry.feed('http://localhost:3000\n'))).toEqual([{url:'http://localhost:3000/',port:3000}]);
  });
+ it('rejects userinfo redirects and loopback-looking hostnames',()=>{
+  expect(detectAddresses('http://localhost:8080@192.168.1.20:9000/')).toEqual([]);
+  expect(detectAddresses('http://127.0.0.1.evil.com:8080/')).toEqual([]);
+  expect(detectAddresses('http://localhost:8080@localhost:9000/')).toEqual([]);
+ });
  it('rejects non-loopback, malformed and out-of-range candidates',()=>{
   for(const text of ['http://example.com:3000','mylocalhost:3000','http://localhost:80','http://localhost:70000','file://localhost:3000/x','http://192.168.1.5:3000'])
    expect(detectAddresses(text),text).toEqual([]);

@@ -9,10 +9,14 @@ export function stripAnsi(text:string):string{return text.replace(ANSI_PATTERN,'
 export function detectAddresses(text:string):DetectedAddress[]{
  const found=new Map<string,DetectedAddress>();
  for(const match of stripAnsi(text).matchAll(ADDRESS_PATTERN)){
-  const port=Number(match[1]);
-  if(!Number.isInteger(port)||port<1024||port>65535)continue;
+  // Reject userinfo so `localhost:8080@evil/` cannot redirect the probe host.
+  if(match[0].includes('@'))continue;
   let parsed:URL;
   try{parsed=new URL(match[0]);}catch{continue;}
+  const host=parsed.hostname;
+  if(host!=='localhost'&&host!=='0.0.0.0'&&host!=='[::1]'&&host!=='[::]'&&!/^127(?:\.\d{1,3}){3}$/.test(host))continue;
+  const port=Number(match[1]);
+  if(!Number.isInteger(port)||port<1024||port>65535)continue;
   if(parsed.hostname==='0.0.0.0'||parsed.hostname==='[::]')parsed.hostname='localhost';
   const url=parsed.origin+parsed.pathname;
   if(!found.has(url))found.set(url,{url,port});
