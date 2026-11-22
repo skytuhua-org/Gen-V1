@@ -34,7 +34,7 @@ async function mount(page: Page) {
   if (url.pathname === '/api/agents/history') {
    const id = url.searchParams.get('agentId')!;
    return route.fulfill({json: {authority: 'personal', agentId: id, threadId: id, sequence: 10, nextCursor: null, messages: Array.from({length: 8}, (_, i) => {
-    const content = `${id}: transcript line ${i}. ` + 'Synthetic readable output. '.repeat(6);
+    const content = `${id}: transcript line ${i}. ` + 'Synthetic readable output. '.repeat(24);
     return {id: `m-${i}`, threadId: id, role: 'assistant', createdAt: '2026-11-06T00:00:0' + i + 'Z', runId: 'r', content, contentOffset: 0, contentLength: content.length, nextContentCursor: null};
    })}});
   }
@@ -53,9 +53,32 @@ const channel = (v: number) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) 
 const luminance = ({r, g, b}: {r: number; g: number; b: number}) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
 const contrastRatio = (fg: string, bg: string) => {const a = luminance(rgb(fg)), b = luminance(rgb(bg)); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);};
 
-for (const width of [1440, 768]) test(`populated grid evidence at ${width} (${label})`, async ({page}) => {
- await page.setViewportSize({width, height: 1000});
+for (const width of [1440, 1280, 768, 390]) test(`populated grid evidence at ${width} (${label})`, async ({page}) => {
+ await page.setViewportSize({width, height: width === 390 ? 844 : 900});
+ await page.emulateMedia({reducedMotion: 'reduce'});
  await mount(page);
+ await expect(page.locator('.agents-preview').first()).toContainText('Synthetic readable output.');
+ expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+ expect(await page.locator('.agents-projects').evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+ if (width === 1440) {
+  const cards = page.locator('.agents-grid-slot > .agents-agent');
+  await expect(cards).toHaveCount(8);
+  await expect.poll(() => cards.last().evaluate(card => Math.abs(card.getBoundingClientRect().bottom - card.closest('.agents-projects')!.getBoundingClientRect().bottom))).toBeLessThanOrEqual(24);
+  const heights = await cards.evaluateAll(cards => cards.map(card => Math.round(card.getBoundingClientRect().height)));
+  expect(new Set(heights.slice(0, 4)).size).toBe(1);
+  expect(new Set(heights.slice(4)).size).toBe(1);
+  const lines = await cards.locator(':scope > .agents-transcript-wrap .agents-preview-text').evaluateAll(previews => previews.map(preview => {
+   const bounds = preview.getBoundingClientRect(), lineHeight = parseFloat(getComputedStyle(preview).lineHeight), range = document.createRange();
+   range.selectNodeContents(preview.firstElementChild!);
+   const rects = [...range.getClientRects()], visible = rects.filter(rect => rect.bottom > bounds.top && rect.top < bounds.bottom);
+   return {count: new Set(visible.map(rect => Math.round(rect.top * 10))).size, height: bounds.height, lineHeight, whole: visible.every(rect => rect.top >= bounds.top - 0.1 && rect.bottom <= bounds.bottom + 0.1), latest: rects.at(-1)!.bottom <= bounds.bottom + 0.1 && rects.at(-1)!.top >= bounds.top};
+  }));
+  for (const preview of lines) {
+   expect(preview.count).toBeGreaterThan(3);
+   expect(preview.height).toBeCloseTo(preview.count * preview.lineHeight, 1);
+   expect(preview.whole).toBe(true); expect(preview.latest).toBe(true);
+  }
+ }
  mkdirSync(outDir, {recursive: true});
  const metrics = await page.locator('.agents-grid-slot').evaluateAll(slots => slots.map(slot => {
   const card = slot.querySelector('.agents-agent');
@@ -91,12 +114,16 @@ for (const width of [1440, 768]) test(`populated grid evidence at ${width} (${la
   const headerGeometry = await page.locator('.agents-grid-slot > .agents-agent > header').evaluateAll(headers => headers.map(header => {
    const title = header.querySelector('h3')!, meta = header.querySelector('.agents-meta')!, open = header.querySelector('button')!, dot = header.querySelector('.agents-status-dot')!;
    const t = title.getBoundingClientRect(), m = meta.getBoundingClientRect(), o = open.getBoundingClientRect(), d = dot.getBoundingClientRect();
-   return {titleFits: t.left >= d.right && t.right <= o.left, metaFits: m.top >= t.bottom && m.right <= o.left, ellipsis: getComputedStyle(title).textOverflow === 'ellipsis', open: o.width >= 32 && o.height >= 32};
+   return {titleFits: t.left >= d.right && t.right <= o.left, metaFits: m.top >= t.bottom && m.right <= o.left, ellipsis: getComputedStyle(title).textOverflow === 'ellipsis', open: o.width >= 28 && o.height >= 28};
   }));
   expect(headerGeometry.length).toBeGreaterThanOrEqual(4);
   expect(headerGeometry.every(header => Object.values(header).every(Boolean))).toBe(true);
   await page.screenshot({path: join(proto, 'agents-4col-dark.png')});
   await page.evaluate(() => {document.documentElement.dataset.theme = 'light';});
+  await page.evaluate(async () => {
+   await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+   await Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));
+  });
   await page.screenshot({path: join(proto, 'agents-4col-light.png')});
   await page.evaluate(() => {document.documentElement.dataset.theme = 'dark';});
   const parent = page.locator('.agents-grid-slot > .agents-agent').first();

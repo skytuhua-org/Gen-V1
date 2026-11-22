@@ -115,7 +115,7 @@ describe('agents workspace grid layout', () => {
     } finally {await page.close();}
   });
 
-  it('sizes cards to content, previews three lines and keeps a single-row composer that grows', async () => {
+  it('fills desktop cards with complete preview lines and keeps a compact composer that grows', async () => {
     const page = await open(1440);
     try {
       const card = cards(page).nth(3);
@@ -123,13 +123,13 @@ describe('agents workspace grid layout', () => {
       await card.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
       const metrics = await card.evaluate(element => ({
         height: element.getBoundingClientRect().height,
-        preview: element.querySelector('.agents-preview')!.getBoundingClientRect().height,
+        preview: element.querySelector('.agents-preview-text')!.getBoundingClientRect().height,
         composer: element.querySelector('.agents-composer-entry')!.getBoundingClientRect().height,
         nestedBorders: [...element.querySelectorAll('.agents-transcript,.agents-composer')].map(node => getComputedStyle(node).borderTopWidth),
       }));
-      expect(metrics.height).toBeLessThan(280);
-      expect(metrics.preview).toBeLessThanOrEqual(60);
-      expect(metrics.composer).toBeCloseTo(36, 2);
+      expect(metrics.height).toBeGreaterThanOrEqual(280);
+      expect(metrics.preview).toBeGreaterThan(60);
+      expect(metrics.composer).toBeCloseTo(28, 2);
       expect(metrics.nestedBorders).toEqual(['0px', '0px']);
       const lines = await card.locator('.agents-preview-text').evaluate(element => {
         const bounds = element.getBoundingClientRect(), range = document.createRange();
@@ -137,15 +137,32 @@ describe('agents workspace grid layout', () => {
         const rects = [...range.getClientRects()], visible = rects.filter(rect => rect.bottom > bounds.top && rect.top < bounds.bottom);
         return {count: new Set(visible.map(rect => Math.round(rect.top * 10))).size, whole: visible.every(rect => rect.top >= bounds.top && rect.bottom <= bounds.bottom), end: rects.at(-1)!.bottom <= bounds.bottom && rects.at(-1)!.top >= bounds.top};
       });
-      expect(lines).toEqual({count: 3, whole: true, end: true});
+      expect(lines.count).toBeGreaterThan(3);
+      expect(lines.whole).toBe(true); expect(lines.end).toBe(true);
+      expect(metrics.preview).toBeCloseTo(lines.count * 20, 1);
       await visible(card.getByRole('log')).toHaveCount(0);
       await card.getByRole('button', {name: 'Show transcript'}).click();
       await visible(card.getByRole('log')).toContainText('transcript line');
       expect(await card.getByRole('log').evaluate(node => node.getBoundingClientRect().height)).toBeLessThanOrEqual(280);
       const textarea = card.locator('textarea');
       await textarea.fill('first\nsecond\nthird\nfourth');
-      expect(await textarea.evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThan(36);
+      expect(await textarea.evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThan(28);
       expect(await textarea.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(false);
+    } finally {await page.close();}
+  });
+
+  it('keeps minimum-height rows scrollable in short viewports and natural single-column mobile cards', async () => {
+    const page = await open(1200, 480);
+    try {
+      expect(await cards(page).first().evaluate(card => card.getBoundingClientRect().height)).toBeGreaterThanOrEqual(280);
+      expect(await page.locator('.agents-projects').evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
+      await cards(page).last().scrollIntoViewIfNeeded();
+      await visible(cards(page).last()).toBeVisible();
+      await page.setViewportSize({width: 390, height: 844});
+      expect(await trackCount(page)).toBe(1);
+      await cards(page).first().scrollIntoViewIfNeeded();
+      expect(await cards(page).first().evaluate(card => card.getBoundingClientRect().height)).toBeLessThan(350);
+      expect(await noHorizontalOverflow(page, 390)).toEqual({page: true, workspace: true});
     } finally {await page.close();}
   });
 

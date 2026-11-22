@@ -71,7 +71,7 @@ export function AgentsWorkspace({controller, composers, onOpenConversation, pref
   <div className="agents-projects" ref={viewport} onScroll={event => controller.setView('$workspace', {top: event.currentTarget.scrollTop})}>
    <LoadingState pending={state.pending} hasContent={Boolean(state.scopeKey) || rows.length > 0} label="Loading agents…" skeleton={<AgentsSkeleton/>}>
    {Boolean(state.scopeKey) && !rows.length && <p className="agents-empty">{state.scope.text || state.scope.statuses || state.scope.projectId !== undefined ? 'No agents match these filters.' : hasConversations ? 'No active agents. Agents appear here once a conversation starts working.' : 'No agents yet. Open a conversation to begin.'}</p>}
-   {rows.map(row => <Project key={row.id ?? '$none'} row={row} controller={controller} composers={composers} onOpenConversation={onOpenConversation} preferences={preferences}/>)}
+   {rows.map(row => <Project key={row.id ?? '$none'} row={row} fill={rows.length === 1} controller={controller} composers={composers} onOpenConversation={onOpenConversation} preferences={preferences}/>)}
    </LoadingState>
   </div>
  </section></Visibility.Provider>;
@@ -102,7 +102,21 @@ function VirtualSlot({children, className, label}: {children: ReactNode; classNa
   {mounted ? children : <button type="button" className="agents-virtual-reveal" onFocus={reveal} onClick={reveal}>Show {label}</button>}
  </div>;
 }
-function Project({row, controller, ...props}: {row: ProjectRow} & Omit<AgentsWorkspaceProps, 'projects'>) {
+function Project({row, fill, controller, ...props}: {row: ProjectRow; fill: boolean} & Omit<AgentsWorkspaceProps, 'projects'>) {
+ const slot = useRef<HTMLDivElement>(null);
+ useLayoutEffect(() => {
+  const element = slot.current, viewport = element?.closest<HTMLElement>('.agents-projects'), grid = element?.firstElementChild as HTMLElement | null;
+  if (!element || !viewport || !grid) return;
+  const resize = () => {
+   const columns = columnsForWidth(element.clientWidth), rows = Math.ceil(row.parents.length / columns);
+   if (!fill || columns === 1 || rows > 2 || !rows) {grid.style.removeProperty('--agents-row-height'); return;}
+   const header = element.previousElementSibling!, style = getComputedStyle(viewport), headerStyle = getComputedStyle(header);
+   const available = viewport.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - header.getBoundingClientRect().height - parseFloat(headerStyle.marginBottom);
+   grid.style.setProperty('--agents-row-height', `${Math.max(280, Math.floor((available - 10 * (rows - 1)) / rows))}px`);
+  };
+  const observer = new ResizeObserver(resize); observer.observe(element); observer.observe(viewport); resize();
+  return () => observer.disconnect();
+ }, [fill, row.parents.length]);
  const color = projectColor({kind: 'local'}, row.id ?? undefined, props.preferences?.projectColors);
  const count = (nodes: AgentNode[]): number => nodes.reduce((total, node) => total + Number(node.agent.status === 'working') + count(node.children), 0);
  const navigate = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -124,7 +138,7 @@ function Project({row, controller, ...props}: {row: ProjectRow} & Omit<AgentsWor
  };
  return <section className="agents-project" role="region" aria-label={`Project ${row.name}`}>
   <header className="agents-project-header"><span className="agents-project-mark" style={{'--project-color': color} as CSSProperties} aria-hidden="true">{row.name.slice(0, 1).toUpperCase()}</span><h2>{row.name}</h2><span>{count(row.parents)} working</span></header>
-  <div className="agents-project-slot">
+  <div className="agents-project-slot" ref={slot}>
    <div className="agents-agent-grid" role="region" aria-label={`${row.name} agents`} tabIndex={0} onKeyDown={navigate}>
     {row.parents.map(node => <VirtualSlot className="agents-grid-slot" key={node.agent.agentId} label={node.agent.title}><Agent node={node} controller={controller} {...props}/></VirtualSlot>)}
    </div>
@@ -166,6 +180,16 @@ function Agent({node, controller, composers, onOpenConversation, preferences}: {
 function Transcript({agent, controller}: {agent: AgentSummary; controller: AgentsWorkspaceController}) {
  useSyncExternalStore(controller.subscribe, controller.getSnapshot);
  const state = controller.transcript(agent.agentId), view = controller.view(agent.agentId), expanded = Boolean(view.transcriptExpanded), transcriptId = useId(), setVisible = useContext(Visibility), wrapper = useRef<HTMLDivElement>(null), log = useRef<HTMLDivElement>(null), previous = useRef({height: 0, first: '', initialized: false});
+ const preview = useRef<HTMLDivElement>(null);
+ useLayoutEffect(() => {
+  const element = preview.current; if (!element) return;
+  const observer = new ResizeObserver(([entry]) => {
+   const text = element.querySelector<HTMLElement>('.agents-preview-text'); if (!text) return;
+   const lineHeight = parseFloat(getComputedStyle(text).lineHeight);
+   text.style.setProperty('--agents-preview-lines', String(Math.max(1, Math.floor((entry.contentRect.height + 0.01) / lineHeight))));
+  });
+  observer.observe(element); return () => observer.disconnect();
+ }, [Boolean(state.error)]);
  useEffect(() => {
   const observer = new IntersectionObserver(([entry]) => setVisible(agent.agentId, entry.isIntersecting), {rootMargin: '80px'});
   if (wrapper.current) observer.observe(wrapper.current);
@@ -182,9 +206,9 @@ function Transcript({agent, controller}: {agent: AgentSummary; controller: Agent
   previous.current = {height: element.scrollHeight, first, initialized: true};
   controller.setView(agent.agentId, {top: element.scrollTop});
  }, [state.messages, state.loaded, controller, agent.agentId, view.atEnd, expanded]);
- const latest = state.messages.at(-1);
+ const previewText = useMemo(() => state.messages.map(message => message.content.trimEnd()).join('\n'), [state.messages]);
  return <div className="agents-transcript-wrap" ref={wrapper} data-expanded={expanded}>
-  <div className="agents-preview" hidden={expanded}>{state.error ? <ErrorState className="agents-error" message={state.error} retryLabel="Retry history" onRetry={() => {void controller.retryHistory(agent.agentId);}}/> : <div className="agents-preview-text">{latest ? <span>{latest.content.trimEnd()}</span> : <p className="agents-transcript-empty">{state.pending ? 'Loading messages…' : state.loaded ? 'No messages yet.' : 'Messages load as they come into view.'}</p>}</div>}</div>
+  <div className="agents-preview" ref={preview} hidden={expanded}>{state.error ? <ErrorState className="agents-error" message={state.error} retryLabel="Retry history" onRetry={() => {void controller.retryHistory(agent.agentId);}}/> : <div className="agents-preview-text">{previewText ? <span>{previewText}</span> : <p className="agents-transcript-empty">{state.pending ? 'Loading messages…' : state.loaded ? 'No messages yet.' : 'Messages load as they come into view.'}</p>}</div>}</div>
   <button type="button" className="agents-transcript-toggle" aria-expanded={expanded} aria-controls={transcriptId} aria-label={expanded ? 'Hide transcript' : 'Show transcript'} onClick={() => controller.setView(agent.agentId, {transcriptExpanded: !expanded}, true)}>{expanded ? 'Hide' : 'Show transcript'}{expanded ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}</button>
   <div className="agents-transcript-expansion" data-expanded={expanded} inert={!expanded} aria-hidden={!expanded} id={transcriptId}><div className="agents-transcript-clip"><div className="agents-transcript" role="log" aria-label={`${agent.title} messages`} aria-live="off" tabIndex={0} ref={log} onFocus={() => controller.setView(agent.agentId, {focus: 'transcript'})} onScroll={event => {
   if (!expanded) return;

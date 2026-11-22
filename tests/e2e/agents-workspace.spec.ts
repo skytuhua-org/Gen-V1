@@ -294,7 +294,11 @@ for (const [theme, width, height, zoom, columns] of [['dark', 1920, 1080, 1, 5],
    }) && card.scrollWidth <= card.clientWidth + 1;
   }))).toBe(true);
   const targets = await page.locator('.agents-workspace button:visible').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height / Number(document.documentElement.style.zoom || 1)));
-  expect(targets.every(size => size >= 32)).toBe(true);
+  expect(targets.every(size => size >= 28)).toBe(true);
+  if (width >= 1280) {
+   expect(await page.locator('.agents-grid-slot > .agents-agent').evaluateAll(cards => cards.every(card => card.getBoundingClientRect().height >= 280))).toBe(true);
+   expect(await page.locator('.agents-projects').evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
+  }
   await page.screenshot({path: info.outputPath(`agents-${theme}-${width}-${zoom}.png`)});
  });
 }
@@ -445,7 +449,7 @@ test('expansion state survives virtualization and density and motion policies ap
  await expect(parent.getByRole('button', {name: 'Hide transcript', exact: true})).toBeVisible();
  await expect(child).toBeVisible();
  await page.locator('.agents-workspace').evaluate(node => {node.setAttribute('data-density', 'compact');});
- expect(await parent.evaluate(node => getComputedStyle(node).paddingTop)).toBe('8px');
+ expect(await parent.evaluate(node => getComputedStyle(node).paddingTop)).toBe('6px');
  expect(await parent.getByRole('button', {name: 'Inspect subagent child-active', exact: true}).evaluate(node => node.getBoundingClientRect().height)).toBe(28);
  expect(await parent.locator(':scope > header .agents-status-dot').evaluate(node => getComputedStyle(node).animationName)).toBe('agents-working');
  for (const policy of ['reduced', 'off']) {
