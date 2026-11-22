@@ -54,6 +54,13 @@ runs:
       run: |
         python -m pip install --disable-pip-version-check --no-warn-script-location --require-hashes --target .harness-hermes-python-deps -r third-party/hermes-agent/runtime-requirements-hashed.txt
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    - name: Install pinned Windows integration wheel dependencies
+      # PYTHON_LOCK.json pins win_amd64 wheels only; the Hermes contracts job
+      # runs on ubuntu-latest and needs none of them.
+      if: inputs.python == 'true' && steps.python-deps.outputs.cache-hit != 'true' && runner.os == 'Windows'
+      shell: pwsh
+      run: |
         $lock = Get-Content -Raw -LiteralPath third-party/integrations/PYTHON_LOCK.json | ConvertFrom-Json
         $requirements = foreach ($distribution in $lock.distributions) {
           if ($distribution.name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$' -or

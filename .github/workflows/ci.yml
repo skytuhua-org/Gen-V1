@@ -158,7 +158,9 @@ jobs:
 
   hermes:
     name: Hermes contracts
-    runs-on: windows-2022
+    # Pure Python contract scripts (pwsh is preinstalled on ubuntu-latest), so
+    # this stays off the smaller Windows hosted-runner pool the other jobs need.
+    runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     timeout-minutes: 30
     defaults:
