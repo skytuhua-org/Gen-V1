@@ -39,7 +39,7 @@ export function ProjectContextCard({context,loading,error,threadTitle,plan,planO
    // The row animates out before it leaves the list, then focus moves to the
    // next Add (or back to the section toggle when the list is empty).
    setTimeout(()=>{setSuggestions(previous=>previous.result?{...previous,result:{...previous.result,suggestions:previous.result.suggestions.filter(entry=>entry.name!==item.name)}}:previous);setLeaving(previous=>{const next=new Set(previous);next.delete(item.name);return next;});
-    const next=suggestionList.current?.querySelector<HTMLElement>('.pkg-add:not(:disabled)');(next??scriptsToggle.current)?.focus();},200);
+    const next=suggestionList.current?.querySelector<HTMLElement>('.pkg-suggestion:not([data-leaving]) .pkg-add:not(:disabled)');(next??scriptsToggle.current)?.focus();},200);
   }).catch(cause=>setActionError(cause instanceof Error?cause.message:'The project action could not finish.')).finally(()=>setBusy(false));};
  const connected=Boolean(context&&(context.project.rootPath||context.capabilities.git||context.capabilities.terminal||context.editor.available));
  const total=(value:number)=>compactCount.format(value);

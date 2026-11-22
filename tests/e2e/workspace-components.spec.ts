@@ -14,6 +14,36 @@ test('automatic context-plan expansion preserves composer focus and reduced moti
 test('failed native profile restoration restores the prior host layout',async({page})=>{await page.getByRole('textbox',{name:'Outside composer'}).fill('Retain draft after rollback');await page.getByRole('button',{name:'Layouts',exact:true}).click();await page.evaluate(()=>(window as any).__failApply=true);await page.getByRole('button',{name:'Recover Fixture recovery',exact:true}).click();await expect(page.getByRole('alert')).toContainText('Synthetic native readiness failure');await expect.poll(()=>page.evaluate(()=>(window as any).__workspaceCalls.map((value:any)=>value[0]))).toContain('workspace.profile.restore');await expect(page.getByRole('region',{name:'Fixture canvas canvas'})).toBeVisible();await expect(page.getByRole('textbox',{name:'Outside composer'})).toHaveValue('Retain draft after rollback');await expect(page.locator('[data-panel-id="source-panel"]')).toBeVisible();});
 test('a refused draft flush prevents profile mutation and hiding does not stop tasks',async({page})=>{await page.getByRole('button',{name:'Layouts',exact:true}).click();await page.evaluate(()=>(window as any).__failPrepare=true);await page.getByRole('button',{name:'Recover Fixture recovery',exact:true}).click();await expect(page.getByRole('alert')).toContainText('Synthetic draft flush refused');expect(await page.evaluate(()=>(window as any).__workspaceCalls.some((value:any)=>value[0]==='workspace.profile.apply'))).toBe(false);await page.evaluate(()=>(window as any).__failPrepare=false);await page.getByRole('button',{name:'Panels',exact:false}).click();await expect(page.getByRole('button',{name:'Hide main window',exact:true})).toHaveCount(0);await page.getByRole('menuitemcheckbox',{name:'Hide Granted files',exact:true}).click();await expect(page.locator('[data-panel-id="source-panel"]')).toHaveCount(0);expect(await page.evaluate(()=>(window as any).__workspaceCalls.some((value:any)=>String(value[0]).includes('stop')))).toBe(false);});
 
+test('package.json suggestions load lazily and Add keeps the panel open with focus moved',async({page})=>{
+ await page.getByText('Project tools',{exact:true}).click();
+ const toggle=page.locator('button.project-context-row',{hasText:'Add script'});
+ await expect(page.locator('.pkg-suggestion-row')).toHaveCount(0);
+ await toggle.click();
+ await expect(page.locator('.pkg-suggestion-row')).toHaveCount(3);
+ await expect(page.locator('.pkg-runner')).toHaveText('pnpm');
+ await expect(page.getByText('2 scripts skipped.',{exact:true})).toBeVisible();
+ await page.locator('.pkg-suggestion').filter({hasText:'build'}).getByRole('button',{name:'Add'}).click();
+ await expect.poll(()=>page.evaluate(()=>(window as any).__workspaceCalls)).toContainEqual(['project.add-script',{name:'build',command:'pnpm run build'}]);
+ await expect(page.getByRole('status')).toHaveText('Added build');
+ await expect(page.locator('.pkg-suggestion-row')).toHaveCount(2);
+ await expect(page.locator('.pkg-add').first()).toBeFocused();
+ await expect(toggle).toHaveAttribute('aria-expanded','true');
+ await page.locator('.pkg-suggestion').filter({hasText:'test'}).getByRole('button',{name:'Add'}).click();
+ await page.locator('.pkg-suggestion').filter({hasText:'lint'}).getByRole('button',{name:'Add'}).click();
+ await expect(page.locator('.pkg-suggestion-row')).toHaveCount(0);
+ await expect(toggle).toBeFocused();
+});
+test('package.json suggestion error and missing states',async({page})=>{
+ await page.evaluate(()=>{(window as any).__suggestions=new Error('read failed');});
+ await page.getByText('Project tools',{exact:true}).click();
+ await page.locator('button.project-context-row',{hasText:'Add script'}).click();
+ await expect(page.getByRole('alert')).toContainText('package.json could not be read');
+ await page.evaluate(()=>{(window as any).__suggestions={status:'missing',runner:'npm',runnerSource:'default',multipleLockfiles:false,suggestions:[],skipped:0};});
+ await page.getByRole('button',{name:'Retry',exact:true}).click();
+ await expect(page.getByRole('alert')).toHaveCount(0);
+ await expect(page.locator('.pkg-suggestion-row')).toHaveCount(0);
+ await expect(page.locator('.pkg-suggestion-group')).toHaveCount(0);
+});
 test('collapsed and offscreen artifact bodies preserve mounted edits with active=false',async({page})=>{
  await page.route('**/workspace-artifact-shell-check',route=>route.fulfill({contentType:'text/html',body:`<html><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${fixtureRoot}/tests/e2e/workspace-artifact-shell-fixture.tsx');</script></body></html>`}));await page.goto('/workspace-artifact-shell-check');
  const edit=page.getByRole('textbox',{name:'Artifact edit',exact:true});await edit.fill('Retain this mounted edit');
