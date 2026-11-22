@@ -8,9 +8,12 @@ if (process.platform === "win32") process.env.TEMP = process.env.TMP = realpathS
 // With --changed (pull-request feedback), a change to any of these selects every
 // test: they are read at run time or shape every test, so the module graph
 // cannot tell which tests depend on them. The merge queue always runs everything.
+// Vitest matches these against absolute paths, so each starts with **/, and
+// dot directories are named because ** does not enter them.
 const forceRerunTriggers = [
-  "**/package.json/**", "**/{vitest,vite}.config.*/**", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.json", "patches/**",
-  ".github/**", "scripts/**", "tests/fixtures/**", "tests/e2e/**", "third-party/**", "docs/**", "plugins/**",
+  "**/package.json/**", "**/{vitest,vite}.config.*/**", "**/pnpm-lock.yaml", "**/pnpm-workspace.yaml", "**/tsconfig*.json",
+  "**/patches/**", "**/.github/**", "**/scripts/**", "**/tests/fixtures/**", "**/tests/e2e/**", "**/third-party/**",
+  "**/docs/**", "**/plugins/**", "**/.{gitattributes,gitignore,node-version,nvmrc}",
   "**/*.{json,yml,yaml,md,py,html,css,txt,toml,sql,sh,ps1}",
 ];
 
