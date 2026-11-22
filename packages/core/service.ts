@@ -122,6 +122,7 @@ export interface ServiceOptions {
     gate?:ModelRequestGate;
     executionGate?:BackgroundWorkOptions['executionGate'];
     idleExecutor?:BackgroundWorkOptions['idleExecutor'];
+    forkApi?:BackgroundWorkOptions['forkApi'];
     intakeAuth?:IntakeAuth;
     intakeFetch?:typeof fetch;
   };
@@ -298,7 +299,7 @@ export class Service {
     this.learning=new LearningCoordinator({factory:job=>{if(!options.learningRuntimeFactory)throw new HarnessError('LEARNING_UNAVAILABLE','Automatic reviews are unavailable in this host.');return options.learningRuntimeFactory(job);},tool:(call,job,reads)=>this.effectFlags.enabled("audit.effectsV1")||this.effectFlags.enabled("security.authorityV1")?this.effects.invoke({call,ctx:{threadId:job.source.threadId},thread:this.thread(job.source.threadId),role:"learning"},async()=>this.learningTool(call,job,reads)) as Promise<LearningToolResult>:this.learningTool(call,job,reads),result:(job,outcome)=>this.learningResult(job,outcome)});
     this.backgroundWork=new BackgroundWorkCoordinator({store,isEnabled:key=>capabilityEnabled(key),currentThread:id=>this.store.get<Thread>('thread',id)??null,
       enqueueFollowUp:input=>{this.enqueueInput({id:input.id,threadId:input.threadId,content:input.content,status:'persisted',runId:null});queueMicrotask(()=>this.background(this.deliverOutbox(input.threadId)));},
-      gate:options.background?.gate,executionGate:options.background?.executionGate,idleExecutor:options.background?.idleExecutor,
+      gate:options.background?.gate,executionGate:options.background?.executionGate,idleExecutor:options.background?.idleExecutor,forkApi:options.background?.forkApi,
       revalidateAuthority:work=>{try{const thread=this.store.get<Thread>('thread',work.owner.threadId);if(thread?.modelId)assertAccountAvailable(this.store,modelProvider(thread.modelId),thread.accountId??null);return{ok:true};}catch(error){return{ok:false,blockedReason:error instanceof HarnessError?error.code:'ACCOUNT_UNAVAILABLE'};}},
       onPaused:()=>{this.intake.stop();}});
     this.intake=new ExternalIntakeCoordinator({store,auth:options.background?.intakeAuth,fetchImpl:options.background?.intakeFetch,

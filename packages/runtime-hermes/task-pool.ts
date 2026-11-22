@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import {HarnessError,type RuntimeAdapter,type RuntimeCallbacks} from '../contracts/index.ts';
 import {createRuntime} from '../runtime/index.ts';
 import type {HermesEngine,HermesEngineOptions,HermesRuntime,HermesRuntimeDependencies,HermesRuntimeOptions} from './index.ts';
@@ -30,6 +31,9 @@ export function createHermesTaskPool(options:HermesRuntimeOptions,dependencies:H
   async cancelBackground(){await Promise.all([...engines].map(engine=>engine.cancelBackground()));},
   async refreshIntegrations(disabledIds){check();await Promise.all([...engines].map(engine=>engine.refreshIntegrations(disabledIds)));},
   createTaskRuntime(){check();const engine=secondary(true),dispose=engine.dispose.bind(engine);engine.dispose=async()=>{await dispose();engines.delete(engine);};return engine;},
+  // S07: a review/idle fork is an isolated read-only engine driven by the host
+  // under the caller's auxiliary budget; ambient plugins stay disabled.
+  fork(request){check();return{forkId:`fork-${request.sourceCutDigest.slice(0,12)}-${randomUUID()}`,runtime:this.createTaskRuntime()};},
   dispose(){return disposing??=(async()=>{disposed=true;const outcomes=await Promise.allSettled([...engines].map(engine=>engine.dispose()).concat([catalog.dispose()]));const failures=outcomes.flatMap(result=>result.status==='rejected'?[result.reason]:[]);if(failures.length)throw new AggregateError(failures,'Hermes task pool cleanup could not be confirmed.');})();},
  };
 }

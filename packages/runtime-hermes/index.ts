@@ -12,6 +12,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
 import {EMPTY_USAGE,HarnessError,type CompletedWriteReceipt,type RunContext,type RuntimeAdapter,type RuntimeCallbacks,type RuntimeUsage,type StartRun} from '../contracts/index.ts';
 import type {AccountUseLease,RuntimeAccountResolver} from '../contracts/accounts.ts';
+import type {ReviewForkHandleV1,ReviewForkRequestV1} from '../contracts/background-work.ts';
 import {isConnectionProviderId} from '../contracts/connections.ts';
 import {createRuntime} from '../runtime/index.ts';
 import {secureDirectory,within} from '../runtime-official/manifest.ts';
@@ -46,7 +47,11 @@ export interface HermesEngine extends RuntimeAdapter {
  sourceTool(params:Record<string,unknown>,authority?:HermesLibraryAuthority):Promise<unknown>;
  refreshIntegrations(disabledIds:IntegrationId[]):Promise<void>;
 }
-export interface HermesRuntime extends HermesEngine {createTaskRuntime():RuntimeAdapter}
+export interface HermesRuntime extends HermesEngine {createTaskRuntime():RuntimeAdapter;
+ /** S07: callable review/idle fork — allocates an isolated read-only engine the
+  * host drives under the caller's auxiliary budget. */
+ fork(request:ReviewForkRequestV1):ReviewForkHandleV1&{runtime:RuntimeAdapter};
+}
 export interface HermesEngineOptions extends HermesRuntimeOptions {readOnly?:boolean;sharedLibrary?:(params:Record<string,unknown>,authority:HermesLibraryAuthority)=>Promise<unknown>}
 type Owner={automaticRefusalReported?:boolean;contextBinding?:NativeContextBinding;contextRequested?:boolean;contextReads?:number;toolSnapshot?:{sequence:number;count:number;schemaBytes:number;digest:string};progressiveTools?:ReturnType<typeof createProgressiveToolSession>;input:StartRun;source:HermesSourceClient;settings:HermesSettings;tools:Set<string>;path:string;broker:HermesBroker;known:Set<string>;tickets:Map<string,string[]>;entered:Set<string>;lease?:AccountUseLease;done:Promise<void>;finish:()=>void;foreground:boolean;review:boolean;uiSettled:boolean;closing?:Promise<void>;writes:Promise<void>;failure?:unknown;usage:RuntimeUsage[];maintenance?:RunContext;lastMessage?:string;reviewAbort?:AbortController;reviewRelease?:()=>void;libraryRevoked?:boolean;libraryCalls:Set<Promise<unknown>>;memoryCheckpoint?:StartRun['memoryCheckpoint'];checkpointWork?:Promise<unknown>;compactionProtection?:NativeCompactionEnvelopeV1;compactionCommitAttempted?:boolean;compactionCommitAccepted?:boolean};
 type Admission={input:StartRun;maintenance:boolean;revoked:boolean;controller:AbortController;done:Promise<void>;finish():void};

@@ -145,6 +145,29 @@ export const intakeV1Schema = z.strictObject({
 });
 export type IntakeV1 = z.infer<typeof intakeV1Schema>;
 
+/** Auxiliary model budget a fork run must be admitted under. */
+export interface ReviewForkBudgetV1 {
+  maxCalls: number;
+  maxTokens: number;
+}
+
+/** Request a review/idle fork on the pinned wrapper. The digest pins the source
+ * cut; ambient plugins are never enabled and no runtime is copied. */
+export interface ReviewForkRequestV1 {
+  sourceCutDigest: string;
+  toolList: readonly string[];
+  auxiliaryBudget: ReviewForkBudgetV1;
+  parentThreadId: string;
+}
+
+export interface ReviewForkHandleV1 {
+  forkId: string;
+}
+
+/** Callable fork API a pinned wrapper may expose. Absent means the host reports
+ * UNSUPPORTED_FORK after the auxiliary-budget check. */
+export type ReviewForkApi = (request: ReviewForkRequestV1) => ReviewForkHandleV1;
+
 /** Host-owned hold reasons. These are blockedReason strings, never values of
  * the strict ImplementationEvidenceV3 status enumerations. */
 export const BACKGROUND_HOLD_REASONS = {

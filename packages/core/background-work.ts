@@ -11,7 +11,7 @@ import { DurableWakeupScheduler, waitForBackgroundDrain, type DeliveryOutcome, t
 import {
   BACKGROUND_HOLD_REASONS, BACKGROUND_SCHEDULER_LIMITS, backgroundWorkV1Schema, humanStepV1Schema,
   type BackgroundOutcome, type BackgroundWorkKind, type BackgroundWorkV1, type HumanStepV1,
-  type M10FlagKey, type ProcessIdentityV1,
+  type M10FlagKey, type ProcessIdentityV1, type ReviewForkApi, type ReviewForkHandleV1,
 } from "../contracts/background-work.ts";
 
 /** M10 owned background work. The host Store remains the only writer and the
@@ -53,8 +53,9 @@ export interface BackgroundWorkOptions {
   /** M03 approved-launch gate; absent means commands stay HOLD_EXECUTION_PROFILE. */
   executionGate?: (request: { profileId: string; spec: OwnedCommandSpec }) => Promise<ExecutionGateDecision>;
   idleExecutor?: (work: BackgroundWorkRecord, signal: AbortSignal) => Promise<IdleExecutionResult>;
-  /** The pinned Hermes wrapper exposes no callable fork API on this cut. */
-  forkApi?: null;
+  /** Callable fork API exposed by the pinned Hermes wrapper; absent means
+   * review/idle forks stay UNSUPPORTED_FORK and REVIEW admits hold. */
+  forkApi?: ReviewForkApi | null;
   /** S04: host-owned account/grant/budget revalidation before any delivery. */
   revalidateAuthority?: (work: BackgroundWorkRecord) => { ok: true } | { ok: false; blockedReason: string };
   onPaused?: () => void;
@@ -104,6 +105,7 @@ export class BackgroundWorkCoordinator {
   private readonly gate?: ModelRequestGate;
   private readonly executionGate?: BackgroundWorkOptions["executionGate"];
   private readonly idleExecutor?: BackgroundWorkOptions["idleExecutor"];
+  private readonly forkApi?: ReviewForkApi | null;
   private readonly onPaused?: () => void;
   private readonly revalidateAuthority?: BackgroundWorkOptions["revalidateAuthority"];
   private readonly sessions = new Map<string, CommandSession>();
@@ -122,6 +124,7 @@ export class BackgroundWorkCoordinator {
     this.gate = options.gate;
     this.executionGate = options.executionGate;
     this.idleExecutor = options.idleExecutor;
+    this.forkApi = options.forkApi ?? null;
     this.onPaused = options.onPaused;
     this.revalidateAuthority = options.revalidateAuthority;
     this.scheduler = new DurableWakeupScheduler({
@@ -167,8 +170,8 @@ export class BackgroundWorkCoordinator {
       if (lifetime === "APPROVED_SERVICE") {
         // S03/G01: no installed supervisor has target-platform PASS evidence.
         state = "BLOCKED"; blockedReason = BACKGROUND_HOLD_REASONS.supervisor;
-      } else if (input.kind === "REVIEW") {
-        // S07: the pinned wrapper exposes no callable, tested fork API.
+      } else if (input.kind === "REVIEW" && !this.forkApi) {
+        // S07: review/idle work needs a callable, tested fork API on the wrapper.
         state = "BLOCKED"; blockedReason = BACKGROUND_HOLD_REASONS.forkApi;
       } else if (input.kind === "COMMAND" && (!this.executionGate || !input.command)) {
         state = "BLOCKED"; blockedReason = BACKGROUND_HOLD_REASONS.executionProfile;
@@ -777,11 +780,18 @@ export class BackgroundWorkCoordinator {
 
   // ---- review fork gate (S07) ----
 
-  admitReviewFork(input: { sourceCutDigest: string; toolList: readonly string[]; auxiliaryBudget: { maxCalls: number; maxTokens: number } | null; parentThreadId: string }): { status: "UNSUPPORTED_FORK" | "AUXILIARY_BUDGET_REQUIRED" } {
+  admitReviewFork(input: { sourceCutDigest: string; toolList: readonly string[]; auxiliaryBudget: { maxCalls: number; maxTokens: number } | null; parentThreadId: string }): { status: "ADMITTED"; forkId: string } | { status: "UNSUPPORTED_FORK" | "AUXILIARY_BUDGET_REQUIRED" } {
     if (!input.auxiliaryBudget) return { status: "AUXILIARY_BUDGET_REQUIRED" };
-    // The pinned Hermes wrapper has no callable fork method; ambient plugins
-    // are never enabled and no runtime is copied to bypass this gate.
-    return { status: "UNSUPPORTED_FORK" };
+    // Ambient plugins are never enabled and no runtime is copied to bypass
+    // this gate; without a callable fork the request stays unsupported.
+    if (!this.forkApi) return { status: "UNSUPPORTED_FORK" };
+    const handle: ReviewForkHandleV1 = this.forkApi({
+      sourceCutDigest: input.sourceCutDigest,
+      toolList: input.toolList,
+      auxiliaryBudget: input.auxiliaryBudget,
+      parentThreadId: input.parentThreadId,
+    });
+    return { status: "ADMITTED", forkId: handle.forkId };
   }
 
   // ---- recovery, shutdown and rollback ----
