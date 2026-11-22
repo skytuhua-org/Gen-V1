@@ -5,6 +5,8 @@
 - Repo: skytuhua-org/Gen-V1
 - Plan revision: rev1, 2026-11-22
 - Baseline: main @ bffae7ff
+- Canonical issue: https://github.com/skytuhua-org/Gen-V1/issues/1731 (rev1 body = this document)
+- Plan-file PR: https://github.com/skytuhua-org/Gen-V1/pull/1727
 - Status: planned, not implemented
 - Source: QA pass 13 (fixture :4317): Settings → Browser renders only the sentence "Open the manual browser from the Windows desktop workspace. Navigation, reload and stop stay in its toolbar." — a whole nav section for a note with no control, and the search row "Start page" leads to it.
 
@@ -32,10 +34,10 @@ In the browser (non-desktop) build, the Browser section either contains a workin
 - States: browser build — 11 sections, no browser rows in search; desktop build — unchanged.
 
 ## EXECUTION_DAG
-- T01 — Confirm `desktop` flag source and the `searchSettings` surface filter behavior; record on issue.
-- T02 — Filter nav + select + search rows in browser build; mount fallback to `general`. Tests: vitest — browser build yields 11 sections; `browser-start-page` absent from search results; stored `browser` section falls back to general.
-- T03 — Playwright on fixture: Settings nav has no Browser button; search "browser" and "start page" return no dead-end results; desktop path untouched (assert in unit test only — no desktop fixture).
-- T04 — Final fixture verification; revision bump if scope changed.
+- T01 — Confirm `desktop` flag source and the `searchSettings` surface filter behavior; record on issue #1731. Deps: none. Handoff: findings comment for T02 owner. Done-when: flag mechanics confirmed.
+- T02 — Filter nav + select + search rows in browser build; mount fallback to `general`. Deps: T01. Owner: web implementer. Tests: vitest — browser build yields 11 sections; `browser-start-page` absent from search results; stored `browser` section falls back to general. Done-when: specs pass; handoff to T03.
+- T03 — Playwright on fixture: Settings nav has no Browser button; search "browser" and "start page" return no dead-end results; desktop path untouched (assert in unit test only — no desktop fixture). Deps: T02. Owner: web implementer. Done-when: fixture spec passes.
+- T04 — Final fixture verification; revision bump if scope changed. Deps: T03. Owner: web implementer. Done-when: verified on :4317; issue #1731 updated; RELEASE posted.
 
 ## VALIDATION
 - vitest + Playwright.
@@ -46,7 +48,7 @@ In the browser (non-desktop) build, the Browser section either contains a workin
 - Researched: stub content confirmed live (l.211 else-branch). Decided: hide section + row in browser build. Pending: `desktop` flag mechanics (T01). Next: T01.
 
 ## REFERENCES
-- This issue; Settings.tsx; QA pass 13.
+- Canonical issue: https://github.com/skytuhua-org/Gen-V1/issues/1731. Plan-file PR: https://github.com/skytuhua-org/Gen-V1/pull/1727. Settings.tsx; QA pass 13.
 
 
 ---

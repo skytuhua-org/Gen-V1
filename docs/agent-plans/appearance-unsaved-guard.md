@@ -5,6 +5,8 @@
 - Repo: skytuhua-org/Gen-V1
 - Plan revision: rev1, 2026-11-22
 - Baseline: main @ bffae7ff (verified HEAD at write time)
+- Canonical issue: https://github.com/skytuhua-org/Gen-V1/issues/1728 (rev1 body = this document)
+- Plan-file PR: https://github.com/skytuhua-org/Gen-V1/pull/1727
 - Status: planned, not implemented
 - Source: QA pass 13 on the built fixture app (:4317); verified live: editing any Appearance control then switching settings section or closing the dialog discards the draft with no warning.
 
@@ -43,12 +45,12 @@ A user who tweaks Appearance (theme, accent, font sizes, density, project colors
 - States: idle; confirming (dialog open, Apply button `aria-busy` while persisting); applying-failed (error text under actions, dialog closed, stays on Appearance).
 
 ## EXECUTION_DAG
-- T01 — Read Modal.tsx props, App.tsx:141 close wiring, Settings.tsx chord/close paths. Produce exact prop signatures in a comment on the issue. No app code. Done-when: wiring diagram confirmed.
-- T02 — AppearanceSettings: add `registerLeaveGuard` prop returning `{dirty, apply, discard}`; `discard` resets draft+theme to persisted preferences. Owner: same worker. Tests: vitest — dirty true after change, discard resets, guard unregisters on unmount.
-- T03 — Settings.tsx: `requestLeave(proceed)`; route `chooseSection`, `revealTarget`, `settings-section-select` change, four section chords, and dialog-close path through it. Tests: vitest — section switch with clean draft navigates immediately; with dirty draft sets leaveRequest and does not change section.
-- T04 — `DiscardAppearanceDialog`: markup/copy/buttons per REQUIREMENTS; focus on Keep editing; `aria-busy` during apply. CSS: `.discard-appearance-dialog` width `min(420px, calc(100vw - 32px))`. Tests: Playwright — open settings → Appearance → change font size → click General → dialog appears with exact copy; Discard → lands on General, returns to Appearance shows persisted values; Apply → navigates and values persisted.
-- T05 — Escape/backdrop/close-button coverage: Playwright — dirty draft + Escape shows dialog; clean draft + Escape closes instantly. Keyboard-only walkthrough of the confirm dialog (Tab order, Enter).
-- T06 — CHANGELOG/not needed; update issue body plan revision to rev2 if scope shifted; final QA on fixture app.
+- T01 — Read Modal.tsx props, App.tsx:141 close wiring, Settings.tsx chord/close paths. Produce exact prop signatures in a comment on the issue. No app code. Deps: none. Handoff: findings comment on issue #1728 for T02 owner. Done-when: wiring diagram confirmed.
+- T02 — AppearanceSettings: add `registerLeaveGuard` prop returning `{dirty, apply, discard}`; `discard` resets draft+theme to persisted preferences. Deps: T01 (prop signatures). Owner: implementer A (AppearanceSettings). Tests: vitest — dirty true after change, discard resets, guard unregisters on unmount. Done-when: guard registered on mount, unregistered on unmount; handoff to T03 owner via issue comment.
+- T03 — Settings.tsx: `requestLeave(proceed)`; route `chooseSection`, `revealTarget`, `settings-section-select` change, four section chords, and dialog-close path through it. Deps: T02 (guard API). Owner: implementer B (Settings.tsx); may be same worker as T02 sequentially. Tests: vitest — section switch with clean draft navigates immediately; with dirty draft sets leaveRequest and does not change section. Done-when: every exit path routes through requestLeave; handoff to T04.
+- T04 — `DiscardAppearanceDialog`: markup/copy/buttons per REQUIREMENTS; focus on Keep editing; `aria-busy` during apply. CSS: `.discard-appearance-dialog` width `min(420px, calc(100vw - 32px))`. Deps: T03 (leaveRequest state). Owner: implementer B. Tests: Playwright — open settings → Appearance → change font size → click General → dialog appears with exact copy; Discard → lands on General, returns to Appearance shows persisted values; Apply → navigates and values persisted. Done-when: three buttons verified end-to-end.
+- T05 — Escape/backdrop/close-button coverage: Playwright — dirty draft + Escape shows dialog; clean draft + Escape closes instantly. Keyboard-only walkthrough of the confirm dialog (Tab order, Enter). Deps: T04. Owner: implementer B. Done-when: all exit paths verified + a11y tab order recorded.
+- T06 — Update issue body plan revision to rev2 if scope shifted; final QA on fixture app. Deps: T05. Owner: implementer B. Done-when: issue #1728 body reflects shipped state; RELEASE posted.
 
 ## VALIDATION
 - `cd apps/web && npx vitest run` (new unit specs pass; suite green).
@@ -61,7 +63,7 @@ A user who tweaks Appearance (theme, accent, font sizes, density, project colors
 - Researched: dirty flag, section switching, modal reuse. Decided: ref-based requestLeave, three-button confirm. Pending: exact Modal prop names (T01). Next step: T01.
 
 ## REFERENCES
-- Issue: this issue. Fixture host: scripts/review-host.ts :4317. Prior QA finding recorded in recording qa-pass13-settings.
+- Canonical issue: https://github.com/skytuhua-org/Gen-V1/issues/1728. Plan-file PR: https://github.com/skytuhua-org/Gen-V1/pull/1727. Fixture host: scripts/review-host.ts :4317. Prior QA finding recorded in recording qa-pass13-settings.
 
 
 ---

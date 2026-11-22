@@ -5,6 +5,8 @@
 - Repo: skytuhua-org/Gen-V1
 - Plan revision: rev1, 2026-11-22
 - Baseline: main @ bffae7ff
+- Canonical issue: https://github.com/skytuhua-org/Gen-V1/issues/1730 (rev1 body = this document)
+- Plan-file PR: https://github.com/skytuhua-org/Gen-V1/pull/1727
 - Status: planned, not implemented
 - Source: QA pass 13 (fixture :4317): Settings → General → Granted resources shows `agreement.pdf` three times (once per thread sharing the grant) with identical rows and no way to revoke any of them.
 
@@ -25,21 +27,21 @@ The Granted resources list shows each granted resource once, labeled with the th
 ## REPO_MAP
 - `scripts/review-host.ts` — fixture grants (`agreement.pdf` shared by signing/catalog/shell threads; 8 grants total, diagnostics line "8 grants").
 - Grant list component: search `Granted resources` / `grants` in `apps/web/src/` (T01 identifies exact file — likely Settings general section or EverydayData.tsx).
-- Grant commands: `command('thread.presentation', ...)` pattern in App.tsx:1150; check `/api` surface for a revoke/delete grant command in T01 — if none exists, add `settings.update`-style command `grant.revoke {resourceId}` (server-side task T05).
+- Grant commands: `command('thread.presentation', ...)` pattern in App.tsx:1150; check `/api` surface for a revoke/delete grant command in T01 — if none exists, add `settings.update`-style command `grant.revoke` with payload `{grantId}` (server-side task T05).
 - Tests: vitest + Playwright.
 
 ## DESIGN
 - Client: `groupBy(grants, resourceKey)` producing `{key, name, threadTitles[], grantIds[]}`. Row keyed by resource key. Revoke calls the revoke command once per underlying grant id (sequential; same optimistic state).
-- If the API lacks revoke: T05 adds it server-side following the existing command pattern; contract `{type:'grant.revoke', payload:{grantId}}` returning the updated grant list.
+- If the API lacks revoke: T05 adds it server-side following the existing command pattern; contract `{type:'grant.revoke', payload:{grantId}}` returning the updated grant list. T03's client call uses the identical payload key `grantId`.
 - States: normal; revoking (`aria-busy`, button disabled); revoke-failed (error meta line); empty.
 
 ## EXECUTION_DAG
-- T01 — Locate grant list component + grant data shape + whether a revoke command exists; post findings. Done-when: file + contract confirmed.
-- T02 — Dedupe/group render + copy exactly as specified. Tests: vitest — 3 identical grants → 1 row with "Granted to 3 threads".
-- T03 — Revoke button wiring, optimistic removal, error path, focus management, live-region announcement. Tests: Playwright — revoke one resource → row collapses, list updates; failure path shows error text.
-- T04 — Reduced-motion + keyboard-only verification; axe pass on row + button labels.
-- T05 — (only if T01 shows no revoke API) add `grant.revoke` command server-side with a vitest contract test.
-- T06 — Fixture-app verification: list shows 6 unique resources (8 grants minus dupes), revoke works, plan revision bump if scope changed.
+- T01 — Locate grant list component + grant data shape + whether a revoke command exists; post findings on issue #1730. Deps: none. Handoff: findings comment names the component file + contract for T02/T03/T05 owners. Done-when: file + contract confirmed.
+- T05 — (only if T01 shows no revoke API) add `grant.revoke` command server-side, payload `{grantId}`, returning updated grant list, with a vitest contract test. Deps: T01. Owner: server implementer. Done-when: command responds per contract; handoff ACK to T03 owner.
+- T02 — Dedupe/group render + copy exactly as specified. Deps: T01 (component location + data shape). Owner: web implementer. Tests: vitest — 3 identical grants → 1 row with "Granted to 3 threads". Done-when: grouping + copy specs pass; handoff to T03.
+- T03 — Revoke button wiring, optimistic removal, error path, focus management, live-region announcement; calls `grant.revoke` with `{grantId}` per grant in the group. Deps: T02 (row markup) and T05 when it runs (API contract; sequential — T05 lands first if needed). Owner: web implementer. Tests: Playwright — revoke one resource → row collapses, list updates; failure path shows error text. Done-when: both paths verified.
+- T04 — Reduced-motion + keyboard-only verification; axe pass on row + button labels. Deps: T03. Owner: web implementer. Done-when: a11y + motion assertions pass.
+- T06 — Fixture-app verification: list shows 6 unique resources (8 grants minus dupes), revoke works, plan revision bump if scope changed. Deps: T04. Owner: web implementer. Done-when: verified on :4317; issue #1730 updated; RELEASE posted.
 
 ## VALIDATION
 - `npx vitest run`; `npx playwright test` on fixture flows.
@@ -50,7 +52,7 @@ The Granted resources list shows each granted resource once, labeled with the th
 - Researched: fixture duplicates confirmed visually. Decided: group-by-resource rows, sequential per-grant revoke. Pending: exact component + API (T01). Next: T01.
 
 ## REFERENCES
-- This issue; scripts/review-host.ts grant fixtures; QA pass 13.
+- Canonical issue: https://github.com/skytuhua-org/Gen-V1/issues/1730. Plan-file PR: https://github.com/skytuhua-org/Gen-V1/pull/1727. scripts/review-host.ts grant fixtures; QA pass 13.
 
 
 ---

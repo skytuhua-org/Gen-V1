@@ -5,6 +5,8 @@
 - Repo: skytuhua-org/Gen-V1
 - Plan revision: rev1, 2026-11-22
 - Baseline: main @ bffae7ff
+- Canonical issue: https://github.com/skytuhua-org/Gen-V1/issues/1729 (rev1 body = this document)
+- Plan-file PR: https://github.com/skytuhua-org/Gen-V1/pull/1727
 - Status: planned, not implemented
 - Source: QA pass 13 (fixture :4317): typing `99` into UI font size then blurring silently restores the previous value — no message, no red state, user cannot tell the entry was rejected.
 
@@ -38,11 +40,11 @@ Every out-of-range or non-integer entry in UI font size (13–16), Chat font siz
 - States: valid (default); invalid (red border + hint); reverting (Escape restores committed value, clears invalid).
 
 ## EXECUTION_DAG
-- T01 — Verify `min`/`max`/`step` attributes on the three inputs; confirm `--danger` token name and whether Review iterations shares `size()`; record findings on the issue. Done-when: facts posted.
-- T02 — Rework `size()` to text+invalid state model; Escape revert; live validation on input event. Tests: vitest — out-of-range keeps text + sets invalid; valid commits; Escape reverts.
-- T03 — Render hint + `aria-invalid`/`aria-describedby`; CSS rules. Tests: Playwright — type 99 → blur → field keeps "99", shows exact hint text; type 14 → hint clears, Apply enabled.
-- T04 — Keyboard + a11y pass: Tab into invalid field announces hint (axe or Playwright a11y assertion); ensure no layout shift >2px when hint appears (hint reserves `min-height:18px` under the input to prevent jump).
-- T05 — Update issue plan revision if needed; fixture-app verification.
+- T01 — Verify `min`/`max`/`step` attributes on the three inputs; confirm `--danger` token name and whether Review iterations shares `size()`; record findings on the issue. Deps: none. Handoff: findings comment on issue #1729 for T02 owner. Done-when: facts posted.
+- T02 — Rework `size()` to text+invalid state model; Escape revert; live validation on input event. Deps: T01. Owner: implementer A. Tests: vitest — out-of-range keeps text + sets invalid; valid commits; Escape reverts. Done-when: state model passes specs; handoff to T03.
+- T03 — Render hint + `aria-invalid`/`aria-describedby`; CSS rules. Deps: T02. Owner: implementer A. Tests: Playwright — type 99 → blur → field keeps "99", shows exact hint text; type 14 → hint clears, Apply enabled. Done-when: all three fields verified end-to-end.
+- T04 — Keyboard + a11y pass: Tab into invalid field announces hint (axe or Playwright a11y assertion); ensure no layout shift >2px when hint appears (hint reserves `min-height:18px` under the input to prevent jump). Deps: T03. Owner: implementer A. Done-when: a11y assertions pass.
+- T05 — Update issue plan revision if needed; fixture-app verification. Deps: T04. Owner: implementer A. Done-when: issue #1729 body reflects shipped state; RELEASE posted.
 
 ## VALIDATION
 - vitest for the state model; Playwright for visible behavior; axe check on hint wiring.
@@ -53,7 +55,7 @@ Every out-of-range or non-integer entry in UI font size (13–16), Chat font siz
 - Researched: `size()` revert-on-blur confirmed live. Decided: keep-text + role=alert hint pattern. Pending: token name, Review-iterations input (T01). Next: T01.
 
 ## REFERENCES
-- This issue; AppearanceSettings.tsx; QA pass 13 recording.
+- Canonical issue: https://github.com/skytuhua-org/Gen-V1/issues/1729. Plan-file PR: https://github.com/skytuhua-org/Gen-V1/pull/1727. AppearanceSettings.tsx; QA pass 13 recording.
 
 
 ---
