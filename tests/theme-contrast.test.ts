@@ -73,7 +73,7 @@ function dividerControlOutlines(css: string, classes: Set<string>): string[] {
   }
   return violations;
 }
-const styles = source('apps/web/src/styles.css'), shell = source('apps/web/src/shell.css'), appearance = source('apps/web/src/appearance.css'), sidebar = source('apps/web/src/sidebar-context.css');
+const styles = source('apps/web/src/styles.css'), shell = source('apps/web/src/shell.css'), appearance = source('apps/web/src/appearance.css'), sidebar = source('apps/web/src/sidebar-context.css'), settings = source('apps/web/src/settings.css');
 
 const REQUIRED = [
   '--canvas', '--sidebar', '--surface', '--subtle', '--hover', '--text', '--muted', '--placeholder', '--control-border',
@@ -267,6 +267,8 @@ describe('appearance theme contrast audit', () => {
   it('paints the surfaces this audit covers with the tokens it measures', () => {
     expect(sidebar).toMatch(/\.sidebar \.thread-item-meta\[data-thread-state='working'\] \.thread-item-status \{\s*color: var\(--accent-text\)/);
     expect(styles).toMatch(/\.send-button \{[^}]*color:var\(--accent-ink,#fff\)/);
+    expect(settings).toMatch(/:root\[data-theme="dark"\] \.settings-switch\[aria-checked=true\] \{\s*background:var\(--accent\);\s*border-color:var\(--accent\);?\s*\}/);
+    expect(settings).toMatch(/:root\[data-theme="dark"\] \.settings-switch\[aria-checked=true\]>span \{\s*background:var\(--canvas\);?\s*\}/);
   });
 
   it('keeps search, textarea, button and radio boundaries on the control token', () => {
