@@ -139,6 +139,7 @@ function ContextSession({ usage, thread, close, refresh, onError, anchor, compac
       await command('run.compact', {}, thread.id);
       if (!active.current) return;
       setRequested(true); await refresh();
+      toast('Context compacted', { tone: 'success', durationMs: 5000 });
     } catch (cause) {
       if (!active.current) return;
       const message = cause instanceof Error ? cause.message : 'Context could not be compacted. Try again.';

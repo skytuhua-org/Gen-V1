@@ -31,6 +31,7 @@ test('available compaction keeps its existing owning-thread command',async({page
  const commands:{type:string;threadId?:string}[]=[];await page.route('**/api/commands',route=>{commands.push(route.request().postDataJSON());return route.fulfill({json:{commandId:'fixture',seq:1,result:{}}});});
  await page.goto('/context-compact-check');await page.getByRole('button',{name:'Inspect context usage'}).click();await page.getByRole('button',{name:'Compact now',exact:true}).click();
  await expect.poll(()=>commands.map(value=>[value.type,value.threadId])).toEqual([['run.compact','owning-thread']]);
+ await expect(page.locator('.ui-toast').filter({hasText:'Context compacted'})).toBeVisible();
 });
 
 test('an unreported session disables Compact now with a reason instead of a dead control',async({page})=>{
