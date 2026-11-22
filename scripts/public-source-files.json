@@ -3416,6 +3416,7 @@
     "tests/project-colors.test.ts",
     "tests/project-context-summary.test.ts",
     "tests/project-file-image.test.ts",
+    "tests/project-image.test.ts",
     "tests/project-instructions-custody.test.ts",
     "tests/project-instructions-host.test.ts",
     "tests/project-memory-file-sources-v3.test.ts",
