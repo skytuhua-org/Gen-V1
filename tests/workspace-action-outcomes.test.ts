@@ -534,3 +534,30 @@ it('supports local unstage and commit through the original revision and replays 
   expect(await f.outcomes.execute(f.projectId, commit.input)).toEqual(result);
   expect((await f.projects.gitStatus(f.projectId, f.thread.id)).head).toBe(after.head);
 }, 60000);
+
+it('parses valid switch-branch and create-branch payloads and rejects malformed ones', () => {
+  const base = { revision: 'a'.repeat(64), expectedHead: 'b'.repeat(40) };
+  expect(() => workspaceActionPayloadSchemas['switch-branch'].parse({ ...base, name: 'feature/x' })).not.toThrow();
+  expect(() => workspaceActionPayloadSchemas['switch-branch'].parse({ ...base, name: 'fix', bringChanges: true })).not.toThrow();
+  expect(() => workspaceActionPayloadSchemas['create-branch'].parse({ ...base, name: 'release/1.0' })).not.toThrow();
+  const bad = [
+    { name: 'has\0nul' },
+    { name: 'x'.repeat(251) },
+    { name: 'ok', extra: 1 },
+    { name: 'ok', bringChanges: 'yes' },
+    { name: '' },
+  ];
+  for (const entry of bad) {
+    expect(workspaceActionPayloadSchemas['switch-branch'].safeParse({ ...base, ...entry }).success).toBe(false);
+    expect(workspaceActionPayloadSchemas['create-branch'].safeParse({ ...base, ...entry }).success).toBe(false);
+  }
+  expect(workspaceActionPayloadSchemas['switch-branch'].safeParse({ ...base, name: 'ok', revision: 'nope' }).success).toBe(false);
+  expect(workspaceActionPayloadSchemas['switch-branch'].safeParse({ ...base, name: 'ok', expectedHead: 'nope' }).success).toBe(false);
+});
+
+it('rejects invalid UTF-8 and missing names for branch actions', () => {
+  const base = { revision: 'c'.repeat(64), expectedHead: 'd'.repeat(64) };
+  expect(workspaceActionPayloadSchemas['switch-branch'].safeParse({ ...base, name: 'latin-é' }).success).toBe(true);
+  expect(workspaceActionPayloadSchemas['switch-branch'].safeParse({ ...base }).success).toBe(false);
+  expect(workspaceActionPayloadSchemas['create-branch'].safeParse({ ...base }).success).toBe(false);
+});
