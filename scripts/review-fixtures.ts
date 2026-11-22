@@ -2,17 +2,19 @@ import type { SurfaceSpec, ElementSpec } from '../packages/contracts/index.ts';
 import { CAPABILITIES, validateSurface } from '../packages/ui-catalog/index.ts';
 import {explorationElements} from './exploration-review-data.ts';
 import type {ComparisonData,StatsData} from '../packages/ui-catalog/everyday.ts';
-import type {ReviewQueueData,EditableTableData,ParameterControlsData} from '../packages/ui-catalog/interactions.ts';
-export const INTERACTION_REVIEW_DATA:{ReviewQueue:ReviewQueueData;EditableTable:EditableTableData;ParameterControls:ParameterControlsData}={
+import type {ReviewQueueData,EditableTableData,ParameterControlsData,QueryResultData} from '../packages/ui-catalog/interactions.ts';
+export const INTERACTION_REVIEW_DATA:{ReviewQueue:ReviewQueueData;EditableTable:EditableTableData;ParameterControls:ParameterControlsData;QueryResult:QueryResultData}={
  ReviewQueue:{title:'Review the release notes',source:'Bundled illustrative notes. Decisions are review feedback, never permission to publish.',items:[{id:'summary',label:'Opening summary',detail:'A shorter explanation of the checkout repair.',evidence:[{label:'Proposed',value:'Checkout totals now include item quantity.'}]},{id:'compatibility',label:'Compatibility note',detail:'Describe the unchanged public interface.',evidence:[{label:'Proposed',value:'Existing callers require no changes.'}]},{id:'timing',label:'Publication timing',detail:'Choose the release window with the team.'}]},
  EditableTable:{title:'Adjust the delivery list',source:'Bundled illustrative delivery records. Submitting edits sends a proposal; no external records are changed.',columns:[{id:'item',label:'Item',type:'text',readOnly:true},{id:'quantity',label:'Quantity',type:'number',required:true,min:1,max:50,step:1},{id:'priority',label:'Priority',type:'choice',options:[{value:'normal',label:'Normal'},{value:'urgent',label:'Urgent'}]},{id:'ready',label:'Ready',type:'boolean'}],rows:[{id:'prints',label:'Prints',values:{item:'Print set',quantity:4,priority:'normal',ready:false}},{id:'frames',label:'Frames',values:{item:'Frame set',quantity:2,priority:'normal',ready:true}}]},
  ParameterControls:{title:'Tune the export',source:'Bundled illustrative export parameters. Apply sends values to the owning task; no export is executed.',controls:[{id:'quality',label:'Quality',type:'range',value:85,min:50,max:100,step:5,required:true},{id:'width',label:'Width',type:'number',value:1600,min:640,max:3840,step:160,required:true},{id:'format',label:'Format',type:'choice',value:'png',options:[{value:'png',label:'PNG'},{value:'webp',label:'WebP'}],required:true},{id:'metadata',label:'Include metadata',type:'boolean',value:false}]},
+ QueryResult:{title:'Inspect the supplied task rows',source:'Bundled illustrative query output; no database was queried.',engine:'sqlite',connectionLabel:'tasks-db',columns:[{name:'id',type:'INTEGER'},{name:'title',type:'TEXT'},{name:'done',type:'INTEGER'}],rows:[[1,'Draft note',1],[2,'Pack prints',0]],rowCount:2,elapsedMs:12,executedAt:'2026-11-03T09:05:00-08:00'},
 };
 export function interactionSpec():SurfaceSpec{return {root:'interactionTabs',elements:{
- interactionTabs:node('Tabs',{labels:['Review items','Edit records','Parameters'],stateKey:'interactionTab'},['reviewQueue','editableTable','parameterControls']),
+ interactionTabs:node('Tabs',{labels:['Review items','Edit records','Parameters','Query result'],stateKey:'interactionTab'},['reviewQueue','editableTable','parameterControls','queryResult']),
  reviewQueue:node('ReviewQueue',{dataBinding:'reviewItems',stateKey:'reviewDraft',actionId:'sendReview',actionLabel:'Send review'}),
  editableTable:node('EditableTable',{dataBinding:'editableRecords',stateKey:'recordEdits',actionId:'submitRecords',actionLabel:'Submit changes'}),
  parameterControls:node('ParameterControls',{dataBinding:'parameters',stateKey:'parameterDraft',actionId:'applyParameters',actionLabel:'Apply settings'}),
+ queryResult:node('QueryResult',{dataBinding:'queryResult',stateKey:'queryResultCard',actionId:'inspectQuery',actionLabel:'Inspect result'}),
 }};}
 
 export const REVIEW_PROVENANCE = 'Illustrative local UI review fixture. External GitHub, CI, Supabase, email and phone effects are simulated.';
@@ -118,12 +120,13 @@ export function catalogSpec(pdfId: string, pngId: string, annotationId=pngId): S
     statistics:node('Stats',{dataBinding:'metrics',stateKey:'selectedMetric'}),
     planComparison:node('Comparison',{dataBinding:'choices',stateKey:'planChoice',actionId:'inspect',actionLabel:'Save selected plan'}),
     privateToken:node('CredentialEntry',{slotKey:'projectApiToken',label:'API token',service:'Project API'}),
-    interactions:node('Stack',{gap:'lg'},['reviewQueue','editableTable','exportProposal']),
+    interactions:node('Stack',{gap:'lg'},['reviewQueue','editableTable','exportProposal','queryResult']),
     exportProposal:node('Split',{ratio:.55,gap:'md'},['exportSource','parameterControls']),
     exportSource:node('Image',{resourceId:annotationId,alt:'Source image for the export proposal'}),
     reviewQueue:node('ReviewQueue',{dataBinding:'reviewItems',stateKey:'reviewDraft',actionId:'inspect',actionLabel:'Send review'}),
     editableTable:node('EditableTable',{dataBinding:'editableRecords',stateKey:'recordEdits',actionId:'inspect',actionLabel:'Submit changes'}),
     parameterControls:node('ParameterControls',{dataBinding:'parameters',stateKey:'parameterDraft',actionId:'inspect',actionLabel:'Apply settings'}),
+    queryResult:node('QueryResult',{dataBinding:'queryResult',stateKey:'queryResultCard',actionId:'inspect',actionLabel:'Inspect result'}),
     workObjects: node('Tabs', { labels: ['Workflow', 'Architecture', 'Trace'], stateKey: 'workObjectTab' }, ['workflowBoard', 'architectureCanvas', 'traceWaterfall']),
     workflowBoard: node('WorkflowBoard', { dataBinding: 'workBoard', stateKey: 'workBoardDraft', actionId: 'inspect' }),
     architectureCanvas: node('ArchitectureCanvas', { dataBinding: 'workArchitecture', stateKey: 'workArchitectureView', actionId: 'inspect' }),

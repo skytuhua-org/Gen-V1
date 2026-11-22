@@ -55,7 +55,7 @@ const hash = (s: string | Buffer) => createHash("sha256").update(s).digest("hex"
 
 describe("trusted surface admission", () => {
   it("publishes strict schemas and valid examples for every requested component", () => {
-    expect(CAPABILITIES.map(c => c.name).sort()).toEqual("Stack Grid Split Tabs Panel Disclosure Text Markdown EvidenceList Metric Progress Timeline Table Chart Tree Form Input Select Toggle Button Code Diff Document Image ChoiceList Steps RelationshipGraph Status DocumentPreview SignaturePad MapView Diagnostics ChangeSet ApiExplorer Pipeline ImageCompare Stats Comparison CredentialEntry ReviewQueue EditableTable ParameterControls ImageAnnotator SchedulePicker LogExplorer WorkflowBoard ArchitectureCanvas TraceWaterfall".split(" ").sort());
+    expect(CAPABILITIES.map(c => c.name).sort()).toEqual("Stack Grid Split Tabs Panel Disclosure Text Markdown EvidenceList Metric Progress Timeline Table Chart Tree Form Input Select Toggle Button Code Diff Document Image ChoiceList Steps RelationshipGraph Status DocumentPreview SignaturePad MapView Diagnostics ChangeSet ApiExplorer Pipeline ImageCompare Stats Comparison CredentialEntry ReviewQueue EditableTable ParameterControls ImageAnnotator SchedulePicker LogExplorer WorkflowBoard ArchitectureCanvas TraceWaterfall QueryResult".split(" ").sort());
     for (const capability of CAPABILITIES) {
       expect(capability.props.additionalProperties).toBe(false);
       validateSurface({ root: "a", elements: { a: { type: capability.name, props: capability.example as Record<string, unknown> } } });
