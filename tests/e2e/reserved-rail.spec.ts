@@ -57,12 +57,30 @@ test('minimized usage retains its rail until an explicit artifact panel takes ov
  await page.getByRole('button',{name:'Open artifact in workspace',exact:true}).click();await expect(plan).toBeHidden();await expect.poll(async()=>{const main=await frame.boundingBox(),panel=await page.locator('.workspace-right').boundingBox();return panel&&main?panel.x>main.x+main.width-1&&panel.x+panel.width>1580&&main.width<1100:null;}).toBe(true);
 });
 test('picker overview sits above the project list without changing workspace geometry',async({page})=>{
- await page.setViewportSize({width:1440,height:1000});await serve(page);await page.goto('/');await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeEnabled();
+ await page.setViewportSize({width:1440,height:1000});await serve(page);await page.goto('/');await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeEnabled({timeout:30000});
  const before=(await page.locator('main.workspace').boundingBox())!,panel=await showPlan(page),picker=page.getByRole('dialog',{name:'Select project',exact:true});
  const list=picker.getByRole('listbox',{name:'Projects',exact:true});expect((await panel.boundingBox())!.y+(await panel.boundingBox())!.height).toBeLessThanOrEqual((await list.boundingBox())!.y);
+ await expect(picker.getByRole('heading',{name:'Current project',exact:true})).toBeVisible();await expect(picker.getByRole('heading',{name:'Switch project',exact:true})).toBeVisible();
+ for(const text of [project.rootPath,'Branch','Uncommitted changes','+18','−4','Plan','Repair checkout failures','0 of 1 done'])await expect(panel.getByText(text,{exact:true})).toBeVisible();
+ await expect(panel.getByText('Project tools',{exact:true})).toHaveCount(0);await expect(list.getByRole('option',{name:project.name,exact:true})).toContainText('Current');
+ const close=picker.getByRole('button',{name:'Close dialog',exact:true});await close.hover();
+ expect(await close.locator('svg').evaluate(node=>{const rgb=getComputedStyle(node).color.match(/[\d.]+/g)!;return rgb[0]===rgb[1]&&rgb[1]===rgb[2];})).toBe(true);
+ expect(await panel.locator('.project-context-section,.project-context-plan-summary,.project-context-tools,.project-context-group').evaluateAll(nodes=>nodes.every(node=>['Top','Bottom','Left','Right'].every(side=>parseFloat(getComputedStyle(node).getPropertyValue('border-'+side.toLowerCase()+'-width'))===0)))).toBe(true);
  await expect(list.getByRole('option',{name:project.name,exact:true})).toHaveAttribute('aria-selected','true');await expect(list.getByRole('option',{name:'Other project',exact:true})).toBeVisible();
  expect((await page.locator('main.workspace').boundingBox())!.width).toBeCloseTo(before.width,0);
  await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Select project',exact:true})).toBeFocused();expect((await page.locator('main.workspace').boundingBox())!.width).toBeCloseTo(before.width,0);
+});
+test('visible project actions preserve their payloads and recover after a failed commit',async({page})=>{
+ await serve(page);const actions:Record<string,unknown>[]=[];
+ await page.route('**/api/projects/*/actions',async route=>{expect(new URL(route.request().url()).pathname).toBe('/api/projects/overview-project/actions');const action=route.request().postDataJSON();actions.push(action);await route.fulfill(action.type==='commit'?{status:500,json:{error:{code:'INTERNAL',message:'Synthetic commit failure'}}}:{json:{}});});
+ await page.goto('/');const panel=await showPlan(page);
+ for(const name of ['Open in VS Code','Add script','Run tests','Commit'])await expect(panel.getByRole('button',{name,exact:true})).toBeVisible();
+ await panel.getByRole('button',{name:'Open in VS Code',exact:true}).click();await expect(panel.getByRole('button',{name:'Add script',exact:true})).toBeEnabled();
+ await panel.getByRole('button',{name:'Run tests',exact:true}).click();await expect(panel.getByRole('button',{name:'Add script',exact:true})).toBeEnabled();
+ await panel.getByRole('button',{name:'Add script',exact:true}).click();await panel.getByRole('textbox',{name:'Script name',exact:true}).fill('Check');await panel.getByRole('textbox',{name:'Command',exact:true}).fill('pnpm check');await panel.locator('form').getByRole('button',{name:'Add script',exact:true}).click();await expect(panel.getByRole('button',{name:'Commit',exact:true})).toBeEnabled();
+ await panel.getByRole('button',{name:'Commit',exact:true}).click();await panel.getByRole('textbox',{name:'Commit message',exact:true}).fill('Review picker');await panel.getByRole('button',{name:'Commit changes',exact:true}).click();await expect(panel.getByRole('alert')).toContainText('Synthetic commit failure');
+ expect(actions.map(({type,payload,threadId})=>({type,payload,threadId}))).toEqual([{type:'open-editor',payload:{},threadId:'task-thread'},{type:'run-script',payload:{scriptId:'test'},threadId:'task-thread'},{type:'add-script',payload:{name:'Check',command:'pnpm check'},threadId:'task-thread'},{type:'commit',payload:{message:'Review picker',expectedHead:'fixture-head',revision:'fixture-revision'},threadId:'task-thread'}]);
+ await expect(panel.getByRole('button',{name:'Commit changes',exact:true})).toBeEnabled();await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Select project',exact:true})).toBeFocused();
 });
 test('overview dismissal keeps the composer draft and exposes no floating-window controls',async({page})=>{
  await page.setViewportSize({width:1600,height:1100});const plan=await open(page);await page.keyboard.press('Escape');
@@ -82,12 +100,12 @@ test('overview actions retain their bound project, report failures, and remain k
  await plan.getByRole('button',{name:'Create branch',exact:true}).click();await expect(plan.getByRole('alert')).toContainText('Synthetic branch failure');expect(action).toMatchObject({type:'branch',threadId:'task-thread',payload:{name:'review-picker',expectedHead:'fixture-head',revision:'fixture-revision'}});
  await expect(search).toBeEnabled();await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Select project',exact:true})).toBeFocused();
  await showPlan(page);await expect(plan.getByRole('button',{name:'Open full plan',exact:true})).toHaveCount(0);
- await plan.getByRole('button',{name:/^Changes/}).click();await expect(page.getByRole('dialog',{name:'Select project',exact:true})).toBeHidden();await expect(page.locator('[data-split-view="diff:task-thread"]')).toBeVisible();
+ await plan.getByRole('button',{name:/^Uncommitted changes/}).click();await expect(page.getByRole('dialog',{name:'Select project',exact:true})).toBeHidden();await expect(page.locator('[data-split-view="diff:task-thread"]')).toBeVisible();
 });
 test('narrow picker stays within the viewport and returns keyboard access to composer and Stop',async({page})=>{
  await page.setViewportSize({width:390,height:844});await page.emulateMedia({reducedMotion:'reduce'});const value=snapshot();value.threads[0].status='working';value.threads[0].runId='fixture-run';await serve(page,value);await page.goto('/');await showPlan(page);
  const picker=page.getByRole('dialog',{name:'Select project',exact:true}),bounds=(await picker.boundingBox())!;expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.y).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(390);expect(bounds.y+bounds.height).toBeLessThanOrEqual(844);
- await expect(picker.getByRole('option',{name:project.name,exact:true})).toBeVisible();await picker.getByRole('button',{name:'Cancel',exact:true}).focus();await page.keyboard.press('Tab');await expect(picker.getByRole('button',{name:'Close dialog',exact:true})).toBeFocused();
+ await expect(picker.getByRole('option',{name:project.name,exact:true})).toBeVisible();await picker.getByRole('button',{name:'Change color for Fieldwork',exact:true}).focus();await page.keyboard.press('Tab');await expect(picker.getByRole('button',{name:'Close dialog',exact:true})).toBeFocused();
  await page.keyboard.press('Escape');for(const name of ['Message','Stop agent']){const el=name==='Message'?page.getByRole('textbox',{name,exact:true}):page.getByRole('button',{name,exact:true});expect(await el.evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);}expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
 });
 if(captureDirectory)for(const mode of ['light','dark','mobile']as const)test('capture project picker '+mode,async({page})=>{

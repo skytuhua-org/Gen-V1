@@ -11,10 +11,33 @@ import {UsageSummary} from '../apps/web/src/WorkspacePanelBodies';
 import {WorkspaceSurfaceBody} from '../apps/web/src/WorkspaceSurfaceBody';
 import {runtimeUsageReport} from '../apps/web/src/usage-presentation';
 import {taskFixture} from './e2e/task-interface-fixture';
+import {PLANNING_PROVENANCE,planDataId} from '../packages/contracts/planning';
 
 const context:ProjectContext={project:{id:'p',name:'Project',rootPath:'C:/Synthetic',authority:{kind:'local'},createdAt:'2026-11-10T00:00:00Z'},threadId:'a',branch:'main',head:'abc',machineName:'Machine',editor:{available:false,label:'Editor'},changes:{added:4,removed:2,files:1},lineage:[],scripts:[],capabilities:{git:true,terminal:false,pullRequests:false}};
 const usage={...EMPTY_USAGE,inputTokens:18321,outputTokens:791,cost:0.012345,sessionPercent:23.456,weeklyPercent:67.89,contextTokens:18000,contextWindow:100000};
 describe('proven duplicate removals',()=>{
+ it('shows explicit picker rows and exposes every project action without a tools disclosure',()=>{
+  const value={...context,editor:{available:true,label:'Editor'},scripts:[{id:'test',name:'Run tests',command:'pnpm test'}],capabilities:{...context.capabilities,terminal:true}};
+  const html=renderToStaticMarkup(createElement(ProjectContextCard,{picker:true,context:value,onShowChanges:()=>{},composerChangesAvailable:true,onAction:async()=>{}}));
+  for(const text of ['Project','C:/Synthetic','Branch','main','Uncommitted changes','+4','−2','Open in Editor','Add script','Run tests','Commit'])expect(html).toContain(text);
+  expect(html).not.toContain('Project tools');expect(html).not.toContain('<details class="project-context-tools"');expect(html).not.toContain('aria-label="Plan summary"');
+ });
+ it.each([{added:0,removed:0,files:0},{added:null,removed:null,files:null}])('distinguishes an empty checkout from unavailable change data: %j',changes=>{
+  const html=renderToStaticMarkup(createElement(ProjectContextCard,{picker:true,context:{...context,changes}}));
+  expect(html).toContain(changes.files===0?'No changes':'Unavailable');
+  expect(html).not.toContain(changes.files===0?'Unavailable':'No changes');
+ });
+ it('retains picker error recovery without inventing project or plan rows',()=>{
+  const html=renderToStaticMarkup(createElement(ProjectContextCard,{picker:true,error:'Context unavailable',onConnect:()=>{}}));
+  expect(html).toContain('Context unavailable');expect(html).toContain('Connect project');expect(html).not.toContain('aria-label="Plan summary"');
+ });
+ it.each([false,true])('shows a labeled picker plan with its exact completed count, including an empty plan: %s',empty=>{
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic'}}}});
+  snapshot.data.push({id:planDataId('task-thread'),threadId:'task-thread',revision:3,provenance:PLANNING_PROVENANCE,createdAt:'2026-11-10T00:00:00Z',value:{version:1,title:'Review changes',agents:[],steps:empty?[]:[{id:'done',title:'Read files',status:'completed',requirements:[]},{id:'now',title:'Check tests',status:'working',requirements:[]}]}});
+  const html=renderToStaticMarkup(createElement(ProjectContextCard,{picker:true,context,snapshot,threadId:'task-thread'}));
+  expect(html).toContain('>Plan</span>');expect(html).toContain('Review changes');expect(html).toContain(empty?'0 of 0 done':'1 of 2 done');
+  expect(html.includes('role="progressbar"')).toBe(!empty);
+ });
  it.each([undefined,false])('retains overview Changes when equivalence is %s',composerChangesAvailable=>{
   const html=renderToStaticMarkup(createElement(ProjectContextCard,{context,onShowChanges:()=>{},composerChangesAvailable}));
   expect(html).toContain('1 changed files');expect(html).toContain('>Changes</span>');

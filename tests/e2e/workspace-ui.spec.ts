@@ -73,7 +73,7 @@ test('Project overview is inside the composer project picker',async({page})=>{
  const overview=dialog.getByRole('region',{name:'Project overview',exact:true});await expect(overview).toBeVisible();
  expect((await overview.boundingBox())!.y).toBeLessThan((await dialog.getByRole('listbox',{name:'Projects',exact:true}).boundingBox())!.y);
  await page.keyboard.press('Escape');await expect(dialog).toBeHidden();await expect(trigger).toBeFocused();
- await trigger.click();await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(dialog).toBeHidden();await expect(trigger).toBeFocused();
+ await trigger.click();await dialog.getByRole('button',{name:'Close dialog',exact:true}).click();await expect(dialog).toBeHidden();await expect(trigger).toBeFocused();
 });
 test('picker remains unchanged without a project',async({page})=>{
  await fixture(page,[],undefined,'workspace');
@@ -102,7 +102,7 @@ test('picker context follows the composer owner rather than the selected main th
  let requested='';await page.route('**/api/projects/*/context*',async route=>{requested=new URL(route.request().url()).searchParams.get('threadId')??'';await route.fulfill({json:{project:{id:'shared-project',name:'Shared project',rootPath:'C:/fixture',authority:{kind:'local'}},threadId:requested,machineName:'Context for '+requested,editor:{available:false,label:'Editor'},branch:'side-branch',head:null,revision:'one',changes:{added:0,removed:0,files:0},lineage:[],scripts:[],capabilities:{git:true,terminal:false,pullRequests:false}}});});
  await page.locator('[data-panel-id="side-panel"]').getByRole('button',{name:'Select project',exact:true}).click();
  const overview=page.getByRole('region',{name:'Project overview',exact:true});await expect(overview.getByRole('button',{name:'side-branch',exact:true})).toBeEnabled();expect(requested).toBe('side');
- await overview.getByText('Project tools',{exact:true}).click();await expect(overview).toContainText('Context for side');
+ await expect(overview.getByText('Project tools',{exact:true})).toHaveCount(0);await expect(overview).toContainText('Context for side');
  await page.keyboard.press('Escape');await expect(page.locator('[data-panel-id="side-panel"]').getByRole('button',{name:'Select project',exact:true})).toBeFocused();
  await page.locator('[data-panel-id="side-panel"]').getByRole('button',{name:'Select project',exact:true}).click();
  await overview.getByRole('button',{name:'Open full plan',exact:true}).click();await expect(page.getByRole('dialog',{name:'Select project',exact:true})).toBeHidden();
@@ -295,7 +295,7 @@ test('canvas project selection targets its owner and cancellation restores indep
  const first=page.locator('[data-panel-id="selected-main"]').getByRole('textbox',{name:'Message',exact:true}),owner=page.locator('[data-panel-id="other-main"]'),second=owner.getByRole('textbox',{name:'Message',exact:true}),opener=owner.getByRole('button',{name:'Select project',exact:true});
  await first.fill('Selected draft');await second.fill('Other owner draft');await opener.click();
  const dialog=page.getByRole('dialog',{name:'Select project',exact:true});await expect(dialog).toBeVisible();
- await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(opener).toBeFocused();
+ await dialog.getByRole('button',{name:'Close dialog',exact:true}).click();await expect(opener).toBeFocused();
  let submitted:Record<string,any>|undefined;
  await page.route('**/api/workspace/commands',async route=>{const input=route.request().postDataJSON();if(input.type!=='workspace.project.connect')return route.fallback();submitted=input;return route.fulfill({json:{commandId:input.id,seq:host.snapshot.seq,result:host.envelope}});});
  await opener.click();await dialog.getByRole('option',{name:'Other local project',exact:true}).click();await expect(dialog).toHaveCount(0);

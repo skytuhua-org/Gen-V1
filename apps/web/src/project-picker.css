@@ -8,10 +8,12 @@
 }
 html[data-native-titlebar="true"] .ui-modal.project-picker { height: min(520px, calc(100dvh - 58px)); }
 .project-picker .ui-modal-header { flex: 0 0 auto; margin-bottom: 0; }
-.ui-modal.project-picker-with-overview { height: min(620px, calc(100dvh - 16px)); }
-html[data-native-titlebar="true"] .ui-modal.project-picker-with-overview { height: min(620px, calc(100dvh - 58px)); }
-.project-picker-overview { flex: 0 1 auto; min-height: 0; max-height: min(280px, 35dvh); overflow: auto; overscroll-behavior: contain; border-bottom: 1px solid var(--border); }
-.project-picker-overview > h3 { margin: 0 0 8px; color: var(--muted); font-size: 12px; font-weight: 550; }
+.ui-modal.project-picker-with-overview { height: min(780px, calc(100dvh - 16px)); }
+html[data-native-titlebar="true"] .ui-modal.project-picker-with-overview { height: min(780px, calc(100dvh - 58px)); }
+.project-picker-overview { flex: 0 0 auto; min-height: 0; max-height: min(500px, max(0px, calc(100dvh - 300px))); overflow: auto; overscroll-behavior: contain; }
+.project-picker-overview > h3, .project-picker-switch > h3 { margin: 0 0 8px; color: var(--text); font-size: 13px; font-weight: 600; }
+.project-picker-switch { display:flex; flex:1 1 auto; flex-direction:column; min-height:64px; gap:8px; }
+.project-picker-switch > h3 { margin:0; }
 .project-picker-overview .project-context-card { border: 0; background: transparent; }
 .project-picker-overview .project-context-section { padding: 0 0 8px; }
 .project-picker-search { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
@@ -48,4 +50,44 @@ html[data-native-titlebar="true"] .ui-modal.project-picker-with-overview { heigh
 @media (forced-colors: active) {
   .project-picker-option[aria-selected="true"] { border: 1px solid Highlight; }
   .project-picker-dot { outline: 1px solid CanvasText; }
+}
+.ui-modal.project-picker { color:var(--text); background:var(--surface); border:0; }
+.project-picker-overview .project-context-card :is(.project-context-section,.project-context-plan-summary,.project-context-tools,.project-context-group), .project-picker-overview .project-memory-launcher { border:0; padding:0; }
+.project-picker-overview .project-context-picker { padding:12px; border-radius:10px; background:var(--subtle); }
+.project-context-picker .project-context-overview { gap:8px; }
+.project-context-picker .project-context-machine { padding:0; min-height:24px; }
+.project-context-picker .project-context-overview > .project-context-machine { color:var(--text); }
+.project-context-picker .project-context-path { margin:0 0 8px; font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
+.project-context-picker .project-context-labeled-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.project-context-picker .project-context-labeled-row > span, .project-context-picker .project-context-row-label { flex-shrink:0; font-size:12px; color:var(--muted); }
+.project-context-picker .project-context-labeled-row > .project-context-row { width:auto; min-width:0; }
+.project-context-picker .project-context-row > span { flex:1; }
+.project-context-picker .project-context-overview > .project-context-row { padding-left:0; }
+.project-context-picker .project-context-plan-summary { display:grid; grid-template-columns:90px minmax(0,1fr); gap:6px 12px; margin-top:8px; }
+.project-context-picker .project-context-summary-title { margin:0; gap:0; }
+.project-context-picker .project-context-summary-title > svg { display:none; }
+.project-context-picker .project-context-plan-summary > :is(p,.project-context-summary-progress,button) { grid-column:2; margin:0; }
+.project-context-picker .project-context-summary-progress > span { background:var(--muted); }
+.project-context-picker .project-context-plan-summary > button { justify-self:start; }
+.project-context-picker .project-context-tools { margin-top:12px; }
+.project-context-picker .project-context-tools > .project-context-detail { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; padding:0; }
+.project-context-picker .project-context-tools .project-context-machine { grid-column:1/-1; color:var(--muted); font-size:11px; }
+.project-context-picker .project-context-tools .project-context-machine strong { color:inherit; font-size:11px; font-weight:400; }
+.project-context-picker .project-context-tools .project-context-row { background:var(--hover); font-size:12px; padding:6px 8px; }
+.project-context-picker .project-context-tools form { grid-column:1/-1; }
+.project-context-picker .project-context-group { margin-top:8px; }
+.project-picker-overview .project-memory-launcher { padding-top:6px; }
+.project-picker-overview .project-memory-launcher > button { width:auto; background:var(--hover); }
+.project-picker-overview .project-context-lineage small { color:var(--muted); }
+.project-picker :is(button,.project-context-detail) { border:0; }
+.project-picker .project-picker-dot { outline:0; }
+.project-context-picker .project-context-overview > .project-context-row > svg { display:none; }
+.project-context-picker .project-context-overview > .project-context-row > span { font-size:12px; color:var(--muted); }
+.project-context-picker .project-context-lineage [data-agent-status] { color:var(--muted); }
+.project-picker .project-context-note.error-text, .project-picker .project-picker-error { color:var(--text); }
+.project-picker .ui-modal-close, .project-picker .ui-modal-close > svg.lucide-x { color:var(--muted); }
+.project-picker .ui-modal-close:hover:not(:disabled) { background:var(--hover); color:var(--text); }
+@media (forced-colors: active) {
+  .project-picker .project-picker-option[aria-selected="true"] { outline:1px solid Highlight; }
+  .project-picker .project-picker-dot { outline:1px solid CanvasText; }
 }

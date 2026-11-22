@@ -35,6 +35,10 @@ it.each([undefined, 'project-a'])('shows overview inside the project picker only
   expect(markup.includes('Existing project content')).toBe(Boolean(selectedProjectId));
   expect(markup).toContain('aria-label="Search projects"');
   expect(markup).toContain('aria-label="Projects"');
+  expect(markup.includes('>Current project</h3>')).toBe(Boolean(selectedProjectId));
+  expect(markup).toContain('>Switch project</h3>');
+  expect(markup).not.toContain('>Cancel</button>');
+  expect(markup).toContain('Change color');
 });
 
 it.each(['projectId', 'threadId', 'accountId'] as const)('rejects a view returned for a different %s', async field => {

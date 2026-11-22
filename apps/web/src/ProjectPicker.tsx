@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, Folder, FolderPlus, Palette, Search } from 'lucide-react';
+import { Folder, FolderPlus, Palette, Search } from 'lucide-react';
 import type { ProjectSummary, WorkspaceAuthority } from '../../../packages/contracts/workspace';
 import { projectColorSchema } from '../../../packages/contracts/preferences';
 import { Modal } from '../../../packages/ui-shell/Modal';
@@ -79,7 +79,8 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, overview,
   };
 
   return <Modal open title="Select project" className={`project-picker${selectedProjectId && overview ? ' project-picker-with-overview' : ''}`} onClose={() => { if (!busy && !pending.current) onClose(); }}>
-    {selectedProjectId && overview && <section className="project-picker-overview" aria-label="Project overview"><h3>Project overview</h3>{overview}</section>}
+    {selectedProjectId && overview && <section className="project-picker-overview" aria-label="Project overview"><h3>Current project</h3>{overview}</section>}
+    <section className="project-picker-switch" aria-label="Switch project"><h3>Switch project</h3>
     <div className="project-picker-search"><Search size={16} aria-hidden="true" /><input ref={search} type="text" role="combobox" aria-label="Search projects"
       aria-autocomplete="list" aria-expanded="true" aria-controls={`${id}-list`} aria-activedescendant={choices.length ? optionId(activeIndex) : undefined}
       placeholder="Search projects" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => {
@@ -100,21 +101,20 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, overview,
           onClick={() => { setActiveKey(key); void run(() => onSelect(project)); }}>
           {project ? <span className="project-picker-dot" style={{ backgroundColor: projectColor(project.authority, project.id, colors) }} aria-hidden="true" /> : <Folder size={14} aria-hidden="true" />}
           <span className="project-picker-label"><span>{project?.name ?? 'No project'}</span>{project && <small>{project.rootPath ?? project.repository}</small>}</span>
-          {project && recentProjectIds.includes(project.id) && <small className="project-picker-recent">Recent</small>}
-          {selected && <Check size={14} aria-hidden="true" />}
+          {selected ? <small className="project-picker-recent">Current</small> : project && recentProjectIds.includes(project.id) && <small className="project-picker-recent">Recent</small>}
         </button>;
       })}
     </div>
     {!choices.length && <p className="project-picker-empty">{query ? 'No matching projects.' : 'No connected projects.'}</p>}
     {(failure || error) && <ErrorState className="project-picker-error" message={failure || error || ''}/>}
+    </section>
     <footer className="project-picker-footer">
       <button type="button" disabled={locked} onClick={() => void run(onAddProject)}><FolderPlus size={15} />Add project</button>
-      <button type="button" ref={colorAnchor} disabled={locked || !active} aria-label={active ? `Color for ${active.name}` : 'Project color'} aria-expanded={Boolean(editing)} onClick={() => { if (!active) return;
+      <button type="button" ref={colorAnchor} disabled={locked || !active} aria-label={active ? `Change color for ${active.name}` : 'Change color'} aria-expanded={Boolean(editing)} onClick={() => { if (!active) return;
         setColorKey(keyOf(active)); setCustom(projectColor(active.authority, active.id, colors) ?? ''); setColorError('');
-      }}><Palette size={15} /><span>Color</span></button>
-      <button type="button" disabled={locked} onClick={onClose}>Cancel</button>
+      }}><Palette size={15} /><span>Change color</span></button>
     </footer>
-    <p className="project-picker-hint">↑↓ navigate · Enter select · Esc cancel</p>
+    <p className="project-picker-hint">↑↓ navigate · Enter select · Esc close</p>
     <Popover anchor={colorAnchor} open={Boolean(editing)} width={280} height={230} initialFocus={colorInput} onDismiss={closeColor}
       role="group" aria-label="Project color" className="ui-control-popup project-picker-colors" onKeyDown={event => {
         if (isComposing(event) && event.key === 'Escape') { event.preventDefault(); return; }
