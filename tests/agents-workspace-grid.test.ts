@@ -166,6 +166,33 @@ describe('agents workspace grid layout', () => {
     } finally {await page.close();}
   });
 
+  it('opens ghost filters by keyboard, restores focus, clears scope and collapses empty search', async () => {
+    const page = await open(1440);
+    try {
+      const project = page.getByRole('combobox', {name:'Project filter'}), status = page.getByRole('combobox', {name:'Status filter'});
+      await project.focus(); await page.keyboard.press('ArrowDown');
+      await visible(page.getByRole('listbox', {name:'Project filter'})).toBeVisible();
+      await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+      await visible(project).toBeFocused();
+      expect(await page.evaluate(() => window.controller.getSnapshot().scope.projectId)).toBe('p');
+      await page.getByRole('button', {name:'Clear project filter'}).click();
+      expect(await page.evaluate(() => window.controller.getSnapshot().scope.projectId)).toBeUndefined();
+      await status.focus(); await page.keyboard.press('Space');
+      await visible(page.getByRole('listbox', {name:'Status filter'})).toBeVisible();
+      await page.keyboard.press('Escape'); await visible(status).toBeFocused();
+      await status.press('Enter'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+      expect(await page.evaluate(() => window.controller.getSnapshot().scope.statuses?.length)).toBe(1);
+      await page.getByRole('button', {name:'Clear status filter'}).click();
+      expect(await page.evaluate(() => window.controller.getSnapshot().scope.statuses)).toBeUndefined();
+      await page.getByRole('button', {name:'Search agents', exact:true}).click();
+      const input = page.getByRole('searchbox', {name:'Filter agents'});
+      await visible(input).toBeFocused(); await input.fill('parent'); await input.press('Escape');
+      await visible(input).toBeVisible(); await input.fill(''); await input.press('Escape');
+      await visible(input).toHaveCount(0);
+      await visible(page.getByRole('button', {name:'Search agents', exact:true})).toBeFocused();
+    } finally {await page.close();}
+  });
+
   it('adopts external controller scope text without clobbering active edits or looping', async () => {
     const page = await open(1440);
     try {

@@ -277,7 +277,9 @@ for (const [theme, width, height, zoom, columns] of [['dark', 1920, 1080, 1, 5],
   await page.evaluate(({theme, zoom}) => {document.documentElement.dataset.theme = theme; document.documentElement.style.zoom = String(zoom);}, {theme, zoom});
   const input = page.getByRole('textbox', {name: 'Message to parent-00', exact: true}); await expect(input).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  expect(await page.locator('.agents-toolbar').evaluate(node => node.getBoundingClientRect().height / Number(document.documentElement.style.zoom || 1))).toBe(36);
+  const toolbarHeight = await page.locator('.agents-toolbar').evaluate(node => node.getBoundingClientRect().height / Number(document.documentElement.style.zoom || 1));
+  expect(toolbarHeight).toBeGreaterThanOrEqual(40); expect(toolbarHeight).toBeLessThanOrEqual(80);
+  expect(await page.locator('.agents-toolbar button:visible').evaluateAll(buttons => buttons.every(button => {const height=button.getBoundingClientRect().height/Number(document.documentElement.style.zoom||1);return height>=28&&height<=32;}))).toBe(true);
   await expect.poll(() => page.locator('.agents-agent-grid').first().evaluate(node => getComputedStyle(node).gridTemplateColumns.split(' ').length)).toBe(columns);
   const firstRowColumns = await page.locator('.agents-agent-grid').first().locator('.agents-grid-slot > .agents-agent').evaluateAll(cards => {
    const bounds = cards.map(card => card.getBoundingClientRect());

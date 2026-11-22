@@ -28,8 +28,9 @@ async function mount(page: Page) {
   if (url.pathname === '/api/shell-settings') return route.fulfill({json: {theme: 'dark', preferences: {}}});
   if (url.pathname === '/api/workspace') return route.fulfill({json: {state: {version: 1, revision: 1, activeCanvasId: 'agents', canvases: [{id: 'agents', name: 'All Agents', preset: 'all-agents', version: 1, panels: [], filter: 'all', projectIds: [], viewport: {x: 0, y: 0, zoom: 1}}], profiles: [], disabledKinds: [], integrations: {}}, projects: []}});
   if (url.pathname === '/api/agents') {
-   const start = Number(url.searchParams.get('cursor') || 0), slice = agents.slice(start, start + 15);
-   return route.fulfill({json: {authority: 'personal', scopeKey: 'scope', sequence: 10, items: slice, ancestors: [], nextCursor: start + 15 < agents.length ? String(start + 15) : null}});
+   const filtered = agents.filter(agent => (!url.searchParams.has('projectId') || agent.projectId === url.searchParams.get('projectId')) && (!url.searchParams.has('status') || url.searchParams.get('status')!.split(',').includes(agent.status)) && (!url.searchParams.has('text') || agent.title.toLowerCase().includes(url.searchParams.get('text')!.toLowerCase())));
+   const start = Number(url.searchParams.get('cursor') || 0), slice = filtered.slice(start, start + 15);
+   return route.fulfill({json: {authority: 'personal', scopeKey: 'scope', sequence: 10, items: slice, ancestors: [], nextCursor: start + 15 < filtered.length ? String(start + 15) : null}});
   }
   if (url.pathname === '/api/agents/history') {
    const id = url.searchParams.get('agentId')!;
@@ -52,6 +53,37 @@ const rgb = (value: string) => {const parts = value.match(/[\d.]+/g)!.map(Number
 const channel = (v: number) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
 const luminance = ({r, g, b}: {r: number; g: number; b: number}) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
 const contrastRatio = (fg: string, bg: string) => {const a = luminance(rgb(fg)), b = luminance(rgb(bg)); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);};
+
+test('ghost toolbar filters, clears, keyboard navigation and inline search', async ({page}) => {
+ await page.emulateMedia({reducedMotion:'reduce'}); await mount(page);
+ const cards = page.locator('.agents-grid-slot > .agents-agent'), project = page.getByRole('combobox', {name:'Project filter'}), status = page.getByRole('combobox', {name:'Status filter'});
+ await expect(cards).toHaveCount(8);
+ await project.focus(); await page.keyboard.press('ArrowDown'); await expect(page.getByRole('listbox', {name:'Project filter'})).toBeVisible();
+ await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+ await expect(project).toBeFocused(); await expect(project).toContainText('Alpha');
+ await expect(page.getByRole('button', {name:'Clear project filter'})).toBeVisible();
+ await status.focus(); await page.keyboard.press('Space'); await expect(page.getByRole('listbox', {name:'Status filter'})).toBeVisible();
+ await page.keyboard.press('Escape'); await expect(status).toBeFocused();
+ await status.press('Enter'); await page.getByRole('option', {name:'failed', exact:true}).click();
+ await expect(cards).toHaveCount(1); await expect(cards.first()).toContainText('Trace the failing test');
+ await page.getByRole('button', {name:'Clear status filter'}).click(); await expect(cards).toHaveCount(8);
+ await project.click(); await page.getByRole('option', {name:'No project', exact:true}).click(); await expect(cards).toHaveCount(0);
+ await expect(page.getByText('No agents match these filters.', {exact:true})).toBeVisible();
+ await page.getByRole('button', {name:'Clear project filter'}).click(); await expect(cards).toHaveCount(8);
+ await page.getByRole('button', {name:'Search agents', exact:true}).click(); const input = page.getByRole('searchbox', {name:'Filter agents'});
+ await expect(input).toBeFocused(); await input.fill('keyboard'); await expect(cards).toHaveCount(1);
+ await input.press('Escape'); await expect(input).toBeVisible(); await input.fill(''); await expect(cards).toHaveCount(8);
+ await input.press('Escape'); await expect(input).toHaveCount(0); await expect(page.getByRole('button', {name:'Search agents', exact:true})).toBeFocused();
+ for (const width of [1440,1280,390]) {
+  await page.setViewportSize({width,height:900});
+  expect(await page.locator('.agents-toolbar').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+  await page.getByRole('button', {name:'Search agents', exact:true}).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole('searchbox', {name:'Filter agents'}).press('Escape');
+ }
+ await page.emulateMedia({forcedColors:'active'});
+ expect(await project.evaluate(node => getComputedStyle(node.closest('.agents-filter')!).outlineStyle)).toBe('solid');
+});
 
 for (const width of [1440, 1280, 768, 390]) test(`populated grid evidence at ${width} (${label})`, async ({page}) => {
  await page.setViewportSize({width, height: width === 390 ? 844 : 900});
@@ -119,12 +151,23 @@ for (const width of [1440, 1280, 768, 390]) test(`populated grid evidence at ${w
   expect(headerGeometry.length).toBeGreaterThanOrEqual(4);
   expect(headerGeometry.every(header => Object.values(header).every(Boolean))).toBe(true);
   await page.screenshot({path: join(proto, 'agents-4col-dark.png')});
+  await page.screenshot({path: join(proto, 'agents-toolbar-dark.png')});
+  await page.getByRole('combobox', {name:'Project filter'}).click();
+  await page.getByRole('option', {name:'Alpha', exact:true}).click();
+  await page.getByRole('combobox', {name:'Status filter'}).click();
+  await expect(page.getByRole('listbox', {name:'Status filter'})).toBeVisible();
+  await page.screenshot({path: join(proto, 'agents-toolbar-open-dark.png')});
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', {name:'Clear project filter'}).click();
+  await page.evaluate(() => {(document.activeElement as HTMLElement)?.blur();});
+  await page.mouse.move(10,800);
   await page.evaluate(() => {document.documentElement.dataset.theme = 'light';});
   await page.evaluate(async () => {
    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
    await Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));
   });
   await page.screenshot({path: join(proto, 'agents-4col-light.png')});
+  await page.screenshot({path: join(proto, 'agents-toolbar-light.png')});
   await page.evaluate(() => {document.documentElement.dataset.theme = 'dark';});
   const parent = page.locator('.agents-grid-slot > .agents-agent').first();
   await parent.getByRole('button', {name: 'Show transcript', exact: true}).click();

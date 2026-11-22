@@ -41,6 +41,7 @@ export function AgentsWorkspace({controller, composers, onOpenConversation, pref
  const catalog = useMemo(() => agentProjectCatalog(projects, state.agents), [projects, state.agents]);
  const viewport = useRef<HTMLDivElement>(null), search = useRef<HTMLInputElement>(null), latestScope = useRef(state.scope); latestScope.current = state.scope;
  const pushed = useRef(state.scope.text ?? undefined);
+ const searchToggle = useRef<HTMLButtonElement>(null);
  const visible = useMemo(() => {
   const ids = new Set<string>(); let frame = 0;
   return {set: (id: string, value: boolean) => {if (value) ids.add(id); else ids.delete(id); cancelAnimationFrame(frame); frame = requestAnimationFrame(() => controller.setVisible([...ids]));}, dispose: () => {cancelAnimationFrame(frame); controller.setVisible([]);}};
@@ -61,10 +62,18 @@ export function AgentsWorkspace({controller, composers, onOpenConversation, pref
  useLayoutEffect(() => {if (viewport.current) viewport.current.scrollTop = controller.view('$workspace').top;}, [controller]);
  return <Visibility.Provider value={visible.set}><section className="agents-workspace" aria-label="Agent workspace" data-density={preferences?.density ?? 'comfortable'}>
   <div className="agents-toolbar" role="toolbar" aria-label="Agent filters">
-   <Select aria-label="Project filter" value={state.scope.projectId === undefined ? '$all' : state.scope.projectId === null ? '$none' : state.scope.projectId} options={[{value: '$all', label: 'All projects'}, ...[...catalog].map(([value, label]) => ({value, label})), {value: '$none', label: 'No project'}]} onValueChange={value => {void controller.setScope({...state.scope, projectId: value === '$all' ? undefined : value === '$none' ? null : value});}}/>
-   <Select aria-label="Status filter" value={state.scope.statuses?.[0] ?? '$all'} options={[{value: '$all', label: 'All statuses'}, ...agentStatuses.map(value => ({value, label: statusLabel(value)}))]} onValueChange={value => {void controller.setScope({...state.scope, statuses: value === '$all' ? undefined : [value as AgentStatus]});}}/>
-   <button type="button" className="agents-icon" aria-label={searchOpen ? 'Close agent search' : 'Search agents'} aria-expanded={searchOpen} onClick={() => {setSearchOpen(!searchOpen); if (searchOpen) setText(''); else requestAnimationFrame(() => search.current?.focus());}}>{searchOpen ? <X size={16}/> : <Search size={16}/>}</button>
-   {searchOpen && <input ref={search} type="search" aria-label="Filter agents" placeholder="Find agent…" maxLength={200} value={text} onChange={event => setText(event.target.value)}/>}
+   <span className="agents-filter agents-filter-project" data-active={state.scope.projectId !== undefined}>
+    <Select aria-label="Project filter" value={state.scope.projectId === undefined ? '$all' : state.scope.projectId === null ? '$none' : state.scope.projectId} options={[{value: '$all', label: 'All projects'}, ...[...catalog].map(([value, label]) => ({value, label})), {value: '$none', label: 'No project'}]} onValueChange={value => {void controller.setScope({...state.scope, projectId: value === '$all' ? undefined : value === '$none' ? null : value});}}/>
+    {state.scope.projectId !== undefined && <button type="button" className="agents-filter-clear" aria-label="Clear project filter" onClick={() => {void controller.setScope({...state.scope, projectId: undefined}); searchToggle.current?.focus();}}><X size={12}/></button>}
+   </span>
+   <span className="agents-filter agents-filter-status" data-active={Boolean(state.scope.statuses?.length)}>
+    <Select aria-label="Status filter" value={state.scope.statuses?.[0] ?? '$all'} options={[{value: '$all', label: 'All statuses'}, ...agentStatuses.map(value => ({value, label: statusLabel(value)}))]} onValueChange={value => {void controller.setScope({...state.scope, statuses: value === '$all' ? undefined : [value as AgentStatus]});}}/>
+    {Boolean(state.scope.statuses?.length) && <button type="button" className="agents-filter-clear" aria-label="Clear status filter" onClick={() => {void controller.setScope({...state.scope, statuses: undefined}); searchToggle.current?.focus();}}><X size={12}/></button>}
+   </span>
+   <span className="agents-search" data-open={searchOpen}>
+    <button ref={searchToggle} type="button" className="agents-icon" aria-label={searchOpen ? 'Close agent search' : 'Search agents'} aria-expanded={searchOpen} onClick={() => {setSearchOpen(!searchOpen); if (searchOpen) setText(''); else requestAnimationFrame(() => search.current?.focus());}}>{searchOpen ? <X size={16}/> : <Search size={16}/>}</button>
+    <span className="agents-search-field"><input ref={search} inert={!searchOpen} aria-hidden={!searchOpen} type="search" aria-label="Filter agents" placeholder="Find agent…" maxLength={200} value={text} onChange={event => setText(event.target.value)} onKeyDown={event => {if (event.key === 'Escape' && !text && !isComposing(event)) {event.preventDefault(); setSearchOpen(false); searchToggle.current?.focus();}}}/></span>
+   </span>
    <span className="agents-connectivity" role="status" data-connected={state.connected} title={state.pending ? 'Connecting to the agent service' : state.connected ? 'Connected to the agent service' : 'Reconnecting to the agent service'}><span className="agents-connectivity-dot" aria-hidden="true"/>{state.pending ? '' : state.connected ? 'Live' : 'Reconnecting…'}</span>
   </div>
   {state.error && <ErrorState className="agents-error" message={state.error} retryLabel="Retry connection" onRetry={() => {void controller.start();}} />}
