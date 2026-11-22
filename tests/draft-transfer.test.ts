@@ -30,3 +30,20 @@ it('retains local skill drafts and edits arriving during import',async()=>{
  expect((await importDraftTransfer(backup([entry()]),snapshot))[0].status).toBe('retained');expect(journal.save).not.toHaveBeenCalled();
  journal.save.mockResolvedValueOnce(false);expect((await importDraftTransfer(backup([entry()]),snapshot))[0]).toMatchObject({status:'retained',reason:'A local edit arrived during import'});
 });
+
+it('exports and imports pasted-text drafts beside their conversation draft',async()=>{
+ const pastes=[{version:1,id:'11111111-1111-4111-8111-111111111111',createdAt:'2026-01-01T00:00:00.000Z',text:'long pasted body'}];
+ const rows=[entry('draft:thread-1','draft text'),entry('draft-pastes:thread-1',pastes)];journal.entries.mockResolvedValue(rows);
+ const snap={threads:[{id:'thread-1'}],userStates:[],requests:[],skills:[]} as unknown as Snapshot;
+ expect(JSON.parse(await exportDraftTransfer(snap)).entries.map((row:{key:string})=>row.key)).toEqual(['draft:thread-1','draft-pastes:thread-1']);
+ expect(await importDraftTransfer(backup(rows),snap)).toEqual([{key:'draft:thread-1',status:'imported'},{key:'draft-pastes:thread-1',status:'imported'}]);
+ expect(journal.save).toHaveBeenCalledWith('draft-pastes:thread-1',undefined,pastes);
+});
+it('blocks malformed pasted-text drafts on import and skips ones for unavailable conversations',async()=>{
+ const snap={threads:[],userStates:[],requests:[],skills:[]} as unknown as Snapshot;
+ expect((await importDraftTransfer(backup([entry('draft-pastes:gone',[{version:1,id:'x',createdAt:'',text:'t'}])]),snap))[0].status).toBe('blocked');
+ expect((await importDraftTransfer(backup([entry('draft-pastes:thread-1','not-an-array')]),snap))[0].status).toBe('blocked');
+ expect(JSON.parse(await exportDraftTransfer(snap)).entries).toEqual([]);
+ journal.entries.mockResolvedValue([entry('draft-pastes:gone',[{version:1,id:'11111111-1111-4111-8111-111111111111',createdAt:'2026-01-01T00:00:00.000Z',text:'t'}])]);
+ expect(JSON.parse(await exportDraftTransfer(snap)).entries).toEqual([]);
+});

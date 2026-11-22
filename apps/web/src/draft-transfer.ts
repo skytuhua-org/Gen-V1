@@ -2,6 +2,7 @@ import type {Snapshot} from '../../../packages/contracts';
 import type {DraftTransferReferences} from '../../../packages/contracts/shell-read-models';
 import {journalCompareAndSwap,journalCompareAndSwapMany,journalEntries,journalReadRecord,type JournalRecord} from './journal';
 import {hasPendingDocumentAssets} from './signature-assets';
+import {readPastedTexts} from './pasted-text';
 import {logicalOwnerV1Schema,type LogicalOwnerV1} from '../../../packages/contracts/source-selection';
 import {parseSourceDraftMetadata,sourceDraftKey} from './workbench-recovery';
 export const DRAFT_TRANSFER_LIMIT=2*1024*1024;
@@ -10,7 +11,7 @@ type ReferenceInput = (Omit<DraftTransferReferences, 'skills'> & {skills?: Draft
 export function snapshotDraftReferences(snapshot: Pick<Snapshot, 'threads' | 'skills' | 'userStates' | 'requests'>): DraftTransferReferences {
  return {threads: snapshot.threads.map(({id}) => ({id})), skills: (snapshot.skills ?? []).map(({name, revision}) => ({name, revision})), userStates: snapshot.userStates.map(({id, revision}) => ({id, revision})), requests: snapshot.requests.map(({id, revision, presentation, responseSchema}) => ({id, revision, presentation: Boolean(presentation), responseSchema}))};
 }
-const transferableKey = (key: string) => key.length <= 2048 && /^(draft|thinking|skill-draft|state|request|source-context):.+/.test(key);
+const transferableKey = (key: string) => key.length <= 2048 && /^(draft|draft-pastes|thinking|skill-draft|state|request|source-context):.+/.test(key);
 const sourceKey = (key: string) => key.startsWith('source-context:');
 function sourceOwner(key: string): LogicalOwnerV1 {
  const parts=key.slice('source-context:'.length).split(':').map(decodeURIComponent);
@@ -44,6 +45,7 @@ function referenceError(key:string,value:unknown,snapshot:DraftTransferReference
  }
  if(key.startsWith('skill-draft:')){const skill=snapshot.skills?.find(skill=>key===`skill-draft:${skill.name}`);if(!skill)return 'Skill is unavailable';if(!record(value)||typeof value.content!=='string'||typeof value.description!=='string'||value.description.length>1024||!Number.isSafeInteger(value.baseRevision)||Number(value.baseRevision)<1)return 'Invalid skill draft';return importing&&value.baseRevision!==skill.revision?'Skill revision changed; resolve this draft manually':undefined;}
  if(key.startsWith('draft:')||key.startsWith('thinking:')){const id=key.slice(key.indexOf(':')+1);if(id!=='new'&&!snapshot.threads.some(thread=>thread.id===id))return 'Conversation is unavailable';return typeof value==='string'&&value.length<=100000?undefined:'Invalid draft text';}
+ if(key.startsWith('draft-pastes:')){const id=key.slice('draft-pastes:'.length);if(id!=='new'&&!snapshot.threads.some(thread=>thread.id===id))return 'Conversation is unavailable';try{readPastedTexts(value);return undefined;}catch{return 'Invalid pasted text draft';}}
  if(key.startsWith('state:')){const state=snapshot.userStates.find(state=>state.id===key.slice(6));if(!state)return 'Artifact state is unavailable';if(!record(value)||!record(value.values)||!Number.isSafeInteger(value.baseRevision)||Number(value.baseRevision)<0)return 'Invalid artifact draft';return importing&&value.baseRevision!==state.revision?'Artifact revision changed; resolve this draft manually':undefined;}
  if(key.startsWith('request:')){const request=snapshot.requests.find(request=>key===`request:${request.id}:${request.presentation?'planning':request.revision}`);if(!request)return 'Decision is unavailable or changed';return record(value)&&value.schema===JSON.stringify(request.responseSchema)&&Object.hasOwn(value,'response')?undefined:'Decision schema changed';}
  return 'Not a transferable draft';
