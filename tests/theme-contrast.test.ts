@@ -165,6 +165,8 @@ const PAIRS: readonly Pair[] = [
   nonText('--muted', '--hover', 'the switch thumb and focus ring on a hovered row'),
   nonText('--pending', '--canvas', 'the pending dot beside a thread status'),
   nonText('--accent', '--selection-bg', 'the selected sidebar filter icon'),
+  nonText('--accent', '--surface', 'the checked settings switch track on its settings card'),
+  nonText('--canvas', '--accent', 'the switch thumb on the checked track'),
 ];
 
 /** A token the audit cannot turn into a colour is reported as unmeasured, not as a crash. */
