@@ -43,7 +43,7 @@ export function ComposerBranchChip({projectId,threadId,context,working=false,dis
  const [confirming,setConfirming]=useState<BranchEntry|null>(null),[creating,setCreating]=useState(false),[name,setName]=useState('');
  const [pending,setPending]=useState<BranchEntry|null>(null),[notice,setNotice]=useState(''),[failure,setFailure]=useState<{code:string;message:string}|null>(null),[switched,setSwitched]=useState('');
  const wasWorking=useRef(working);
- const git=context?.capabilities.git===true,locked=disabled||working||!list?.canSwitch;
+ const git=context?.capabilities.git===true,locked=disabled||working||Boolean(list&&!list.canSwitch);
  const dirty=(list?.dirty.tracked??0)+(list?.dirty.untracked??0)>0;
  const trimmed=query.trim().toLowerCase();
  const localEntries=(list?.local??[]).filter(entry=>matches(entry,trimmed)).toSorted((a,b)=>Number(b.current)-Number(a.current));

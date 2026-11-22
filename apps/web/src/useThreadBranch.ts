@@ -33,14 +33,17 @@ export function useThreadBranch(projectId?:string,threadId?:string){
  const act=useCallback(async(type:'switch-branch'|'create-branch',payload:Record<string,unknown>):Promise<BranchActionResult>=>{
   if(!projectId)return{state:'not-applied',code:'NO_PROJECT',message:'No project is selected.'};
   try{
-   const result=await authenticated(()=>fetch(`/api/projects/${encodeURIComponent(projectId)}/actions`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','x-harness-csrf':csrfToken},body:JSON.stringify({id:crypto.randomUUID(),type,payload,...(threadId?{threadId}:{})})})).then(read<WorkspaceActionExecution>);
-   if(result.state==='confirmed'&&threadId)announceWorkspaceChanged(projectId,threadId);
+   // A confirmed outcome returns the bare command receipt; non-2xx carries {state,error{code,message,details{state}}}.
+   await authenticated(()=>fetch(`/api/projects/${encodeURIComponent(projectId)}/actions`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','x-harness-csrf':csrfToken},body:JSON.stringify({id:crypto.randomUUID(),type,payload,...(threadId?{threadId}:{})})})).then(read);
+   if(threadId)announceWorkspaceChanged(projectId,threadId);
    if(activeLoad.current===load)await load();
-   return{state:result.state,...('error' in result&&result.error?{code:result.error.code,message:result.error.message}:{})};
+   return{state:'confirmed'};
   }catch(reason){
    const code=reason instanceof ApiError?reason.code:'HTTP_ERROR',message=reason instanceof Error?reason.message:'The branch action could not finish.';
+   const details=reason instanceof ApiError?reason.details as {state?:string}|undefined:undefined;
+   const state:WorkspaceActionExecution['state']=details?.state==='uncertain'||code==='ACTION_UNCERTAIN'?'uncertain':details?.state==='revoked'?'revoked':code==='HTTP_ERROR'||code==='NETWORK_ERROR'?'uncertain':'not-applied';
    if(activeLoad.current===load)await load();
-   return{state:code==='HTTP_ERROR'||code==='NETWORK_ERROR'?'uncertain':'not-applied',code,message};
+   return{state,code,message};
   }
  },[projectId,threadId,load]);
  return{list:state.list,loading:state.loading,error:state.error,reload:load,act};

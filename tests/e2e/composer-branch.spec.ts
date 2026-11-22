@@ -30,12 +30,33 @@ async function mount(page: Page, branches: ReturnType<typeof list> = list(), act
     if (actions) return actions(route, body, served);
     const name = body.payload?.branch ?? body.payload?.name;
     if (body.type === 'switch-branch' || body.type === 'create-branch') switchTo(String(name), String(body.payload?.source ?? 'local'));
-    route.fulfill({ json: { state: 'confirmed', receipt: { commandId: body.id ?? 'c', result: {} } } });
+    route.fulfill({ json: { commandId: body.id ?? 'c', result: {} } });
   });
   await page.route('**/composer-branch-fixture?*', route => route.fulfill({ contentType: 'text/html', body: `<html data-theme="dark"><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${path}');</script></body></html>` }));
   await page.goto('/composer-branch-fixture?mount=1');
 }
 const chip = (page: Page) => page.getByRole('combobox', { name: /^Branch:/ });
+
+
+test('chip stays clickable after a failed branch load and retries', async ({ page }) => {
+  const path = encodeURI('/@fs/' + resolve('tests/e2e/composer-branch-fixture.tsx').replaceAll('\\', '/'));
+  let failed = true;
+  await page.route('**/api/bootstrap*', route => route.fulfill({ json: { csrfToken: 'fixture-token' } }));
+  await page.route('**/api/projects/*/branches*', route => {
+    if (failed) return route.fulfill({ status: 500, json: { code: 'HTTP_ERROR', message: 'boom' } });
+    route.fulfill({ json: list() });
+  });
+  await page.route('**/composer-branch-fixture?*', route => route.fulfill({ contentType: 'text/html', body: `<html data-theme="dark"><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${path}');</script></body></html>` }));
+  await page.goto('/composer-branch-fixture?mount=1');
+  const trigger = chip(page);
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  const box = page.getByRole('dialog', { name: 'Branches' });
+  await expect(box.getByRole('button', { name: 'Check branch' })).toBeVisible();
+  failed = false;
+  await box.getByRole('button', { name: 'Check branch' }).click();
+  await expect(box.getByRole('listbox').getByRole('option')).toHaveCount(4);
+});
 
 test('chip lists current-first local and remote branches and switches cleanly', async ({ page }) => {
   await mount(page);
@@ -75,7 +96,7 @@ test('dirty working copy requires Bring changes before switching', async ({ page
       for (const e of served.local) e.current = e.name === short;
       served.dirty = { tracked: 0, untracked: 0 };
     }
-    route.fulfill({ json: { state: 'confirmed', receipt: { commandId: 'c', result: {} } } });
+    route.fulfill({ json: { commandId: 'c', result: {} } });
   });
   const trigger = chip(page);
   await trigger.click();
@@ -98,7 +119,7 @@ test('remote pick tracks the remote branch', async ({ page }) => {
       for (const e of served.local) e.current = e.name === short;
       served.dirty = { tracked: 0, untracked: 0 };
     }
-    route.fulfill({ json: { state: 'confirmed', receipt: { commandId: 'c', result: {} } } });
+    route.fulfill({ json: { commandId: 'c', result: {} } });
   });
   await chip(page).click();
   await page.getByRole('option', { name: /origin\/upstream-only/ }).click();
@@ -127,7 +148,7 @@ test('create-branch row expands, validates names, and posts create-branch', asyn
       for (const e of served.local) e.current = e.name === short;
       served.dirty = { tracked: 0, untracked: 0 };
     }
-    route.fulfill({ json: { state: 'confirmed', receipt: { commandId: 'c', result: {} } } });
+    route.fulfill({ json: { commandId: 'c', result: {} } });
   });
   const trigger = chip(page);
   await trigger.click();

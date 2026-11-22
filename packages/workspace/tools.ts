@@ -257,6 +257,8 @@ export class ProjectTools{
      if(inUse!==undefined&&!(await this.sameWorktree(inUse,path)))throw new HarnessError('BRANCH_IN_USE',`${target} is open in another thread. Switch that thread first.`);
      if(current.branch===target)return;
      if(dirty&&!input.bringChanges&&input.type==='switch-branch')throw new HarnessError('DIRTY_TREE',`You have ${current.files.length} uncommitted ${current.files.length===1?'change':'changes'}.`);
+     // Runs admit independently of the git lock; recheck immediately before mutating.
+     if(threadId&&this.store.get<Thread>('thread',threadId)?.runId)throw new HarnessError('RUN_ACTIVE','Wait for the active run to finish, then switch.');
      try{await git(args);}catch(error){
       const stderr=error instanceof HarnessError&&error.code==='GIT_ERROR'?String((error.details as {stderr?:string}|undefined)?.stderr??''):'';
       if(/would be overwritten|Please commit your changes|Please stash/.test(stderr))throw new HarnessError('BRANCH_CONFLICT',`Your changes conflict with ${target}. Commit or stash them first, then switch.`);
@@ -266,6 +268,7 @@ export class ProjectTools{
     };
     if(input.type==='create-branch'){
      if(await this.refExists(git,'refs/heads/'+name))throw new HarnessError('BRANCH_EXISTS',`A branch named ${name} already exists.`);
+     if(threadId&&this.store.get<Thread>('thread',threadId)?.runId)throw new HarnessError('RUN_ACTIVE','Wait for the active run to finish, then switch.');
      try{await git(['switch','-c',name]);}catch(error){
       const stderr=error instanceof HarnessError&&error.code==='GIT_ERROR'?String((error.details as {stderr?:string}|undefined)?.stderr??''):'';
       if(/already exists/.test(stderr))throw new HarnessError('BRANCH_EXISTS',`A branch named ${name} already exists.`);
@@ -277,7 +280,8 @@ export class ProjectTools{
      const short=name.slice(name.indexOf('/')+1);
      if(!short||short==='HEAD'||this.branchNameProblem(short))throw new HarnessError('INVALID_BRANCH_NAME',`Git doesn't allow this name: ${JSON.stringify(name)} has no valid local branch part.`);
      if(await this.refExists(git,'refs/heads/'+short))await run(short,['switch','--no-guess',short]);
-     else await run(short,['switch','--track',name]);
+     // --track writes branch.<name>.* into the pinned common config; --no-track -c gives the same local branch without a config write.
+     else await run(short,['switch','--no-track','-c',short,name]);
     }
     else await run(name,['switch','--no-guess',name]);
    }
