@@ -20,9 +20,10 @@
 .software-detail { min-width:0; padding:16px 0 0; margin-top:14px; border-top:1px solid var(--border); }
 .software-investigation { display:flex; flex-direction:column; gap:12px; }
 .software-investigation .software-detail { padding-top:0; margin-top:0; border-top:0; }
-.software-check-inventory { display:grid; gap:0; margin-top:0; padding-top:0; border-top:0; }
-.software-check-inventory button { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:9px; min-height:38px; padding:6px 8px; border-color:transparent; border-radius:5px; }
-.software-check-inventory .software-item-meta { padding-left:0; align-items:center; }
+.software-check-inventory { display:grid; gap:0; margin-top:0; padding-top:0; border-top:0; min-width:220px; }
+.software-check-inventory button { display:grid; grid-template-columns:minmax(0,1fr); gap:3px; min-height:38px; padding:6px 8px; border-color:transparent; border-radius:5px; }
+.software-check-inventory .software-item-copy>span { display:block; font-size:13px; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.software-check-inventory .software-item-meta { padding-left:22px; align-items:center; font-size:11px; }
 @media(pointer:coarse) { .software-check-inventory button { min-height:44px; } }
 @container software (min-width:640px) { .software-investigation { display:grid; grid-template-columns:clamp(220px,calc(100% - 416px),240px) minmax(0,1fr); gap:16px; align-items:start; } }
 .software-file-review .software-list { gap:6px; padding-bottom:3px; }
