@@ -61,7 +61,7 @@ function Fixture(){
   <WorkspaceControls envelope={envelope} send={send} prepare={prepare} panels={active.panels} title={()=>'Granted files'} addPanel={unsupported} updatePanel={updatePanel} workspaceMode="retained-canvas"/>
   <div style={{display:'grid',gridTemplateColumns:'minmax(600px,1fr) 420px',flex:1,minHeight:0}}>
    <WorkspaceCanvas canvas={active} panels={active.panels} projects={[]} disabledKinds={[]} title={()=>'Granted files'} updatePanel={updatePanel} updateViewport={async viewport=>{const next=structuredClone(latest.current);next.state.canvases[0].viewport=viewport;publish(next);}} setFilter={unsupported} renderBody={()=><p>Granted file contents</p>}/>
-   <ProjectContextCard threadTitle="Fixture project" plan={<PlanStatus snapshot={snapshot} threadId="fixture-task"/>} planOpen={planOpen} onTogglePlan={()=>setPlanOpen(value=>!value)} context={fixtureContext} threadId="fixture-task" onAction={async(type,payload)=>record('project.'+type,payload)} loadSuggestions={loadFixtureSuggestions}/>
+   <ProjectContextCard threadTitle="Fixture project" plan={<PlanStatus snapshot={snapshot} threadId="fixture-task"/>} planOpen={planOpen} onTogglePlan={()=>setPlanOpen(value=>!value)} context={fixtureContext} threadId="fixture-task" onAction={async(type,payload)=>{record('project.'+type,payload);}} loadSuggestions={loadFixtureSuggestions}/>
   </div>
  </main></DesktopProvider>;
 }
