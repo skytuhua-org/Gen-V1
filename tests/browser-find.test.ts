@@ -5,7 +5,7 @@ import {DESKTOP_BROWSER_FIND_QUERY_LIMIT,type DesktopBrowserFindState} from '../
 
 const harness=()=>{
  const calls:{text:string;findNext:boolean;forward:boolean}[]=[],stops:string[]=[];
- let nextId=0,throwOn=false,live=true;
+ let nextId=-1,throwOn=false,live=true;
  const states:DesktopBrowserFindState[]=[];
  const native:BrowserFindNative={
   findInPage(text,options){if(throwOn)throw Error('synthetic find failure');calls.push({text,...options});return ++nextId;},
@@ -67,14 +67,21 @@ describe('browser find controller',()=>{
   expect(calls).toEqual([]);expect(stops).toEqual(['clearSelection']);
   expect(last().matches).toBe(0);expect(last().ordinal).toBe(0);expect(last().searching).toBe(false);
  });
+ it('applies results for Electron request id zero, the first real request id',()=>{
+  const{find,last,request}=harness();
+  find.query('needle');
+  expect(request()).toBe(0);
+  find.found(0,{matches:4,activeMatchOrdinal:1,finalUpdate:true});
+  expect(last().matches).toBe(4);expect(last().ordinal).toBe(1);expect(last().searching).toBe(false);
+ });
  it('drops stale results after a newer query or a reset',()=>{
-  const{find,last}=harness();
-  find.query('one');const first=1;find.query('two');
+  const{find,last,request}=harness();
+  find.query('one');const first=request();find.query('two');
   find.found(first,{matches:9,activeMatchOrdinal:9,finalUpdate:true});
   expect(last().searching).toBe(true);
-  find.found(2,{matches:1,activeMatchOrdinal:1,finalUpdate:true});
+  find.found(request(),{matches:1,activeMatchOrdinal:1,finalUpdate:true});
   expect(last().matches).toBe(1);
-  find.reset();find.found(2,{matches:4,activeMatchOrdinal:2,finalUpdate:true});
+  find.reset();find.found(request(),{matches:4,activeMatchOrdinal:2,finalUpdate:true});
   expect(last().matches).toBe(0);expect(last().open).toBe(false);
  });
  it('clears selection and keeps the query on close, fully clearing on reset',()=>{

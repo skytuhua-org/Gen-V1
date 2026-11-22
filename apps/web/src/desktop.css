@@ -13,7 +13,7 @@
 .desktop-navigation-only .brand-row {gap:5px;}
 .desktop-thread-only .desktop-sidebar-toggle,.desktop-thread-only .mobile-menu {display:none;}
 .desktop-agent-window {display:flex;justify-content:flex-end;margin-top:4px;}
-.desktop-browser-surface {height:100vh;background:var(--canvas);color:var(--text);}
+.desktop-browser-surface {height:100vh;display:flex;flex-direction:column;background:var(--canvas);color:var(--text);}
 .desktop-browser-toolbar {height:96px;flex:0 0 96px;background:var(--surface);color:var(--text);overflow:hidden;}
 .desktop-browser-toolbar>header {height:44px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;}
 .desktop-browser-toolbar>header strong {font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}

@@ -24,7 +24,7 @@ const closed:DesktopBrowserFindState={open:false,openRequest:0,query:'',ordinal:
  * caller resets the controller on document/owner epoch changes so stale
  * results can never reapply to a different page or custody. */
 export function createBrowserFind(native:BrowserFindNative,alive:()=>boolean,emit:(state:DesktopBrowserFindState)=>void):BrowserFindController {
- let state:DesktopBrowserFindState={...closed},revision=0,requestId=0,highlighted=false;
+ let state:DesktopBrowserFindState={...closed},revision=0,requestId=-1,highlighted=false;
  const apply=(next:Partial<DesktopBrowserFindState>)=>{state={...state,...next};emit(state);};
  const stop=(action:'clearSelection'|'keepSelection')=>{if(!highlighted)return;highlighted=false;if(alive())try{native.stopFindInPage(action);}catch{}};
  const search=(forward:boolean,findNext:boolean)=>{
@@ -33,10 +33,10 @@ export function createBrowserFind(native:BrowserFindNative,alive:()=>boolean,emi
   apply({searching:true,error:undefined,open:true});
   try{
    requestId=native.findInPage(state.query,{findNext,forward});
-   if(fence!==revision)requestId=0;
+   if(fence!==revision)requestId=-1;
   }catch(cause){
    if(fence!==revision)return;
-   requestId=0;
+   requestId=-1;
    apply({searching:false,error:cause instanceof Error?cause.message.slice(0,300):'Find failed'});
   }
  };
@@ -47,20 +47,20 @@ export function createBrowserFind(native:BrowserFindNative,alive:()=>boolean,emi
    if(!alive())return;
    const query=String(text);
    if(query===state.query&&state.open&&!state.error)return;
-   if(!query){revision++;requestId=0;stop('clearSelection');apply({query:'',ordinal:0,matches:0,searching:false,error:undefined,open:true});return;}
+   if(!query){revision++;requestId=-1;stop('clearSelection');apply({query:'',ordinal:0,matches:0,searching:false,error:undefined,open:true});return;}
    apply({query,open:true});
    search(true,false);
   },
   next(){if(state.open&&state.query&&!state.error)search(true,true);},
   previous(){if(state.open&&state.query&&!state.error)search(false,true);},
-  close(){if(!state.open)return;revision++;requestId=0;stop('clearSelection');apply({open:false,ordinal:0,matches:0,searching:false,error:undefined});},
+  close(){if(!state.open)return;revision++;requestId=-1;stop('clearSelection');apply({open:false,ordinal:0,matches:0,searching:false,error:undefined});},
   found(id,result){
-   if(!alive()||id!==requestId||requestId===0)return;
+   if(!alive()||id!==requestId||requestId<0)return;
    highlighted=highlighted||result.matches>0;
    apply({ordinal:result.activeMatchOrdinal,matches:result.matches,searching:!result.finalUpdate});
   },
   reset(){
-   revision++;requestId=0;
+   revision++;requestId=-1;
    if(alive())try{if(highlighted){highlighted=false;native.stopFindInPage('clearSelection');}}catch{}
    if(state.open||state.query||state.ordinal||state.matches||state.searching||state.error){state={...closed,openRequest:state.openRequest};emit(state);}
   },
