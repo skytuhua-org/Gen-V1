@@ -54,8 +54,8 @@ function trimReport(report:CiFailureReport){
   const largest=report.jobs.reduce<CiFailedJob|undefined>((best,job)=>job.excerpt&&(!best||Buffer.byteLength(job.excerpt,'utf8')>Buffer.byteLength(best.excerpt,'utf8'))?job:best,undefined);
   if(!largest)return;
   const lines=largest.excerpt.split('\n');
-  if(lines.length<=1){largest.excerpt='';largest.excerptLines=0;largest.truncated=true;continue;}
-  lines.shift();largest.excerpt=lines.join('\n');largest.excerptLines=lines.length;largest.truncated=true;
+  if(lines.length<=1){largest.excerpt='';largest.excerptLines=0;largest.errorLines=[];largest.truncated=true;continue;}
+  lines.shift();largest.excerpt=lines.join('\n');largest.excerptLines=lines.length;largest.errorLines=largest.errorLines.flatMap(index=>index>0?[index-1]:[]);largest.truncated=true;
  }
 }
 /** Bundled GitHub CLI with a private sign-in profile and exact reviewed revisions. */
@@ -170,7 +170,7 @@ export class GitHubTools{
    const parsed=z.object({detailsUrl:z.string().max(2048).optional(),conclusion:z.string().nullable().optional(),state:z.string().optional(),status:z.string().optional()}).safeParse(entry.row);
    const data=parsed.success?parsed.data:{},conclusion=(data.conclusion??data.state??data.status)??'';
    const match=checkJobUrl.exec(data.detailsUrl??''),actions=match&&match[1].toLowerCase()===repo.toLowerCase()?match:null;
-   const job:CiFailedJob={id:actions?actions[3]:`ext:${position}`,checkName:entry.check.name,workflowName:null,failedStep:null,conclusion,url:actions?actions[0]:'',logState:'not-actions',excerpt:'',excerptLines:0,truncated:false};
+   const job:CiFailedJob={id:actions?actions[3]:`ext:${position}`,checkName:entry.check.name,workflowName:null,failedStep:null,conclusion,url:actions?actions[0]:'',logState:'not-actions',excerpt:'',excerptLines:0,errorLines:[],truncated:false};
    if(!actions){jobs.push(job);continue;}
    attempts+=1;
    try{
@@ -183,8 +183,8 @@ export class GitHubTools{
     else{job.logState='unavailable';if(!/\b(404|410)\b/.test(fetched.error)&&!isBlobMissing(fetched.error))systemic+=1;}
     jobs.push(job);continue;
    }
-   const{excerpt,lines,truncated}=extractFailureExcerpt(redactor.redact(fetched.stdout).text);
-   Object.assign(job,{logState:'ready' as const,excerpt,excerptLines:lines,truncated});jobs.push(job);
+   const{excerpt,lines,truncated,errorIndexes}=extractFailureExcerpt(redactor.redact(fetched.stdout).text);
+   Object.assign(job,{logState:'ready' as const,excerpt,excerptLines:lines,errorLines:errorIndexes,truncated});jobs.push(job);
   }
   if(systemic>0&&systemic===attempts)throw new HarnessError('CI_LOGS_UNAVAILABLE','None of the failed job logs could be fetched from GitHub.');
   const report:CiFailureReport={id:'',repo,number:selected,headOid,localHead:head,observedAt:new Date().toISOString(),jobs,omittedJobs:Math.max(0,failed.length-jobs.length)};

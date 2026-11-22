@@ -89,7 +89,7 @@ describe('extractFailureExcerpt (#1326 T03, R04)', () => {
   });
 
   it('returns an empty excerpt for an empty log', () => {
-    expect(extractFailureExcerpt('')).toEqual({ excerpt: '', lines: 0, truncated: false });
+    expect(extractFailureExcerpt('')).toEqual({ excerpt: '', lines: 0, truncated: false, errorIndexes: [] });
   });
 });
 

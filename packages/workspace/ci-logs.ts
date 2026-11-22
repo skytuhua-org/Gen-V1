@@ -4,6 +4,8 @@ export interface FailureExcerpt {
   excerpt: string;
   lines: number;
   truncated: boolean;
+  /** Indexes of `##[error]` lines within `excerpt` (for the UI's <mark>). */
+  errorIndexes: number[];
 }
 
 interface CleanLine {
@@ -30,7 +32,7 @@ export function isBlobMissing(raw: string): boolean {
  * after it; a log without an error line yields its last `excerptLines` lines.
  * The result never exceeds `excerptBytes` — earlier lines are dropped first. */
 export function extractFailureExcerpt(raw: string): FailureExcerpt {
-  if (!raw.length) return { excerpt: '', lines: 0, truncated: false };
+  if (!raw.length) return { excerpt: '', lines: 0, truncated: false, errorIndexes: [] };
   const cleaned: CleanLine[] = [];
   const rawLines = raw.split(/\r?\n/);
   if (rawLines[rawLines.length - 1] === '') rawLines.pop(); // trailing newline is not a log line
@@ -59,5 +61,6 @@ export function extractFailureExcerpt(raw: string): FailureExcerpt {
   const joined = () => picked.map(index => cleaned[index].text).join('\n');
   while (picked.length > 1 && Buffer.byteLength(joined(), 'utf8') > CI_FAILURE_LIMITS.excerptBytes) picked = picked.slice(1);
   const omitted = cleaned.length - picked.length;
-  return { excerpt: joined(), lines: picked.length, truncated: omitted > 0 };
+  const errorIndexes = picked.flatMap((index, position) => cleaned[index].error ? [position] : []);
+  return { excerpt: joined(), lines: picked.length, truncated: omitted > 0, errorIndexes };
 }

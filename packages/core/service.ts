@@ -1528,7 +1528,7 @@ export class Service {
       const report = await this.options.ciFailureReport(thread.projectId, thread.id, ciFailure.reportId);
       const selected = new Set(ciFailure.jobIds), jobs = report.jobs.filter((job) => job.logState === 'ready' && selected.has(job.id));
       if (jobs.length !== selected.size) throw new HarnessError('INVALID_INPUT', 'Every selected job must have a ready log excerpt. Refresh the pull request failures.');
-      ciStored = { repo: report.repo, number: report.number, headOid: report.headOid, localHead: report.localHead, jobs: jobs.map((job) => ({ id: job.id, checkName: job.checkName, workflowName: job.workflowName, failedStep: job.failedStep, conclusion: job.conclusion, url: job.url, excerpt: job.excerpt, truncated: job.truncated })) };
+      ciStored = { repo: report.repo, number: report.number, headOid: report.headOid, localHead: report.localHead, jobs: jobs.map((job) => ({ id: job.id, checkName: job.checkName, workflowName: job.workflowName, failedStep: job.failedStep, conclusion: job.conclusion, url: job.url, excerpt: job.excerpt, errorLines: job.errorLines, truncated: job.truncated })) };
       if (Buffer.byteLength(JSON.stringify(ciStored), 'utf8') > CI_FAILURE_LIMITS.reportBytes) throw new HarnessError('CI_REPORT_EXPIRED', 'The CI failure report no longer fits a stored reference. Refresh the pull request failures.');
     }
     const receipt = this.store.command(command, () => {

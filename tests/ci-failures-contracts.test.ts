@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { capabilityEnabled, configureHostCapabilityFlags, type CapabilityFlagKey } from '../packages/core/capability-flags.ts';
 import { CI_FAILURE_LIMITS, CiFailureReportV1, CiFailureSendV1 } from '../packages/contracts/ci-failures.ts';
 
-const job = { id: '98765432101', checkName: 'test', workflowName: 'CI', failedStep: 'pnpm test', conclusion: 'failure', url: 'https://github.com/acme/repo/actions/runs/1/job/98765432101', logState: 'ready', excerpt: 'FAIL tests/x.test.ts', excerptLines: 1, truncated: false };
+const job = { id: '98765432101', checkName: 'test', workflowName: 'CI', failedStep: 'pnpm test', conclusion: 'failure', url: 'https://github.com/acme/repo/actions/runs/1/job/98765432101', logState: 'ready', excerpt: 'FAIL tests/x.test.ts', excerptLines: 1, errorLines: [0], truncated: false };
 const report = { id: 'f'.repeat(64), repo: 'acme/repo', number: 42, headOid: 'a'.repeat(40), localHead: 'b'.repeat(40), observedAt: '2026-11-21T00:00:00.000Z', jobs: [job], omittedJobs: 0 };
 
 it('defaults workspace.ciFixV1 to false and rejects unknown flags at configure time', () => {
