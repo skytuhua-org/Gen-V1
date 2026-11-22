@@ -20,6 +20,9 @@ import type {TerminalExcerptComposer} from './TerminalBody';
 import {TerminalBody} from './TerminalBody.tsx';
 export {TerminalBody} from './TerminalBody.tsx';
 import './workspace-tools.css';
+import {Check,Copy,Download,Loader2} from 'lucide-react';
+import {toast} from '../../../packages/ui-shell/Toast';
+import {requestPatch,decodePatch,patchFilename,savePatchBytes,skippedSummary} from './patch-export.ts';
 import {ProjectFiles} from './files/ProjectFiles';
 import {panelLabels} from './WorkspaceControls';
 
@@ -39,9 +42,43 @@ function FilesBody({base,query,active,fallback}:{base:string;query:URLSearchPara
 function DiffBody({base,query,active,fallback}:{base:string;query:URLSearchParams;active:boolean;fallback:ReactNode}){
  const{value,error,errorCode,load,setError}=useProjectRequest<GitStatus>(base+'/git?'+query,active),[staged,setStaged]=useState(false),[pending,setPending]=useState(false);
  const apply=async(type:string,path:string)=>{if(!value||value.gitWrite!==true||pending)return;setPending(true);try{await post(base+'/actions',{id:crypto.randomUUID(),type,payload:{paths:[path],revision:value.revision,expectedHead:value.head},...(query.get('threadId')?{threadId:query.get('threadId')}:{})});await load();}catch(error){setError(message(error));}finally{setPending(false);}};
+ const[patchBusy,setPatchBusy]=useState<string|null>(null),[copied,setCopied]=useState<string|null>(null);
+ const patchRef=useRef<{controller:AbortController;timer:ReturnType<typeof setTimeout>|null}|null>(null),copiedTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
+ useEffect(()=>()=>{patchRef.current?.controller.abort();if(patchRef.current?.timer)clearTimeout(patchRef.current.timer);if(copiedTimer.current)clearTimeout(copiedTimer.current);},[]);
+ // A different view or revision voids in-flight exports.
+ useEffect(()=>{patchRef.current?.controller.abort();patchRef.current=null;setPatchBusy(null);},[staged,value?.revision]);
  if(errorCode==='PROJECT_NOT_CONNECTED')return fallback;
  const legacy=(value as (GitStatus&{mode?:string})|null)?.mode==='legacy';
- return <div className="live-review"><div className="panel-toolbar"><strong>Changes</strong><span>{value?.branch}</span><button onClick={()=>void load()}>Refresh</button><label><input type="checkbox" checked={staged} onChange={event=>setStaged(event.target.checked)}/>Staged</label></div>{error&&<p role="status" className="error-text">{error}</p>}{legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}{value&&<><small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length} changed files</small><ul className="live-change-list">{value.files.map(file=><li key={file.path}><span>{file.oldPath?file.oldPath+' → ':''}{file.path}</span><small>{file.binary?'Binary':file.untracked?'Untracked':`${file.index}${file.worktree} +${file.added??'?'} −${file.removed??'?'}`}</small><button disabled={pending||value.gitWrite!==true} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button></li>)}</ul><pre className="live-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{(staged?value.stagedDiff:value.diff)||'No tracked changes in this view.'}</pre></>}</div>;
+ const inScope=(file:GitStatus['files'][number])=>staged?file.staged:file.worktree!==' '||file.untracked;
+ const scopeFiles=value?.files.filter(inScope)??[];
+ const emptyReason=!value?'Loading changes…':scopeFiles.length===0?'No changes in this view.':null;
+ const runPatch=async(purpose:'copy'|'save',path?:string)=>{
+  if(!value||patchBusy)return;
+  const key=purpose+':'+(path??''),controller=new AbortController(),entry={controller,timer:null as ReturnType<typeof setTimeout>|null};
+  patchRef.current=entry;
+  // Delay the busy affordance so quick exports don't flicker.
+  entry.timer=setTimeout(()=>setPatchBusy(key),150);
+  try{
+   const patch=await requestPatch(base,{scope:staged?'staged':'worktree',purpose,revision:value.revision,path,threadId:query.get('threadId')??undefined},controller.signal);
+   const bytes=await decodePatch(patch),summary=skippedSummary(patch.skipped);
+   if(controller.signal.aborted)return;
+   if(purpose==='copy'){
+    if(!patch.bytes){toast('No changes in this view.',{tone:'error'});return;}
+    await navigator.clipboard.writeText(new TextDecoder().decode(bytes));
+    setCopied(key);if(copiedTimer.current)clearTimeout(copiedTimer.current);copiedTimer.current=setTimeout(()=>setCopied(null),1600);
+    toast((path?'File patch copied to the clipboard.':'Patch copied to the clipboard.')+(summary?' '+summary:''));
+   }else{
+    const name=patchFilename(undefined,value.branch,value.head,patch.scope,path);
+    if(await savePatchBytes(name,patch,bytes)==='saved')toast('Patch saved as '+name+(summary?' '+summary:''));
+   }
+  }catch(cause){
+   if(controller.signal.aborted)return;
+   if(cause instanceof ApiError&&cause.code==='STALE_REVISION'){toast('The changes list is stale. Refreshed — copy again.',{tone:'error'});void load();return;}
+   toast(message(cause),{tone:'error'});
+  }finally{if(patchRef.current===entry){patchRef.current=null;setPatchBusy(null);}if(entry.timer)clearTimeout(entry.timer);}
+ };
+ const patchIcon=(key:string)=>(copied===key?<Check size={14} aria-hidden="true" className="live-patch-copied"/>:patchBusy===key?<Loader2 size={14} aria-hidden="true" className="live-patch-spin"/>:null);
+ return <div className="live-review"><div className="panel-toolbar"><strong>Changes</strong><span>{value?.branch}</span><span className="live-patch-actions"><button type="button" disabled={!!emptyReason||patchBusy!==null} title={emptyReason??'Copy the whole view as a patch'} onClick={()=>void runPatch('copy')}>{patchIcon('copy:')??<Copy size={14} aria-hidden="true"/>}<span className="patch-label">Copy patch</span></button><button type="button" disabled={!!emptyReason||patchBusy!==null} title={emptyReason??'Save the whole view as a .patch file'} onClick={()=>void runPatch('save')}>{patchIcon('save:')??<Download size={14} aria-hidden="true"/>}<span className="patch-label">Save .patch…</span></button></span><button onClick={()=>void load()}>Refresh</button><label><input type="checkbox" checked={staged} onChange={event=>setStaged(event.target.checked)}/>Staged</label></div>{error&&<p role="status" className="error-text">{error}</p>}{legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}{value&&<><small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length} changed files</small><ul className="live-change-list">{value.files.map(file=>{const usable=inScope(file),rowReason=usable?undefined:'No changes in this view.';return <li key={file.path}><span>{file.oldPath?file.oldPath+' → ':''}{file.path}</span><small>{file.binary?'Binary':file.untracked?'Untracked':`${file.index}${file.worktree} +${file.added??'?'} −${file.removed??'?'}`}</small><span className="live-row-patch"><button type="button" className="icon-button" aria-label={'Copy patch for '+file.path} title={rowReason??'Copy patch'} disabled={!usable||patchBusy!==null} onClick={()=>void runPatch('copy',file.path)}>{copied==='copy:'+file.path?<Check size={13} aria-hidden="true" className="live-patch-copied"/>:patchBusy==='copy:'+file.path?<Loader2 size={13} aria-hidden="true" className="live-patch-spin"/>:<Copy size={13} aria-hidden="true"/>}</button><button type="button" className="icon-button" aria-label={'Save patch for '+file.path} title={rowReason??'Save patch'} disabled={!usable||patchBusy!==null} onClick={()=>void runPatch('save',file.path)}>{patchBusy==='save:'+file.path?<Loader2 size={13} aria-hidden="true" className="live-patch-spin"/>:<Download size={13} aria-hidden="true"/>}</button></span><button disabled={pending||value.gitWrite!==true} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button></li>;})}</ul><pre className="live-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{(staged?value.stagedDiff:value.diff)||'No tracked changes in this view.'}</pre></>}</div>;
 }
 function ChangesBody({base,query,active,recorded,preferences}:{base:string;query:URLSearchParams;active:boolean;recorded:ReactNode;preferences:UiPreferences}){
  // Enable History only with a host adapter and the context's exact workingCopy.id.
