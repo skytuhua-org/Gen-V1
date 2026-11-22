@@ -96,6 +96,22 @@ test('Escape hides the quick-ask window through the bridge',async({page})=>{
  await expect.poll(()=>page.evaluate(()=>(window as any).__desktopCalls)).toContainEqual(['quickAskHide']);
 });
 
+test('a fresh open push during the close fade cancels the hide and the panel resizes the window',async({page})=>{
+ await quickAskBridge(page);await serveTaskFixture(page,fixture());
+ await page.goto('/');
+ const input=page.getByRole('textbox',{name:'Ask Gen V1',exact:true});
+ await openQuickAsk(page);
+ await expect(input).toBeVisible({timeout:15000});
+ // Measured panel height is pushed to the desktop host so the window fits the content.
+ await expect.poll(()=>page.evaluate(()=>(window as any).__desktopCalls.filter((call:any)=>call[0]==='quickAskResize'&&call[1]>0).length)).toBeGreaterThan(0);
+ await input.press('Escape');
+ // Reopening inside the 140ms exit fade clears the pending hide; the panel stays up.
+ await openQuickAsk(page);
+ await expect(input).toBeVisible();
+ await page.waitForTimeout(400);
+ await expect.poll(()=>page.evaluate(()=>(window as any).__desktopCalls)).not.toContainEqual(['quickAskHide']);
+});
+
 /** Main-window bridge so Settings renders as the desktop build; registration state is pushed through __quickAskRegistration. */
 async function mainBridge(page:Page,registration='ready'){
  await page.addInitScript(state=>{
