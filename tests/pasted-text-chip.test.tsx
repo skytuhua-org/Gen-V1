@@ -23,7 +23,7 @@ function Fixture(){
   <ComposerAttachments resources={[]} pastes={pastes}
    onEditPaste={async(id,text)=>{window.__edits.push([id,text]);setPastes(list=>list.map(p=>p.id===id?{...p,text}:p));}}
    onRemovePaste={async(id)=>{window.__removes.push(id);setPastes(list=>list.filter(p=>p.id!==id));}}
-   onInsertPaste={(text)=>{window.__inserts.push(text);setInserted(text);}}/>
+   onInsertPaste={(_id,text)=>{window.__inserts.push(text);setInserted(text);}}/>
   <output data-testid="inserted">{inserted}</output>
  </>;
 }
