@@ -161,10 +161,10 @@ export async function verifyInstalledMemoryUI(page: Page, seed: InstalledMemoryS
       await row(seed.items.accept.id).getByRole('button', {name: 'Accept ' + seed.items.accept.id, exact: true}).click();
       await expect(row(seed.items.accept.id)).toHaveCount(0);
       await row(seed.items.reject.id).getByRole('button', {name: 'Reject ' + seed.items.reject.id, exact: true}).click();
-      await expect(row(seed.items.reject.id)).toHaveCount(0);
+      await expect(row(seed.items.reject.id)).toContainText('Rejected · revision 2');
       await panel.getByRole('tab', {name: 'Accepted', exact: true}).click();
       await expect(row(seed.items.accept.id)).toContainText('Accepted · revision 2');
-      await expect(row(seed.items.reject.id)).toContainText('Expired · revision 2');
+      await expect(row(seed.items.reject.id)).toHaveCount(0);
       await row(seed.items.edit.id).scrollIntoViewIfNeeded();
       observations.push({iteration, step: 'review-edit-accept-reject', editedRevision: 3, acceptedRevision: 2, rejectedState: 'EXPIRED', screenshot: await screenshot(page, directory, 'installed-memory-reviewed.png')});
       await row(seed.items.reject.id).scrollIntoViewIfNeeded();
