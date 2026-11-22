@@ -28,6 +28,15 @@ it('makes project memory reachable from an owning main project context without m
   expect(fetch).not.toHaveBeenCalled();
 });
 
+it.each([undefined, 'project-a'])('shows overview inside the project picker only for a selected project: %s', async selectedProjectId => {
+  const {ProjectPicker} = await import('../apps/web/src/ProjectPicker');
+  const markup = renderToStaticMarkup(createElement(ProjectPicker, {open:true, authority:{kind:'local'}, projects:[], selectedProjectId, colors:{}, overview:createElement('p', null, 'Existing project content'), onClose:()=>{}, onSelect:()=>{}, onAddProject:()=>{}, onColorChange:()=>{}}));
+  expect(markup.includes('aria-label="Project overview"')).toBe(Boolean(selectedProjectId));
+  expect(markup.includes('Existing project content')).toBe(Boolean(selectedProjectId));
+  expect(markup).toContain('aria-label="Search projects"');
+  expect(markup).toContain('aria-label="Projects"');
+});
+
 it.each(['projectId', 'threadId', 'accountId'] as const)('rejects a view returned for a different %s', async field => {
   responses({...view(), scope: {...scope, [field]: 'foreign'}});
   await expect((await api()).getProjectMemory(owner)).rejects.toMatchObject({code: 'INVALID_RESPONSE'});

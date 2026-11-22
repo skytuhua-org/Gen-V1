@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo, useSyncExternalStore, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
-import { Activity, ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleHelp, CircleStop, Folder, LayoutDashboard, Laptop, LoaderCircle, Menu, MessageSquare, PanelLeftOpen, PanelRight, PenLine, Plus, SlidersHorizontal, WifiOff, X } from 'lucide-react';
+import { Activity, ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleHelp, CircleStop, Folder, Laptop, LoaderCircle, Menu, MessageSquare, PanelLeftOpen, PanelRight, PenLine, Plus, SlidersHorizontal, WifiOff, X } from 'lucide-react';
 import type { InputRequest, ModelInfo, Operation, Snapshot, Thread,Message } from '../../../packages/contracts';
 import { ApiError, bootstrap, command, getModels, getSnapshot, getThreadMessages, getToolEffectObservation, searchThreadMessages, subscribe, type ToolEffectObservation } from './api';
 import {onAccountCatalogChanged,notifyAccountCatalogChanged,mergeAccountModels} from './account-api';
@@ -40,7 +40,6 @@ import {UsageFooter} from './UsageFooter';
 import {UsageDialog} from './UsageDialog';
 import {runtimeUsageReport} from './usage-presentation';
 import {SummaryDock,SummaryLayout} from '../../../packages/ui-shell/SummaryDock';
-import {Popover} from '../../../packages/ui-shell/Popover';
 import {workspacePanelBounds} from './panel-geometry';
 import {createPlanVisibility,selectPlanRecord} from './plan-visibility';
 import {ComposerToolbar,ComposerTaskActions} from './ComposerToolbar';
@@ -482,13 +481,13 @@ function CanvasThread({sharedComposers,thread,snapshot,visible,blocked,refresh,s
 function stopConversation(thread: Thread, composers?: SharedAgentComposers) {
  return composers ? composers.stop({kind: 'conversation', threadId: thread.id, modelId: thread.modelId ?? null, working: Boolean(thread.runId) || thread.status === 'working'}) : command('run.stop', {}, thread.id);
 }
-export interface AppProps {onDirtyWidgetChange?:(id:string,threadId:string,dirty:boolean,discard?:()=>Promise<void>)=>void;onComposerChangesAvailability?:ComposerChangesAvailability;sharedComposers?:SharedAgentComposers;embeddedThreadId?:string;embeddedActive?:boolean;onRequestThread?:(id:string)=>void;liveUsage?:{open:boolean;toggle:()=>void};modelPickerRequest?:{id:number;threadId?:string};hostWorkspaceContext?:WorkspaceContextValue;onRequestWorkspaceTool?:(kind:WorkspaceContextValue['activeTab'],resourceId?:string,artifactId?:string)=>void}
+export interface AppProps {onDirtyWidgetChange?:(id:string,threadId:string,dirty:boolean,discard?:()=>Promise<void>)=>void;onComposerChangesAvailability?:ComposerChangesAvailability;sharedComposers?:SharedAgentComposers;embeddedThreadId?:string;embeddedActive?:boolean;onRequestThread?:(id:string)=>void;liveUsage?:{open:boolean;toggle:()=>void};modelPickerRequest?:{id:number;threadId?:string};hostWorkspaceContext?:WorkspaceContextValue;projectOverviewHost?:{planVisible:boolean;openTool:(kind:'plan'|'diff')=>void};onRequestWorkspaceTool?:(kind:WorkspaceContextValue['activeTab'],resourceId?:string,artifactId?:string)=>void}
 export function App(props:AppProps={}) {
   const desktop=useDesktop();
   if(props.embeddedThreadId||desktop?.context.surface.kind==='thread'||desktop?.context.surface.kind==='navigation')return <ConversationWorkspace {...props}/>;
   return <WorkspaceHost conversation={host=><ConversationWorkspace {...props} host={host}/>}/>;
 }
-function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,embeddedThreadId,embeddedActive=true,onRequestThread,liveUsage,modelPickerRequest:externalModelPicker,hostWorkspaceContext,onRequestWorkspaceTool,onDirtyWidgetChange,host}:AppProps&{host?:ConversationHost}={}) {
+function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,embeddedThreadId,embeddedActive=true,onRequestThread,liveUsage,modelPickerRequest:externalModelPicker,hostWorkspaceContext,onRequestWorkspaceTool,projectOverviewHost,onDirtyWidgetChange,host}:AppProps&{host?:ConversationHost}={}) {
   const ownPluginCatalog=usePluginCatalog(!host&&!embeddedThreadId),pluginCatalog=host?.pluginCatalog??ownPluginCatalog,plugins=pluginCatalog.plugins,[selectedPluginId,setSelectedPluginId]=useState<string|null>(null),[openedPlugins,setOpenedPlugins]=useState<string[]>([]);
   useEffect(()=>{if(pluginCatalog.error)toast(pluginCatalog.error,{tone:'error'});},[pluginCatalog.error]);
   const [selectedPluginWorkspace,setSelectedPluginWorkspace]=useState<string|null>(null),[openedPluginWorkspaces,setOpenedPluginWorkspaces]=useState<{pluginId:string;workspaceId:string}[]>([]);
@@ -1101,7 +1100,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     const panel:PanelPlacement={...view,canvasId:activeCanvas?.id??'workspace-default',placement:'canvas',visible:true,collapsed:false,bounds:{x:0,y:0,width:480,height:380},order:0,alwaysOnTop:false};return canvasBodyGuarded(panel,active);
   };
   const renderConversationView=(view:SurfaceRef,active:boolean)=>view.kind==='thread'
-    ?<div className="split-thread-owner" onFocusCapture={()=>focusSplitOwner(view)}>{view.binding.threadId?<App onDirtyWidgetChange={onDirtyWidget} onComposerChangesAvailability={reportComposerChanges} sharedComposers={host?.composers??sharedComposers} embeddedThreadId={view.binding.threadId} embeddedActive={active} modelPickerRequest={modelPickerRequest} hostWorkspaceContext={workspaceContext} onRequestWorkspaceTool={(kind,resourceId,artifactId)=>revealWorkspaceTool(kind,resourceId,artifactId,view.binding)} onRequestThread={select} liveUsage={{open:liveUsageOpen,toggle:()=>{focusSplitOwner(view);setLiveUsageOpen(value=>!value);}}}/>:<p>The owning conversation is unavailable.</p>}</div>
+    ?<div className="split-thread-owner" onFocusCapture={()=>focusSplitOwner(view)}>{view.binding.threadId?<App projectOverviewHost={{planVisible:Boolean(view.binding.threadId&&convSplitState.layout&&planVisible(convSplitState.layout,view.binding.threadId)),openTool:kind=>{void openSplitTool(kind,undefined,true,view.binding.threadId,false,view.binding).catch(cause=>setError(messageOf(cause)));}}} onDirtyWidgetChange={onDirtyWidget} onComposerChangesAvailability={reportComposerChanges} sharedComposers={host?.composers??sharedComposers} embeddedThreadId={view.binding.threadId} embeddedActive={active} modelPickerRequest={modelPickerRequest} hostWorkspaceContext={workspaceContext} onRequestWorkspaceTool={(kind,resourceId,artifactId)=>revealWorkspaceTool(kind,resourceId,artifactId,view.binding)} onRequestThread={select} liveUsage={{open:liveUsageOpen,toggle:()=>{focusSplitOwner(view);setLiveUsageOpen(value=>!value);}}}/>:<p>The owning conversation is unavailable.</p>}</div>
     :<SurfaceBoundary resetKey={view.id}>{renderSplitView(view,active)}</SurfaceBoundary>;
   const splitRoot=splitEnabled&&Boolean(thread||convSplitState.layout&&Object.keys(convSplitState.layout.views).length);
   const rightPanelToggle=!embeddedThreadId?<button type="button" className={`icon-button workspace-panel-toggle ${layout.rightPanelOpen ? 'selected' : ''}`} aria-label={layout.rightPanelOpen ? 'Hide workspace panel' : 'Open workspace panel'} aria-pressed={layout.rightPanelOpen} title={layout.rightPanelOpen ? 'Close right panel' : 'Open right panel'} onClick={() => setLayout(value => value.rightPanelOpen ? { ...value, rightPanelOpen: false, rightPanelMaximized: false } : { ...value, rightPanelOpen: true })}><PanelRight size={17} /></button>:null;
@@ -1116,11 +1115,17 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     return[owner];
   });
   const sharedUsageOwner=usageCandidates.find(owner=>owner.id===selectedId)??usageCandidates.find(owner=>owner.id===thread?.id);
-  const fullPlanVisible=Boolean(thread&&convSplitState.layout&&planVisible(convSplitState.layout,thread.id));
-  const [overviewOpen,setOverviewOpen]=useState(false),overviewAnchor=useRef<HTMLButtonElement>(null),overviewContent=useRef<HTMLDivElement>(null);
-  useEffect(()=>{setOverviewOpen(false);},[candidateThread?.id]);
-  const projectOverview=<SurfaceBoundary resetKey={candidateThread?.id??'new'}><ProjectContextSurface composerChangesAvailable={composerChangesAvailable} key={candidateThread?.id??'new'} thread={candidateThread} snapshot={snapshot} planOpen={planOpen} fullPlanVisible={fullPlanVisible||Boolean(detachedPlan)} onOpenDetailedPlan={()=>{setOverviewOpen(false);if(splitEnabled)void openSplitTool('plan',undefined,true,candidateThread?.id).catch(cause=>setError(messageOf(cause)));else revealWorkspaceTool('plan');}} onTogglePlan={()=>{if(planOpen)dismissPlan();else{planVisibility.show(candidateThread);setPlanFocusOnOpen(false);setPlanOpen(true);}}} onSelectThread={select} onShowChanges={()=>{setOverviewOpen(false);if(splitEnabled)void openSplitTool('diff',undefined,true,candidateThread?.id).catch(cause=>setError(messageOf(cause)));else revealWorkspaceTool('diff');}} onConnect={()=>{setOverviewOpen(false);openProjectConnect({threadId:candidateThread?.id,projectId:candidateThread?.projectId});}}/></SurfaceBoundary>;
-  const panelToggle=!embeddedThreadId?<><button ref={overviewAnchor} type="button" className="icon-button project-overview-trigger" aria-label="Project overview" title="Project overview" aria-haspopup="dialog" aria-expanded={overviewOpen} onClick={()=>setOverviewOpen(value=>!value)}><LayoutDashboard size={17}/></button>{rightPanelToggle}<Popover anchor={overviewAnchor} contentRef={overviewContent} initialFocus={overviewContent} open={overviewOpen} present width={420} height={520} preferredSide="below" align="end" role="dialog" aria-label="Project overview" className="project-overview-popover" tabIndex={-1} onDismiss={()=>setOverviewOpen(false)}>{projectOverview}</Popover></>:null;
+  const overviewThread=snapshot.threads.find(value=>value.id===projectPicker?.threadId);
+  const fullPlanVisible=projectOverviewHost?.planVisible??Boolean(overviewThread&&convSplitState.layout&&planVisible(convSplitState.layout,overviewThread.id));
+  const openOverviewTool=(kind:'plan'|'diff')=>{
+    if(!overviewThread)return;
+    setProjectPicker(null);
+    if(projectOverviewHost){projectOverviewHost.openTool(kind);return;}
+    const binding:PanelBinding={authority:{kind:'local'},threadId:overviewThread.id,projectId:overviewThread.projectId};
+    if(canvasActive)void addCanvasPanel(kind,binding).catch(cause=>setError(messageOf(cause)));else if(splitEnabled)void openSplitTool(kind,undefined,true,overviewThread.id,false,binding).catch(cause=>setError(messageOf(cause)));else revealWorkspaceTool(kind,undefined,undefined,binding);
+  };
+  const projectOverview=overviewThread?.projectId?<SurfaceBoundary resetKey={overviewThread?.id??'new'}><ProjectContextSurface composerChangesAvailable={composerChangesAvailable} key={overviewThread?.id??'new'} thread={overviewThread} snapshot={snapshot} planOpen={planOpen} fullPlanVisible={fullPlanVisible||Boolean(overviewThread.id===thread?.id&&detachedPlan)} onOpenDetailedPlan={()=>openOverviewTool('plan')} onTogglePlan={()=>{if(planOpen)dismissPlan();else{planVisibility.show(overviewThread);setPlanFocusOnOpen(false);setPlanOpen(true);}}} onSelectThread={id=>{setProjectPicker(null);select(id);}} onShowChanges={()=>openOverviewTool('diff')} onConnect={()=>{projectConnectPicker.current=projectPicker;setProjectPicker(null);openProjectConnect({threadId:overviewThread?.id,projectId:overviewThread?.projectId});}}/></SurfaceBoundary>:undefined;
+  const panelToggle=rightPanelToggle;
   const contextSummaries=<SummaryDock><UsageFooter open={liveUsageOpen} threadId={sharedUsageOwner?.id} usage={sharedUsageOwner?snapshot.usage[sharedUsageOwner.id]:undefined} visible={Boolean(sharedUsageOwner)&&preferences.showUsageFooter&&!rightWindowOpen} onOpenUsage={openUsage}/></SummaryDock>;
   const [retryingMainLayout,setRetryingMainLayout]=useState(false);
   const retryMainLayout=()=>{
@@ -1201,7 +1206,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     {archiveThread && <Dialog title="Uncheckpointed widget edits" close={() => setArchiveThread(null)}><p>Checkpoint your widget edits before archiving this thread, or explicitly discard them.</p>{error&&<p role="status" className="error-text">{error}</p>}<footer className="dialog-actions"><button className="secondary" onClick={() => { select(archiveThread); setArchiveThread(null); }}>Return to checkpoint</button><button className="quiet" onClick={() => void archive(archiveThread, true)}>Discard edits and archive</button></footer></Dialog>}
     {resourcePicker && <ResourcePicker key={resourcePicker.session} threadId={resourcePicker.threadId} opener={resourcePicker.opener}
       close={() => setResourcePicker(current => current === resourcePicker ? null : current)} refresh={refresh} />}
-    {projectPicker&&<ProjectPicker open authority={{kind:'local'}} projects={workspaceEnvelope?.projects??[]} selectedProjectId={snapshot.threads.find(value=>value.id===projectPicker.threadId)?.projectId}
+    {projectPicker&&<ProjectPicker open authority={{kind:'local'}} projects={workspaceEnvelope?.projects??[]} selectedProjectId={snapshot.threads.find(value=>value.id===projectPicker.threadId)?.projectId} overview={projectOverview}
       recentProjectIds={[...new Set([...snapshot.threads].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).flatMap(value=>value.projectId?[value.projectId]:[]))]}
       colors={preferences.projectColors} busy={projectPicking} error={projectPickerError} onClose={closeProjectSelection} onSelect={pickProject} onColorChange={saveProjectColor}
       onAddProject={()=>{projectConnectPicker.current=projectPicker;setProjectPicker(null);openProjectConnect({});}}/>}

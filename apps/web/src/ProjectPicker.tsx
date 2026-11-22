@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, Folder, FolderPlus, Palette, Search } from 'lucide-react';
 import type { ProjectSummary, WorkspaceAuthority } from '../../../packages/contracts/workspace';
 import { projectColorSchema } from '../../../packages/contracts/preferences';
@@ -14,6 +14,7 @@ export interface ProjectPickerProps {
   authority: WorkspaceAuthority;
   projects: readonly ProjectSummary[];
   selectedProjectId?: string;
+  overview?: ReactNode;
   recentProjectIds?: readonly string[];
   colors: Record<string, string>;
   busy?: boolean;
@@ -29,7 +30,7 @@ export function ProjectPicker(props: ProjectPickerProps) {
   return props.open ? <ProjectPickerDialog {...props} /> : null;
 }
 
-function ProjectPickerDialog({ authority, projects, selectedProjectId, recentProjectIds = [], colors, busy = false, error,
+function ProjectPickerDialog({ authority, projects, selectedProjectId, overview, recentProjectIds = [], colors, busy = false, error,
   onClose, onSelect, onAddProject, onColorChange }: ProjectPickerProps) {
   const id = useId(), search = useRef<HTMLInputElement>(null), list = useRef<HTMLDivElement>(null);
   const colorAnchor = useRef<HTMLButtonElement>(null), colorInput = useRef<HTMLInputElement>(null);
@@ -77,7 +78,8 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
     void run(async () => { await onColorChange(editing, value); setColorKey(null); colorAnchor.current?.focus(); }, true);
   };
 
-  return <Modal open title="Select project" className="project-picker" onClose={() => { if (!busy && !pending.current) onClose(); }}>
+  return <Modal open title="Select project" className={`project-picker${selectedProjectId && overview ? ' project-picker-with-overview' : ''}`} onClose={() => { if (!busy && !pending.current) onClose(); }}>
+    {selectedProjectId && overview && <section className="project-picker-overview" aria-label="Project overview"><h3>Project overview</h3>{overview}</section>}
     <div className="project-picker-search"><Search size={16} aria-hidden="true" /><input ref={search} type="text" role="combobox" aria-label="Search projects"
       aria-autocomplete="list" aria-expanded="true" aria-controls={`${id}-list`} aria-activedescendant={choices.length ? optionId(activeIndex) : undefined}
       placeholder="Search projects" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => {

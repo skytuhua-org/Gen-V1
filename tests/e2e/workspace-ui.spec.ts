@@ -64,27 +64,49 @@ async function fixture(page:Page,panels:PanelPlacement[],beforeCommand?:(type:st
  return {...host,envelope};
 }
 
-test('Project overview is anchored in the workspace header',async({page})=>{
- await fixture(page,[],undefined,'workspace');
- const trigger=page.getByRole('button',{name:'Project overview',exact:true}),dialog=page.getByRole('dialog',{name:'Project overview',exact:true});
+test('Project overview is inside the composer project picker',async({page})=>{
+ await fixture(page,[],undefined,'workspace','selected-project');
+ const trigger=page.getByRole('button',{name:'Select project',exact:true}),dialog=page.getByRole('dialog',{name:'Select project',exact:true});
  await expect(page.locator('.summary-overview')).toHaveCount(0);await expect(dialog).toBeHidden();
- await trigger.click();await expect(dialog).toBeVisible();await expect(dialog).toBeFocused();
- const anchor=(await trigger.boundingBox())!,popup=(await dialog.boundingBox())!;
- expect(popup.y).toBeGreaterThanOrEqual(anchor.y+anchor.height);expect(popup.x+popup.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+ await expect(page.getByRole('button',{name:'Project overview',exact:true})).toHaveCount(0);
+ await trigger.press('Enter');await expect(dialog).toBeVisible();await expect(dialog.getByRole('combobox',{name:'Search projects'})).toBeFocused();
+ const overview=dialog.getByRole('region',{name:'Project overview',exact:true});await expect(overview).toBeVisible();
+ expect((await overview.boundingBox())!.y).toBeLessThan((await dialog.getByRole('listbox',{name:'Projects',exact:true}).boundingBox())!.y);
  await page.keyboard.press('Escape');await expect(dialog).toBeHidden();await expect(trigger).toBeFocused();
- await trigger.click();await page.getByRole('textbox',{name:'Message',exact:true}).click();await expect(dialog).toBeHidden();
+ await trigger.click();await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(dialog).toBeHidden();await expect(trigger).toBeFocused();
 });
-test('overview remains usable without a project',async({page})=>{
+test('picker remains unchanged without a project',async({page})=>{
  await fixture(page,[],undefined,'workspace');
- await page.getByRole('button',{name:'Project overview',exact:true}).click();
- await expect(page.getByRole('dialog',{name:'Project overview',exact:true}).getByRole('button',{name:'Connect project',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Select project',exact:true}).click();
+ const picker=page.getByRole('dialog',{name:'Select project',exact:true});
+ await expect(picker.getByRole('region',{name:'Project overview',exact:true})).toHaveCount(0);
+ await expect(picker.getByRole('option',{name:'No project',exact:true})).toBeVisible();await expect(picker.getByRole('button',{name:'Add project',exact:true})).toBeEnabled();
 });
 test('overview exposes context read errors for its bound project',async({page})=>{
  await fixture(page,[],undefined,'workspace','unreachable-project');
  await page.route('**/api/projects/*/context*',route=>route.fulfill({status:500,json:{error:{code:'INTERNAL',message:'Synthetic context read failed'}}}));
  await page.reload();
- await page.getByRole('button',{name:'Project overview',exact:true}).click();
- await expect(page.getByRole('dialog',{name:'Project overview',exact:true})).toContainText('Synthetic context read failed');
+ await page.getByRole('button',{name:'Select project',exact:true}).click();
+ await expect(page.getByRole('region',{name:'Project overview',exact:true})).toContainText('Synthetic context read failed');
+ await expect(page.getByRole('combobox',{name:'Search projects'})).toBeFocused();await expect(page.getByRole('option',{name:'No project',exact:true})).toBeEnabled();
+ await page.getByRole('region',{name:'Project overview',exact:true}).getByRole('button',{name:'Connect project',exact:true}).click();
+ await page.getByRole('dialog',{name:'Connect project',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'Select project',exact:true})).toBeVisible();await expect(page.getByRole('combobox',{name:'Search projects'})).toBeFocused();
+ await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Select project',exact:true})).toBeFocused();
+});
+
+test('picker context follows the composer owner rather than the selected main thread',async({page})=>{
+ const host=await fixture(page,[panel('main-panel','task-thread',24),panel('side-panel','side',528)],undefined,'custom','shared-project');
+ delete host.snapshot.threads.find(value=>value.id==='side')!.sideParentId;
+ host.snapshot.data.push({...host.snapshot.data[0],id:planDataId('side'),threadId:'side',value:{version:1,title:'Other owner plan',steps:[],agents:[]}});await page.reload();
+ let requested='';await page.route('**/api/projects/*/context*',async route=>{requested=new URL(route.request().url()).searchParams.get('threadId')??'';await route.fulfill({json:{project:{id:'shared-project',name:'Shared project',rootPath:'C:/fixture',authority:{kind:'local'}},threadId:requested,machineName:'Context for '+requested,editor:{available:false,label:'Editor'},branch:'side-branch',head:null,revision:'one',changes:{added:0,removed:0,files:0},lineage:[],scripts:[],capabilities:{git:true,terminal:false,pullRequests:false}}});});
+ await page.locator('[data-panel-id="side-panel"]').getByRole('button',{name:'Select project',exact:true}).click();
+ const overview=page.getByRole('region',{name:'Project overview',exact:true});await expect(overview.getByRole('button',{name:'side-branch',exact:true})).toBeEnabled();expect(requested).toBe('side');
+ await overview.getByText('Project tools',{exact:true}).click();await expect(overview).toContainText('Context for side');
+ await page.keyboard.press('Escape');await expect(page.locator('[data-panel-id="side-panel"]').getByRole('button',{name:'Select project',exact:true})).toBeFocused();
+ await page.locator('[data-panel-id="side-panel"]').getByRole('button',{name:'Select project',exact:true}).click();
+ await overview.getByRole('button',{name:'Open full plan',exact:true}).click();await expect(page.getByRole('dialog',{name:'Select project',exact:true})).toBeHidden();
+ await expect.poll(()=>host.envelope.state.canvases[0].panels.filter(value=>value.kind==='plan').map(value=>value.binding.threadId)).toEqual(['side']);
 });
 
 test('primary Workspace keeps tools fixed and preserves its anchored draft through close reopen and reload',async({page})=>{

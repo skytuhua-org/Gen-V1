@@ -8,6 +8,12 @@
 }
 html[data-native-titlebar="true"] .ui-modal.project-picker { height: min(520px, calc(100dvh - 58px)); }
 .project-picker .ui-modal-header { flex: 0 0 auto; margin-bottom: 0; }
+.ui-modal.project-picker-with-overview { height: min(620px, calc(100dvh - 16px)); }
+html[data-native-titlebar="true"] .ui-modal.project-picker-with-overview { height: min(620px, calc(100dvh - 58px)); }
+.project-picker-overview { flex: 0 1 auto; min-height: 0; max-height: min(280px, 35dvh); overflow: auto; overscroll-behavior: contain; border-bottom: 1px solid var(--border); }
+.project-picker-overview > h3 { margin: 0 0 8px; color: var(--muted); font-size: 12px; font-weight: 550; }
+.project-picker-overview .project-context-card { border: 0; background: transparent; }
+.project-picker-overview .project-context-section { padding: 0 0 8px; }
 .project-picker-search { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .project-picker-search input { width: 100%; min-width: 0; min-height: 32px; padding: 6px 8px; font: inherit; }
 .project-picker-list { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 32px; gap: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }

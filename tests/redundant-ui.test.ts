@@ -48,11 +48,13 @@ describe('proven duplicate removals',()=>{
   expect(usageHtml).not.toContain('aria-label="Thread memory"');
   expect(usageHtml).not.toContain('Note decision');
  });
- it('opts the production main and split summary owners into the retained composer Changes route',()=>{
+ it('opts each composer picker overview owner into the retained composer Changes route',()=>{
   const app=readFileSync(new URL('../apps/web/src/App.tsx',import.meta.url),'utf8');
-  const summaries=app.split('<ProjectContextSurface').slice(1).filter(value=>/key=\{(thread|candidateThread)\?\.id\?\?'new'\}/.test(value));
-  expect(summaries).toHaveLength(2);
+  const summaries=app.split('<ProjectContextSurface').slice(1).filter(value=>/key=\{(thread|overviewThread)\?\.id\?\?'new'\}/.test(value));
+  expect(summaries).toHaveLength(1);
   for(const summary of summaries)expect(summary.split('/>')[0]).toContain('composerChangesAvailable={composerChangesAvailable}');
+  expect(app).toContain('const overviewThread=snapshot.threads.find(value=>value.id===projectPicker?.threadId)');
+  expect(app).toContain('overview={projectOverview}');
   expect(app).toContain('ready&&!busy');
   expect(app).toContain('available&&embeddedActive&&!threadHeld');
  });
