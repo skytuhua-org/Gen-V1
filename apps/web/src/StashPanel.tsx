@@ -17,9 +17,9 @@ type StashAction = 'stash-apply' | 'stash-pop' | 'stash-drop';
 
 /** Stash list + actions for the Changes panel; shares refs/stash across the
  * project's thread worktrees, so entries may have been made in another thread. */
-export function StashPanel({ base, query, active, status, runActive, reload, trigger, open, setOpen }: {
+export function StashPanel({ base, query, active, status, runActive, reload, refreshSignal, trigger, open, setOpen }: {
   base: string; query: URLSearchParams; active: boolean; status: GitStatus | null; runActive: boolean;
-  reload: () => Promise<void>; trigger: RefObject<HTMLButtonElement | null>; open: boolean; setOpen: (open: boolean) => void;
+  reload: () => Promise<void>; refreshSignal: number; trigger: RefObject<HTMLButtonElement | null>; open: boolean; setOpen: (open: boolean) => void;
 }) {
   const [stashes, setStashes] = useState<StashList | null>(null), [error, setError] = useState(''), generation = useRef(0);
   const [expanded, setExpanded] = useState<boolean | null>(null), [shown, setShown] = useState<string | null>(null), [showAll, setShowAll] = useState<string | null>(null);
@@ -33,9 +33,9 @@ export function StashPanel({ base, query, active, status, runActive, reload, tri
     try { const next = await get<StashList>(base + '/git/stashes?' + query); if (captured === generation.current) setStashes(next); }
     catch (cause) { if (captured === generation.current) setError(message(cause)); }
   };
-  // Deps on [active, query string]: without them setStashes re-renders re-run the
-  // effect forever, looping Git commands through the shared project queue.
-  useEffect(() => { if (active) void loadStashes(); return () => { generation.current++; }; }, [active, base, threadId]);
+  // refreshSignal ticks when the toolbar Refresh button reloads Git status, so
+  // the list refetches alongside it rather than looping on every render.
+  useEffect(() => { if (active) void loadStashes(); return () => { generation.current++; }; }, [active, base, threadId, refreshSignal]);
   useEffect(() => { if (expanded === null && stashes) setExpanded(stashes.entries.length > 0); }, [expanded, stashes]);
   // Two-step confirm disarms on a timer and whenever the list it guards changes.
   useEffect(() => { setArm(''); }, [stashes?.stashRevision]);
