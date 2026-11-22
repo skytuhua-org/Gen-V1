@@ -4,7 +4,7 @@ import {lstat,mkdir,readFile,realpath,open,rm} from 'node:fs/promises';
 import {dirname,join,relative,resolve} from 'node:path';
 import {z} from 'zod';
 import {Store} from '../storage/store.ts';
-import {HarnessError,type HostCommand,type ResourceGrant,type Thread} from '../contracts/index.ts';
+import {HarnessError,isRunActive,type HostCommand,type ResourceGrant,type Thread} from '../contracts/index.ts';
 import type {ProjectContext,ProjectSummary} from '../contracts/workspace.ts';
 import {threadNavigationRevision} from '../contracts/shell-read-models.ts';
 import {WorkspaceRepository} from '../core/workspace-layout.ts';
@@ -14,12 +14,21 @@ import {readBoundFile,withPathGuard} from '../core/file-access.ts';
 import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead} from '../contracts/code-review.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
+import {moveToRecycleBin} from './recycle-bin.ts';
 
 interface Identity{dev:string;ino:string}
 export interface WorkspaceBinding {id:string;threadId:string;projectId:string;familyId?:string;path:string;branch:string;gitDirectory:string;commonDirectory:string;identity:Identity;gitDirectoryIdentity:Identity;commonDirectoryIdentity:Identity}
 export interface GitFile{path:string;oldPath?:string;index:string;worktree:string;staged:boolean;untracked:boolean;binary:boolean;added:number|null;removed:number|null}
 export interface GitStatus{head:string;branch:string;revision:string;files:GitFile[];diff:string;stagedDiff:string;truncated:boolean;mode?:'managed'|'legacy';gitWrite?:boolean;untrackedIncluded?:boolean}
-export interface ProjectToolOptions{git?:string;gh?:string}
+export interface DiscardHookInput{projectId:string;threadId:string|undefined;paths:string[];worktree:string;operationId:string}
+export interface ProjectToolOptions{
+ git?:string;
+ gh?:string;
+ // Snapshots the discarded paths before the write; a failure aborts the discard.
+ beforeDiscard?:(input:DiscardHookInput)=>Promise<void>;
+ // Overrides the Recycle Bin host operation; defaults to PowerShell on Windows.
+ trash?:(absolutePath:string,signal:AbortSignal)=>Promise<void>;
+}
 const id=z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/),label=z.string().trim().min(1).max(100),hash=(data:string|Buffer)=>createHash('sha256').update(data).digest('hex');
 const identity=async(path:string):Promise<Identity>=>{const info=await lstat(path,{bigint:true});if(info.isSymbolicLink()||!info.isDirectory())throw new HarnessError('CAPABILITY_DENIED','Project directories must be ordinary directories.');return{dev:String(info.dev),ino:String(info.ino)};};
 const equal=(a:Identity,b:Identity)=>a.dev===b.dev&&a.ino===b.ino;
@@ -179,15 +188,40 @@ export class ProjectTools{
    return readLocalComparisonFile({git:args=>nativeGit(this.gitExecutable(),metadata,path,args,signal),path,signal,managed,owner},entry.value,request.path);
   }));
  }
- async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string}){
+ async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string;operationId?:string}){
   return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
    const current=await this.status(metadata,path,signal,managed);if(input.revision!==current.revision)throw new HarnessError('REVISION_CHANGED','The worktree changed. Refresh the review before applying this action.');const paths=z.array(pathName).min(1).max(1000).optional().parse(input.paths),git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
    if(input.type==='stage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to stage.');await git(['add','--',...paths]);}
    else if(input.type==='unstage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to unstage.');await git(['restore','--staged','--',...paths]);}
    else if(input.type==='commit')await git(['-c','commit.gpgsign=false','commit','-m',z.string().trim().min(1).max(4000).parse(input.message)]);
    else if(input.type==='branch'){const branch=z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]{0,150}$/).refine(value=>!value.endsWith('/')&&!value.includes('//')).parse(input.name);await git(['switch','-c',branch]);}
+   else if(input.type==='discard')await this.discardFile(projectId,threadId,paths,current,input.operationId,signal,path,git);
    else throw new HarnessError('INVALID_INPUT','Unknown Git action.');return this.status(metadata,path,signal,managed);
   }));
+ }
+ private async discardFile(projectId:string,threadId:string|undefined,paths:string[]|undefined,current:GitStatus,operationId:string|undefined,signal:AbortSignal,worktree:string,git:(args:string[])=>Promise<string>):Promise<void>{
+  if(!paths||paths.length!==1)throw new HarnessError('INVALID_INPUT','Choose one file to discard.');
+  const file=current.files.find(item=>item.path===paths[0]);
+  if(!file)throw new HarnessError('REVISION_CHANGED','That file has no changes. Refresh the review.');
+  // A run admitted to this working copy can be writing these files right now.
+  const thread=threadId?this.store.get<Thread>('thread',threadId):undefined;
+  if(isRunActive(thread))throw new HarnessError('RUN_ACTIVE','Stop the run before discarding files.');
+  if(file.index==='U'||file.worktree==='U'||file.index+file.worktree==='AA'||file.index+file.worktree==='DD')throw new HarnessError('CONFLICTED_PATH','Resolve the conflict in this file first.');
+  // Git links (submodule entries) are never restorable one-file writes.
+  const entries=[...(await git(['ls-files','-s','--',file.path])).split('\n'),...(await git(['ls-tree','HEAD','--',file.path])).split('\n')];
+  if(entries.some(line=>line.startsWith('160000')))throw new HarnessError('UNSUPPORTED_PATH','Submodule entries cannot be discarded one file at a time.');
+  const target=join(worktree,...file.path.split('/'));
+  if(this.options.beforeDiscard)await this.options.beforeDiscard({projectId,threadId,paths:file.oldPath?[file.path,file.oldPath]:[file.path],worktree,operationId:operationId??'discard'});
+  const trash=this.options.trash??moveToRecycleBin;
+  if(file.untracked)await withPathGuard([{path:target,leaf:true}],signal,async()=>trash(target,signal));
+  else{
+   if(file.oldPath)await git(['restore','--source=HEAD','--staged','--worktree','--',file.oldPath]);
+   if(file.index==='A'||file.oldPath){
+    await git(['rm','--cached','--quiet','--',file.path]);
+    if(await lstat(target).then(()=>true,()=>false))await withPathGuard([{path:target,leaf:true}],signal,async()=>trash(target,signal));
+   }
+   else await git(['restore','--source=HEAD','--staged','--worktree','--',file.path]);
+  }
  }
  async context(projectId:string,threadId?:string):Promise<ProjectContext>{
   const admitted=await this.binding(projectId,threadId),project=admitted.project,captured=threadId?this.store.get<Thread>('thread',threadId):undefined,threadRevision=captured?threadNavigationRevision(captured):undefined;

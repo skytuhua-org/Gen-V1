@@ -15,6 +15,7 @@ import '../../apps/web/src/styles.css';
 const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Fixture'}}}});
 snapshot.artifacts=[];
 if(new URLSearchParams(location.search).has('project'))snapshot.threads.find(thread=>thread.id==='task-thread')!.projectId='project-one';
+if(new URLSearchParams(location.search).has('run-active')){const thread=snapshot.threads.find(thread=>thread.id==='task-thread')!;thread.status='working';thread.runId='run-1';}
 const w=window as unknown as {__saved?:string[];__refuseSave?:boolean;__opened?:string[]};
 function WebEditor({name}:{name:string}){
  const [draft,setDraft]=useState('');

@@ -91,6 +91,13 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
   catch{return{available:false,restore:capabilityEnabled('workspace.restoreV1')};}
  });
  const checkpoints=new CheckpointService(service.store);
+ // Discards snapshot the file under workspace.checkpointsV1 so the edit can be
+ // recovered from History; a checkpoint failure aborts the discard untouched.
+ projects.options.beforeDiscard=async input=>{
+  if(!capabilityEnabled('workspace.checkpointsV1'))return;
+  const{owner,root}=await checkpointOwner(input.projectId,input.threadId);
+  await checkpoints.create({owner,root,paths:input.paths,label:'Before discard',provenance:{kind:'discard_backup',operationId:input.operationId}});
+ };
  app.post('/api/projects/:projectId/checkpoints/list',{bodyLimit:64*1024},async(request,reply)=>{
   reply.header('Cache-Control','no-store');
   if(!capabilityEnabled('workspace.checkpointsV1'))throw new HarnessError('CAPABILITY_DENIED','File checkpoints are disabled.');
