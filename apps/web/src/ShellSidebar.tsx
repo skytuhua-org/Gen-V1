@@ -102,6 +102,7 @@ export function ShellSidebar({
   close,
   toggleCollapsed,
   setFolded,
+  onRowOrder,
   select,
   create,
   settings,
@@ -146,6 +147,8 @@ export function ShellSidebar({
   close: () => void;
   toggleCollapsed: (event: MouseEvent<HTMLButtonElement>) => void;
   setFolded: (key: string, folded: boolean) => void;
+  /** Reports the visible thread rows in render order (pinned -> working -> flat -> settled, fold/cap aware) for the keyboard switcher. */
+  onRowOrder?: (ids: string[]) => void;
   select: (id: string) => void;
   create: () => void;
   settings: () => void;
@@ -188,6 +191,24 @@ export function ShellSidebar({
   const orderedRemaining = orderSidebarProjects(remaining, preferences.projectGrouping, preferences.projectOrder);
   const settledFolded = layout.folded['settled'] ?? false;
   const visibleSettled = showAllSettled ? settled : settled.slice(0, 6);
+  const rowOrderKey = JSON.stringify([
+    layout.folded,
+    showAllSettled,
+    pinned.map(item => item.id),
+    working.map(item => item.id),
+    orderedRemaining.map(item => item.id),
+    visibleSettled.map(item => item.id),
+  ]);
+  const onRowOrderRef = useRef(onRowOrder); onRowOrderRef.current = onRowOrder;
+  useEffect(() => {
+    onRowOrderRef.current?.([
+      ...(layout.folded['pinned'] ? [] : pinned),
+      ...(layout.folded['working'] ? [] : working),
+      ...orderedRemaining,
+      ...(settledFolded ? [] : visibleSettled),
+    ].map(item => item.id));
+    // rowOrderKey captures every input to the reported order.
+  }, [rowOrderKey, settledFolded]);
   const locked = search.trim().length > 0 || filter !== 'all';
   const reorder = useThreadReorder(navRef, {
     // Ordering needs every settled row; only rendering stops at six.
