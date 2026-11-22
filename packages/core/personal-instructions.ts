@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { lstatSync, readFileSync } from 'node:fs';
 import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { HarnessError } from '../contracts/index.ts';
@@ -82,6 +83,25 @@ export async function capturePersonalInstructions(dataDir: string, enabled: bool
     const view = await readPersonalInstructions(dataDir);
     if (view.status !== 'OK' || !view.text || !view.digest) return undefined;
     return { text: view.text, digest: view.digest };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Synchronous variant for the dispatch path: must not add an async hop before runtime.start. */
+export function capturePersonalInstructionsSync(dataDir: string, enabled: boolean): { text: string; digest: string } | undefined {
+  if (!enabled) return undefined;
+  try {
+    const path = personalInstructionsPath(dataDir);
+    let info;
+    try { info = lstatSync(path); }
+    catch { return undefined; }
+    if (!info.isFile() || info.nlink !== 1 || info.size > PERSONAL_INSTRUCTIONS_MAX_BYTES) return undefined;
+    const bytes = readFileSync(path);
+    let text: string;
+    try { text = decode(bytes); } catch { return undefined; }
+    if (text.includes('\0') || unsupportedDirective.test(text)) return undefined;
+    return { text, digest: hash(bytes) };
   } catch {
     return undefined;
   }

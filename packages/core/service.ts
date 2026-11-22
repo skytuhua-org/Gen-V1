@@ -23,7 +23,7 @@ import { admitSchema, validateJson, widgetDefinition, GENERATED_APPS_ENABLED } f
 import { patchSpec, protectedFingerprint } from "./presentation.ts";
 import { admitArtifactContents, threadData } from "./ui-admission.ts";
 import { changeTaskMemory, taskMemories, taskMemoryContext } from './task-memory.ts';
-import { capturePersonalInstructions, writePersonalInstructions } from './personal-instructions.ts';
+import { capturePersonalInstructionsSync, writePersonalInstructions } from './personal-instructions.ts';
 import { discoverCapabilities } from './discovery.ts';
 import { inspectTask } from './task-inspection.ts';
 import {PlanningCoordinator} from './planning.ts';
@@ -1680,7 +1680,7 @@ export class Service {
     const userPrompt=inputs.map((input,index) => "Input " + input.id + ":\n" + contents[index]).join("\n\n");
     const sourceContext = sourceContexts.map(context => context.text).join(''), deliveredRefs = sourceContexts.flatMap(context => context.refs);
     let input: StartRun = { ...ctx,accountId:binding.accountId, memory: taskMemoryContext(this.store, threadId), modelId, thinkingLevel:thread.thinkingLevel, sessionPath: thread.sessionPath, inputId: inputs[0].id, inputIds: inputs.map(i => i.id), resources: thread.sideParentId?[]:this.store.all("resource", threadId), ...(completedWrites.length?{completedWrites}:{}), ...(deliveredRefs.length ? {sourceRefs: deliveredRefs} : {}), prompt: guidance+userPrompt+sourceContext };
-    if(!thread.sideParentId){const personalInstructions=await capturePersonalInstructions(this.store.dataDir,this.preferences.personalInstructionsEnabled);if(personalInstructions)input={...input,personalInstructions};}
+    if(!thread.sideParentId){const personalInstructions=capturePersonalInstructionsSync(this.store.dataDir,this.preferences.personalInstructionsEnabled);if(personalInstructions)input={...input,personalInstructions};}
     if (!this.aborts.has(threadId) || !thread.runId) this.aborts.set(threadId, new AbortController());
     const control=this.aborts.get(threadId)!;this.retainController(control);
     let dispatched=false;

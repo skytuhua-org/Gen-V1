@@ -4,7 +4,7 @@
   width: 100%; min-height: 168px; max-height: 420px; resize: vertical;
   font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-size: 13px; line-height: 1.55; padding: 10px 12px;
-  border: 1px solid var(--border); border-radius: var(--control-radius, 6px);
+  border: 1px solid var(--control-border); border-radius: var(--control-radius, 6px);
   background: var(--surface); color: var(--text);
 }
 .personal-instructions textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
