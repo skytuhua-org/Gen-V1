@@ -122,3 +122,10 @@ it('keeps all four audit path filters and does not admit unrelated application c
   for(const path of auditPaths)expect(scheduledAudit(ready,[path])).toEqual(['integration']);
   expect(scheduledAudit(ready,['apps/web/src/App.tsx'])).toBeNull();
 });
+it('selects pull-request tests from the merge commit diff and keeps the full suite for the merge queue',()=>{
+  const selected=jobSource.split(/^  selected:\n/m)[1]??'';
+  expect(selected).toMatch(/^          fetch-depth: 2$/m);
+  expect(selected).toContain('pnpm test --maxWorkers=1 --changed HEAD^1');
+  expect(selected).not.toMatch(/continue-on-error|always\(\)|--passWithNoTests/);
+  for(const id of ['test','browser','installed-memory'])expect(jobs.find(job=>job.id===id)?.condition).toBe("github.event_name != 'pull_request'");
+});
