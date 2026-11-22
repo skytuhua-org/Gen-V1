@@ -554,11 +554,11 @@ describe('aggregate and manifest',()=>{
     for(const label of ['password:','Authorization: Bearer','AWS_SECRET_ACCESS_KEY:','api_key:']){
       for(const cut of [1,2,3,label.length-1]){
         const directory=temporaryDirectory();
-        const script=String.raw`const label=process.argv[1],cut=Number(process.argv[2]);process.stdout.write("before\\n"+label.slice(0,cut));setTimeout(()=>process.stderr.write("SYNTHETIC_PARTIAL_CREDENTIAL_OTHER_PIPE_1122\\n"),40);setTimeout(()=>process.stdout.write(label.slice(cut)+"\\n"),80);`;
+        const script=String.raw`const label=process.argv[1],cut=Number(process.argv[2]);process.stdout.write("before\n"+label.slice(0,cut));setTimeout(()=>process.stderr.write("SYNTHETIC_PARTIAL_CREDENTIAL_OTHER_PIPE_1122\n"),40);setTimeout(()=>process.stdout.write(label.slice(cut)+"\n"),80);`;
         const result=await runCheck(specFor(directory,{args:['-e',script,label,String(cut)]}));
         expect(result.status).toBe('PASS');
         const log=readFileSync(result.artifact,'utf8');
-        expect(log).toContain('before\\n');
+        expect(log).toContain('before\n');
         expect(log).toContain('[REDACTED MULTILINE CREDENTIAL]');
         expect(log).not.toContain('SYNTHETIC_PARTIAL_CREDENTIAL_OTHER_PIPE_1122');
       }
