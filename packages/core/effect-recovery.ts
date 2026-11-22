@@ -39,7 +39,10 @@ export function recoverEffects(store: Store): { uncertain: string[]; interrupted
         effect.owner.threadId === operation!.threadId &&
         Number(opMatch![2]) === operation!.revision &&
         effect.targetPreconditions.length === targetPreconditions.length &&
-        effect.targetPreconditions.every((entry, index) => entry === targetPreconditions[index]));
+        // Legacy `key=value` receipts lose the boundary when either side has `=`.
+        // An ambiguous receipt cannot prove an exact target after a restart.
+        effect.targetPreconditions.every((entry, index) => entry === targetPreconditions[index]
+          && entry.indexOf("=") === entry.lastIndexOf("=")));
       const recorded = bound && ["succeeded", "failed", "cancelled"].includes(operation!.status)
         ? ({ succeeded: "SUCCEEDED", failed: "FAILED", cancelled: "CANCELLED" } as const)[operation!.status as "succeeded" | "failed" | "cancelled"]
         : null;

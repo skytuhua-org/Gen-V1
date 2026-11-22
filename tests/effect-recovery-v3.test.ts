@@ -191,6 +191,9 @@ it.each([
   { admitted: ['path=/changed'], recorded: { path: '/approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
   { admitted: ['path=/approved', 'revision=2'], recorded: { path: '/approved', revision: 1 }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
   { admitted: ['path=/approved'], recorded: { path: '/approved', revision: 1 }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
+  // The legacy key=value encoding cannot distinguish these two target maps.
+  { admitted: ['path=draft=approved'], recorded: { path: 'draft=approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
+  { admitted: ['path=draft=approved'], recorded: { 'path=draft': 'approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
 ])('recovers a completed operation only when admitted target preconditions match ($expected)', async ({ admitted, recorded, expected }) => {
   const { store, ledger } = await fixture();
   ledger.admit({
