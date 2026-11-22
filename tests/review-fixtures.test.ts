@@ -9,7 +9,7 @@ describe('recorded review fixture coverage', () => {
   it('uses typed declarative review, editable-record and parameter fixtures',()=>{validateSurface(interactionSpec());for(const name of ['ReviewQueue','EditableTable','ParameterControls'] as const)expect(INTERACTION_DATA_SCHEMAS[name].safeParse(INTERACTION_REVIEW_DATA[name]).success).toBe(true);});
   it('covers every advertised catalog entry through one reusable renderer', () => {
     expect(assertCatalogCoverage(catalogSpec('pdf-resource', 'png-resource'))).toEqual(CAPABILITIES.map(item=>item.name).sort());
-    expect(CAPABILITIES).toHaveLength(48);
+    expect(CAPABILITIES).toHaveLength(49);
   });
   it('covers typed statistics, selection and a declared private credential without embedding token bytes',()=>{
     expect(()=>validateSurface(everydaySpec())).not.toThrow();
