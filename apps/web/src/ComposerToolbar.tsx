@@ -77,6 +77,21 @@ function ComposerOverflow({toolbar}:{toolbar:RefObject<HTMLDivElement|null>}){
   return()=>observer.disconnect();
  },[open]);
  const navigation=useListNavigation(rows,index=>{rows[index].target.click();dismiss();},dismiss);
+ // While collapsed, any focus landing on a hidden tier-2 control (e.g. an
+ // anchored popover returning focus to its trigger on dismiss) is moved to
+ // the visible ⋯ trigger so keyboard users keep their place.
+ useEffect(()=>{
+  const element=toolbar.current;
+  if(!element)return;
+  function onFocusIn(event:FocusEvent){
+   const button=trigger.current;
+   if(!button||!button.offsetParent)return;
+   const node=event.target;
+   if(node instanceof HTMLElement&&OVERFLOW_TARGETS.some(({selector})=>node.matches(selector)))button.focus();
+  }
+  element.addEventListener('focusin',onFocusIn);
+  return()=>element.removeEventListener('focusin',onFocusIn);
+ },[toolbar]);
  function openMenu(){
   const scope=toolbar.current?.closest('.composer')??toolbar.current;
   if(!scope)return;
@@ -89,10 +104,11 @@ function ComposerOverflow({toolbar}:{toolbar:RefObject<HTMLDivElement|null>}){
   }
   setRows(next);
  }
+ const firstEnabled=rows.findIndex(row=>!row.disabled);
  return <div className="composer-overflow">
   <button ref={trigger} type="button" className="icon-button composer-overflow-trigger" aria-label="More composer actions" title="More composer actions" aria-haspopup="menu" aria-expanded={open} onClick={openMenu}>{ellipsis}</button>
   <Popover anchor={trigger} open={open} width={184} height={rows.length*32+8} preferredSide="above" align="end" role="menu" aria-label="More composer actions" className="composer-overflow-menu" onDismiss={dismiss} onKeyDown={navigation.onKeyDown} initialFocus={first}>
-   {rows.map((row,index)=><button key={index} ref={element=>{navigation.rows.current[index]=element;if(index===0)first.current=element;}} type="button" role="menuitem" className="composer-overflow-item" disabled={row.disabled} title={row.title||undefined} onClick={()=>{row.target.click();dismiss();}} onFocus={()=>navigation.onFocus(index)}>{row.label}</button>)}
+   {rows.map((row,index)=><button key={index} ref={element=>{navigation.rows.current[index]=element;if(index===firstEnabled)first.current=element;}} type="button" role="menuitem" className="composer-overflow-item" disabled={row.disabled} title={row.title||undefined} onClick={()=>{row.target.click();dismiss();}} onFocus={()=>navigation.onFocus(index)}>{row.label}</button>)}
   </Popover>
  </div>;
 }
