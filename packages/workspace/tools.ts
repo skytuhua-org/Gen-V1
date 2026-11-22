@@ -221,7 +221,7 @@ export class ProjectTools{
   for(const name of file.oldPath?[file.path,file.oldPath]:[file.path])if(await lstat(join(worktree,...name.split('/'))).then(info=>info.isFile()&&!info.isSymbolicLink(),()=>false))backup.push(name);
   // A deleted file whose index still holds staged edits would lose them to a
   // HEAD restore with no possible backup; a clean unstaged deletion is fine.
-  if(!backup.includes(file.path)&&file.index!==' '&&file.index!=='?')throw new HarnessError('UNSUPPORTED_PATH','The staged edits in this file cannot be backed up. Commit or unstage them before discarding.');
+  if(!backup.includes(file.path)&&file.index!==' '&&file.index!=='?'&&file.index!=='D')throw new HarnessError('UNSUPPORTED_PATH','The staged edits in this file cannot be backed up. Commit or unstage them before discarding.');
   if(this.options.beforeDiscard&&backup.length)await this.options.beforeDiscard({projectId,threadId,paths:backup,worktree,operationId:operationId??'discard'});
   const trash=this.options.trash??moveToRecycleBin;
   // The bin helper is an outside process: a leaf pin would deny its delete,
