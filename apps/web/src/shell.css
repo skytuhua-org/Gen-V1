@@ -152,7 +152,7 @@
 .panel-toolbar label { min-width:0; flex:1; }
 .panel-toolbar select { font-size:12px; padding:6px 8px; width:100%; }
 .panel-artifact-picker { display:inline-flex; min-width:0; }
-.panel-artifact-picker .ui-select-trigger:disabled { font-size:11px; color:var(--muted); background:var(--surface); border-color:var(--border); cursor:default; }
+.panel-artifact-picker .ui-select-trigger:disabled { font-size:11px; color:var(--muted); background:var(--surface); border-color:var(--control-border); cursor:default; }
 .panel-artifact-picker .ui-select-trigger:disabled>svg { color:var(--subtle); }
 .panel-artifact-empty { font-size:11px; color:var(--muted); }
 .panel-empty { padding:35px 24px; display:flex; flex-direction:column; align-items:center; text-align:center; gap:10px; color:var(--muted); font-size:12px; }
