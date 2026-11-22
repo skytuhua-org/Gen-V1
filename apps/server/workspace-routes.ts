@@ -44,6 +44,7 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
  app.get('/api/workspace',async()=>projects.workspace.read());
  app.post('/api/workspace/commands',{bodyLimit:1024*1024},async request=>{const input=envelope.parse(request.body);return input.type==='workspace.project.connect'?projects.connect(input):projects.workspace.command(input);});
  app.get('/api/projects/:projectId/context',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);return projects.context(projectId,threadId);});
+ app.get('/api/projects/:projectId/dev-servers',async(request,reply)=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);await projects.binding(projectId,threadId);reply.header('Cache-Control','no-store');return{items:(host.devServers?.list(projectId)??[]).map(row=>({...row,threadTitle:row.threadId?(service.store.get<{title?:string}>('thread',row.threadId)?.title??null):null}))};});
  app.get('/api/projects/:projectId/git',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);return projects.gitStatus(projectId,threadId);});
  // Read-only comparison dependencies; retain existing action/review routes verbatim.
  app.get('/api/projects/:projectId/git/comparison',async(request,reply)=>{
