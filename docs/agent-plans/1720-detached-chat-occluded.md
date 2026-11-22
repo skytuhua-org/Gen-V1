@@ -19,21 +19,23 @@ With the chat detached (header ⤢ "Detach chat"), opening the right workspace p
 
 ## REPO_MAP
 - `packages/ui-shell/ChatView.tsx` — owns the floating chat: `ChatLayout` state (`mode:'popup'|'drawer'|'full'`, `detached`), `commit()` → `writeChatLayout` (`chat-layout.ts`); header buttons "Move chat panel"/"Detach chat"/"Dock chat to side drawer" ~L123-124.
-- `packages/ui-shell/chat-view.css` — `.chat-view-surface:not([data-chat-mode=full]) { z-index:40; border-radius:14px }` (line 6) — the floating surface's own layer.
+- `packages/ui-shell/chat-view.css` — `.chat-view-slot { position:relative; isolation:isolate }` (line 1) traps child z-index inside the slot's stacking context — the actual root cause; `.chat-view-surface:not([data-chat-mode=full]) { z-index:40; border-radius:14px }` (line 6) — the floating surface.
 - `apps/web/src/workspace-canvas.css` + `styles.css` — `.workspace-right` (observed z-index 28) and `.workspace-tools` (tablist "Workspace views", "Add surface" +) — the layer that wins over the chat.
 - `styles.css`/`tokens.css` — `--ui-layer-*` tokens (scrim, drawer) to reuse for layer ordering.
 - Verified facts: elementFromPoint at the chat's center returns `.workspace-panel-content`/tablist; the chat's z=40 loses through stacking-context/DOM order, not the number.
 
 ## DESIGN SPEC (exact values — no design choices left)
-- In `packages/ui-shell/chat-view.css` raise the floating chat above the right workspace panel: set `.chat-view-surface:not([data-chat-mode=full]) { z-index: var(--ui-layer-floating) }` and add `--ui-layer-floating` to the layer tokens, one step above the right panel's layer: `--ui-layer-floating: calc(var(--ui-layer-right-panel, 28) + 10)`. If `--ui-layer-right-panel` does not exist, introduce it with value `28` on `.workspace-right` (the observed computed value) so ordering is expressed in tokens, not literals.
-- The surface must NOT gain `transform`, `filter`, or `backdrop-filter` (and none may be added to `.workspace-tools`, `.shell-workarea`, or ancestors) that would re-nest it under the panel.
-- Discovery checkpoint (T01): if `.chat-view-surface` precedes `.workspace-right` in DOM order in the same stacking context, DOM paint order explains the loss and the token change alone suffices; confirm with `elementFromPoint` rather than assuming.
+- Root cause: `.chat-view-slot` (the wrapper, `ChatView.tsx` L118) has `isolation:isolate`, so the child's `z-index:40` is trapped inside the slot's own stacking context and can never beat `.workspace-right` (z=28) at the top level. Raising `.chat-view-surface`'s z-index therefore cannot work.
+- Fix on the wrapper, not the child: in `packages/ui-shell/chat-view.css` give the slot a layer that wins only while a floating chat lives inside it — `.chat-view-slot:has(> .chat-view-surface:not([data-chat-mode=full])) { z-index: var(--ui-layer-floating) }`. Add `--ui-layer-floating` to the layer tokens, one step above the right panel's layer: `--ui-layer-floating: calc(var(--ui-layer-right-panel, 28) + 10)`. If `--ui-layer-right-panel` does not exist, introduce it with value `28` on `.workspace-right` (the observed computed value) so ordering is expressed in tokens, not literals.
+- Keep `isolation:isolate` on the slot (it localizes inner stacking); the wrapper's new z-index is what competes at the top level. When the chat is `data-chat-mode=full` the `:has()` guard does not match and the slot stays at its current layer — centered layout unchanged.
+- No `transform`, `filter`, or `backdrop-filter` may be added to `.chat-view-slot`, `.workspace-tools`, `.shell-workarea`, or their ancestors — any of them would create another trapping stacking context.
+- Verification is hit-testing, not paint order: `document.elementFromPoint` at the chat's center must return a `.chat-view-surface` descendant while the right panel is open.
 - No visual change otherwise: identical borders, shadows (`box-shadow` on the floating window unchanged), header layout, 28×28px `.icon-button` controls.
 - Keyboard: no new shortcuts; focus order unchanged; when the chat overlaps the panel, Tab must still reach the chat's header buttons (verify, since pointer hit-testing and tab order are independent).
 - Motion: none added; the existing panel-open transition is unchanged; `prefers-reduced-motion` behavior unchanged.
 
 ## EXECUTION_DAG
-- T01 (owner: implementer A): resolve why `.workspace-right`/`.workspace-tools` paints above `.chat-view-surface` (DOM order vs stacking context — discovery checkpoint); add `--ui-layer-floating`/`--ui-layer-right-panel` tokens; apply `--ui-layer-floating` on `.chat-view-surface:not([data-chat-mode=full])` in `packages/ui-shell/chat-view.css`. Done-when: `elementFromPoint` at the floating surface's center returns a chat descendant with the right panel open.
+- T01 (owner: implementer A): add `--ui-layer-floating`/`--ui-layer-right-panel` tokens; apply the `:has()` z-index rule on `.chat-view-slot` in `packages/ui-shell/chat-view.css` (wrapper fix — child z-index cannot escape `isolation:isolate`). Done-when: `elementFromPoint` at the floating surface's center returns a chat descendant with the right panel open, and the centered (`full`) chat is unchanged.
 - T02 (owner: A): vitest + Playwright check — script `scripts/test-browser.ts` pattern or a new vitest asserting `elementFromPoint` at the floating window's center returns a chat descendant while the right panel is open. Done-when: test passes locally.
 - T03 (owner: A): manual verify in fixture: detach chat → open right panel → click Dock, Move, resize handles at overlap region; reload → repeat. Done-when: all controls work at 3 positions (over panel, partially off-panel, fully off-panel).
 
