@@ -3425,6 +3425,7 @@
     "tests/project-memory-service-v3.test.ts",
     "tests/project-memory-ui.test.ts",
     "tests/project-memory-v3.test.ts",
+    "tests/project-script-suggestions-service.test.ts",
     "tests/project-script-suggestions.test.ts",
     "tests/project-search.test.ts",
     "tests/project-tools.test.ts",

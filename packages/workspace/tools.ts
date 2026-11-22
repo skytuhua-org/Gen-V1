@@ -5,7 +5,7 @@ import {dirname,join,relative,resolve} from 'node:path';
 import {z} from 'zod';
 import {Store} from '../storage/store.ts';
 import {HarnessError,type HostCommand,type ResourceGrant,type Thread} from '../contracts/index.ts';
-import type {ProjectContext,ProjectSummary} from '../contracts/workspace.ts';
+import type {ProjectContext,ProjectScriptSuggestions,ProjectSummary} from '../contracts/workspace.ts';
 import {threadNavigationRevision} from '../contracts/shell-read-models.ts';
 import {WorkspaceRepository} from '../core/workspace-layout.ts';
 import {assertNotStorage,canonical,inside} from '../core/security.ts';
@@ -14,6 +14,7 @@ import {readBoundFile,withPathGuard} from '../core/file-access.ts';
 import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead} from '../contracts/code-review.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
+import {detectRunner,suggestScripts} from './script-suggestions.ts';
 
 interface Identity{dev:string;ino:string}
 export interface WorkspaceBinding {id:string;threadId:string;projectId:string;familyId?:string;path:string;branch:string;gitDirectory:string;commonDirectory:string;identity:Identity;gitDirectoryIdentity:Identity;commonDirectoryIdentity:Identity}
@@ -154,6 +155,30 @@ export class ProjectTools{
   return{head,branch,revision:hash(JSON.stringify([head,branch,raw,diff,stagedDiff,untracked])),files,diff,stagedDiff,truncated:false,mode:managed?'managed':'legacy',gitWrite:managed,untrackedIncluded:managed};
  }
  async gitStatus(projectId:string,threadId?:string):Promise<GitStatus>{return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed)=>this.status(metadata,path,signal,managed)));}
+ /** Lazy guarded read of the working copy's package.json for the scripts picker; never throws for content problems. */
+ async scriptSuggestions(projectId:string,threadId?:string):Promise<ProjectScriptSuggestions>{
+  const bound=await this.binding(projectId,threadId),path=bound.path,target=join(path,'package.json'),signal=new AbortController().signal;
+  const saved=this.store.all<{command:string;projectId:string}>('projectScript').filter(item=>item.projectId===bound.project.id).map(item=>item.command);
+  const lockfiles={pnpm:await lstat(join(path,'pnpm-lock.yaml')).then(()=>true,()=>false),yarn:await lstat(join(path,'yarn.lock')).then(()=>true,()=>false),npm:await lstat(join(path,'package-lock.json')).then(()=>true,()=>false)||await lstat(join(path,'npm-shrinkwrap.json')).then(()=>true,()=>false),count:0};
+  lockfiles.count=[lockfiles.pnpm,lockfiles.yarn,lockfiles.npm].filter(Boolean).length;
+  const missing:ProjectScriptSuggestions={status:'missing',runner:'npm',runnerSource:'default',multipleLockfiles:false,suggestions:[],skipped:0},unreadable=(reason?:ProjectScriptSuggestions['reason']):ProjectScriptSuggestions=>({status:'unreadable',...(reason?{reason}:{}) ,runner:'npm',runnerSource:'default',multipleLockfiles:false,suggestions:[],skipped:0});
+  let data:Buffer;
+  try{
+   const info=await lstat(target);
+   // Symlinks are never ordinary project files; whether the target escaped
+   // the working copy decides the exact unreadable reason.
+   if(info.isSymbolicLink()){const resolved=await realpath(target);return unreadable(inside(path,resolved)?'not-a-file':'outside-working-copy');}
+   if(!info.isFile())return unreadable('not-a-file');
+   data=await withPathGuard([{path:target,leaf:true,readOnly:true}],signal,()=>readBoundFile(target,256*1024));
+  }catch(error){
+   if((error as NodeJS.ErrnoException).code==='ENOENT')return missing;
+   return unreadable(error instanceof HarnessError&&error.code==='RESOURCE_LIMIT'?'too-large':undefined);
+  }
+  let pkg:unknown;
+  try{pkg=JSON.parse(data.toString('utf8'));}catch{return unreadable('invalid-json');}
+  const detected=detectRunner(pkg,lockfiles),result=suggestScripts(pkg,detected.runner,saved);
+  return{status:'ok',runner:detected.runner,runnerSource:detected.runnerSource,multipleLockfiles:detected.multipleLockfiles,suggestions:result.suggestions,skipped:result.skipped};
+ }
  /** Read-only origin through the same attested managed/legacy Git boundary. */
  async gitReviewOrigin(projectId:string,threadId?:string){return this.exclusive(projectId,async()=>{
   const binding=await this.binding(projectId,threadId),signal=new AbortController().signal;
