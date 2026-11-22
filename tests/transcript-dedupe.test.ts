@@ -2,15 +2,31 @@ import { expect, it } from 'vitest';
 import type { Message } from '../packages/contracts';
 import { dedupeReplayedFrames } from '../apps/web/src/thread-messages';
 
-const message = (id: string, threadId = 't1', role: Message['role'] = 'assistant', content = 'done') => ({ id, threadId, role, content, createdAt: id, runId: 'r' });
+const message = (id: string, threadId = 't1', role: Message['role'] = 'assistant', content = 'done', runId: Message['runId'] = 'r1') => ({ id, threadId, role, content, createdAt: id, runId });
 
-it('drops a replayed frame equal to the thread\u2019s last message', () => {
+it('drops a replayed frame equal to the thread\u2019s last message across the run boundary', () => {
   const merged = dedupeReplayedFrames([
     message('m1', 't1', 'user', 'hi'),
     message('m2', 't1', 'assistant', 'answer'),
-    message('m3-replay', 't1', 'assistant', 'answer'),
+    message('m3-replay', 't1', 'assistant', 'answer', 'r2'),
   ]);
   expect(merged.map(item => item.id)).toEqual(['m1', 'm2']);
+});
+
+it('keeps identical consecutive frames emitted inside the same run', () => {
+  const frames = [
+    message('m1', 't1', 'activity', 'calling tool'),
+    message('m2', 't1', 'activity', 'calling tool'),
+  ];
+  expect(dedupeReplayedFrames(frames)).toBe(frames);
+});
+
+it('keeps identical consecutive frames when both lack a run id', () => {
+  const frames = [
+    message('m1', 't1', 'user', 'ok', null),
+    message('m2', 't1', 'user', 'ok', null),
+  ];
+  expect(dedupeReplayedFrames(frames)).toBe(frames);
 });
 
 it('keeps the identical message object list when nothing replayed', () => {
@@ -39,7 +55,7 @@ it('tracks the last frame per thread when messages interleave', () => {
   const frames = [
     message('a1', 't1', 'assistant', 'answer'),
     message('b1', 't2', 'assistant', 'other'),
-    message('a2-replay', 't1', 'assistant', 'answer'),
+    message('a2-replay', 't1', 'assistant', 'answer', 'r2'),
     message('b2', 't2', 'assistant', 'new'),
   ];
   expect(dedupeReplayedFrames(frames).map(item => item.id)).toEqual(['a1', 'b1', 'b2']);

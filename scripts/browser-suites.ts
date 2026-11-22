@@ -78,6 +78,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('project-memory'),
   suite('project-memory-host'),
   suite('wo5-app-integration'),
+  suite('resume-interruption'),
   suite('runtime-presentation'),
   suite('shared-panels'),
   suite('shell', ['frontend.spec.ts']),

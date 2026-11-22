@@ -14,7 +14,7 @@ test('a completed resume clears the interrupted banner and never repeats the las
  await expect.poll(()=>host.commands.filter(command=>command.type==='run.resume')).toHaveLength(1);
  // The host resumes the thread and replays its last frame with a fresh id.
  snapshot.threads[0].status='ready';
- snapshot.messages.push({id:'reply-replay',threadId:'task-thread',role:'assistant',content:'Synthetic local source data for the reusable renderer.',runId:null,createdAt:snapshot.messages[snapshot.messages.length-1]!.createdAt});
+ snapshot.messages.push({id:'reply-replay',threadId:'task-thread',role:'assistant',content:'Synthetic local source data for the reusable renderer.',runId:'resumed-run',createdAt:snapshot.messages[snapshot.messages.length-1]!.createdAt});
  await host.publish();
  await expect(strip).toHaveCount(0);
  await expect(page.getByText('Synthetic local source data for the reusable renderer.',{exact:true})).toHaveCount(1);

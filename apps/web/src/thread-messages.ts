@@ -9,13 +9,16 @@ import { getThreadMessages } from './api';
 // A resumed run can replay its last frame: it arrives with a fresh id but the
 // same role and content as the thread's previous message. Drop that duplicate
 // so a resume never repeats the last rendered message in the transcript.
-export function dedupeReplayedFrames<T extends Pick<Message, 'id' | 'threadId' | 'role' | 'content'>>(messages: T[]): T[] {
+export function dedupeReplayedFrames<T extends Pick<Message, 'id' | 'threadId' | 'role' | 'content' | 'runId'>>(messages: T[]): T[] {
   let changed = false;
   const lastByThread = new Map<string, T>();
   const kept: T[] = [];
   for (const message of messages) {
     const last = lastByThread.get(message.threadId);
-    if (last && last.id !== message.id && last.role === message.role && last.content === message.content) { changed = true; continue; }
+    // A replay lands under the resumed run's id; requiring a run boundary keeps
+    // identical consecutive frames inside one run (parallel tool calls with the
+    // same activity text, repeated user messages) from being dropped.
+    if (last && last.id !== message.id && last.role === message.role && last.content === message.content && last.runId !== message.runId) { changed = true; continue; }
     lastByThread.set(message.threadId, message);
     kept.push(message);
   }
