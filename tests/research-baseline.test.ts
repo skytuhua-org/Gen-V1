@@ -477,6 +477,35 @@ describe('dependency-contract checker', () => {
     ]);
   });
 
+  it('ignores mutable local Git attributes when validating executable contract-test bytes', () => {
+    const checkout = dir('contract-local-attributes');
+    const git = (...args: string[]) => execFileSync('git', ['-C', checkout, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const source = 'packages/capabilities/process.ts', testId = 'tests/contract.test.ts';
+    git('init', '-q');
+    git('config', 'core.autocrlf', 'false');
+    mkdirSync(join(checkout, 'packages', 'capabilities'), { recursive: true });
+    mkdirSync(join(checkout, 'tests'), { recursive: true });
+    writeFileSync(join(checkout, source), 'export {};');
+    writeFileSync(join(checkout, testId), 'export const marker = "$Id$";\n');
+    git('add', '--', source, testId);
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Seed');
+    const sha = git('rev-parse', 'HEAD'), blob = git('rev-parse', sha + ':' + source);
+    const lockedTestBlob = git('rev-parse', sha + ':' + testId);
+    const lock = sourceLockV3Schema.parse({
+      schemaVersion: 3, auditAncestorSha: sha, executionBaseSha: sha, inspectedPaths: [{ path: source, blobSha: blob }],
+      publicContracts: [{ name: 'process-launcher', version: blob, testIds: [testId] }],
+      acceptedDependencyCommits: [], approvedDrift: [],
+    });
+    expect(verifySourceLock(checkout, lock)).toEqual([]);
+    // Git's built-in ident attribute can hide altered working bytes during
+    // hash-object --path, even when .git/info/attributes is not committed.
+    writeFileSync(join(checkout, testId), 'export const marker = "$Id: unreviewed $";\n');
+    writeFileSync(join(checkout, '.git', 'info', 'attributes'), testId + ' ident\n');
+    expect(git('hash-object', `--path=${testId}`, '--', testId)).toBe(lockedTestBlob);
+    expect(git('hash-object', '--no-filters', '--', testId)).not.toBe(lockedTestBlob);
+    expect(verifySourceLock(checkout, lock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_DRIFT']);
+  });
+
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('collects all contract issues when a test path is inaccessible', () => {
     const checkout = dir('inaccessible-contract');
     const git = (...args: string[]) => execFileSync('git', ['-C', checkout, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
