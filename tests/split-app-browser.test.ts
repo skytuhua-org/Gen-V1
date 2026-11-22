@@ -116,7 +116,7 @@ describe.runIf(enabled)('actual App split workspace',()=>{
  it('keeps full thread renderers, drafts and exact send owners through tab movement, parking and reload',async()=>{
   const host=await fixture(),{page}=host;try{
    const first=page.locator('[data-split-view="thread:thread-a"]'),second=page.locator('[data-split-view="thread:thread-b"]'),a=first.getByRole('textbox',{name:'Message',exact:true}),b=second.getByRole('textbox',{name:'Message',exact:true});
-   await b.waitFor({state:'visible'});expect(await first.getByRole('combobox',{name:'Model',exact:true}).textContent()).toContain('Model A');expect(await second.getByRole('combobox',{name:'Model',exact:true}).count()).toBe(0);expect(await first.textContent()).toContain('First transcript only');expect(await second.textContent()).toContain('Second transcript only');expect(await first.textContent()).not.toContain('Second transcript only');
+   await b.waitFor({state:'visible'});expect(await first.getByRole('combobox',{name:'Model',exact:true}).textContent()).toContain('Model A');expect(await second.getByRole('combobox',{name:'Model',exact:true}).count()).toBe(1);expect(await second.locator('.model-picker-trigger-name').count()).toBe(0);expect(await first.textContent()).toContain('First transcript only');expect(await second.textContent()).toContain('Second transcript only');expect(await first.textContent()).not.toContain('Second transcript only');
    await a.fill('First independent draft');await b.fill('Second independent draft');await page.evaluate(()=>{(window as any).savedDraft=document.querySelector('[data-split-view="thread:thread-b"] textarea');});
    const dataTransfer=await page.evaluateHandle(()=>new DataTransfer());await page.locator('[data-split-pane="right"] [role="tab"]').dispatchEvent('dragstart',{dataTransfer});
    const rect=await page.locator('[data-split-pane="pane-main"] .split-pane-slot').boundingBox();if(!rect)throw Error('Missing target pane');await page.locator('.split-workspace').dispatchEvent('drop',{dataTransfer,clientX:rect.x+rect.width/2,clientY:rect.y+rect.height/2});
@@ -821,7 +821,7 @@ for(const held of [false,true]) it('viewport shrink retains a visible moved floa
    await pw(secondary.getByRole('textbox',{name:'Message',exact:true})).toHaveCount(1);
    await pw(secondary.getByRole('button',{name:'Send message',exact:true})).toHaveCount(1);
    await pw(secondary.locator('.breadcrumb')).toHaveCount(0);
-   await pw(secondary.getByRole('combobox',{name:'Model',exact:true})).toHaveCount(0);
+   await pw(secondary.getByRole('combobox',{name:'Model',exact:true})).toHaveCount(1);await pw(secondary.locator('.model-picker-trigger-name')).toHaveCount(0);
    await pw(secondary.getByRole('button',{name:'Attach files',exact:true})).toHaveCount(0);
    await pw(secondary.getByText('Saved drafts',{exact:true})).toHaveCount(0);
    await pw(secondary.getByRole('button',{name:'Inspect changes',exact:true})).toHaveCount(0);
@@ -1078,9 +1078,9 @@ for(const held of [false,true]) it('viewport shrink retains a visible moved floa
   }finally{await page.close();}
  },30000);
 
- it('shows no saved-layout or switch-layout chrome in the shell (T04/R05)',async()=>{
+ it('keeps the saved-layout chooser as the only layout chrome in the shell (T04/R05)',async()=>{
   const host=await fixture({mode:'default',singleThread:true}),{page}=host;try{
-   for(const probe of [/layout/i,/Saved workspace/])expect(await page.getByRole('button',{name:probe}).count(),probe.toString()).toBe(0);
+   expect(await page.getByRole('button',{name:'Layouts',exact:true}).count()).toBe(1);
    expect(await page.getByRole('combobox',{name:/layout|Saved workspace/i}).count()).toBe(0);
    expect(await page.getByRole('button',{name:'Open panel',exact:true}).count()).toBe(1);
    expect(host.errors).toEqual([]);
