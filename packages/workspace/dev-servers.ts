@@ -122,6 +122,11 @@ export class DevServerTracker{
   this.lastReadAt=this.now();
   return [...this.rows.values()].map(confirmed=>confirmed.row).filter(row=>row.projectId===projectId);
  }
+ /** Every confirmed row, for host-level prompts like the quit dialog. */
+ all():DevServerRow[]{
+  this.lastReadAt=this.now();
+  return [...this.rows.values()].map(confirmed=>confirmed.row);
+ }
  count():number{return this.rows.size;}
  dispose(){
   this.clearTimer(this.reprobe);

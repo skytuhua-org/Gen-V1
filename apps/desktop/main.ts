@@ -17,6 +17,7 @@ import {releaseOwnedBrowsers,detachOwnedBrowser} from './browser-lifecycle.ts';
 import {ensureMainDockedBrowser} from './docked-browser.ts';
 import {nativeBrowserBounds} from './browser-bounds.ts';
 import {launchDesktopSignIn,parseDesktopSignInTarget} from './auth-launcher.ts';
+import {quitDialogOptions} from './dev-server-quit.ts';
 import {captureDesktopPlacement,createNormalBounds,parseDesktopPlacement,placeOnDesktopDisplay,restoreDesktopPlacement,retainDesktopPlacement,type DesktopDisplay,type DesktopPlacement} from './display-layout.ts';
 import type {ConnectionProviderId} from '../../packages/contracts/connections.ts';
 import {createAccountLoginFlows} from './account-login.ts';
@@ -199,7 +200,7 @@ function requestClose(record:WindowRecord):Promise<boolean>{
 }
 function destroyWindow(record:WindowRecord){if(record.window.isDestroyed())return;remember(record,quitting);loseBrowserOwner(record);record.window.destroy();}
 async function mainWindow(){const existing=[...windows.values()].find(record=>record.surface.kind==='main');if(existing){existing.visible=true;if(existing.window.isMinimized())existing.window.restore();existing.window.show();existing.window.focus();remember(existing);broadcast();await existing.readyPromise;return existing;}const result=await openSurface({kind:'main'});return windows.get(result.id)!;}
-function backendRequest(type:'harness.stopAll'|'harness.layout.save'|'harness.plugin.validate'|'harness.update.readiness'|'harness.update.prepare'|'harness.attention.read'|'harness.attention.open'|'harness.attention.dismiss',extra:Record<string,unknown>={}):Promise<Record<string,unknown>>{
+function backendRequest(type:'harness.stopAll'|'harness.layout.save'|'harness.plugin.validate'|'harness.update.readiness'|'harness.update.prepare'|'harness.attention.read'|'harness.attention.open'|'harness.attention.dismiss'|'harness.devServers.count',extra:Record<string,unknown>={}):Promise<Record<string,unknown>>{
  const child=backend,token=launchToken,requestId=randomUUID(),reply=type==='harness.stopAll'?'harness.stoppedAll':type==='harness.layout.save'?'harness.layout.saved':type==='harness.plugin.validate'?'harness.plugin.validated':type+'.result';
  if(!child?.connected||child.exitCode!==null||child.signalCode)return Promise.reject(Error('The local backend is unavailable. Restore the workspace and retry.'));
  return new Promise((resolve,reject)=>{const finish=(error?:Error,value?:Record<string,unknown>)=>{clearTimeout(timer);child.removeListener('message',receive);child.removeListener('exit',exited);child.removeListener('disconnect',exited);if(error)reject(error);else resolve(value!);};const receive=(raw:unknown)=>{if(!raw||typeof raw!=='object'||Array.isArray(raw))return;const value=raw as Record<string,unknown>;if(value.type===reply&&value.token===token&&value.requestId===requestId){if(value.error)finish(Error(String(value.error).slice(0,500)));else finish(undefined,value);}};const exited=()=>finish(Error('The local backend disconnected before acknowledging the action.'));const timer=setTimeout(()=>finish(Error('The local backend did not acknowledge the action. Restore the workspace and retry.')),15000);child.on('message',receive);child.once('exit',exited);child.once('disconnect',exited);try{child.send({type,token,requestId,...extra},error=>{if(error)finish(error);});}catch(error){finish(error instanceof Error?error:Error(String(error)));}});
@@ -358,6 +359,12 @@ function startUpdater(){
 async function closeApplication(){
  let activeWorkAtClose=true,savedStateFlushed=false;
  try{activeWorkAtClose=signInFlows.isBusy()||(await backendRequest('harness.update.readiness')).idle!==true;}catch{}
+ if(!osSessionEnding&&!restartForUpdate){
+  try{
+   const running=await backendRequest('harness.devServers.count'),count=typeof running.count==='number'?running.count:0;
+   if(count>0&&(await dialog.showMessageBox(quitDialogOptions(count,running.items))).response!==0){for(const entry of windows.values())cancelClose(entry);restartForUpdate=false;return;}
+  }catch{}
+ }
  for(const record of windows.values())if(!await requestClose(record)){for(const entry of windows.values())cancelClose(entry);restartForUpdate=false;return;}
  await signInFlows.close();
  clearTimeout(saveTimer);try{await persistence.flush();}catch{layoutError='Workspace layout could not be saved.';}
