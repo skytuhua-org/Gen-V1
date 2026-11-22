@@ -33,7 +33,9 @@ export function StashPanel({ base, query, active, status, runActive, reload, tri
     try { const next = await get<StashList>(base + '/git/stashes?' + query); if (captured === generation.current) setStashes(next); }
     catch (cause) { if (captured === generation.current) setError(message(cause)); }
   };
-  useEffect(() => { if (active) void loadStashes(); return () => { generation.current++; }; });
+  // Deps on [active, query string]: without them setStashes re-renders re-run the
+  // effect forever, looping Git commands through the shared project queue.
+  useEffect(() => { if (active) void loadStashes(); return () => { generation.current++; }; }, [active, base, threadId]);
   useEffect(() => { if (expanded === null && stashes) setExpanded(stashes.entries.length > 0); }, [expanded, stashes]);
   // Two-step confirm disarms on a timer and whenever the list it guards changes.
   useEffect(() => { setArm(''); }, [stashes?.stashRevision]);
