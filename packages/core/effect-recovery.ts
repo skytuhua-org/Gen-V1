@@ -26,12 +26,20 @@ export function recoverEffects(store: Store): { uncertain: string[]; interrupted
       // and revision) before the operation's outcome is inherited.
       const opMatch = /^operation:(.+)@(\d+)$/.exec(effect.invocationId);
       const operation = opMatch ? store.get<Operation>("operation", opMatch[1]) : null;
+      // The invocation shape alone does not prove which target was dispatched.
+      // Do not inherit an operation outcome from a receipt with stale or
+      // conflicting target preconditions.
+      const targetPreconditions = operation
+        ? Object.entries(operation.preconditions).map(([key, value]) => key + "=" + value)
+        : [];
       const bound = Boolean(
         operation &&
         effect.toolId === "operation:" + operation!.kind &&
         effect.threadId === operation!.threadId &&
         effect.owner.threadId === operation!.threadId &&
-        Number(opMatch![2]) === operation!.revision);
+        Number(opMatch![2]) === operation!.revision &&
+        effect.targetPreconditions.length === targetPreconditions.length &&
+        effect.targetPreconditions.every((entry, index) => entry === targetPreconditions[index]));
       const recorded = bound && ["succeeded", "failed", "cancelled"].includes(operation!.status)
         ? ({ succeeded: "SUCCEEDED", failed: "FAILED", cancelled: "CANCELLED" } as const)[operation!.status as "succeeded" | "failed" | "cancelled"]
         : null;
