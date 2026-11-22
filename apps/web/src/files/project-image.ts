@@ -50,7 +50,15 @@ export async function readProjectImage(
 			signal,
 		}),
 	);
-	if (!response.ok) await read(response);
+	if (!response.ok)
+		try {
+			await read(response);
+		} catch (cause) {
+			// The host limit message is generic; the preview names its own cap (R06).
+			if (cause instanceof ApiError && cause.code === "RESOURCE_LIMIT")
+				throw tooLarge();
+			throw cause;
+		}
 	const length = Number(response.headers.get("Content-Length") ?? "0");
 	if (length > IMAGE_BYTE_LIMIT) throw tooLarge();
 	const blob = await response.blob();

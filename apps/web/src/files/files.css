@@ -408,3 +408,125 @@
 		grid-template-columns: minmax(0, 1fr);
 	}
 }
+
+/* Image preview in project Files (#1585) */
+.files-image {
+	display: flex;
+	flex-direction: column;
+	min-height: 100%;
+	height: 100%;
+}
+.files-image-bar {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 8px var(--files-inset);
+	border-bottom: 1px solid var(--border);
+	background: var(--surface);
+}
+.files-mode-toggle {
+	display: inline-flex;
+	border: 1px solid var(--control-border);
+	border-radius: 6px;
+	padding: 2px;
+	gap: 2px;
+}
+.files-mode-toggle button {
+	min-height: 24px;
+	padding: 2px 8px;
+	font-size: 12px;
+	border-radius: 4px;
+	color: var(--muted);
+	transition: background-color var(--ui-motion-hover) var(--ui-ease-enter), color var(--ui-motion-hover) var(--ui-ease-enter);
+}
+.files-mode-toggle button[aria-pressed="true"] {
+	background: var(--selection-bg);
+	color: var(--text);
+	box-shadow: inset 0 0 0 1px var(--selection-border);
+}
+.files-mode-toggle button:active {
+	transform: scale(0.97);
+	transition: transform var(--ui-motion-press) var(--ui-ease-enter);
+}
+.files-image-meta {
+	margin-left: auto;
+	font-size: 12px;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.files-image-stage {
+	flex: 1;
+	display: grid;
+	place-items: center;
+	justify-content: safe center;
+	align-content: safe center;
+	padding: var(--files-inset);
+	overflow: auto;
+}
+.files-image-stage img {
+	display: block;
+	padding: 0;
+	margin: 0;
+	opacity: 0;
+	outline: 1px solid var(--border);
+	border-radius: 2px;
+	background-color: var(--surface);
+	background-image: conic-gradient(var(--subtle) 25%, transparent 0 50%, var(--subtle) 0 75%, transparent 0);
+	background-size: 16px 16px;
+}
+.files-image-stage[data-mode="fit"] img {
+	max-width: 100%;
+	max-height: 100%;
+	width: auto;
+	height: auto;
+	object-fit: contain;
+}
+.files-image-stage img[data-loaded="true"] {
+	opacity: 1;
+	transform: scale(1);
+	transition: opacity var(--ui-motion-status) var(--ui-ease-enter), transform var(--ui-motion-status) var(--ui-ease-enter);
+}
+.files-image-stage img:not([data-loaded]) {
+	transform: scale(0.985);
+}
+@container files (max-width: 400px) {
+	.files-image-meta .files-image-size {
+		display: none;
+	}
+}
+@media (forced-colors: active) {
+	.files-image-stage img {
+		outline: 1px solid CanvasText;
+		background-image: none;
+	}
+	.files-mode-toggle button[aria-pressed="true"] {
+		outline: 2px solid Highlight;
+		outline-offset: -2px;
+	}
+}
+:root:is([data-motion=reduced],[data-motion=off]) .files-image-stage img,
+.app-shell[data-panel-animations=false] .files-image-stage img {
+	transform: none !important;
+	transition: none !important;
+	opacity: 1;
+}
+:root:is([data-motion=reduced],[data-motion=off]) .files-mode-toggle button,
+.app-shell[data-panel-animations=false] .files-mode-toggle button {
+	transform: none !important;
+	transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+	.files-image-stage img {
+		transform: none !important;
+		transition: none !important;
+		opacity: 1;
+	}
+	.files-mode-toggle button {
+		transform: none !important;
+		transition: none !important;
+	}
+}
