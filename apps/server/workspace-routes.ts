@@ -49,7 +49,13 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
  app.get('/api/projects/:projectId/git/patch',async(request,reply)=>{
   reply.header('Cache-Control','no-store');
   const{projectId}=z.object({projectId:identifier}).parse(request.params),query=workspacePatchQuerySchema.parse(request.query);
-  return projects.gitPatch(projectId,query);
+  // Conflict/too-large statuses are scoped to this route; other commands keep the shared 400 mapping.
+  try{return await projects.gitPatch(projectId,query);}
+  catch(error){
+   if(error instanceof HarnessError&&(error.code==='STALE_REVISION'||error.code==='RESOURCE_LIMIT'))
+    return reply.code(error.code==='STALE_REVISION'?409:413).send({error:{code:error.code,message:error.message}});
+   throw error;
+  }
  });
  // Read-only comparison dependencies; retain existing action/review routes verbatim.
  app.get('/api/projects/:projectId/git/comparison',async(request,reply)=>{

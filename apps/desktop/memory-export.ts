@@ -53,12 +53,13 @@ function current(entry: Pick<Pending, 'owner' | 'frame'>) {
 /** The normal trusted-session guard remains deny-by-default, including during an export. */
 export function createMemoryExportDownloads() {
   const guarded = new WeakSet<Session>(), pending = new Map<WebContents, Pending>();
-  function guard(session: Session) {
+  function guard(session: Session, ownedElsewhere?: (contents: WebContents) => boolean) {
     if (guarded.has(session)) return;
     guarded.add(session);
     session.on('will-download', (event, item, contents, frame) => {
       const entry = pending.get(contents);
-      if (!entry || entry.admitted) {event.preventDefault(); return;}
+      // Another guarded download service can own this event; never cancel it.
+      if (!entry || entry.admitted) {if (!ownedElsewhere?.(contents)) event.preventDefault(); return;}
       if (!current(entry)) {event.preventDefault(); entry.finish(error('the owning document changed.')); return;}
       try {
         const chain = item.getURLChain();
@@ -121,5 +122,5 @@ export function createMemoryExportDownloads() {
       } catch (cause) {entry.finish(cause instanceof Error ? cause : error('the download could not start.'));}
     });
   }
-  return {guard, export: exportMemory};
+  return {guard, export: exportMemory, owns: (contents: WebContents) => pending.has(contents)};
 }

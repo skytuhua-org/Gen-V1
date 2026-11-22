@@ -79,7 +79,7 @@ describe("gitPatch", () => {
     const { source, tools, projectId } = await fixture();
     await writeFile(join(source, "one.txt"), "base\nchanged\n");
     const status = await tools.gitStatus(projectId, "main");
-    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision });
+    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main" });
     const bytes = decode(patch);
     expect(bytes.toString("utf8")).toContain("+changed");
     expect(patch.paths).toEqual(["one.txt"]);
@@ -95,11 +95,11 @@ describe("gitPatch", () => {
     git("add", "one.txt");
     await writeFile(join(source, "one.txt"), "base\nstaged\nunstaged\n");
     const status = await tools.gitStatus(projectId, "main");
-    const patch = await tools.gitPatch(projectId, { scope: "staged", purpose: "save", revision: status.revision });
+    const patch = await tools.gitPatch(projectId, { scope: "staged", purpose: "save", revision: status.revision, threadId: "main" });
     const text = decode(patch).toString("utf8");
     expect(text).toContain("+staged");
     expect(text).not.toContain("+unstaged");
-    const work = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision });
+    const work = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main" });
     expect(decode(work).toString("utf8")).toContain("+unstaged");
   });
 
@@ -107,7 +107,7 @@ describe("gitPatch", () => {
     const { source, tools, projectId } = await fixture();
     await writeFile(join(source, "new-file.txt"), "hello\nworld\n");
     const status = await tools.gitStatus(projectId, "main");
-    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision });
+    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main" });
     const text = decode(patch).toString("utf8");
     expect(text).toContain("diff --git a/new-file.txt b/new-file.txt");
     expect(text).toContain("new file mode 100644");
@@ -125,9 +125,10 @@ describe("gitPatch", () => {
     await chmod(script, 0o755);
     await writeFile(join(source, "empty.txt"), "");
     const status = await tools.gitStatus(projectId, "main");
-    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision });
+    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main" });
     const text = decode(patch).toString("utf8");
-    expect(text).toContain("new file mode 100755");
+    const execMode = process.platform === "win32" ? "100644" : "100755";
+    expect(text).toMatch(new RegExp(`diff --git a/run\\.sh b/run\\.sh\\nnew file mode ${execMode}`));
     expect(text).toMatch(/diff --git a\/empty\.txt b\/empty\.txt\nnew file mode 100644\nindex 0+\.\.\.[0-9a-f]{40}\n(?!-)/);
   });
 
@@ -135,7 +136,7 @@ describe("gitPatch", () => {
     const { source, tools, projectId } = await fixture();
     await writeFile(join(source, "blob.bin"), Buffer.from([0, 1, 2, 3, 255]));
     const status = await tools.gitStatus(projectId, "main");
-    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision });
+    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main" });
     expect(patch.skipped).toEqual([{ path: "blob.bin", reason: "binary" }]);
     expect(patch.paths).not.toContain("blob.bin");
   });
@@ -145,7 +146,7 @@ describe("gitPatch", () => {
     git("mv", "one.txt", "renamed.txt");
     await writeFile(join(source, "two.txt"), "second\nno-newline"); // no trailing LF
     const status = await tools.gitStatus(projectId, "main");
-    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision });
+    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main" });
     const text = decode(patch).toString("utf8");
     expect(text).toContain("rename from one.txt");
     expect(text).toContain("rename to renamed.txt");
@@ -157,7 +158,7 @@ describe("gitPatch", () => {
     await writeFile(join(source, "one.txt"), "base\none\n");
     await writeFile(join(source, "two.txt"), "second\ntwo\n");
     const status = await tools.gitStatus(projectId, "main");
-    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, path: "one.txt" });
+    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main", path: "one.txt" });
     const text = decode(patch).toString("utf8");
     expect(patch.paths).toEqual(["one.txt"]);
     expect(text).toContain("+one");
@@ -168,21 +169,21 @@ describe("gitPatch", () => {
     const { source, tools, projectId } = await fixture();
     await writeFile(join(source, "one.txt"), "base\nchanged\n");
     const status = await tools.gitStatus(projectId, "main");
-    await expect(tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: "wrong" })).rejects.toMatchObject({ code: "STALE_REVISION" });
-    await expect(tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, path: "../escape" })).rejects.toMatchObject({ code: "UNSUPPORTED_PATH" });
-    await expect(tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, path: "/abs" })).rejects.toMatchObject({ code: "UNSUPPORTED_PATH" });
-    await expect(tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, path: "unchanged.txt" })).rejects.toMatchObject({ code: "UNSUPPORTED_PATH" });
-    await expect(tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, path: "one.txt" })).resolves.toMatchObject({ paths: ["one.txt"] });
+    await expect(tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: "wrong", threadId: "main" })).rejects.toMatchObject({ code: "STALE_REVISION" });
+    await expect(tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main", path: "../escape" })).rejects.toMatchObject({ code: "UNSUPPORTED_PATH" });
+    await expect(tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main", path: "/abs" })).rejects.toMatchObject({ code: "UNSUPPORTED_PATH" });
+    await expect(tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main", path: "unchanged.txt" })).rejects.toMatchObject({ code: "UNSUPPORTED_PATH" });
+    await expect(tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main", path: "one.txt" })).resolves.toMatchObject({ paths: ["one.txt"] });
   });
 
   it("drops non-UTF-8 blocks for purpose=copy but keeps them for save", async () => {
     const { source, tools, projectId } = await fixture();
     await writeFile(join(source, "latin.txt"), Buffer.from([0x61, 0xe9, 0x0a])); // "aé\n" in Latin-1
     const status = await tools.gitStatus(projectId, "main");
-    const copy = await tools.gitPatch(projectId, { scope: "worktree", purpose: "copy", revision: status.revision });
+    const copy = await tools.gitPatch(projectId, { scope: "worktree", purpose: "copy", revision: status.revision, threadId: "main" });
     expect(copy.skipped).toEqual([{ path: "latin.txt", reason: "not-utf8" }]);
     expect(copy.paths).toEqual([]);
-    const save = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision });
+    const save = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main" });
     expect(save.paths).toEqual(["latin.txt"]);
   });
 
@@ -190,7 +191,7 @@ describe("gitPatch", () => {
     const { git, tools, projectId } = await fixture();
     const status = await tools.gitStatus(projectId, "main");
     const before = git("status", "--porcelain");
-    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision });
+    const patch = await tools.gitPatch(projectId, { scope: "worktree", purpose: "save", revision: status.revision, threadId: "main" });
     expect(patch.paths).toEqual([]);
     expect(patch.bytes).toBe(0);
     expect(git("status", "--porcelain")).toBe(before);
@@ -245,7 +246,7 @@ describe("synthesized untracked headers", () => {
     git("add", "-N", "empty.txt", "run.sh");
     const canonical = git("diff", "--full-index", "--no-color", "--no-ext-diff", "--no-textconv");
     const empty = synthesizeUntrackedPatch("empty.txt", Buffer.alloc(0), false).toString("utf8");
-    const exec = synthesizeUntrackedPatch("run.sh", Buffer.from("#!/bin/sh\necho x\n"), true).toString("utf8");
+    const exec = synthesizeUntrackedPatch("run.sh", Buffer.from("#!/bin/sh\necho x\n"), process.platform !== "win32").toString("utf8");
     expect(canonical).toContain(empty.trimEnd());
     expect(canonical).toContain(exec.trimEnd());
   });

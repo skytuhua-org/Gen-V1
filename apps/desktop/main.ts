@@ -120,7 +120,7 @@ function secureBrowserSession(value:Session){
  const ready=(async()=>{const proxy=await (proxyPromise??=createBrowserProxy());await value.setProxy({mode:'fixed_servers',proxyRules:'http=127.0.0.1:'+proxy.port+';https=127.0.0.1:'+proxy.port,proxyBypassRules:'<-loopback>'});await value.closeAllConnections();})();configuredBrowserSessions.set(value,ready);return ready;
 }
 const memoryExports=createMemoryExportDownloads(),patchSaves=createPatchSaveDownloads();
-function secureSessionDownloads(value:Session){memoryExports.guard(value);patchSaves.guard(value);}
+function secureSessionDownloads(value:Session){memoryExports.guard(value,contents=>patchSaves.owns(contents));patchSaves.guard(value,contents=>memoryExports.owns(contents));}
 function browserRecord(id:string):BrowserRecord {
  const existing=browsers.get(id);if(existing)return existing;
  if(browsers.size>=12)throw Error('Close a browser before opening another');
