@@ -51,7 +51,7 @@ async function fixture(width:number,saved:unknown=null,failReads=false,delayRead
  await page.route('http://127.0.0.1/**',route=>{
   const path=new URL(route.request().url()).pathname;
   const body=path==='/plugin.js'?javascript:path==='/plugin.css'?css:path==='/plugin'?'<html data-theme="dark"><head><meta name="gen-plugin-id" content="personal-visuals"><link rel="stylesheet" href="/plugin.css"></head><body><div id="root"></div><script src="/plugin.js"></script></body></html>':pluginToolsParent.replace('window.saved=null;window.failReads=false;window.delayReads=false;',`window.saved=${JSON.stringify(saved)};window.failReads=${failReads};window.delayReads=${delayReads};`);
-  return route.fulfill({contentType:path.endsWith('.js')?'text/javascript':path.endsWith('.css')?'text/css':'text/html',body});
+  return route.fulfill({contentType:path.endsWith('.js')?'text/javascript':path.endsWith('.css')?'text/css':'text/html; charset=utf-8',body});
  });
  await page.goto('http://127.0.0.1/plugin-dock-test');
  const frame=page.frames().find(value=>value.parentFrame())!;

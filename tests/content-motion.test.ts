@@ -29,7 +29,7 @@ describe('content motion', () => {
   beforeAll(async () => {
     script = (await build({stdin:{contents:fixture,resolveDir:process.cwd(),loader:'tsx'},loader:{'.css':'empty'},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'}})).outputFiles[0]!.text;
     css = await readFile('packages/ui-shell/tokens.css','utf8') + await readFile('packages/ui-shell/feedback.css','utf8') + await readFile('apps/web/src/styles.css','utf8') + await readFile('apps/web/src/shell.css','utf8') + await readFile('apps/web/src/loading-state.css','utf8');
-    server = createServer((_request, response) => { response.setHeader('content-type', 'text/html'); response.end(`<style>${css}</style><div id="root"></div><script>${script}</script>`); });
+    server = createServer((_request, response) => { response.setHeader('content-type', 'text/html; charset=utf-8'); response.end(`<style>${css}</style><div id="root"></div><script>${script}</script>`); });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address(); base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
     browser = await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{})});
