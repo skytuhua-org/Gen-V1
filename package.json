@@ -13,7 +13,7 @@
     "start": "tsx apps/server/main.ts",
     "build": "node scripts/build.mjs",
     "build:widgets": "node scripts/build-widgets.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "bun check --no-script",
     "lint:ui": "tsx scripts/lint-ui.ts",
     "lint": "tsx scripts/lint-ui.ts --check && bun lint --no-script",
     "check:docs-links": "node scripts/check-doc-links.mjs",

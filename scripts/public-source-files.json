@@ -2854,6 +2854,7 @@
     "tests/browser-runner.test.ts",
     "tests/browser-verification-v3.test.ts",
     "tests/build-review-index.test.ts",
+    "tests/bun-check-typecheck.test.ts",
     "tests/bun-lint-config.test.ts",
     "tests/capabilities.test.ts",
     "tests/capture-ui/helpers-edges.test.ts",
