@@ -1,7 +1,7 @@
-import {useId,useState,type ReactNode} from 'react';
+import {useEffect,useId,useRef,useState,type CSSProperties,type ReactNode} from 'react';
 import {Bot,CalendarClock,ChevronDown,ChevronRight,Code2,FileDiff,Folder,GitBranch,GitCommitHorizontal,ListChecks,MessageSquare,Plus,Server,Terminal} from 'lucide-react';
 import type {Snapshot} from '../../../packages/contracts/index.ts';
-import type {ProjectContext} from '../../../packages/contracts/workspace.ts';
+import type {ProjectContext,ProjectScriptSuggestion,ProjectScriptSuggestions} from '../../../packages/contracts/workspace.ts';
 import {contextCompanions} from './project-context-summary';
 import {LoadingState,PendingStatus} from './LoadingState';
 import './project-context.css';
@@ -18,12 +18,29 @@ export interface ProjectContextCardProps {
  composerChangesAvailable?:boolean;
  snapshot?:Snapshot;threadId?:string;onOpenDetailedPlan?:()=>void;
  automationItems?:{id:string;title:string;status:string;nextRunAt?:string}[];automationsAvailable?:boolean;
+ /** Lazy package.json script suggestions; omit to hide the section entirely. */
+ loadSuggestions?:(projectId:string,threadId?:string,signal?:AbortSignal)=>Promise<ProjectScriptSuggestions>;
 }
 /** Data and callbacks only: this card is safe to consume from either authority's shell. */
-export function ProjectContextCard({context,loading,error,threadTitle,plan,planOpen=false,onTogglePlan,fullPlanVisible=false,onAction,onSelectThread,onShowChanges,onConnect,snapshot,threadId,onOpenDetailedPlan,automationItems=[],automationsAvailable=false,composerChangesAvailable=false}:ProjectContextCardProps){
+export function ProjectContextCard({context,loading,error,threadTitle,plan,planOpen=false,onTogglePlan,fullPlanVisible=false,onAction,onSelectThread,onShowChanges,onConnect,snapshot,threadId,onOpenDetailedPlan,automationItems=[],automationsAvailable=false,composerChangesAvailable=false,loadSuggestions}:ProjectContextCardProps){
  const planId=useId(),[expanded,setExpanded]=useState<'scripts'|'branch'|'commit'|'lineage'|null>(null),[busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[scriptName,setScriptName]=useState(''),[scriptCommand,setScriptCommand]=useState(''),[branch,setBranch]=useState(''),[commit,setCommit]=useState('');
  const run=(type:string,payload:Record<string,unknown>={})=>{if(!onAction||busy)return;setBusy(true);setActionError('');void onAction(type,payload).then(()=>{setExpanded(null);setCommit('');}).catch(cause=>setActionError(cause instanceof Error?cause.message:'The project action could not finish.')).finally(()=>setBusy(false));};
  const toggle=(name:NonNullable<typeof expanded>)=>setExpanded(value=>value===name?null:name);
+ const suggGeneration=useRef(0),scriptsToggle=useRef<HTMLButtonElement|null>(null),suggestionList=useRef<HTMLDivElement|null>(null);
+ const [suggestions,setSuggestions]=useState<{phase:'idle'|'loading'|'ready'|'error';result?:ProjectScriptSuggestions}>({phase:'idle'}),[leaving,setLeaving]=useState<ReadonlySet<string>>(new Set()),[addedNote,setAddedNote]=useState('');
+ const loadPkgScripts=()=>{if(!loadSuggestions||!context)return;const generation=++suggGeneration.current,controller=new AbortController();setSuggestions({phase:'loading'});setLeaving(new Set());
+  loadSuggestions(context.project.id,threadId,controller.signal).then(result=>{if(generation!==suggGeneration.current)return;setSuggestions({phase:result.status==='unreadable'?'error':'ready',result});}).catch(()=>{if(generation===suggGeneration.current&&!controller.signal.aborted)setSuggestions({phase:'error'});});
+  return controller;};
+ // Lazy read: package.json is fetched only while the scripts panel is open.
+ useEffect(()=>{if(expanded!=='scripts')return;const controller=loadPkgScripts();return()=>{suggGeneration.current++;controller?.abort();};},[expanded,context?.project.id,loadSuggestions]);
+ const addSuggestion=(item:ProjectScriptSuggestion)=>{if(!onAction||busy)return;setBusy(true);setActionError('');
+  void onAction('add-script',{name:item.name,command:item.command}).then(()=>{
+   setAddedNote('Added '+item.name);setLeaving(previous=>new Set(previous).add(item.name));
+   // The row animates out before it leaves the list, then focus moves to the
+   // next Add (or back to the section toggle when the list is empty).
+   setTimeout(()=>{setSuggestions(previous=>previous.result?{...previous,result:{...previous.result,suggestions:previous.result.suggestions.filter(entry=>entry.name!==item.name)}}:previous);setLeaving(previous=>{const next=new Set(previous);next.delete(item.name);return next;});
+    const next=suggestionList.current?.querySelector<HTMLElement>('.pkg-add:not(:disabled)');(next??scriptsToggle.current)?.focus();},200);
+  }).catch(cause=>setActionError(cause instanceof Error?cause.message:'The project action could not finish.')).finally(()=>setBusy(false));};
  const connected=Boolean(context&&(context.project.rootPath||context.capabilities.git||context.capabilities.terminal||context.editor.available));
  const total=(value:number)=>compactCount.format(value);
  const lineage=context?.lineage.toSorted((a,b)=>Number(b.status==='working')-Number(a.status==='working'))??[];
@@ -45,8 +62,22 @@ export function ProjectContextCard({context,loading,error,threadTitle,plan,planO
    {context&&connected&&<details className="project-context-tools"><summary>Project tools<ChevronDown size={13}/></summary><div className="project-context-detail">
     <div className="project-context-machine"><Server size={15}/><strong title={context.machineName}>{context.machineName}</strong></div>
     {context.editor.available&&<button className="project-context-row" aria-busy={busy} disabled={busy||!onAction} onClick={()=>run('open-editor')}><Code2 size={16}/><span>Open in {context.editor.label}</span><ChevronRight size={13}/></button>}
-    {context.capabilities.terminal&&<><button className="project-context-row" aria-busy={busy} disabled={busy||!onAction} aria-expanded={expanded==='scripts'} onClick={()=>toggle('scripts')}><Plus size={15}/><span>Add script</span><ChevronDown size={13}/></button>
-     {expanded==='scripts'&&<form onSubmit={event=>{event.preventDefault();run('add-script',{name:scriptName,command:scriptCommand});}}><label>Script name<input value={scriptName} onChange={event=>setScriptName(event.target.value)} required maxLength={100}/></label><label>Command<input value={scriptCommand} onChange={event=>setScriptCommand(event.target.value)} required maxLength={4000}/></label><button className="secondary" aria-busy={busy} disabled={busy||!scriptName.trim()||!scriptCommand.trim()}>Add script</button></form>}
+    {context.capabilities.terminal&&<><button ref={scriptsToggle} className="project-context-row" aria-busy={busy} disabled={busy||!onAction} aria-expanded={expanded==='scripts'} onClick={()=>toggle('scripts')}><Plus size={15}/><span>Add script</span><ChevronDown size={13}/></button>
+     {expanded==='scripts'&&<><form onSubmit={event=>{event.preventDefault();run('add-script',{name:scriptName,command:scriptCommand});}}><label>Script name<input value={scriptName} onChange={event=>setScriptName(event.target.value)} required maxLength={100}/></label><label>Command<input value={scriptCommand} onChange={event=>setScriptCommand(event.target.value)} required maxLength={4000}/></label><button className="secondary" aria-busy={busy} disabled={busy||!scriptName.trim()||!scriptCommand.trim()}>Add script</button></form>
+      {loadSuggestions&&<div className="pkg-suggestions" data-phase={suggestions.phase}>
+       <PendingStatus pending={suggestions.phase==='loading'} label="Reading package.json…"/>
+       {suggestions.phase==='error'&&<p className="project-context-note error-text" role="alert">package.json could not be read. <button type="button" className="quiet" onClick={loadPkgScripts}>Retry</button></p>}
+       {suggestions.phase==='ready'&&suggestions.result?.status==='ok'&&<div className="pkg-suggestion-group">
+        <p className="pkg-suggestions-caption">From package.json <span className="pkg-runner" title={suggestions.result.runnerSource==='lockfile'?'Detected from lockfiles':suggestions.result.runnerSource==='packageManager'?'Detected from the packageManager field':'Default runner'}>{suggestions.result.runner}</span>{suggestions.result.multipleLockfiles&&<small title="Several lockfiles found">*</small>}</p>
+        <div className="pkg-suggestion-list" ref={suggestionList}>
+         {suggestions.result.suggestions.map((item,index)=><div key={item.name} className="pkg-suggestion" data-leaving={leaving.has(item.name)||undefined} style={{'--i':Math.min(index,8)} as CSSProperties}><div className="pkg-suggestion-row"><Terminal size={14}/><span className="pkg-suggestion-name">{item.name}</span><code className="pkg-suggestion-command" title={item.body}>{item.command}</code><button type="button" className="secondary pkg-add" aria-busy={busy} disabled={busy||!onAction} onClick={()=>addSuggestion(item)}><Plus size={12}/> Add</button></div></div>)}
+        </div>
+        {suggestions.result.suggestions.length===0&&<p className="project-context-note">No new scripts to add.</p>}
+        {suggestions.result.skipped>0&&<p className="project-context-note">{suggestions.result.skipped} script{suggestions.result.skipped===1?'':'s'} skipped.</p>}
+       </div>}
+       {addedNote&&<p role="status" className="project-context-note pkg-added-note">{addedNote}</p>}
+      </div>}
+     </>}
      {context.scripts.map(script=><button key={script.id} className="project-context-row project-script-row" title={script.command} aria-busy={busy} disabled={busy||!onAction} onClick={()=>run('run-script',{scriptId:script.id})}><Terminal size={14}/><span>{script.name}</span><ChevronRight size={13}/></button>)}
     </>}
     {context.capabilities.git&&<><button className="project-context-row" aria-busy={busy} disabled={busy||!onAction} title={context.head??undefined} aria-expanded={expanded==='commit'} onClick={()=>toggle('commit')}><GitCommitHorizontal size={16}/><span>Commit</span><ChevronDown size={13}/></button>
