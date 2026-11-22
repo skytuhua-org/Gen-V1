@@ -78,6 +78,18 @@ it('rejects pastes on a side-question composer', async () => {
  await expect(owner.addPaste(child, paste())).rejects.toThrow('unavailable');
  owner.dispose();
 });
+it('drops accepted chips but keeps additions made while the send was in flight', async () => {
+ const {clearAcceptedPastes} = await import('../apps/web/src/pasted-text');
+ records.set('draft-pastes:owner', {value: [paste(ID1, 'sent'), paste(ID2, 'added later')], generation: 'g'});
+ await clearAcceptedPastes('owner', [paste(ID1, 'sent')]);
+ expect(records.get('draft-pastes:owner')?.value).toEqual([paste(ID2, 'added later')]);
+});
+it('keeps a chip edited in another window when the send is accepted', async () => {
+ const {clearAcceptedPastes} = await import('../apps/web/src/pasted-text');
+ records.set('draft-pastes:owner', {value: [paste(ID1, 'edited elsewhere'), paste(ID2, 'other')], generation: 'g'});
+ await clearAcceptedPastes('owner', [paste(ID1, 'sent')]);
+ expect(records.get('draft-pastes:owner')?.value).toEqual([paste(ID1, 'edited elsewhere'), paste(ID2, 'other')]);
+});
 it('surfaces a recovery error for unreadable paste drafts', async () => {
  const owner = store();
  records.set('draft-pastes:owner', {value: 'corrupt', generation: 'g'});

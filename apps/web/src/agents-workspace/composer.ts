@@ -215,7 +215,7 @@ export function createSharedAgentComposers(actions: {sendParent(input: ParentSen
     await journalCompareAndSwap(key(agent), pending.generation, '');
     await clearAcceptedSkills(skillDraftKey(identity(agent)), pending.skills ?? []);
     await clearAcceptedExcerpts(identity(agent),pending.excerptGeneration);
-    if(pending.pastes?.length)await clearAcceptedPastes(identity(agent),pending.pastes.map(paste=>paste.id));
+    if(pending.pastes?.length)await clearAcceptedPastes(identity(agent),pending.pastes);
     if(pending.sourceOwner) await clearAcceptedSourceDraft(pending.sourceOwner,pending.sourceGeneration);
     await journalWrite(pendingKey(agent), null); value.pending = undefined;
     // journal notifications own the draft; never clear text authored during transport.

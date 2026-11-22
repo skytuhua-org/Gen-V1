@@ -397,7 +397,7 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
         await command('message.send', { content: submittedPrompt, modelId, thinkingLevel:submittedThinking, ...(requestContextId ? {requestContextId} : {}), ...(submittedSkills.length?{skills:submittedSkills.map(binding=>binding.ref)}:{}) }, id);
         await clearAcceptedSkills(skillDraftKey(id),submittedSkills);
         await clearAcceptedExcerpts(id,submittedExcerptGeneration);
-        await clearAcceptedPastes(id,submittedPastes.map(paste=>paste.id));
+        await clearAcceptedPastes(id,submittedPastes);
         await journalCompareAndSwap(`draft:${key}`, submittedGeneration, '');
         if (id !== key && migrated && migrated.source?.generation === submittedGeneration) await journalCompareAndSwap(`draft:${id}`, migrated.generation, '');
         await refresh();

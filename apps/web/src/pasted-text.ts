@@ -52,14 +52,16 @@ export async function changePastedTexts(threadId:string,update:(current:PastedTe
  for(let attempt=0;attempt<8;attempt++){const record=await journalReadRecord(key),next=readPastedTexts(update(readPastedTexts(record?.value)));if(await journalCompareAndSwap(key,record?.generation,next))return;}
  throw Error('Pasted text changed in another window. Retry.');
 }
-/** Drop only the sent ids so chips added while the send was in flight survive. */
-export async function clearAcceptedPastes(threadId:string,accepted:readonly string[]):Promise<void>{
+/** Drop the accepted chips so chips added while the send was in flight
+ * survive. A chip edited elsewhere keeps its id but no longer matches the
+ * submitted content, so it is kept rather than deleted. */
+export async function clearAcceptedPastes(threadId:string,accepted:readonly PastedText[]):Promise<void>{
  if(!accepted.length)return;
- const key=pasteDraftKey(threadId),drop=new Set(accepted);
+ const key=pasteDraftKey(threadId),drop=new Map(accepted.map(paste=>[paste.id,paste]));
  for(let attempt=0;attempt<8;attempt++){
   const record=await journalReadRecord(key);
   if(!record)return;
-  const current=readPastedTexts(record.value),next=current.filter(paste=>!drop.has(paste.id));
+  const current=readPastedTexts(record.value),next=current.filter(paste=>{const sent=drop.get(paste.id);return !sent||sent.text!==paste.text||sent.createdAt!==paste.createdAt;});
   if(next.length===current.length)return;
   if(await journalCompareAndSwap(key,record.generation,next))return;
  }
