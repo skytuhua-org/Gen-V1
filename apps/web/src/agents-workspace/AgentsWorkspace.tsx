@@ -6,6 +6,8 @@ import {agentStatuses, type AgentStatus, type AgentSummary} from '../../../../pa
 import {useDesktop, useDetachedSurface, usePendingSurface} from '../desktop-context';
 import {ComposerView} from '../ComposerView';
 import {ComposerCommands,ComposerSkillBindings,type ComposerCommandsHandle} from '../ComposerCommands';
+import {PastedTextChip} from '../PastedText';
+import {insertDraftText} from '../saved-drafts';
 import {command} from '../api';
 import {LoadingState} from '../LoadingState';
 import {AgentsSkeleton, ConversationSkeleton} from '../ViewSkeletons';
@@ -183,12 +185,14 @@ function InlineComposer({agent, composers, controller,onOpenConversation}: {agen
  useEffect(() => {modeOwner.current.active = true; return () => {modeOwner.current.active = false; modeOwner.current.revision++;};}, []);
  const skillsBlocked = !agent.parentId && Boolean(state.skills?.length) && !state.retry;
  const send = () => {if (!currentHeld.current && !skillsBlocked) void composers.submit(agent);};
+ const insertPasteText = (text: string) => {const area = input.current; const result = insertDraftText(area?.value ?? state.draft, text, area?.selectionStart ?? 0); void composers.edit(agent, result.text); requestAnimationFrame(() => {area?.focus(); area?.setSelectionRange(result.caret, result.caret);});};
  return <><div inert={held}><ComposerView className="agents-composer" onSubmit={event => {event.preventDefault(); send();}}>
   <textarea ref={input} aria-label={`Message to ${agent.title}`} placeholder={agent.parentId ? 'Follow up…' : 'Message…'} rows={1} value={state.draft} disabled={held || !state.ready} onFocus={() => controller.setView(agent.agentId, {focus: 'composer'})} onChange={event => {void composers.edit(agent, event.target.value);}} onKeyDown={event => {if(commands.current?.keyDown(event))return;if (isComposing(event) || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return; if (event.key === 'Enter') {event.preventDefault(); send();}}}/>
+  {Boolean(state.pastes?.length) && <div className="pasted-text-chips" role="group" aria-label="Pasted texts">{state.pastes!.map(paste => <PastedTextChip key={paste.id} paste={paste} disabled={held || state.busy || !state.ready} onEdit={text => composers.editPaste(agent, paste.id, text)} onRemove={() => composers.removePaste(agent, paste.id)} onInsert={insertPasteText}/>)}</div>}
   {!agent.parentId&&<><ComposerSkillBindings bindings={state.skills??[]} retry={state.retry} disabled={held} onRemove={id=>{void composers.removeSkill(agent,id).catch(()=>{});}}/><ComposerCommands ref={commands} input={input} draft={state.draft} threadId={agent.threadId??undefined} projectId={agent.projectId??undefined} disabled={held||!state.ready||state.busy||state.stopping} onDraft={text=>{void composers.edit(agent,text);}} onModel={()=>{if(agent.threadId)onOpenConversation(agent.threadId,'model');}} onMode={async mode=>{if(agent.status==='working')throw Error('Wait for the active run to finish to change mode.');const revision=modeOwner.current.revision,owner=desktop?desktop.ownership(surface):0;if(agent.threadId)await command('thread.mode',{mode},agent.threadId,undefined,()=>modeOwner.current.active&&!currentHeld.current&&modeOwner.current.revision===revision&&owner!==undefined&&(!desktop||desktop.ownership(surface)===owner));}}/></>}
   <div className="agents-composer-actions"><span role="status">{state.ticket ? `${state.ticket.status.replaceAll('_', ' ')}${state.ticket.error ? ': ' + state.ticket.error : ''}` : state.busy ? 'Sending…' : ''}</span>
    {!agent.parentId && agent.status === 'working' && <button type="button" aria-label={`Stop ${agent.title}`} disabled={held || state.stopping} onClick={() => {if (!currentHeld.current) void composers.stop(agent);}}><Square size={13}/>{state.stopping ? 'Stopping…' : 'Stop'}</button>}
-   <button type="submit" aria-label={`${state.retry ? 'Retry send to' : 'Send to'} ${agent.title}`} disabled={held || skillsBlocked || !composers.canSend(agent) || !state.retry && !state.draft.trim()}><Send size={14}/>{state.retry ? 'Retry send' : 'Send'}</button>
+   <button type="submit" aria-label={`${state.retry ? 'Retry send to' : 'Send to'} ${agent.title}`} disabled={held || skillsBlocked || !composers.canSend(agent) || !state.retry && !state.draft.trim() && !(state.pastes?.length ?? 0)}><Send size={14}/>{state.retry ? 'Retry send' : 'Send'}</button>
   </div>
   {!agent.parentId && !agent.modelId && <p className="agents-readonly">Choose a model in this conversation to send.</p>}
   {state.error && <ErrorState className="agents-error" message={state.error} />}
