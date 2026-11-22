@@ -62,3 +62,7 @@ A user who tweaks Appearance (theme, accent, font sizes, density, project colors
 
 ## REFERENCES
 - Issue: this issue. Fixture host: scripts/review-host.ts :4317. Prior QA finding recorded in recording qa-pass13-settings.
+
+
+---
+Plan file: https://github.com/skytuhua-org/Gen-V1/blob/55705782391c1497ace6f4433b9c54a78feabdb7/docs/agent-plans/appearance-unsaved-guard.md

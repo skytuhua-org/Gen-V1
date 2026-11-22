@@ -54,3 +54,7 @@ Every out-of-range or non-integer entry in UI font size (13–16), Chat font siz
 
 ## REFERENCES
 - This issue; AppearanceSettings.tsx; QA pass 13 recording.
+
+
+---
+Plan file: https://github.com/skytuhua-org/Gen-V1/blob/55705782391c1497ace6f4433b9c54a78feabdb7/docs/agent-plans/font-size-input-feedback.md

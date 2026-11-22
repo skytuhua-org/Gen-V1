@@ -51,3 +51,7 @@ The Granted resources list shows each granted resource once, labeled with the th
 
 ## REFERENCES
 - This issue; scripts/review-host.ts grant fixtures; QA pass 13.
+
+
+---
+Plan file: https://github.com/skytuhua-org/Gen-V1/blob/55705782391c1497ace6f4433b9c54a78feabdb7/docs/agent-plans/granted-resources-dedupe-revoke.md

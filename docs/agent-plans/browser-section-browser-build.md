@@ -47,3 +47,7 @@ In the browser (non-desktop) build, the Browser section either contains a workin
 
 ## REFERENCES
 - This issue; Settings.tsx; QA pass 13.
+
+
+---
+Plan file: https://github.com/skytuhua-org/Gen-V1/blob/55705782391c1497ace6f4433b9c54a78feabdb7/docs/agent-plans/browser-section-browser-build.md
