@@ -1,31 +1,37 @@
 import { z } from 'zod';
 
 // `GET /api/projects/:projectId/branches` response for the composer branch
-// picker. Read-only: it never writes to the working copy and carries no write
-// authority beyond the existing context read.
-const shortOid = z.string().regex(/^[a-f0-9]{7,40}$/);
-const branchName = z.string().min(1).max(250);
-export const projectBranchEntrySchema = z.strictObject({
-  name: branchName,
-  head: shortOid,
-  committedAt: z.string().datetime(),
-  /** 'here' = checked out in this working copy; 'other' = checked out in
-      another worktree of the same family; 'none' = not checked out anywhere. */
-  occupancy: z.enum(['here', 'other', 'none']),
+// picker (plan docs/agent-plans/composer-branch-chip.md r1). Read-only: it
+// never writes to the working copy and carries no write authority beyond the
+// existing context read.
+const oid = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
+const revision = z.string().regex(/^[a-f0-9]{64}$/);
+export const branchEntrySchema = z.strictObject({
+  /** 'feature/x' or 'origin/feature/x'. */
+  name: z.string().min(1).max(250),
+  head: oid,
+  subject: z.string().max(200),
+  /** ISO 8601 committer date of `head`. */
+  committedAt: z.string().min(1).max(100),
+  upstream: z.string().max(250).nullable(),
   current: z.boolean(),
+  /** 'this' = checked out in this working copy; 'other' = checked out in
+      another worktree of the same git family; null = not checked out. */
+  occupiedBy: z.enum(['this', 'other']).nullable(),
 });
-export type ProjectBranchEntry = z.infer<typeof projectBranchEntrySchema>;
-export const projectBranchesSchema = z.strictObject({
+export type BranchEntry = z.infer<typeof branchEntrySchema>;
+export const branchListSchema = z.strictObject({
   /** Current branch name, null on a detached HEAD. */
-  branch: z.string().min(1).max(250).nullable(),
-  head: z.string().regex(/^[a-f0-9]{40}$/),
-  revision: z.string().min(1).max(128),
+  current: z.string().min(1).max(250).nullable(),
+  head: oid.nullable(),
+  revision,
   detached: z.boolean(),
-  /** Uncommitted changes summary used to decide the bring-changes confirm. */
-  dirty: z.strictObject({ files: z.number().int().nonnegative(), untracked: z.number().int().nonnegative() }),
-  local: z.array(projectBranchEntrySchema).max(500),
-  remote: z.array(projectBranchEntrySchema).max(500),
+  dirty: z.strictObject({ tracked: z.number().int().min(0), untracked: z.number().int().min(0) }),
+  canSwitch: z.boolean(),
+  reason: z.enum(['run-active', 'read-only', 'no-git']).nullable(),
+  local: z.array(branchEntrySchema).max(500),
+  remote: z.array(branchEntrySchema).max(500),
   /** True when either list hit its cap. */
   truncated: z.boolean(),
 });
-export type ProjectBranches = z.infer<typeof projectBranchesSchema>;
+export type BranchList = z.infer<typeof branchListSchema>;

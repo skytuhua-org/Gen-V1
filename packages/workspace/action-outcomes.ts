@@ -36,6 +36,13 @@ interface Fence {
 const kind = 'workspaceActionOutcome';
 const duplicate = () => new HarnessError('DUPLICATE_COMMAND', 'Command ID reused with different content');
 const denied = () => new HarnessError('CAPABILITY_DENIED', 'The original action owner or access changed.');
+// Branch-action refusal codes are only raised before any mutation, or by a Git
+// refusal that provably left the worktree untouched, so they can be recorded
+// as not-applied even after the intent was marked started.
+const BRANCH_REFUSALS = new Set(['RUN_ACTIVE', 'BRANCH_IN_USE', 'BRANCH_CONFLICT', 'BRANCH_EXISTS', 'INVALID_BRANCH_NAME', 'DIRTY_TREE', 'REVISION_CHANGED', 'CAPABILITY_DENIED', 'INVALID_INPUT']);
+interface Refusal { code: string; message: string }
+const refusalOf = (error: unknown): Refusal | undefined =>
+  error instanceof HarnessError && BRANCH_REFUSALS.has(error.code) ? { code: error.code, message: error.message } : undefined;
 
 /** Host only. Private intent/results never flow through Store transaction return values. */
 export class WorkspaceActionOutcomes {
@@ -158,7 +165,10 @@ export class WorkspaceActionOutcomes {
       return command.type === 'project.create-pr' && receipt && created.success && created.data.repo === fence.repo && created.data.head === command.payload.head && created.data.revision === command.payload.revision ? {state:'confirmed',receipt} : {state:'uncertain'};
     }
     if (intent.version !== 1 || intent.ownerFence !== fence.hash) return { state: 'revoked' };
-    if (intent.status === 'not-applied') return { state: 'not-applied' };
+    if (intent.status === 'not-applied') {
+      const stored = intent.result as Refusal | undefined;
+      return { state: 'not-applied', ...(stored?.code ? { error: { code: stored.code, message: stored.message } } : {}) };
+    }
     if (intent.status === 'confirmed') {
       const receipt = this.store.receipt(command),
         summary = receipt?.result;
@@ -246,7 +256,15 @@ export class WorkspaceActionOutcomes {
         let result: unknown;
         if (input.type === 'review-pr') result = await this.github.review(projectId, input.threadId, input.payload);
         else if (input.type === 'create-pr') result = await this.github.create(projectId, input.threadId, input.payload, beginWrite);
-        else result = await this.projects.gitAction(projectId, input.threadId, { type: input.type, ...payload });
+        else {
+          try {
+            result = await this.projects.gitAction(projectId, input.threadId, { type: input.type, ...payload });
+          } catch (error) {
+            const refusal = refusalOf(error);
+            if (refusal && (input.type === 'switch-branch' || input.type === 'create-branch')) (error as HarnessError & { refusal?: Refusal }).refusal = refusal;
+            throw error;
+          }
+        }
         let fresh: Fence | undefined;
         try {
           fresh = await this.fence(projectId, input);
@@ -269,17 +287,18 @@ export class WorkspaceActionOutcomes {
         ? await withPathGuard([{ ...fence.credential, leaf: true, readOnly: true }], new AbortController().signal, write)
         : await write();
       return this.current(fence) ? result : { state: 'revoked' };
-    } catch {
-      if (started) return { state: 'uncertain' };
+    } catch (error) {
+      const refusal = (error as { refusal?: Refusal } | null)?.refusal;
+      if (started && !refusal) return { state: 'uncertain' };
       // This invocation owns the reservation and has never entered a write tool.
       try {
         this.store.internal('project.action.not-applied', input.threadId ?? null, () => {
           const current = this.read(command);
-          if (!current || current.status !== 'prepared' || current.ownerFence !== fence.hash) throw denied();
-          this.store.put(kind, input.id, input.threadId ?? null, { ...current, status: 'not-applied' });
+          if (!current || (current.status !== 'prepared' && !(refusal && current.status === 'started')) || current.ownerFence !== fence.hash) throw denied();
+          this.store.put(kind, input.id, input.threadId ?? null, { ...current, status: 'not-applied', ...(refusal ? { result: refusal } : {}) });
           return this.summary(command, this.current(fence) ? 'not-applied' : 'revoked');
         });
-        return this.current(fence) ? { state: 'not-applied' } : { state: 'revoked' };
+        return this.current(fence) ? { state: 'not-applied', ...(refusal ? { error: refusal } : {}) } : { state: 'revoked' };
       } catch {
         return { state: 'uncertain' };
       }
