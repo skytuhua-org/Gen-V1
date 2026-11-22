@@ -487,7 +487,7 @@
 }
 .files-text-preview[data-wrap="true"] .files-text-cell {
 	white-space: pre-wrap;
-	word-break: break-all;
+	overflow-wrap: anywhere;
 }
 .files-text-probe {
 	position: absolute;

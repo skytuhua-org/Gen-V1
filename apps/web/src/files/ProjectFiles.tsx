@@ -151,9 +151,9 @@ function ProjectFilesReader({
 							</p>
 						) : (
 							<>
-								{file.text === "" && (
+								{file.text === "" ? (
 									<p className="files-message">Empty text file</p>
-								)}
+								) : (
 								<ProjectTextPreview
 									text={file.text ?? ""}
 									wrap={wrap}
@@ -166,6 +166,7 @@ function ProjectFilesReader({
 									targetLine={missing ? undefined : line ?? undefined}
 									targetSeq={matchSeq}
 								/>
+								)}
 							</>
 						)}
 						<small className="files-checksum">SHA-256 {file.sha256}</small>

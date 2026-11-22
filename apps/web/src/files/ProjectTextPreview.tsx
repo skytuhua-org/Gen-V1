@@ -11,7 +11,7 @@ import {
 	DEFAULT_PREFERENCES,
 	type UiPreferences,
 } from "../../../../packages/contracts/preferences";
-import { shortcutKeys, shortcutPlatform } from "../keyboard-bindings";
+import { ariaShortcut, shortcutKeys, shortcutPlatform } from "../keyboard-bindings";
 import { matchesShortcut } from "../shell-layout";
 
 /** One logical source line; `end` excludes its separator, which is text[start..end] never contains one. */
@@ -460,7 +460,7 @@ export function ProjectTextPreview({
 					type="button"
 					ref={goButtonRef}
 					aria-label="Go to line"
-					aria-keyshortcuts={goChord}
+					aria-keyshortcuts={ariaShortcut(goChord)}
 					title={`Go to line (${shortcutKeys(goChord, shortcutPlatform())})`}
 					onClick={() => {
 						setGotoError("");
