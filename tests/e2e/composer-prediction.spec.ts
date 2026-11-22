@@ -130,7 +130,7 @@ test('desktop workspace snapshot notifications witness the run without SSE event
     window.harnessDesktop = {
       getContext: async () => context, ready: async () => context, list: async () => [],
       detach: async surface => ({ id: 'detached', surface, ready: true, minimized: false }),
-      reattach: async () => {}, minimize: async () => {}, signIn: async () => {}, resetBounds: async () => {}, focus: async () => {}, browser: async () => {},
+      reattach: async () => {}, minimize: async () => {}, signIn: async () => {}, resetBounds: async () => {}, focus: async () => {}, browser: async () => {}, zoom: async () => {},
       onState: () => () => {}, onCloseRequested: () => () => {},
       onWorkspaceChanged: listener => { const receive = () => listener({ connected: true, sequence: 1 }); window.addEventListener('task-fixture-update', receive); return () => window.removeEventListener('task-fixture-update', receive); },
     };

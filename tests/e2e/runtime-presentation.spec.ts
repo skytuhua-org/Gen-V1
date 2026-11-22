@@ -34,7 +34,7 @@ async function nativeBridge(page: Page) {
       onState: () => () => {},
       onCloseRequested: () => () => {},
       detach: async () => { throw new Error('This fixture does not detach windows.'); },
-      reattach: async () => {}, minimize: async () => {}, signIn: async () => {}, resetBounds: async () => {}, focus: async () => {}, browser: async () => {},
+      reattach: async () => {}, minimize: async () => {}, signIn: async () => {}, resetBounds: async () => {}, focus: async () => {}, browser: async () => {}, zoom: async () => {},
     };
   });
 }
