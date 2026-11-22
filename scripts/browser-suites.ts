@@ -57,6 +57,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('clarity-schedule-logs', ['clarity-schedule-logs.spec.ts', 'exploration-ui.spec.ts', 'task-scheduling.spec.ts']),
   suite('fidelity', ['graph-fidelity.spec.ts', 'signing-fidelity.spec.ts']),
   suite('model-picker', ['composer-reference.spec.ts', 'model-picker.spec.ts']),
+  suite('pasted-text'),
   suite('workspace', ['workspace-components.spec.ts', 'workspace-ui.spec.ts']),
   suite('chart-coordinates'),
   suite('compact-settings'),
