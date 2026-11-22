@@ -14,6 +14,8 @@ import {readBoundFile,withPathGuard} from '../core/file-access.ts';
 import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead} from '../contracts/code-review.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
+import {buildWorkspacePatch} from './patch-export.ts';
+import {workspacePatchQuerySchema} from '../contracts/workspace-patch.ts';
 
 interface Identity{dev:string;ino:string}
 export interface WorkspaceBinding {id:string;threadId:string;projectId:string;familyId?:string;path:string;branch:string;gitDirectory:string;commonDirectory:string;identity:Identity;gitDirectoryIdentity:Identity;commonDirectoryIdentity:Identity}
@@ -154,6 +156,22 @@ export class ProjectTools{
   return{head,branch,revision:hash(JSON.stringify([head,branch,raw,diff,stagedDiff,untracked])),files,diff,stagedDiff,truncated:false,mode:managed?'managed':'legacy',gitWrite:managed,untrackedIncluded:managed};
  }
  async gitStatus(projectId:string,threadId?:string):Promise<GitStatus>{return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed)=>this.status(metadata,path,signal,managed)));}
+ /** Copy/save patch export (#1604): byte-exact git diff output keyed by the same revision hash as gitStatus. */
+ async gitPatch(projectId:string,query:unknown){
+  const input=workspacePatchQuerySchema.parse(query);
+  if(input.path&&!pathName.safeParse(input.path).success)throw new HarnessError('UNSUPPORTED_PATH','Choose a file inside the project.');
+  if(input.path&&gitSegment(input.path))throw new HarnessError('UNSUPPORTED_PATH','Git metadata is not project content.');
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,input.threadId,false,async(metadata,path,signal,managed)=>{
+   const status=await this.status(metadata,path,signal,managed);
+   if(input.revision!==status.revision)throw new HarnessError('STALE_REVISION','The changes list is stale. Refresh, then copy again.');
+   if(input.path){
+    const file=status.files.find(file=>file.path===input.path);
+    const changed=file&&(input.scope==='staged'?file.staged:file.worktree!==' '||file.untracked);
+    if(!changed)throw new HarnessError('UNSUPPORTED_PATH','The file has no changes in this view.');
+   }
+   return buildWorkspacePatch(this.gitExecutable(),metadata,path,{scope:input.scope,purpose:input.purpose,path:input.path,managed,head:status.head,branch:status.branch,revision:status.revision,files:status.files.map(file=>({path:file.path,oldPath:file.oldPath,untracked:file.untracked,binary:file.binary}))},signal);
+  }));
+ }
  /** Read-only origin through the same attested managed/legacy Git boundary. */
  async gitReviewOrigin(projectId:string,threadId?:string){return this.exclusive(projectId,async()=>{
   const binding=await this.binding(projectId,threadId),signal=new AbortController().signal;
