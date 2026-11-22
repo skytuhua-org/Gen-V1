@@ -506,6 +506,35 @@ describe('dependency-contract checker', () => {
     expect(verifySourceLock(checkout, lock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_DRIFT']);
   });
 
+  it.skipIf(process.platform === 'win32')('rejects source-locked test bytes reached through an external parent symlink', () => {
+    const checkout = dir('contract-parent-alias'), external = dir('contract-external');
+    const git = (...args: string[]) => execFileSync('git', ['-C', checkout, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const source = 'packages/capabilities/process.ts', testId = 'tests/contract.test.ts';
+    const bytes = 'import "./helper.js";\n';
+    git('init', '-q');
+    mkdirSync(join(checkout, 'packages', 'capabilities'), { recursive: true });
+    mkdirSync(join(checkout, 'tests'), { recursive: true });
+    writeFileSync(join(checkout, source), 'export {};');
+    writeFileSync(join(checkout, testId), bytes);
+    git('add', '--', source, testId);
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Seed');
+    const sha = git('rev-parse', 'HEAD'), sourceBlob = git('rev-parse', `${sha}:${source}`);
+    const lockedTestBlob = git('rev-parse', `${sha}:${testId}`);
+    const lock = sourceLockV3Schema.parse({
+      schemaVersion: 3, auditAncestorSha: sha, executionBaseSha: sha,
+      inspectedPaths: [{ path: source, blobSha: sourceBlob }],
+      publicContracts: [{ name: 'process-launcher', version: sourceBlob, testIds: [testId] }],
+      acceptedDependencyCommits: [], approvedDrift: [],
+    });
+    expect(verifySourceLock(checkout, lock)).toEqual([]);
+    rmSync(join(checkout, 'tests'), { recursive: true });
+    writeFileSync(join(external, 'contract.test.ts'), bytes);
+    writeFileSync(join(external, 'helper.js'), 'throw new Error("untracked external helper");\n');
+    symlinkSync(external, join(checkout, 'tests'), 'dir');
+    // The leaf is still a regular file and its bytes still match the locked Git blob.
+    expect(git('hash-object', '--no-filters', '--', testId)).toBe(lockedTestBlob);
+    expect(verifySourceLock(checkout, lock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_UNSAFE_PATH']);
+  });
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('collects all contract issues when a test path is inaccessible', () => {
     const checkout = dir('inaccessible-contract');
     const git = (...args: string[]) => execFileSync('git', ['-C', checkout, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();

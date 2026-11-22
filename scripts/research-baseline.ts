@@ -263,11 +263,20 @@ export function verifySourceLock(rootDir: string, lock: SourceLockV3): EvidenceI
         if (git(rootDir, ['cat-file', '-t', spec]) === 'blob')
           committedBlob = git(rootDir, ['rev-parse', spec]);
       } catch { /* Missing from the locked commit, even if present locally. */ }
-      let isFile = false;
-      try { isFile = lstatSync(join(rootDir, testId), { throwIfNoEntry: false })?.isFile() ?? false; }
-      catch { /* Missing or inaccessible local test. */ }
+      let isFile = false, isPhysicalPath = false;
+      try {
+        const testPath = join(rootDir, testId);
+        isFile = lstatSync(testPath, { throwIfNoEntry: false })?.isFile() ?? false;
+        // A parent symlink or junction can redirect a byte-identical test into
+        // an external tree with different, untracked relative dependencies.
+        if (isFile) isPhysicalPath = realpathSync(testPath) === join(realpathSync(rootDir), ...parts);
+      } catch { /* Missing, inaccessible or unresolved local test. */ }
       if (!committedBlob || !isFile) {
         issues.push({ code: 'CONTRACT_TEST_MISSING', message: `Contract ${contract.name} test is not a committed and accessible regular file: ${testId}` });
+        continue;
+      }
+      if (!isPhysicalPath) {
+        issues.push({ code: 'CONTRACT_TEST_UNSAFE_PATH', message: `Contract ${contract.name} test path resolves through an external alias: ${testId}` });
         continue;
       }
       let workingBlob: string | null = null;
