@@ -172,7 +172,7 @@ export class ProjectTools{
  private workspaceBusy(binding:{workspace?:WorkspaceBinding}):boolean{
   const workspace=binding.workspace;if(!workspace)return false;
   const owner=this.store.get<Thread>('thread',workspace.threadId);
-  return Boolean(owner&&owner.runId);
+  return Boolean(owner&&(owner.runId||owner.status==='working'));
  }
  /** Read-only origin through the same attested managed/legacy Git boundary. */
  async gitReviewOrigin(projectId:string,threadId?:string){return this.exclusive(projectId,async()=>{
@@ -211,7 +211,11 @@ export class ProjectTools{
     const eligibility=await this.undoEligibility(git,managed,this.workspaceBusy(binding));
     if(!eligibility.eligible)throw new HarnessError('CAPABILITY_DENIED',eligibility.reason??'The last commit cannot be undone.');
     const message=(await git(['log','-1','--format=%B',eligibility.head!])).trim();
+    // Runs are admitted without this lock, so re-fence right before and right
+    // after the reset; a run that landed in between rolls the pointer back.
+    if(this.workspaceBusy(binding))throw new HarnessError('RUN_ACTIVE','Wait for the run to finish.');
     await git(['reset','--soft','HEAD^']);
+    if(this.workspaceBusy(binding)){await git(['reset','--soft',eligibility.head!]).catch(()=>{});throw new HarnessError('RUN_ACTIVE','Wait for the run to finish.');}
     const after=await this.status(metadata,path,signal,managed);
     return{...after,undo:{undoneHead:eligibility.head!,head:after.head,message}};
    }
