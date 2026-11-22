@@ -14,6 +14,7 @@ import {GitHubAuth} from '../../packages/workspace/github-auth.ts';
 import {createIntegrationHost} from './integration-host.ts';
 import {ProjectTools} from '../../packages/workspace/tools.ts';
 import {TerminalHost} from '../../packages/workspace/terminal.ts';
+import {DevServerTracker} from '../../packages/workspace/dev-servers.ts';
 import {registerWorkspaceHost} from './workspace-host.ts';
 import {existsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
@@ -44,8 +45,8 @@ export function createHermesService(store:Store,native:RuntimeAdapter,effectOpti
    return decision.status==='ALLOW'?{allowed:true}:{allowed:false,reason:decision.status==='BLOCKED'?decision.code:'HOLD_EXECUTION_PROFILE'};
   },
   intakeAuth:{token:()=>backgroundAuth.token()}},memoryExtractionAdmission:async(job,signal)=>{assertMemoryExtractionModel(job.modelId);const permit=await hermesRequestScheduler.acquire(job.modelId.split('/')[0],job.access.accountId,signal,{requestClass:'background'});return permit.release;},memoryExtractionRuntimeFactory:job=>{assertMemoryExtractionModel(job.modelId);return createRuntime({dataDir:store.dataDir,accounts,modelOnly:true,purpose:'memory-extraction'});},source:{runtime,library},planningRuntimeFactory:()=>runtime.createTaskRuntime(),prepareWorkspace:thread=>projects.prepareWorkspace(thread),additionalTool:(call,ctx,host)=>integrations!.additionalTool(call,ctx,host),hostOperationExecutors:integrations.operationExecutors,sideRuntimeFactory:()=>createRuntime({dataDir:store.dataDir,accounts}),predictionRuntimeFactory:()=>createRuntime({dataDir:store.dataDir,accounts,modelOnly:true,purpose:'prediction'})});
- const terminals=new TerminalHost(projects);registerWorkspaceHost(service,{projects,terminals,integrations:integrations.manager,secretReferences:()=>integrations!.secretReferences(),context7Key:async key=>{await integrations!.configurePrivate({context7ApiKey:key});}});
+ const devServers=new DevServerTracker();const terminals=new TerminalHost(projects,devServers);registerWorkspaceHost(service,{projects,terminals,devServers,integrations:integrations.manager,secretReferences:()=>integrations!.secretReferences(),context7Key:async key=>{await integrations!.configurePrivate({context7ApiKey:key});}});
  const dispose=service.dispose.bind(service);let closing:Promise<void>|undefined;
- service.dispose=()=>closing??=(async()=>{const results=await Promise.allSettled([dispose(),integrations!.close(),terminals.dispose(),projects.dispose()]);const failures=results.flatMap(result=>result.status==='rejected'?[result.reason]:[]);if(failures.length)throw new AggregateError(failures,'Workspace shutdown could not be confirmed.');})();
+ service.dispose=()=>closing??=(async()=>{const results=await Promise.allSettled([dispose(),integrations!.close(),terminals.dispose(),projects.dispose()]);devServers.dispose();const failures=results.flatMap(result=>result.status==='rejected'?[result.reason]:[]);if(failures.length)throw new AggregateError(failures,'Workspace shutdown could not be confirmed.');})();
  return service;
 }
