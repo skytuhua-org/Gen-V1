@@ -2,7 +2,7 @@ import {test,expect,type Page,type Route} from '@playwright/test';
 import type {TerminalFixture} from './fixtures/terminal-read';
 
 declare global{interface Window{terminalFixture:TerminalFixture}}
-type Read={id:string;projectId:string;threadId?:string;output:string;start:number;cursor:number;exited:boolean;exitCode:number|null};
+type Read={id:string;projectId:string;threadId?:string;output:string;start:number;cursor:number;exited:boolean;exitCode:number|null;name?:string|null;nameRevision?:number};
 type RequestRecord={path:string;method:string;body:Record<string,unknown>|null;csrf:string|undefined};
 const result=(id='terminal-a',output='before\r\n',extra:Partial<Read>={}):Read=>({id,projectId:'project-a',threadId:'thread-a',output,start:0,cursor:8,exited:false,exitCode:null,...extra});
 const json=(route:Route,body:unknown,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
@@ -176,4 +176,101 @@ test('an unbound start fails closed when its pending caller ID cannot be retaine
  await page.addInitScript(()=>{const original=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key.endsWith(':pending'))throw new DOMException('Synthetic storage unavailable','QuotaExceededError');return original.call(this,key,value);};});
  const api=await mount(page,{unbound:true});await expect(phase(page)).toHaveText('Start unconfirmed');await expect(errorText(page)).toContainText('retain');await expect(page.getByRole('button',{name:'Stop',exact:true})).toBeDisabled();
  expect(api.creates()).toEqual([]);await page.evaluate(()=>window.terminalFixture.show(false));await expect(page.locator('.xterm')).toHaveCount(0);await page.evaluate(()=>window.terminalFixture.show(true));await expect(phase(page)).toHaveText('Start unconfirmed');expect(api.creates()).toEqual([]);
+});
+
+
+test.describe('terminal rename (#1640)',()=>{
+ const named=(name:string|null,rev:number,extra:Partial<Read>={})=>result('terminal-a','',{name,nameRevision:rev,...extra});
+ const heading=(page:Page)=>page.locator('.terminal-name-heading');
+ const renameButton=(page:Page)=>page.getByRole('button',{name:'Rename',exact:true});
+
+ test('save posts a rename command and updates the acknowledged heading',async({page})=>{
+  let name:string|null=null,rev=0;
+  const api=await mount(page,{
+   create:async(route,body)=>json(route,result(String(body.terminalId),'before\r\n',{name,nameRevision:rev})),
+   read:async(route)=>json(route,named(name,rev,{start:8,cursor:8})),
+   command:async(route,body)=>{if(body.type==='rename'){name=String(body.name).trim()||null;rev+=1;await json(route,named(name,rev,{start:8,cursor:8}));return;}await json(route,named(name,rev,{exited:body.type==='stop'}));},
+  });
+  await expect(heading(page)).toHaveText('Terminal');
+  await renameButton(page).click();
+  const input=page.locator('#terminal-name-input');
+  await expect(input).toBeFocused();await expect(input).toHaveValue('');
+  await input.fill('API');await input.press('Enter');
+  await expect(heading(page)).toHaveText('API');
+  const calls=api.requests.filter(item=>item.body?.type==='rename');
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({path:'/api/terminals/terminal-a/commands',csrf:'synthetic-csrf',body:{projectId:'project-a',threadId:'thread-a',type:'rename',name:'API'}});
+  expect(api.requests.filter(item=>item.body?.type==='input')).toEqual([]);
+ });
+
+ test('blank save resets the name and Escape cancels without a request',async({page})=>{
+  let name:string|null='API',rev=3;
+  const api=await mount(page,{
+   create:async(route,body)=>json(route,result(String(body.terminalId),'before\r\n',{name,nameRevision:rev})),
+   read:async(route)=>json(route,named(name,rev,{start:8,cursor:8})),
+   command:async(route,body)=>{if(body.type==='rename'){name=String(body.name).trim()||null;rev+=1;await json(route,named(name,rev,{start:8,cursor:8}));return;}await json(route,named(name,rev,{exited:body.type==='stop'}));},
+  });
+  await expect(heading(page)).toHaveText('API');
+  await renameButton(page).click();
+  const input=page.locator('#terminal-name-input');
+  await expect(input).toHaveValue('API');
+  await expect(page.getByRole('button',{name:'Reset name',exact:true})).toBeVisible();
+  await input.fill('   ');await page.getByRole('button',{name:'Save',exact:true}).click();
+  await expect(heading(page)).toHaveText('Terminal');
+  expect(api.requests.filter(item=>item.body?.type==='rename').map(item=>item.body?.name)).toEqual(['   ']);
+  // Escape cancels: reopen, type, Escape, assert no second rename call.
+  await renameButton(page).click();await input.fill('Other');await input.press('Escape');
+  await expect(page.locator('#terminal-name-input')).toHaveCount(0);
+  await tick(page);
+  expect(api.requests.filter(item=>item.body?.type==='rename')).toHaveLength(1);
+ });
+
+ test('client validation blocks overlong and control names without a request',async({page})=>{
+  const api=await mount(page,{});
+  await renameButton(page).click();
+  const input=page.locator('#terminal-name-input');
+  await input.fill('x'.repeat(65));
+  await expect(page.getByRole('button',{name:'Save',exact:true})).toBeDisabled();
+  await expect(errorText(page)).toContainText('64 characters');
+  await input.fill('line1\u0007line2');
+  await expect(errorText(page)).toContainText('control characters');
+  await input.fill('Valid');
+  await expect(errorText(page)).toHaveCount(0);
+  await page.getByRole('button',{name:'Cancel',exact:true}).click();
+  await tick(page);
+  expect(api.requests.filter(item=>item.body?.type==='rename')).toEqual([]);
+ });
+
+ test('failed save keeps the draft and old heading; retry via Save succeeds',async({page})=>{
+  let name:string|null=null,rev=0,failOnce=true;
+  await mount(page,{
+   create:async(route,body)=>json(route,result(String(body.terminalId),'before\r\n',{name,nameRevision:rev})),
+   read:async(route)=>json(route,named(name,rev,{start:8,cursor:8})),
+   command:async(route,body)=>{if(body.type==='rename'&&failOnce){failOnce=false;await failure(route);return;}if(body.type==='rename'){name=String(body.name).trim()||null;rev+=1;await json(route,named(name,rev,{start:8,cursor:8}));return;}await json(route,named(name,rev,{exited:body.type==='stop'}));},
+  });
+  await renameButton(page).click();
+  const input=page.locator('#terminal-name-input');
+  await input.fill('Tests');await input.press('Enter');
+  await expect(input).toBeVisible();await expect(input).toHaveValue('Tests');
+  await expect(errorText(page)).toContainText('Synthetic transient read failure');
+  await expect(heading(page)).toHaveCount(0);
+  await page.getByRole('button',{name:'Save',exact:true}).click();
+  await expect(heading(page)).toHaveText('Tests');
+ });
+
+ test('polls converge other views and stale revisions are ignored',async({page})=>{
+  let name:string|null=null,rev=0,reads=0;
+  await mount(page,{read:async(route)=>{reads++;if(reads===1){name='Remote';rev=1;}await json(route,named(name,rev,{start:8,cursor:8}));}});
+  await expect(heading(page)).toHaveText('Remote');
+ });
+
+ test('rename is unavailable until the session is acknowledged and running',async({page})=>{
+  const gate=deferred();
+  await mount(page,{create:async(route,body)=>{await gate.promise;await json(route,result(String(body.terminalId),'',{name:null,nameRevision:0}));}});
+  const button=renameButton(page);
+  await expect(button).toBeDisabled();
+  gate.resolve();
+  await expect(heading(page)).toHaveText('Terminal');
+  await expect(button).toBeEnabled();
+ });
 });
