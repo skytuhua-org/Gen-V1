@@ -196,7 +196,10 @@ export class ProjectTools{
     const stashGit=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal,{LC_ALL:'C'});
     if(input.type==='stash-push'){
      if(current.files.length===0)throw new HarnessError('NOTHING_TO_STASH','There are no changes to stash.');
-     await stashGit(['stash','push','--include-untracked','-m',z.string().trim().min(1).max(200).parse(input.message)]);
+     // .harness-directory-guard is a deny-delete pin the path guard plants in
+     // writable directories: stashing it fails cleanup on Windows and a restore
+     // would break the next pin. It must never leave the worktree.
+     await stashGit(['stash','push','--include-untracked','-m',z.string().trim().min(1).max(200).parse(input.message),'--',':!.harness-directory-guard',':!**/.harness-directory-guard']);
      const created=await this.stashEntries(stashGit),top=created[0];
      if(!top)throw new HarnessError('GIT_ERROR','The stash entry was not recorded.');
      return{status:await this.status(metadata,path,signal,managed),result:{created:{...top,files:await this.stashFiles(stashGit,top.oid),filesTruncated:false}}};
@@ -230,9 +233,10 @@ export class ProjectTools{
   }));
  }
  private async stashEntries(git:(args:string[])=>Promise<string>):Promise<Omit<StashEntry,'files'|'filesTruncated'>[]>{
-  const raw=await git(['stash','list','-z','--format=%H%x00%gs%x00%cI']),entries:Omit<StashEntry,'files'|'filesTruncated'>[]=[];
-  for(const record of raw.split('\n')){
-   if(!record)continue;const[oid,subject='',createdAt='']=record.split('\0');
+  // -z output is fully NUL-separated: each entry emits oid, subject, createdAt.
+  const fields=(await git(['stash','list','-z','--format=%H%x00%gs%x00%cI'])).split('\0'),entries:Omit<StashEntry,'files'|'filesTruncated'>[]=[];
+  for(let i=0;i+2<fields.length;i+=3){
+   const oid=fields[i]!,subject=(fields[i+1]??'').replace(/\s+/g,' '),createdAt=fields[i+2]??'';
    if(!oid||!/^[0-9a-f]{40}$/.test(oid))continue;
    const match=/^(?:WIP on|On) ([^:]+):\s*(.*)$/.exec(subject);
    entries.push({oid,index:entries.length,message:match?match[2]||subject:subject,branch:match?match[1]:null,createdAt});

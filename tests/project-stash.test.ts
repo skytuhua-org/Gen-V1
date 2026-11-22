@@ -72,6 +72,17 @@ it('rejects stash writes during a run, on stale revisions and with nothing to st
  await expect(tools.gitAction(projectId,'one',{type:'stash-apply',revision:fresh.revision,oid:list.entries[0]!.oid,stashRevision:'0'.repeat(64)})).rejects.toMatchObject({code:'STASH_CHANGED'});
  await expect(tools.gitAction(projectId,'one',{type:'stash-drop',revision:fresh.revision,oid:'f'.repeat(40),stashRevision:list.stashRevision})).rejects.toMatchObject({code:'STASH_CHANGED'});
 },60000);
+it('lists every stash entry in newest-first order',async()=>{
+ const{tools,projectId,managed,git}=await stashFixture();
+ await writeFile(join(managed.path,'one.txt'),'one\n');await git('stash','push','-q','-u','-m','first stash');
+ await writeFile(join(managed.path,'one.txt'),'two\n');await git('stash','push','-q','-u','-m','second stash');
+ const list=await tools.stashList(projectId,'one');
+ expect(list.entries).toHaveLength(2);expect(list.total).toBe(2);
+ expect(list.entries.map(entry=>entry.index)).toEqual([0,1]);
+ expect(list.entries.map(entry=>entry.message)).toEqual(['second stash','first stash']);
+ expect(list.entries.every(entry=>/^[0-9a-f]{40}$/.test(entry.oid)&&entry.branch)).toBe(true);
+ expect(list.entries[0]!.files.map(file=>file.path)).toEqual(['one.txt']);
+},60000);
 it('keeps the entry and reports conflicts when apply does not merge cleanly',async()=>{
  const{tools,projectId,managed,git}=await stashFixture();
  await writeFile(join(managed.path,'one.txt'),'stashed\n');await git('stash','push','-q','-u','-m','conflict');
