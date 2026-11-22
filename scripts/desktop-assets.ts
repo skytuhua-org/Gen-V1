@@ -123,5 +123,5 @@ export function desktopBuilderConfig(dist:string,channel=process.env.HARNESS_REL
   // Use the supported 7z payload for large file counts. Its temporary-tree copy
   // occurs during installation; the installed application launches directly.
   win:{target:[{target:'nsis',arch:['x64']}],signAndEditExecutable:false},
-  nsis:{artifactName:'Gen-V1-Setup-${version}-win-x64.exe',oneClick:true,perMachine:false,allowElevation:false,packElevateHelper:false,useZip:false,differentialPackage:channel!==undefined,runAfterFinish:false,deleteAppDataOnUninstall:false,createDesktopShortcut:false,createStartMenuShortcut:true},compression:'normal' as const};
+  nsis:{include:'build/nsis-login-cleanup.nsh',artifactName:'Gen-V1-Setup-${version}-win-x64.exe',oneClick:true,perMachine:false,allowElevation:false,packElevateHelper:false,useZip:false,differentialPackage:channel!==undefined,runAfterFinish:false,deleteAppDataOnUninstall:false,createDesktopShortcut:false,createStartMenuShortcut:true},compression:'normal' as const};
 }
