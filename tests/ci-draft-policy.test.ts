@@ -11,14 +11,14 @@ const jobs=starts.map((match,index)=>{
   return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',shards:shards?JSON.parse(shards) as number[]:null};
 });
 const requiredJobs=['checks','test/1','test/2','test/3','test/4','browser','installed-memory'];
-const pullRequestJobs=['checks','selected'];
+const pullRequestJobs=['checks','select','selected'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
-type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string};
+type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number};
 function context(event:CiEvent){return {workflow:'CI',ref:event.ref??'refs/pull/42/merge',event_name:event.name,event:event.name==='pull_request'?{action:event.action,pull_request:{number:42,draft:event.draft}}:{}};}
 function evaluate(expression:string,event:CiEvent):unknown {
   // The policy uses boolean/string comparisons and property access, whose
   // JavaScript and Actions semantics agree for these boolean/string fixtures.
-  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event)},{timeout:100});
+  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),needs:{select:{outputs:{total:String(event.selectedShards??1)}}}},{timeout:100});
 }
 function scheduledJobs(event:CiEvent):string[]|null {
   if(event.name==='pull_request'&&!types.includes(event.action??''))return null;
@@ -123,9 +123,15 @@ it('keeps all four audit path filters and does not admit unrelated application c
   expect(scheduledAudit(ready,['apps/web/src/App.tsx'])).toBeNull();
 });
 it('selects pull-request tests from the merge commit diff and keeps the full suite for the merge queue',()=>{
+  const select=jobSource.split(/^  select:\n/m)[1]?.split(/^  selected:\n/m)[0]??'';
   const selected=jobSource.split(/^  selected:\n/m)[1]??'';
-  expect(selected).toMatch(/^          fetch-depth: 2$/m);
-  expect(selected).toContain('pnpm test --maxWorkers=1 --changed HEAD^1');
-  expect(selected).not.toMatch(/continue-on-error|always\(\)|--passWithNoTests/);
+  for(const job of [select,selected])expect(job).toMatch(/^          fetch-depth: 2$/m);
+  expect(select).toContain('vitest list --changed HEAD^1 --filesOnly');
+  expect(selected).toContain('pnpm test --maxWorkers=1 --changed HEAD^1 --shard $env:SHARD');
+  expect(selected).toContain('shard: ${{ fromJSON(needs.select.outputs.shards) }}');
+  for(const job of [select,selected])expect(job).not.toMatch(/continue-on-error|always\(\)|--passWithNoTests/);
   for(const id of ['test','browser','installed-memory'])expect(jobs.find(job=>job.id===id)?.condition).toBe("github.event_name != 'pull_request'");
+});
+it('books no Windows test runner when the diff reaches no test',()=>{
+  expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual(['checks','select']);
 });

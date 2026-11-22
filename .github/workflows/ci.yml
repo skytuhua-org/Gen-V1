@@ -327,11 +327,50 @@ jobs:
             .harness-desktop-installed/run-*/enabled-memory/installed-memory-redacted-export.json
             .harness-packaged-providers/run-*/verification.json
 
-  selected:
-    name: Tests reachable from the diff
-    runs-on: windows-2022
+  # Lists the tests the pull request diff can reach (vitest.config.ts
+  # forceRerunTriggers names the inputs that select every test) and sizes the
+  # Windows shards to that list, about 35 test files per shard, at most four.
+  select:
+    name: Select tests reachable from the diff
+    runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    timeout-minutes: 5
+    outputs:
+      shards: ${{ steps.select.outputs.shards }}
+      total: ${{ steps.select.outputs.total }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          # The pull-request merge commit and its first parent, the base tip.
+          fetch-depth: 2
+          filter: blob:none
+
+      - name: Install toolchain
+        uses: ./.github/actions/setup
+
+      - name: List tests reachable from the pull request diff
+        id: select
+        run: |
+          pnpm exec vitest list --changed HEAD^1 --filesOnly --json="$RUNNER_TEMP/selected.json"
+          node -e '
+            const files = require(process.argv[1]);
+            const total = Math.min(4, Math.ceil(files.length / 35));
+            console.log(files.length + " test files selected, " + total + " shards");
+            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, "total=" + total + "\nshards=" + JSON.stringify(Array.from({length: total}, (_, i) => i + 1)) + "\n");
+          ' "$RUNNER_TEMP/selected.json"
+
+  selected:
+    name: Selected tests (shard ${{ matrix.shard }}/${{ needs.select.outputs.total }})
+    needs: select
+    runs-on: windows-2022
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.select.outputs.total != '0'
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.select.outputs.shards) }}
     defaults:
       run:
         shell: pwsh
@@ -340,7 +379,6 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-          # The pull-request merge commit and its first parent, the base tip.
           fetch-depth: 2
           filter: blob:none
 
@@ -353,6 +391,7 @@ jobs:
       - name: Build web application
         run: pnpm build
 
-      # vitest.config.ts forceRerunTriggers lists the inputs that select every test.
-      - name: Run tests reachable from the pull request diff
-        run: pnpm test --maxWorkers=1 --changed HEAD^1
+      - name: Run this shard of the tests reachable from the pull request diff
+        env:
+          SHARD: ${{ matrix.shard }}/${{ needs.select.outputs.total }}
+        run: pnpm test --maxWorkers=1 --changed HEAD^1 --shard $env:SHARD
