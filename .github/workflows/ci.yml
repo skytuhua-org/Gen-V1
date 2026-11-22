@@ -25,10 +25,13 @@ env:
   GIT_CONFIG_VALUE_0: true
 
 jobs:
-  # A draft pull request is not reviewable, so its matrix runs when it becomes
-  # ready for review instead of on every draft push. Four definitions expand
-  # to seven jobs, including installer packaging; draft pushes otherwise starve the
-  # shared runner pool that required checks depend on.
+  # A draft pull request is not reviewable, so its jobs run when it becomes
+  # ready for review instead of on every draft push; draft pushes otherwise
+  # starve the shared runner pool that required checks depend on.
+  #
+  # A reviewable pull request gets Windows checks plus the tests reachable from
+  # its diff. The full suite (four shards, browser and installed-memory) runs in
+  # the merge queue and on main, so nothing reaches main without it.
   #
   # Small checks share one job so they pay for one runner and one toolchain
   # install. Every step after setup runs even when an earlier one fails, so the
@@ -116,7 +119,7 @@ jobs:
   test:
     name: Tests (shard ${{ matrix.shard }}/4)
     runs-on: windows-2022
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -146,7 +149,7 @@ jobs:
   browser:
     name: Browser tests
     runs-on: windows-2022
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     timeout-minutes: 30
     defaults:
       run:
@@ -200,7 +203,7 @@ jobs:
   installed-memory:
     name: Installed desktop memory retention and opt-in
     runs-on: windows-2022
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request'
     timeout-minutes: 60
     defaults:
       run:
@@ -323,3 +326,33 @@ jobs:
             .harness-desktop-installed/run-*/enabled-memory/*.png
             .harness-desktop-installed/run-*/enabled-memory/installed-memory-redacted-export.json
             .harness-packaged-providers/run-*/verification.json
+
+  selected:
+    name: Tests reachable from the diff
+    runs-on: windows-2022
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          # The pull-request merge commit and its first parent, the base tip.
+          fetch-depth: 2
+          filter: blob:none
+
+      - name: Install toolchain
+        uses: ./.github/actions/setup
+        with:
+          python: 'true'
+          playwright: 'true'
+
+      - name: Build web application
+        run: pnpm build
+
+      # vitest.config.ts forceRerunTriggers lists the inputs that select every test.
+      - name: Run tests reachable from the pull request diff
+        run: pnpm test --maxWorkers=1 --changed HEAD^1

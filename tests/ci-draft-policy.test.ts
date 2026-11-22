@@ -11,6 +11,7 @@ const jobs=starts.map((match,index)=>{
   return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',shards:shards?JSON.parse(shards) as number[]:null};
 });
 const requiredJobs=['checks','test/1','test/2','test/3','test/4','browser','installed-memory'];
+const pullRequestJobs=['checks','selected'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
 type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string};
 function context(event:CiEvent){return {workflow:'CI',ref:event.ref??'refs/pull/42/merge',event_name:event.name,event:event.name==='pull_request'?{action:event.action,pull_request:{number:42,draft:event.draft}}:{}};}
@@ -33,17 +34,17 @@ function scheduledJobs(event:CiEvent):string[]|null {
 it.each(['opened','synchronize','reopened'])('keeps draft %s events out of every runner job',action=>{
   expect(scheduledJobs({name:'pull_request',action,draft:true})).toEqual([]);
 });
-it.each(['opened','synchronize','reopened'])('runs every required job for reviewable %s events',action=>{
-  expect(scheduledJobs({name:'pull_request',action,draft:false})).toEqual(requiredJobs);
+it.each(['opened','synchronize','reopened'])('runs checks and diff-selected tests for reviewable %s events',action=>{
+  expect(scheduledJobs({name:'pull_request',action,draft:false})).toEqual(pullRequestJobs);
 });
-it('starts all seven jobs when a draft becomes ready without another commit',()=>{
+it('starts pull-request feedback when a draft becomes ready without another commit',()=>{
   expect(scheduledJobs({name:'pull_request',action:'opened',draft:true})).toEqual([]);
-  expect(scheduledJobs({name:'pull_request',action:'ready_for_review',draft:false})).toEqual(requiredJobs);
+  expect(scheduledJobs({name:'pull_request',action:'ready_for_review',draft:false})).toEqual(pullRequestJobs);
 });
 it('cancels the same PR run when reviewable work becomes draft and admits no replacement jobs',()=>{
   const ready:CiEvent={name:'pull_request',action:'ready_for_review',draft:false};
   const draft:CiEvent={...ready,action:'converted_to_draft',draft:true};
-  expect(scheduledJobs(ready)).toEqual(requiredJobs);
+  expect(scheduledJobs(ready)).toEqual(pullRequestJobs);
   expect(scheduledJobs(draft)).toEqual([]);
   const concurrency=/^concurrency:\n((?: {2}.*\n)+)/m.exec(workflow)?.[1]??'';
   const group=/^  group:\s*(.+)$/m.exec(concurrency)?.[1];
