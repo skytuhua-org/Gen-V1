@@ -10,7 +10,7 @@
 :root[data-motion="reduced"] .quick-ask-panel { animation-name:quick-ask-panel-fade; animation-duration:var(--ui-motion-press); }
 :root[data-motion="reduced"] .quick-ask-panel.closing { transition-duration:var(--ui-motion-press); }
 @media (prefers-reduced-motion: reduce) {
-  :root[data-motion="system"] .quick-ask-panel { animation-name:quick-ask-panel-fade; animation-duration:var(--ui-motion-press); }
+  .quick-ask-panel { animation-name:quick-ask-panel-fade; animation-duration:var(--ui-motion-press); }
   :root[data-motion="system"] .quick-ask-panel.closing { transition-duration:var(--ui-motion-press); }
 }
 :root:is([data-motion="off"],[data-panel-animations="false"]) .quick-ask-panel { animation:none; transition:none; }
