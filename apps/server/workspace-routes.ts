@@ -93,7 +93,7 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
  const checkpoints=new CheckpointService(service.store);
  // Discards snapshot the file under workspace.checkpointsV1 so the edit can be
  // recovered from History; a checkpoint failure aborts the discard untouched.
- projects.options.beforeDiscard=async input=>{
+ if(projects.options)projects.options.beforeDiscard=async input=>{
   if(!capabilityEnabled('workspace.checkpointsV1'))return;
   const{owner,root}=await checkpointOwner(input.projectId,input.threadId);
   const snapshot=await checkpoints.create({owner,root,paths:input.paths,label:'Before discard',provenance:{kind:'discard_backup',operationId:input.operationId}});

@@ -75,12 +75,12 @@ it('refuses discard for active runs, missing or multi paths, conflicts and trash
  await writeFile(join(binding.path,'one.txt'),'changed\n');
  let status=await tools.gitStatus(projectId,thread.id);
  // An admitted run owns the working copy until it settles, including startup before runId lands.
- store.internal('fixture',null,()=>store.put('thread',thread.id,thread.id,{...thread,status:'working',runId:'run-1'}));
+ store.internal('fixture',null,()=>store.put('thread',thread.id,thread.id,{...store.get<typeof thread>('thread',thread.id)!,status:'working',runId:'run-1'}));
  await expect(tools.gitAction(projectId,thread.id,{type:'discard',paths:['one.txt'],revision:status.revision})).rejects.toThrow(/run/i);
  expect(await readFile(join(binding.path,'one.txt'),'utf8')).toBe('changed\n');
- store.internal('fixture',null,()=>store.put('thread',thread.id,thread.id,{...thread,status:'working',runId:null}));
+ store.internal('fixture',null,()=>store.put('thread',thread.id,thread.id,{...store.get<typeof thread>('thread',thread.id)!,status:'working',runId:null}));
  await expect(tools.gitAction(projectId,thread.id,{type:'discard',paths:['one.txt'],revision:status.revision})).rejects.toThrow(/run/i);
- store.internal('fixture',null,()=>store.put('thread',thread.id,thread.id,thread));
+ store.internal('fixture',null,()=>store.put('thread',thread.id,thread.id,{...store.get<typeof thread>('thread',thread.id)!,status:'ready',runId:null}));
  await expect(tools.gitAction(projectId,thread.id,{type:'discard',paths:['missing.txt'],revision:status.revision})).rejects.toThrow(/REVISION_CHANGED|Refresh/i);
  await expect(tools.gitAction(projectId,thread.id,{type:'discard',paths:['one.txt','second.txt'],revision:status.revision})).rejects.toThrow(/one file/i);
  // A merge conflict is a real git state; discard must refuse before writing.

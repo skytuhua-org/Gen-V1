@@ -156,7 +156,7 @@ it('confirms a discard through the actions route, replays it and rejects it whil
  const replay=await app.inject({method:'POST',url,payload:input});
  expect(replay.statusCode).toBe(200);expect(replay.json()).toEqual(first.json());
  // A run on the owning thread rejects the discard before any write, mapped to the standard 409.
- f.store.internal('fixture',null,()=>f.store.put('thread',f.thread.id,f.thread.id,{...f.thread,status:'working',runId:'run-1'}));
+ f.store.internal('fixture',null,()=>f.store.put('thread',f.thread.id,f.thread.id,{...f.store.get<typeof f.thread>('thread',f.thread.id)!,status:'working',runId:'run-1'}));
  await writeFile(join(f.binding.path,'one.txt'),'changed again\n');
  const next=await f.projects.gitStatus(f.projectId,f.thread.id);
  const blocked=await app.inject({method:'POST',url,payload:{id:randomUUID(),type:'discard',threadId:f.thread.id,payload:{paths:['one.txt'],revision:next.revision,expectedHead:next.head}}});
