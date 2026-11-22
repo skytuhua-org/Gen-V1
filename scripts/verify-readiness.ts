@@ -126,7 +126,10 @@ function redactedLogSink(stream:ReturnType<typeof createWriteStream>){
         return;
       }
       const wasTentative=tentativeSensitiveLine[source];
-      const completedPemOpener=wasTentative&&begin.test((carry[source]+chunk).replace(/\x1b\[(?:[0-9]{1,3}(?:;[0-9]{1,3})*)?m/g,''));
+      const completedLine=(carry[source]+chunk).replace(/\x1b\[(?:[0-9]{1,3}(?:;[0-9]{1,3})*)?m/g,'');
+      const completedPemOpener=wasTentative&&begin.test(completedLine);
+      // A redacted inline credential line cannot certify held other-pipe bytes.
+      const completedRedactedField=wasTentative&&redactSecrets(completedLine)!==completedLine;
       const suppressOther=privateKeyEnd[other]!==null||tentativeSensitiveLine[other];
       const lines=(carry[source]+chunk).split('\n');carry[source]=lines.pop()!;
       const carryWasTainted=taintedCarry[source];
@@ -158,7 +161,7 @@ function redactedLogSink(stream:ReturnType<typeof createWriteStream>){
       if(wasTentative&&!tentativeSensitiveLine[source]){
         const queued=pendingOtherPipe;
         pendingOtherPipe=[];pendingOtherPipeBytes=0;
-        if(!unsafeControlOutput&&!completedPemOpener){
+        if(!unsafeControlOutput&&!completedPemOpener&&!completedRedactedField){
           // The opener was ordinary text. Re-process every held chunk through
           // the same sanitizer, preserving per-pipe carry and source ordering.
           for(const item of queued)writeChunk(item.source,item.chunk);

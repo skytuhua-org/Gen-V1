@@ -550,6 +550,19 @@ describe('aggregate and manifest',()=>{
     expect(log).not.toContain('SYNTHETIC_OVERFLOW_8823');
   });
 
+  it.each(['password:','Authorization:','api_key:','AWS_SECRET_ACCESS_KEY:'])('discards deferred other-pipe bytes when %s completes with an inline credential',async label=>{
+    const directory=temporaryDirectory();
+    const script=String.raw`const label=process.argv[1];process.stdout.write("before\n"+label.slice(0,1));setTimeout(()=>process.stderr.write("SYNTHETIC_HELD_INLINE_OTHER_PIPE_2301\n"),40);setTimeout(()=>process.stdout.write(label.slice(1)+" SYNTHETIC_INLINE_VALUE_2301\nafter\n"),80);`;
+    const result=await runCheck(specFor(directory,{args:['-e',script,label]}));
+    expect(result.status).toBe('PASS');
+    const log=readFileSync(result.artifact,'utf8');
+    expect(log).toContain('before\n');
+    expect(log).toContain('[REDACTED]');
+    expect(log).toContain('after\n');
+    expect(log).not.toContain('SYNTHETIC_HELD_INLINE_OTHER_PIPE_2301');
+    expect(log).not.toContain('SYNTHETIC_INLINE_VALUE_2301');
+  });
+
   it('holds other-pipe canaries while a named credential label is still fragmented',async()=>{
     for(const label of ['password:','Authorization: Bearer','AWS_SECRET_ACCESS_KEY:','api_key:']){
       for(const cut of [1,2,3,label.length-1]){
