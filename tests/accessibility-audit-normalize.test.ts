@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import {
 	criterionLabel,
 	normalizeAudit,
-} from "../apps/desktop/accessibility-normalize.ts";
+} from "../packages/desktop-contract/accessibility-normalize.ts";
 
 const meta = {
 	kind: "local" as const,
