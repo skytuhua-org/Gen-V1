@@ -22,7 +22,7 @@ async function setup(page:Page,opts:{preferences?:Record<string,unknown>;empty?:
 async function paste(page:Page,text:string,opts:{files?:boolean;inline?:boolean}={}){
  const area=message(page);await area.focus();
  const prevented=await area.evaluate((node,{text:body,files,inline})=>{if(inline)node.dispatchEvent(new KeyboardEvent('keydown',{key:'v',ctrlKey:true,shiftKey:true,bubbles:true,cancelable:true}));const dt=new DataTransfer();dt.setData('text/plain',body);if(files)dt.items.add(new File(['x'],'image.png',{type:'image/png'}));const event=new ClipboardEvent('paste',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:dt});return !node.dispatchEvent(event);},{text,files:opts.files??false,inline:opts.inline??false});
- if(!prevented)await area.evaluate((node,body)=>{const start=node.selectionStart??node.value.length,end=node.selectionEnd??node.value.length,setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!;setter.call(node,node.value.slice(0,start)+body+node.value.slice(end));node.dispatchEvent(new Event('input',{bubbles:true}));},text);
+ if(!prevented)await area.evaluate((raw,body)=>{const node=raw as HTMLTextAreaElement;const start=node.selectionStart??node.value.length,end=node.selectionEnd??node.value.length,setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')!.set!;setter.call(node,node.value.slice(0,start)+body+node.value.slice(end));node.dispatchEvent(new Event('input',{bubbles:true}));},text);
 }
 test('A1: 50-line paste collapses to one chip, textarea unchanged, live region announces',async({page})=>{
  await setup(page);await paste(page,bigPaste);
@@ -65,7 +65,7 @@ test('A7: chips survive a reload',async({page})=>{
  await page.reload();await expect(message(page)).toBeEnabled();await expect(chip(page)).toBeVisible();
 });
 test('A8: a new conversation keeps chips until its first send',async({page})=>{
- const f=await setup(page,{empty:true});const area=message(page);
+ const f=await setup(page,{empty:true});
  await paste(page,bigPaste);await expect(chip(page)).toBeVisible();
  await page.getByRole('button',{name:'Send message',exact:true}).click();await expect.poll(()=>f.sends.length).toBe(1);
  expect(f.sends[0].content).toContain('line 1 of the pasted body');await expect(chip(page)).toBeHidden();
