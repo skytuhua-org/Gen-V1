@@ -1,5 +1,5 @@
 import type { AccessibilityAuditResult } from "../../../../packages/desktop-contract/index.ts";
-import { criterionLabel } from "../../../desktop/accessibility-normalize.ts";
+import { criterionLabel } from "../../../../packages/desktop-contract/accessibility-normalize.ts";
 
 const MAX_MESSAGE_BYTES = 24 * 1024,
 	MAX_MESSAGE_ELEMENTS = 5;

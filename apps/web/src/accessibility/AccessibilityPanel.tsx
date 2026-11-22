@@ -12,7 +12,7 @@ import type {
 	AccessibilityAuditRule,
 	AccessibilityImpact,
 } from "../../../../packages/desktop-contract/index.ts";
-import { criterionLabel } from "../../../desktop/accessibility-normalize.ts";
+import { criterionLabel } from "../../../../packages/desktop-contract/accessibility-normalize.ts";
 import { buildFixMessage } from "./fix-message.ts";
 import type { AccessibilityAuditHook } from "./useAccessibilityAudit.ts";
 import "./accessibility.css";

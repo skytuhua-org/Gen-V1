@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { AccessibilityAuditOutcome } from "../../packages/desktop-contract/index.ts";
-import { normalizeAudit } from "./accessibility-normalize.ts";
+import { normalizeAudit } from "../../packages/desktop-contract/accessibility-normalize.ts";
 
 export const AUDIT_WORLD_ID = 1099;
 export const AUDIT_RUNNER = `(async()=>{const r=await axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21a','wcag21aa','wcag22aa']},resultTypes:['violations'],iframes:false,elementRef:false,selectors:true,ancestry:false,xpath:false,absolutePaths:false});return {version:axe.version,url:location.href,title:document.title,width:innerWidth,height:innerHeight,violations:r.violations.map(v=>({id:v.id,impact:v.impact,help:v.help,description:v.description,helpUrl:v.helpUrl,tags:v.tags,nodes:v.nodes.map(n=>({target:n.target,html:n.html,failureSummary:n.failureSummary}))}))};})()`;

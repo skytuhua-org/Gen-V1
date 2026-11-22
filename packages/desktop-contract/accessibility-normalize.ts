@@ -3,7 +3,7 @@ import type {
 	AccessibilityAuditResult,
 	AccessibilityAuditRule,
 	AccessibilityImpact,
-} from "../../packages/desktop-contract/index.ts";
+} from "./index.ts";
 
 /** WCAG 2.2 success-criterion short names for the criteria axe-core 4.14 tags
  * with wcagNNN markers. Unknown criteria surface as their number only. */

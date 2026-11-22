@@ -28,7 +28,7 @@ import {createAttentionPopups,attentionPopupHtml,type AttentionPopupAction,type 
 import {attentionDeliverySchema} from '../../packages/contracts/attention.ts';
 import {hostFlagEnabled} from '../../packages/core/host-flags.ts';
 import {loadAxeSource,runAudit,runLocalAudit,auditFailed,type AuditHost} from './accessibility-audit.ts';
-import {normalizeAudit} from './accessibility-normalize.ts';
+import {normalizeAudit} from '../../packages/desktop-contract/accessibility-normalize.ts';
 const persistence=createPersistenceQueue();
 const auditRuns=new Map<string,AbortController>();
 let auditCapabilityCache:{value:boolean;at:number}|undefined,auditAxe:string|undefined;
