@@ -37,7 +37,7 @@ test('available compaction keeps its existing owning-thread command',async({page
 test('an unreported session disables Compact now with a reason instead of a dead control',async({page})=>{
  const commands:unknown[]=[];await page.route('**/api/commands',route=>{commands.push(route.request().postDataJSON());return route.fulfill({json:{commandId:'fixture',seq:1,result:{}}});});
  await page.goto('/context-compact-check?unreported=1');await page.getByRole('button',{name:'Inspect context usage'}).click();
- const popup=page.getByRole('dialog',{name:'Context inspector'});await expect(popup).toContainText("Context use isn't reported for this session yet.");await expect(popup).not.toContainText('Not reported');
+ const popup=page.getByRole('dialog',{name:'Context inspector'});await expect(popup).toContainText("Context use isn't reported for this session yet.");await expect(popup).toContainText('Not reported');
  const compact=popup.getByRole('button',{name:'Compact now',exact:true});
  await expect(compact).toBeDisabled();await expect(compact).toHaveAttribute('title','Nothing to compact');await expect(compact).toHaveAttribute('aria-disabled','true');
  await compact.evaluate(node=>(node as HTMLButtonElement).click());expect(commands).toEqual([]);

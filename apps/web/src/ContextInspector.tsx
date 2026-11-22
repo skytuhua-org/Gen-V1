@@ -163,7 +163,7 @@ function ContextSession({ usage, thread, close, refresh, onError, anchor, compac
   return <Popover anchor={anchor} contentRef={panel} initialFocus={panel} open width={328} height={(measured?.categories.length ? 282 : 200) + (failure ? 48 : 0) + (lastRequest || compactionHistory ? 84 : 0) + (budget ? 120 : 0) + (recalled ? 180 : 0) + (workbench?.enabled?48:0)}
     role="dialog" aria-label="Context inspector" tabIndex={-1} className="context-inspector" onDismiss={close}>
     {workbench?.enabled&&<nav aria-label="Context views"><button type="button" onClick={()=>{close();workbench.show('request');}}>Last request</button><button type="button" onClick={()=>{close();workbench.show('sources');}}>Sources</button><button type="button" onClick={()=>{close();workbench.show('tools');}}>Tools</button><span aria-current="page">Compaction</span></nav>}
-    <header><strong>Context {measured && <span>{Math.round(measured.ratio)}%</span>}</strong>
+    <header><strong>Context <span>{measured ? `${Math.round(measured.ratio)}%` : 'Not reported'}</span></strong>
       {measured && <span className="context-inspector-total">{contextNumber(measured.used)} of {contextNumber(measured.total)} tokens</span>}</header>
     <div className="context-inspector-body">{measured ? <ContextMeter usage={usage} busy={compacting} accepted={playingReceipt} /> : <p className="context-inspector-unreported">Context use isn't reported for this session yet.</p>}
       {(lastRequest || compactionHistory) && <RequestEvidence request={lastRequest} sources={hostSources} compaction={compactionHistory} thread={thread} />}
