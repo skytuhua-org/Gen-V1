@@ -111,6 +111,15 @@ function ContextSession({ usage, thread, close, refresh, onError, anchor, compac
   const budget = budgetObservation?.threadId === thread?.id && budgetObservation?.epoch === thread?.epoch &&
     (!thread?.runId || budgetObservation?.runId === thread.runId) ? budgetObservation?.budget : undefined;
   const reported = ownedCompaction(thread, compaction), accepted = acceptedCompaction(thread, compaction, usage);
+  const compactRun = useRef<string | undefined>();
+  useEffect(() => {
+    const runId = compactRun.current;
+    if (!runId || !requested || !thread) return;
+    if (thread.runId === runId || usage?.activity === 'compacting') return;
+    if (thread.runId) return; // a different run owns the thread now
+    compactRun.current = undefined;
+    if (!thread.error && reported?.status !== 'failed') toast('Context compacted', { tone: 'success', durationMs: 5000 });
+  }, [requested, thread?.runId, thread?.error, usage?.activity, reported?.status]);
   const lastReceipt = useRef(accepted?.receipt.id);
   const playingReceipt = Boolean(accepted && (animateReceipt || lastReceipt.current !== accepted.receipt.id));
   useEffect(() => {
@@ -136,10 +145,10 @@ function ContextSession({ usage, thread, close, refresh, onError, anchor, compac
     restoreActionFocus.current = action.current?.ownerDocument.activeElement === action.current;
     locked.current = true; setSubmitting(true); setError(''); setRequested(false);
     try {
-      await command('run.compact', {}, thread.id);
+      const receipt = await command('run.compact', {}, thread.id);
       if (!active.current) return;
-      setRequested(true); await refresh();
-      toast('Context compacted', { tone: 'success', durationMs: 5000 });
+      compactRun.current = (receipt.result as { runId?: string } | undefined)?.runId;
+      await refresh(); setRequested(true);
     } catch (cause) {
       if (!active.current) return;
       const message = cause instanceof Error ? cause.message : 'Context could not be compacted. Try again.';
