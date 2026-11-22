@@ -58,4 +58,4 @@
 .database-attach-dialog .database-dialog-body { display:flex; flex-direction:column; gap:var(--ui-space-2); }
 .database-dialog-footer { display:flex; justify-content:flex-end; gap:var(--ui-space-2); margin-top:var(--ui-space-2); }
 .settings-row-inline { display:flex; align-items:center; gap:var(--ui-space-2); font-size:13px; }
-@media (prefers-reduced-motion:reduce) { .database-panel *,.schema-children,.schema-chevron,.database-progress { animation:none; transition:none; } .database-progress { display:none; } .database-running-static { display:inline; } }
+@media (prefers-reduced-motion:reduce) { .database-panel *,.schema-children,.schema-chevron,.database-progress,.database-error { animation:none; transition:none; } .database-run:active { transform:none; } .database-progress { display:none; } .database-running-static { display:inline; } }
