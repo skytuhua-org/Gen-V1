@@ -214,17 +214,27 @@ export class ProjectTools{
   const entries=[...(await git(['ls-files','-s','--',literal(file.path)])).split('\n'),...(await git(['ls-tree','HEAD','--',literal(file.path)])).split('\n')];
   if(entries.some(line=>line.startsWith('160000')))throw new HarnessError('UNSUPPORTED_PATH','Submodule entries cannot be discarded one file at a time.');
   const target=join(worktree,...file.path.split('/'));
-  if(this.options.beforeDiscard)await this.options.beforeDiscard({projectId,threadId,paths:file.oldPath?[file.path,file.oldPath]:[file.path],worktree,operationId:operationId??'discard'});
+  // Only live working-copy bytes need a checkpoint; absent paths (a deleted
+  // file, the renamed-away original) are restored from HEAD and a checkpoint
+  // would only record them as skipped.
+  const backup:string[]=[];
+  for(const name of file.oldPath?[file.path,file.oldPath]:[file.path])if(await lstat(join(worktree,...name.split('/'))).then(info=>info.isFile()&&!info.isSymbolicLink(),()=>false))backup.push(name);
+  if(this.options.beforeDiscard&&backup.length)await this.options.beforeDiscard({projectId,threadId,paths:backup,worktree,operationId:operationId??'discard'});
   const trash=this.options.trash??moveToRecycleBin;
-  // No leaf guard around the bin move: on Windows a pinned file shares
-  // read/write but denies delete opens for every process, so the Recycle Bin
-  // helper could never remove it while guarded.
-  if(file.untracked)await trash(target,signal);
+  // The bin helper is an outside process: a leaf pin would deny its delete,
+  // so instead every ancestor directory is pinned. A directory guard denies
+  // delete opens on the directory itself, which stops a junction swap from
+  // retargeting the move outside the worktree, while deleting the unpinned
+  // leaf file still works.
+  const ancestors:string[]=[];
+  for(let dir=dirname(target);dir!==worktree&&inside(worktree,dir);dir=dirname(dir))ancestors.push(dir);
+  const moveToBin=async()=>{if(ancestors.length)await withPathGuard(ancestors.map(path=>({path,leaf:false})),signal,async()=>trash(target,signal));else await trash(target,signal);};
+  if(file.untracked)await moveToBin();
   else{
    if(file.oldPath)await git(['restore','--source=HEAD','--staged','--worktree','--',literal(file.oldPath)]);
    if(file.index==='A'||file.oldPath){
     await git(['rm','--cached','--quiet','--',literal(file.path)]);
-    if(await lstat(target).then(()=>true,()=>false))await trash(target,signal);
+    if(await lstat(target).then(()=>true,()=>false))await moveToBin();
    }
    else await git(['restore','--source=HEAD','--staged','--worktree','--',literal(file.path)]);
   }
