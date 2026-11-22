@@ -52,3 +52,4 @@ it('discards an unbound working copy together with the branch it created',async(
  expect(listed).not.toContain(worktree);
  await rm(root,{recursive:true,force:true,maxRetries:5});
 },60000);
+

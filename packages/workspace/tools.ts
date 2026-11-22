@@ -11,8 +11,9 @@ import {WorkspaceRepository} from '../core/workspace-layout.ts';
 import {assertNotStorage,canonical,inside} from '../core/security.ts';
 import {gitExecutable} from '../capabilities/process.ts';
 import {readBoundFile,withPathGuard} from '../core/file-access.ts';
-import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
+import {directoryIdentity,importGitFamily,nativeGit,nativeGitResult,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead} from '../contracts/code-review.ts';
+import type {StashEntry,StashFile,StashList} from '../contracts/workspace-action-outcomes.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
 
 interface Identity{dev:string;ino:string}
@@ -179,14 +180,84 @@ export class ProjectTools{
    return readLocalComparisonFile({git:args=>nativeGit(this.gitExecutable(),metadata,path,args,signal),path,signal,managed,owner},entry.value,request.path);
   }));
  }
- async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string}){
+ async gitAction(projectId:string,threadId:string|undefined,input:{type:'stash-push';revision:string;message?:string}):Promise<{status:GitStatus;result:{created:StashEntry}}>;
+ async gitAction(projectId:string,threadId:string|undefined,input:{type:'stash-apply'|'stash-pop';revision:string;oid:string;stashRevision:string}):Promise<{status:GitStatus;result:{restored:'clean'|'conflicts';conflicts:string[];dropped:boolean}}>;
+ async gitAction(projectId:string,threadId:string|undefined,input:{type:'stash-drop';revision:string;oid:string;stashRevision:string}):Promise<{status:GitStatus;result:{dropped:true}}>;
+ async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string;oid?:string;stashRevision?:string}):Promise<GitStatus>;
+ async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string;oid?:string;stashRevision?:string}){
   return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
    const current=await this.status(metadata,path,signal,managed);if(input.revision!==current.revision)throw new HarnessError('REVISION_CHANGED','The worktree changed. Refresh the review before applying this action.');const paths=z.array(pathName).min(1).max(1000).optional().parse(input.paths),git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
    if(input.type==='stage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to stage.');await git(['add','--',...paths]);}
    else if(input.type==='unstage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to unstage.');await git(['restore','--staged','--',...paths]);}
    else if(input.type==='commit')await git(['-c','commit.gpgsign=false','commit','-m',z.string().trim().min(1).max(4000).parse(input.message)]);
    else if(input.type==='branch'){const branch=z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]{0,150}$/).refine(value=>!value.endsWith('/')&&!value.includes('//')).parse(input.name);await git(['switch','-c',branch]);}
+   else if(input.type==='stash-push'||input.type==='stash-apply'||input.type==='stash-pop'||input.type==='stash-drop'){
+    if(threadId){const thread=this.store.get<Thread>('thread',id.parse(threadId));if(thread&&(thread.status==='working'||thread.runId))throw new HarnessError('RUN_ACTIVE','Wait for the active run to finish before changing stashes.');}
+    const stashGit=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal,{LC_ALL:'C'});
+    if(input.type==='stash-push'){
+     if(current.files.length===0)throw new HarnessError('NOTHING_TO_STASH','There are no changes to stash.');
+     await stashGit(['stash','push','--include-untracked','-m',z.string().trim().min(1).max(200).parse(input.message)]);
+     const created=await this.stashEntries(stashGit),top=created[0];
+     if(!top)throw new HarnessError('GIT_ERROR','The stash entry was not recorded.');
+     return{status:await this.status(metadata,path,signal,managed),result:{created:{...top,files:await this.stashFiles(stashGit,top.oid),filesTruncated:false}}};
+    }
+    const entries=await this.stashEntries(stashGit),stashRevision=hash(entries.map(entry=>entry.oid).join('\n'));
+    if(input.stashRevision!==stashRevision)throw new HarnessError('STASH_CHANGED','The stash list changed. Refresh it before retrying.');
+    const index=entries.findIndex(entry=>entry.oid===input.oid);
+    if(index<0)throw new HarnessError('STASH_CHANGED','That stash entry is no longer present. Refresh the list before retrying.');
+    const ref=`stash@{${index}}`;
+    if((await stashGit(['rev-parse','--verify',ref])).trim()!==input.oid)throw new HarnessError('STASH_CHANGED','The stash entry moved. Refresh the list before retrying.');
+    if(input.type==='stash-drop'){await stashGit(['stash','drop',ref]);return{status:await this.status(metadata,path,signal,managed),result:{dropped:true}};}
+    const result=await nativeGitResult(this.gitExecutable(),metadata,path,['stash','apply',ref],signal,{LC_ALL:'C'});
+    const fresh=await this.status(metadata,path,signal,managed);
+    if(result.exitCode!==0){
+     const unmerged=new Set(['DD','AU','UD','UA','DU','AA','UU']),conflicts=fresh.files.filter(file=>unmerged.has(file.index+file.worktree)).map(file=>file.path);
+     if(conflicts.length===0){
+      if((result.stderr.includes('would be overwritten')||result.stderr.includes('already exists, no checkout'))&&fresh.revision===current.revision){
+       const paths=result.stderr.split('\n').map(line=>line.startsWith('\t')?line.trim():'').filter(Boolean);
+       throw new HarnessError('STASH_WOULD_OVERWRITE','Applying the stash would overwrite local edits.',{paths});
+      }
+      throw new HarnessError('GIT_ERROR','Git operation did not complete.',result);
+     }
+     // Conflict state: the entry stays in the list so nothing is lost.
+     return{status:fresh,result:{restored:'conflicts',conflicts,dropped:false}};
+    }
+    let dropped=false;
+    if(input.type==='stash-pop'&&(await stashGit(['rev-parse','--verify',ref])).trim()===input.oid){await stashGit(['stash','drop',ref]);dropped=true;}
+    return{status:fresh,result:{restored:'clean',conflicts:[],dropped}};
+   }
    else throw new HarnessError('INVALID_INPUT','Unknown Git action.');return this.status(metadata,path,signal,managed);
+  }));
+ }
+ private async stashEntries(git:(args:string[])=>Promise<string>):Promise<Omit<StashEntry,'files'|'filesTruncated'>[]>{
+  const raw=await git(['stash','list','-z','--format=%H%x00%gs%x00%cI']),entries:Omit<StashEntry,'files'|'filesTruncated'>[]=[];
+  for(const record of raw.split('\n')){
+   if(!record)continue;const[oid,subject='',createdAt='']=record.split('\0');
+   if(!oid||!/^[0-9a-f]{40}$/.test(oid))continue;
+   const match=/^(?:WIP on|On) ([^:]+):\s*(.*)$/.exec(subject);
+   entries.push({oid,index:entries.length,message:match?match[2]||subject:subject,branch:match?match[1]:null,createdAt});
+   if(entries.length>=50)break;
+  }
+  return entries;
+ }
+ private async stashFiles(git:(args:string[])=>Promise<string>,oid:string):Promise<StashFile[]>{
+  const untracked=new Set<string>();
+  try{for(const name of (await git(['ls-tree','-r','-z','--name-only',oid+'^3'])).split('\0'))if(name)untracked.add(name);}catch{/* No untracked parent. */}
+  const files:StashFile[]=[],fields=(await git(['stash','show','--name-status','-z','--include-untracked',oid])).split('\0');
+  for(let i=0;i<fields.length;i++){
+   const status=fields[i];if(!status)continue;const letter=status[0]!;
+   const path=fields[++i];if(!path)break;
+   if(letter==='R'||letter==='C'){const oldPath=path,next=fields[++i];if(!next)break;files.push({path:next,oldPath,status:'R',untracked:untracked.has(next)});}
+   else if(letter==='A'||letter==='M'||letter==='D'||letter==='T')files.push({path,status:letter==='T'?'M':letter,untracked:untracked.has(path)});
+   if(files.length>=100)break;
+  }
+  return files;
+ }
+ async stashList(projectId:string,threadId?:string):Promise<StashList>{
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,async(metadata,path,signal,managed)=>{
+   const git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal,{LC_ALL:'C'}),entries=await this.stashEntries(git),list:StashEntry[]=[];
+   for(const entry of entries)list.push({...entry,files:await this.stashFiles(git,entry.oid),filesTruncated:false});
+   return{stashRevision:hash(entries.map(entry=>entry.oid).join('\n')),entries:list,total:entries.length,gitWrite:managed};
   }));
  }
  async context(projectId:string,threadId?:string):Promise<ProjectContext>{

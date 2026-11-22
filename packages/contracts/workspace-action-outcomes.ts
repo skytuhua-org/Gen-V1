@@ -118,8 +118,8 @@ export interface WorkspaceActionOperation {
   action: { head: string; revision: string; branch: string };
   payload: WorkspaceActionPayload;
 }
-export type WorkspaceActionOutcome = { state: 'confirmed' | 'not-applied' | 'uncertain' | 'revoked' };
-export type WorkspaceActionExecution = { state: 'confirmed'; receipt: CommandReceipt } | { state: 'not-applied' | 'uncertain' | 'revoked' };
+export type WorkspaceActionOutcome = { state: 'confirmed' | 'not-applied' | 'uncertain' | 'revoked'; error?: { code: string; message: string; details?: unknown } };
+export type WorkspaceActionExecution = { state: 'confirmed'; receipt: CommandReceipt } | { state: 'not-applied' | 'uncertain' | 'revoked'; error?: { code: string; message: string; details?: unknown } };
 
 export interface StashFile { path: string; oldPath?: string; status: 'A' | 'M' | 'D' | 'R'; untracked: boolean }
 export interface StashEntry { oid: string; index: number; message: string; branch: string | null; createdAt: string; files: StashFile[]; filesTruncated: boolean }

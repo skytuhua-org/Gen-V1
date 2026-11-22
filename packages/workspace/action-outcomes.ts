@@ -24,7 +24,11 @@ interface Intent {
   ownerFence: string;
   status: 'prepared' | 'started' | 'confirmed' | 'not-applied';
   result?: unknown;
+  error?: { code: string; message: string; details?: unknown };
 }
+/** Codes a tool only raises before it has written anything; they read as
+ * not-applied refusals with their own code/message rather than uncertain. */
+const preWriteRefusals = new Set(['REVISION_CHANGED', 'RUN_ACTIVE', 'NOTHING_TO_STASH', 'STASH_CHANGED', 'STASH_WOULD_OVERWRITE']);
 interface Fence {
   hash: string;
   authority: string;
@@ -158,7 +162,7 @@ export class WorkspaceActionOutcomes {
       return command.type === 'project.create-pr' && receipt && created.success && created.data.repo === fence.repo && created.data.head === command.payload.head && created.data.revision === command.payload.revision ? {state:'confirmed',receipt} : {state:'uncertain'};
     }
     if (intent.version !== 1 || intent.ownerFence !== fence.hash) return { state: 'revoked' };
-    if (intent.status === 'not-applied') return { state: 'not-applied' };
+    if (intent.status === 'not-applied') return { state: 'not-applied', ...(intent.error ? { error: intent.error } : {}) };
     if (intent.status === 'confirmed') {
       const receipt = this.store.receipt(command),
         summary = receipt?.result;
@@ -269,8 +273,24 @@ export class WorkspaceActionOutcomes {
         ? await withPathGuard([{ ...fence.credential, leaf: true, readOnly: true }], new AbortController().signal, write)
         : await write();
       return this.current(fence) ? result : { state: 'revoked' };
-    } catch {
-      if (started) return { state: 'uncertain' };
+    } catch (error) {
+      if (started) {
+        if (!(error instanceof HarnessError) || !preWriteRefusals.has(error.code)) return { state: 'uncertain' };
+        // The write tool refused before mutating; fold the started intent back
+        // to not-applied with the refusal's own code for the route to relay.
+        try {
+          const refusal = { code: error.code, message: error.message, ...(error.details === undefined ? {} : { details: error.details }) };
+          this.store.internal('project.action.not-applied', input.threadId ?? null, () => {
+            const current = this.read(command);
+            if (!current || current.status !== 'started' || current.ownerFence !== fence.hash) throw denied();
+            this.store.put(kind, input.id, input.threadId ?? null, { ...current, status: 'not-applied', error: refusal });
+            return this.summary(command, this.current(fence) ? 'not-applied' : 'revoked');
+          });
+          return this.current(fence) ? { state: 'not-applied', error: refusal } : { state: 'revoked' };
+        } catch {
+          return { state: 'uncertain' };
+        }
+      }
       // This invocation owns the reservation and has never entered a write tool.
       try {
         this.store.internal('project.action.not-applied', input.threadId ?? null, () => {
