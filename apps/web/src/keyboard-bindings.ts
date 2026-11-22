@@ -46,6 +46,9 @@ export const KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
   {id: 'window-move', label: 'Move the focused window', scope: 'Workspace', chords: ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'], hint: 'Hold Shift to resize it, or Alt for 2 px steps', handlers: [module('FloatingWindow.tsx')]},
   {id: 'window-restore', label: 'Return the focused window to its edge position', scope: 'Workspace', chords: ['Home'], handlers: [module('FloatingWindow.tsx')]},
   {id: 'window-close', label: 'Close or collapse the focused window', scope: 'Workspace', chords: ['Escape'], handlers: [module('FloatingWindow.tsx')]},
+  {id: 'app-zoom-in', label: 'Zoom the desktop app in', scope: 'Global', chords: ['Ctrl+=', 'Ctrl++'], handlers: ['apps/desktop/app-zoom.ts']},
+  {id: 'app-zoom-out', label: 'Zoom the desktop app out', scope: 'Global', chords: ['Ctrl+-'], handlers: ['apps/desktop/app-zoom.ts']},
+  {id: 'app-zoom-reset', label: 'Reset the desktop app zoom', scope: 'Global', chords: ['Ctrl+0'], handlers: ['apps/desktop/app-zoom.ts']},
 ];
 
 /** The rebindable subset, in registry order; Settings turns these into shortcut rows. */

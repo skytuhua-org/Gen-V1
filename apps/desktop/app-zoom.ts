@@ -16,7 +16,7 @@ export function parseSavedZoom(value:unknown):number {
 export function zoomCommandFor(event:ZoomKey):ZoomCommand|null {
  if(event.type!=='keyDown'||event.altKey)return null;
  if((event.ctrlKey||event.metaKey)&&!event.shiftKey&&event.key==='=')return 'in';
- if((event.ctrlKey||event.metaKey)&&event.shiftKey&&event.key==='+')return 'in';
+ if((event.ctrlKey||event.metaKey)&&event.key==='+')return 'in';
  if((event.ctrlKey||event.metaKey)&&event.code==='NumpadAdd')return 'in';
  if((event.ctrlKey||event.metaKey)&&!event.shiftKey&&event.key==='-')return 'out';
  if((event.ctrlKey||event.metaKey)&&event.code==='NumpadSubtract')return 'out';

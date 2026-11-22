@@ -16,6 +16,7 @@ import {createStartupOutputCapture,finishBackendStartup,nodeSidecarArguments,req
 import {releaseOwnedBrowsers,detachOwnedBrowser} from './browser-lifecycle.ts';
 import {ensureMainDockedBrowser} from './docked-browser.ts';
 import {nativeBrowserBounds} from './browser-bounds.ts';
+import {nextZoom,parseSavedZoom,zoomCommandFor,type ZoomCommand} from './app-zoom.ts';
 import {launchDesktopSignIn,parseDesktopSignInTarget} from './auth-launcher.ts';
 import {captureDesktopPlacement,createNormalBounds,parseDesktopPlacement,placeOnDesktopDisplay,restoreDesktopPlacement,retainDesktopPlacement,type DesktopDisplay,type DesktopPlacement} from './display-layout.ts';
 import type {ConnectionProviderId} from '../../packages/contracts/connections.ts';
@@ -28,7 +29,7 @@ import {createAttentionPopups,attentionPopupHtml,type AttentionPopupAction,type 
 import {attentionDeliverySchema} from '../../packages/contracts/attention.ts';
 const persistence=createPersistenceQueue();
 
-interface BrowserRecord {id:string;view:WebContentsView;state:DesktopBrowserState;owner?:WindowRecord;generation:number;networkReady:Promise<void>}
+interface BrowserRecord {id:string;view:WebContentsView;state:DesktopBrowserState;owner?:WindowRecord;generation:number;networkReady:Promise<void>;lastCssBounds?:DesktopBounds}
 interface WindowRecord extends NativeCloseOwner {id:string;surface:DesktopSurface;window:BrowserWindow;url:string;ready:boolean;settled:boolean;visible:boolean;normalBounds:ReturnType<typeof createNormalBounds>;placement?:DesktopPlacement;appliedBounds?:DesktopBounds;monitorRescued?:boolean;recoveries?:number;resolveReady:(value:DesktopWindowInfo)=>void;rejectReady:(error:Error)=>void;readyPromise:Promise<DesktopWindowInfo>;readyTimer:ReturnType<typeof setTimeout>;browser?:BrowserRecord;dockedBrowser?:BrowserRecord}
 interface SavedWindow {surface:DesktopSurface;bounds:DesktopBounds;placement?:DesktopPlacement;open:boolean;visible?:boolean;alwaysOnTop?:boolean;dockedBrowserId?:string}
 const windows=new Map<string,WindowRecord>(),browsers=new Map<string,BrowserRecord>();
@@ -52,6 +53,7 @@ let handoffQueue:Promise<unknown>=Promise.resolve();
 let workspaceRelay:ReturnType<typeof workspaceEvents>|undefined;
 let attentionPopups:ReturnType<typeof createAttentionPopups>|undefined,attentionNative:BrowserWindow|undefined,attentionUrl='',attentionAction:((action:AttentionPopupAction)=>void|Promise<void>)|undefined;
 let tray:Tray|undefined,hostLayout:DesktopLayout|undefined,layoutError:string|undefined,restoringLayout=true;
+let appZoom=1,zoomSequence=0;
 function handoff<T>(action:()=>Promise<T>):Promise<T>{const next=handoffQueue.catch(()=>{}).then(action);handoffQueue=next;return next;}
 const root=resolve(process.env.HARNESS_DESKTOP_HOST_ROOT??(app.isPackaged?join(process.resourcesPath,'host'):join(dirname(fileURLToPath(import.meta.url)),'../..')));
 const nodePath=resolve(process.env.HARNESS_DESKTOP_NODE_PATH??join(process.resourcesPath,'node','node.exe'));
@@ -67,11 +69,11 @@ function workAreas(){return screen.getAllDisplays().map(display=>display.workAre
 function displays():DesktopDisplay[]{const primary=screen.getPrimaryDisplay(),all=screen.getAllDisplays();return (all.length?all:[primary]).map(display=>({id:String(display.id),workArea:display.workArea,label:display.label,scaleFactor:display.scaleFactor,primary:display.id===primary.id}));}
 function info(record:WindowRecord):DesktopWindowInfo{return {id:record.id,surface:record.surface,ready:record.ready,minimized:record.window.isMinimized(),visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),bounds:record.window.getNormalBounds(),displayId:record.placement?.displayId};}
 function captureLayout():DesktopLayout{return {version:1,windows:[...windows.values()].filter(record=>!record.window.isDestroyed()).map(record=>({surface:record.surface,bounds:record.normalBounds.read(),visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),...(record.dockedBrowser?{dockedBrowserId:record.dockedBrowser.id}:{}),...(record.placement?{displayId:record.placement.displayId,placement:record.placement}:{})}))};}
-function snapshot(record:WindowRecord):DesktopState{return {windows:[...windows.values()].map(info),...(record.browser?{browser:record.browser.state}:{}),...(record.dockedBrowser?{dockedBrowser:{browserId:record.dockedBrowser.id,state:record.dockedBrowser.state}}:{}),...(backendError?{backendError}:{}),...(layoutError?{layoutError}:{}),update:updateStatus,nativeTitleBar:process.platform==='win32'};}
-function broadcast(focusSurface?:DesktopSurface){
+function snapshot(record:WindowRecord):DesktopState{return {windows:[...windows.values()].map(info),...(record.browser?{browser:record.browser.state}:{}),...(record.dockedBrowser?{dockedBrowser:{browserId:record.dockedBrowser.id,state:record.dockedBrowser.state}}:{}),...(backendError?{backendError}:{}),...(layoutError?{layoutError}:{}),update:updateStatus,nativeTitleBar:process.platform==='win32',appZoom:{factor:appZoom,sequence:zoomSequence}};}
+function broadcast(focusSurface?:DesktopSurface,zoomOrigin?:string){
  for(const record of windows.values()){
   if(record.window.isDestroyed())continue;
-  const state={...snapshot(record),...(record.surface.kind==='main'&&focusSurface?{focusSurface}:{})};
+  const state={...snapshot(record),...(zoomOrigin?{appZoom:{factor:appZoom,sequence:zoomSequence,origin:zoomOrigin}}:{}),...(record.surface.kind==='main'&&focusSurface?{focusSurface}:{})};
   try{record.window.webContents.send(channels.state,state);}
   catch{/* Renderer disposal must not interrupt other live windows' updates. */}
  }
@@ -85,7 +87,7 @@ function authorize(event:IpcMainInvokeEvent):WindowRecord {
 }
 function persist(){
  if(quitPending||quitting)return;
- clearTimeout(saveTimer);saveTimer=setTimeout(()=>{void persistence.enqueue(async()=>{await mkdir(dirname(stateFile),{recursive:true});await writeFile(stateFile,JSON.stringify({version:1,windows:saved.slice(-24)}),{encoding:'utf8',mode:0o600});if(!restoringLayout&&!layoutError){await backendRequest('harness.layout.save',{layout:captureLayout()});}}).catch(error=>{layoutError='Workspace layout could not be saved: '+String(error instanceof Error?error.message:error).slice(0,300);broadcast();});},180);
+ clearTimeout(saveTimer);saveTimer=setTimeout(()=>{void persistence.enqueue(async()=>{await mkdir(dirname(stateFile),{recursive:true});await writeFile(stateFile,JSON.stringify({version:1,appZoom,windows:saved.slice(-24)}),{encoding:'utf8',mode:0o600});if(!restoringLayout&&!layoutError){await backendRequest('harness.layout.save',{layout:captureLayout()});}}).catch(error=>{layoutError='Workspace layout could not be saved: '+String(error instanceof Error?error.message:error).slice(0,300);broadcast();});},180);
 }
 function remember(record:WindowRecord,open=true){if(record.window.isDestroyed())return;
  const normal=!record.window.isMaximized()&&!record.window.isMinimized()&&!record.window.isFullScreen();
@@ -99,13 +101,30 @@ function remember(record:WindowRecord,open=true){if(record.window.isDestroyed())
  if(!awaitingRescue)record.placement=retainDesktopPlacement(bounds,record.placement,record.appliedBounds,all);
  if(record.placement&&all.some(display=>display.id===record.placement!.displayId))record.monitorRescued=false;
  const value={surface:record.surface,bounds,placement:record.placement,open,visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),...(record.dockedBrowser?{dockedBrowserId:record.dockedBrowser.id}:{})};saved=[...saved.filter(entry=>desktopSurfaceKey(entry.surface)!==key),value];if(saved.length>24){const live=new Set([...windows.values()].map(item=>desktopSurfaceKey(item.surface)));saved=[...saved.filter(entry=>live.has(desktopSurfaceKey(entry.surface))),...saved.filter(entry=>!live.has(desktopSurfaceKey(entry.surface)))].slice(0,24);}persist();}
-async function loadSaved(){try{const bytes=await readFile(stateFile,'utf8');if(bytes.length>128*1024)return;const raw=JSON.parse(bytes);if(raw.version!==1||!Array.isArray(raw.windows)||raw.windows.length>24)return;for(const entry of raw.windows){try{const surface=parseDesktopSurface(entry.surface);if(!desktopSurfaceAllowed(surface))continue;if(entry.bounds&&typeof entry.bounds==='object')saved.push({surface,bounds:clampDesktopBounds(entry.bounds,workAreas(),surfaceSize(surface)),placement:parseDesktopPlacement(entry.placement),open:entry.open===true,visible:entry.visible!==false,alwaysOnTop:entry.alwaysOnTop===true,...(surface.kind==='main'&&desktopId(entry.dockedBrowserId)?{dockedBrowserId:entry.dockedBrowserId}:{})});}catch{}}}catch{}}
+async function loadSaved(){try{const bytes=await readFile(stateFile,'utf8');if(bytes.length>128*1024)return;const raw=JSON.parse(bytes);if(raw.version!==1||!Array.isArray(raw.windows)||raw.windows.length>24)return;appZoom=parseSavedZoom(raw.appZoom);for(const entry of raw.windows){try{const surface=parseDesktopSurface(entry.surface);if(!desktopSurfaceAllowed(surface))continue;if(entry.bounds&&typeof entry.bounds==='object')saved.push({surface,bounds:clampDesktopBounds(entry.bounds,workAreas(),surfaceSize(surface)),placement:parseDesktopPlacement(entry.placement),open:entry.open===true,visible:entry.visible!==false,alwaysOnTop:entry.alwaysOnTop===true,...(surface.kind==='main'&&desktopId(entry.dockedBrowserId)?{dockedBrowserId:entry.dockedBrowserId}:{})});}catch{}}}catch{}}
 function applyPlacement(record:WindowRecord,bounds:DesktopBounds,preferred=record.placement){if(record.window.isDestroyed())return;record.placement=preferred;record.appliedBounds=bounds;record.normalBounds.apply(bounds);record.window.setBounds(bounds);remember(record);}
 function resetWindowPosition(record:WindowRecord){const all=displays(),current=captureDesktopPlacement(record.window.getBounds(),all),target=all.find(display=>display.id===current.displayId)!;const bounds=placeOnDesktopDisplay(surfaceSize(record.surface),target);applyPlacement(record,bounds,captureDesktopPlacement(bounds,all));}
 function focusedRecord(){const focused=BrowserWindow.getFocusedWindow();return [...windows.values()].find(record=>record.window===focused);}
 function moveWindowToDisplay(record:WindowRecord,id:string){const all=displays(),target=all.find(display=>display.id===id);if(!target)return;const bounds=placeOnDesktopDisplay(record.normalBounds.read(),target);applyPlacement(record,bounds,captureDesktopPlacement(bounds,all));}
 function moveToAdjacentDisplay(offset:number){const record=focusedRecord(),all=displays();if(!record||all.length<2)return;const current=captureDesktopPlacement(record.window.getBounds(),all),index=all.findIndex(display=>display.id===current.displayId);moveWindowToDisplay(record,all[(index+offset+all.length)%all.length].id);}
-function installApplicationMenu(){const all=displays();Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'File',submenu:[{label:'Restore chat',click:()=>{void mainWindow();}},{type:'separator'},{label:'Quit Gen V1',accelerator:'Control+Shift+Q',click:()=>app.quit()}]},{label:'Window',submenu:[{role:'minimize'},{role:'zoom'},{label:'Move to Display',submenu:all.map((display,index)=>({label:(display.label||'Display '+(index+1))+(display.primary?' (Primary)':''),click:()=>{const record=focusedRecord();if(record)moveWindowToDisplay(record,display.id);}}))},{label:'Move to Next Display',accelerator:'Control+Alt+Right',enabled:all.length>1,click:()=>moveToAdjacentDisplay(1)},{label:'Move to Previous Display',accelerator:'Control+Alt+Left',enabled:all.length>1,click:()=>moveToAdjacentDisplay(-1)},{label:'Reset window position',click:()=>{const record=focusedRecord();if(record)resetWindowPosition(record);}}]}]));}
+function setAppZoom(factor:number,origin?:WindowRecord){
+ zoomSequence++;
+ if(factor!==appZoom){
+  appZoom=factor;
+  for(const record of windows.values()){
+   if(record.window.isDestroyed())continue;
+   record.window.webContents.setZoomFactor(factor);
+   const docked=record.dockedBrowser;
+   if(docked?.lastCssBounds)try{docked.view.setBounds(nativeBrowserBounds(docked.lastCssBounds,record.window.getContentSize(),factor));}catch{try{docked.view.setBounds({x:0,y:0,width:0,height:0});}catch{}}
+  }
+ }
+ persist();broadcast(undefined,origin?.id);
+}
+function zoom(command:ZoomCommand,origin?:WindowRecord){setAppZoom(command==='reset'?1:nextZoom(appZoom,command),origin);}
+function watchZoomKeys(contents:Electron.WebContents,origin:()=>WindowRecord|undefined){
+ contents.on('before-input-event',(event,input)=>{const command=zoomCommandFor({type:input.type,key:input.key,code:input.code,ctrlKey:input.control,metaKey:input.meta,altKey:input.alt,shiftKey:input.shift});if(command){event.preventDefault();zoom(command,origin());}});
+}
+function installApplicationMenu(){const all=displays();Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'File',submenu:[{label:'Restore chat',click:()=>{void mainWindow();}},{type:'separator'},{label:'Quit Gen V1',accelerator:'Control+Shift+Q',click:()=>app.quit()}]},{label:'View',submenu:[{label:'Zoom In',accelerator:'CmdOrCtrl+=',registerAccelerator:false,click:()=>zoom('in',focusedRecord())},{label:'Zoom Out',accelerator:'CmdOrCtrl+-',registerAccelerator:false,click:()=>zoom('out',focusedRecord())},{label:'Actual Size',accelerator:'CmdOrCtrl+0',registerAccelerator:false,click:()=>zoom('reset',focusedRecord())}]},{label:'Window',submenu:[{role:'minimize'},{role:'zoom'},{label:'Move to Display',submenu:all.map((display,index)=>({label:(display.label||'Display '+(index+1))+(display.primary?' (Primary)':''),click:()=>{const record=focusedRecord();if(record)moveWindowToDisplay(record,display.id);}}))},{label:'Move to Next Display',accelerator:'Control+Alt+Right',enabled:all.length>1,click:()=>moveToAdjacentDisplay(1)},{label:'Move to Previous Display',accelerator:'Control+Alt+Left',enabled:all.length>1,click:()=>moveToAdjacentDisplay(-1)},{label:'Reset window position',click:()=>{const record=focusedRecord();if(record)resetWindowPosition(record);}}]}]));}
 function displayTitle(surface:DesktopSurface){return surface.kind==='plugin'?'Plug-in view':({main:'Gen V1',plan:'Task plan',usage:'Live usage',thread:'Chat',artifact:'Task artifact',agent:'Subagent',navigation:'Projects and threads',workspace:'Workspace',browser:'Browser'})[surface.kind];}
 function browserState(record:BrowserRecord){const contents=record.view.webContents;if(contents.isDestroyed())return;record.state={...record.state,url:(contents.getURL()||'about:blank').slice(0,4096),title:(contents.getTitle()||'Browser').slice(0,500),canGoBack:contents.navigationHistory.canGoBack(),canGoForward:contents.navigationHistory.canGoForward(),loading:contents.isLoading()};broadcast();}
 const configuredBrowserSessions=new WeakMap<Session,Promise<void>>();
@@ -127,7 +146,7 @@ function browserRecord(id:string):BrowserRecord {
  const view=new WebContentsView({webPreferences:{session:browserSession,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false}});
  view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
  const record:BrowserRecord={id,view,state:{url:'about:blank',title:'Browser',canGoBack:false,canGoForward:false,loading:false},generation:0,networkReady};void networkReady.catch(error=>{record.state.error='The isolated browser connection could not start: '+String(error instanceof Error?error.message:error).slice(0,200);broadcast();});browsers.set(id,record);
- view.webContents.setWindowOpenHandler(()=>({action:'deny'}));view.webContents.on('will-attach-webview',event=>event.preventDefault());
+ view.webContents.setWindowOpenHandler(()=>({action:'deny'}));view.webContents.on('will-attach-webview',event=>event.preventDefault());watchZoomKeys(view.webContents,()=>record.owner);
  view.webContents.on('will-navigate',(event,url)=>{try{remoteBrowserUrl(url);}catch{event.preventDefault();record.state.error='Local, private-network and non-HTTP pages are blocked.';broadcast();}});
  view.webContents.on('will-redirect',(event,url)=>{try{remoteBrowserUrl(url);}catch{event.preventDefault();}});
  view.webContents.on('did-navigate',()=>browserState(record));view.webContents.on('did-navigate-in-page',()=>browserState(record));view.webContents.on('did-start-loading',()=>browserState(record));view.webContents.on('did-stop-loading',()=>browserState(record));view.webContents.on('page-title-updated',()=>browserState(record));
@@ -160,6 +179,7 @@ async function openSurface(raw:unknown,sourceBounds?:DesktopBounds):Promise<Desk
  const size=surfaceSize(surface),previous=saved.find(entry=>desktopSurfaceKey(entry.surface)===key),all=displays(),placement=previous?.placement??(previous?captureDesktopPlacement(previous.bounds,all):undefined),bounds=restoreDesktopPlacement(placement,all,size,sourceBounds),id=randomUUID(),url=trustedUrl(id);
  const native=new BrowserWindow({...bounds,...nativeTitlebarOptions(process.platform),minWidth:Math.min(320,bounds.width),minHeight:Math.min(160,bounds.height),show:false,alwaysOnTop:previous?.alwaysOnTop===true,title:displayTitle(surface),backgroundColor:'#0f0f0f',autoHideMenuBar:true,webPreferences:{preload,partition:'persist:harness',sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false}});
  native.on('query-session-end',()=>{osSessionEnding=true;});native.on('session-end',()=>{osSessionEnding=true;});
+ native.webContents.once('did-finish-load',()=>{if(!native.isDestroyed())native.webContents.setZoomFactor(appZoom);});watchZoomKeys(native.webContents,()=>record);native.webContents.on('zoom-changed',(_event,direction)=>zoom(direction,record));
  let resolveReady!:(value:DesktopWindowInfo)=>void,rejectReady!:(error:Error)=>void;
  const readyPromise=new Promise<DesktopWindowInfo>((resolve,reject)=>{resolveReady=resolve;rejectReady=reject;});void readyPromise.catch(()=>{});
  const record:WindowRecord={id,surface,window:native,url,ready:false,settled:false,visible:previous?.visible!==false,normalBounds:createNormalBounds(bounds),placement:placement??captureDesktopPlacement(bounds,all),appliedBounds:bounds,monitorRescued:!!placement&&!all.some(display=>display.id===placement.displayId),resolveReady,rejectReady,readyPromise,readyTimer:setTimeout(()=>{if(record.ready)return;if(surface.kind==='main')startupDiagnostic('main-deadline');record.settled=true;record.rejectReady(Error('The detached window did not become ready. Your original view remains available.'));loseBrowserOwner(record);native.destroy();},20000)};
@@ -268,6 +288,7 @@ function registerIpc(){
  handle(channels.activeSignIn,()=>signInFlows.current());
  handle(channels.cancelSignIn,(_record,value)=>{if(!desktopId(value))throw Error('Invalid sign-in flow.');return signInFlows.cancel(value);});
  handle(channels.reset,record=>resetWindowPosition(record));
+ handle(channels.zoom,(record,value)=>{if(value!=='in'&&value!=='out'&&value!=='reset')throw Error('Invalid zoom command');zoom(value,record);});
  handle(channels.focus,async(_record,value)=>{
   if(!desktopId(value))throw Error('Invalid window identity');const target=windows.get(value);if(!target)throw Error('Window is no longer open');
   if(_record.surface.kind==='plugin'&&desktopSurfaceKey(_record.surface)!==desktopSurfaceKey(target.surface))throw Error('This window belongs to another workspace.');
@@ -296,7 +317,7 @@ function registerIpc(){
    remember(record);broadcast();
   });
   const browser=record.browser??record.dockedBrowser;if(!browser)throw Error('No browser is attached to this window');const contents=browser.view.webContents;
-  if(command.type==='bounds'){if(!record.dockedBrowser)throw Error('Only the docked browser can set content bounds');browser.view.setBounds(nativeBrowserBounds(command.bounds,record.window.getContentSize(),record.window.webContents.getZoomFactor()));return;}
+  if(command.type==='bounds'){if(!record.dockedBrowser)throw Error('Only the docked browser can set content bounds');browser.lastCssBounds=command.bounds;browser.view.setBounds(nativeBrowserBounds(command.bounds,record.window.getContentSize(),record.window.webContents.getZoomFactor()));return;}
   await browser.networkReady;const generation=++browser.generation;
   if(command.type==='navigate'){if(!await allowRemoteBrowserUrl(command.url))throw Error('Only public HTTP and HTTPS pages are allowed. Local and private-network requests are blocked.');if(generation!==browser.generation)return;browser.state.error=undefined;await contents.loadURL(remoteBrowserUrl(command.url).href).catch(error=>{if(generation===browser.generation){browser.state.error=error instanceof Error?error.message:'The page could not be loaded';browserState(browser);}});}
   else if(command.type==='back'&&contents.navigationHistory.canGoBack())contents.navigationHistory.goBack();
@@ -365,7 +386,7 @@ async function closeApplication(){
  try{await backendRequest('harness.layout.save',{layout:captureLayout()});}catch{savedStateFlushed=false;}
  if(!activeWorkAtClose&&savedStateFlushed&&updater){try{if((await backendRequest('harness.update.prepare')).idle!==true)activeWorkAtClose=true;}catch{activeWorkAtClose=true;}}
  quitting=true;attentionPopups?.stop();attentionPopups=undefined;for(const record of [...windows.values()])destroyWindow(record);clearTimeout(saveTimer);
- try{await persistence.enqueue(async()=>{await mkdir(dirname(stateFile),{recursive:true});await writeFile(stateFile,JSON.stringify({version:1,windows:saved.slice(-24)}),{encoding:'utf8',mode:0o600});});}catch{savedStateFlushed=false;}
+ try{await persistence.enqueue(async()=>{await mkdir(dirname(stateFile),{recursive:true});await writeFile(stateFile,JSON.stringify({version:1,appZoom,windows:saved.slice(-24)}),{encoding:'utf8',mode:0o600});});}catch{savedStateFlushed=false;}
  const backendStoppedCleanly=await stopBackend();
  for(const browser of browsers.values())if(!browser.view.webContents.isDestroyed())browser.view.webContents.close({waitForBeforeUnload:false});
  try{await proxyPromise?.then(proxy=>proxy.close());}catch{savedStateFlushed=false;}tray?.destroy();

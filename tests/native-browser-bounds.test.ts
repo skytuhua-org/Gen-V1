@@ -25,6 +25,13 @@ it('converts owner CSS pixels into native DIP bounds at real renderer zoom and r
  expect(nativeBrowserBounds({x:100,y:80,width:900,height:700},[800,640],.8)).toEqual({x:80,y:64,width:720,height:560});
  expect(nativeBrowserBounds({x:1.1,y:2.1,width:7.5,height:8.5},[100,100],1)).toEqual({x:2,y:3,width:6,height:7});
 });
+it('scales the same CSS slot by every app zoom step without clipping or overflow',()=>{
+ for(const zoom of [0.5,0.67,0.75,0.8,0.9,1,1.1,1.25,1.5,1.75,2]){
+  const bounds=nativeBrowserBounds({x:100,y:50,width:300,height:200},[800,600],zoom);
+  expect(bounds).toEqual({x:Math.ceil(100*zoom),y:Math.ceil(50*zoom),width:Math.floor(400*zoom)-Math.ceil(100*zoom),height:Math.floor(250*zoom)-Math.ceil(50*zoom)});
+  expect(bounds.x+bounds.width).toBeLessThanOrEqual(800);expect(bounds.y+bounds.height).toBeLessThanOrEqual(600);
+ }
+});
 it('preserves a fully hidden native view and rejects malformed or out-of-owner bounds',()=>{
  expect(nativeBrowserBounds({x:0,y:0,width:0,height:0},[800,600],1.5)).toEqual({x:0,y:0,width:0,height:0});
  for(const zoom of [0,-1,NaN,Infinity])expect(()=>nativeBrowserBounds({x:0,y:0,width:100,height:100},[800,600],zoom)).toThrow();
