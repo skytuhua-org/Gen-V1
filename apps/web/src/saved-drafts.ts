@@ -25,6 +25,15 @@ const savedDraftSchema=z.object({version:z.literal(1),id:z.string().uuid(),name:
 export type SavedDraft=z.infer<typeof savedDraftSchema>;
 export interface SavedDraftLibrary {version:1;owner:SavedDraftOwner;records:SavedDraft[]}
 export const savedDraftOwnerKey=(owner:SavedDraftOwner)=>{const o=savedDraftOwnerSchema.parse(owner);return JSON.stringify([o.profileId,o.accountId,o.threadId,o.projectId,o.workingCopyId]);};
+export type SavedDraftSlotState='no-thread'|'loading'|'retry'|'ready';
+export interface SavedDraftSlotContext {loading:boolean;error:string;context:{project:{id:string};workingCopy?:{id:string};threadId?:string}|null}
+export function savedDraftSlotState(thread:{id:string;projectId?:string|null;workspaceId?:string|null}|undefined,project:SavedDraftSlotContext):SavedDraftSlotState{
+ if(!thread)return 'no-thread';
+ if(!thread.projectId)return 'ready';
+ if(project.loading)return 'loading';
+ if(project.error||project.context?.project.id!==thread.projectId||project.context.threadId!==thread.id||(project.context.workingCopy?.id??null)!==(thread.workspaceId??null))return 'retry';
+ return 'ready';
+}
 export const savedDraftLibraryKey=(owner:SavedDraftOwner)=>'saved-drafts:'+savedDraftOwnerKey(owner);
 export function readSavedDraftLibrary(value:unknown,owner:SavedDraftOwner):SavedDraftLibrary{
  const parsed=value===undefined?{version:1 as const,owner:savedDraftOwnerSchema.parse(owner),records:[]}:z.object({version:z.literal(1),owner:savedDraftOwnerSchema,records:z.array(savedDraftSchema)}).strict().parse(value);

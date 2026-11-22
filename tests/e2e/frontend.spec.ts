@@ -1367,3 +1367,36 @@ test('keyboard, narrow layout and reduced motion remain usable', async ({ page }
   const duration = await page.locator('.sidebar').evaluate(element => getComputedStyle(element).transitionDuration);
   expect(parseFloat(duration)).toBeLessThan(.01);
 });
+
+test('saved drafts composer slot covers loading, retry and ready states', async ({ page }) => {
+  const initial = populated();
+  initial.threads[0] = { ...initial.threads[0]!, projectId: 'project', workspaceId: 'copy' };
+  const projectContext = { project: { id: 'project', name: 'Project', authority: { kind: 'local' }, createdAt: timestamp }, threadId: 'one', workingCopy: { id: 'copy', path: '/tmp/copy' }, machineName: 'Fixture', editor: { available: false, label: 'Editor' }, branch: null, head: null, changes: { added: null, removed: null, files: null }, lineage: [], scripts: [], capabilities: { git: false, terminal: false, pullRequests: false } };
+  let behavior: 'pending' | 'error' | 'ready' = 'pending';
+  const pending: (() => void)[] = [];
+  await host(page, initial);
+  await page.route('**/api/projects/project/context?*', route => {
+    if (behavior === 'pending') return new Promise<void>(resolve => pending.push(() => { void route.fulfill({ json: projectContext }); resolve(); }));
+    if (behavior === 'error') return route.fulfill({ status: 500, json: { error: { code: 'CONTEXT_FAILED', message: 'Project context failed.' } } });
+    return route.fulfill({ json: projectContext });
+  });
+  await page.goto('/');
+  const trigger = page.getByRole('button', { name: 'Saved drafts', exact: true });
+  await expect(trigger).toBeDisabled();
+  await expect(trigger).toHaveAttribute('title', 'Loading saved drafts…');
+  pending.splice(0).forEach(resolve => resolve());
+  await expect(trigger).toBeEnabled();
+  await trigger.click();
+  await expect(page.getByRole('dialog', { name: 'Saved drafts', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  behavior = 'error';
+  await page.reload();
+  await expect(trigger).toBeEnabled();
+  await expect(trigger).toHaveAttribute('title', 'Saved drafts are unavailable — click to retry.');
+  behavior = 'ready';
+  await trigger.click();
+  await trigger.click();
+  await expect(page.getByRole('dialog', { name: 'Saved drafts', exact: true })).toBeVisible();
+});
+

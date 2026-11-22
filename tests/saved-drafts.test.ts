@@ -1,5 +1,5 @@
 import {describe,it,expect,beforeEach,afterEach,vi} from 'vitest';
-import {savedDraftOwnerKey,readSavedDraftLibrary,createSavedDraft,insertDraftText,disabledReferenceValidation,loadSavedDrafts,saveNamedDraft,deleteSavedDraft,planDraftRestore,restoreSavedDraftText,savedDraftLibraryKey} from '../apps/web/src/saved-drafts';
+import {savedDraftOwnerKey,readSavedDraftLibrary,createSavedDraft,insertDraftText,disabledReferenceValidation,loadSavedDrafts,saveNamedDraft,deleteSavedDraft,planDraftRestore,restoreSavedDraftText,savedDraftLibraryKey,savedDraftSlotState} from '../apps/web/src/saved-drafts';
 import {captureTerminalExcerpt} from '../apps/web/src/terminal-excerpts';
 const owner={profileId:'profile',accountId:'account',threadId:'thread',projectId:'project',workingCopyId:'copy'};
 describe('saved drafts text-only contract',()=>{
@@ -148,4 +148,18 @@ for(const damage of ['version','records','owner-key'] as const)it.each(['load','
 it.each(['version','ownerless'] as const)('keeps affected-thread quota and owner checks strict for a malformed %s working-copy library',async damage=>{
  const copy={...owner,workingCopyId:'damaged-copy'},value=damage==='version'?{version:999,owner:copy,records:[]}:{version:1,records:[]};put(savedDraftLibraryKey(copy),value);put('draft:'+owner.threadId,'Keep current');
  await expect(loadSavedDrafts(owner)).rejects.toThrow();await expect(saveNamedDraft(owner,'Do not bypass quota')).rejects.toThrow();expect(local.rows.get(savedDraftLibraryKey(copy))?.value).toEqual(value);expect(local.rows.get('draft:'+owner.threadId)?.value).toBe('Keep current');
+});
+describe('saved drafts composer slot states',()=>{
+ const thread={id:'thread',projectId:'project',workspaceId:'copy'};
+ const context={project:{id:'project'},threadId:'thread',workingCopy:{id:'copy'}};
+ it('disables with the conversation prompt when there is no thread',()=>{expect(savedDraftSlotState(undefined,{loading:false,error:'',context:null})).toBe('no-thread');});
+ it('stays disabled while the owning project context is loading',()=>{expect(savedDraftSlotState(thread,{loading:true,error:'',context:null})).toBe('loading');});
+ it('enables a retry affordance on load errors and owner mismatches',()=>{
+  for(const project of [{loading:false,error:'failed',context},{loading:false,error:'',context:null},{loading:false,error:'',context:{...context,project:{id:'other'}}},{loading:false,error:'',context:{...context,threadId:'other'}},{loading:false,error:'',context:{...context,workingCopy:{id:'other'}}},{loading:false,error:'',context:{...context,workingCopy:undefined}}])expect(savedDraftSlotState(thread,project)).toBe('retry');
+ });
+ it('resolves the library only for the matching project, thread and working copy',()=>{
+  expect(savedDraftSlotState(thread,{loading:false,error:'',context})).toBe('ready');
+  expect(savedDraftSlotState({id:'thread',workspaceId:null},{loading:false,error:'',context:null})).toBe('ready');
+  expect(savedDraftSlotState({...thread,workspaceId:undefined},{loading:false,error:'',context:{project:{id:'project'},threadId:'thread'}})).toBe('ready');
+ });
 });

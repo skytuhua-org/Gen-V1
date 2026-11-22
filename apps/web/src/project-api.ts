@@ -22,6 +22,7 @@ export function useProjectContext(projectId?:string,threadId?:string,workspaceId
   await authenticated(()=>fetch(`/api/projects/${encodeURIComponent(projectId)}/actions`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','x-harness-csrf':csrfToken},body:JSON.stringify({id:crypto.randomUUID(),type,payload,...(threadId?{threadId}:{})})})).then(read);
   if(activeLoad.current===load)await load();
  },[projectId,threadId,load]);
+ const refresh=useCallback(()=>{void load();},[load]);
  const current=state.owner===owner?state:{context:null,loading:Boolean(projectId),error:''};
- return{context:current.context,loading:current.loading,error:current.error,action};
+ return{context:current.context,loading:current.loading,error:current.error,action,refresh};
 }
