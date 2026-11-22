@@ -36,8 +36,8 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
 function trackerFixture(){
  now=0;timers.list.length=0;timers.seq=0;
- const probes:{port:number;resolve:(listening:boolean)=>void}[]=[];
- const tracker=new DevServerTracker({probe:port=>new Promise<boolean>(resolve=>probes.push({port,resolve})),now:()=>now,setTimer,clearTimer,timestamp:()=>'2026-02-02T00:00:00.000Z'});
+ const probes:{host:string;port:number;resolve:(listening:boolean)=>void}[]=[];
+ const tracker=new DevServerTracker({probe:(host,port)=>new Promise<boolean>(resolve=>probes.push({host,port,resolve})),now:()=>now,setTimer,clearTimer,timestamp:()=>'2026-02-02T00:00:00.000Z'});
  cleanups.push(()=>tracker.dispose());
  return{tracker,probes};
 }
@@ -120,6 +120,18 @@ describe('DevServerTracker',()=>{
   tracker.output(info(),'VITE ready\nhttp://local');
   tracker.output(info(),'host:4321/\n');
   expect(probes.map(p=>p.port)).toEqual([4321]);
+ });
+ it('detects an unterminated trailing address once output pauses',async()=>{
+  const{tracker,probes}=trackerFixture();
+  tracker.output(info(),'Ready\nhttp://localhost:5173/');
+  expect(probes).toEqual([]);
+  run(1000);
+  expect(probes.map(p=>p.port)).toEqual([5173]);
+ });
+ it('probes the literal loopback host a server announced',async()=>{
+  const{tracker,probes}=trackerFixture();
+  tracker.output(info(),'Serving on http://127.0.0.2:8080/\n');
+  expect(probes.map(p=>[p.host,p.port])).toEqual([['127.0.0.2',8080]]);
  });
 });
 

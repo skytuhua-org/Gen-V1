@@ -21,7 +21,7 @@ export function detectAddresses(text:string):DetectedAddress[]{
 }
 
 /** Carries the unterminated tail of terminal output between chunks so an address split across writes still scans once. */
-export function createLineCarry(limit=512):{feed(chunk:string):string}{
+export function createLineCarry(limit=512):{feed(chunk:string):string;pending():string}{
  let carry='';
  return{
   feed(chunk:string){
@@ -31,5 +31,6 @@ export function createLineCarry(limit=512):{feed(chunk:string):string}{
    if(carry.length>limit)carry=carry.slice(-limit);
    return cut<0?text:text.slice(0,cut+1);
   },
+  pending(){return carry;},
  };
 }
