@@ -28,6 +28,62 @@ it('reports live managed untracked/staged changes and refuses an action against 
  await expect(tools.gitAction(projectId,thread.id,{type:'stage',paths:['new.txt'],revision:before.revision})).rejects.toThrow(/changed|revision/i);
  await tools.gitAction(projectId,thread.id,{type:'stage',paths:['new.txt'],revision:after.revision});expect((await tools.gitStatus(projectId,thread.id)).files.find(item=>item.path==='new.txt')?.staged).toBe(true);
 },60000);
+async function managedFixture(){const f=await fixture(),receipt=await f.tools.connect({id:'project',type:'workspace.project.connect',payload:{name:'Fixture',path:f.path}}),projectId=(receipt.result as {projects:{id:string}[]}).projects[0]!.id;
+ const thread={id:'main',title:'Main',projectId,projectName:'Fixture',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'ready' as const,epoch:0,runId:null,modelId:null,sessionPath:null,kind:'main' as const};f.store.internal('fixture',null,()=>f.store.put('thread',thread.id,thread.id,thread));await f.tools.prepareWorkspace(thread);const managed=await f.tools.binding(projectId,thread.id);
+ const mgit=(...args:string[])=>execFileSync('git',['-C',managed.path,...args],{windowsHide:true,encoding:'utf8'}).trim();mgit('config','user.name','Fixture');mgit('config','user.email','fixture@example.invalid');
+ return{...f,projectId,thread,managed,mgit};}
+it('undoes the tip commit in a managed copy and stages its changes without touching the worktree',async()=>{
+ const{tools,managed,mgit,projectId,thread}=await managedFixture();
+ await writeFile(join(managed.path,'one.txt'),'second\n');await writeFile(join(managed.path,'added.txt'),'added\n');mgit('add','.');mgit('commit','-m','Second subject\n\nBody paragraph.');
+ const tip=mgit('rev-parse','HEAD'),parent=mgit('rev-parse','HEAD^');
+ // Pre-existing edits: a staged file, an unstaged edit and an untracked file.
+ await writeFile(join(managed.path,'staged.txt'),'staged\n');mgit('add','staged.txt');
+ await writeFile(join(managed.path,'unstaged.txt'),'unstaged\n');mgit('add','unstaged.txt');await writeFile(join(managed.path,'unstaged.txt'),'unstaged edit\n');
+ await writeFile(join(managed.path,'loose.txt'),'untracked\n');
+ const indexTree=mgit('write-tree'),worktreeBefore=mgit('ls-files','-s');
+ const before=await tools.gitStatus(projectId,thread.id);
+ const result=await tools.gitAction(projectId,thread.id,{type:'undo',revision:before.revision}) as {head:string;undo:{undoneHead:string;head:string;message:string}};
+ expect(result.undo).toEqual({undoneHead:tip,head:parent,message:'Second subject\n\nBody paragraph.'});
+ expect(mgit('rev-parse','HEAD')).toBe(parent);expect(result.head).toBe(parent);
+ expect(mgit('write-tree')).toBe(indexTree);expect(mgit('ls-files','-s')).toBe(worktreeBefore);
+ expect(await readFile(join(managed.path,'one.txt'),'utf8')).toBe('second\n');expect(await readFile(join(managed.path,'loose.txt'),'utf8')).toBe('untracked\n');
+ const after=await tools.gitStatus(projectId,thread.id);
+ expect(after.files.find(item=>item.path==='added.txt')?.staged).toBe(true);expect(after.files.find(item=>item.path==='one.txt')?.staged).toBe(true);expect(after.files.find(item=>item.path==='loose.txt')?.untracked).toBe(true);
+},60000);
+it('blocks undo for remote-tracked, root, merge and busy-run states',async()=>{
+ const{tools,managed,mgit,projectId,thread,store}=await managedFixture();
+ // The managed copy starts on the imported tip; make a local second commit first.
+ await writeFile(join(managed.path,'one.txt'),'second\n');mgit('add','.');mgit('commit','-qm','Local tip');
+ // Remote-tracking ref containing HEAD blocks undo even without an upstream.
+ mgit('update-ref','refs/remotes/origin/main','HEAD');
+ const tracked=await tools.gitStatus(projectId,thread.id);
+ await expect(tools.gitAction(projectId,thread.id,{type:'undo',revision:tracked.revision})).rejects.toThrow(/remote-tracking/i);
+ mgit('update-ref','-d','refs/remotes/origin/main');
+ // A merge tip is blocked.
+ mgit('checkout','-qb','side','HEAD^');await writeFile(join(managed.path,'side.txt'),'side\n');mgit('add','.');mgit('commit','-qm','Side');mgit('checkout','-q','-');
+ mgit('merge','--no-ff','-m','Merge side','side');
+ const merged=await tools.gitStatus(projectId,thread.id);
+ await expect(tools.gitAction(projectId,thread.id,{type:'undo',revision:merged.revision})).rejects.toThrow(/merge/i);
+ mgit('reset','--hard','-q','ORIG_HEAD');
+ // An admitted run on the owning thread blocks undo.
+ const owner=store.get<{runId:string|null}>('thread',thread.id)!;store.internal('fixture',null,()=>store.put('thread',thread.id,thread.id,{...owner,runId:'run-1'}));
+ const busy=await tools.gitStatus(projectId,thread.id);
+ await expect(tools.gitAction(projectId,thread.id,{type:'undo',revision:busy.revision})).rejects.toThrow(/run/i);
+ store.internal('fixture',null,()=>store.put('thread',thread.id,thread.id,{...owner,runId:null}));
+ // A root commit is blocked.
+ mgit('checkout','-qb','rooted');await writeFile(join(managed.path,'r.txt'),'r\n');mgit('add','.');mgit('commit','-qm','r');mgit('checkout','-q','--orphan','orphan');mgit('reset','-q');mgit('add','one.txt');mgit('commit','-qm','orphan root');
+ const rooted=await tools.gitStatus(projectId,thread.id);
+ await expect(tools.gitAction(projectId,thread.id,{type:'undo',revision:rooted.revision})).rejects.toThrow(/first commit/i);
+},60000);
+it('previews undo eligibility through project context',async()=>{
+ const{tools,managed,mgit,projectId,thread}=await managedFixture();
+ await writeFile(join(managed.path,'one.txt'),'second\n');mgit('add','.');mgit('commit','-qm','Undoable subject');
+ const context=await tools.context(projectId,thread.id);
+ expect(context.undo).toMatchObject({eligible:true,subject:'Undoable subject',head:mgit('rev-parse','HEAD')});
+ mgit('update-ref','refs/remotes/origin/main','HEAD');
+ const blocked=await tools.context(projectId,thread.id);
+ expect(blocked.undo).toMatchObject({eligible:false,reason:'This commit is on a remote-tracking branch.'});
+},60000);
 it('rejects a remote company reference and a thread from another project',async()=>{
  const{tools,store}=await fixture();store.internal('fixture',null,()=>{store.put('workspaceProject','remote',null,{id:'remote',name:'Remote',authority:{kind:'company',companyId:'fleet'},rootPath:'C:/',createdAt:new Date().toISOString()});});
  await expect(tools.binding('remote')).rejects.toThrow(/local|authority|company/i);

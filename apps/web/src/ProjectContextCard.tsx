@@ -1,5 +1,6 @@
-import {useId,useState,type ReactNode} from 'react';
-import {Bot,CalendarClock,ChevronDown,ChevronRight,Code2,FileDiff,Folder,GitBranch,GitCommitHorizontal,ListChecks,MessageSquare,Plus,Server,Terminal} from 'lucide-react';
+import {useEffect,useId,useState,type ReactNode} from 'react';
+import {Bot,CalendarClock,ChevronDown,ChevronRight,Code2,FileDiff,Folder,GitBranch,GitCommitHorizontal,ListChecks,MessageSquare,Plus,Server,Terminal,Undo2} from 'lucide-react';
+import {Modal} from '../../../packages/ui-shell/Modal.tsx';
 import type {Snapshot} from '../../../packages/contracts/index.ts';
 import type {ProjectContext} from '../../../packages/contracts/workspace.ts';
 import {contextCompanions} from './project-context-summary';
@@ -12,7 +13,7 @@ export interface ProjectContextCardProps {
  context?:ProjectContext|null;loading?:boolean;error?:string;threadTitle?:string;plan?:ReactNode;planOpen?:boolean;onTogglePlan?:()=>void;
  /** True when this thread's full plan is already visible elsewhere in the workspace. */
  fullPlanVisible?:boolean;
- onAction?:(type:string,payload?:Record<string,unknown>)=>Promise<void>;
+ onAction?:(type:string,payload?:Record<string,unknown>)=>Promise<unknown>;
  onSelectThread?:(threadId:string)=>void;onShowChanges?:()=>void;onConnect?:()=>void;
  /** True only when this owner has a reachable equivalent composer Changes action. */
  composerChangesAvailable?:boolean;
@@ -21,8 +22,13 @@ export interface ProjectContextCardProps {
 }
 /** Data and callbacks only: this card is safe to consume from either authority's shell. */
 export function ProjectContextCard({context,loading,error,threadTitle,plan,planOpen=false,onTogglePlan,fullPlanVisible=false,onAction,onSelectThread,onShowChanges,onConnect,snapshot,threadId,onOpenDetailedPlan,automationItems=[],automationsAvailable=false,composerChangesAvailable=false}:ProjectContextCardProps){
- const planId=useId(),[expanded,setExpanded]=useState<'scripts'|'branch'|'commit'|'lineage'|null>(null),[busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[scriptName,setScriptName]=useState(''),[scriptCommand,setScriptCommand]=useState(''),[branch,setBranch]=useState(''),[commit,setCommit]=useState('');
- const run=(type:string,payload:Record<string,unknown>={})=>{if(!onAction||busy)return;setBusy(true);setActionError('');void onAction(type,payload).then(()=>{setExpanded(null);setCommit('');}).catch(cause=>setActionError(cause instanceof Error?cause.message:'The project action could not finish.')).finally(()=>setBusy(false));};
+ const planId=useId(),[expanded,setExpanded]=useState<'scripts'|'branch'|'commit'|'lineage'|null>(null),[busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[scriptName,setScriptName]=useState(''),[scriptCommand,setScriptCommand]=useState(''),[branch,setBranch]=useState(''),[commit,setCommit]=useState(''),[undoOpen,setUndoOpen]=useState(false),[notice,setNotice]=useState('');
+ const run=(type:string,payload:Record<string,unknown>={})=>{if(!onAction||busy)return;setBusy(true);setActionError('');setNotice('');void onAction(type,payload).then(()=>{setExpanded(null);setCommit('');}).catch(cause=>setActionError(cause instanceof Error?cause.message:'The project action could not finish.')).finally(()=>setBusy(false));};
+ const undo=context?.undo,undoHead=undo?.head;
+ // A changed tip means the reviewed commit is no longer current; the pending
+ // confirmation must not carry over to a commit it did not name.
+ useEffect(()=>{setUndoOpen(false);},[undoHead]);
+ const confirmUndo=()=>{if(!onAction||busy||!undo?.eligible||!undo.head||!context?.revision)return;setBusy(true);setActionError('');setNotice('');void onAction('undo',{expectedHead:undo.head,revision:context.revision}).then(result=>{const restored=(result as {result?:{message?:unknown}}|undefined)?.result?.message;setUndoOpen(false);setExpanded('commit');if(typeof restored==='string'&&restored)setCommit(restored);setNotice('Commit undone. Changes are staged.');}).catch(cause=>{setUndoOpen(false);setActionError(cause instanceof Error?cause.message:'The project action could not finish.');}).finally(()=>setBusy(false));};
  const toggle=(name:NonNullable<typeof expanded>)=>setExpanded(value=>value===name?null:name);
  const connected=Boolean(context&&(context.project.rootPath||context.capabilities.git||context.capabilities.terminal||context.editor.available));
  const total=(value:number)=>compactCount.format(value);
@@ -50,7 +56,9 @@ export function ProjectContextCard({context,loading,error,threadTitle,plan,planO
      {context.scripts.map(script=><button key={script.id} className="project-context-row project-script-row" title={script.command} aria-busy={busy} disabled={busy||!onAction} onClick={()=>run('run-script',{scriptId:script.id})}><Terminal size={14}/><span>{script.name}</span><ChevronRight size={13}/></button>)}
     </>}
     {context.capabilities.git&&<><button className="project-context-row" aria-busy={busy} disabled={busy||!onAction} title={context.head??undefined} aria-expanded={expanded==='commit'} onClick={()=>toggle('commit')}><GitCommitHorizontal size={16}/><span>Commit</span><ChevronDown size={13}/></button>
-     {expanded==='commit'&&<form onSubmit={event=>{event.preventDefault();run('commit',{message:commit,expectedHead:context.head,revision:context.revision});}}><label>Commit message<input value={commit} onChange={event=>setCommit(event.target.value)} required maxLength={4000}/></label><button className="secondary" aria-busy={busy} disabled={busy||!commit.trim()}>Commit changes</button></form>}
+     {expanded==='commit'&&<form onSubmit={event=>{event.preventDefault();run('commit',{message:commit,expectedHead:context.head,revision:context.revision});}}><label>Commit message<textarea value={commit} onChange={event=>setCommit(event.target.value)} required maxLength={4000} rows={2}/></label><div className="project-commit-actions"><button className="secondary" aria-busy={busy} disabled={busy||!commit.trim()}>Commit changes</button>
+      {undo&&<button type="button" className="secondary project-undo-button" aria-busy={busy} disabled={busy||!onAction||!undo.eligible} title={undo.eligible?undefined:undo.reason} onClick={()=>setUndoOpen(true)}><Undo2 size={13}/>Undo last commit</button>}</div>
+      {undo&&!undo.eligible&&undo.reason&&<p className="project-context-note">{undo.reason}</p>}</form>}
     </>}
    </div></details>}
    {(agents.length>0||history.length>0)&&<details className="project-context-group"><summary><Bot size={15}/><span>Agents and history</span><small>{agents.length+history.length}</small><ChevronDown size={13}/></summary><div className="project-context-lineage">{agents.map(item=><button key={item.id} disabled={!onSelectThread} onClick={()=>onSelectThread?.(item.id)}><span>{item.title}</span><small data-agent-status={item.status}>{item.status==='working'?'Working':item.status==='awaiting_input'?'Needs input':item.status==='ready'?'Idle':item.status}</small></button>)}{history.map(item=><button key={item.id} disabled={!onSelectThread} onClick={()=>onSelectThread?.(item.id)} title={item.title+' · '+item.status}><span>{item.title}</span><small>{item.status==='working'?'Working':item.status==='awaiting_input'?'Needs input':item.status}</small></button>)}</div></details>}
@@ -58,6 +66,12 @@ export function ProjectContextCard({context,loading,error,threadTitle,plan,planO
    {snapshot&&automationsAvailable&&automationItems.length>0&&<details className="project-context-group"><summary><CalendarClock size={15}/><span>Automations</span><small>{automationItems.length}</small><ChevronDown size={13}/></summary><ul className="project-context-automations">{automationItems.map(item=><li key={item.id}><span>{item.title}</span><small>{item.status}{item.nextRunAt&&<> · <time dateTime={item.nextRunAt}>{new Date(item.nextRunAt).toLocaleString()}</time></>}</small></li>)}</ul></details>}
   </LoadingState>
   <PendingStatus pending={busy} label="Updating project…"/>
+  {notice&&<p role="status" className="project-context-note">{notice}</p>}
   {(error||context?.error||actionError)&&<p role="alert" className="project-context-note error-text">{actionError||error||context?.error}</p>}
+  <Modal open={undoOpen} title="Undo last commit?" onClose={()=>setUndoOpen(false)}><div className="project-undo-confirm">
+   <p className="project-undo-subject"><span>{undo?.subject}</span>{undo?.head&&<code>{undo.head.slice(0,8)}</code>}</p>
+   <p>This moves the current branch back one commit. Its changes return to staging and its message is restored as a draft. Your files won't be discarded.{commit.trim()?' This replaces the current commit message draft.':''}</p>
+   <div className="project-undo-actions"><button type="button" className="secondary" autoFocus onClick={()=>setUndoOpen(false)}>Cancel</button><button type="button" className="primary" aria-busy={busy} disabled={busy} onClick={confirmUndo}>{busy?'Undoing…':'Undo last commit'}</button></div>
+  </div></Modal>
  </div>;
 }

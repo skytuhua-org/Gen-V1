@@ -102,6 +102,21 @@ it('valid Unicode review text fits submission and exact read-only inspection',as
  const inspect=await app.inject({method:'POST',url:'/api/projects/'+f.projectId+'/action-outcomes/inspect',payload:operation});expect(inspect.statusCode).toBe(200);expect(inspect.json()).toEqual({state:'confirmed'});expect(writes).toBe(1);
 },60000);
 
+it('routes an undo write through durable identity and confirms the restored message',async()=>{
+ const f=await fixture(),managedGit=(...args:string[])=>execFileSync('git',['-C',f.binding.path,...args],{windowsHide:true,encoding:'utf8'}).trim();
+ managedGit('config','user.name','Fixture');managedGit('config','user.email','fixture@example.invalid');
+ await writeFile(join(f.binding.path,'one.txt'),'second\n');managedGit('add','.');managedGit('commit','-qm','Undoable tip\n\nBody text.');
+ const status=await f.projects.gitStatus(f.projectId,f.thread.id),tip=status.head!,parent=managedGit('rev-parse','HEAD^');
+ const input={id:randomUUID(),type:'undo',threadId:f.thread.id,payload:{expectedHead:tip,revision:status.revision}};
+ const app=Fastify(),service={store:f.store} as Service;registerWorkspaceHost(service,{projects:f.projects,github:f.github,terminals:{dispose:async()=>{}} as TerminalHost});registerWorkspaceRoutes(app,service);cleanup.push(()=>app.close());
+ const url='/api/projects/'+f.projectId+'/actions';
+ const response=await app.inject({method:'POST',url,payload:input});
+ expect(response.statusCode).toBe(200);expect(response.headers['cache-control']).toBe('no-store');
+ expect(response.json()).toMatchObject({commandId:input.id,result:{undoneHead:tip,head:parent,message:'Undoable tip\n\nBody text.'}});
+ expect(managedGit('rev-parse','HEAD')).toBe(parent);
+ // A replayed command must not undo another commit.
+ const replay=await app.inject({method:'POST',url,payload:input});expect(replay.json()).toEqual(response.json());expect(managedGit('rev-parse','HEAD')).toBe(parent);
+},60000);
 it('returns an unsuccessful response for an unconfirmed action so existing controls retain their draft',async()=>{
  const f=await fixture(),{input}=await f.operation(),app=Fastify(),service={store:f.store} as Service;
  await writeFile(join(f.binding.path,'one.txt'),'changed after the reviewed revision\n');

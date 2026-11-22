@@ -7,7 +7,7 @@ const identifier = z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/);
 const revision = z.string().regex(/^[a-f0-9]{64}$/),
   oid = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const repo = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
-export const workspaceActionTypeSchema = z.enum(['stage', 'unstage', 'commit', 'review-pr', 'create-pr']);
+export const workspaceActionTypeSchema = z.enum(['stage', 'unstage', 'commit', 'undo', 'review-pr', 'create-pr']);
 type WorkspaceActionType = z.infer<typeof workspaceActionTypeSchema>;
 export const workspaceActionEnvelopeSchema = z.strictObject({
   id: identifier,
@@ -34,6 +34,7 @@ export const workspaceActionPayloadSchemas = {
   stage: z.strictObject({ ...local, paths }),
   unstage: z.strictObject({ ...local, paths }),
   commit: z.strictObject({ ...local, message: text(4000).refine((value) => value.trim().length > 0) }),
+  undo: z.strictObject({ ...local }),
   'review-pr': z.strictObject({
     repo: repo.optional(),
     number: z.number().int().positive(),
@@ -61,6 +62,7 @@ export const workspaceActionOwnerSchema = z.strictObject({
 const branch = z.string().max(1024);
 export const createdPullRequestResultSchema = z.strictObject({url:z.string().max(2048),head:oid,revision,repo})
   .refine(value => value.url.toLowerCase().startsWith(`https://github.com/${value.repo}/pull/`.toLowerCase()) && /^[1-9]\d*$/.test(value.url.slice(`https://github.com/${value.repo}/pull/`.length)));
+export const undoneCommitResultSchema = z.strictObject({ undoneHead: oid, head: oid, message: z.string().max(4000) });
 const localComparison = z.strictObject({
   kind: z.literal('local'),
   id: revision,

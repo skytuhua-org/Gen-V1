@@ -154,6 +154,26 @@ export class ProjectTools{
   return{head,branch,revision:hash(JSON.stringify([head,branch,raw,diff,stagedDiff,untracked])),files,diff,stagedDiff,truncated:false,mode:managed?'managed':'legacy',gitWrite:managed,untrackedIncluded:managed};
  }
  async gitStatus(projectId:string,threadId?:string):Promise<GitStatus>{return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed)=>this.status(metadata,path,signal,managed)));}
+ /** Read-only undo eligibility shared by the context preview and the write-time recheck. */
+ private async undoEligibility(git:(args:string[])=>Promise<string>,managed:boolean,busy:boolean):Promise<{eligible:boolean;reason?:string;head?:string;branch?:string;subject?:string}>{
+  if(!managed)return{eligible:false,reason:'Undo needs a managed working copy.'};
+  let head='';try{head=(await git(['rev-parse','--verify','HEAD'])).trim();}catch{return{eligible:false,reason:'Refresh project details to check the last commit.'};}
+  const branch=(await git(['branch','--show-current'])).trim();
+  if(!branch)return{eligible:false,reason:'Detached HEAD cannot be undone here.'};
+  const parents=(await git(['rev-list','--parents','-n','1','HEAD'])).trim().split(/\s+/);
+  if(parents.length===1)return{eligible:false,reason:"The first commit can't be undone."};
+  if(parents.length>2)return{eligible:false,reason:"Merge commits can't be undone."};
+  // Local-only: any remote-tracking ref containing HEAD blocks undo, whatever its name.
+  if((await git(['for-each-ref','--format=%(refname)','--contains',head,'refs/remotes'])).trim())return{eligible:false,reason:'This commit is on a remote-tracking branch.'};
+  if(busy)return{eligible:false,reason:'Wait for the run to finish.'};
+  const subject=(await git(['log','-1','--format=%s',head])).trim().slice(0,500);
+  return{eligible:true,head,branch,subject};
+ }
+ private workspaceBusy(binding:{workspace?:WorkspaceBinding}):boolean{
+  const workspace=binding.workspace;if(!workspace)return false;
+  const owner=this.store.get<Thread>('thread',workspace.threadId);
+  return Boolean(owner&&owner.runId);
+ }
  /** Read-only origin through the same attested managed/legacy Git boundary. */
  async gitReviewOrigin(projectId:string,threadId?:string){return this.exclusive(projectId,async()=>{
   const binding=await this.binding(projectId,threadId),signal=new AbortController().signal;
@@ -180,12 +200,21 @@ export class ProjectTools{
   }));
  }
  async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string}){
+  const binding=await this.binding(projectId,threadId);
   return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
    const current=await this.status(metadata,path,signal,managed);if(input.revision!==current.revision)throw new HarnessError('REVISION_CHANGED','The worktree changed. Refresh the review before applying this action.');const paths=z.array(pathName).min(1).max(1000).optional().parse(input.paths),git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
    if(input.type==='stage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to stage.');await git(['add','--',...paths]);}
    else if(input.type==='unstage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to unstage.');await git(['restore','--staged','--',...paths]);}
    else if(input.type==='commit')await git(['-c','commit.gpgsign=false','commit','-m',z.string().trim().min(1).max(4000).parse(input.message)]);
    else if(input.type==='branch'){const branch=z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]{0,150}$/).refine(value=>!value.endsWith('/')&&!value.includes('//')).parse(input.name);await git(['switch','-c',branch]);}
+   else if(input.type==='undo'){
+    const eligibility=await this.undoEligibility(git,managed,this.workspaceBusy(binding));
+    if(!eligibility.eligible)throw new HarnessError('CAPABILITY_DENIED',eligibility.reason??'The last commit cannot be undone.');
+    const message=(await git(['log','-1','--format=%B',eligibility.head!])).trim();
+    await git(['reset','--soft','HEAD^']);
+    const after=await this.status(metadata,path,signal,managed);
+    return{...after,undo:{undoneHead:eligibility.head!,head:after.head,message}};
+   }
    else throw new HarnessError('INVALID_INPUT','Unknown Git action.');return this.status(metadata,path,signal,managed);
   }));
  }
@@ -193,9 +222,10 @@ export class ProjectTools{
   const admitted=await this.binding(projectId,threadId),project=admitted.project,captured=threadId?this.store.get<Thread>('thread',threadId):undefined,threadRevision=captured?threadNavigationRevision(captured):undefined;
   const lineage=this.store.all<Thread>('thread').filter(item=>item.projectId===project.id).map(item=>({id:item.id,title:item.title,status:item.status,parentThreadId:item.parentThreadId,kind:item.kind})),scripts=this.store.all<{id:string;name:string;command:string;projectId:string}>('projectScript').filter(item=>item.projectId===project.id);
   let status:GitStatus|undefined,error:string|undefined;try{status=await this.gitStatus(projectId,threadId);}catch(reason){error=reason instanceof Error?reason.message:'Project status is unavailable.';}
+  let undo:ProjectContext['undo'];if(status?.gitWrite){try{undo=await this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,async(metadata,path,signal,managed)=>this.undoEligibility(args=>nativeGit(this.gitExecutable(),metadata,path,args,signal),managed,this.workspaceBusy(admitted))));}catch{undo={eligible:false,reason:'Refresh project details to check the last commit.'};}}
   const current=await this.binding(projectId,threadId),latest=threadId?this.store.get<Thread>('thread',threadId):undefined;
   if(current.path!==admitted.path||current.workspace?.id!==admitted.workspace?.id||threadId&&(!captured||!latest||threadNavigationRevision(latest)!==threadRevision))throw new HarnessError('REVISION_CHANGED','Conversation metadata changed. Retry the current thread.');
-  return{project,...(threadId?{threadId,threadRevision}:{}),...(admitted.workspace?{workingCopy:{id:admitted.workspace.id,path:admitted.path}}:{}),machineName:hostname(),editor:{available:true,label:'Default editor'},branch:status?.branch??null,head:status?.head??null,...(status?{revision:status.revision}:{}),changes:{added:status?status.files.reduce((sum,file)=>sum+(file.added??0),0):null,removed:status?status.files.reduce((sum,file)=>sum+(file.removed??0),0):null,files:status?.files.length??null},lineage,scripts,capabilities:{git:!!status,gitWrite:status?.gitWrite??false,untrackedIncluded:status?.untrackedIncluded??false,terminal:!!project.rootPath,pullRequests:!!status?.gitWrite},...(error?{error}:{})};
+  return{project,...(threadId?{threadId,threadRevision}:{}),...(admitted.workspace?{workingCopy:{id:admitted.workspace.id,path:admitted.path}}:{}),machineName:hostname(),editor:{available:true,label:'Default editor'},branch:status?.branch??null,head:status?.head??null,...(status?{revision:status.revision}:{}),changes:{added:status?status.files.reduce((sum,file)=>sum+(file.added??0),0):null,removed:status?status.files.reduce((sum,file)=>sum+(file.removed??0),0):null,files:status?.files.length??null},lineage,scripts,...(undo?{undo}:{}) ,capabilities:{git:!!status,gitWrite:status?.gitWrite??false,untrackedIncluded:status?.untrackedIncluded??false,terminal:!!project.rootPath,pullRequests:!!status?.gitWrite},...(error?{error}:{})};
  }
  async files(projectId:string,threadId:string|undefined,relativePath=''){
   const{path}=await this.binding(projectId,threadId),target=relativePath?join(path,pathName.parse(relativePath)):path,resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Files stay inside the selected worktree.');

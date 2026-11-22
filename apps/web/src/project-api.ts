@@ -18,9 +18,10 @@ export function useProjectContext(projectId?:string,threadId?:string,workspaceId
  useLayoutEffect(()=>{activeLoad.current=load;},[load]);
  useEffect(()=>{void load();return()=>{if(activeLoad.current===load)activeLoad.current=null;generation.current++;pending.current?.abort();pending.current=null;};},[load]);
  const action=useCallback(async(type:string,payload:Record<string,unknown>={})=>{
-  if(!projectId)return;
-  await authenticated(()=>fetch(`/api/projects/${encodeURIComponent(projectId)}/actions`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','x-harness-csrf':csrfToken},body:JSON.stringify({id:crypto.randomUUID(),type,payload,...(threadId?{threadId}:{})})})).then(read);
+  if(!projectId)return undefined;
+  const response=await authenticated(()=>fetch(`/api/projects/${encodeURIComponent(projectId)}/actions`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','x-harness-csrf':csrfToken},body:JSON.stringify({id:crypto.randomUUID(),type,payload,...(threadId?{threadId}:{})})})).then(read<unknown>);
   if(activeLoad.current===load)await load();
+  return response;
  },[projectId,threadId,load]);
  const current=state.owner===owner?state:{context:null,loading:Boolean(projectId),error:''};
  return{context:current.context,loading:current.loading,error:current.error,action};
