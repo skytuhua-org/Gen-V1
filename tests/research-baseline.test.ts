@@ -434,13 +434,13 @@ describe('benchmark report shape fixtures', () => {
 });
 
 describe('dependency-contract checker', () => {
-  it('requires a file at a declared contract test path', () => {
+  it('requires source-locked committed test bytes instead of trusting mutable checkout files', () => {
     const checkout = dir('contract-file');
     const git = (...args: string[]) => execFileSync('git', ['-C', checkout, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
     const source = 'packages/capabilities/process.ts', testId = 'tests/contract.test.ts';
     git('init', '-q');
     mkdirSync(join(checkout, 'packages', 'capabilities'), { recursive: true });
-    mkdirSync(join(checkout, testId), { recursive: true });
+    mkdirSync(join(checkout, 'tests'), { recursive: true });
     writeFileSync(join(checkout, source), 'export {};');
     git('add', '--', source);
     git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Seed');
@@ -450,14 +450,30 @@ describe('dependency-contract checker', () => {
       publicContracts: [{ name: 'process-launcher', version: blob, testIds: [testId] }], acceptedDependencyCommits: [], approvedDrift: [],
     });
     expect(verifySourceLock(checkout, lock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_MISSING']);
-    rmSync(join(checkout, testId), { recursive: true });
     writeFileSync(join(checkout, testId), 'export {};');
-    expect(verifySourceLock(checkout, lock)).toEqual([]);
-    const nestedLock = sourceLockV3Schema.parse({ ...lock, publicContracts: [
+    // A local-only untracked test did not exist at the claimed execution base.
+    expect(verifySourceLock(checkout, lock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_MISSING']);
+    git('add', '--', testId);
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Commit contract test');
+    const committedLock = sourceLockV3Schema.parse({ ...lock, executionBaseSha: git('rev-parse', 'HEAD') });
+    expect(verifySourceLock(checkout, committedLock)).toEqual([]);
+    writeFileSync(join(checkout, testId), 'export const unreviewed = true;');
+    expect(verifySourceLock(checkout, committedLock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_DRIFT']);
+    writeFileSync(join(checkout, testId), 'export {};');
+    expect(verifySourceLock(checkout, committedLock)).toEqual([]);
+    rmSync(join(checkout, testId));
+    expect(verifySourceLock(checkout, committedLock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_MISSING']);
+    const nestedLock = sourceLockV3Schema.parse({ ...committedLock, publicContracts: [
       { ...lock.publicContracts[0], testIds: [testId + '/case.ts', 'tests/no-second-contract.test.ts'] },
     ] });
     expect(verifySourceLock(checkout, nestedLock).map(issue => issue.code)).toEqual([
       'CONTRACT_TEST_MISSING', 'CONTRACT_TEST_MISSING',
+    ]);
+    const unsafeLock = sourceLockV3Schema.parse({ ...committedLock, publicContracts: [
+      { ...lock.publicContracts[0], testIds: ['../outside.test.ts', 'tests/../alias.test.ts', join(checkout, 'outside.test.ts')] },
+    ] });
+    expect(verifySourceLock(checkout, unsafeLock).map(issue => issue.code)).toEqual([
+      'CONTRACT_TEST_INVALID_PATH', 'CONTRACT_TEST_INVALID_PATH', 'CONTRACT_TEST_INVALID_PATH',
     ]);
   });
 
