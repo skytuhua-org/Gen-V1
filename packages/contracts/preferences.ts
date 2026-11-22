@@ -71,6 +71,7 @@ export const DEFAULT_PREFERENCES: UiPreferences = {
   keybindings: { search: 'Ctrl+K', newThread: 'Ctrl+Shift+O', toggleSidebar: 'Ctrl+B', toggleRightPanel: 'Ctrl+Shift+B', openSettings: 'Ctrl+Comma', stop: 'Escape' },
 };
 const patchSchema = preferencesSchema.partial().extend({ keybindings: keybindings.partial().optional() }).strict();
+export function parsePreferencePatch(value: unknown): PreferencePatch { return patchSchema.parse(value); }
 export function mergePreferences(current: UiPreferences, patch: unknown): UiPreferences {
   const next = patchSchema.parse(patch);
   return readPreferences({ ...current, ...next, keybindings: { ...current.keybindings, ...next.keybindings } });
