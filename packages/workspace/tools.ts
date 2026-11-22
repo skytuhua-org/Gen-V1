@@ -1,7 +1,7 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {hostname} from 'node:os';
 import {lstat,mkdir,readFile,realpath,open,rm} from 'node:fs/promises';
-import {dirname,join,relative,resolve} from 'node:path';
+import {dirname,extname,join,relative,resolve} from 'node:path';
 import {z} from 'zod';
 import {Store} from '../storage/store.ts';
 import {HarnessError,type HostCommand,type ResourceGrant,type Thread} from '../contracts/index.ts';
@@ -26,6 +26,15 @@ const equal=(a:Identity,b:Identity)=>a.dev===b.dev&&a.ino===b.ino;
 const pathName=z.string().min(1).max(1024).refine(path=>!path.includes('\0')&&!path.includes(':')&&!/^[\\/]|(?:^|[\\/])\.\.(?:[\\/]|$)/.test(path),'Choose a file inside the project.');
 // Git metadata is never project content, whatever its case or nesting depth.
 const gitSegment=(value:string)=>value.split(/[\\/]/).some(part=>part.toLowerCase()==='.git');
+// Project Files image preview: extension routes to this allowlist, then the bytes must match the signature.
+const IMAGE_TYPES:Record<string,{mime:string;label:string;signature:(data:Buffer)=>boolean}>={
+ '.png':{mime:'image/png',label:'PNG',signature:data=>data.length>=8&&data[0]===0x89&&data[1]===0x50&&data[2]===0x4e&&data[3]===0x47&&data[4]===0x0d&&data[5]===0x0a&&data[6]===0x1a&&data[7]===0x0a},
+ '.jpg':{mime:'image/jpeg',label:'JPEG',signature:data=>data.length>=3&&data[0]===0xff&&data[1]===0xd8&&data[2]===0xff},
+ '.jpeg':{mime:'image/jpeg',label:'JPEG',signature:data=>data.length>=3&&data[0]===0xff&&data[1]===0xd8&&data[2]===0xff},
+ '.gif':{mime:'image/gif',label:'GIF',signature:data=>data.length>=6&&(data.toString('ascii',0,6)==='GIF87a'||data.toString('ascii',0,6)==='GIF89a')},
+ '.webp':{mime:'image/webp',label:'WebP',signature:data=>data.length>=12&&data.toString('ascii',0,4)==='RIFF'&&data.toString('ascii',8,12)==='WEBP'},
+ '.svg':{mime:'image/svg+xml',label:'SVG',signature:data=>{const head=data.subarray(0,4096);return !head.includes(0)&&head.toString('utf8').toLowerCase().includes('<svg');}},
+};
 async function untrackedDigest(path:string,signal:AbortSignal){
  return withPathGuard([{path,leaf:true,readOnly:true}],signal,async()=>{
   const file=await open(path,'r');try{const info=await file.stat({bigint:true});if(!info.isFile()||info.nlink!==1n)throw new HarnessError('CAPABILITY_DENIED','Changed paths must be ordinary files.');
@@ -202,5 +211,10 @@ export class ProjectTools{
   return withPathGuard([{path:target,leaf:false}],new AbortController().signal,async()=>{const{readdir}=await import('node:fs/promises'),entries=[];for(const item of(await readdir(target,{withFileTypes:true})).slice(0,500)){if(item.name.toLowerCase()==='.git'||item.name==='.harness-directory-guard'||item.isSymbolicLink())continue;entries.push({name:item.name,path:relativePath?relativePath+'/'+item.name:item.name,kind:item.isDirectory()?'directory':'file'});}return{path:relativePath,entries};});
  }
  async file(projectId:string,threadId:string|undefined,relativePath:string){const{path}=await this.binding(projectId,threadId),target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data)};});}
+ async fileImage(projectId:string,threadId:string|undefined,relativePath:string){
+  const type=IMAGE_TYPES[extname(relativePath).toLowerCase()];if(!type)throw new HarnessError('INVALID_INPUT','This file type has no image preview.');
+  const{path}=await this.binding(projectId,threadId),target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');
+  return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,10*1024*1024);if(!type.signature(data))throw new HarnessError('UNSUPPORTED','This file is not a valid '+type.label+' image.');return{bytes:data,mime:type.mime,sha256:hash(data)};});
+ }
  async dispose(){await Promise.allSettled([...this.queues.values()]);}
 }

@@ -68,6 +68,11 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
  });
  app.get('/api/projects/:projectId/files',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path}=querySchema.parse(request.query);return projects.files(projectId,threadId,path);});
  app.get('/api/projects/:projectId/file',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path}=querySchema.parse(request.query);return projects.file(projectId,threadId,z.string().min(1).parse(path));});
+ app.get('/api/projects/:projectId/file/image',async(request,reply)=>{
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path}=querySchema.parse(request.query),image=await projects.fileImage(projectId,threadId,z.string().min(1).parse(path));
+  reply.header('Content-Type',image.mime).header('Content-Security-Policy',"sandbox; default-src 'none'").header('X-Content-Type-Options','nosniff').header('Cache-Control','no-store').header('X-File-Sha256',image.sha256);
+  return image.bytes;
+ });
  app.get('/api/projects/:projectId/pull-requests',async request=>{
   const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,linked}=pullQuerySchema.parse(request.query);if(!linked)return github.list(projectId,threadId);
   await projects.binding(projectId,threadId);const{repo}=await github.repo(projectId,threadId);
