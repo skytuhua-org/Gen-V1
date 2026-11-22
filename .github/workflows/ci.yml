@@ -5,6 +5,7 @@ on:
     branches: [main, agent/m05-v3]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -25,9 +26,13 @@ env:
 
 jobs:
   # A draft pull request is not reviewable, so its matrix runs when it becomes
-  # ready for review instead of on every draft push. Six definitions expand
-  # to nine jobs, including installer packaging; draft pushes otherwise starve the
+  # ready for review instead of on every draft push. Four definitions expand
+  # to seven jobs, including installer packaging; draft pushes otherwise starve the
   # shared runner pool that required checks depend on.
+  #
+  # Small checks share one job so they pay for one runner and one toolchain
+  # install. Every step after setup runs even when an earlier one fails, so the
+  # job lists every failure instead of stopping at the first.
   checks:
     name: Windows checks
     runs-on: windows-2022
@@ -43,34 +48,70 @@ jobs:
           persist-credentials: false
 
       - name: Install toolchain
+        id: setup
         uses: ./.github/actions/setup
+        with:
+          python: 'true'
 
       - name: Build and verify the public plug-in API package
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm build:plugin-api
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --test tests/plugin-api-package.test.mjs
 
       - name: Install optional visuals plug-in dependencies
+        id: visuals
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm --dir plugins/personal-visuals install --ignore-workspace --frozen-lockfile
 
       - name: Exercise UI guard negative and positive fixtures
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm test:ui-guard
 
       - name: Check TypeScript and enforce UI architecture policy
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm lint
 
       - name: Check the repository type program
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm typecheck
 
       - name: Typecheck the optional visuals plug-in
+        if: ${{ !cancelled() && steps.visuals.outcome == 'success' }}
         run: pnpm --dir plugins/personal-visuals typecheck
 
       - name: Build the optional visuals plug-in
+        if: ${{ !cancelled() && steps.visuals.outcome == 'success' }}
         run: pnpm --dir plugins/personal-visuals build
 
       - name: Build web application
+        id: build
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm build
+
+      - name: Build desktop shell
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm desktop:build
+
+      - name: Verify original source custody
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: python -I -S -B tests/hermes_source_contract.py -v
+
+      - name: Verify atomic learning controls
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: python -I -S -B tests/hermes_atomic_controls.py -v
+
+      - name: Verify original Hermes worker behavior
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: python -I -S -B tests/hermes_source_worker.py -v
+
+      - name: Verify native memory checkpoint ordering and failure isolation
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          python -B tests/memory_native_checkpoint_v3.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -B tests/memory_native_checkpoint_worker_v3.py -v
 
   test:
     name: Tests (shard ${{ matrix.shard }}/4)
@@ -155,63 +196,6 @@ jobs:
             test-results/browser/**/artifacts/**/trace.zip
             test-results/browser/**/artifacts/**/host-observations.json
             test-results/browser/**/artifacts/**/memory-host-observations.json
-
-  hermes:
-    name: Hermes contracts
-    runs-on: windows-2022
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
-      - name: Install toolchain
-        uses: ./.github/actions/setup
-        with:
-          python: 'true'
-
-      - name: Verify original source custody
-        run: python -I -S -B tests/hermes_source_contract.py -v
-
-      - name: Verify atomic learning controls
-        run: python -I -S -B tests/hermes_atomic_controls.py -v
-
-      - name: Verify original Hermes worker behavior
-        run: python -I -S -B tests/hermes_source_worker.py -v
-
-      - name: Verify native memory checkpoint ordering and failure isolation
-        run: |
-          python -B tests/memory_native_checkpoint_v3.py -v
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -B tests/memory_native_checkpoint_worker_v3.py -v
-
-  desktop:
-    name: Desktop build
-    runs-on: windows-2022
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
-      - name: Install toolchain
-        uses: ./.github/actions/setup
-
-      - name: Build web application
-        run: pnpm build
-
-      - name: Build desktop shell
-        run: pnpm desktop:build
 
   installed-memory:
     name: Installed desktop memory retention and opt-in
