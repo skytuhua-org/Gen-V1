@@ -6,7 +6,7 @@
 // real corepack executable (or a resolved JS entry under process.execPath).
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -249,11 +249,32 @@ export function verifySourceLock(rootDir: string, lock: SourceLockV3): EvidenceI
     if (actual !== contract.version)
       issues.push({ code: 'CONTRACT_VERSION_MISMATCH', message: `Contract ${contract.name} version ${contract.version} does not match ${source} blob ${actual ?? 'missing'} at base.` });
     for (const testId of contract.testIds) {
+      // A mutable checkout or untracked fixture cannot prove that a required
+      // contract test existed at the source-locked execution base.
+      const parts = testId.split('/');
+      if (isAbsolute(testId) || testId.includes('\\') || testId.includes(':') ||
+          parts.some(part => !part || part === '.' || part === '..')) {
+        issues.push({ code: 'CONTRACT_TEST_INVALID_PATH', message: `Contract ${contract.name} test path must be repository-relative: ${testId}` });
+        continue;
+      }
+      let committedBlob: string | null = null;
+      try {
+        const spec = `${lock.executionBaseSha}:${testId}`;
+        if (git(rootDir, ['cat-file', '-t', spec]) === 'blob')
+          committedBlob = git(rootDir, ['rev-parse', spec]);
+      } catch { /* Missing from the locked commit, even if present locally. */ }
       let isFile = false;
-      // Missing or inaccessible test files cannot establish compatibility.
-      try { isFile = statSync(join(rootDir, testId), { throwIfNoEntry: false })?.isFile() ?? false; }
-      catch { /* collect the issue and continue checking the other entries */ }
-      if (!isFile) issues.push({ code: 'CONTRACT_TEST_MISSING', message: `Contract ${contract.name} test is not an accessible regular file: ${testId}` });
+      try { isFile = lstatSync(join(rootDir, testId), { throwIfNoEntry: false })?.isFile() ?? false; }
+      catch { /* Missing or inaccessible local test. */ }
+      if (!committedBlob || !isFile) {
+        issues.push({ code: 'CONTRACT_TEST_MISSING', message: `Contract ${contract.name} test is not a committed and accessible regular file: ${testId}` });
+        continue;
+      }
+      let workingBlob: string | null = null;
+      try { workingBlob = git(rootDir, ['hash-object', `--path=${testId}`, '--', testId]); }
+      catch { /* Unreadable local content cannot prove the committed test bytes. */ }
+      if (workingBlob !== committedBlob)
+        issues.push({ code: 'CONTRACT_TEST_DRIFT', message: `Contract ${contract.name} test does not match the source-locked blob: ${testId}` });
     }
   }
   return issues;
