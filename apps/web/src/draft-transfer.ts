@@ -108,15 +108,25 @@ export async function importDraftTransfer(text:string,input:ReferenceInput,signa
   const saved=await journalCompareAndSwapMany(group.map(row=>({key:row.key,generation:undefined,value:row.record.value})),[],{acknowledgeHandoffRetry:true});
   finish(group,saved?'imported':'retained',saved?undefined:'A local edit arrived during import');
  }
+ // A prompt's text and pasted-text chips are one draft: import or retain them
+ // together so a local draft never mixes with chips from the backup.
+ const promptGroups=new Map<string,TransferRow[]>();
+ for(const row of rows){
+  const match=/^draft(?:-pastes)?:(.+)$/.exec(row.key);
+  if(!match)continue;
+  const list=promptGroups.get(match[1])??[];list.push(row);promptGroups.set(match[1],list);
+ }
  for(const row of rows){
   signal?.throwIfAborted();if(results.has(row.key))continue;
-  const error=referenceError(row.key,row.record.value,snapshot,true);
-  if(error){finish([row],'blocked',error);continue;}
-  if(row.key.startsWith('draft:')&&localSources.some(source=>sourceThread(source.key)===row.key.slice(6))){finish([row],'retained','Local source context already exists; its prompt was not replaced');continue;}
-  const existing=await journalReadRecord(row.key);signal?.throwIfAborted();
-  if(existing){finish([row],'retained','A local entry already exists; it was not replaced');continue;}
-  const saved=await journalCompareAndSwap(row.key,undefined,row.record.value);
-  finish([row],saved?'imported':'retained',saved?undefined:'A local edit arrived during import');
+  const match=/^draft(?:-pastes)?:(.+)$/.exec(row.key);
+  const group=match?(promptGroups.get(match[1])??[row]):[row];
+  const error=group.map(member=>referenceError(member.key,member.record.value,snapshot,true)).find(Boolean);
+  if(error){finish(group,'blocked',error);continue;}
+  if(group.some(member=>member.key.startsWith('draft:')&&localSources.some(source=>sourceThread(source.key)===member.key.slice(6)))){finish(group,'retained','Local source context already exists; its prompt was not replaced');continue;}
+  const existing=await Promise.all(group.map(member=>journalReadRecord(member.key)));signal?.throwIfAborted();
+  if(existing.some(Boolean)){finish(group,'retained','A local entry already exists; it was not replaced');continue;}
+  const saved=group.length===1?await journalCompareAndSwap(group[0].key,undefined,group[0].record.value):await journalCompareAndSwapMany(group.map(member=>({key:member.key,generation:undefined,value:member.record.value})),[]);
+  finish(group,saved?'imported':'retained',saved?undefined:'A local edit arrived during import');
  }
  return rows.map(row=>results.get(row.key)!);
 }

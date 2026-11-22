@@ -1,8 +1,8 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 import type {Snapshot} from '../packages/contracts/index.ts';
 import type {JournalRecord} from '../apps/web/src/journal.ts';
-const journal=vi.hoisted(()=>({entries:vi.fn(),read:vi.fn(),save:vi.fn()}));
-vi.mock('../apps/web/src/journal',()=>({journalEntries:journal.entries,journalReadRecord:journal.read,journalCompareAndSwap:journal.save}));
+const journal=vi.hoisted(()=>({entries:vi.fn(),read:vi.fn(),save:vi.fn(),saveMany:vi.fn()}));
+vi.mock('../apps/web/src/journal',()=>({journalEntries:journal.entries,journalReadRecord:journal.read,journalCompareAndSwap:journal.save,journalCompareAndSwapMany:journal.saveMany}));
 vi.mock('../apps/web/src/signature-assets',()=>({hasPendingDocumentAssets:()=>false}));
 import {exportDraftTransfer,importDraftTransfer} from '../apps/web/src/draft-transfer.ts';
 
@@ -10,7 +10,7 @@ const snapshot={threads:[],userStates:[],requests:[],skills:[{name:'verify-relea
 const draft={content:'Keep this unfinished procedure.',description:'Verify a release.',baseRevision:3};
 const entry=(key='skill-draft:verify-release',value:unknown=draft)=>({key,record:{value,generation:'browser-draft',updatedAt:1} satisfies JournalRecord});
 const backup=(entries:ReturnType<typeof entry>[])=>JSON.stringify({app:'generative-harness-drafts',version:1,entries});
-beforeEach(()=>{vi.clearAllMocks();journal.entries.mockResolvedValue([]);journal.read.mockResolvedValue(undefined);journal.save.mockResolvedValue(true);});
+beforeEach(()=>{vi.clearAllMocks();journal.entries.mockResolvedValue([]);journal.read.mockResolvedValue(undefined);journal.save.mockResolvedValue(true);journal.saveMany.mockResolvedValue(true);});
 
 it('exports skill drafts, including stale drafts, without exporting unrelated journal state',async()=>{
  const rows=[entry(),entry('skill-draft:verify-release',{...draft,baseRevision:2}),entry('private:account-token','private')];journal.entries.mockResolvedValue(rows);
@@ -37,7 +37,16 @@ it('exports and imports pasted-text drafts beside their conversation draft',asyn
  const snap={threads:[{id:'thread-1'}],userStates:[],requests:[],skills:[]} as unknown as Snapshot;
  expect(JSON.parse(await exportDraftTransfer(snap)).entries.map((row:{key:string})=>row.key)).toEqual(['draft:thread-1','draft-pastes:thread-1']);
  expect(await importDraftTransfer(backup(rows),snap)).toEqual([{key:'draft:thread-1',status:'imported'},{key:'draft-pastes:thread-1',status:'imported'}]);
- expect(journal.save).toHaveBeenCalledWith('draft-pastes:thread-1',undefined,pastes);
+ expect(journal.saveMany).toHaveBeenCalledWith([{key:'draft:thread-1',generation:undefined,value:'draft text'},{key:'draft-pastes:thread-1',generation:undefined,value:pastes}],[]);
+});
+it('retains backup pasted-text drafts when the local prompt text is kept',async()=>{
+ const pastes=[{version:1,id:'11111111-1111-4111-8111-111111111111',createdAt:'2026-01-01T00:00:00.000Z',text:'backup chips'}];
+ journal.read.mockImplementation(async (key:string)=>key==='draft:thread-1'?{value:'local draft',generation:'g'}:undefined);
+ const snap={threads:[{id:'thread-1'}],userStates:[],requests:[],skills:[]} as unknown as Snapshot;
+ const rows=[entry('draft:thread-1','backup draft'),entry('draft-pastes:thread-1',pastes)];
+ const results=await importDraftTransfer(backup(rows),snap);
+ expect(results).toEqual([{key:'draft:thread-1',status:'retained',reason:'A local entry already exists; it was not replaced'},{key:'draft-pastes:thread-1',status:'retained',reason:'A local entry already exists; it was not replaced'}]);
+ expect(journal.save).not.toHaveBeenCalled();expect(journal.saveMany).not.toHaveBeenCalled();
 });
 it('blocks malformed pasted-text drafts on import and skips ones for unavailable conversations',async()=>{
  const snap={threads:[],userStates:[],requests:[],skills:[]} as unknown as Snapshot;
