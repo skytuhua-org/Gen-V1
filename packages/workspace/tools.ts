@@ -200,6 +200,7 @@ export class ProjectTools{
   }));
  }
  private async discardFile(projectId:string,threadId:string|undefined,paths:string[]|undefined,current:GitStatus,operationId:string|undefined,signal:AbortSignal,worktree:string,git:(args:string[])=>Promise<string>):Promise<void>{
+  const literal=(path:string)=>':(literal)'+path;
   if(!paths||paths.length!==1)throw new HarnessError('INVALID_INPUT','Choose one file to discard.');
   const file=current.files.find(item=>item.path===paths[0]);
   if(!file)throw new HarnessError('REVISION_CHANGED','That file has no changes. Refresh the review.');
@@ -208,19 +209,24 @@ export class ProjectTools{
   if(isRunActive(thread))throw new HarnessError('RUN_ACTIVE','Stop the run before discarding files.');
   if(file.index==='U'||file.worktree==='U'||file.index+file.worktree==='AA'||file.index+file.worktree==='DD')throw new HarnessError('CONFLICTED_PATH','Resolve the conflict in this file first.');
   // Git links (submodule entries) are never restorable one-file writes.
-  const entries=[...(await git(['ls-files','-s','--',file.path])).split('\n'),...(await git(['ls-tree','HEAD','--',file.path])).split('\n')];
+  // Literal pathspecs: Git treats '[]*?' as globs, which would let one row's
+  // discard rewrite unrelated matching files the backup never covered.
+  const entries=[...(await git(['ls-files','-s','--',literal(file.path)])).split('\n'),...(await git(['ls-tree','HEAD','--',literal(file.path)])).split('\n')];
   if(entries.some(line=>line.startsWith('160000')))throw new HarnessError('UNSUPPORTED_PATH','Submodule entries cannot be discarded one file at a time.');
   const target=join(worktree,...file.path.split('/'));
   if(this.options.beforeDiscard)await this.options.beforeDiscard({projectId,threadId,paths:file.oldPath?[file.path,file.oldPath]:[file.path],worktree,operationId:operationId??'discard'});
   const trash=this.options.trash??moveToRecycleBin;
-  if(file.untracked)await withPathGuard([{path:target,leaf:true}],signal,async()=>trash(target,signal));
+  // No leaf guard around the bin move: on Windows a pinned file shares
+  // read/write but denies delete opens for every process, so the Recycle Bin
+  // helper could never remove it while guarded.
+  if(file.untracked)await trash(target,signal);
   else{
-   if(file.oldPath)await git(['restore','--source=HEAD','--staged','--worktree','--',file.oldPath]);
+   if(file.oldPath)await git(['restore','--source=HEAD','--staged','--worktree','--',literal(file.oldPath)]);
    if(file.index==='A'||file.oldPath){
-    await git(['rm','--cached','--quiet','--',file.path]);
-    if(await lstat(target).then(()=>true,()=>false))await withPathGuard([{path:target,leaf:true}],signal,async()=>trash(target,signal));
+    await git(['rm','--cached','--quiet','--',literal(file.path)]);
+    if(await lstat(target).then(()=>true,()=>false))await trash(target,signal);
    }
-   else await git(['restore','--source=HEAD','--staged','--worktree','--',file.path]);
+   else await git(['restore','--source=HEAD','--staged','--worktree','--',literal(file.path)]);
   }
  }
  async context(projectId:string,threadId?:string):Promise<ProjectContext>{

@@ -96,7 +96,11 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
  projects.options.beforeDiscard=async input=>{
   if(!capabilityEnabled('workspace.checkpointsV1'))return;
   const{owner,root}=await checkpointOwner(input.projectId,input.threadId);
-  await checkpoints.create({owner,root,paths:input.paths,label:'Before discard',provenance:{kind:'discard_backup',operationId:input.operationId}});
+  const snapshot=await checkpoints.create({owner,root,paths:input.paths,label:'Before discard',provenance:{kind:'discard_backup',operationId:input.operationId}});
+  // A path the checkpoint skipped (binary, oversized, secret-named) has no
+  // History backup, so discarding it would lose the edit the dialog promised to keep.
+  const excluded=snapshot.exclusions.filter(entry=>input.paths.includes(entry.path));
+  if(excluded.length)throw new HarnessError('UNSUPPORTED_PATH',`No History backup can be kept for ${excluded.map(entry=>entry.path).join(', ')} (${excluded[0]!.reason}), so the discard was cancelled.`);
  };
  app.post('/api/projects/:projectId/checkpoints/list',{bodyLimit:64*1024},async(request,reply)=>{
   reply.header('Cache-Control','no-store');
