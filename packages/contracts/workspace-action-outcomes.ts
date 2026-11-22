@@ -62,7 +62,7 @@ export const workspaceActionOwnerSchema = z.strictObject({
 const branch = z.string().max(1024);
 export const createdPullRequestResultSchema = z.strictObject({url:z.string().max(2048),head:oid,revision,repo})
   .refine(value => value.url.toLowerCase().startsWith(`https://github.com/${value.repo}/pull/`.toLowerCase()) && /^[1-9]\d*$/.test(value.url.slice(`https://github.com/${value.repo}/pull/`.length)));
-export const undoneCommitResultSchema = z.strictObject({ undoneHead: oid, head: oid, message: z.string().max(4000) });
+export const undoneCommitResultSchema = z.strictObject({ undoneHead: oid, head: oid, message: z.string().max(64000) });
 const localComparison = z.strictObject({
   kind: z.literal('local'),
   id: revision,
