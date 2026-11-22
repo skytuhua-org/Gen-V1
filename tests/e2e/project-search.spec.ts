@@ -133,9 +133,16 @@ test("folder/project scopes keep path and text hits distinct and open a matching
 	await expect(page.locator(".files-matching-line")).toHaveText(
 		"const workspace = restoreLayout();",
 	);
-	const text = await preview(page).locator("pre").textContent();
-	expect(text?.split("\n")).toHaveLength(100);
-	expect(text?.split("\n")[47]).toBe("const workspace = restoreLayout();");
+	const lines = preview(page).locator(".files-text-lines");
+	await expect(
+		lines.locator(".files-text-cell", { hasText: "const workspace = restoreLayout();" }),
+	).toHaveText("const workspace = restoreLayout();");
+	await lines.evaluate((element) => {
+		element.scrollTop = element.scrollHeight;
+	});
+	await expect(
+		lines.locator(".files-text-gutter", { hasText: "100" }),
+	).toBeVisible();
 	const request = await page.evaluate(
 		() => window.projectSearchFixture.requests[0],
 	);
@@ -467,7 +474,11 @@ test("a changed checksum shows current file content without a misleading line hi
 	await projectScope(page);
 	await hits(page).first().click();
 	await expect(preview(page)).toContainText("changed since the search");
-	await expect(preview(page).locator("pre")).toContainText("workspace");
+	const lines = preview(page).locator(".files-text-lines");
+	await lines.evaluate((element) => {
+		element.scrollTop = element.scrollHeight / 2;
+	});
+	await expect(lines).toContainText("workspace");
 	await expect(page.locator(".files-matching-line")).toHaveCount(0);
 });
 
@@ -912,16 +923,20 @@ for (const { name, text, line } of [
 		await hits(page).first().click();
 		await expect(page.locator(".files-matching-line")).toHaveText("needle");
 		await expect(preview(page)).toContainText(`Matching line ${line}`);
-		expect(await preview(page).locator("pre").textContent()).toBe(text);
+		const cells = preview(page).locator(".files-text-cell");
+		expect(await cells.allTextContents()).toEqual(
+			text
+				.split(/\r\n|\r|\n/)
+				.map((content) => (content === "" ? "\u00a0" : content)),
+		);
 		const position = await preview(page)
-			.locator("pre")
+			.locator(".files-text-lines")
 			.evaluate((element) => {
-				const first = document.createRange();
-				first.setStart(element.firstChild!, 0);
-				first.setEnd(element.firstChild!, 1);
+				const first = element.querySelector(".files-text-row")!;
+				const target = element.querySelector(".files-matching-line")!;
 				return {
 					offset:
-						element.querySelector("mark")!.getBoundingClientRect().top -
+						target.getBoundingClientRect().top -
 						first.getBoundingClientRect().top,
 					height: Number.parseFloat(getComputedStyle(element).lineHeight),
 				};

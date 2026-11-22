@@ -412,7 +412,7 @@
 .files-text-preview {
 	display: flex;
 	flex-direction: column;
-	flex: 1;
+	height: 100%;
 	min-height: 0;
 	outline: none;
 }
@@ -437,6 +437,7 @@
 	flex: 1;
 	min-height: 0;
 	overflow: auto;
+	padding: var(--files-inset);
 	font-family: var(--code-font, monospace);
 	font-size: var(--code-font-size, 13px);
 	line-height: 1.5;
@@ -450,6 +451,12 @@
 	outline: 2px solid var(--ui-focus-ring, #808080);
 	outline-offset: -2px;
 }
+/* Internal virtualization layout mutates spacer heights/selection marks; never animate them. */
+.files-text-preview,
+.files-text-preview * {
+	transition: none;
+}
+
 .files-text-row {
 	display: flex;
 	align-items: flex-start;

@@ -89,7 +89,7 @@ export function ProjectTextPreview({
 		(index: number) => {
 			if (!wrap) return lineHeight;
 			const known = measured.get(index);
-			if (known !== undefined) return known;
+			if (known !== undefined) return Math.max(lineHeight, known);
 			const cols = Math.max(1, Math.floor((view.widthGuess ?? 1) / charWidth));
 			return (
 				lineHeight *
@@ -116,6 +116,12 @@ export function ProjectTextPreview({
 		},
 		[prefix, total],
 	);
+	// Latest layout values for event handlers registered once.
+	const lowerRef = useRef(lower);
+	lowerRef.current = lower;
+	const prefixRef = useRef(prefix);
+	prefixRef.current = prefix;
+	const revealRef = useRef<(line: number) => void>(() => {});
 	const overscan = Math.max(view.height, 200);
 	const first = lower(Math.max(0, view.top - overscan));
 	const last = Math.min(
@@ -124,42 +130,58 @@ export function ProjectTextPreview({
 	);
 	const digits = String(total).length;
 	const gutterCh = Math.max(4, digits + 2);
+	// Centers a logical line, when the scroller has a real height. Returns false before layout so callers can retry.
+	const scrollTo = useCallback(
+		(index: number) => {
+			const scroller = scrollRef.current;
+			if (!scroller || scroller.clientHeight === 0) return false;
+			const prefix = prefixRef.current,
+				rowTop = prefix[index]!,
+				rowHeight = Math.max(lineHeight, estimate(index));
+			const top = clamp(
+				rowTop + rowHeight / 2 - scroller.clientHeight / 2,
+				0,
+				Math.max(0, prefix[total]! - scroller.clientHeight),
+			);
+			scroller.scrollTop = top;
+			anchorRef.current = { line: index, delta: top - rowTop };
+			return true;
+		},
+		[estimate, lineHeight, total],
+	);
 	const reveal = useCallback(
 		(line: number) => {
 			const index = clamp(line, 1, total) - 1;
-			const scroller = scrollRef.current;
-			if (!scroller) return;
-			const rowTop = prefix[index]!,
-				rowHeight = Math.max(lineHeight, estimate(index)),
-				top = clamp(
-					rowTop + rowHeight / 2 - scroller.clientHeight / 2,
-					0,
-					Math.max(0, fullHeight - scroller.clientHeight),
-				);
-			scroller.scrollTop = top;
 			setTarget(index);
 			setStatus(`Line ${index + 1} of ${total}`);
 			pendingReveal.current = index;
+			scrollTo(index);
 		},
-		[clamp, estimate, fullHeight, lineHeight, prefix, total],
+		[scrollTo, total],
 	);
+	revealRef.current = reveal;
 	useEffect(() => {
-		if (targetLine !== undefined && targetSeq) reveal(targetLine);
-	}, [targetLine, targetSeq, reveal]);
-	// Re-apply a pending reveal once the target row has a real measurement.
+		if (targetLine !== undefined && targetSeq) revealRef.current(targetLine);
+	}, [targetLine, targetSeq]);
+	// Retries a pending reveal until the target row is mounted and measured, then recenters once.
 	useLayoutEffect(() => {
 		const pending = pendingReveal.current;
-		if (pending !== null && (!wrap || measured.has(pending))) {
-			pendingReveal.current = null;
-			if (wrap) reveal(pending + 1);
+		if (pending === null || view.height === 0) return;
+		if (!(first <= pending && pending <= last)) {
+			scrollTo(pending);
+			return;
 		}
-	}, [measured, wrap, reveal]);
+		if (wrap && !measured.has(pending)) return;
+		pendingReveal.current = null;
+		if (wrap) scrollTo(pending);
+	}, [view, measured, wrap, first, last, scrollTo]);
 	// Restore the logical-line anchor after heights shift so the view does not jump.
 	useLayoutEffect(() => {
 		const anchor = anchorRef.current,
 			scroller = scrollRef.current;
-		if (anchor && scroller)
+		if (anchor && scroller && pendingReveal.current === null) {
 			scroller.scrollTop = prefix[anchor.line]! + anchor.delta;
+		}
 	}, [prefix]);
 
 	useEffect(() => {
@@ -172,33 +194,35 @@ export function ProjectTextPreview({
 	useEffect(() => {
 		const scroller = scrollRef.current;
 		if (!scroller) return;
-		setView({
-			top: scroller.scrollTop,
-			height: scroller.clientHeight,
-			widthGuess: scroller.clientWidth - gutterCh * charWidth - 20,
-		});
-		const observer = new ResizeObserver(() =>
-			setView({
-				top: scroller.scrollTop,
-				height: scroller.clientHeight,
-				widthGuess: scroller.clientWidth - gutterCh * charWidth - 20,
-			}),
-		);
+		const update = () =>
+			setView((current) => {
+				const next = {
+					top: scroller.scrollTop,
+					height: scroller.clientHeight,
+					widthGuess: scroller.clientWidth - gutterCh * charWidth - 20,
+				};
+				return current.top === next.top &&
+					current.height === next.height &&
+					current.widthGuess === next.widthGuess
+					? current
+					: next;
+			});
+		update();
+		const observer = new ResizeObserver(update);
 		observer.observe(scroller);
 		let frame = 0;
 		const onScroll = () => {
 			if (frame) return;
 			frame = requestAnimationFrame(() => {
 				frame = 0;
-				anchorRef.current = {
-					line: lower(scroller.scrollTop),
-					delta: scroller.scrollTop - prefix[lower(scroller.scrollTop)]!,
-				};
-				setView({
-					top: scroller.scrollTop,
-					height: scroller.clientHeight,
-					widthGuess: scroller.clientWidth - gutterCh * charWidth - 20,
-				});
+				if (pendingReveal.current === null) {
+					const line = lowerRef.current(scroller.scrollTop);
+					anchorRef.current = {
+						line,
+						delta: scroller.scrollTop - prefixRef.current[line]!,
+					};
+				}
+				update();
 			});
 		};
 		scroller.addEventListener("scroll", onScroll, { passive: true });
@@ -207,14 +231,14 @@ export function ProjectTextPreview({
 			scroller.removeEventListener("scroll", onScroll);
 			if (frame) cancelAnimationFrame(frame);
 		};
-	}, [lower, prefix, gutterCh, charWidth]);
+	}, [gutterCh, charWidth]);
 	const rowObserver = useRef<ResizeObserver | null>(null);
 	useEffect(() => {
 		rowObserver.current = new ResizeObserver((entries) => {
 			for (const entry of entries) {
 				const element = entry.target as HTMLElement,
 					index = Number(element.dataset.line);
-				if (!Number.isNaN(index))
+				if (!Number.isNaN(index) && entry.target.clientHeight > 0)
 					measureQueue.current.set(index, entry.target.clientHeight);
 			}
 			if (measureQueue.current.size) {
@@ -456,7 +480,7 @@ export function ProjectTextPreview({
 			>
 				<span
 					ref={probeRef}
-					className="files-text-cell files-text-probe"
+					className="files-text-probe"
 					aria-hidden="true"
 				>
 					0000000000
