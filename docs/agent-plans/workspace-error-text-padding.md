@@ -1,9 +1,9 @@
-# Plan — Pad error text inside the workspace panel (rev1)
+# Plan — Pad error text inside the workspace panel (rev2)
 
 ## META
 - Feature: Inset/padding for `.error-text` rendered inside the workspace right panel
 - Repo: skytuhua-org/Gen-V1
-- Plan revision: rev1, 2026-11-22
+- Plan revision: rev2, 2026-11-22
 - Baseline: `main` @ `97efd9ca`
 - Status: planned, not implemented
 - Source: frontend QA pass on fixture app (:4317) — the Files surface shows "File access check failed — the folder could not be opened safely for this action" flush against the panel's left/right edges, clipped by the panel boundary

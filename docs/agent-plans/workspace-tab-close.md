@@ -1,9 +1,9 @@
-# Plan — Close affordance for workspace surface tabs (rev1)
+# Plan — Close affordance for workspace surface tabs (rev2)
 
 ## META
 - Feature: Close button + middle-click close on workspace surface tabs
 - Repo: skytuhua-org/Gen-V1
-- Plan revision: rev1, 2026-11-22
+- Plan revision: rev2, 2026-11-22
 - Baseline: `main` @ `97efd9ca` (verified via `git fetch origin main`)
 - Status: planned, not implemented
 - Source: frontend QA pass on the fixture app (:4317) — tabs accumulate with no way to dismiss them

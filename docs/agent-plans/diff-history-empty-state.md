@@ -1,9 +1,9 @@
-# Plan — Diff History tab empty state styling + copy split (rev1)
+# Plan — Diff History tab empty state styling + copy split (rev2)
 
 ## META
 - Feature: Style the "Checkpoint history unavailable" state and split error vs. empty
 - Repo: skytuhua-org/Gen-V1
-- Plan revision: rev1, 2026-11-22
+- Plan revision: rev2, 2026-11-22
 - Baseline: `main` @ `97efd9ca`
 - Status: planned, not implemented
 - Source: frontend QA pass on fixture app (:4317) — Diff → History with no checkpoint owner shows a bare left-aligned text line that looks broken next to the centered empty states used elsewhere; the same line serves "no data" and "failed to load" indistinguishably

@@ -1,9 +1,9 @@
-# Plan — Workspace tab strip: scroll active tab into view + arrow-key navigation (rev1)
+# Plan — Workspace tab strip: scroll active tab into view + arrow-key navigation (rev2)
 
 ## META
 - Feature: Active-tab visibility and APG keyboard navigation for the workspace surface tab strip
 - Repo: skytuhua-org/Gen-V1
-- Plan revision: rev1, 2026-11-22
+- Plan revision: rev2, 2026-11-22
 - Baseline: `main` @ `97efd9ca`
 - Status: planned, not implemented
 - Source: frontend QA pass on fixture app (:4317) — opening "Plan" from Add surface while the strip overflows leaves the new tab offscreen; Arrow keys on tabs scroll the strip instead of moving selection
