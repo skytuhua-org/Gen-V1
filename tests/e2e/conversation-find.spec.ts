@@ -68,3 +68,8 @@ test('Escape and Close restore the rendered Find trigger',async({page})=>{
  await setup(page);const trigger=page.getByRole('button',{name:'Find in conversation',exact:true});await trigger.focus();await page.keyboard.press('Enter');await expect(phrase(page)).toBeFocused();await page.keyboard.press('Escape');await expect(trigger).toBeFocused();
  await page.keyboard.press('Enter');await page.getByRole('button',{name:'Close find',exact:true}).click();await expect(trigger).toBeFocused();
 });
+test('find input keeps a readable width at desktop and narrow widths',async({page})=>{
+ await setup(page);await open(page);
+ expect(await phrase(page).evaluate(el=>el.getBoundingClientRect().width)).toBeGreaterThanOrEqual(160);
+ for(const width of [400,360]){await page.setViewportSize({width,height:900});await expect(phrase(page)).toBeVisible();expect(await phrase(page).evaluate(el=>el.getBoundingClientRect().width)).toBeGreaterThanOrEqual(96);}
+});
