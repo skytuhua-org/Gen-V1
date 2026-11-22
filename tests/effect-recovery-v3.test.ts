@@ -8,7 +8,7 @@ import { buildToolRegistry, ToolAuthority } from '../packages/core/tool-authorit
 import { __setEffectFaultHookForTests, ToolEffectLedger, createToolEffectFlags } from '../packages/core/tool-effects.ts';
 import { disableEffects, observationFreshness, reconcileEffect, recoverEffects, retryDecision } from '../packages/core/effect-recovery.ts';
 import { ToolEffectReadModels } from '../packages/core/tool-effect-read-models.ts';
-import type { Thread, ToolCall } from '../packages/contracts/index.ts';
+import type { Operation, Thread, ToolCall } from '../packages/contracts/index.ts';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -150,19 +150,29 @@ it('does not repeat an effect across an invocation page boundary', async () => {
   expect(new Set(seen).size).toBe(3);
 });
 
-const operationDefinition = { id: 'operation:file.replace', version: 1 as const, schemaDigest: 'd', risk: 'HOST_EXECUTE' as const, replayClass: 'NONREPLAYABLE' as const, allowedRoles: ['run' as const], executorBinding: 'domain' as const, approval: 'operation' as const };
 const crashedOperation = { id: 'op-crash', threadId: 'thread-1', revision: 1, kind: 'file.replace', description: '', args: {}, resourceIds: [], preconditions: {}, status: 'succeeded' as const, approved: true, createdAt: '', result: { done: true } };
 
-it('settles a crashed operation dispatch from the committed operation record', async () => {
-  const { store, ledger } = await fixture();
-  const admitted = ledger.admit({
-    call: { name: 'operation:file.replace', args: { invocationId: 'operation:op-crash@1', operationId: 'op-crash' } },
-    owner: { threadId: 'thread-1', runId: 'run-1', epoch: 1, projectId: 'p1', workspaceId: 'w1', accountBinding: 'acct-1' },
-    definition: operationDefinition,
+function commitAdmittedOperation(store: Store, ledger: ToolEffectLedger, preconditions: Record<string, string> = {}, recorded: Record<string, string> = preconditions) {
+  const owner = thread();
+  const prepared = { ...crashedOperation, status: 'prepared' as const, preconditions };
+  const approval = ledger.issueApproval(prepared, owner);
+  store.internal('fixture.initial', owner.id, () => {
+    store.put('thread', owner.id, owner.id, owner);
+    store.put('operation', prepared.id, owner.id, prepared);
+    store.put('approval', approval.approvalId, owner.id, approval);
   });
-  expect(admitted.state).toBe('DISPATCHED');
-  store.internal('fixture.operation', 'thread-1', () => store.put('operation', 'op-crash', 'thread-1', crashedOperation));
-  const outcome = recoverEffects(store);
+  const admitted = ledger.admitOperationDispatch(prepared, owner, () =>
+    store.put('operation', prepared.id, owner.id, { ...prepared, status: 'running' }));
+  expect(admitted?.state).toBe('DISPATCHED');
+  store.internal('fixture.completed', owner.id, () =>
+    store.put('operation', prepared.id, owner.id, { ...prepared, status: 'succeeded', preconditions: recorded, result: { done: true } }));
+  return approval;
+}
+
+it('settles a crashed operation dispatch only from signed, consumed and unchanged dispatch evidence', async () => {
+  const { store, ledger } = await fixture();
+  commitAdmittedOperation(store, ledger);
+  const outcome = recoverEffects(store, ledger);
   expect(outcome.uncertain).toEqual([]);
   const effect = ledger.get('operation:op-crash@1');
   expect(effect?.state).toBe('SUCCEEDED');
@@ -181,47 +191,75 @@ it('does not inherit an operation outcome onto a forged invocation identity', as
   });
   expect(admitted.state).toBe('DISPATCHED');
   store.internal('fixture.operation', 'thread-1', () => store.put('operation', 'op-crash', 'thread-1', crashedOperation));
-  const outcome = recoverEffects(store);
+  const outcome = recoverEffects(store, ledger);
   expect(outcome.uncertain).toEqual(['operation:op-crash@1']);
   expect(ledger.get('operation:op-crash@1')?.state).toBe('UNKNOWN_EXTERNAL_OUTCOME');
 });
 
 it.each(['operation:op-crash@01', 'operation:op-crash@0001'] as const)('does not settle noncanonical operation receipt %s', async invocationId => {
   const { store, ledger } = await fixture();
-  ledger.admit({
-    call: { name: 'operation:file.replace', args: { invocationId, operationId: 'op-crash' } },
-    owner: { threadId: 'thread-1', runId: 'run-1', epoch: 1, projectId: 'p1', workspaceId: 'w1', accountBinding: 'acct-1' },
-    definition: operationDefinition,
-    targetPreconditions: ['path=/approved'],
+  commitAdmittedOperation(store, ledger, { path: '/approved' });
+  const canonical = ledger.get('operation:op-crash@1')!;
+  store.internal('fixture.alias', 'thread-1', () => {
+    store.put('toolEffect', canonical.invocationId, canonical.threadId, { ...canonical, state: 'UNKNOWN_EXTERNAL_OUTCOME' });
+    store.put('toolEffect', invocationId, canonical.threadId, { ...canonical, invocationId, effectId: 'eff_' + invocationId, state: 'DISPATCHED' });
   });
-  store.internal('fixture.operation', 'thread-1', () =>
-    store.put('operation', 'op-crash', 'thread-1', { ...crashedOperation, preconditions: { path: '/approved' } }));
-  const result = recoverEffects(store);
-  expect(result.uncertain).toEqual([invocationId]);
+  const result = recoverEffects(store, ledger);
+  expect(result.uncertain).toContain(invocationId);
   expect(ledger.get(invocationId)?.state).toBe('UNKNOWN_EXTERNAL_OUTCOME');
 });
 
 it.each([
-  { admitted: ['path=/approved'], recorded: { path: '/approved' }, expected: 'SUCCEEDED' },
-  { admitted: ['path=/changed'], recorded: { path: '/approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
-  { admitted: ['path=/approved', 'revision=2'], recorded: { path: '/approved', revision: 1 }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
-  { admitted: ['path=/approved'], recorded: { path: '/approved', revision: 1 }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
-  // The legacy key=value encoding cannot distinguish these two target maps.
-  { admitted: ['path=draft=approved'], recorded: { path: 'draft=approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
-  { admitted: ['path=draft=approved'], recorded: { 'path=draft': 'approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
-])('recovers a completed operation only when admitted target preconditions match ($expected)', async ({ admitted, recorded, expected }) => {
+  { admitted: { path: '/approved' }, recorded: { path: '/approved' }, expected: 'SUCCEEDED' },
+  { admitted: { path: '/changed' }, recorded: { path: '/approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
+  { admitted: { path: '/approved', revision: '2' }, recorded: { path: '/approved', revision: '1' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
+  { admitted: { path: '/approved' }, recorded: { path: '/approved', revision: '1' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
+  { admitted: { path: 'draft=approved' }, recorded: { path: 'draft=approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
+  { admitted: { path: 'draft=approved' }, recorded: { 'path=draft': 'approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
+])('recovers only an exact authenticated target ($expected)', async ({ admitted, recorded, expected }) => {
   const { store, ledger } = await fixture();
-  ledger.admit({
-    call: { name: 'operation:file.replace', args: { invocationId: 'operation:op-crash@1', operationId: 'op-crash' } },
-    owner: { threadId: 'thread-1', runId: 'run-1', epoch: 1, projectId: 'p1', workspaceId: 'w1', accountBinding: 'acct-1' },
-    definition: operationDefinition,
-    targetPreconditions: admitted,
-  });
-  store.internal('fixture.operation', 'thread-1', () =>
-    store.put('operation', 'op-crash', 'thread-1', { ...crashedOperation, preconditions: recorded }));
-  const outcome = recoverEffects(store);
+  commitAdmittedOperation(store, ledger, admitted, recorded);
+  const outcome = recoverEffects(store, ledger);
   expect(ledger.get('operation:op-crash@1')?.state).toBe(expected);
   expect(outcome.uncertain).toEqual(expected === 'SUCCEEDED' ? [] : ['operation:op-crash@1']);
+});
+
+it.each(['args', 'resourceIds', 'kind', 'run', 'epoch', 'account', 'project', 'workspace',
+  'definitionDigest', 'privateArgumentCommitment', 'approvalId', 'spentGrant'] as const)
+('quarantines recorded success after %s provenance drift', async field => {
+  const { store, ledger } = await fixture();
+  const approval = commitAdmittedOperation(store, ledger, { path: '/approved' });
+  store.internal('fixture.provenance-drift', 'thread-1', () => {
+    const operation = store.get<Operation>('operation', 'op-crash')!;
+    const owner = store.get<Thread>('thread', 'thread-1')!;
+    const effect = ledger.get('operation:op-crash@1')!;
+    if (field === 'args') store.put('operation', operation.id, operation.threadId, { ...operation, args: { path: '/changed' } });
+    else if (field === 'resourceIds') store.put('operation', operation.id, operation.threadId, { ...operation, resourceIds: ['new-resource'] });
+    else if (field === 'kind') store.put('operation', operation.id, operation.threadId, { ...operation, kind: 'folder.delete' });
+    else if (field === 'run') store.put('thread', owner.id, owner.id, { ...owner, runId: 'other-run' });
+    else if (field === 'epoch') store.put('thread', owner.id, owner.id, { ...owner, epoch: 2 });
+    else if (field === 'account') store.put('thread', owner.id, owner.id, { ...owner, accountId: 'other-account' });
+    else if (field === 'project') store.put('thread', owner.id, owner.id, { ...owner, projectId: 'other-project' });
+    else if (field === 'workspace') store.put('thread', owner.id, owner.id, { ...owner, workspaceId: 'other-workspace' });
+    else if (field === 'definitionDigest') store.put('toolEffect', effect.invocationId, effect.threadId, { ...effect, definitionDigest: 'altered' });
+    else if (field === 'privateArgumentCommitment') store.put('toolEffect', effect.invocationId, effect.threadId, { ...effect, privateArgumentCommitment: 'altered' });
+    else if (field === 'approvalId') store.put('toolEffect', effect.invocationId, effect.threadId, { ...effect, approvalId: 'other-grant' });
+    else if (field === 'spentGrant') {
+      const grant = store.get('approval', approval.approvalId) as { remainingUses: number };
+      store.put('approval', approval.approvalId, owner.id, { ...grant, remainingUses: 1 });
+    }
+  });
+  const result = recoverEffects(store, ledger);
+  expect(result.uncertain).toEqual(['operation:op-crash@1']);
+  expect(ledger.get('operation:op-crash@1')?.state).toBe('UNKNOWN_EXTERNAL_OUTCOME');
+});
+
+it('requires host signing custody before inheriting an otherwise identical committed result', async () => {
+  const { store, ledger } = await fixture();
+  commitAdmittedOperation(store, ledger);
+  const result = recoverEffects(store);
+  expect(result.uncertain).toEqual(['operation:op-crash@1']);
+  expect(ledger.get('operation:op-crash@1')?.state).toBe('UNKNOWN_EXTERNAL_OUTCOME');
 });
 
 it.each(['id', 'schemaDigest'] as const)('refuses retry after the registered %s changes', async field => {

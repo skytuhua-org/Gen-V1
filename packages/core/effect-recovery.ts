@@ -1,6 +1,7 @@
-import { HarnessError, type Operation } from "../contracts/index.ts";
+import { HarnessError, type Operation, type Thread } from "../contracts/index.ts";
 import type { EffectState, ObservationFreshness, ToolEffectRecord } from "../contracts/tool-effects.ts";
 import type { RegistryEntry } from "./tool-authority.ts";
+import type { ToolEffectLedger } from "./tool-effects.ts";
 import type { Store } from "../storage/store.ts";
 
 const now = () => new Date().toISOString();
@@ -15,7 +16,7 @@ const appendTransition = (effect: ToolEffectRecord, to: EffectState, note: strin
  * explicitly uncertain — the external outcome may or may not have happened.
  * PREPARED effects never left the host and stay durable; their owner was
  * revoked by recovery, so they fail closed rather than being replayable. */
-export function recoverEffects(store: Store): { uncertain: string[]; interrupted: string[] } {
+export function recoverEffects(store: Store, ledger?: ToolEffectLedger): { uncertain: string[]; interrupted: string[] } {
   const uncertain: string[] = [], interrupted: string[] = [];
   for (const effect of store.all<ToolEffectRecord>("toolEffect")) {
     if (effect.state === "DISPATCHED") {
@@ -26,23 +27,10 @@ export function recoverEffects(store: Store): { uncertain: string[]; interrupted
       // and revision) before the operation's outcome is inherited.
       const opMatch = /^operation:(.+)@(\d+)$/.exec(effect.invocationId);
       const operation = opMatch ? store.get<Operation>("operation", opMatch[1]) : null;
-      // The invocation shape alone does not prove which target was dispatched.
-      // Do not inherit an operation outcome from a receipt with stale or
-      // conflicting target preconditions.
-      const targetPreconditions = operation
-        ? Object.entries(operation.preconditions).map(([key, value]) => key + "=" + value)
-        : [];
-      const bound = Boolean(
-        operation &&
-        effect.toolId === "operation:" + operation!.kind &&
-        effect.threadId === operation!.threadId &&
-        effect.owner.threadId === operation!.threadId &&
-        effect.invocationId === "operation:" + operation!.id + "@" + operation!.revision &&
-        effect.targetPreconditions.length === targetPreconditions.length &&
-        // Legacy `key=value` receipts lose the boundary when either side has `=`.
-        // An ambiguous receipt cannot prove an exact target after a restart.
-        effect.targetPreconditions.every((entry, index) => entry === targetPreconditions[index]
-          && entry.indexOf("=") === entry.lastIndexOf("=")));
+      // Recompute the exact authenticated dispatch and consumed approval.
+      // Without host custody, a matching name/precondition string is not proof.
+      const bound = Boolean(operation && ledger?.matchesRecoveredOperationDispatch(
+        effect, operation, store.get<Thread>("thread", operation.threadId) ?? null));
       const recorded = bound && ["succeeded", "failed", "cancelled"].includes(operation!.status)
         ? ({ succeeded: "SUCCEEDED", failed: "FAILED", cancelled: "CANCELLED" } as const)[operation!.status as "succeeded" | "failed" | "cancelled"]
         : null;

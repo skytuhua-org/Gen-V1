@@ -2331,7 +2331,7 @@ export class Service {
       return { inferenceCalls: 0 };
     });
     if (this.effects.admissionsDisabled()) disableEffects(this.store);
-    else if (this.effectFlags.enabled("audit.effectsV1") || this.effectFlags.enabled("security.authorityV1")) recoverEffects(this.store);
+    else if (this.effectFlags.enabled("audit.effectsV1") || this.effectFlags.enabled("security.authorityV1")) recoverEffects(this.store, this.effects);
     this.backgroundWork.recover();
     this.backgroundWork.start();
     this.intake.start();

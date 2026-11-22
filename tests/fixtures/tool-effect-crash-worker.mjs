@@ -95,7 +95,7 @@ if (mode === 'crash') {
 }
 
 const before = ledger.get(invocationId);
-const recovery = recoverEffects(store);
+const recovery = recoverEffects(store, ledger);
 const after = ledger.get(invocationId);
 let readmissionStarted = 0, readmissionState = null, readmissionError = null;
 if (after) {
