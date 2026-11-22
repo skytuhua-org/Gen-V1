@@ -2,10 +2,10 @@ import {expect,it} from 'vitest';
 import {CAPABILITIES,validateSurface} from '../packages/ui-catalog';
 import {taskDesignScenes,TASK_DESIGN_SELECTORS} from '../scripts/task-design-scenes';
 
-it('keeps all 48 advertised components in 18 valid recording scenes with visible selectors',()=>{
- const scenes=taskDesignScenes();expect(scenes).toHaveLength(18);
+it('keeps all 49 advertised components in 19 valid recording scenes with visible selectors',()=>{
+ const scenes=taskDesignScenes();expect(scenes).toHaveLength(19);
  const recorded=new Set(scenes.flatMap(scene=>{validateSurface(scene.spec);return Object.values(scene.spec.elements).map(node=>node.type);}));
- expect([...recorded].sort()).toEqual(CAPABILITIES.map(component=>component.name).sort());expect(recorded.size).toBe(48);
+ expect([...recorded].sort()).toEqual(CAPABILITIES.map(component=>component.name).sort());expect(recorded.size).toBe(49);
  for(const component of recorded)expect(TASK_DESIGN_SELECTORS[component]).toBeTruthy();
 });
 
