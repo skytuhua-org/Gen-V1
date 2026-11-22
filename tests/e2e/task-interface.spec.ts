@@ -188,3 +188,21 @@ test('capture one batched desktop, narrow and theme inspection of reusable task 
   }
   await writeFile(`${path}/manifest.json`, JSON.stringify({ provenance: 'Authored synthetic local renderer fixtures. No live model, GitHub, database, geographic provider, or external feedback delivery.', reducedMotion: true, references: ['merge-16.png', 'graph-14.png', 'migration-16.png', 'faq-24.png'], metrics }, null, 2));
 });
+
+test('map feedback confirmation follows the selected place and prevents repeat sends', async ({ page }) => {
+  const fixture = await serveTaskFixture(page, taskFixture(linkedMapSpec, { places: linkedMapData })); await page.goto('/');
+  await expect(page.locator('.task-map')).toBeVisible();
+  const send = page.getByRole('button', { name: 'Send feedback request', exact: true });
+  await send.click();
+  await expect(page.locator('.task-map-feedback')).toHaveText('Feedback requested for Print studio.');
+  await expect(page.getByRole('button', { name: 'Request sent', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Next place' }).click();
+  await expect(page.getByRole('region', { name: 'Selected place' })).toContainText('Ceramics room');
+  await expect(page.locator('.task-map-feedback')).toHaveCount(0);
+  await expect(send).toBeEnabled();
+  await page.getByRole('button', { name: 'Previous place' }).click();
+  await expect(page.getByRole('region', { name: 'Selected place' })).toContainText('Print studio');
+  await expect(page.locator('.task-map-feedback')).toHaveText('Feedback requested for Print studio.');
+  await expect(page.getByRole('button', { name: 'Request sent', exact: true })).toBeDisabled();
+  expect(fixture.commands.filter(command => command.type === 'action.submit')).toHaveLength(1);
+});
