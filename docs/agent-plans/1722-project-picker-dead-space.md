@@ -34,6 +34,7 @@
 - T02 (owner A): Playwright/vitest measuring `.ui-modal.project-picker` clientHeight at 0, 2 and 40 rows. Done-when: ≤ chrome+rows+4px at small counts, ≤520px at large.
 
 ## VALIDATION
+- Fixture setup: `pnpm build` first, then serve the fixture host — `node --import tsx --input-type=module -e "import {openReviewHost} from './scripts/review-host.ts'; import {mkdtempSync} from 'node:fs'; import {join} from 'node:path'; import {tmpdir} from 'node:os'; await openReviewHost(mkdtempSync(join(tmpdir(),'genv1-')), 4317)"` — and browse http://127.0.0.1:4317 (the Vite dev server on :5173 fails API writes on Linux; use the built host only).
 - vitest/Playwright PASS; `pnpm lint` PASS.
 - Manual: counts {0 (No projects found), 2, 12, 40} at viewport heights 900px and 500px; colors editor open; search filtering shrinking the list live.
 - Acceptance: each requirement → T01/T02 checks above.

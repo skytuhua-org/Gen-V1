@@ -36,6 +36,7 @@ The find-in-conversation button is active on a brand-new conversation with zero 
 - T02 (owner A): vitest on the gate logic + Playwright click/Ctrl+F on empty vs non-empty. Done-when: passes.
 
 ## VALIDATION
+- Fixture setup: `pnpm build` first, then serve the fixture host — `node --import tsx --input-type=module -e "import {openReviewHost} from './scripts/review-host.ts'; import {mkdtempSync} from 'node:fs'; import {join} from 'node:path'; import {tmpdir} from 'node:os'; await openReviewHost(mkdtempSync(join(tmpdir(),'genv1-')), 4317)"` — and browse http://127.0.0.1:4317 (the Vite dev server on :5173 fails API writes on Linux; use the built host only).
 - vitest PASS; `pnpm lint && pnpm typecheck` PASS.
 - Manual matrix: empty transcript {click 🔍, Ctrl+F} → nothing; one message sent → button enabled, bar opens, search works; delete/clear → disabled again. 420px width recheck.
 - Acceptance: requirements ↔ T01/T02 mapping above.

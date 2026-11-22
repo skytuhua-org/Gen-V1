@@ -34,6 +34,7 @@ The whole app animates in pieces (`.thread-item`, `[role=tabpanel]`, messages vi
 - T02 (owner A): Playwright/vitest asserting computed `animation-name` is `ui-item-in` under normal motion and `none` under `data-motion="reduced"`. Done-when: passes.
 
 ## VALIDATION
+- Fixture setup: `pnpm build` first, then serve the fixture host — `node --import tsx --input-type=module -e "import {openReviewHost} from './scripts/review-host.ts'; import {mkdtempSync} from 'node:fs'; import {join} from 'node:path'; import {tmpdir} from 'node:os'; await openReviewHost(mkdtempSync(join(tmpdir(),'genv1-')), 4317)"` — and browse http://127.0.0.1:4317 (the Vite dev server on :5173 fails API writes on Linux; use the built host only).
 - vitest/Playwright PASS; `pnpm lint` PASS.
 - Manual: load /new (animation plays once), switch to a thread and back (plays again once), toggle reduced motion (instant), dark + light themes, 420px width.
 - Acceptance: requirements ↔ T01/T02.

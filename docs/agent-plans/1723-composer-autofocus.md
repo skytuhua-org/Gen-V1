@@ -36,6 +36,7 @@ On the welcome/empty-project screen ("What are we working on?" + composer) the c
 - T02 (owner A): vitest or Playwright check on activeElement in both cases + dialog-open case. Done-when: passes locally.
 
 ## VALIDATION
+- Fixture setup: `pnpm build` first, then serve the fixture host — `node --import tsx --input-type=module -e "import {openReviewHost} from './scripts/review-host.ts'; import {mkdtempSync} from 'node:fs'; import {join} from 'node:path'; import {tmpdir} from 'node:os'; await openReviewHost(mkdtempSync(join(tmpdir(),'genv1-')), 4317)"` — and browse http://127.0.0.1:4317 (the Vite dev server on :5173 fails API writes on Linux; use the built host only).
 - `pnpm exec vitest run <file>` PASS; `pnpm lint && pnpm typecheck` PASS.
 - Manual: fresh /new → type immediately (no click) → sends; open existing thread with history → not focused; open Select project dialog, close → focus returns to textarea or composer (existing dialog focus-restore keeps working).
 - Acceptance: every requirement → T01/T02.
