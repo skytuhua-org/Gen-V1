@@ -16,6 +16,7 @@ import {createStartupOutputCapture,finishBackendStartup,nodeSidecarArguments,req
 import {releaseOwnedBrowsers,detachOwnedBrowser} from './browser-lifecycle.ts';
 import {ensureMainDockedBrowser} from './docked-browser.ts';
 import {nativeBrowserBounds} from './browser-bounds.ts';
+import {createBrowserFind,type BrowserFindController} from './browser-find.ts';
 import {launchDesktopSignIn,parseDesktopSignInTarget} from './auth-launcher.ts';
 import {captureDesktopPlacement,createNormalBounds,parseDesktopPlacement,placeOnDesktopDisplay,restoreDesktopPlacement,retainDesktopPlacement,type DesktopDisplay,type DesktopPlacement} from './display-layout.ts';
 import type {ConnectionProviderId} from '../../packages/contracts/connections.ts';
@@ -28,7 +29,7 @@ import {createAttentionPopups,attentionPopupHtml,type AttentionPopupAction,type 
 import {attentionDeliverySchema} from '../../packages/contracts/attention.ts';
 const persistence=createPersistenceQueue();
 
-interface BrowserRecord {id:string;view:WebContentsView;state:DesktopBrowserState;owner?:WindowRecord;generation:number;networkReady:Promise<void>}
+interface BrowserRecord {id:string;view:WebContentsView;state:DesktopBrowserState;owner?:WindowRecord;generation:number;networkReady:Promise<void>;find:BrowserFindController}
 interface WindowRecord extends NativeCloseOwner {id:string;surface:DesktopSurface;window:BrowserWindow;url:string;ready:boolean;settled:boolean;visible:boolean;normalBounds:ReturnType<typeof createNormalBounds>;placement?:DesktopPlacement;appliedBounds?:DesktopBounds;monitorRescued?:boolean;recoveries?:number;resolveReady:(value:DesktopWindowInfo)=>void;rejectReady:(error:Error)=>void;readyPromise:Promise<DesktopWindowInfo>;readyTimer:ReturnType<typeof setTimeout>;browser?:BrowserRecord;dockedBrowser?:BrowserRecord}
 interface SavedWindow {surface:DesktopSurface;bounds:DesktopBounds;placement?:DesktopPlacement;open:boolean;visible?:boolean;alwaysOnTop?:boolean;dockedBrowserId?:string}
 const windows=new Map<string,WindowRecord>(),browsers=new Map<string,BrowserRecord>();
@@ -126,17 +127,21 @@ function browserRecord(id:string):BrowserRecord {
  const browserSession=session.fromPartition('persist:harness-browser'),networkReady=secureBrowserSession(browserSession);
  const view=new WebContentsView({webPreferences:{session:browserSession,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false}});
  view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
- const record:BrowserRecord={id,view,state:{url:'about:blank',title:'Browser',canGoBack:false,canGoForward:false,loading:false},generation:0,networkReady};void networkReady.catch(error=>{record.state.error='The isolated browser connection could not start: '+String(error instanceof Error?error.message:error).slice(0,200);broadcast();});browsers.set(id,record);
+ const record:BrowserRecord={id,view,state:{url:'about:blank',title:'Browser',canGoBack:false,canGoForward:false,loading:false},generation:0,networkReady,find:undefined as unknown as BrowserFindController};void networkReady.catch(error=>{record.state.error='The isolated browser connection could not start: '+String(error instanceof Error?error.message:error).slice(0,200);broadcast();});browsers.set(id,record);
+ record.find=createBrowserFind(view.webContents,()=>!view.webContents.isDestroyed()&&browsers.get(id)===record,next=>{record.state.find=next;broadcast();});
+ view.webContents.on('found-in-page',(_event,result)=>record.find.found(result.requestId,{matches:result.matches,activeMatchOrdinal:result.activeMatchOrdinal,finalUpdate:result.finalUpdate}));
+ view.webContents.on('before-input-event',(event,input)=>{if(input.type==='keyDown'&&input.key.toLowerCase()==='f'&&(input.control||input.meta)&&!input.alt&&!input.isComposing){event.preventDefault();record.find.open();}});
  view.webContents.setWindowOpenHandler(()=>({action:'deny'}));view.webContents.on('will-attach-webview',event=>event.preventDefault());
  view.webContents.on('will-navigate',(event,url)=>{try{remoteBrowserUrl(url);}catch{event.preventDefault();record.state.error='Local, private-network and non-HTTP pages are blocked.';broadcast();}});
  view.webContents.on('will-redirect',(event,url)=>{try{remoteBrowserUrl(url);}catch{event.preventDefault();}});
- view.webContents.on('did-navigate',()=>browserState(record));view.webContents.on('did-navigate-in-page',()=>browserState(record));view.webContents.on('did-start-loading',()=>browserState(record));view.webContents.on('did-stop-loading',()=>browserState(record));view.webContents.on('page-title-updated',()=>browserState(record));
+ view.webContents.on('did-navigate',()=>{record.find.reset();browserState(record);});view.webContents.on('did-navigate-in-page',()=>{record.find.reset();browserState(record);});view.webContents.on('did-start-loading',()=>browserState(record));view.webContents.on('did-stop-loading',()=>browserState(record));view.webContents.on('page-title-updated',()=>browserState(record));
  view.webContents.on('did-fail-load',(_event,code,description,_url,isMainFrame)=>{if(isMainFrame&&code!==-3){record.state.error=description.slice(0,300);browserState(record);}});
- view.webContents.on('render-process-gone',()=>{record.state.error='The browser page stopped. Reload it to continue.';record.state.loading=false;broadcast();});
+ view.webContents.on('render-process-gone',()=>{record.find.reset();record.state.error='The browser page stopped. Reload it to continue.';record.state.loading=false;broadcast();});
  void view.webContents.loadURL('about:blank');return record;
 }
 function moveBrowser(browser:BrowserRecord,owner:WindowRecord,docked:boolean){
  const previous=browser.owner;
+ browser.find.reset();
  if(previous&&!previous.window.isDestroyed())detachOwnedBrowser(previous,browser,value=>previous.window.contentView.removeChildView(value.view));
  browser.owner=owner;if(docked)owner.dockedBrowser=browser;else owner.browser=browser;
  owner.window.contentView.addChildView(browser.view);const [width,height]=owner.window.getContentSize();browser.view.setBounds(docked?{x:Math.max(0,width-520),y:100,width:Math.min(520,width),height:Math.max(0,height-100)}:{x:0,y:96,width,height:Math.max(0,height-96)});broadcast();
@@ -144,6 +149,7 @@ function moveBrowser(browser:BrowserRecord,owner:WindowRecord,docked:boolean){
 function loseBrowserOwner(record:WindowRecord){
  const failures=releaseOwnedBrowsers(record,browsers,browser=>{
   browser.generation++;
+  browser.find.reset();
   try{if(!record.window.isDestroyed())record.window.contentView.removeChildView(browser.view);}
   finally{if(!browser.view.webContents.isDestroyed())browser.view.webContents.close({waitForBeforeUnload:false});}
  });
@@ -170,7 +176,7 @@ async function openSurface(raw:unknown,sourceBounds?:DesktopBounds):Promise<Desk
  native.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));native.webContents.session.setPermissionCheckHandler(()=>false);secureSessionDownloads(native.webContents.session);
  native.on('close',event=>{if(!quitting){event.preventDefault();void requestClose(record).then(allow=>{if(allow)destroyWindow(record);else cancelClose(record);}).catch(()=>cancelClose(record));}});
  native.on('closed',()=>{clearTimeout(record.readyTimer);if(!record.settled){record.settled=true;record.rejectReady(Error('The detached window closed before it was ready'));}windows.delete(id);if(record.closeRequest){clearTimeout(record.closeRequest.timer);record.closeRequest.resolve(false);}broadcast();});
- const resized=()=>{remember(record);if(record.browser){const [width,height]=native.getContentSize();record.browser.view.setBounds({x:0,y:96,width,height:Math.max(0,height-96)});}};
+ const resized=()=>{remember(record);};
  const manuallyPlaced=(_event:unknown,next:DesktopBounds)=>{
   if(!record.ready||native.isMaximized()||native.isMinimized()||native.isFullScreen())return;
   record.normalBounds.observe(next,{manual:true,normal:true});record.placement=captureDesktopPlacement(record.normalBounds.read(),displays());record.appliedBounds=record.normalBounds.read();record.monitorRescued=false;remember(record);
@@ -291,12 +297,17 @@ function registerIpc(){
    if(quitting||quitPending||record.window.isDestroyed()||windows.get(record.id)!==record)throw Error('The workspace is closing.');
    const browser=record.dockedBrowser;if(!browser)throw Error('Only the docked browser can be closed from the workspace.');
    detachOwnedBrowser(record,browser,value=>{try{record.window.contentView.removeChildView(value.view);}catch{}});
-   browser.generation++;if(browsers.get(browser.id)===browser)browsers.delete(browser.id);
+   browser.generation++;browser.find.reset();if(browsers.get(browser.id)===browser)browsers.delete(browser.id);
    if(!browser.view.webContents.isDestroyed())browser.view.webContents.close({waitForBeforeUnload:false});
    remember(record);broadcast();
   });
   const browser=record.browser??record.dockedBrowser;if(!browser)throw Error('No browser is attached to this window');const contents=browser.view.webContents;
-  if(command.type==='bounds'){if(!record.dockedBrowser)throw Error('Only the docked browser can set content bounds');browser.view.setBounds(nativeBrowserBounds(command.bounds,record.window.getContentSize(),record.window.webContents.getZoomFactor()));return;}
+  if(command.type==='bounds'){if(record.dockedBrowser!==browser&&record.browser!==browser)throw Error('Only the owning window can set browser content bounds');browser.view.setBounds(nativeBrowserBounds(command.bounds,record.window.getContentSize(),record.window.webContents.getZoomFactor()));return;}
+  if(command.type==='find-open'){browser.find.open();return;}
+  if(command.type==='find-query'){browser.find.query(command.query);return;}
+  if(command.type==='find-next'){browser.find.next();return;}
+  if(command.type==='find-prev'){browser.find.previous();return;}
+  if(command.type==='find-close'){browser.find.close();if(!contents.isDestroyed())contents.focus();return;}
   await browser.networkReady;const generation=++browser.generation;
   if(command.type==='navigate'){if(!await allowRemoteBrowserUrl(command.url))throw Error('Only public HTTP and HTTPS pages are allowed. Local and private-network requests are blocked.');if(generation!==browser.generation)return;browser.state.error=undefined;await contents.loadURL(remoteBrowserUrl(command.url).href).catch(error=>{if(generation===browser.generation){browser.state.error=error instanceof Error?error.message:'The page could not be loaded';browserState(browser);}});}
   else if(command.type==='back'&&contents.navigationHistory.canGoBack())contents.navigationHistory.goBack();

@@ -21,3 +21,9 @@ it('leaves the dock absent and toolbar address empty without a native provider',
  const html=renderToStaticMarkup(createElement(DesktopBrowserToolbar));
  expect(html).toContain('<strong>Browser</strong>');expect(html).toContain('value=""');expect(html).not.toContain('role="alert"');
 });
+
+it('renders the find bar with a live match count and no address submission',()=>{
+ const html=renderToStaticMarkup(createElement(DesktopBrowserToolbar,{state:{...state,find:{open:true,openRequest:1,query:'reading',ordinal:2,matches:5,searching:false}}}));
+ expect(html).toContain('role="search"');expect(html).toContain('aria-label="Find in page"');expect(html).toContain('aria-label="Next match"');expect(html).toContain('aria-label="Previous match"');
+ expect(html).toContain('2 of 5');expect(html).toContain('aria-live="polite"');expect(html).not.toContain('type="find"');
+});
