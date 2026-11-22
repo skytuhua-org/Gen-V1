@@ -954,3 +954,161 @@ for (const source of ["project", "granted"])
 			).toBeVisible();
 		},
 	);
+
+const projectCalls = (page: Page) =>
+	page.evaluate(() => window.__projectPathCalls ?? []);
+
+test("row context menu records a reveal call for the exact relative path and owner", async ({
+	page,
+}) => {
+	const go = await fixture(page, "?bridge=1");
+	await project(page);
+	await go();
+	const row = page.getByRole("button", { name: "ok.txt", exact: true });
+	await row.click({ button: "right" });
+	const menu = page.getByRole("menu", { name: "Actions for ok.txt" });
+	await expect(menu).toBeVisible();
+	await menu.getByRole("menuitem", { name: "Show in File Explorer" }).click();
+	await expect.poll(() => projectCalls(page)).toEqual([
+		{
+			projectId: "project-one",
+			threadId: "task-thread",
+			path: "ok.txt",
+			action: "reveal",
+		},
+	]);
+});
+
+for (const key of ["Shift+F10", "ContextMenu"])
+	test("keyboard opens the row file menu: " + key, async ({ page }) => {
+		const go = await fixture(page, "?bridge=1");
+		await project(page);
+		await go();
+		const row = page.getByRole("button", { name: "ok.txt", exact: true });
+		await row.focus();
+		await page.keyboard.press(key);
+		const menu = page.getByRole("menu", { name: "Actions for ok.txt" });
+		await expect(menu).toBeVisible();
+		await page.keyboard.press("Escape");
+		await expect(menu).toHaveCount(0);
+		await expect(row).toBeFocused();
+	});
+
+test("blocked program entries disable Open with the reason in the title", async ({
+	page,
+}) => {
+	const go = await fixture(page, "?bridge=1");
+	await project(page, [entry("run.ps1"), entry("ok.txt")]);
+	await go();
+	await page
+		.getByRole("button", { name: "run.ps1", exact: true })
+		.click({ button: "right" });
+	const menu = page.getByRole("menu", { name: "Actions for run.ps1" });
+	const open = menu.getByRole("menuitem", {
+		name: "Open with default app",
+	});
+	await expect(open).toBeDisabled();
+	await expect(open).toHaveAttribute(
+		"title",
+		/Open is turned off for programs and scripts\./,
+	);
+	await menu.getByRole("menuitem", { name: "Show in File Explorer" }).click();
+	await expect.poll(() => projectCalls(page)).toEqual([
+		{
+			projectId: "project-one",
+			threadId: "task-thread",
+			path: "run.ps1",
+			action: "reveal",
+		},
+	]);
+});
+
+test("a folder row offers Open folder and records the open action", async ({
+	page,
+}) => {
+	const go = await fixture(page, "?bridge=1");
+	await project(page);
+	await go();
+	await page
+		.getByRole("button", { name: "next", exact: true })
+		.click({ button: "right" });
+	const menu = page.getByRole("menu", { name: "Actions for next" });
+	await expect(
+		menu.getByRole("menuitem", { name: "Open folder" }),
+	).toBeVisible();
+	await menu.getByRole("menuitem", { name: "Open folder" }).click();
+	await expect.poll(() => projectCalls(page)).toEqual([
+		{
+			projectId: "project-one",
+			threadId: "task-thread",
+			path: "next",
+			action: "open",
+		},
+	]);
+});
+
+test("a rejected host call reports one error toast and no retry loop", async ({
+	page,
+}) => {
+	const go = await fixture(page, "?bridge=1&bridge-fail=open");
+	await project(page);
+	await go();
+	await page
+		.getByRole("button", { name: "ok.txt", exact: true })
+		.click({ button: "right" });
+	const menu = page.getByRole("menu", { name: "Actions for ok.txt" });
+	await menu.getByRole("menuitem", { name: "Open with default app" }).click();
+	await expect(page.locator(".ui-toast[role=alert]")).toContainText(
+		"Windows could not open this file. No application is registered.",
+	);
+	await expect(page.locator(".ui-toast[role=alert]")).toHaveCount(1);
+});
+
+test("the header File actions menu acts on the selected file", async ({
+	page,
+}) => {
+	const go = await fixture(page, "?bridge=1");
+	await project(page);
+	await go();
+	await page.getByRole("button", { name: "ok.txt", exact: true }).click();
+	await page.getByRole("button", { name: "File actions" }).click();
+	await page
+		.getByRole("menuitem", { name: "Show in File Explorer" })
+		.click();
+	await expect.poll(() => projectCalls(page)).toEqual([
+		{
+			projectId: "project-one",
+			threadId: "task-thread",
+			path: "ok.txt",
+			action: "reveal",
+		},
+	]);
+});
+
+test("without a desktop bridge the row keeps the native context menu", async ({
+	page,
+}) => {
+	const go = await fixture(page);
+	await project(page);
+	await go();
+	await page
+		.getByRole("button", { name: "ok.txt", exact: true })
+		.click({ button: "right" });
+	await expect(page.getByRole("menu")).toHaveCount(0);
+	await expect(
+		page.getByRole("button", { name: "File actions" }),
+	).toHaveCount(0);
+});
+
+test("granted resources never show the local-host file menu", async ({
+	page,
+}) => {
+	const go = await fixture(page, "?granted=1&bridge=1");
+	await granted(page, [entry("empty.txt")]);
+	await go();
+	await page
+		.getByRole("button", { name: "empty.txt", exact: true })
+		.click({ button: "right" });
+	await expect(page.getByRole("menu")).toHaveCount(0);
+	expect(await projectCalls(page)).toEqual([]);
+});

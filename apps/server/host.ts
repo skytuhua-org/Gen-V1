@@ -9,9 +9,10 @@ import {buildServer,buildWidgetServer,type MountRegistry} from './server.ts';
 import {acquireProfileLease,type ProfileLease} from './profile-lease.ts';
 import {createProtectedHermesService,type EffectServiceOptions} from './effect-service.ts';
 import {WorkspaceRepository} from '../../packages/core/workspace-layout.ts';
+import {workspaceHost} from './workspace-host.ts';
 import {AttentionRepository} from '../../packages/core/attention.ts';
 import type {AttentionDelivery} from '../../packages/contracts/attention.ts';
-import {parseDesktopLayout,type DesktopLayout} from '../../packages/desktop-contract/index.ts';
+import {parseDesktopLayout,type DesktopLayout,type DesktopProjectPathRequest} from '../../packages/desktop-contract/index.ts';
 import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {loadInstalledPlugins,type PluginRegistry} from '../../packages/plugins/host.ts';
@@ -24,7 +25,7 @@ import {createPersonalSkillCatalog} from '../../packages/skill-catalog/adapters.
 import {configureHostCapabilityFlags,readCapabilityFlagOverrides,capabilityEnabled,type CapabilityFlagKey} from '../../packages/core/capability-flags.ts';
 
 export interface HostOptions {dataDir:string;port:number;widgetPort:number;dev:boolean;pluginDir?:string;launchToken?:string;capabilityFlags?:Readonly<Partial<Record<CapabilityFlagKey,boolean>>>;toolEffectFlags?:EffectServiceOptions['toolEffectFlags'];approvedBackendId?:string;isolationBackends?:readonly ExecutionBackend[]}
-export interface RunningHost {attentionRead?():Promise<AttentionDelivery>;attentionAction?(type:'open'|'dismiss',eventId:string):Promise<{threadId?:string;dismissed?:boolean}>;origin:string;widgetOrigin:string;pid:number;close():Promise<void>;nativeLayout?:DesktopLayout;stopAll():Promise<{stopped:number;errors?:string[]}>;saveNativeLayout(layout:unknown):Promise<void>;validatePluginSurface?(surface:unknown):Promise<boolean>;pluginCompatibility?(version:string):Promise<{allowed:boolean}>;updateReadiness?():Promise<{idle:boolean}>;prepareUpdateClose?():Promise<{idle:boolean}>}
+export interface RunningHost {attentionRead?():Promise<AttentionDelivery>;attentionAction?(type:'open'|'dismiss',eventId:string):Promise<{threadId?:string;dismissed?:boolean}>;origin:string;widgetOrigin:string;pid:number;close():Promise<void>;nativeLayout?:DesktopLayout;stopAll():Promise<{stopped:number;errors?:string[]}>;saveNativeLayout(layout:unknown):Promise<void>;validatePluginSurface?(surface:unknown):Promise<boolean>;pluginCompatibility?(version:string):Promise<{allowed:boolean}>;updateReadiness?():Promise<{idle:boolean}>;prepareUpdateClose?():Promise<{idle:boolean}>;projectPath?(request:DesktopProjectPathRequest):Promise<{path:string;kind:'file'|'directory';openable:boolean}>}
 export interface HostFactories {
  acquireProfile:typeof acquireProfileLease;
  createStore(dataDir:string):Store;
@@ -126,6 +127,7 @@ export async function launchHost(options:HostOptions,overrides:Partial<HostFacto
     // plug-in may have changed since download or application startup.
     return {allowed:(await checkInstalledCompatibility(pluginRoot,version)).compatible};
    },
+   async projectPath(request){if(!accepting)throw Error('The host is not accepting project path requests.');return workspaceHost(service!).projects.desktopPath(request.projectId,request.threadId,request.path);},
    async updateReadiness(){return {idle:accepting&&!pluginLoadFailed&&!await plugins?.isBusy()&&service!.isUpdateIdle()};},
    async prepareUpdateClose(){accepting=false;const idle=service!.freezeForUpdate();return {idle:idle&&!pluginLoadFailed&&!await plugins?.isBusy()};},
   };

@@ -1,5 +1,5 @@
 import {contextBridge,ipcRenderer} from 'electron';
-import {DESKTOP_CHANNELS as channels,parseDesktopSurface,type DesktopBridge,type DesktopState} from '../../packages/desktop-contract/index.ts';
+import {DESKTOP_CHANNELS as channels,parseDesktopProjectPathRequest,parseDesktopSurface,type DesktopBridge,type DesktopState} from '../../packages/desktop-contract/index.ts';
 if(process.argv.includes('--gen-attention-popup')){
  contextBridge.exposeInMainWorld('harnessAttention',Object.freeze({
   action:(type:unknown,eventId:unknown)=>{if(!['open','dismiss','pause','resume'].includes(String(type))||typeof eventId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9:_.-]{0,999}$/.test(eventId))return;void ipcRenderer.invoke(channels.attentionPopupAction,{type,eventId}).catch(()=>{});},
@@ -13,6 +13,7 @@ ipcRenderer.on(channels.closeRequest,(_event,requestId:unknown)=>{
 });
 const bridge:DesktopBridge={
  exportProjectMemory:serializedExport=>ipcRenderer.invoke(channels.memoryExport,serializedExport),
+ projectPath:request=>ipcRenderer.invoke(channels.projectPath,parseDesktopProjectPathRequest(request)),
  openAttention:eventId=>ipcRenderer.invoke(channels.attentionOpen,eventId),
  onAttentionOpen:listener=>{const receive=(_event:Electron.IpcRendererEvent,value:unknown)=>{if(value&&typeof value==='object'&&Object.keys(value).length===1&&typeof(value as {threadId?:unknown}).threadId==='string'&&/^[A-Za-z0-9_.:-]{1,200}$/.test((value as {threadId:string}).threadId))listener((value as {threadId:string}).threadId);};ipcRenderer.on(channels.attentionSelected,receive);return()=>ipcRenderer.removeListener(channels.attentionSelected,receive);},
  setTheme:theme=>ipcRenderer.invoke(channels.theme,theme),

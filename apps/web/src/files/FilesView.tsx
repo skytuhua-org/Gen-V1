@@ -10,11 +10,18 @@ import {
 	ChevronRight,
 	File,
 	Folder,
+	MoreHorizontal,
 	PanelLeft,
 	RefreshCw,
 	Search,
 } from "lucide-react";
 import { Select } from "../../../../packages/ui-shell/Select";
+import { ActionMenu } from "../../../../packages/ui-shell/ActionMenu";
+import {
+	FileContextMenu,
+	fileMenuItems,
+	type FileMenuAction,
+} from "./FileContextMenu";
 import type { FilesRead } from "./useFilesRead";
 import "./files.css";
 
@@ -50,6 +57,7 @@ export function FilesView({
 	download,
 	limitNote,
 	projectSearch,
+	fileActions,
 	onDirectory,
 	onSelect,
 	onRefresh,
@@ -65,6 +73,9 @@ export function FilesView({
 	selector?: ReactNode;
 	download?: string;
 	limitNote?: string;
+	fileActions?: {
+		run: (entry: FilesEntry, action: FileMenuAction) => Promise<void>;
+	};
 	projectSearch?: {
 		available: boolean;
 		body: (openPreview: () => void) => ReactNode;
@@ -86,8 +97,35 @@ export function FilesView({
 	const [filter, setFilter] = useState(""),
 		[treeOpen, setTreeOpen] = useState(true),
 		[scope, setScope] = useState("folder"),
+		[headerMenuOpen, setHeaderMenuOpen] = useState(false),
+		[rowMenu, setRowMenu] = useState<{
+			entry: FilesEntry;
+			point: { x: number; y: number } | null;
+		} | null>(null),
 		listId = useId(),
-		filterId = useId();
+		filterId = useId(),
+		menuAnchor = useRef<HTMLButtonElement | null>(null);
+	const actions = source === "project" ? fileActions : undefined;
+	const openRowMenu = (
+		event:
+			| React.MouseEvent<HTMLButtonElement>
+			| React.KeyboardEvent<HTMLButtonElement>,
+		entry: FilesEntry,
+	) => {
+		event.preventDefault();
+		event.stopPropagation();
+		menuAnchor.current = event.currentTarget;
+		setRowMenu({
+			entry,
+			point:
+				event.type === "contextmenu"
+					? {
+						x: (event as React.MouseEvent).clientX,
+						y: (event as React.MouseEvent).clientY,
+					}
+					: null,
+		});
+	};
 	const entries = folder.value?.entries ?? [],
 		visible = entries.filter((entry) =>
 			entry.name.toLowerCase().includes(filter.toLowerCase()),
@@ -253,6 +291,26 @@ export function FilesView({
 												aria-current={
 													selected?.path === entry.path ? "true" : undefined
 												}
+												aria-haspopup={actions ? "menu" : undefined}
+												data-menu-open={
+													rowMenu?.entry.path === entry.path || undefined
+												}
+												onContextMenu={
+													actions
+														? (event) => openRowMenu(event, entry)
+														: undefined
+												}
+												onKeyDown={
+													actions
+														? (event) => {
+															if (
+																event.key === "ContextMenu" ||
+																(event.key === "F10" && event.shiftKey)
+															)
+																openRowMenu(event, entry);
+														}
+														: undefined
+												}
 												onClick={() => {
 													if (entry.kind === "directory") directory(entry.path);
 													else {
@@ -313,6 +371,25 @@ export function FilesView({
 										Download
 									</a>
 								)}
+								{actions && selected && (
+									<ActionMenu
+										iconOnly
+										label="File actions"
+										icon={<MoreHorizontal size={15} />}
+										open={headerMenuOpen}
+										onOpenChange={setHeaderMenuOpen}
+										items={fileMenuItems(selected).map((item) => ({
+											id: item.id,
+											label: item.label,
+											icon: item.icon,
+											title: item.title,
+											disabled: item.disabled,
+											onSelect: () => {
+												void actions.run(selected, item.id);
+											},
+										}))}
+									/>
+								)}
 							</header>
 							<div
 								className="files-preview-content"
@@ -351,6 +428,27 @@ export function FilesView({
 					)}
 				</section>
 			</div>
+			{actions && rowMenu && (
+				<FileContextMenu
+					entry={rowMenu.entry}
+					anchor={menuAnchor}
+					getAnchorRect={
+						rowMenu.point
+							? () => ({
+									left: rowMenu.point!.x,
+									right: rowMenu.point!.x,
+									top: rowMenu.point!.y,
+									bottom: rowMenu.point!.y,
+								})
+							: undefined
+					}
+					open
+					onClose={() => setRowMenu(null)}
+					run={(action) => {
+						void actions.run(rowMenu.entry, action);
+					}}
+				/>
+			)}
 		</div>
 	);
 }

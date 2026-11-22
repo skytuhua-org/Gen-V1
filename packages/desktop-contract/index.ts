@@ -21,9 +21,13 @@ export interface DesktopState {windows:DesktopWindowInfo[];browser?:DesktopBrows
 export interface DesktopContext extends DesktopState {windowId:string;surface:DesktopSurface}
 export interface DesktopWorkspaceChange {connected:boolean;sequence:number}
 export type DesktopBrowserCommand = {type:'open'}|{type:'close'}|{type:'navigate';url:string}|{type:'back'|'forward'|'reload'|'stop'}|{type:'bounds';bounds:{x:number;y:number;width:number;height:number}};
+export type DesktopProjectPathAction = 'reveal'|'open';
+export interface DesktopProjectPathRequest {projectId:string;threadId?:string;path:string;action:DesktopProjectPathAction}
+export interface DesktopProjectPathResult {action:DesktopProjectPathAction}
 export interface DesktopMemoryExportResult {status:'saved'|'cancelled';admitted:true;filename:string;bytes:number;sha256:string}
 export interface DesktopBridge {
   exportProjectMemory?(serializedExport:string):Promise<DesktopMemoryExportResult>;
+  projectPath?(request:DesktopProjectPathRequest):Promise<DesktopProjectPathResult>;
   onAttentionOpen?(listener:(threadId:string)=>void):()=>void;
   openAttention?(eventId:string):Promise<void>;
   setTheme?(theme:'light'|'dark'):Promise<void>;
@@ -48,7 +52,7 @@ export interface DesktopBridge {
   onCloseRequested(handler:()=>Promise<boolean>):()=>void;
   onWorkspaceChanged?(listener:(change:DesktopWorkspaceChange)=>void):()=>void;
 }
-export const DESKTOP_CHANNELS={memoryExport:'harness-desktop:memory-export',attentionOpen:'harness-desktop:attention-open',attentionSelected:'harness-desktop:attention-selected',attentionPopupCards:'harness-attention:cards',attentionPopupAction:'harness-attention:action',theme:'harness-desktop:theme',update:'harness-desktop:update',context:'harness-desktop:context',ready:'harness-desktop:ready',detach:'harness-desktop:detach',reattach:'harness-desktop:reattach',minimize:'harness-desktop:minimize',signIn:'harness-desktop:sign-in',signInStatus:'harness-desktop:sign-in-status',activeSignIn:'harness-desktop:active-sign-in',cancelSignIn:'harness-desktop:cancel-sign-in',reset:'harness-desktop:reset',focus:'harness-desktop:focus',list:'harness-desktop:list',browser:'harness-desktop:browser',state:'harness-desktop:state',closeRequest:'harness-desktop:close-request',closeAnswer:'harness-desktop:close-answer',workspaceChanged:'harness-desktop:workspace-changed',control:'harness-desktop:control',captureLayout:'harness-desktop:capture-layout',applyLayout:'harness-desktop:apply-layout'} as const;
+export const DESKTOP_CHANNELS={memoryExport:'harness-desktop:memory-export',attentionOpen:'harness-desktop:attention-open',attentionSelected:'harness-desktop:attention-selected',attentionPopupCards:'harness-attention:cards',attentionPopupAction:'harness-attention:action',theme:'harness-desktop:theme',update:'harness-desktop:update',context:'harness-desktop:context',ready:'harness-desktop:ready',detach:'harness-desktop:detach',reattach:'harness-desktop:reattach',minimize:'harness-desktop:minimize',signIn:'harness-desktop:sign-in',signInStatus:'harness-desktop:sign-in-status',activeSignIn:'harness-desktop:active-sign-in',cancelSignIn:'harness-desktop:cancel-sign-in',reset:'harness-desktop:reset',focus:'harness-desktop:focus',list:'harness-desktop:list',browser:'harness-desktop:browser',state:'harness-desktop:state',closeRequest:'harness-desktop:close-request',closeAnswer:'harness-desktop:close-answer',workspaceChanged:'harness-desktop:workspace-changed',control:'harness-desktop:control',captureLayout:'harness-desktop:capture-layout',applyLayout:'harness-desktop:apply-layout',projectPath:'harness-desktop:project-path'} as const;
 const kinds=new Set(['main','navigation','workspace','plan','usage','thread','artifact','agent','browser','plugin']);
 const tabs=new Set(['launcher','files','diff','output','usage','notes','artifact','context','terminal','pull-request','linked-pull-requests']);
 export function desktopId(value:unknown):value is string{return typeof value==='string'&&value.length<=200&&/^[a-zA-Z0-9_.:-]+$/.test(value)&&!['__proto__','prototype','constructor'].includes(value);}
@@ -86,4 +90,17 @@ export function parseDesktopLayout(value:unknown):DesktopLayout {
  if(mains!==1)throw Error('A workspace must retain its main window');const docked=windows.find(entry=>entry.surface.kind==='main')?.dockedBrowserId;if(docked&&windows.some(entry=>entry.surface.kind==='browser'&&entry.surface.browserId===docked))throw Error('Duplicate native browser custody');return {version:1,windows};
 }
 export function parseDesktopWindowControl(value:unknown):DesktopWindowControl {const record=strictRecord(value,['windowId','type','visible','enabled']);if(!desktopId(record.windowId))throw Error('Invalid window identity');if(record.type==='visibility'&&Object.keys(record).length===3&&typeof record.visible==='boolean')return {windowId:record.windowId,type:'visibility',visible:record.visible};if(record.type==='always-on-top'&&Object.keys(record).length===3&&typeof record.enabled==='boolean')return {windowId:record.windowId,type:'always-on-top',enabled:record.enabled};throw Error('Invalid window control');}
+const DESKTOP_OPEN_BLOCKED=new Set(['exe','com','bat','cmd','ps1','psm1','psd1','vbs','vbe','js','jse','wsf','wsh','msi','msp','msix','appx','appxbundle','scr','pif','lnk','url','reg','hta','cpl','jar','application','appref-ms','msc','scf','inf','sys','dll','sh']);
+/** Programs and scripts open through the real shell name's last extension; no extension is allowed. */
+export function desktopOpenBlocked(name:string):boolean {const index=name.lastIndexOf('.');return index>0&&DESKTOP_OPEN_BLOCKED.has(name.slice(index+1).toLowerCase());}
+export function parseDesktopProjectPathRequest(value:unknown):DesktopProjectPathRequest {
+  if(!value||typeof value!=='object'||Array.isArray(value)||Object.getPrototypeOf(value)!==Object.prototype)throw Error('Invalid project path request');
+  const record=value as Record<string,unknown>;
+  if(Object.keys(record).some(key=>!['projectId','threadId','path','action'].includes(key)))throw Error('Invalid project path request');
+  if(!desktopId(record.projectId))throw Error('Invalid project identity');
+  if(record.threadId!==undefined&&!desktopId(record.threadId))throw Error('Invalid thread identity');
+  if(typeof record.path!=='string'||record.path.length<1||record.path.length>1024)throw Error('Invalid project path');
+  if(record.action!=='reveal'&&record.action!=='open')throw Error('Invalid project path action');
+  return{projectId:record.projectId,...(record.threadId!==undefined?{threadId:record.threadId}:{}),path:record.path,action:record.action};
+}
 declare global {interface Window {harnessDesktop?:DesktopBridge}}

@@ -1,7 +1,7 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {hostname} from 'node:os';
-import {lstat,mkdir,readFile,realpath,open,rm} from 'node:fs/promises';
-import {dirname,join,relative,resolve} from 'node:path';
+import {lstat,mkdir,readFile,realpath,open,rm,stat} from 'node:fs/promises';
+import {basename,dirname,join,relative,resolve} from 'node:path';
 import {z} from 'zod';
 import {Store} from '../storage/store.ts';
 import {HarnessError,type HostCommand,type ResourceGrant,type Thread} from '../contracts/index.ts';
@@ -14,6 +14,7 @@ import {readBoundFile,withPathGuard} from '../core/file-access.ts';
 import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead} from '../contracts/code-review.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
+import {desktopOpenBlocked} from '../desktop-contract/index.ts';
 
 interface Identity{dev:string;ino:string}
 export interface WorkspaceBinding {id:string;threadId:string;projectId:string;familyId?:string;path:string;branch:string;gitDirectory:string;commonDirectory:string;identity:Identity;gitDirectoryIdentity:Identity;commonDirectoryIdentity:Identity}
@@ -202,5 +203,17 @@ export class ProjectTools{
   return withPathGuard([{path:target,leaf:false}],new AbortController().signal,async()=>{const{readdir}=await import('node:fs/promises'),entries=[];for(const item of(await readdir(target,{withFileTypes:true})).slice(0,500)){if(item.name.toLowerCase()==='.git'||item.name==='.harness-directory-guard'||item.isSymbolicLink())continue;entries.push({name:item.name,path:relativePath?relativePath+'/'+item.name:item.name,kind:item.isDirectory()?'directory':'file'});}return{path:relativePath,entries};});
  }
  async file(projectId:string,threadId:string|undefined,relativePath:string){const{path}=await this.binding(projectId,threadId),target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data)};});}
+ /** Desktop reveal/open resolves a real file or directory under the selected working copy. */
+ async desktopPath(projectId:string,threadId:string|undefined,relativePath:string):Promise<{path:string;kind:'file'|'directory';openable:boolean}>{
+  const{path}=await this.binding(projectId,threadId);
+  let input:string;try{input=pathName.parse(relativePath);}catch{throw new HarnessError('CAPABILITY_DENIED','Choose a file or folder inside this project.');}
+  if(gitSegment(input)||input.split(/[\\/]/).includes('.harness-directory-guard'))throw new HarnessError('CAPABILITY_DENIED','Choose a file or folder inside this project.');
+  const target=join(path,input),resolved=await realpath(target).catch((error:NodeJS.ErrnoException)=>{if(error?.code==='ENOENT')throw new HarnessError('NOT_FOUND','This file is no longer in the project. Refresh Files.');throw error;});
+  if(!inside(path,resolved)||gitSegment(relative(path,resolved)))throw new HarnessError('CAPABILITY_DENIED','Choose a file or folder inside this project.');
+  return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{
+   const info=await stat(resolved);
+   return{path:resolved,kind:info.isDirectory()?'directory':'file',openable:info.isDirectory()||!desktopOpenBlocked(basename(resolved))};
+  });
+ }
  async dispose(){await Promise.allSettled([...this.queues.values()]);}
 }
