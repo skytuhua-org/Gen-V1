@@ -9,10 +9,10 @@
 | Revision / date | r1 / 2026-11-22 |
 | Verified baseline | `main` at `2640b897a42739eba3785fc934af882996c07097` |
 | Plan source | Maintainer feature row: “Pin a few Files previews so you can switch back to the same files while browsing other folders or opening search results.” Binding v1 scope and VS Code references supplied with the assignment; source inspection at the baseline above. |
-| Issue / PR | No exact feature issue found by title search; broader pinned-preview search returned related features, not this scope. No issue or PR created: this assignment explicitly requires local-only planning and a local commit. |
+| Issue / PR | The full plan is published as the body of a new GitHub issue in skytuhua-org/Gen-V1 labeled `feature` and `medium`. This identical file ships in a docs-only PR from this branch, left open for maintainer review and never self-merged. |
 | Related work | [#1344](https://github.com/skytuhua-org/Gen-V1/issues/1344), [#1583](https://github.com/skytuhua-org/Gen-V1/issues/1583), [#1585](https://github.com/skytuhua-org/Gen-V1/issues/1585); integration details below. |
 | Implementation | NOT_STARTED. This document proposes implementation, never claims feature tests have run. |
-| Publication | Deferred by instruction. This local file is the complete plan source, not a published issue body or attachment. HANDOFF_INCOMPLETE for remote retrieval until publication is authorized. |
+| Publication | Authorized. The issue body contains the complete plan and links the commit-pinned identical Markdown copy in the docs-only PR. Issue-body Markdown is not a file attachment. |
 
 `docs/agent-plans/changes-viewed-files.md` is absent at this baseline. The most recent plan-changing commit is the baseline merge (#1150); inspected `ux-linked-prs-dead-end.md` and `1235-t11-model-draft.md` as fallback examples. This plan retains the former's objective/requirements/map/design/DAG/validation/state structure and expands task contracts to the current AGENTS.md requirements.
 
@@ -135,7 +135,7 @@ No persistent migration, schema version, new grant, external network load, analy
 
 ## EXECUTION_DAG
 
-Common contract: implementing agent claims the canonical issue before work once publication is authorized, reads the entire current revision/journal, starts from current main and records exact SHA. Tasks are sequential to avoid overlapping Files edits: `T01 → T02 → T03 → T04 → T05 → T06`. Each task has one owner; no parallel worker edits the same source/test. All tasks must checkpoint and release per AGENTS.md. New names below are proposed files unless listed as existing in REPO_MAP.
+Common contract: implementing agent claims the canonical issue before work, reads the entire current revision/journal, starts from current main and records exact SHA. Tasks are sequential to avoid overlapping Files edits: `T01 → T02 → T03 → T04 → T05 → T06`. Each task has one owner; no parallel worker edits the same source/test. All tasks must checkpoint and release per AGENTS.md. New names below are proposed files unless listed as existing in REPO_MAP.
 
 ### T01 — Rebase integration facts and establish checkout identity
 - Prerequisites/input: baseline, R05/R06/R10, current main and related issue/PR states; no feature code assumed present.
@@ -231,12 +231,12 @@ Release gate: all applicable V rows pass with accessible evidence; no unverified
 
 - Researched/decided: baseline single-selection/search/read/layout behavior, tests, design tokens, explicit six-pin lifecycle, visual/keyboard/motion spec and related issue states. #1344 has not landed at the checked baseline/GitHub state.
 - Implemented: this Markdown plan and its public-source manifest entry only. No feature code, tests, editor, host metadata or UI has been implemented by this planning task.
-- Verified: source inspection and read-only issue/PR queries. Documentation checks are to be executed after the final edit; their actual results belong in the local commit report. No browser/visual/feature verification claimed.
-- Owner/branch: local planning worker on `devin/1795307133-plan-pinned-file-previews`, derived from main at the SHA in META. T01–T06 are NOT_STARTED and unclaimed for implementation.
-- Publication: explicitly deferred; no claim/comments, issue changes, attachment, push or PR performed. Later authorized publisher must find/reuse or create the matching issue, place this **entire** plan in its body, also attach the actual Markdown where supported, or use a reviewed docs PR plus SHA-pinned identical source if attachments are unavailable. Read back every section and compare to the file; never call body Markdown an attachment. Until then remote HANDOFF_INCOMPLETE is intentional, not an accepted durable publication.
+- Verified: source inspection and read-only issue/PR queries. Documentation checks executed: public-source test 13/13 passed; docs-links reported 0 broken links. No browser/visual/feature verification claimed.
+- Owner/branch: planning branch `devin/1795307133-plan-pinned-file-previews`, derived from main at the SHA in META, carries the docs-only PR for maintainer review. T01–T06 are NOT_STARTED and unclaimed for implementation.
+- Publication: the complete plan is the body of the new issue labeled `feature` and `medium`; the issue links the commit-pinned identical Markdown source carried by this branch's docs-only PR. Leave the PR open for maintainer review; never self-merge. Read back every section and compare to the file before declaring HANDOFF_COMPLETE; issue-body Markdown is not a file attachment.
 - Risks: same-owner rebinding is not exposed in current read responses; T01's additive metadata is required, not optional hardening. Concurrent manual editing and renderer stacks touch the same files; reconcile actual merged code before T03. Strictly distinguish per-file denial from lost binding. No polling means externally initiated changes are detected at the next read; never display that read under retained old slots.
 - Pending checks: live host, supported Windows desktop, keyboard/visual/motion and editor-guard checks all remain implementation work. No false claim of passing runtime verification.
-- Exact next step: finish requested local documentation checks and commit these two documentation-related files, without push. After explicit publication/implementation authorization, publish losslessly per AGENTS.md, have receiver ACK full plan/journal, then start T01 from current main and recheck #1344/#1583/#1585.
+- Exact next step: implementing agent claims the issue, reads the entire plan and current journal, ACKs the handoff, starts T01 from current main, and rechecks #1344/#1583/#1585.
 
 ## REFERENCES
 
