@@ -7,7 +7,8 @@ import { ContextMeter, contextNumber, contextSegments, contextTokenCount, type C
 import { unavailableCompaction } from './runtime-presentation';
 import './context-inspector.css';
 import {useSourceWorkbench} from './SourceWorkbench';
-import {ErrorState} from '../../../packages/ui-shell/Feedback';
+import {ErrorState,Spinner} from '../../../packages/ui-shell/Feedback';
+import {toast} from '../../../packages/ui-shell/Toast';
 import {memoryItemV1Schema, memoryRecallV1Schema, type MemoryItemV1, type MemoryRecallV1, type MemoryRevisionRef} from '../../../packages/contracts/project-memory';
 import {MODEL_REQUEST_OBSERVATION_LIMIT, modelRequestObservationV1Schema, type ModelRequestObservationV1} from '../../../packages/contracts/model-request';
 import {ModelRequestDetails} from './UsageDialog';
@@ -116,6 +117,7 @@ function ContextSession({ usage, thread, close, refresh, onError, anchor, compac
     if (!accepted) { setAnimateReceipt(false); return; }
     if (lastReceipt.current === accepted.receipt.id) return;
     lastReceipt.current = accepted.receipt.id; setAnimateReceipt(true);
+    toast('Context compacted', { tone: 'success', durationMs: 5000 });
     const timer = setTimeout(() => setAnimateReceipt(false), 600); return () => clearTimeout(timer);
   }, [accepted?.receipt.id]);
   const compacting = submitting || reported?.status === 'pending' || usage?.activity === 'compacting';
@@ -130,7 +132,7 @@ function ContextSession({ usage, thread, close, refresh, onError, anchor, compac
     if (document && action.current?.disabled && document.activeElement === document.body) panel.current?.focus();
   }, [compacting, thread?.runId]);
   const compact = async () => {
-    if (!thread?.sessionPath || thread.runId || locked.current || compacting || unavailable) return;
+    if (!thread?.sessionPath || thread.runId || locked.current || compacting || unavailable || !measured) return;
     restoreActionFocus.current = action.current?.ownerDocument.activeElement === action.current;
     locked.current = true; setSubmitting(true); setError(''); setRequested(false);
     try {
@@ -140,7 +142,7 @@ function ContextSession({ usage, thread, close, refresh, onError, anchor, compac
     } catch (cause) {
       if (!active.current) return;
       const message = cause instanceof Error ? cause.message : 'Context could not be compacted. Try again.';
-      setError(message); onError?.(message);
+      setError(message); toast("Couldn't compact — try again", { tone: 'error' }); onError?.(message);
     } finally { if (active.current) { locked.current = false; setSubmitting(false); } }
   };
   const activity = compacting ? 'Compacting context…' : reported?.status === 'failed' ? 'Compaction failed' : reported?.status === 'cancelled' ? 'Compaction stopped' :
@@ -151,9 +153,9 @@ function ContextSession({ usage, thread, close, refresh, onError, anchor, compac
   return <Popover anchor={anchor} contentRef={panel} initialFocus={panel} open width={328} height={(measured?.categories.length ? 282 : 200) + (failure ? 48 : 0) + (lastRequest || compactionHistory ? 84 : 0) + (budget ? 120 : 0) + (recalled ? 180 : 0) + (workbench?.enabled?48:0)}
     role="dialog" aria-label="Context inspector" tabIndex={-1} className="context-inspector" onDismiss={close}>
     {workbench?.enabled&&<nav aria-label="Context views"><button type="button" onClick={()=>{close();workbench.show('request');}}>Last request</button><button type="button" onClick={()=>{close();workbench.show('sources');}}>Sources</button><button type="button" onClick={()=>{close();workbench.show('tools');}}>Tools</button><span aria-current="page">Compaction</span></nav>}
-    <header><strong>Context <span>{measured ? `${Math.round(measured.ratio)}%` : 'Not reported'}</span></strong>
+    <header><strong>Context {measured && <span>{Math.round(measured.ratio)}%</span>}</strong>
       {measured && <span className="context-inspector-total">{contextNumber(measured.used)} of {contextNumber(measured.total)} tokens</span>}</header>
-    <div className="context-inspector-body"><ContextMeter usage={usage} busy={compacting} accepted={playingReceipt} />
+    <div className="context-inspector-body">{measured ? <ContextMeter usage={usage} busy={compacting} accepted={playingReceipt} /> : <p className="context-inspector-unreported">Context use isn't reported for this session yet.</p>}
       {(lastRequest || compactionHistory) && <RequestEvidence request={lastRequest} sources={hostSources} compaction={compactionHistory} thread={thread} />}
       {budget && <InferenceBudget value={budget}/>}
       {failure && <ErrorState className="context-inspector-error" message={failure}/>}
@@ -163,9 +165,10 @@ function ContextSession({ usage, thread, close, refresh, onError, anchor, compac
       {recalled && <MemoryRecallDetails value={recalled}/>}
     </div>
     <footer><span role="status" aria-live="polite" className={playingReceipt ? 'context-receipt-pulse' : undefined}>{activity}</span>
-      <button ref={action} type="button" disabled={!thread?.sessionPath || Boolean(thread.runId) || compacting || Boolean(unavailable)}
-        title={unavailable?.reason ?? (!thread?.sessionPath ? 'Start a session before compacting context.' : undefined)} aria-description={unavailable?.reason}
-        onClick={() => void compact()}>{compacting ? 'Compacting…' : failure ? 'Retry compaction' : 'Compact now'}</button></footer>
+      <button ref={action} type="button" disabled={!thread?.sessionPath || Boolean(thread.runId) || compacting || Boolean(unavailable) || !measured}
+        title={unavailable?.reason ?? (!thread?.sessionPath ? 'Start a session before compacting context.' : !measured ? 'Nothing to compact' : undefined)} aria-description={unavailable?.reason}
+        aria-disabled={!thread?.sessionPath || Boolean(thread.runId) || Boolean(unavailable) || !measured || undefined} aria-busy={compacting || undefined}
+        onClick={() => void compact()}>{compacting && <Spinner size={12} />}{compacting ? 'Compacting…' : failure ? 'Retry compaction' : 'Compact now'}</button></footer>
   </Popover>;
 }
 
