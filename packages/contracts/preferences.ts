@@ -31,6 +31,7 @@ const keybindings = z.strictObject({
   search: z.string().min(1).max(80), newThread: z.string().min(1).max(80),
   toggleSidebar: z.string().min(1).max(80), toggleRightPanel: z.string().min(1).max(80),
   openSettings: z.string().min(1).max(80), stop: z.string().min(1).max(80),
+  filesGoToLine: z.string().min(1).max(80),
 });
 export const preferencesSchema = z.strictObject({
   density: z.enum(['compact', 'comfortable', 'touch']), uiFontSize: z.number().int().min(13).max(16),
@@ -68,7 +69,7 @@ export const DEFAULT_PREFERENCES: UiPreferences = {
   diffLayout: 'split', hideWhitespace: false, diffDefaultExpanded: true, diffColors: 'red-green',
   showThreadDetails: true, showComposerContext: true, showUsageFooter:true, wordWrap: true,
   learningEnabled:true,learningApproval:false,learningInterval:10,skillCurator:true,
-  keybindings: { search: 'Ctrl+K', newThread: 'Ctrl+Shift+O', toggleSidebar: 'Ctrl+B', toggleRightPanel: 'Ctrl+Shift+B', openSettings: 'Ctrl+Comma', stop: 'Escape' },
+  keybindings: { search: 'Ctrl+K', newThread: 'Ctrl+Shift+O', toggleSidebar: 'Ctrl+B', toggleRightPanel: 'Ctrl+Shift+B', openSettings: 'Ctrl+Comma', stop: 'Escape', filesGoToLine: 'Ctrl+G' },
 };
 const patchSchema = preferencesSchema.partial().extend({ keybindings: keybindings.partial().optional() }).strict();
 export function mergePreferences(current: UiPreferences, patch: unknown): UiPreferences {

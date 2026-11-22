@@ -32,9 +32,9 @@ function useProjectRequest<T>(url:string,active:boolean){
  activeLoad.current=load;
  useEffect(()=>{activeLoad.current=load;setValue(null);if(active)void load();return()=>{activeLoad.current=null;generation.current++;pending.current?.abort();pending.current=null;};},[load,active]);return{value,error,errorCode,load,setError};
 }
-function FilesBody({base,query,active,fallback}:{base:string;query:URLSearchParams;active:boolean;fallback:ReactNode}){
+function FilesBody({base,query,active,fallback,preferences}:{base:string;query:URLSearchParams;active:boolean;fallback:ReactNode;preferences:UiPreferences}){
  const owner=base+'?'+query.toString();
- return <ProjectFiles key={owner} base={base} query={query.toString()} active={active} fallback={fallback}/>;
+ return <ProjectFiles key={owner} base={base} query={query.toString()} active={active} fallback={fallback} preferences={preferences}/>;
 }
 function DiffBody({base,query,active,fallback}:{base:string;query:URLSearchParams;active:boolean;fallback:ReactNode}){
  const{value,error,errorCode,load,setError}=useProjectRequest<GitStatus>(base+'/git?'+query,active),[staged,setStaged]=useState(false),[pending,setPending]=useState(false);
@@ -68,7 +68,7 @@ export function WorkspaceSurfaceBody({kind,binding,snapshot,refresh,active=true,
  if(!projectId&&(kind==='pull-request'||kind==='linked-pull-requests'))return <><GitHubSignIn active={active} timeFormat={prefs.timeFormat}/><p className="panel-note">Connect a project to use {panelLabels[kind].toLowerCase()}.</p></>;
  if(!projectId)return <p className="panel-note">Connect a project to use {panelLabels[kind].toLowerCase()}.</p>;
  const base='/api/projects/'+encodeURIComponent(projectId),query=new URLSearchParams(threadId?{threadId}:{});
- if(kind==='files')return <FilesBody base={base} query={query} active={active} fallback={files}/>;
+ if(kind==='files')return <FilesBody base={base} query={query} active={active} fallback={files} preferences={prefs}/>;
  if(kind==='diff')return <ChangesBody key={base+'?'+query} base={base} query={query} active={active} recorded={recordedDiff} preferences={prefs}/>;
  if(kind==='terminal')return <TerminalBody key={projectId+':'+threadId+':'+binding.terminalId} projectId={projectId} threadId={threadId} terminalId={binding.terminalId} active={active} excerptComposer={excerptComposer} openAnother={onOpenTool?()=>onOpenTool('terminal'):undefined}/>;
  if(kind==='pull-request'||kind==='linked-pull-requests'){const journalKey='pr-panel:'+JSON.stringify(['local',projectId,threadId??null,kind,panelId??'sidebar']);return <PullRequestsBody key={journalKey} journalKey={journalKey} base={base} query={query} active={active} threadId={threadId} linked={kind==='linked-pull-requests'} reviewRequest={kind==='linked-pull-requests'&&reviewRequest&&reviewRequest.threadId===threadId&&reviewRequest.projectId===projectId&&reviewRequest.panelId===(panelId??'sidebar')?reviewRequest:undefined} onReviewHandled={onReviewHandled} timeFormat={prefs.timeFormat}/>;}

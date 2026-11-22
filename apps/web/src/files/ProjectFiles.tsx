@@ -1,14 +1,12 @@
-import {
-	Fragment,
-	useCallback,
-	useEffect,
-	useRef,
-	useState,
-	type ReactNode,
-} from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { authenticated, read } from "../api";
 import { FilesView, type FilesEntry } from "./FilesView";
+import { parseSourceLines, ProjectTextPreview } from "./ProjectTextPreview";
 import { ProjectSearch } from "./ProjectSearch";
+import {
+	DEFAULT_PREFERENCES,
+	type UiPreferences,
+} from "../../../../packages/contracts/preferences";
 import {
 	unavailableProjectSearch,
 	type ProjectSearchAdapter,
@@ -27,6 +25,7 @@ interface ProjectFilesProps {
 	active: boolean;
 	fallback: ReactNode;
 	searchAdapter?: ProjectSearchAdapter;
+	preferences?: UiPreferences;
 }
 export function ProjectFiles(props: ProjectFilesProps) {
 	return <ProjectFilesReader key={props.base + "?" + props.query} {...props} />;
@@ -37,14 +36,17 @@ function ProjectFilesReader({
 	active,
 	fallback,
 	searchAdapter = unavailableProjectSearch,
+	preferences = DEFAULT_PREFERENCES,
 }: ProjectFilesProps) {
 	const [path, setPath] = useState(""),
 		[selected, setSelected] = useState<FilesEntry | null>(null),
 		[selectedMatch, setSelectedMatch] = useState<ProjectSearchMatch | null>(
 			null,
 		),
+		[wrapOverride, setWrapOverride] = useState<boolean | null>(null),
+		[matchSeq, setMatchSeq] = useState(0),
 		[searchRefresh, setSearchRefresh] = useState(0);
-	const matchLine = useRef<HTMLElement>(null);
+	const wrap = wrapOverride ?? preferences.wordWrap;
 	const owner = {
 		projectId: decodeURIComponent(base.split("/").at(-1) ?? ""),
 		threadId: new URLSearchParams(query).get("threadId") ?? null,
@@ -89,31 +91,11 @@ function ProjectFilesReader({
 		file &&
 		file.sha256.toLowerCase() !== selectedMatch.sha256.toLowerCase()
 	);
-	useEffect(() => {
-		if (!stale && !preview.pending)
-			matchLine.current?.scrollIntoView({
-				block: "center",
-				behavior: "instant",
-			});
-	}, [file, selectedMatch, stale, preview.pending]);
 	if (folder.errorCode === "PROJECT_NOT_CONNECTED") return fallback;
 	const line =
 		selectedMatch?.kind === "text" && !stale ? selectedMatch.line : undefined;
-	const lines =
-		line && file?.text ? file.text.split(/(\r\n|\r|\n)/) : undefined;
-	const lineIndex = line ? (line - 1) * 2 : -1;
-	// DOM carriage returns need an explicit visual break; retain the source text.
-	const renderParts = (parts: string[]) =>
-		parts.map((part, index) =>
-			part === "\r" ? (
-				<Fragment key={index}>
-					{part}
-					<br aria-hidden="true" />
-				</Fragment>
-			) : (
-				part
-			),
-		);
+	const logical = file?.text !== null && file?.text !== undefined ? parseSourceLines(file.text).length : 0;
+	const missing = !!line && line > logical;
 	return (
 		<FilesView
 			source="project"
@@ -132,6 +114,7 @@ function ProjectFilesReader({
 						selected={selectedMatch}
 						onSelect={(match) => {
 							setSelectedMatch(match);
+							setMatchSeq((value) => value + 1);
 							if (selected?.path === match.path) preview.refresh();
 							else
 								setSelected({
@@ -154,34 +137,36 @@ function ProjectFilesReader({
 								refresh search results before using the matching line.
 							</p>
 						)}
-						{line && lines && lineIndex >= lines.length && (
+						{missing && (
 							<p className="files-message" role="status">
 								The matching line is no longer available. Refresh the search.
 							</p>
 						)}
-						{line && lines && lineIndex < lines.length && (
+						{line && !missing && (
 							<p className="files-message files-limit">Matching line {line}</p>
 						)}
 						{file.binary ? (
 							<p className="files-message">
 								Binary file; no text preview.
 							</p>
-						) : file.text === "" ? (
-							<p className="files-message">Empty text file</p>
 						) : (
-							<pre>
-								{lines && line && lineIndex < lines.length ? (
-									<>
-										{renderParts(lines.slice(0, lineIndex))}
-										<mark className="files-matching-line" ref={matchLine}>
-											{lines[lineIndex]}
-										</mark>
-										{renderParts(lines.slice(lineIndex + 1))}
-									</>
-								) : (
-									file.text
+							<>
+								{file.text === "" && (
+									<p className="files-message">Empty text file</p>
 								)}
-							</pre>
+								<ProjectTextPreview
+									text={file.text ?? ""}
+									wrap={wrap}
+									onToggleWrap={() =>
+										setWrapOverride((value) =>
+											value === null ? !wrap : !value,
+										)
+									}
+									preferences={preferences}
+									targetLine={missing ? undefined : line ?? undefined}
+									targetSeq={matchSeq}
+								/>
+							</>
 						)}
 						<small className="files-checksum">SHA-256 {file.sha256}</small>
 					</>
