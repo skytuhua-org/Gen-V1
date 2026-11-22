@@ -585,3 +585,16 @@ test('a pending page change retains committed pixels, highlight and status until
   } finally { await page.evaluate(() => (window as unknown as { __releasePage2?: () => void }).__releasePage2?.()); }
   await expect(preview(page).getByRole('status')).toContainText('Page 2 of 2'); await expect(preview(page).locator('.document-active-field')).toHaveCount(0);
 });
+
+test('a failed preview collapses to a compact error row without dead chrome', async ({ page }) => {
+  await fixtureHost(page, new TextEncoder().encode('not a pdf')); await page.goto('/');
+  const failure = page.locator('.document-preview-failure');
+  await expect(failure).toBeVisible({ timeout: 20000 });
+  await expect(failure).toContainText('Preview unavailable');
+  await expect(failure.getByRole('button', { name: 'Retry preview' })).toBeVisible();
+  await expect(failure.getByRole('link', { name: 'Open source PDF' })).toBeVisible();
+  await expect(page.locator('.document-preview-paging')).toHaveCount(0);
+  await expect(page.locator('.document-preview-tools')).toHaveCount(0);
+  await expect(page.locator('.document-preview-footer')).toHaveCount(0);
+  expect((await failure.boundingBox())!.height).toBeLessThanOrEqual(96);
+});
