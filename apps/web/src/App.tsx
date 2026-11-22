@@ -51,6 +51,8 @@ import {ComposerAttachments} from './ComposerAttachments';
 import {Modal} from '../../../packages/ui-shell/Modal';
 import {SessionBranchLineage, SessionBranchMenu, useSessionBranchOverview} from './SessionBranchMenu';
 import {toast,Toaster} from '../../../packages/ui-shell/Toast';
+import {Spinner} from '../../../packages/ui-shell/Feedback';
+import {dedupeReplayedFrames} from './thread-messages';
 import {TooltipLayer} from '../../../packages/ui-shell/Tooltip';
 import {reducedMotion} from './task-motion';
 import {Select} from '../../../packages/ui-shell/Select';
@@ -348,10 +350,11 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
   };
   const fail = (cause: unknown) => { setError(messageOf(cause)); setLocalResumeRequired(cause instanceof ApiError && cause.code === 'RESUME_REQUIRED'); };
   const dismissError = () => { setError(''); setLocalResumeRequired(false); if (sharedComposers && sharedTarget) sharedComposers.clearError(sharedTarget); };
+  const [resuming, setResuming] = useState(false);
   const resume = () => {
-    if (!thread || !modelId) return;
-    dismissError();
-    void journalRead<string>('thinking:'+thread.id).then(level=>command('run.resume',{modelId,thinkingLevel:level===undefined?(thread.thinkingLevel??null):(level||null)},thread.id)).then(()=>refresh()).catch(fail);
+    if (!thread || !modelId || resuming) return;
+    dismissError(); setResuming(true);
+    void journalRead<string>('thinking:'+thread.id).then(level=>command('run.resume',{modelId,thinkingLevel:level===undefined?(thread.thinkingLevel??null):(level||null)},thread.id)).then(()=>refresh()).catch(cause=>{fail(cause);toast("Couldn't resume — try again",{tone:'error',durationMs:5000,action:{label:'Retry',onClick:resume}});}).finally(()=>setResuming(false));
   };
   const send = async () => {
     if (busy || !skillsReady || !shared&&!excerptsReady || skillsBlocked || !draft.trim() && !excerpts.length && !retry) return;
@@ -417,7 +420,7 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
   };
   const preparePR=()=>{const intent='Create a pull request for the current changes.';const current=draftLatest.current;updateDraft(current.startsWith(intent)?current:intent+(current.trim()?'\n\n'+current:''));input.current?.focus();};
   return <div className="composer-dock">
-    {thread && !working && ['stopped', 'interrupted', 'failed'].includes(thread.status) && <div className="resume-strip" role="status"><span>{thread.status === 'interrupted' ? 'This session was interrupted.' : thread.status === 'stopped' ? 'Agent stopped. Your work is saved.' : 'The agent could not finish this run.'}</span><button className="secondary" disabled={!modelId} title={!modelId ? 'Choose an available model before resuming.' : undefined} onClick={resume}>Resume<ChevronRight size={13} /></button></div>}
+    {thread && !working && ['stopped', 'interrupted', 'failed'].includes(thread.status) && <div className="resume-strip" role="status"><span>{thread.status === 'interrupted' ? 'This session was interrupted.' : thread.status === 'stopped' ? 'Agent stopped. Your work is saved.' : 'The agent could not finish this run.'}</span><button className="secondary" disabled={!modelId || resuming} title={!modelId ? 'Choose an available model before resuming.' : undefined} onClick={resume} aria-busy={resuming || undefined}>{resuming ? <><Spinner size={12} />Resuming…</> : <>Resume<ChevronRight size={13} /></>}</button></div>}
     {localSkills.error&&!shared&&<p role="alert" className="composer-error">{localSkills.error}</p>}
     {error && <div className="composer-error" role="alert"><span>{error}</span><span className="composer-error-actions">{resumeRequired&&thread&&<button className="quiet" disabled={!modelId} onClick={resume}>Resume thread</button>}<button className="icon-button" aria-label="Dismiss composer error" onClick={dismissError}><X size={14} /></button></span></div>}
     {working && draft.trim() && !(workbench?.enabled && workbench.draft?.sendMode === 'AFTER_CURRENT') && !/^\/(?:btw|side)(?:\s|$)/i.test(draft.trim()) && <p className="composer-hint">The agent is working — start the message with /btw to send a side question.</p>}
@@ -633,6 +636,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
       const messages=new Set(previous.messages.map(message=>message.id));for(const message of value.messages)if(!messages.has(message.id)&&message.threadId===(entryThread.current??value.activeThreadId))liveMessages.current.add(message.id);
       for (const artifact of value.artifacts) if (!known.has(artifact.id) && artifact.threadId === (entryThread.current ?? value.activeThreadId)) liveEntries.current.add(artifact.id);
     }
+    value.messages = dedupeReplayedFrames(value.messages);
     snapshotRef.current = value; setSnapshot(value);
   } }, []);
   const refresh = useCallback(async (value?: Snapshot): Promise<void> => {

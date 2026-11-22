@@ -5,6 +5,23 @@ import { getThreadMessages } from './api';
 // Snapshot messages are windowed per thread (see store.snapshot). Views that
 // render full history merge the window with older pages fetched on demand.
 // `eager` keeps paging until nothing older remains (transcript-style views).
+
+// A resumed run can replay its last frame: it arrives with a fresh id but the
+// same role and content as the thread's previous message. Drop that duplicate
+// so a resume never repeats the last rendered message in the transcript.
+export function dedupeReplayedFrames<T extends Pick<Message, 'id' | 'threadId' | 'role' | 'content'>>(messages: T[]): T[] {
+  let changed = false;
+  const lastByThread = new Map<string, T>();
+  const kept: T[] = [];
+  for (const message of messages) {
+    const last = lastByThread.get(message.threadId);
+    if (last && last.id !== message.id && last.role === message.role && last.content === message.content) { changed = true; continue; }
+    lastByThread.set(message.threadId, message);
+    kept.push(message);
+  }
+  return changed ? kept : messages;
+}
+
 export function useThreadMessages(snapshot: Pick<Snapshot, 'messages' | 'messagesTruncated'>, threadId: string | undefined, eager = false) {
   const [older, setOlder] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
