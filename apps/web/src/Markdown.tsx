@@ -13,6 +13,13 @@ function inline(text: string): ReactNode {
   });
 }
 
+export interface ReplyHeading {key:string;level:number;label:string}
+/** Visible text of a heading label, from the same inline grammar the renderer uses. */
+function inlineLabel(text:string):string{
+  const label=text.replaceAll(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/[^\s)]+|#[^\s)]+)\))/g,part=>part.startsWith('**')?part.slice(2,-2):part.startsWith('`')?part.slice(1,-1):(part.match(/^\[([^\]]+)\]\(/)?.[1]??part));
+  return label.replace(/\s+/g,' ').trim()||'Untitled section';
+}
+
 type Alignment='left'|'center'|'right'|undefined;
 const MAX_TABLE_COLUMNS=24,MAX_TABLE_ROWS=200,MAX_TABLE_CELLS=4096;
 function tableRow(line:string){
@@ -73,8 +80,11 @@ function list(lines:string[],start:number,key:string,depth=0):{node:ReactNode;ne
   return {node:first.ordered?<ol key={key} className="markdown-list" start={first.start}>{items}</ol>:<ul key={key} className="markdown-list">{items}</ul>,next:index};
 }
 
-/** A small safe block renderer; malformed table rows remain visible as prose. */
-function blocks(text:string):ReactNode[]{
+/** A small safe block renderer; malformed table rows remain visible as prose.
+ * When `headings` is supplied (opt-in reply outline), each emitted heading also
+ * records a descriptor and gains a local target marker; prose output and keys
+ * are otherwise unchanged. */
+function blocks(text:string,headings?:ReplyHeading[]):ReactNode[]{
   const lines=text.replaceAll('\r\n','\n').split('\n'),nodes:ReactNode[]=[];let index=0,tableCells=0;
   while(index<lines.length){
     if(!lines[index]!.trim()){index++;continue;}
@@ -86,7 +96,7 @@ function blocks(text:string):ReactNode[]{
       nodes.push(<div key={key} className="markdown-code"><CopyButton text={code} label="Copy code"/><pre><code>{code}</code></pre></div>);if(index<lines.length)index++;continue;
     }
     const title=heading(lines[index]!);
-    if(title){const Heading=`h${title[1]!.length}` as 'h1'|'h2'|'h3'|'h4'|'h5'|'h6';nodes.push(<Heading key={key}>{inline(title[2]!)}</Heading>);index++;continue;}
+    if(title){const Heading=`h${title[1]!.length}` as 'h1'|'h2'|'h3'|'h4'|'h5'|'h6';nodes.push(headings?<Heading key={key} data-outline-key={key} tabIndex={-1}>{inline(title[2]!)}</Heading>:<Heading key={key}>{inline(title[2]!)}</Heading>);headings?.push({key,level:title[1]!.length,label:inlineLabel(title[2]!)});index++;continue;}
     const table=tableStart(lines,index);
     if(table){
       const start=index,rows:string[][]=[];let rowCount=0,oversized=table.oversized||tableCells+table.header.length>MAX_TABLE_CELLS;index+=2;
@@ -113,4 +123,24 @@ function blocks(text:string):ReactNode[]{
 export const Markdown = memo(function Markdown({ text,animate=false,initialReveal=false }: { text: string;animate?:boolean;initialReveal?:boolean }) {
   const rendered = useMemo(() => blocks(text), [text]);
   return <SentenceReveal className="markdown" text={text} animate={animate} initialReveal={initialReveal}>{rendered}</SentenceReveal>;
+});
+
+/** Main-reply adapter: shares one memoized block walk between the prose and an
+ * opt-in outline composed outside the prose root. Equal labels gain a
+ * positional suffix in source order. */
+export const ReplyMarkdown = memo(function ReplyMarkdown({ text,animate=false,initialReveal=false,renderOutline }: { text:string;animate?:boolean;initialReveal?:boolean;renderOutline?:(headings:ReplyHeading[])=>ReactNode }) {
+  const parsed = useMemo(() => {
+    const headings:ReplyHeading[]=[];
+    const nodes=blocks(text,renderOutline?headings:undefined);
+    if(renderOutline){
+      const counts=new Map<string,number>(),seen=new Map<string,number>();
+      for(const heading of headings)counts.set(heading.label,(counts.get(heading.label)??0)+1);
+      for(const heading of headings){
+        const total=counts.get(heading.label)!;
+        if(total>1){const order=(seen.get(heading.label)??0)+1;heading.label=`${heading.label} (${order} of ${total})`;seen.set(heading.label,order);}
+      }
+    }
+    return {nodes,headings};
+  }, [text,renderOutline]);
+  return <>{renderOutline?.(parsed.headings)}<SentenceReveal className="markdown" text={text} animate={animate} initialReveal={initialReveal}>{parsed.nodes}</SentenceReveal></>;
 });

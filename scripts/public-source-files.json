@@ -95,6 +95,7 @@
     "apps/web/src/ControlConsentPanel.tsx",
     "apps/web/src/ConversationFind.tsx",
     "apps/web/src/CopyButton.tsx",
+    "apps/web/src/ReplyContents.tsx",
     "apps/web/src/CredentialEntry.tsx",
     "apps/web/src/DelegatedAgentTranscript.tsx",
     "apps/web/src/DesktopBrowser.tsx",
