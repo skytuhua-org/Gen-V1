@@ -1,4 +1,5 @@
 import {useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type FocusEvent, type ReactNode, type RefObject} from 'react';
+import {onWorkspaceChanged} from '../useThreadBranch';
 import {GitPullRequest} from 'lucide-react';
 import {Popover} from '../../../../packages/ui-shell/Popover';
 import {projectColor} from '../project-colors';
@@ -61,7 +62,10 @@ export function ThreadHoverCard<Target>({facts, loadFacts, cache: suppliedCache,
   useEffect(() => {
     if (!visible || !controller) return;
     controller.activate(facts.scope);
-    return () => controller.deactivate();
+    const off = onWorkspaceChanged(detail => {
+      if (detail.threadId === facts.scope.threadId) controller.activate(facts.scope);
+    });
+    return () => {off(); controller.deactivate();};
     // Scope identity, rather than a parent's newly allocated facts object, owns reads.
   }, [controller, visible, scopeKey]);
   useEffect(() => {
