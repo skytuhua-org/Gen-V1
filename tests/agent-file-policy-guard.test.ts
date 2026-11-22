@@ -13,7 +13,7 @@ import { ProjectTools } from '../packages/workspace/tools.ts';
 import { ProjectSearch } from '../packages/workspace/project-search.ts';
 import { FILE_POLICY_DENIED, FILE_POLICY_DENIED_MESSAGE } from '../packages/contracts/agent-file-policy.ts';
 import { withPathGuard } from '../packages/core/file-access.ts';
-import type { ResourceGrant, RuntimeAdapter, StartRun, Thread } from '../packages/contracts/index.ts';
+import type { DataRecord, ResourceGrant, RuntimeAdapter, StartRun, Thread } from '../packages/contracts/index.ts';
 
 vi.mock('../packages/core/file-access.ts', async original => ({
 	...await original<typeof import('../packages/core/file-access.ts')>(),
@@ -70,8 +70,8 @@ describe('agent file policy guards', () => {
 		const { project, service } = await fixture();
 		const thread = (await service.command({ id: 't3', type: 'thread.create', payload: {} })).result as Thread;
 		const g = await grant(service, thread, project);
-		const result = await handleDomainTool('repository_files', { resourceId: g.id }, ctx(service, thread.id)) as { entries: { path: string }[] };
-		const paths = result.entries.map(entry => entry.path);
+		const result = await handleDomainTool('repository_files', { resourceId: g.id }, ctx(service, thread.id)) as DataRecord;
+		const paths = (result.value as { entries: { path: string }[] }).entries.map(entry => entry.path);
 		expect(paths).toContain('src/app.ts');
 		expect(paths).not.toContain('.env');
 		expect(paths.some(path => path.startsWith('secrets/'))).toBe(false);
