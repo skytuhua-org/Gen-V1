@@ -48,4 +48,4 @@ Error text inside the workspace panel must have the same breathing room as every
 - Next step: T01.
 
 ## REFERENCES
-- Issue: (filled at publish). Related: #1560 covers the red "Connect this project to a local folder." dead-end copy — different issue, that one is about copy/UX, this one about layout.
+- Issue: https://github.com/skytuhua-org/Gen-V1/issues/1743 (canonical body = this plan). Related: #1560 covers the red "Connect this project to a local folder." dead-end copy — different issue, that one is about copy/UX, this one about layout.

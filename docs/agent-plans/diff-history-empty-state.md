@@ -50,4 +50,4 @@ Make the History tab's no-owner state match the app empty-state pattern and use 
 - Next step: T01.
 
 ## REFERENCES
-- Issue: (filled at publish). Related: #1561 (Current/Recorded copy mixup — separate fix).
+- Issue: https://github.com/skytuhua-org/Gen-V1/issues/1742 (canonical body = this plan). Related: #1561 (Current/Recorded copy mixup — separate fix).

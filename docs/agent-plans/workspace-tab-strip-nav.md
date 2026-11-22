@@ -23,7 +23,7 @@ Two behavior gaps in the same strip (`WorkspacePanel.tsx` header, `role="tablist
   - `ArrowRight`: move focus+selection to the next tab; wraps from last to first.
   - `ArrowLeft`: previous tab; wraps first to last.
   - `Home`: first tab. `End`: last tab.
-  - Roving `tabIndex`: selected tab `tabIndex={0}`, all others `tabIndex={-1}`; `Tab` leaves the strip.
+  - Roving `tabIndex`: selected tab `tabIndex={0}`, all others `tabIndex={-1}`; `Tab` leaves the strip. Once the companion close-affordance plan (`workspace-tab-close`, #1740) lands, its per-tab close buttons are `tabIndex={-1}` and stay out of the `Tab` order — `Tab` still leaves the strip.
   - The strip container keeps its existing overflow scroll; arrow keys on a focused tab must `preventDefault()` so they never scroll the strip.
   - `Enter`/`Space` on a focused non-selected tab is a no-op beyond native click (automatic activation already selects on arrow move; a focused-but-not-selected state only occurs after pointer click, which selects anyway).
 - Screen reader: roles `tablist`/`tab`/`tabpanel` and `aria-selected`/`aria-controls`/`aria-labelledby` already exist and stay unchanged.
@@ -55,4 +55,4 @@ Two behavior gaps in the same strip (`WorkspacePanel.tsx` header, `role="tablist
 - Next step: T01.
 
 ## REFERENCES
-- Issue: (filled at publish). Companion plan: `workspace-tab-close.md` (close affordance; orthogonal, touch same file — land either first, other rebases).
+- Issue: https://github.com/skytuhua-org/Gen-V1/issues/1741 (canonical body = this plan). Companion plan: `workspace-tab-close.md` / issue #1740 (close affordance; orthogonal, touch same file — land either first, other rebases).

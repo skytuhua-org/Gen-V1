@@ -22,10 +22,10 @@ A user who opens surfaces via the "+" ("Add surface") menu can never remove them
   - Focus-visible: `outline: 1px solid var(--accent); outline-offset: -1px`.
   - Closing the tab must not also activate it: stop propagation on the close button's click.
 - Middle-click (`mousedown` button 1) on the tab body closes it; `event.preventDefault()` to stop autoscroll.
-- Keyboard: when the tab button itself has focus, `Delete` closes the tab. When the close button has focus, `Enter`/`Space` activate it (native button behavior).
-- After a close (existing `workspace.closeTab` semantics kept): the active tab becomes the last remaining open tab; if none remain, `activeTab` falls back to `'artifact'` and the strip MUST show a single `Artifact` tab (re-add `artifact` to `openTabs` when the list would empty — matches `readShellLayout` normalization that always keeps `activeTab` in `openTabs`). The `Artifact` tab is never closable: render no close button on it and ignore middle-click/Delete for it.
+- Keyboard: when the tab button itself has focus, `Delete` closes the tab. The close button is `tabIndex={-1}` — never a `Tab` stop (keeps `Tab` = leave strip, per the companion nav plan); it is reachable by pointer and by screen-reader virtual cursor, and keyboard users close via `Delete`. When the close button has focus, `Enter`/`Space` activate it (native button behavior).
+- After a close (existing `workspace.closeTab` semantics kept): closing a tab that is NOT active changes nothing about the selection — the active tab stays active. Closing the ACTIVE tab selects the last remaining open tab; if none remain, `activeTab` falls back to `'artifact'` and the strip MUST show a single `Artifact` tab (re-add `artifact` to `openTabs` when the list would empty — matches `readShellLayout` normalization that always keeps `activeTab` in `openTabs`). The `Artifact` tab is never closable: render no close button on it and ignore middle-click/Delete for it.
 - If the closed tab was active and the fallback equals the already-active tab, no visual change beyond the tab removal.
-- Focus after close: focus moves to the newly active tab button (the tab that took over), not left on a removed element.
+- Focus after close: if the closed tab was active, focus moves to the newly active tab button; if it was inactive, focus moves to the active tab button (focus never stays on a removed element).
 - No confirmation, no undo, no toast on close.
 - Labels come from the existing `tabLabels` record; no new copy is introduced.
 
@@ -38,7 +38,7 @@ A user who opens surfaces via the "+" ("Add surface") menu can never remove them
 - Tests: vitest unit tests + Playwright browser tests are the repo's test stack (no jsdom/Testing Library). Locate existing panel tests via `rg -l "WorkspacePanel|workspace-right" apps/web --glob '*.test.*' --glob '*.spec.*'` — discovery, treat as unverified until run.
 
 ## DESIGN
-- Render, inside each closable tab `<button role="tab">`, a nested interactive element is invalid HTML; instead split each tab into a wrapper `<div role="presentation">` containing the tab `<button role="tab">` (label) and the close `<button>` sibling, both inside the same `role="tablist"` strip. Keyboard order: tab button, then its close button, then next tab.
+- Render, inside each closable tab `<button role="tab">`, a nested interactive element is invalid HTML; instead split each tab into a wrapper `<div role="presentation">` containing the tab `<button role="tab">` (label) and the close `<button>` sibling, both inside the same `role="tablist"` strip. The close button carries `tabIndex={-1}` so it stays out of the `Tab` order.
 - Call `workspace.closeTab(id)` on close activation; when `openTabs.filter(t => t !== id)` is empty, call `workspace.setActiveTab('artifact')` then `workspace.openTab('artifact')` so the strip keeps one tab. Implement in `WorkspacePanel.tsx`, not the context (context already correct).
 - Middle-click: `onMouseDown` on the tab button, `event.button === 1` → `preventDefault` + `closeTab`.
 - `Delete` key: `onKeyDown` on the tab button when `event.target === event.currentTarget`.
@@ -59,4 +59,4 @@ A user who opens surfaces via the "+" ("Add surface") menu can never remove them
 - Next step: T01.
 
 ## REFERENCES
-- Issue: (filled at publish). Fixture QA pass 15, workspace panel surface.
+- Issue: https://github.com/skytuhua-org/Gen-V1/issues/1740 (canonical body = this plan). Fixture QA pass 15, workspace panel surface.
