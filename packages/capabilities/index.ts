@@ -156,10 +156,11 @@ export async function handleDomainTool(name: string, rawArgs: unknown, ctx: Doma
       const a = parse("database_schema", rawArgs);
       if (a.attachmentId !== undefined) {
         const t = await requireAttachment(ctx, a.attachmentId);
-        return publish(ctx, await t.gateway.schema(t.connection, ctx.signal), `attachment:${a.attachmentId}; schema`);
+        const schema = await t.gateway.schema(t.connection, ctx.signal);
+        return publish(ctx, { ...schema, tables: schema.schemas.flatMap(s => s.objects) }, `attachment:${a.attachmentId}; schema`);
       }
       const result = await access(ctx, a.resourceId!, a.path, false, path => sqliteGateway().schema(syntheticConnection(path), ctx.signal));
-      return publish(ctx, result, provenance(a.resourceId!, a.path, result.digest));
+      return publish(ctx, { ...result, tables: result.schemas.flatMap(s => s.objects) }, provenance(a.resourceId!, a.path, result.digest));
     }
     case "database_query": {
       const a = parse("database_query", rawArgs);
