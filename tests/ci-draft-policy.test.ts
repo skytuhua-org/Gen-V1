@@ -135,3 +135,7 @@ it('selects pull-request tests from the merge commit diff and keeps the full sui
 it('books no Windows test runner when the diff reaches no test',()=>{
   expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual(['checks','select']);
 });
+it('fails any job that exceeds its time budget',()=>{
+  const budgets=Object.fromEntries(starts.map((match,index)=>[match[1],Number(/^    timeout-minutes: (\d+)$/m.exec(jobSource.slice(match.index,starts[index+1]?.index))?.[1])]));
+  expect(budgets).toEqual({checks:15,test:22,browser:30,'installed-memory':60,select:5,selected:22});
+});

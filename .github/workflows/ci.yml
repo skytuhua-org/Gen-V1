@@ -25,6 +25,10 @@ env:
   GIT_CONFIG_VALUE_0: true
 
 jobs:
+  # Each timeout-minutes is the job's budget: about 1.5x its p95 setup+run time
+  # over the 150-run audit in #1666, capped at the previous timeout. A job that
+  # exceeds it fails; budgets only shrink. Browser (p95 24 min) and installed
+  # memory (p95 43 min) already sat under 1.5x, so they keep 30 and 60.
   # A draft pull request is not reviewable, so its jobs run when it becomes
   # ready for review instead of on every draft push; draft pushes otherwise
   # starve the shared runner pool that required checks depend on.
@@ -40,7 +44,7 @@ jobs:
     name: Windows checks
     runs-on: windows-2022
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    timeout-minutes: 30
+    timeout-minutes: 15
     defaults:
       run:
         shell: pwsh
@@ -120,7 +124,7 @@ jobs:
     name: Tests (shard ${{ matrix.shard }}/4)
     runs-on: windows-2022
     if: github.event_name != 'pull_request'
-    timeout-minutes: 30
+    timeout-minutes: 22
     strategy:
       fail-fast: false
       matrix:
@@ -366,7 +370,7 @@ jobs:
     needs: select
     runs-on: windows-2022
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.select.outputs.total != '0'
-    timeout-minutes: 30
+    timeout-minutes: 22
     strategy:
       fail-fast: false
       matrix:
