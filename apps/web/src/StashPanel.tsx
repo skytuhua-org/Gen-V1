@@ -41,12 +41,6 @@ export function StashPanel({ base, query, active, status, runActive, reload, tri
   // Keep keyboard focus inside the section while rows appear/disappear.
   useEffect(() => { const document = section.current?.ownerDocument; if (!document) return; return retainFocus(document, () => section.current); }, [stashes]);
 
-  if (!active || !stashes || (stashes.entries.length === 0 && conflicts.length === 0) || stashes.gitWrite === false) {
-    return <>
-      {open && status?.gitWrite === true && <StashCreate anchor={trigger} open={open} setOpen={setOpen} input={input} name={name} setName={setName} busy={busy === 'stash-push'} onSubmit={async () => { await create(); }} />}
-    </>;
-  }
-
   const refresh = async () => { await reload(); await loadStashes(); };
   const postAction = async (type: string, payload: Record<string, unknown>) =>
     post<{ result: { status: GitStatus; result: { restored?: 'clean' | 'conflicts'; conflicts?: string[]; dropped?: boolean; created?: StashEntry } } }>(
@@ -73,10 +67,10 @@ export function StashPanel({ base, query, active, status, runActive, reload, tri
     trigger.current?.focus();
   };
 
-  const act = async (entry: StashEntry, type: StashAction) => {
+  const act = async (entry: StashEntry, type: StashAction, armed = false) => {
     if (!status || status.gitWrite !== true || !stashes || busy) return;
     const key = type + ':' + entry.oid;
-    if (arm !== key) { setArm(key); return; }
+    if (!armed && arm !== key) { setArm(key); return; }
     setArm(''); setBusy(key); setError('');
     try {
       const outcome = await postAction(type, { revision: status.revision, expectedHead: status.head, oid: entry.oid, stashRevision: stashes.stashRevision });
@@ -89,6 +83,12 @@ export function StashPanel({ base, query, active, status, runActive, reload, tri
       if (cause instanceof ApiError && (cause.code === 'STASH_CHANGED' || cause.code === 'REVISION_CHANGED')) await refresh();
     } finally { setBusy(''); }
   };
+
+  if (!active || !stashes || (stashes.entries.length === 0 && conflicts.length === 0) || stashes.gitWrite === false) {
+    return <>
+      {open && status?.gitWrite === true && <StashCreate anchor={trigger} open={open} setOpen={setOpen} input={input} name={name} setName={setName} busy={busy === 'stash-push'} onSubmit={async () => { await create(); }} />}
+    </>;
+  }
 
   const entries = stashes?.entries ?? [];
   const labels: Record<StashAction, [string, string]> = { 'stash-apply': ['Apply', 'Applying'], 'stash-pop': ['Pop', 'Popping'], 'stash-drop': ['Drop', 'Dropping'] };
@@ -127,7 +127,7 @@ export function StashPanel({ base, query, active, status, runActive, reload, tri
     </ul>}
     {open && status?.gitWrite === true && <StashCreate anchor={trigger} open={open} setOpen={setOpen} input={input} name={name} setName={setName} busy={busy === 'stash-push'} onSubmit={create} />}
     <Modal open={dropping !== null} title="Drop stash entry?" className="stash-drop-dialog" onClose={() => { if (!busy) setDropping(null); }}>
-      {dropping && <form onSubmit={event => { event.preventDefault(); const entry = dropping; setDropping(null); void act(entry, 'stash-drop'); }}>
+      {dropping && <form onSubmit={event => { event.preventDefault(); const entry = dropping; setDropping(null); void act(entry, 'stash-drop', true); }}>
         <p>Drop “{dropping.message}”? The stashed changes will not be recoverable.</p>
         <div className="stash-drop-actions"><button type="button" autoFocus disabled={Boolean(busy)} onClick={() => setDropping(null)}>Cancel</button><button type="submit" disabled={Boolean(busy)}>Drop</button></div>
       </form>}

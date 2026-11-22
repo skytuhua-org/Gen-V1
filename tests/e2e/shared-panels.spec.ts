@@ -43,18 +43,21 @@ test('directory navigation rejects a file response from the previous selection',
  await expect(panel.locator('.live-files .panel-toolbar')).toContainText('next');await expect(panel.getByRole('region',{name:'File content'})).not.toContainText('Content from the previous directory');
 });
 
-async function pullRequestFixture(page:Page,options:{gitWrite?:boolean;missingWrite?:boolean;kind?:string;dirty?:boolean;loseAcknowledgment?:boolean}={}){
+async function pullRequestFixture(page:Page,options:{gitWrite?:boolean;missingWrite?:boolean;kind?:string;dirty?:boolean;loseAcknowledgment?:boolean;stash?:boolean}={}){
  const state={head:'a'.repeat(40),revision:'c'.repeat(64),gitWrite:options.gitWrite??true,remoteHead:'a'.repeat(40)},actions:Record<string,any>[]=[],lists:string[]=[];
  let pendingCreate:Route|undefined,pendingReview:Route|undefined,holdCreate=false,holdReview=false;
  const receipts=new Map<string,{command:Record<string,any>;receipt:unknown}>();
- const receiptFor=(command:Record<string,any>)=>({commandId:command.id,seq:1,result:command.type==='create-pr'?{url:'https://github.com/fixture/project/pull/14',repo:'fixture/project',head:command.payload.head,revision:command.payload.revision}:command.type==='review-pr'?{operationId:command.id,operation:'review-pr',state:'confirmed'}:{url:'https://github.com/fixture/project/pull/14'}});
+ const stashOid='e'.repeat(40),stashEntry={oid:stashOid,message:'save work',branch:'gen/review',createdAt:new Date().toISOString(),files:[{path:'source.ts',status:'M'}]},stashList=()=>({entries:options.stash?[stashEntry]:[],total:options.stash?1:0,stashRevision:'f'.repeat(64),gitWrite:state.gitWrite});
+ const stashResult=(command:Record<string,any>)=>({operationId:command.id,operation:command.type,state:'confirmed',status:{head:state.head,revision:state.revision,branch:'gen/review',gitWrite:state.gitWrite,files:[],diff:'',stagedDiff:'',truncated:false},result:command.type==='stash-push'?{created:stashEntry}:command.type==='stash-drop'?{dropped:true}:{restored:'clean',conflicts:[],dropped:command.type==='stash-pop'}});
+ const receiptFor=(command:Record<string,any>)=>({commandId:command.id,seq:1,result:command.type==='create-pr'?{url:'https://github.com/fixture/project/pull/14',repo:'fixture/project',head:command.payload.head,revision:command.payload.revision}:command.type==='review-pr'?{operationId:command.id,operation:'review-pr',state:'confirmed'}:command.type.startsWith('stash-')?stashResult(command):{url:'https://github.com/fixture/project/pull/14'}});
  await page.route('**/api/bootstrap',route=>route.fulfill({json:{csrfToken:'fixture'}}));
  await page.route('**/api/projects/project-one/git?*',route=>route.fulfill({json:{head:state.head,revision:state.revision,branch:'gen/review',mode:'managed',...(options.missingWrite?{}:{gitWrite:state.gitWrite}),files:options.dirty?[{path:'source.ts',index:' ',worktree:'M',staged:false,untracked:false,binary:false,added:1,removed:0}]:[],diff:'',stagedDiff:'',truncated:false}}));
  await page.route('**/api/projects/project-one/pull-requests?*',route=>{lists.push(route.request().url());return route.fulfill({json:{repo:'fixture/project',items:[12,13].map(number=>({number,title:'PR '+number,url:'https://github.com/fixture/project/pull/'+number,state:'OPEN'}))}});});
  await page.route('**/api/projects/project-one/pull-requests/*?*',route=>{const number=Number(new URL(route.request().url()).pathname.split('/').at(-1));return route.fulfill({json:{item:{number,title:'PR '+number,headRefOid:state.remoteHead,state:'OPEN',files:[],statusCheckRollup:[]},head:state.head,revision:state.revision,canReview:true}});});
+ await page.route('**/api/projects/project-one/git/stashes*',route=>route.fulfill({json:stashList()}));
  await page.route('**/api/projects/project-one/actions',async route=>{const command=route.request().postDataJSON();actions.push(command);if(command.type==='create-pr'&&holdCreate){pendingCreate=route;return;}if(command.type==='review-pr'&&holdReview){pendingReview=route;return;}if(options.loseAcknowledgment){if(!receipts.has(command.id)){receipts.set(command.id,{command,receipt:receiptFor(command)});if(receipts.size===1)return route.fulfill({status:200,contentType:'application/json',body:'{"commandId":'});}const stored=receipts.get(command.id)!;expect(command).toEqual(stored.command);return route.fulfill({json:stored.receipt});}await route.fulfill({json:receiptFor(command)});});
  await page.goto('/shared-panels-check?project=1&pr-panels='+(options.kind??'pull-request'));
- const panel=page.getByRole('region',{name:'first PR panel',exact:true});if(options.kind==='diff')await expect(panel.getByRole('button',{name:'Stage',exact:true})).toBeVisible();else await expect(panel.getByRole('button',{name:'#12 PR 12',exact:true})).toBeVisible();
+ const panel=page.getByRole('region',{name:'first PR panel',exact:true});if(options.kind==='diff')await expect(panel.getByRole('button',{name:options.dirty?'Stage':'Refresh',exact:true})).toBeVisible();else await expect(panel.getByRole('button',{name:'#12 PR 12',exact:true})).toBeVisible();
  return{panel,state,actions,lists,get effects(){return receipts.size;},holdCreate:()=>{holdCreate=true;},holdReview:()=>{holdReview=true;},releaseCreate:async()=>{await expect.poll(()=>Boolean(pendingCreate)).toBe(true);await pendingCreate!.fulfill({json:receiptFor(pendingCreate!.request().postDataJSON())});},releaseReview:async()=>{await expect.poll(()=>Boolean(pendingReview)).toBe(true);await pendingReview!.fulfill({json:receiptFor(pendingReview!.request().postDataJSON())});}};
 }
 
@@ -155,6 +158,28 @@ test('PR handoff refuses an action started while the draft flush is pending',asy
 test('Diff actions reject false and missing write capability while writable worktrees still stage',async({page})=>{
  for(const missingWrite of [false,true]){const{panel,actions}=await pullRequestFixture(page,{kind:'diff',dirty:true,gitWrite:false,missingWrite});await expect(panel.getByRole('button',{name:'Stage',exact:true})).toBeDisabled();expect(actions).toHaveLength(0);}
  const{panel,actions}=await pullRequestFixture(page,{kind:'diff',dirty:true,gitWrite:true});await expect(panel.getByRole('button',{name:'Stage',exact:true})).toBeEnabled();await panel.getByRole('button',{name:'Stage',exact:true}).click();await expect.poll(()=>actions.filter(action=>action.type==='stage').length).toBe(1);expect(actions[0].payload).toMatchObject({paths:['source.ts'],expectedHead:'a'.repeat(40),revision:'c'.repeat(64)});
+});
+
+test('the Stash section lists entries and posts armed apply, pop, and confirmed drop actions',async({page})=>{
+ const{panel,actions}=await pullRequestFixture(page,{kind:'diff',dirty:true,stash:true});
+ const stashes=panel.getByRole('region',{name:'Stashes'});await expect(stashes.getByRole('button',{name:'save work',exact:true})).toBeVisible();
+ await stashes.getByRole('button',{name:'Apply',exact:true}).click();await stashes.getByRole('button',{name:'Apply?',exact:true}).click();
+ await expect.poll(()=>actions.filter(action=>action.type==='stash-apply').length).toBe(1);
+ expect(actions[0].payload).toMatchObject({oid:'e'.repeat(40),stashRevision:'f'.repeat(64),revision:'c'.repeat(64),expectedHead:'a'.repeat(40)});
+ await stashes.getByRole('button',{name:'Pop',exact:true}).click();await stashes.getByRole('button',{name:'Pop?',exact:true}).click();
+ await expect.poll(()=>actions.filter(action=>action.type==='stash-pop').length).toBe(1);
+ await stashes.getByRole('button',{name:'Drop',exact:true}).click();expect(actions.filter(action=>action.type==='stash-drop')).toHaveLength(0);
+ await page.getByRole('dialog').getByRole('button',{name:'Drop',exact:true}).click();await expect.poll(()=>actions.filter(action=>action.type==='stash-drop').length).toBe(1);
+});
+test('the Stash trigger submits a named push through the popover and requires a dirty writable worktree',async({page})=>{
+ const{panel,actions}=await pullRequestFixture(page,{kind:'diff',dirty:true});
+ await expect(panel.getByRole('region',{name:'Stashes'})).toHaveCount(0);
+ await panel.getByRole('button',{name:'Stash…',exact:true}).click();await page.getByRole('textbox',{name:'Name',exact:true}).fill('wip half-done');
+ await page.getByRole('button',{name:'Stash changes',exact:true}).click();
+ await expect.poll(()=>actions.filter(action=>action.type==='stash-push').length).toBe(1);
+ expect(actions[0].payload).toMatchObject({message:'wip half-done',revision:'c'.repeat(64),expectedHead:'a'.repeat(40)});
+ const clean=await pullRequestFixture(page,{kind:'diff'});await expect(clean.panel.getByRole('button',{name:'Stash…',exact:true})).toBeDisabled();
+ const readOnly=await pullRequestFixture(page,{kind:'diff',dirty:true,gitWrite:false});await expect(readOnly.panel.getByRole('button',{name:'Stash…',exact:true})).toBeDisabled();
 });
 
 test('PR submission rechecks the worktree before creating or reviewing',async({page})=>{
