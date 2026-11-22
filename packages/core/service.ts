@@ -2310,6 +2310,11 @@ export class Service {
     if(this.memoryHostInstance?.busy)throw new HarnessError('MEMORY_SOURCE_BUSY','Active memory work must finish cleanup before host recovery.');
     this.planning.recover();
     sweepStaleAccountLeases(this.store);
+    // Settle only authenticated historical effects while the persisted original
+    // run/epoch owner is still intact. This is read-only reconciliation of
+    // durable outcomes, never authority to dispatch or publish for that run.
+    if (this.effects.admissionsDisabled()) disableEffects(this.store);
+    else if (this.effectFlags.enabled("audit.effectsV1") || this.effectFlags.enabled("security.authorityV1")) recoverEffects(this.store, this.effects);
     this.store.internal("workspace.recovered", null, () => {
       // A former host can no longer publish, but its unconfirmed native cleanup
       // and cost are not converted into successful teardown or zero spend.
@@ -2330,8 +2335,6 @@ export class Service {
       for (const input of this.store.all<Outbox>("outbox").filter(i => i.status !== "handled")) {if(input.requestContextId)this.requestCustody.release(input.requestContextId,'cancelled');this.store.put("outbox", input.id, input.threadId, { ...input, requestContextId:undefined, status: "persisted" });}
       return { inferenceCalls: 0 };
     });
-    if (this.effects.admissionsDisabled()) disableEffects(this.store);
-    else if (this.effectFlags.enabled("audit.effectsV1") || this.effectFlags.enabled("security.authorityV1")) recoverEffects(this.store, this.effects);
     this.backgroundWork.recover();
     this.backgroundWork.start();
     this.intake.start();

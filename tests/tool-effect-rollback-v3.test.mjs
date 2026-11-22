@@ -129,6 +129,53 @@ it.each([null, { version: 2, mode: 'AUTHENTICATED' }])('does not overwrite or ac
   expect(x.store.get('toolEffectAdmissionPolicy', 'global')).toEqual(policy);
 });
 
+// Signed, synthetic durability cut: the Operation commit is durable but the
+// associated effect is still DISPATCHED. Real Store reopen and Service.recover
+// must reconcile history before it revokes the interrupted thread owner.
+it.each([
+  { name: 'recorded success under the original owner', drift: 'none', state: 'SUCCEEDED' },
+  { name: 'recorded success after account drift', drift: 'account', state: 'UNKNOWN_EXTERNAL_OUTCOME' },
+  { name: 'an unfinished external effect', drift: 'unfinished', state: 'UNKNOWN_EXTERNAL_OUTCOME' },
+])('keeps original custody through Service restart for $name', async ({ drift, state }) => {
+  const x = await fixture();
+  x.store.internal('fixture.interrupted-owner', x.thread.id, () => {
+    const existing = x.store.get('thread', x.thread.id);
+    x.store.put('thread', existing.id, existing.id,
+      { ...existing, runId: 'interrupted-host-run', epoch: existing.epoch + 2, status: 'working' });
+  });
+  const prepared = x.prepare('Synthetic durability boundary before effect settlement');
+  const original = x.store.get('thread', x.thread.id);
+  const approval = x.service.effects.issueApproval(prepared, original);
+  x.store.internal('fixture.signed-approval', prepared.threadId, () =>
+    x.store.put('approval', approval.approvalId, prepared.threadId, approval));
+  const admitted = x.service.effects.admitOperationDispatch(prepared, original, () =>
+    x.store.put('operation', prepared.id, prepared.threadId, { ...prepared, approved: true, status: 'running' }));
+  expect(admitted?.state).toBe('DISPATCHED');
+  expect(x.store.get('approval', approval.approvalId).remainingUses).toBe(0);
+  x.store.internal('fixture.synthetic-commit-before-effect-settlement', prepared.threadId, () => {
+    if (drift !== 'unfinished') x.store.put('operation', prepared.id, prepared.threadId,
+      { ...prepared, approved: true, status: 'succeeded', result: { completed: true } });
+    if (drift === 'account') x.store.put('thread', original.id, original.id,
+      { ...original, accountId: 'different-account' });
+  });
+  const invocationId = 'operation:' + prepared.id + '@' + prepared.revision;
+  const dispatch = x.store.get('toolEffect', invocationId);
+  expect(dispatch.state).toBe('DISPATCHED');
+  await x.restart(enabled);
+  await x.service.recover();
+  const recovered = x.store.get('toolEffect', invocationId);
+  expect(recovered.state).toBe(state);
+  expect(recovered.owner).toEqual(dispatch.owner);
+  expect(recovered.transitions.at(-1).note).toMatch(/host_restart/);
+  const revoked = x.store.get('thread', original.id);
+  expect(revoked.runId).toBeNull();
+  expect(revoked.epoch).toBe(original.epoch + 1);
+  expect(x.store.get('approval', approval.approvalId).remainingUses).toBe(0);
+  if (drift === 'unfinished') expect(x.store.get('operation', prepared.id).status).toBe('unknown');
+  // No real external executor runs in this synthetic durability-cut test.
+  expect(await x.effects()).toEqual([]);
+});
+
 it('retains authenticated admission when the authority flag still supplies the complete ledger path', async () => {
   const { x, completed, pending } = await history();
   await x.restart({ 'security.authorityV1': true }); await x.service.recover();
