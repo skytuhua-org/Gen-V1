@@ -1,54 +1,35 @@
 :root {
-  --ornament-grain-opacity:.035;
-  --ornament-canvas:#faf8f4;
-  --ornament-sidebar:#eae5dd;
-  --ornament-panel:#f1ede6;
-  --ornament-surface:#fffdf9;
-  --ornament-mark:#b8b5a0;
-  --ornament-elevation:0 3px 8px #352b2008,0 16px 40px #352b2010;
-  --ornament-scrollbar:#8c83736b;
-  --ornament-selection:#e8ddc9;
+  --ornament-mark:#202020;
+  --ornament-mark-ink:#fff;
+  --ornament-elevation:0 3px 8px #00000008,0 16px 40px #00000010;
+  --ornament-scrollbar:#8888;
+  --ornament-selection:#dedede;
 }
 :root[data-theme=dark] {
-  --ornament-grain-opacity:.055;
-  --ornament-canvas:#151412;
-  --ornament-sidebar:#211e1a;
-  --ornament-panel:#1c1a17;
-  --ornament-surface:#25221e;
-  --ornament-mark:#555546;
+  --ornament-mark:#eee;
+  --ornament-mark-ink:#111;
   --ornament-elevation:0 4px 12px #0002,0 18px 44px #0004;
-  --ornament-scrollbar:#b1a48b66;
-  --ornament-selection:#494033;
+  --ornament-scrollbar:#aaa6;
+  --ornament-selection:#404040;
 }
 @media (forced-colors:none) and (prefers-contrast:no-preference) and (prefers-reduced-transparency:no-preference) {
-  :root:not(:has(.app-shell[data-contrast=high])) :is(body,.app-shell) { background-color:var(--ornament-canvas); }
-  :root:not(:has(.app-shell[data-contrast=high])) body::after {
-    content:'';
-    position:fixed;
-    inset:0;
-    z-index:2147483647;
-    pointer-events:none;
-    opacity:var(--ornament-grain-opacity);
-    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cpath fill='%2380786c' filter='url(%23grain)' d='M0 0h160v160H0z'/%3E%3C/svg%3E");
-  }
+  :root:not(:has(.app-shell[data-contrast=high])) .app-shell { background-color:var(--canvas); }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.split-workspace,.split-pane,.split-surface:not(.split-surface-float),.chat-view-surface[data-chat-mode=full],.workspace-canvas) { background-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) .split-pane { border-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) .split-pane:focus-visible { outline:2px solid var(--ui-focus-ring,#808080); outline-offset:-2px; }
-  :root:not(:has(.app-shell[data-contrast=high])) .app-shell .sidebar { background-color:var(--ornament-sidebar); }
-  :root:not(:has(.app-shell[data-contrast=high])) .workspace-right { background-color:var(--ornament-panel); }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.split-pane-header,.split-workspace-tools) { background-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.workspace-switcher,.workspace-header,.workspace-plugin-notice,.split-pane-header,.split-workspace-tools,.workspace-right-header,.workspace-panel-content>.panel-toolbar,.canvas-panel-header,.artifact-header,.settings-page-heading,.settings-dialog>.ui-modal-header) { border-bottom-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) .sidebar :is(.thread-group-settled,.sidebar-footer,.plugin-navigation) { border-top-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.app-shell .composer:not(.dragging),.app-shell .canvas-panel,.app-shell .artifact,.app-shell .decision,.app-shell .agents-grid-slot>.agents-agent,.ui-popover.ui-popover) {
     box-shadow:var(--ornament-elevation);
-    background-color:var(--ornament-surface);
+    background-color:var(--surface);
   }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.app-shell .artifact,.app-shell .canvas-panel,.app-shell .decision,.app-shell .agents-grid-slot>.agents-agent) { border-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) .canvas-panel:focus-within { border-color:var(--ui-focus-ring,#808080); }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.canvas-panel,.workspace-right) .artifact { background:transparent; box-shadow:none; }
   :root:not(:has(.app-shell[data-contrast=high])) .app-shell .composer:focus-within { box-shadow:none; }
-  :root:not(:has(.app-shell[data-contrast=high])) .ui-modal.settings-dialog { background-color:var(--ornament-canvas); box-shadow:var(--ornament-elevation); }
-  :root:not(:has(.app-shell[data-contrast=high])) .settings-navigation { background-color:var(--ornament-sidebar); }
+  :root:not(:has(.app-shell[data-contrast=high])) .ui-modal.settings-dialog { background-color:var(--canvas); box-shadow:var(--ornament-elevation); }
+  :root:not(:has(.app-shell[data-contrast=high])) .settings-navigation { background-color:var(--sidebar); }
   :root:not(:has(.app-shell[data-contrast=high])) .sidebar .brand-mark {
     width:24px;
     height:24px;
@@ -57,6 +38,7 @@
     justify-content:center;
     border-radius:7px;
     background:var(--ornament-mark);
+    color:var(--ornament-mark-ink);
   }
   :root:not(:has(.app-shell[data-contrast=high])) .sidebar .brand-mark>svg { display:none; }
   :root:not(:has(.app-shell[data-contrast=high])) .sidebar .brand-mark::before { content:'G' / ''; font-size:13px; font-weight:650; line-height:1; }

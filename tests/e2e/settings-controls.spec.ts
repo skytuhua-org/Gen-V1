@@ -8,7 +8,12 @@ import {readFileSync} from 'node:fs';
 import {openApp} from './app-ready';
 
 for(const theme of ['dark','light'] as const)test(`ornament remains decorative and respects contrast preferences in ${theme}`,async({page})=>{
-  expect(readFileSync(new URL('../../apps/web/src/ornament.css',import.meta.url),'utf8')).not.toMatch(/gradient|@keyframes|animation:|will-change:/i);
+  const ornament=readFileSync(new URL('../../apps/web/src/ornament.css',import.meta.url),'utf8');
+  expect(ornament).not.toMatch(/gradient|sage|clay|grain|turbulence|url\(|@keyframes|animation:|will-change:|(?:hsl|oklch)\(/i);
+  for(const hex of ornament.match(/#[\da-f]{3,8}\b/gi)??[]){
+    const rgb=hex.length<=5?hex.slice(1,4).split(''):hex.slice(1,7).match(/../g)!;
+    expect(new Set(rgb).size,hex).toBe(1);
+  }
   await page.setViewportSize({width:1440,height:900});
   const directory=process.env.ORNAMENT_CAPTURE_DIR;
   const capture=async(name:string)=>{if(directory){const close=page.getByRole('button',{name:'Dismiss notification',exact:true});let count=await close.count();while(count){await close.first().click();await expect(close).toHaveCount(--count);}await page.evaluate(()=>Promise.all(document.getAnimations().filter(animation=>animation.playState==='running'&&animation.effect?.getComputedTiming().iterations!==Infinity).map(animation=>animation.finished.catch(()=>{}))));await mkdir(directory,{recursive:true});await page.screenshot({path:resolve(directory,name+'.png')});}};
@@ -16,8 +21,7 @@ for(const theme of ['dark','light'] as const)test(`ornament remains decorative a
   empty.settings.theme=theme;empty.threads=[];empty.messages=[];empty.artifacts=[];empty.userStates=[];empty.activeThreadId=null;
   await serveTaskFixture(page,empty);await openApp(page);await expect(page.locator('.workspace-switcher')).toBeVisible();
   await expect(page.locator('.sidebar .brand-mark')).toBeVisible();
-  const grain=await page.locator('body').evaluate(node=>{const style=getComputedStyle(node,'::after');return {opacity:style.opacity,image:style.backgroundImage,position:style.position,pointer:style.pointerEvents,animation:style.animationName};});
-  expect(grain).toMatchObject({opacity:theme==='dark'?'0.055':'0.035',position:'fixed',pointer:'none',animation:'none'});expect(grain.image).toContain('feTurbulence');
+  expect(await page.locator('body').evaluate(node=>{const s=getComputedStyle(node,'::after');return {content:s.content,image:s.backgroundImage,animation:s.animationName};})).toEqual({content:'none',image:'none',animation:'none'});
   const canvas=page.locator('.conversation-frame:visible').first();
   expect(await canvas.evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');
   const ground=()=>page.locator('body').evaluate(node=>{const s=getComputedStyle(node,'::before');return {content:s.content,image:s.backgroundImage,position:s.position,pointer:s.pointerEvents,animation:s.animationName,duration:s.animationDuration,transform:s.transform};});
@@ -25,11 +29,10 @@ for(const theme of ['dark','light'] as const)test(`ornament remains decorative a
   expect(await ground()).toMatchObject({content:'none',image:'none',animation:'none',transform:'none'});
   const flatFill=async(selector:string,token:string)=>{
     const fill=await page.locator(selector).first().evaluate((node,token)=>{const s=getComputedStyle(node),probe=document.createElement('span');probe.style.backgroundColor=`var(${token})`;node.append(probe);const expected=getComputedStyle(probe).backgroundColor;probe.remove();return {actual:s.backgroundColor,expected,image:s.backgroundImage};},token);
-    expect(fill.actual).toBe(fill.expected);expect(fill.actual).not.toBe('rgba(0, 0, 0, 0)');expect(fill.image).toBe('none');return fill.actual;
+    expect(fill.actual).toBe(fill.expected);expect(fill.actual).not.toBe('rgba(0, 0, 0, 0)');expect(fill.image).toBe('none');expect(new Set(fill.actual.match(/[\d.]+/g)!.slice(0,3)).size).toBe(1);return fill.actual;
   };
-  const mainFill=await flatFill('.app-shell','--ornament-canvas');
-  const sidebarFill=await flatFill('.app-shell .sidebar','--ornament-sidebar');
-  expect(sidebarFill).not.toBe(mainFill);
+  await flatFill('.app-shell','--canvas');
+  await flatFill('.app-shell .sidebar','--sidebar');
   for(const mode of ['off','reduced']){
     await page.evaluate(mode=>document.documentElement.dataset.motion=mode,mode);
     expect(await ground()).toMatchObject({animation:'none',transform:'none'});
@@ -54,9 +57,8 @@ for(const theme of ['dark','light'] as const)test(`ornament remains decorative a
   await page.getByRole('button',{name:'Open artifact in workspace',exact:true}).click();await expect(page.getByRole('complementary',{name:'Workspace panel',exact:true})).toBeVisible();
   await expect(page.getByRole('heading',{name:'Release review',exact:true})).toBeInViewport();await expect(page.getByText('A considered workspace. Clear priorities, small changes, dependable outcomes.',{exact:true})).toBeInViewport();
   for(const pane of await page.locator('.split-pane:visible').all())expect(await pane.evaluate(node=>getComputedStyle(node).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
-  const panelFill=await flatFill('.workspace-right','--ornament-panel');
-  expect(panelFill).not.toBe(mainFill);expect(panelFill).not.toBe(sidebarFill);
-  await flatFill('.composer:visible','--ornament-surface');
+  await flatFill('.workspace-right','--surface');
+  await flatFill('.composer:visible','--surface');
   expect(await page.locator('.composer:visible').first().evaluate(node=>getComputedStyle(node).boxShadow)).not.toBe('none');
   await capture(`conversation-${theme}`);
   expect(await page.locator('.sidebar-thread-row.active').evaluate(node=>getComputedStyle(node,'::before').content)).toBe('none');
@@ -72,8 +74,12 @@ for(const theme of ['dark','light'] as const)test(`ornament remains decorative a
   await page.getByRole('button',{name:'Settings',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Settings',exact:true});await expect(dialog).toBeVisible();
   await dialog.getByRole('navigation',{name:'Settings sections'}).getByRole('button',{name:'Appearance',exact:true}).click();await expect(dialog.getByRole('heading',{name:'Appearance',exact:true})).toBeVisible();await capture(`settings-${theme}`);
   expect(await dialog.evaluate(node=>getComputedStyle(node).boxShadow)).not.toBe('none');
-  await flatFill('.ui-modal.settings-dialog','--ornament-canvas');await flatFill('.settings-navigation','--ornament-sidebar');
+  await flatFill('.ui-modal.settings-dialog','--canvas');await flatFill('.settings-navigation','--sidebar');
   const mark=page.locator('.sidebar .brand-mark');await flatFill('.sidebar .brand-mark','--ornament-mark');
+  const markColors=await mark.evaluate(node=>{const s=getComputedStyle(node);return {fill:s.backgroundColor,ink:s.color};});
+  expect(markColors).toEqual(theme==='dark'?{fill:'rgb(238, 238, 238)',ink:'rgb(17, 17, 17)'}:{fill:'rgb(32, 32, 32)',ink:'rgb(255, 255, 255)'});
+  const selection=await page.locator('.composer').first().evaluate(node=>{const s=getComputedStyle(node,'::selection');return {fill:s.backgroundColor,ink:s.color,text:getComputedStyle(node).color};});
+  expect(selection.fill).toBe(theme==='dark'?'rgb(64, 64, 64)':'rgb(222, 222, 222)');expect(selection.ink).toBe(selection.text);
   const expectDecorationsDisabled=async()=>{
     expect(await ground()).toMatchObject({content:'none',image:'none',animation:'none'});expect(await page.locator('body').evaluate(node=>getComputedStyle(node,'::after').content)).toBe('none');expect(await mark.evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');expect(await dialog.evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');
     const fills=await page.evaluate(()=>{
