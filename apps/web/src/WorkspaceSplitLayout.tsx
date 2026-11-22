@@ -38,12 +38,17 @@ interface CornerGesture {pointerId:number;paneId:string;x:number;y:number;elemen
 const edgeLabel:Record<SplitDropEdge,string>={left:'Left',right:'Side by side',top:'Above',bottom:'Below',center:'Open as tab'};
 const defaultTitle=(view:SurfaceRef)=>view.kind==='thread'?'Conversation':view.kind.replaceAll('-',' ');
 
+function hasStackedPanes(node:SplitWorkspaceNode):boolean{
+ return node.kind==='split'&&(node.axis==='vertical'||hasStackedPanes(node.first)||hasStackedPanes(node.second));
+}
+
 function keepFloatVisible(rect:ChatRect,viewport:ChatViewport):ChatRect{
  if(viewport.width<=0||viewport.height<=0)return rect;const bounds=chatBounds(viewport);
- // Keep rects a move drag could admit (64px slack on edge-filling floats); only project placements beyond that.
- const slack=64,availW=bounds.right-bounds.left,availH=bounds.bottom-bounds.top,sx=rect.width>=availW?slack:0,sy=rect.height>=availH?slack:0;
+ // Keep rects a move drag could admit (64px leftward slack on edge-filling
+ // floats, matching clampChatRect); only project placements beyond that.
+ const slack=64,availW=bounds.right-bounds.left,availH=bounds.bottom-bounds.top,sx=rect.width>=availW?slack:0;
  const minX=Math.min(bounds.left,bounds.right-rect.width),maxX=Math.max(bounds.left,bounds.right-rect.width),minY=Math.min(bounds.top,bounds.bottom-rect.height),maxY=Math.max(bounds.top,bounds.bottom-rect.height);
- return rect.width<=availW&&rect.height<=availH&&rect.x>=minX-sx&&rect.x<=maxX&&rect.y>=minY&&rect.y<=maxY+sy?rect:clampChatRect(rect,viewport);
+ return rect.width<=availW&&rect.height<=availH&&rect.x>=minX-sx&&rect.x<=maxX&&rect.y>=minY&&rect.y<=maxY?rect:clampChatRect(rect,viewport);
 }
 
 /** View bodies keep one stable DOM parent; layout changes only reposition their slots. */
@@ -76,7 +81,7 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  };
  const keyFloat=(event:KeyboardEvent<HTMLElement>,viewId:string)=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;const rect=floatRectOf(viewId);if(!rect)return;event.preventDefault();const step=event.shiftKey?24:8,dx=event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0,dy=event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0;const next=clampChatRect({...rect,x:rect.x+dx,y:rect.y+dy},{width:size.width,height:size.height});setFloatRects(current=>({...current,[viewId]:next}));onMoveFloat?.(viewId,next);};
  useEffect(()=>{const escape=(event:globalThis.KeyboardEvent)=>{if(event.key==='Escape'){if(floatGesture.current){event.preventDefault();cancelFloat();}setFloatMenu(null);}};const blur=()=>{cancelFloat();setFloatMenu(null);};window.addEventListener('keydown',escape);window.addEventListener('blur',blur);return()=>{window.removeEventListener('keydown',escape);window.removeEventListener('blur',blur);cancelFloat();};},[cancelFloat]);
- const minimum=minimumSplitSize(layout),narrow=size.width>0&&(size.width<minimum.width||size.height<minimum.height||(!toolDock&&size.width<700)),topBar=narrow?30:0;
+ const minimum=minimumSplitSize(layout),narrow=size.width>0&&(size.width<minimum.width||(toolDock?size.height<minimum.height:size.width<700)||(hasStackedPanes(layout.root)&&size.height<minimum.height)),topBar=narrow?30:0;
  const mainPaneId=resolveMainPaneId(layout);
  useEffect(()=>{if(menuPane&&(!layout.panes[menuPane]||layout.panes[menuPane].collapsed||narrow&&layout.focusedPaneId!==menuPane))setMenuPane(null);},[menuPane,layout.panes,layout.focusedPaneId,narrow]);
  const measure=useCallback(()=>{
@@ -170,13 +175,14 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
   if(node.kind==='pane')return renderPane(node.paneId);const ratio=previewRatio?.id===node.id?previewRatio.ratio:node.ratio,firstCollapsed=splitPaneIds(node.first).every(id=>layout.panes[id]!.collapsed),secondCollapsed=splitPaneIds(node.second).every(id=>layout.panes[id]!.collapsed),style={'--split-ratio':ratio,...(firstCollapsed!==secondCollapsed?{[node.axis==='horizontal'?'gridTemplateColumns':'gridTemplateRows']:firstCollapsed?'36px 6px minmax(0,1fr)':'minmax(0,1fr) 6px 36px'}:{})} as CSSProperties;
   return <div key={node.id} className={`split-node split-${node.axis}`} style={style}>{renderNode(node.first)}<div role="separator" tabIndex={0} aria-label={`Resize ${node.axis==='horizontal'?'columns':'rows'}`} aria-orientation={node.axis==='horizontal'?'vertical':'horizontal'} aria-valuenow={Math.round(ratio*100)} aria-valuemin={5} aria-valuemax={95} className={`split-divider${previewRatio?.id===node.id?' is-dragging':''}`} onPointerDown={event=>beginResize(event,node)} onPointerMove={moveResize} onPointerUp={endResize} onPointerCancel={event=>{if(resize.current?.pointerId===event.pointerId)cancel();}} onLostPointerCapture={event=>{if(resize.current?.pointerId===event.pointerId)cancel();}} onContextMenu={event=>{event.preventDefault();cancel();}} onKeyDown={event=>keyResize(event,node)}>{previewRatio?.id===node.id&&<span>{Math.round(ratio*100)}% {node.axis==='horizontal'?'width':'height'}</span>}</div>{renderNode(node.second)}</div>;
  };
- const visibleOwner=new Map<string,string>();for(const pane of Object.values(layout.panes)){const active=pane.activeViewId?layout.views[pane.activeViewId]:undefined;if(!pane.collapsed&&active&&(pane.id!==emptyMainPaneId||active.kind!=='thread')&&(!narrow||pane.id===layout.focusedPaneId))visibleOwner.set(active.id,pane.id);}
+ const liveOwner=new Map<string,string>(),visibleOwner=new Map<string,string>();for(const pane of Object.values(layout.panes)){const active=pane.activeViewId?layout.views[pane.activeViewId]:undefined;if(!pane.collapsed&&active&&(pane.id!==emptyMainPaneId||active.kind!=='thread')){liveOwner.set(active.id,pane.id);if(!narrow||pane.id===layout.focusedPaneId)visibleOwner.set(active.id,pane.id);}}
  const viewPlacements=Object.values(layout.views).map(view=>{
   const paneId=dockedPreview===view.id?undefined:visibleOwner.get(view.id),slot=paneId?rects[paneId]:undefined,floatRect=!paneId&&(dockedPreview===view.id||layout.parkedViewIds.includes(view.id))?floatRectOf(view.id):undefined,active=Boolean(slot&&slot.width>0&&slot.height>0)||Boolean(floatRect);
+  const live=Boolean(liveOwner.get(view.id))||Boolean(floatRect);
   const style:CSSProperties=floatRect?{left:floatRect.x,top:floatRect.y,width:floatRect.width,height:floatRect.height}:active?{left:slot!.left,top:slot!.top,width:slot!.width,height:slot!.height}:{display:'none'};
-  return{view,paneId,floatRect,active,style};
+  return{view,paneId,floatRect,active,live,style};
  });
- const activeViewKey=JSON.stringify(viewPlacements.filter(placement=>placement.active).map(placement=>placement.view.id).sort());
+ const activeViewKey=JSON.stringify(viewPlacements.filter(placement=>placement.live).map(placement=>placement.view.id).sort());
  useLayoutEffect(()=>{
   if(!onActiveViewsChange)return;
   onActiveViewsChange(layout.id,JSON.parse(activeViewKey));
