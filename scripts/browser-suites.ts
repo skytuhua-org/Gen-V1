@@ -96,6 +96,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('ui-shell-controls'),
   suite('usage-context'),
   suite('wo8'),
+  suite('network-proxy-settings'),
 ];
 
 export function validateBrowserSuites(specs:string[], suites=browserSuites):void {
