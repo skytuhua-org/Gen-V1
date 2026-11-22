@@ -254,6 +254,16 @@ it.each(['args', 'resourceIds', 'kind', 'run', 'epoch', 'account', 'project', 'w
   expect(ledger.get('operation:op-crash@1')?.state).toBe('UNKNOWN_EXTERNAL_OUTCOME');
 });
 
+it('quarantines malformed persisted recovery intent without terminating startup', async () => {
+  const { store, ledger } = await fixture();
+  commitAdmittedOperation(store, ledger);
+  const operation = store.get<Operation>('operation', 'op-crash')!;
+  store.internal('fixture.malformed', 'thread-1', () =>
+    store.put('operation', operation.id, operation.threadId, { ...operation, args: null }));
+  expect(() => recoverEffects(store, ledger)).not.toThrow();
+  expect(ledger.get('operation:op-crash@1')?.state).toBe('UNKNOWN_EXTERNAL_OUTCOME');
+});
+
 it('requires host signing custody before inheriting an otherwise identical committed result', async () => {
   const { store, ledger } = await fixture();
   commitAdmittedOperation(store, ledger);

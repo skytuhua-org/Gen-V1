@@ -260,7 +260,8 @@ export class ToolEffectLedger {
   /** Only host-authenticated dispatch identity can bind an interrupted effect to a committed operation.
    * A legacy or drifted record is evidence to inspect, never permission to inherit a result. */
   matchesRecoveredOperationDispatch(effect: ToolEffectRecord, operation: Operation, thread: Thread | null): boolean {
-    if (!thread || !this.authenticated() || operation.threadId !== thread.id || effect.threadId !== thread.id
+    try {
+      if (!thread || !this.authenticated() || operation.threadId !== thread.id || effect.threadId !== thread.id
       || effect.invocationId !== "operation:" + operation.id + "@" + operation.revision
       || ["commandId", "invocationId", "operationId"].some(key => Object.hasOwn(operation.args, key))) return false;
     const owner = ownerFor(thread);
@@ -271,7 +272,6 @@ export class ToolEffectLedger {
     if (effect.targetPreconditions.length !== preconditions.length
       || !effect.targetPreconditions.every((entry, index) => entry === preconditions[index]
         && entry.indexOf("=") === entry.lastIndexOf("="))) return false;
-    try {
       const binding = { kind: operation.kind, args: operation.args, resourceIds: operation.resourceIds, preconditions: operation.preconditions };
       if (effect.toolId !== "operation:" + operation.kind
         || effect.definitionDigest !== this.signer().commit("operation-definition", binding)) return false;
