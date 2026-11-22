@@ -151,6 +151,10 @@
 .panel-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 13px; border-bottom:1px solid var(--border); }
 .panel-toolbar label { min-width:0; flex:1; }
 .panel-toolbar select { font-size:12px; padding:6px 8px; width:100%; }
+.panel-artifact-picker { display:inline-flex; min-width:0; }
+.panel-artifact-picker .ui-select-trigger:disabled { font-size:11px; color:var(--muted); background:var(--surface); border-color:var(--border); cursor:default; }
+.panel-artifact-picker .ui-select-trigger:disabled>svg { color:var(--subtle); }
+.panel-artifact-empty { font-size:11px; color:var(--muted); }
 .panel-empty { padding:35px 24px; display:flex; flex-direction:column; align-items:center; text-align:center; gap:10px; color:var(--muted); font-size:12px; }
 .panel-empty strong { color:var(--text); font-size:14px; font-weight:500; }
 .panel-empty p { max-width:340px; }
