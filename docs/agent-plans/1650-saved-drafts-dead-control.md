@@ -19,24 +19,27 @@ In a thread with a project connected ("UI review recordings") and text typed in 
 - Compact density: no layout shift; button stays in its current slot.
 
 ## REPO_MAP (verified)
-- `apps/web/src/App.tsx` (~line 446): renders `<SavedDrafts owner={savedDraftOwner} …>` only when `savedDraftOwner` is truthy; otherwise renders a permanently `disabled` fallback button with the "waiting for the owning project context" / "Start a conversation…" tooltips. Bug: `savedDraftOwner` stays null even when the thread has `projectId`/`workspaceId` set — derive it the same way the live path does (verify: `savedDraftOwnerKey` in `saved-drafts.ts`).
-- `apps/web/src/SavedDrafts.tsx`, `apps/web/src/saved-drafts.ts`: `savedDraftOwnerKey`, `SavedDraftOwner` type — the owner is `{threadId, projectId, workspaceId}`; check whether the fallback can construct an owner from `thread.projectId ?? workspaceId`.
+- `apps/web/src/App.tsx` (~line 261): `savedDraftOwner` = `{profileId: window.location.origin, accountId: thread.accountId ?? null, threadId: thread.id, projectId: thread.projectId ?? null, workingCopyId: thread.projectId ? draftProject.context?.workingCopy?.id ?? null : null}` — defined only when `thread` exists AND (`!thread.projectId` OR `draftProject` loaded without error and `context.project.id === thread.projectId` AND `context.threadId === thread.id` AND `context.workingCopy?.id ?? null === thread.workspaceId ?? null`).
+- `apps/web/src/App.tsx` (~line 446): renders `<SavedDrafts>` only when `savedDraftOwner` is truthy; otherwise a permanently `disabled` fallback button with the "waiting for the owning project context" / "Start a conversation…" tooltips. Bug: while `draftProject` is loading, errors, or mismatches the thread, the control sits dead with a tooltip that does not name the cause or offer recovery.
+- `apps/web/src/SavedDrafts.tsx`, `apps/web/src/saved-drafts.ts`: `savedDraftOwnerSchema` = `{profileId, accountId|null, threadId, projectId|null, workingCopyId|null}` (all required keys); `savedDraftOwnerKey` serializes it. For a thread with no `projectId` the owner already exists (`projectId: null, workingCopyId: null`) and the button is enabled today — no change needed on that path.
 - `apps/web/src/saved-drafts.css`: styles for the popover; no changes expected.
 - Discovery: confirm whether the backend/draft library requires a projectId-scoped owner or accepts a threadId-only owner; pick the cheapest correct owner derivation.
 
 ## DESIGN SPEC
-- Disabled fallback tooltip (only string): "Select a project or open a conversation to save named drafts."
-- Enabled path: construct `savedDraftOwner` whenever `thread` exists (use `thread.projectId ?? null`, `thread.workspaceId ?? null`, `threadId: thread.id`); render `<SavedDrafts>` instead of the fallback. Its own `disabled` prop already covers `busy || !ready || retry || predictionBlocked`.
-- Tooltip on enabled button comes from SavedDrafts internals — leave unchanged.
-- No visual changes; button remains `quiet` style, same position in the composer leading slot.
+Three states replace the single dead fallback (all keep the `quiet` style, same position in the composer leading slot, same 13px label):
+- No thread → fallback stays `disabled`, tooltip: "Start a conversation to save named drafts." (unchanged).
+- Thread + `draftProject` loading (`draftProject.loading`) → fallback `disabled`, tooltip: "Loading saved drafts…". If the codebase already renders a spinner affordance for pending composer controls, reuse it; otherwise text only.
+- Thread + `draftProject.error` or context mismatch after load → render a `quiet` button labeled "Saved drafts" (not disabled), tooltip: "Saved drafts are unavailable — click to retry."; `onClick` calls the existing `draftProject` retry/refetch (discovery: find the refresh function next to the `draftProject` hook).
+- Owner resolved → `<SavedDrafts>` as today; its own `disabled` prop covers `busy || !ready || retry || predictionBlocked`. Remove the "waiting for the owning project context" string entirely.
+- No layout shift: max two visual variants of the slot (button or quiet button); height unchanged.
 
 ## EXECUTION_DAG
-- T01 (owner: this task's implementer): In `App.tsx`, derive `savedDraftOwner` for the fallback case using `savedDraftOwnerKey`/`SavedDraftOwner` from `saved-drafts.ts`; render `<SavedDrafts>` when derivable, else the fallback button with the single new tooltip string. Done when: built app shows enabled Saved drafts in a project-connected thread and the new tooltip in the no-context state. Tests: vitest unit test for the owner-derivation helper; Playwright check that the button is enabled in a fixture thread.
-- T02 (same owner): Update the tooltip string; verify no other copy of the old strings remains (rg "owning project context"). Done when: both states verified at :4317.
+- T01 (owner: this task's implementer): In `App.tsx`, implement the three states from DESIGN SPEC keyed off `thread`, `draftProject.loading`, `draftProject.error`/context-mismatch; delete the "waiting for the owning project context" string (rg to confirm zero occurrences). Tests: vitest for the state-selection helper (extract a pure function `savedDraftSlotState(thread, draftProject)`); Playwright at :4317 for loading → enabled transition in a fixture thread. Done when all pass.
+- T02 (same owner): Retry path — wire the error-state button to the existing `draftProject` refetch; Playwright: forced error → tooltip shows retry copy → click → button becomes enabled. Done when verified at :4317.
 
 ## VALIDATION
-- `pnpm build` then serve review host on :4317; open a fixture thread with a project → Saved drafts enabled, popover opens; detached/no-project state → disabled with the new tooltip.
-- vitest for derivation; Playwright smoke for button state.
+- `pnpm build` then serve review host on :4317; fixture thread: loading → "Loading saved drafts…" tooltip → enabled button; error injection → retry tooltip → click → enabled; no thread → "Start a conversation…" tooltip.
+- vitest for `savedDraftSlotState`; Playwright for the three states.
 
 ## STATE
 Researched + decided; nothing implemented. Next step: T01.

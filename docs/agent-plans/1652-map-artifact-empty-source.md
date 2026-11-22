@@ -29,7 +29,7 @@ The map artifact renders a "Source" `<details>` row that expands to an empty par
 - Link styling: inherit, `color: var(--accent)` if that token exists in styles.css, otherwise the same link style used elsewhere in artifact cards (discovery: find existing artifact link class). No layout change; summary row keeps current style.
 
 ## EXECUTION_DAG
-- T01 (owner: implementer): Apply the guard + link render in `MapView.tsx`; sweep other generative components for the identical pattern and apply the same fix or file follow-ups. Tests: vitest for the blank/URL normalization helper; Playwright: fixture card shows no Source row when source blank, shows link when URL. Done when verified at :4317.
+- T01 (owner: implementer): Apply the guard + link render in `MapView.tsx` only; grep other generative components for the identical `>Source<`/blank-source pattern and file one follow-up issue per affected component (do not edit them in this task). Tests: vitest for the blank/URL normalization helper; Playwright: fixture card shows no Source row when source blank, shows link when URL. Done when verified at :4317.
 
 ## VALIDATION
 - `pnpm build`, review host :4317; Playwright both states; vitest for helper.
