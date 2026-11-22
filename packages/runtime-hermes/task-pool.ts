@@ -16,6 +16,7 @@ export function createHermesTaskPool(options:HermesRuntimeOptions,dependencies:H
    const idle=main.size>=3?[...main].find(([,value])=>!value.sourceBusy&&!value.reviewBusy):undefined;
    if(idle){main.delete(idle[0]);engine=idle[1];}else engine=secondary();
   }if(callbacks)engine.configure(callbacks);main.set(threadId,engine);return engine;};
+ const newTaskRuntime=()=>{check();const engine=secondary(true),dispose=engine.dispose.bind(engine);engine.dispose=async()=>{await dispose();engines.delete(engine);};return engine;};
  return{
   configure(value){check();callbacks=value;for(const engine of main.values())engine.configure(value);canonical.configure(value);},
   models(query){check();return catalog.models(query);},
@@ -30,10 +31,10 @@ export function createHermesTaskPool(options:HermesRuntimeOptions,dependencies:H
   sourceRequest(method,params){check();return canonical.sourceRequest(method,params);},sourceTool(params,authority){check();return canonical.sourceTool(params,authority);},
   async cancelBackground(){await Promise.all([...engines].map(engine=>engine.cancelBackground()));},
   async refreshIntegrations(disabledIds){check();await Promise.all([...engines].map(engine=>engine.refreshIntegrations(disabledIds)));},
-  createTaskRuntime(){check();const engine=secondary(true),dispose=engine.dispose.bind(engine);engine.dispose=async()=>{await dispose();engines.delete(engine);};return engine;},
+  createTaskRuntime(){return newTaskRuntime();},
   // S07: a review/idle fork is an isolated read-only engine driven by the host
   // under the caller's auxiliary budget; ambient plugins stay disabled.
-  fork(request){check();return{forkId:`fork-${request.sourceCutDigest.slice(0,12)}-${randomUUID()}`,runtime:this.createTaskRuntime()};},
+  fork(request){return{forkId:`fork-${request.sourceCutDigest.slice(0,12)}-${randomUUID()}`,runtime:newTaskRuntime()};},
   dispose(){return disposing??=(async()=>{disposed=true;const outcomes=await Promise.allSettled([...engines].map(engine=>engine.dispose()).concat([catalog.dispose()]));const failures=outcomes.flatMap(result=>result.status==='rejected'?[result.reason]:[]);if(failures.length)throw new AggregateError(failures,'Hermes task pool cleanup could not be confirmed.');})();},
  };
 }
