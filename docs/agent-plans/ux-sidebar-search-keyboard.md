@@ -40,9 +40,9 @@ Ctrl+K (or, after #1371, Ctrl+Shift+F) focuses the sidebar thread-search input, 
 6. **Empty state** unchanged (`No matching threads.`).
 
 ### EXECUTION_DAG
-- T01 Select-on-focus + `aria-keyshortcuts`/`title` on the input. Done: Ctrl+K retypes over the query; hint tooltip shows the bound chord.
-- T02 Input `onKeyDown`: Enter→top result, ArrowDown/ArrowUp→row navigation, Escape→clear/blur with stopPropagation; clear button per DESIGN 5.
-- T03 Roving focus in the thread list + row Escape→input; verify on :4317 `shell` fixture.
+- T01 Select-on-focus + `aria-keyshortcuts`/`title` on the input. Deps: none. Owner: single implementer. Handoff: →T02. Done: Ctrl+K retypes over the query; hint tooltip shows the bound chord.
+- T02 Input `onKeyDown`: Enter→top result, ArrowDown/ArrowUp→row navigation, Escape→clear/blur with stopPropagation; clear button per DESIGN 5. Deps: T01 (same file, must merge cleanly). Owner: single implementer. Handoff: →T03. Done: every key behaves per DESIGN 2–4 in the fixture.
+- T03 Roving focus in the thread list + row Escape→input; verify on :4317 `shell` fixture. Deps: T02 (activeIndex contract). Owner: single implementer. Handoff: →VALIDATION/REVIEW release. Done: full keyboard loop input→list→open works end-to-end.
 
 ### VALIDATION
 - Fixture on :4317: Ctrl+K → existing query selected; type → replaced. Type `meet` → Enter opens top thread. ArrowDown ×2 → second row focused; Enter opens it. Escape with text → cleared, focus stays; Escape empty → blurred; global stop/sidebar never fires (verify a running thread keeps running).

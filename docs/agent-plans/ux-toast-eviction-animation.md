@@ -27,7 +27,7 @@
 4. Reduced motion: unchanged — the `@media` rule already swaps `ui-toast-out` for `ui-feedback-fade` at `var(--ui-motion-press)`; evicted items inherit it.
 
 ### EXECUTION_DAG
-- T01 Implement eviction-through-`leaving` per DESIGN in `Toast.tsx`; extend the component's existing test (vitest; follow the repo's current Toast test if present, else a focused unit test on the queue reducer) to assert the evicted item enters `leaving` then unmounts.
+- T01 Implement eviction-through-`leaving` per DESIGN in `Toast.tsx`; extend the component's existing test (vitest; follow the repo's current Toast test if present, else a focused unit test on the queue reducer) to assert the evicted item enters `leaving` then unmounts. Deps: none (whole scope). Owner: single implementer. Handoff: →VALIDATION/REVIEW release. Done: eviction animates identically to a dismissal under normal and reduced motion.
 
 ### VALIDATION
 - On :4317: trigger 4+ toasts quickly (settle/unsettle threads) — oldest animates out identically to a dismissal; stack never jumps.

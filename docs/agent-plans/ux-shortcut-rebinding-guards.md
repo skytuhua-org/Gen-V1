@@ -40,9 +40,9 @@ The Settings → Shortcuts capture field persists literally any keydown as a bin
 5. **Persistence:** unchanged `setPreference('keybindings.<id>', chord)` path; errors surface via the existing settings-save error toast.
 
 ### EXECUTION_DAG
-- T01 Editable-target guard in `App.tsx` (+`WorkspaceHost.tsx` if applicable) with vitest coverage in `tests/shell-shortcut-roundtrip.test.ts` (bare `k` inside a textarea does not fire; Ctrl+K does).
-- T02 `ShortcutInput` validation per DESIGN 2 + inline error styles.
-- T03 Conflict confirm bar per DESIGN 3 + `Reset` button per DESIGN 4; verify on :4317 Settings.
+- T01 Editable-target guard in `App.tsx` (+`WorkspaceHost.tsx` if applicable) with vitest coverage in `tests/shell-shortcut-roundtrip.test.ts` (bare `k` inside a textarea does not fire; Ctrl+K does). Deps: none; independent of T02/T03. Owner: single implementer. Handoff: →T02. Done: bare-key bindings never fire from editable targets.
+- T02 `ShortcutInput` validation per DESIGN 2 + inline error styles. Deps: none; Settings-only, no overlap with T01. Owner: single implementer. Handoff: →T03. Done: every rejected chord class shows its specified error and saves nothing.
+- T03 Conflict confirm bar per DESIGN 3 + `Reset` button per DESIGN 4; verify on :4317 Settings. Deps: T02 (same component, shares row markup). Owner: single implementer. Handoff: →VALIDATION/REVIEW release. Done: conflict requires explicit choice; non-default rows show Reset that restores the default.
 
 ### VALIDATION
 - Fixture on :4317: rebind Search→`k` → rejected with modifier message; Search→Ctrl+B → confirm bar, `Cancel` discards, `Use anyway` saves and shows "Also used by". After any non-default value, `Reset` restores Ctrl+K.
