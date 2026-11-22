@@ -196,10 +196,10 @@ canonical saved state on activation, or implement an equivalent conflict-aware
 single-writer protocol. A flush alone cannot refresh a stale retained editor.
 
 Workspace contributions follow the same window rules as conversation surfaces:
-desktop detachment is available under `windowBehavior` declarations and current
-host authorization, and browser sessions report the explicit unavailable reason.
-Existing typed references and guarded child return are preserved; a workspace
-contribution does not bypass either.
+desktop detachment is available subject to current host authorization and
+surface-identity validation, and browser sessions report the explicit
+unavailable reason. Existing typed references and guarded child return are
+preserved; a workspace contribution does not bypass either.
 
 ## Verification boundaries
 
