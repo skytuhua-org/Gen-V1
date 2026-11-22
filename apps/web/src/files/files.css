@@ -430,7 +430,7 @@
 .live-files .files-mode button[aria-pressed="true"] {
 	color: var(--text);
 	background: var(--subtle);
-	border-color: var(--border);
+	border-color: var(--control-border);
 }
 .live-files .files-mode-enter {
 	animation: files-mode-in var(--ui-motion-insert) var(--ui-ease-enter);
