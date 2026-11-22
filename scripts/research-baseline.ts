@@ -271,7 +271,9 @@ export function verifySourceLock(rootDir: string, lock: SourceLockV3): EvidenceI
         continue;
       }
       let workingBlob: string | null = null;
-      try { workingBlob = git(rootDir, ['hash-object', `--path=${testId}`, '--', testId]); }
+      // --path applies mutable local Git attributes and clean filters, which can
+      // disguise changed executable bytes as the committed blob.
+      try { workingBlob = git(rootDir, ['hash-object', '--no-filters', '--', testId]); }
       catch { /* Unreadable local content cannot prove the committed test bytes. */ }
       if (workingBlob !== committedBlob)
         issues.push({ code: 'CONTRACT_TEST_DRIFT', message: `Contract ${contract.name} test does not match the source-locked blob: ${testId}` });
