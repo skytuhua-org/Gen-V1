@@ -186,6 +186,24 @@ it('does not inherit an operation outcome onto a forged invocation identity', as
   expect(ledger.get('operation:op-crash@1')?.state).toBe('UNKNOWN_EXTERNAL_OUTCOME');
 });
 
+it.each([
+  { admitted: ['path=/approved'], recorded: { path: '/approved' }, expected: 'SUCCEEDED' },
+  { admitted: ['path=/changed'], recorded: { path: '/approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
+])('recovers a completed operation only when admitted target preconditions match ($expected)', async ({ admitted, recorded, expected }) => {
+  const { store, ledger } = await fixture();
+  ledger.admit({
+    call: { name: 'operation:file.replace', args: { invocationId: 'operation:op-crash@1', operationId: 'op-crash' } },
+    owner: { threadId: 'thread-1', runId: 'run-1', epoch: 1, projectId: 'p1', workspaceId: 'w1', accountBinding: 'acct-1' },
+    definition: operationDefinition,
+    targetPreconditions: admitted,
+  });
+  store.internal('fixture.operation', 'thread-1', () =>
+    store.put('operation', 'op-crash', 'thread-1', { ...crashedOperation, preconditions: recorded }));
+  const outcome = recoverEffects(store);
+  expect(ledger.get('operation:op-crash@1')?.state).toBe(expected);
+  expect(outcome.uncertain).toEqual(expected === 'SUCCEEDED' ? [] : ['operation:op-crash@1']);
+});
+
 it.each(['id', 'schemaDigest'] as const)('refuses retry after the registered %s changes', async field => {
   const { authority, ledger } = await fixture();
   await ledger.invoke({ call: call('retry-drift'), ctx, thread: thread(), role: 'run' }, async () => 1);
