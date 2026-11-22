@@ -37,7 +37,7 @@ export function recoverEffects(store: Store): { uncertain: string[]; interrupted
         effect.toolId === "operation:" + operation!.kind &&
         effect.threadId === operation!.threadId &&
         effect.owner.threadId === operation!.threadId &&
-        Number(opMatch![2]) === operation!.revision &&
+        effect.invocationId === "operation:" + operation!.id + "@" + operation!.revision &&
         effect.targetPreconditions.length === targetPreconditions.length &&
         // Legacy `key=value` receipts lose the boundary when either side has `=`.
         // An ambiguous receipt cannot prove an exact target after a restart.

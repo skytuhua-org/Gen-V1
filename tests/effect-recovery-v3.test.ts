@@ -186,6 +186,21 @@ it('does not inherit an operation outcome onto a forged invocation identity', as
   expect(ledger.get('operation:op-crash@1')?.state).toBe('UNKNOWN_EXTERNAL_OUTCOME');
 });
 
+it.each(['operation:op-crash@01', 'operation:op-crash@0001'] as const)('does not settle noncanonical operation receipt %s', async invocationId => {
+  const { store, ledger } = await fixture();
+  ledger.admit({
+    call: { name: 'operation:file.replace', args: { invocationId, operationId: 'op-crash' } },
+    owner: { threadId: 'thread-1', runId: 'run-1', epoch: 1, projectId: 'p1', workspaceId: 'w1', accountBinding: 'acct-1' },
+    definition: operationDefinition,
+    targetPreconditions: ['path=/approved'],
+  });
+  store.internal('fixture.operation', 'thread-1', () =>
+    store.put('operation', 'op-crash', 'thread-1', { ...crashedOperation, preconditions: { path: '/approved' } }));
+  const result = recoverEffects(store);
+  expect(result.uncertain).toEqual([invocationId]);
+  expect(ledger.get(invocationId)?.state).toBe('UNKNOWN_EXTERNAL_OUTCOME');
+});
+
 it.each([
   { admitted: ['path=/approved'], recorded: { path: '/approved' }, expected: 'SUCCEEDED' },
   { admitted: ['path=/changed'], recorded: { path: '/approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
