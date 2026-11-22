@@ -2,21 +2,11 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtemp,mkdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {EventEmitter} from 'node:events';
-import * as childProcess from 'node:child_process';
-import * as processTree from '../packages/runtime-pi/process-tree.ts';
 import {Store} from '../packages/storage/store.ts';
 import {ProjectTools} from '../packages/workspace/tools.ts';
 import {TerminalHost} from '../packages/workspace/terminal.ts';
-import {safeError} from '../packages/runtime-pi/sdk.ts';
-import {createPiRuntime} from '../packages/runtime-pi/index.ts';
-import type {RunContext,StartRun} from '../packages/contracts/index.ts';
-
-vi.mock('node:child_process', async importOriginal => ({ ...await importOriginal<typeof import('node:child_process')>() }));
 
 const cleanup:(()=>Promise<void>)[]=[];afterEach(async()=>{vi.restoreAllMocks();for(const close of cleanup.splice(0).reverse())await close();});
-const ctx:RunContext={threadId:'task-a',runId:'run-a',epoch:3};
-const input:StartRun={...ctx,prompt:'Please inspect the granted file.',modelId:'openai/gpt-5.4',sessionPath:null,inputId:'input-001',resources:[]};
 
 // Issue #1081 defect (a): open() must not leave a live, registered terminal
 // when the durable session record cannot be written.

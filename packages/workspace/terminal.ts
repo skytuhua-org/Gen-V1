@@ -35,10 +35,10 @@ export class TerminalHost{
   // Trusted integration programs retain their explicitly pinned environments.
   const pty=spawn(input.program??shell,input.args??args,{name:'xterm-256color',cwd:binding.path,cols:dimension.parse(input.cols??100),rows:dimension.parse(input.rows??30),env:(input.environment??{...processEnvironment(),...configured}) as Record<string,string>,useConpty:true});
   let finish!:()=>void;const session:Session={id:terminalId,projectId,...(threadId?{threadId}:{}),path:binding.path,pty,output:'',offset:0,exited:false,exitCode:null,done:new Promise<void>(resolve=>{finish=resolve;})};
+  // Set when the durable registration rolls back: the exit handler must not
+  // persist or retain the dead session, and the map stays without it.
+  let rolledBack=false;
   this.sessions.set(terminalId,session);
-  // A failed open must not leave a live process registered: the durable
-  // record is the registration, so a persist failure rolls both back.
-  try{this.persist(session);}catch(error){this.sessions.delete(terminalId);try{session.pty.kill();}catch{/* The failed open still releases its process. */}throw error;}
   pty.onData(data=>{
    session.output+=data;
    if(session.output.length>512*1024){
@@ -53,9 +53,22 @@ export class TerminalHost{
    session.exited=true;session.exitCode=event.exitCode;
    // Native exit is definitive even if the separate durable update fails.
    finish();
+   if(rolledBack)return;
    try{this.persist(session);}catch{process.stderr.write('Gen V1 could not persist terminal exit state.\n');}
    this.evictExited(session);
   });
+
+  // A failed open must not leave a live process registered: the durable
+  // record is the registration, so a persist failure rolls both back. The
+  // kill is awaited so the child's handles (e.g. its cwd on Windows) are
+  // released before open() rejects.
+  try{this.persist(session);}catch(error){
+   this.sessions.delete(terminalId);rolledBack=true;
+   try{session.pty.kill();}catch{/* The failed open still releases its process. */}
+   let timer:ReturnType<typeof setTimeout>|undefined;
+   try{await Promise.race([session.done,new Promise<void>(resolve=>{timer=setTimeout(resolve,3000)})]);}finally{clearTimeout(timer);}
+   throw error;
+  }
 
   if(command!==undefined)pty.write(command+'\r');
   return this.result(session,0);
