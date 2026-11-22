@@ -2414,6 +2414,7 @@
     "evals/review.ts",
     "evals/runner.ts",
     "gen_m16_evidence.py",
+    "hk.pkl",
     "m16_records.json",
     "package.json",
     "packages/agent-projection/index.ts",
