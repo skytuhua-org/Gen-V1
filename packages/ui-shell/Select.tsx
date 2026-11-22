@@ -16,9 +16,10 @@ export interface SelectProps {
   form?: string;
   disabled?: boolean;
   required?: boolean;
+  minPopupWidth?: number;
 }
 
-export function Select({ value, onValueChange, options, 'aria-label': label, 'aria-invalid': suppliedInvalid, id, name, form, disabled, required }: SelectProps) {
+export function Select({ value, onValueChange, options, 'aria-label': label, 'aria-invalid': suppliedInvalid, id, name, form, disabled, required, minPopupWidth = 0 }: SelectProps) {
   const anchor = useRef<HTMLButtonElement>(null), content = useRef<HTMLDivElement>(null);
   const native = useRef<HTMLSelectElement>(null), initial = useRef(value), change = useRef(onValueChange);
   change.current = onValueChange;
@@ -37,7 +38,7 @@ export function Select({ value, onValueChange, options, 'aria-label': label, 'ar
   };
   const navigation = useListNavigation(options, choose, close);
   // Fit the trigger or the longest label, so a narrow select does not cover its neighbours.
-  const popupWidth = Math.max(anchor.current?.offsetWidth ?? 0, Math.min(280, 64 + 7 * Math.max(0, ...options.map(option => option.label.length))));
+  const popupWidth = Math.max(minPopupWidth, anchor.current?.offsetWidth ?? 0, Math.min(280, 64 + 7 * Math.max(0, ...options.map(option => option.label.length))));
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   useEffect(() => {
     const update = () => { const blocked = Boolean(native.current?.matches(':disabled')); setFieldsetDisabled(blocked); if (blocked) setOpen(false); };

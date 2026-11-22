@@ -84,7 +84,7 @@ for (const width of [1440, 1024, 768]) test(`first agent reads reserve project r
   await expect(page.locator('.loading-agents')).toHaveCount(0);
   const original = await input.elementHandle();
   h.delay();
-  await page.getByRole('combobox', {name: 'Status filter'}).click(); await page.getByRole('option', {name: 'working', exact: true}).click();
+  await page.getByRole('combobox', {name: 'Status filter'}).click(); await page.getByRole('option', {name: 'Working', exact: true}).click();
   await expect(page.getByRole('status').filter({hasText: 'Loading agents'})).toBeVisible();
   await expect(page.locator('.loading-agents')).toHaveCount(0);
   await expect(input).toHaveValue('Keep this draft');

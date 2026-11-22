@@ -179,6 +179,9 @@ describe('agents workspace grid layout', () => {
       expect(await page.evaluate(() => window.controller.getSnapshot().scope.projectId)).toBeUndefined();
       await status.focus(); await page.keyboard.press('Space');
       await visible(page.getByRole('listbox', {name:'Status filter'})).toBeVisible();
+      await visible(page.getByRole('option', {name:'Ready', exact:true})).toBeVisible();
+      await visible(page.getByRole('option', {name:'Awaiting input', exact:true})).toBeVisible();
+      await visible(page.getByRole('option', {name:'Needs review', exact:true})).toBeVisible();
       await page.keyboard.press('Escape'); await visible(status).toBeFocused();
       await status.press('Enter'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
       expect(await page.evaluate(() => window.controller.getSnapshot().scope.statuses?.length)).toBe(1);

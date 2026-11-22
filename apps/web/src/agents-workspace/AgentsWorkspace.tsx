@@ -27,7 +27,7 @@ export interface AgentsWorkspaceProps {
  hasConversations?: boolean;
 }
 const Visibility = createContext<(id: string, visible: boolean) => void>(() => {});
-const statusLabel = (value: AgentStatus) => value.replaceAll('_', ' ');
+const statusLabel = (value: AgentStatus) => value.charAt(0).toUpperCase() + value.slice(1).replaceAll('_', ' ');
 export const columnsForWidth = (width: number): number => width < 600 ? 1 : Math.max(1, Math.floor((width + 10) / 274));
 const relativeTime = (value: string) => {
  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 60000));
@@ -63,11 +63,11 @@ export function AgentsWorkspace({controller, composers, onOpenConversation, pref
  return <Visibility.Provider value={visible.set}><section className="agents-workspace" aria-label="Agent workspace" data-density={preferences?.density ?? 'comfortable'}>
   <div className="agents-toolbar" role="toolbar" aria-label="Agent filters">
    <span className="agents-filter agents-filter-project" data-active={state.scope.projectId !== undefined}>
-    <Select aria-label="Project filter" value={state.scope.projectId === undefined ? '$all' : state.scope.projectId === null ? '$none' : state.scope.projectId} options={[{value: '$all', label: 'All projects'}, ...[...catalog].map(([value, label]) => ({value, label})), {value: '$none', label: 'No project'}]} onValueChange={value => {void controller.setScope({...state.scope, projectId: value === '$all' ? undefined : value === '$none' ? null : value});}}/>
+    <Select aria-label="Project filter" minPopupWidth={220} value={state.scope.projectId === undefined ? '$all' : state.scope.projectId === null ? '$none' : state.scope.projectId} options={[{value: '$all', label: 'All projects'}, ...[...catalog].map(([value, label]) => ({value, label})), {value: '$none', label: 'No project'}]} onValueChange={value => {void controller.setScope({...state.scope, projectId: value === '$all' ? undefined : value === '$none' ? null : value});}}/>
     {state.scope.projectId !== undefined && <button type="button" className="agents-filter-clear" aria-label="Clear project filter" onClick={() => {void controller.setScope({...state.scope, projectId: undefined}); searchToggle.current?.focus();}}><X size={12}/></button>}
    </span>
    <span className="agents-filter agents-filter-status" data-active={Boolean(state.scope.statuses?.length)}>
-    <Select aria-label="Status filter" value={state.scope.statuses?.[0] ?? '$all'} options={[{value: '$all', label: 'All statuses'}, ...agentStatuses.map(value => ({value, label: statusLabel(value)}))]} onValueChange={value => {void controller.setScope({...state.scope, statuses: value === '$all' ? undefined : [value as AgentStatus]});}}/>
+    <Select aria-label="Status filter" minPopupWidth={220} value={state.scope.statuses?.[0] ?? '$all'} options={[{value: '$all', label: 'All statuses'}, ...agentStatuses.map(value => ({value, label: statusLabel(value)}))]} onValueChange={value => {void controller.setScope({...state.scope, statuses: value === '$all' ? undefined : [value as AgentStatus]});}}/>
     {Boolean(state.scope.statuses?.length) && <button type="button" className="agents-filter-clear" aria-label="Clear status filter" onClick={() => {void controller.setScope({...state.scope, statuses: undefined}); searchToggle.current?.focus();}}><X size={12}/></button>}
    </span>
    <span className="agents-search" data-open={searchOpen}>

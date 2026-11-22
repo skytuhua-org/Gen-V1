@@ -64,7 +64,13 @@ test('ghost toolbar filters, clears, keyboard navigation and inline search', asy
  await expect(page.getByRole('button', {name:'Clear project filter'})).toBeVisible();
  await status.focus(); await page.keyboard.press('Space'); await expect(page.getByRole('listbox', {name:'Status filter'})).toBeVisible();
  await page.keyboard.press('Escape'); await expect(status).toBeFocused();
- await status.press('Enter'); await page.getByRole('option', {name:'failed', exact:true}).click();
+ await status.press('Enter');
+ await expect(page.getByRole('option', {name:'Awaiting input', exact:true})).toBeVisible();
+ await expect(page.getByRole('option', {name:'Needs review', exact:true})).toBeVisible();
+ expect(await page.getByRole('listbox', {name:'Status filter'}).evaluate(menu => menu.getBoundingClientRect().width)).toBeGreaterThanOrEqual(220);
+ expect(await page.getByRole('option').evaluateAll(options => options.every(option => {const label=option.querySelector('span')!,range=document.createRange();range.selectNodeContents(label);return new Set([...range.getClientRects()].map(rect=>Math.round(rect.top))).size===1 && label.scrollWidth <= label.clientWidth;}))).toBe(true);
+ await page.getByRole('option', {name:'Failed', exact:true}).click();
+ await expect(status).toContainText('Failed');
  await expect(cards).toHaveCount(1); await expect(cards.first()).toContainText('Trace the failing test');
  await page.getByRole('button', {name:'Clear status filter'}).click(); await expect(cards).toHaveCount(8);
  await project.click(); await page.getByRole('option', {name:'No project', exact:true}).click(); await expect(cards).toHaveCount(0);
@@ -77,6 +83,11 @@ test('ghost toolbar filters, clears, keyboard navigation and inline search', asy
  for (const width of [1440,1280,390]) {
   await page.setViewportSize({width,height:900});
   expect(await page.locator('.agents-toolbar').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+  for (const control of [project,status]) {
+   await control.click();
+   expect(await page.getByRole('listbox').evaluate(menu=>{const rect=menu.getBoundingClientRect();return rect.left>=0&&rect.right<=innerWidth;})).toBe(true);
+   await page.keyboard.press('Escape');
+  }
   await page.getByRole('button', {name:'Search agents', exact:true}).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('searchbox', {name:'Filter agents'}).press('Escape');
@@ -99,6 +110,12 @@ for (const width of [1440, 1280, 768, 390]) test(`populated grid evidence at ${w
   const heights = await cards.evaluateAll(cards => cards.map(card => Math.round(card.getBoundingClientRect().height)));
   expect(new Set(heights.slice(0, 4)).size).toBe(1);
   expect(new Set(heights.slice(4)).size).toBe(1);
+  const offsets = await cards.evaluateAll(cards => cards.slice(0,4).map(card => {
+   const preview=card.querySelector('.agents-preview-text')!, bounds=preview.getBoundingClientRect(),range=document.createRange();range.selectNodeContents(preview.firstElementChild!);
+   const first=[...range.getClientRects()].find(rect=>rect.bottom>bounds.top&&rect.top<bounds.bottom)!;
+   return first.top-card.querySelector('.agents-activity')!.getBoundingClientRect().bottom;
+  }));
+  expect(Math.max(...offsets)-Math.min(...offsets)).toBeLessThanOrEqual(2);
   const lines = await cards.locator(':scope > .agents-transcript-wrap .agents-preview-text').evaluateAll(previews => previews.map(preview => {
    const bounds = preview.getBoundingClientRect(), lineHeight = parseFloat(getComputedStyle(preview).lineHeight), range = document.createRange();
    range.selectNodeContents(preview.firstElementChild!);
