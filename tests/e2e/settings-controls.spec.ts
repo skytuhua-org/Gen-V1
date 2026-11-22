@@ -17,10 +17,23 @@ for(const theme of ['dark','light'] as const)test(`ornament remains decorative a
   const grain=await page.locator('body').evaluate(node=>{const style=getComputedStyle(node,'::after');return {opacity:style.opacity,image:style.backgroundImage,position:style.position,pointer:style.pointerEvents,animation:style.animationName};});
   expect(grain).toMatchObject({opacity:theme==='dark'?'0.05':'0.03',position:'fixed',pointer:'none',animation:'none'});expect(grain.image).toContain('feTurbulence');
   const canvas=page.locator('.conversation-frame:visible').first();
-  const grid=await canvas.evaluate(node=>getComputedStyle(node).backgroundImage);
-  expect(grid).toContain('radialGradient');expect(grid).toContain("width='22'");expect(grid).toContain("r='.5'");expect(grid).toContain('radial-gradient');
+  expect(await canvas.evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');
+  const ground=()=>page.locator('body').evaluate(node=>{const s=getComputedStyle(node,'::before');return {content:s.content,image:s.backgroundImage,position:s.position,pointer:s.pointerEvents,animation:s.animationName,duration:s.animationDuration,transform:s.transform};});
+  await page.evaluate(()=>document.documentElement.dataset.motion='system');
+  expect(await ground()).toMatchObject({position:'fixed',pointer:'none',animation:'ornament-drift',duration:'52s'});
+  expect((await ground()).image.match(/radial-gradient/g)).toHaveLength(4);
+  expect(await page.evaluate(()=>{const effect=document.getAnimations().find(a=>a instanceof CSSAnimation&&a.animationName==='ornament-drift')?.effect;return effect instanceof KeyframeEffect?effect.getKeyframes().flatMap(frame=>Object.keys(frame).filter(key=>!['offset','computedOffset','easing','composite','transform','opacity'].includes(key))):null;})).toEqual([]);
+  for(const mode of ['off','reduced']){
+    await page.evaluate(mode=>document.documentElement.dataset.motion=mode,mode);
+    expect(await ground()).toMatchObject({animation:'none',transform:'none'});
+    expect((await ground()).image).toContain('radial-gradient');
+  }
+  await page.evaluate(()=>document.documentElement.dataset.motion='system');
+  await page.emulateMedia({reducedMotion:'reduce'});expect(await ground()).toMatchObject({animation:'none',transform:'none'});
+  await page.emulateMedia({reducedMotion:'no-preference'});
+  expect((await ground()).animation).toBe('ornament-drift');
   await expect(canvas.locator('.composer')).toHaveCount(0);
-  expect(await page.locator('.composer:visible').first().evaluate(node=>getComputedStyle(node).backgroundImage)).toContain('to right');
+  expect(await page.locator('.composer:visible').first().evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');
   await capture(`empty-${theme}`);
   const value=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'A considered workspace. Clear priorities, small changes, dependable outcomes.'}}}});
   value.settings.theme=theme;value.threads[0].title='Review the release checklist';value.threads[0].projectName='Fieldwork';
@@ -33,9 +46,11 @@ for(const theme of ['dark','light'] as const)test(`ornament remains decorative a
   }
   await page.getByRole('button',{name:'Open artifact in workspace',exact:true}).click();await expect(page.getByRole('complementary',{name:'Workspace panel',exact:true})).toBeVisible();
   await expect(page.getByRole('heading',{name:'Release review',exact:true})).toBeInViewport();await expect(page.getByText('A considered workspace. Clear priorities, small changes, dependable outcomes.',{exact:true})).toBeInViewport();
+  for(const pane of await page.locator('.split-pane:visible').all())expect(await pane.evaluate(node=>getComputedStyle(node).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
   await capture(`conversation-${theme}`);
-  expect(await page.locator('.sidebar-thread-row.active').evaluate(node=>getComputedStyle(node,'::before').width)).toBe('2px');
-  expect(await page.locator('.artifact:visible').first().evaluate(node=>getComputedStyle(node,'::after').width)).toBe('6px');
+  expect(await page.locator('.sidebar-thread-row.active').evaluate(node=>getComputedStyle(node,'::before').content)).toBe('none');
+  expect(await page.locator('.artifact:visible').first().evaluate(node=>getComputedStyle(node,'::after').content)).toBe('none');
+  for(const selector of ['.workspace-switcher','.workspace-header:visible','.split-pane-header:visible','.workspace-right-header','.artifact:visible'])expect(await page.locator(selector).first().evaluate(node=>getComputedStyle(node).borderBottomColor)).toBe('rgba(0, 0, 0, 0)');
   const unchanged=await page.evaluate(()=>{
     const elements=[document.querySelector('.composer'),document.querySelector('.workspace-right'),document.querySelector('.split-divider')].filter((node):node is Element=>Boolean(node));
     const sample=()=>elements.map(node=>{const s=getComputedStyle(node);return {color:s.color,borderLeft:s.borderLeft,borderRight:s.borderRight,width:s.width,height:s.height};});
@@ -47,16 +62,15 @@ for(const theme of ['dark','light'] as const)test(`ornament remains decorative a
   await dialog.getByRole('navigation',{name:'Settings sections'}).getByRole('button',{name:'Appearance',exact:true}).click();await expect(dialog.getByRole('heading',{name:'Appearance',exact:true})).toBeVisible();await capture(`settings-${theme}`);
   expect(await dialog.evaluate(node=>getComputedStyle(node).boxShadow)).not.toBe('none');
   const mark=page.locator('.sidebar .brand-mark');expect(await mark.evaluate(node=>getComputedStyle(node).backgroundImage)).toContain('linear-gradient');
-  const expectDecorationsDisabled=async()=>{expect(await canvas.evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');expect(await page.locator('.artifact:visible').first().evaluate(node=>getComputedStyle(node,'::after').display)).toBe('none');expect(await page.locator('.sidebar-thread-row.active').evaluate(node=>getComputedStyle(node,'::before').display)).toBe('none');expect(await page.locator('html').evaluate(node=>getComputedStyle(node).getPropertyValue('--ornament-sage').trim())).toBe('transparent');};
+  const expectDecorationsDisabled=async()=>{expect(await ground()).toMatchObject({content:'none',image:'none',animation:'none'});expect(await page.locator('body').evaluate(node=>getComputedStyle(node,'::after').content)).toBe('none');expect(await mark.evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');expect(await dialog.evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');};
   await page.evaluate(()=>document.querySelectorAll<HTMLElement>('.app-shell').forEach(node=>node.dataset.contrast='high'));
-  expect(await page.locator('body').evaluate(node=>getComputedStyle(node,'::after').display)).toBe('none');expect(await mark.evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');
   await expectDecorationsDisabled();
   await page.evaluate(()=>document.querySelectorAll<HTMLElement>('.app-shell').forEach(node=>node.dataset.contrast='normal'));
-  await page.emulateMedia({forcedColors:'active'});expect(await page.locator('body').evaluate(node=>getComputedStyle(node,'::after').display)).toBe('none');expect(await mark.evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');
+  await page.emulateMedia({forcedColors:'active'});
   await expectDecorationsDisabled();
   await page.emulateMedia({forcedColors:'none'});
   const session=await page.context().newCDPSession(page);await session.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-transparency',value:'reduce'}]});
-  expect(await page.evaluate(()=>matchMedia('(prefers-reduced-transparency: reduce)').matches)).toBe(true);expect(await page.locator('body').evaluate(node=>getComputedStyle(node,'::after').display)).toBe('none');expect(await mark.evaluate(node=>getComputedStyle(node).backgroundImage)).toBe('none');
+  expect(await page.evaluate(()=>matchMedia('(prefers-reduced-transparency: reduce)').matches)).toBe(true);
   await expectDecorationsDisabled();
   await session.detach();
 });
@@ -247,7 +261,7 @@ test('dropdown popovers anchor to their trigger inside the settings dialog with 
   const { dialog, commands } = await openSettings(page);
   // Let the entrance animation finish; a forwards-filled transform used to keep the dialog
   // as the containing block for the fixed popover, shifting it and clipping it at the dialog edge.
-  await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.playState === 'running' ).map(animation => animation.finished.catch(() => {}))));
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.playState === 'running' && animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {}))));
   const trigger = dialog.getByRole('combobox', { name: 'Time format', exact: true });
   await trigger.click();
   const list = dialog.getByRole('listbox', { name: 'Time format', exact: true });
