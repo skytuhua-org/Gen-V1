@@ -47,6 +47,7 @@ function unregistered(binding: KeyboardBinding, text: string): string | null {
 /** Native control behavior rather than an app chord: these keys move focus or are recorded, never dispatched as a shortcut. */
 const NATIVE_KEYS: Record<string, readonly string[]> = {
   'apps/web/src/App.tsx': ['enter', 'tab'],
+  'apps/web/src/ShellSidebar.tsx': ['escape', 'arrowdown', 'arrowup'],
   'apps/web/src/TerminalBody.tsx': ['tab'],
   'apps/web/src/Settings.tsx': ['tab', ',', 'control', 'meta', 'alt', 'shift'],
 };

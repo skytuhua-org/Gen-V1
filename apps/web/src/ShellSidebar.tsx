@@ -19,11 +19,12 @@ import {
   Search,
   Settings2,
   SquarePen,
+  X,
 } from 'lucide-react';
 import {threadNavigationRevision,type ThreadNavigationRow as Thread} from '../../../packages/contracts/shell-read-models';
 import type { UiPreferences } from '../../../packages/contracts/preferences';
 import type { ShellLayout } from './shell-layout';
-import { ariaKeyShortcuts } from './keyboard-bindings';
+import { ariaKeyShortcuts, ariaShortcut, shortcutKeys } from './keyboard-bindings';
 import { MotionRegion } from './task-motion';
 import { UpdateControl } from './UpdateControl';
 import { useWorkspace } from './workspace-context';
@@ -160,7 +161,12 @@ export function ShellSidebar({
   const [menuId, setMenuId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'working' | 'waiting'>('all');
   const [showAllSettled, setShowAllSettled] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const navRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [search]);
   const threadMove = useThreadMove(elementRef, matching,
     !mobile && !layout.sidebarCollapsed,
     JSON.stringify([search, filter, showAllSettled, layout.folded, preferences.projectGrouping, preferences.showWorkingSection]));
@@ -188,6 +194,19 @@ export function ShellSidebar({
   const orderedRemaining = orderSidebarProjects(remaining, preferences.projectGrouping, preferences.projectOrder);
   const settledFolded = layout.folded['settled'] ?? false;
   const visibleSettled = showAllSettled ? settled : settled.slice(0, 6);
+  const navigable = [
+    ...(layout.folded['pinned'] ? [] : pinned),
+    ...(layout.folded['working'] ? [] : working),
+    ...orderedRemaining,
+    ...(settledFolded ? [] : visibleSettled),
+  ];
+  const navigableIndex = new Map(navigable.map((item, index) => [item.id, index]));
+  const focusThreadRow = (index: number) => {
+    const item = navigable[index];
+    if (!item) return;
+    setActiveIndex(index);
+    (navRef.current?.querySelector(`[data-thread-id="${CSS.escape(item.id)}"] .thread-item`) as HTMLElement | null)?.focus();
+  };
   const locked = search.trim().length > 0 || filter !== 'all';
   const reorder = useThreadReorder(navRef, {
     // Ordering needs every settled row; only rendering stops at six.
@@ -255,11 +274,29 @@ export function ShellSidebar({
               onPlaceThread(item);
               return;
             }
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              event.stopPropagation();
+              searchRef.current?.focus();
+              return;
+            }
+            if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+              const index = navigableIndex.get(item.id);
+              if (index !== undefined) {
+                const next = index + (event.key === 'ArrowDown' ? 1 : -1);
+                if (next >= 0 && next < navigable.length) {
+                  event.preventDefault();
+                  focusThreadRow(next);
+                }
+              }
+              return;
+            }
             if (reorder.key(item, event)) return;
             trigger.onKeyDown?.(event);
           }}
           aria-label={`${item.title} ${threadStatus(item)}`}
           aria-current={item.id === selectedId ? 'page' : undefined}
+          tabIndex={navigableIndex.get(item.id) === activeIndex ? 0 : -1}
           onClick={() => {
             select(item.id);
             setMenuId(null);
@@ -384,15 +421,53 @@ export function ShellSidebar({
         </button>
       </div>
       <div className="navigation-actions">
-        <div className="search-field">
+        <div className={`search-field${search.length > 0 ? ' has-clear' : ''}`}>
           <Search size={13} />
           <input
             ref={searchRef}
             aria-label="Search threads"
+            aria-keyshortcuts={ariaShortcut(preferences.keybindings.search)}
+            title={`Focus (${shortcutKeys(preferences.keybindings.search)})`}
             placeholder="Search"
             value={search}
             onChange={event => setSearch(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') {
+                const first = navigable[0];
+                if (first) {
+                  event.preventDefault();
+                  select(first.id);
+                  setMenuId(null);
+                }
+                return;
+              }
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                if (!navigable.length) return;
+                event.preventDefault();
+                focusThreadRow(event.key === 'ArrowDown' ? 0 : navigable.length - 1);
+                return;
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                if (search.length > 0) setSearch('');
+                else event.currentTarget.blur();
+              }
+            }}
           />
+          {search.length > 0 && (
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="Clear search"
+              onClick={() => {
+                setSearch('');
+                searchRef.current?.focus();
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
         <button
           type="button"

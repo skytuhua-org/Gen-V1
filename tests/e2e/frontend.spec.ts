@@ -1367,3 +1367,53 @@ test('keyboard, narrow layout and reduced motion remain usable', async ({ page }
   const duration = await page.locator('.sidebar').evaluate(element => getComputedStyle(element).transitionDuration);
   expect(parseFloat(duration)).toBeLessThan(.01);
 });
+
+test('sidebar thread search completes a keyboard loop without leaking Escape', async ({ page }) => {
+  const state = await host(page, populated()); await page.goto('/');
+  const input = page.getByRole('textbox', { name: 'Search threads' });
+  // The search chord selects the existing query so the next character replaces it.
+  await input.fill('quiet');
+  await page.getByRole('textbox', { name: 'Message', exact: true }).click();
+  await page.keyboard.press('Control+k');
+  await expect(input).toBeFocused();
+  await page.keyboard.type('x');
+  await expect(input).toHaveValue('x');
+  // Enter opens the top matching thread.
+  await input.fill('task');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.thread-item', { hasText: 'First task' })).toHaveAttribute('aria-current', 'page');
+  // Arrow keys move DOM focus through the filtered rows; Enter opens the focused row.
+  await input.fill('task');
+  await input.press('ArrowDown');
+  await expect(page.locator('.thread-item', { hasText: 'First task' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  const second = page.locator('.thread-item', { hasText: 'Second task' });
+  await expect(second).toBeFocused();
+  await expect(second).toHaveAttribute('tabindex', '0');
+  await expect(page.locator('.thread-item', { hasText: 'First task' })).toHaveAttribute('tabindex', '-1');
+  await page.keyboard.press('Enter');
+  await expect(second).toHaveAttribute('aria-current', 'page');
+  // Escape returns focus to the search field from a result row.
+  await page.keyboard.press('Escape');
+  await expect(input).toBeFocused();
+  // Escape with a query clears it and keeps focus; the global sidebar/stop handlers never see it.
+  await input.fill('task');
+  await page.keyboard.press('Escape');
+  await expect(input).toHaveValue('');
+  await expect(input).toBeFocused();
+  await expect(page.locator('.sidebar')).toBeVisible();
+  expect(state.commands.filter(item => item.type === 'run.stop' || item.type === 'conversation.stop')).toHaveLength(0);
+  // Escape with an empty query blurs the field.
+  await page.keyboard.press('Escape');
+  await expect(input).not.toBeFocused();
+  // The clear affordance only appears with a query and refocuses the field.
+  await expect(page.locator('.search-clear')).toHaveCount(0);
+  await input.fill('task');
+  const clear = page.getByRole('button', { name: 'Clear search' });
+  await expect(clear).toBeVisible();
+  const wrapper = await page.locator('.search-field').boundingBox(), pill = await clear.boundingBox();
+  expect(pill!.x + pill!.width).toBeLessThanOrEqual(wrapper!.x + wrapper!.width + 1);
+  await clear.click();
+  await expect(input).toHaveValue('');
+  await expect(input).toBeFocused();
+});
