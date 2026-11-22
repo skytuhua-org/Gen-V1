@@ -1367,3 +1367,22 @@ test('keyboard, narrow layout and reduced motion remain usable', async ({ page }
   const duration = await page.locator('.sidebar').evaluate(element => getComputedStyle(element).transitionDuration);
   expect(parseFloat(duration)).toBeLessThan(.01);
 });
+
+test('composer model CTA reflects run state and thread lifecycle', async ({ page }) => {
+  await host(page, snapshot(), false);
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Connect a model to start' })).toBeVisible();
+
+  const replied = populated();
+  await host(page, replied, false);
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Connect a model to reply' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Connect a model to start' })).toBeHidden();
+
+  const running = populated();
+  running.threads[0] = { ...running.threads[0]!, status: 'working', runId: 'run-1' };
+  await host(page, running, false);
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Connect a model to reply' })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Connect a model to start' })).toBeHidden();
+});
