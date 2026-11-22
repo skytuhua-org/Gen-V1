@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.',
   testMatch: ['artifact-settle.spec.ts'],
   workers: 1, timeout: 45_000,

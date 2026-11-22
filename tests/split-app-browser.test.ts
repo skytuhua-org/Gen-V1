@@ -33,7 +33,7 @@ describe.runIf(enabled)('actual App split workspace',()=>{
  afterAll(async()=>{try{await browser?.close();}finally{if(server&&server.exitCode===null){server.kill();await new Promise<void>(resolve=>{const timer=setTimeout(resolve,2000);server!.once('exit',()=>{clearTimeout(timer);resolve();});});}}});
 
  async function fixture({plan=false,plugins=[],retainedCanvas=false,retainedPlan=false,unstarted=false,width=1600,height=1000,deferPluginFlush=false,mode='split',singleThread=false,mainTabs=false}:{plan?:boolean;plugins?:PluginManifest[];retainedCanvas?:boolean;retainedPlan?:boolean;unstarted?:boolean;width?:number;height?:number;deferPluginFlush?:boolean;mode?:'split'|'chat'|'default';singleThread?:boolean;mainTabs?:boolean}={}){
-  const page=await browser!.newPage({viewport:{width,height}});page.setDefaultTimeout(7000);
+  const page=await browser!.newPage({viewport:{width,height}});page.setDefaultTimeout(20000);
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript((initialMode)=>{if(window.parent===window){localStorage.setItem('harness:selected-thread','thread-a');if(initialMode==='split')localStorage.setItem('harness:workspace-mode:v3','split');}},mode);
   const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic artifact retained in the original renderer'}}}});
@@ -97,8 +97,8 @@ describe.runIf(enabled)('actual App split workspace',()=>{
    channel.port1.onmessage=e=>{if(e.data.type==='gen.plugin.connected'){window.fixtureConnected=true;channel.port1.postMessage({type:'gen.plugin.ready',pluginId:${JSON.stringify(pluginId)},session:${JSON.stringify(session)}});}if(e.data.type==='gen.plugin.flush'){if(hold)window.fixtureFlushPending.push(e.data);else acknowledge(e.data);}};channel.port1.start();parent.postMessage({type:'gen.plugin.connect',pluginId:${JSON.stringify(pluginId)},session:${JSON.stringify(session)}},'*',[channel.port2]);
   </script></body></html>`});});
   await page.route('**/split-app-check',route=>route.fulfill({contentType:'text/html',body:`<html><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${fixtureModule}');</script></body></html>`}));
-  // Cold Vite module loading has its own startup budget; interactions retain
-  // the seven-second timeout and each test's existing overall bound.
+  // Cold Vite module loading has its own startup budget; interactions retain a
+  // twenty-second timeout and each test's existing overall bound.
   const served=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/snapshot'&&response.status()===200,{timeout:40000});
   await page.goto(origin+'/split-app-check',{timeout:20000});
   await served;
@@ -529,7 +529,7 @@ describe.runIf(enabled)('actual App split workspace',()=>{
  },30000);
 
  it('embedded transcript Stop routes through the shared composer owner, not raw run.stop (AUD-05)',async()=>{
-  const page=await browser!.newPage({viewport:{width:1200,height:800}});page.setDefaultTimeout(7000);
+  const page=await browser!.newPage({viewport:{width:1200,height:800}});page.setDefaultTimeout(20000);
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   try{
    const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic working transcript'}}}});

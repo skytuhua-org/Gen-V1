@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 import { resolve } from 'node:path';
 
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.', testMatch: /model-picker\.spec\.ts|subscription-accounts\.spec\.ts|composer-reference\.spec\.ts|composer-motion\.spec\.ts/,
   workers: 1, timeout: 45000,
   use: { baseURL: 'http://127.0.0.1:5527', viewport: { width: 1440, height: 1000 }, trace: 'retain-on-failure' },

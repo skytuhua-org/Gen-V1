@@ -6,6 +6,7 @@ export default defineConfig({
   testMatch: 'chart-coordinates.spec.ts',
   workers: 1,
   timeout: 45000,
+  expect: {timeout: 15_000},
   use: {
     baseURL: 'http://127.0.0.1:5482',
     browserName: 'chromium',

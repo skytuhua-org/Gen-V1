@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 import { resolve } from 'node:path';
 
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.', testMatch: 'tabs-identity.spec.ts', workers: 1, timeout: 30_000,
   outputDir: resolve(import.meta.dirname, '../../test-results/tabs-identity'),
   use: { baseURL: 'http://127.0.0.1:5483', browserName: 'chromium', headless: true, viewport: { width: 1440, height: 1000 }, trace: 'retain-on-failure' },

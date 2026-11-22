@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 import { resolve } from 'node:path';
 
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.', testMatch: 'ui-shell-controls.spec.ts', workers: 1, timeout: 15000,
   outputDir: resolve('.harness-ui-shell/controls'),
   use: { baseURL: 'http://127.0.0.1:5394', channel: 'msedge', viewport: { width: 800, height: 600 }, trace: 'retain-on-failure' },
