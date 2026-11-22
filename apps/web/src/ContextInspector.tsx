@@ -111,7 +111,7 @@ function ContextSession({ usage, thread, close, refresh, onError, anchor, compac
   const budget = budgetObservation?.threadId === thread?.id && budgetObservation?.epoch === thread?.epoch &&
     (!thread?.runId || budgetObservation?.runId === thread.runId) ? budgetObservation?.budget : undefined;
   const reported = ownedCompaction(thread, compaction), accepted = acceptedCompaction(thread, compaction, usage);
-  const compactRun = useRef<string | undefined>();
+  const compactRun = useRef<string | undefined>(undefined);
   useEffect(() => {
     const runId = compactRun.current;
     if (!runId || !requested || !thread) return;
