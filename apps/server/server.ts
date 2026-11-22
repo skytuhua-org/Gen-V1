@@ -72,7 +72,7 @@ export async function buildServer(service: Service, options: ServerOptions) {
     const known = error instanceof HarnessError, malformed = error instanceof z.ZodError || error instanceof URIError;
     const native = typeof (error as { statusCode?: unknown }).statusCode === "number" ? (error as { statusCode: number }).statusCode : undefined;
     const code = known ? error.code : malformed ? "INVALID_INPUT" : native === 413 ? "RESOURCE_LIMIT" : "HOST_ERROR";
-    const status = code === "NOT_FOUND" ? 404 : ["CAPABILITY_DENIED", "AUTH_REQUIRED"].includes(code) ? 403 : known || malformed ? 400 : native !== undefined && native >= 400 && native < 500 ? native : 500;
+    const status = code === "NOT_FOUND" ? 404 : code === "STALE_REVISION" ? 409 : code === "RESOURCE_LIMIT" ? 413 : ["CAPABILITY_DENIED", "AUTH_REQUIRED"].includes(code) ? 403 : known || malformed ? 400 : native !== undefined && native >= 400 && native < 500 ? native : 500;
     const message = known ? error.message : error instanceof z.ZodError ? "Command envelope is invalid" : error instanceof URIError ? "The request path is invalid" : code === "RESOURCE_LIMIT" ? "The request exceeds its byte limit" : "The host could not complete this request";
     reply.code(status).send({ error: { code, message, ...(known && error.details ? { details: error.details } : {}) } });
   });

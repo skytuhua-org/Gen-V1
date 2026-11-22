@@ -5,6 +5,7 @@ import type {Service} from '../../packages/core/service.ts';
 import {HarnessError} from '../../packages/contracts/index.ts';
 import {integrationIdSchema} from '../../packages/contracts/integrations.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema} from '../../packages/contracts/code-review.ts';
+import {workspacePatchQuerySchema} from '../../packages/contracts/workspace-patch.ts';
 import {workspaceHost,githubFor} from './workspace-host.ts';
 import {registerEnvironmentRoutes} from './environment-routes.ts';
 import {registerIntegrationSecretReferenceRoutes} from './integration-secret-reference-routes.ts';
@@ -45,6 +46,11 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
  app.post('/api/workspace/commands',{bodyLimit:1024*1024},async request=>{const input=envelope.parse(request.body);return input.type==='workspace.project.connect'?projects.connect(input):projects.workspace.command(input);});
  app.get('/api/projects/:projectId/context',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);return projects.context(projectId,threadId);});
  app.get('/api/projects/:projectId/git',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);return projects.gitStatus(projectId,threadId);});
+ app.get('/api/projects/:projectId/git/patch',async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),query=workspacePatchQuerySchema.parse(request.query);
+  return projects.gitPatch(projectId,query);
+ });
  // Read-only comparison dependencies; retain existing action/review routes verbatim.
  app.get('/api/projects/:projectId/git/comparison',async(request,reply)=>{
   reply.header('Cache-Control','no-store');
