@@ -1752,7 +1752,7 @@ export class Service {
       this.background(this.deliverOutbox(op.threadId));return result;
     } catch(error) {
       const status:Operation['status']=admitted?'unknown':'failed',message=error instanceof Error?error.message.slice(0,2000):'Verification execution was unavailable.';
-      if(!this.closed)this.store.internal('verification.operation.failed',op.threadId,()=>{const latest=this.store.get<Operation>('operation',op.id);if(!latest||latest.revision!==op.revision||digest(latest.args)!==digest(op.args)||!['prepared','running'].includes(latest.status))return{operationId:op.id,status:latest?.status??status};const ended:Operation={...op,status,error:message};this.store.put('operation',op.id,op.threadId,ended);this.verification.recordFailure(ended);this.verificationRepair.failed(ended,error);this.operationData(ended);this.enqueueOperationResult(ended);return{operationId:op.id,status};});
+      if(!this.closed)this.store.internal('verification.operation.failed',op.threadId,()=>{const latest=this.store.get<Operation>('operation',op.id);if(!latest||latest.revision!==op.revision||digest(latest.args)!==digest(op.args)||!['prepared','running'].includes(latest.status))return{operationId:op.id,status:latest?.status??status};const ended:Operation={...op,status,error:message,errorCode:error instanceof HarnessError?error.code:undefined};this.store.put('operation',op.id,op.threadId,ended);this.verification.recordFailure(ended);this.verificationRepair.failed(ended,error);this.operationData(ended);this.enqueueOperationResult(ended);return{operationId:op.id,status};});
       if(admitted&&this.verificationEffects.get(invocationId))this.verificationEffects.settle(invocationId,{error:message},'UNKNOWN_EXTERNAL_OUTCOME');
       this.background(this.deliverOutbox(op.threadId));throw error;
     }
@@ -1777,6 +1777,7 @@ export class Service {
   private async executeOperation(id: string, control: AbortController): Promise<unknown> {
     const op = this.store.get<Operation>("operation", id);
     if (!op) throw new HarnessError("NOT_FOUND", "Operation unavailable");
+    if (op.status === "failed" && op.result === undefined && isVerificationOperation(op) && (op.args.intent as {repair?: unknown} | undefined)?.repair) throw new HarnessError(op.errorCode ?? "OPERATION_FAILED", op.error ?? "Operation failed");
     if (["succeeded", "failed", "cancelled"].includes(op.status)) return op;
     if (op.status !== "prepared") throw new HarnessError("RECONCILIATION_REQUIRED", "An operation is already running or has an uncertain outcome");
     this.assertMutation(op.threadId);
