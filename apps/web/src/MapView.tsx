@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, MapPin, MessageSquare } from 'lucide-react';
 import { mapData } from '../../../packages/ui-catalog/workflow';
 import { ArtifactTitle, inputPath, mapActionPayload, statePath, useTaskAction } from './task-context';
 import { reducedMotion } from './task-motion';
+import { mapSourceContent } from './map-source';
 import './map-view.css';
 
 export function MapView({ element: { props } }: ComponentRenderProps) {
@@ -63,6 +64,6 @@ export function MapView({ element: { props } }: ComponentRenderProps) {
     </div>
     <footer className="task-map-footer"><div className="task-map-navigation"><button type="button" className="icon-button" aria-label="Previous place" onClick={() => choose(index - 1)}><ArrowLeft size={15} /></button><div className="task-map-dots" aria-hidden="true">{points.map(point => <span key={point.id} className={point.id === selected.id ? 'is-selected' : ''} />)}</div><button type="button" className="icon-button" aria-label="Next place" onClick={() => choose(index + 1)}><ArrowRight size={15} /></button></div>{Boolean(props.feedbackActionId) && <button type="button" className="quiet" disabled={action.busy} onClick={() => { const point = selected; void action.run(String(props.feedbackActionId), { ...mapActionPayload(props, store.getSnapshot().values), pointId: point.id }).then(accepted => { if (accepted) setFeedback(`Feedback requested for ${point.label}.`); }); }}><MessageSquare size={13} />{action.busy ? 'Sending request…' : 'Send feedback request'}</button>}</footer>
     {action.error && <p className="error-text" role="status">{action.error}</p>}{feedback && <p className="task-map-feedback" role="status">{feedback}</p>}
-    {parsed.data.source && <details className="task-map-source"><summary>Source</summary><p>{parsed.data.source}</p></details>}
+    {(() => { const source = mapSourceContent(parsed.data.source); return source && <details className="task-map-source"><summary>Source</summary>{source.kind === 'link' ? <a className="task-map-source-link" href={source.text} target="_blank" rel="noopener">{source.text}</a> : <p>{source.text}</p>}</details>; })()}
   </section>;
 }

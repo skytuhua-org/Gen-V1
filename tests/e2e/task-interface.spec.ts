@@ -188,3 +188,22 @@ test('capture one batched desktop, narrow and theme inspection of reusable task 
   }
   await writeFile(`${path}/manifest.json`, JSON.stringify({ provenance: 'Authored synthetic local renderer fixtures. No live model, GitHub, database, geographic provider, or external feedback delivery.', reducedMotion: true, references: ['merge-16.png', 'graph-14.png', 'migration-16.png', 'faq-24.png'], metrics }, null, 2));
 });
+
+test('map source disclosure hides blank source', async ({ page }) => {
+  await serveTaskFixture(page, taskFixture(linkedMapSpec, { places: { ...linkedMapData, source: '   ' } }));
+  await page.goto('/');
+  await expect(page.locator('.task-map')).toBeVisible();
+  await expect(page.locator('.task-map-source')).toHaveCount(0);
+});
+
+test('map source disclosure renders URL source as a link', async ({ page }) => {
+  await serveTaskFixture(page, taskFixture(linkedMapSpec, { places: { ...linkedMapData, source: '  https://example.com/places ' } }));
+  await page.goto('/');
+  const details = page.locator('.task-map-source');
+  await expect(details).toHaveCount(1);
+  await details.locator('summary').click();
+  const link = details.locator('a.task-map-source-link');
+  await expect(link).toHaveText('https://example.com/places');
+  await expect(link).toHaveAttribute('href', 'https://example.com/places');
+  await expect(link).toHaveAttribute('target', '_blank');
+});
