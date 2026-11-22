@@ -9,8 +9,9 @@ export function stripAnsi(text:string):string{return text.replace(ANSI_PATTERN,'
 export function detectAddresses(text:string):DetectedAddress[]{
  const found=new Map<string,DetectedAddress>();
  for(const match of stripAnsi(text).matchAll(ADDRESS_PATTERN)){
-  // Reject userinfo so `localhost:8080@evil/` cannot redirect the probe host.
-  if(match[0].includes('@'))continue;
+  // Reject userinfo in the authority so `localhost:8080@evil/` cannot redirect the probe host; an '@' in the path is fine.
+  const rest=match[0].slice(match[0].indexOf('://')+3),slash=rest.indexOf('/');
+  if((slash<0?rest:rest.slice(0,slash)).includes('@'))continue;
   let parsed:URL;
   try{parsed=new URL(match[0]);}catch{continue;}
   const host=parsed.hostname;
