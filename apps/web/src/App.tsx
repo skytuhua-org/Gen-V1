@@ -93,7 +93,9 @@ import {AgentInbox} from './AgentInbox';
 import {BackgroundWork} from './BackgroundWork';
 import {ConversationFind} from './ConversationFind';
 import {canLoadConversationHistory} from './conversation-find';
-import {changeTerminalExcerpts,clearAcceptedExcerpts,editTerminalExcerpt,excerptDraftKey,readTerminalExcerpts,serializeTerminalExcerpts,type TerminalExcerpt} from './terminal-excerpts';
+import {changeTerminalExcerpts,clearAcceptedExcerpts,editTerminalExcerpt,excerptDraftKey,readTerminalExcerpts,type TerminalExcerpt} from './terminal-excerpts';
+import {changePastedTexts,clearAcceptedPastes,pasteDraftKey,readPastedTexts,serializeComposerPrompt,shouldCollapse,normalizePaste,countLines,lineLabel,PASTED_TEXT_MAX_COUNT,PASTED_TEXT_MAX_BYTES,type PastedText} from './pasted-text';
+import {insertDraftText} from './saved-drafts';
 import type {TerminalExcerptComposer} from './TerminalBody';
 import {WorkspaceSurfaceBody, type ReviewRequest} from './WorkspaceSurfaceBody';
 import {ProjectContextSurface} from './ProjectContextSurface';
@@ -286,8 +288,16 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
   const excerpts=shared?sharedState.excerpts??[]:localExcerpts;
   useEffect(()=>{if(shared)return;let current=true;setExcerptsReady(false);const accept=(value:unknown)=>{try{setLocalExcerpts(readTerminalExcerpts(value));setExcerptsReady(true);}catch{setExcerptsReady(false);setError('Terminal excerpts could not be recovered. Keep this workspace open.');}};const unsubscribe=journalSubscribe(excerptDraftKey(key),accept);void journalReadRecord(excerptDraftKey(key)).then(record=>{if(current)accept(record?.value);}).catch(()=>{if(current)setError('Terminal excerpts could not be recovered. Keep this workspace open.');});return()=>{current=false;unsubscribe();};},[key,shared]);
   const updateExcerpt=(id:string,text?:string)=>sharedComposers&&sharedTarget?(text===undefined?sharedComposers.removeExcerpt(sharedTarget,id):sharedComposers.editExcerpt(sharedTarget,id,text)):changeTerminalExcerpts(key,current=>text===undefined?current.filter(e=>e.id!==id):current.map(e=>e.id===id?editTerminalExcerpt(e,text):e));
+  const [localPastes,setLocalPastes]=useState<PastedText[]>([]),[pastesReady,setPastesReady]=useState(false);
+  const pastes=shared?sharedState.pastes??[]:localPastes;
+  useEffect(()=>{if(shared)return;let current=true;setPastesReady(false);const accept=(value:unknown)=>{try{setLocalPastes(readPastedTexts(value));setPastesReady(true);}catch{setPastesReady(false);setError('Pasted text drafts could not be recovered. Keep this workspace open.');}};const unsubscribe=journalSubscribe(pasteDraftKey(key),accept);void journalReadRecord(pasteDraftKey(key)).then(record=>{if(current)accept(record?.value);}).catch(()=>{if(current)setError('Pasted text drafts could not be recovered. Keep this workspace open.');});return()=>{current=false;unsubscribe();};},[key,shared]);
+  const updatePaste=(id:string,text?:string)=>{justCollapsed.current=undefined;return sharedComposers&&sharedTarget?(text===undefined?sharedComposers.removePaste(sharedTarget,id):sharedComposers.editPaste(sharedTarget,id,text)):changePastedTexts(draftTarget.current,current=>text===undefined?current.filter(p=>p.id!==id):current.map(p=>p.id===id?{...p,text}:p));};
+  const justCollapsed=useRef<{id:string;caret:number;draft:string;text:string}|undefined>(undefined),inlineOverride=useRef<number|undefined>(undefined);
+  const [pasteCaption,setPasteCaption]=useState(''),[pasteAnnouncement,setPasteAnnouncement]=useState(''),pasteCaptionTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+  const announcePaste=(lines:number)=>{const mod=/mac/i.test(navigator.platform)?'⌘Z':'Ctrl+Z';setPasteAnnouncement(`Pasted ${lineLabel(lines)} as an attachment. Press ${mod} to paste inline.`);setPasteCaption(`Pasted as attachment · ${mod} to paste inline`);clearTimeout(pasteCaptionTimer.current);pasteCaptionTimer.current=setTimeout(()=>setPasteCaption(''),6000);};
+  const insertPasteText=(text:string)=>{const area=input.current;if(!area)return;const result=insertDraftText(area.value,text,area.selectionStart);area.focus();updateDraft(result.text);requestAnimationFrame(()=>{area.setSelectionRange(result.caret,result.caret);});};
   const [contextOpen, setContextOpen] = useState(false);
-  const memoryPrompt = useMemo(() => {try {return serializeTerminalExcerpts(draft, excerpts);} catch {return undefined;}}, [draft, excerpts]);
+  const memoryPrompt = useMemo(() => {try {return serializeComposerPrompt(draft, pastes, excerpts);} catch {return undefined;}}, [draft, pastes, excerpts]);
   const memoryOwner = thread?.projectId && !threadParent(thread) && !delegatedThread(thread) && draftProject.context?.threadId === thread.id && draftProject.context.project.id === thread.projectId && draftProject.context.project.authority.kind === 'local' ? {projectId: thread.projectId, threadId: thread.id, accountId: thread.accountId ?? null} : undefined;
   const preparedMemory = useProjectMemoryPreparation(memoryOwner && memoryPrompt !== undefined && modelId ? {owner: memoryOwner, prompt: memoryPrompt, modelId, thinkingLevel: thinkingLevel || null, ownerVersion: JSON.stringify([thread?.epoch, thread?.sessionPath, thread?.workspaceId, Object.entries(snapshot.settings.selectedAccounts ?? {}).sort(([left], [right]) => left.localeCompare(right))])} : undefined, contextOpen, busy || working || Boolean(shared && sharedState.retry));
   const contextAnchor = useRef<HTMLButtonElement>(null);
@@ -325,7 +335,7 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
     resize(); const observer = new ResizeObserver(resize); observer.observe(textarea.parentElement!); if (ghost.current) observer.observe(ghost.current);
     return () => observer.disconnect();
   }, [draft, prediction.candidate, preferences.fontSize, preferences.promptFont]);
-  const updateDraft = (value: string) => { prediction.dismiss(); draftLatest.current = value; setDraft(value); if (sharedComposers && sharedTarget) {void sharedComposers.edit(sharedTarget, value); return;} void journalWrite(`draft:${draftTarget.current}`, value).catch(() => setError('Draft could not be stored locally. Keep this tab open.')); };
+  const updateDraft = (value: string) => { prediction.dismiss(); justCollapsed.current=undefined; setPasteCaption(''); draftLatest.current = value; setDraft(value); if (sharedComposers && sharedTarget) {void sharedComposers.edit(sharedTarget, value); return;} void journalWrite(`draft:${draftTarget.current}`, value).catch(() => setError('Draft could not be stored locally. Keep this tab open.')); };
   const acceptPrediction = () => {
     // Recheck synchronously if zoom, font loading or resize beats the observer.
     if (ghost.current && input.current && (ghost.current.hidden || ghost.current.scrollHeight > input.current.clientHeight)) { prediction.dismiss(); return false; }
@@ -340,6 +350,9 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
       const selected=await journalReadRecord(skillDraftKey(key));
       await journalWrite(skillDraftKey(id),readSkillBindings(selected?.value));
       if(retireSource&&selected)await journalCompareAndSwap(skillDraftKey(key),selected.generation,[]);
+      const pasted=await journalReadRecord(pasteDraftKey(key));
+      await journalWrite(pasteDraftKey(id),readPastedTexts(pasted?.value));
+      if(retireSource&&pasted)await journalCompareAndSwap(pasteDraftKey(key),pasted.generation,[]);
       if(!thread&&draftMode==='plan')await command('thread.mode',{mode:'plan'},id);
     }
     const generation = id !== key ? await journalWrite(`draft:${id}`, source?.value ?? fallback) : journalGeneration(`draft:${key}`);
@@ -354,9 +367,10 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
     void journalRead<string>('thinking:'+thread.id).then(level=>command('run.resume',{modelId,thinkingLevel:level===undefined?(thread.thinkingLevel??null):(level||null)},thread.id)).then(()=>refresh()).catch(fail);
   };
   const send = async () => {
-    if (busy || !skillsReady || !shared&&!excerptsReady || skillsBlocked || !draft.trim() && !excerpts.length && !retry) return;
+    if (busy || !skillsReady || !shared&&(!excerptsReady||!pastesReady) || skillsBlocked || !draft.trim() && !excerpts.length && !pastes.length && !retry) return;
     const sideCommand=!retry&&/^\/(?:btw|side)(?:\s|$)/i.exec(draft.trim());
     if(sideCommand){
+      if(pastes.length){setError("Side questions can't include pasted text. Insert it as text or remove it.");return;}
       if(!thread){setError('Start a main conversation before asking a side question.');return;}
       const generation=journalGeneration(`draft:${key}`);setError('');
       try{await onSide(draft.trim().slice(sideCommand[0].length).trim());await journalCompareAndSwap(`draft:${key}`,generation,'');}catch(cause){fail(cause);}
@@ -366,22 +380,24 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
     await runAction(async () => {
       setError('');
       const submittedDraft = draft, submittedSkills = skills.slice(), submittedThinking = thinkingLatest.current || null;
-      const submittedGeneration = journalGeneration(`draft:${key}`), submittedExcerptGeneration = journalGeneration(excerptDraftKey(key));
+      const submittedGeneration = journalGeneration(`draft:${key}`), submittedExcerptGeneration = journalGeneration(excerptDraftKey(key)), submittedPasteGeneration = journalGeneration(pasteDraftKey(key));
       try {
         const submittedExcerpts=readTerminalExcerpts(excerpts,thread?.projectId?{projectId:thread.projectId,threadId:thread.id}:undefined);
-        const submittedPrompt = serializeTerminalExcerpts(submittedDraft, submittedExcerpts);
+        const submittedPastes=readPastedTexts(pastes);
+        const submittedPrompt = serializeComposerPrompt(submittedDraft, submittedPastes, submittedExcerpts);
         const requestContextId = retry ? undefined : preparedMemory.requestContextId({prompt: submittedPrompt, modelId, thinkingLevel: submittedThinking});
         let migrated: Awaited<ReturnType<typeof migrateDraft>> | undefined;
         const id = await ensureThread(async id => { migrated = await migrateDraft(id, submittedDraft, true); });
         if (sharedComposers) {
           const target: ConversationComposerTarget = {kind: 'conversation', projectId:thread?.projectId, workspaceId:thread?.workspaceId, threadId: id, modelId, working};
-          await sharedComposers.prepare(target); await sharedComposers.submit(target, {sourceContextVisible:Boolean(workbench?.draft&&workbench.owner?.threadId===id),thinkingLevel: submittedThinking, ...(requestContextId ? {requestContextId} : {}),submission:{content:submittedDraft,generation:id===key?submittedGeneration:migrated&&migrated.source?.generation===submittedGeneration?migrated.generation:undefined,skills:submittedSkills,excerpts:submittedExcerpts,excerptGeneration:submittedExcerptGeneration}});
+          await sharedComposers.prepare(target); await sharedComposers.submit(target, {sourceContextVisible:Boolean(workbench?.draft&&workbench.owner?.threadId===id),thinkingLevel: submittedThinking, ...(requestContextId ? {requestContextId} : {}),submission:{content:submittedDraft,generation:id===key?submittedGeneration:migrated&&migrated.source?.generation===submittedGeneration?migrated.generation:undefined,skills:submittedSkills,excerpts:submittedExcerpts,excerptGeneration:submittedExcerptGeneration,pastes:submittedPastes,pasteGeneration:submittedPasteGeneration}});
           await refresh(); return;
         }
         if(workbench?.draft?.sourceRefs.length||workbench?.draft?.sendMode==='AFTER_CURRENT')throw Error('Source-aware sending is unavailable in this composer. The draft was retained.');
         await command('message.send', { content: submittedPrompt, modelId, thinkingLevel:submittedThinking, ...(requestContextId ? {requestContextId} : {}), ...(submittedSkills.length?{skills:submittedSkills.map(binding=>binding.ref)}:{}) }, id);
         await clearAcceptedSkills(skillDraftKey(id),submittedSkills);
         await clearAcceptedExcerpts(id,submittedExcerptGeneration);
+        await clearAcceptedPastes(id,submittedPastes.map(paste=>paste.id));
         await journalCompareAndSwap(`draft:${key}`, submittedGeneration, '');
         if (id !== key && migrated && migrated.source?.generation === submittedGeneration) await journalCompareAndSwap(`draft:${id}`, migrated.generation, '');
         await refresh();
@@ -423,13 +439,42 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
     {working && draft.trim() && !(workbench?.enabled && workbench.draft?.sendMode === 'AFTER_CURRENT') && !/^\/(?:btw|side)(?:\s|$)/i.test(draft.trim()) && <p className="composer-hint">The agent is working — start the message with /btw to send a side question.</p>}
     <ComposerView className={dragging ? 'dragging' : ''} onSubmit={event => { event.preventDefault(); void send(); }} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (event.dataTransfer.files.length) void upload(event.dataTransfer.files); }}>
       <WorkbenchComposer title={thread?.title??'New conversation'} working={working} disabled={busy||!ready||retry}/>
-      <ComposerAttachments resources={resources} excerpts={excerpts} disabled={busy||!ready||retry} onEditExcerpt={(id,text)=>updateExcerpt(id,text)} onRemoveExcerpt={id=>updateExcerpt(id)} timeFormat={getPreferences(snapshot.settings).timeFormat}/>
+      <ComposerAttachments resources={resources} excerpts={excerpts} pastes={pastes} disabled={busy||!ready||retry} onEditExcerpt={(id,text)=>updateExcerpt(id,text)} onRemoveExcerpt={id=>updateExcerpt(id)} onEditPaste={(id,text)=>updatePaste(id,text)} onRemovePaste={id=>updatePaste(id)} onInsertPaste={(id,text)=>{insertPasteText(text);void updatePaste(id);}} timeFormat={getPreferences(snapshot.settings).timeFormat}/>
       <ComposerSkillBindings bindings={skills} retry={retry} onRemove={id=>{void (sharedComposers&&sharedTarget?sharedComposers.removeSkill(sharedTarget,id):localSkills.remove(id)).catch(cause=>fail(cause));}}/>
       <ComposerCommands ref={commands} input={input} draft={draft} threadId={thread?.id} projectId={thread?.projectId} disabled={!ready||!skillsReady||busy||predictionBlocked} onDraft={updateDraft} onModel={()=>modelPicker.current?.open()} onMode={chooseMode}/>
       <div className="composer-entry-row">
       <div className="composer-input">
-        <textarea ref={input} aria-label="Message" placeholder={prediction.candidate ? '' : dragging ? 'Drop files to attach' : 'Ask anything…'} value={draft} disabled={!ready} onChange={event => updateDraft(event.target.value)} onPaste={prediction.dismiss} onCompositionStart={prediction.dismiss} onKeyDown={event => {
+        <textarea ref={input} aria-label="Message" placeholder={prediction.candidate ? '' : dragging ? 'Drop files to attach' : 'Ask anything…'} value={draft} disabled={!ready} onChange={event => updateDraft(event.target.value)} onPaste={event => {
+          prediction.dismiss();
+          if (inlineOverride.current !== undefined && performance.now() - inlineOverride.current < 500) { inlineOverride.current = undefined; return; }
+          const raw = event.clipboardData?.getData('text/plain');
+          if (!raw?.trim()) return;
+          const text = normalizePaste(raw), bytes = new TextEncoder().encode(text).length;
+          if (bytes > PASTED_TEXT_MAX_BYTES) { event.preventDefault(); setError(`This paste is ${Math.ceil(bytes / 1024)} KB. Gen sends at most 64 KB per message. Attach it as a file instead.`); return; }
+          if (busy || retry || !shouldCollapse(text, preferences.pasteCollapse) || pastes.length >= PASTED_TEXT_MAX_COUNT) return;
+          event.preventDefault();
+          const area = event.currentTarget;
+          if (area.selectionStart !== area.selectionEnd) document.execCommand('delete');
+          const chip: PastedText = {version: 1, id: crypto.randomUUID(), createdAt: new Date().toISOString(), text};
+          justCollapsed.current = {id: chip.id, caret: area.selectionStart, draft: draftLatest.current, text};
+          void (sharedComposers && sharedTarget ? sharedComposers.addPaste(sharedTarget, chip) : changePastedTexts(draftTarget.current, current => [...current, chip])).then(() => announcePaste(countLines(text))).catch(cause => setError(cause instanceof Error ? cause.message : 'Pasted text could not be stored. Keep this workspace open.'));
+        }} onCompositionStart={prediction.dismiss} onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.key === 'v' || event.key === 'V')) { inlineOverride.current = performance.now(); return; }
+          const undo = justCollapsed.current;
+          if ((event.ctrlKey || event.metaKey) && !event.shiftKey && (event.key === 'z' || event.key === 'Z') && undo && draftLatest.current === undo.draft && pastes.some(paste => paste.id === undo.id)) {
+            event.preventDefault();
+            justCollapsed.current = undefined;
+            void updatePaste(undo.id);
+            const area = input.current;
+            if (area) {
+              area.focus(); area.setSelectionRange(undo.caret, undo.caret);
+              if (document.execCommand('insertText', false, undo.text)) updateDraft(area.value);
+              else { const result = insertDraftText(area.value, undo.text, undo.caret); updateDraft(result.text); area.setSelectionRange(result.caret, result.caret); }
+            }
+            return;
+          }
+          if (event.key !== 'Control' && event.key !== 'Meta' && event.key !== 'Shift' && event.key !== 'Alt') justCollapsed.current = undefined;
           const submitKey = event.key === 'Enter' && !event.shiftKey && (preferences.sendShortcut === 'enter' || event.ctrlKey || event.metaKey);
           if (submitKey && /^\/(?:btw|side)$/i.test(draft.trim())) { event.preventDefault(); void send(); return; }
           if(commands.current?.keyDown(event))return;
@@ -441,15 +486,15 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
       </div>
       <ComposerTaskActions changeSummary={changes} onChanges={inspectChanges} onCreatePR={preparePR} disabled={busy||!ready} working={working}/>
       </div>
-      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{prediction.candidate ? `Suggested message: ${prediction.candidate} Tab to accept. Escape to dismiss.` : ''}</span>
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{pasteAnnouncement || (prediction.candidate ? `Suggested message: ${prediction.candidate} Tab to accept. Escape to dismiss.` : '')}</span>
       <ComposerToolbar modelPickerRef={modelPicker} models={models} modelId={modelId} onModelChange={id=>{chooseThinking('');setModelId(id);}} modelScopeHint={thread?'New conversations only.':'Applies to new tasks.'} onModelNewTask={onNewTask} thinkingLevel={thinkingLevel} onThinkingChange={chooseThinking} projectLabel={thread?.projectName??project?.label} changeSummary={changes} onProject={async()=>{if(!selectProject){await addResource();return;}const opener=document.activeElement as HTMLElement|null;selectProject(thread?.id,opener,thread?undefined:id=>migrateDraft(id,draftLatest.current,true));}} onChanges={inspectChanges} onCreatePR={preparePR} onTranscript={text=>{const current=draftLatest.current;updateDraft(current+(current&&!/\s$/.test(current)?' ':'')+text);}} disabled={busy||!ready} working={working} separateActions
         leading={<>{savedDraftOwner?<SavedDrafts owner={savedDraftOwner} input={input} disabled={busy||!ready||retry||predictionBlocked}/>:<button type="button" className="quiet saved-drafts-trigger" disabled title={thread?'Saved drafts are waiting for the owning project context.':'Start a conversation to save named drafts.'}>Saved drafts</button>}<button type="button" className="icon-button attach-button" aria-label="Attach files" title="Attach files" disabled={busy} onClick={()=>file.current?.click()}><Plus size={18}/></button><input type="file" multiple ref={file} hidden onChange={event=>{if(event.target.files)void upload(event.target.files);event.target.value='';}}/></>}
         runtime={<>{thread?.accountId!=null&&<span className="composer-account" title="Account for this task">{snapshot.accounts?.find(account=>account.id===thread.accountId)?.label??'Account unavailable'}</span>}<span className="pill runtime-pill" title="Local workspace"><Laptop size={14}/>Local</span><button type="button" className="mode-toggle" aria-label="Task mode" aria-pressed={(thread?.mode??draftMode)==='plan'} title={(thread?.mode??draftMode)==='plan'?'Switch to Build':'Switch to Plan'} disabled={working||busy} onClick={()=>{void chooseMode((thread?.mode??draftMode)==='plan'?'build':'plan').catch(cause=>setError(messageOf(cause)));}}>{(thread?.mode??draftMode)==='plan'?<PenLine size={15}/>:<Bot size={15}/>}<span>{(thread?.mode??draftMode)==='plan'?'Plan':'Build'}</span></button>{preferences.showUsageFooter&&onShowUsage&&<button type="button" className="composer-tool composer-usage-launcher" aria-label={usageOpen?'Hide live usage':'Show live usage'} title={usageOpen?'Hide live usage':'Show live usage'} aria-pressed={usageOpen} onClick={onShowUsage}><Activity size={15}/></button>}</>}
         context={preferences.showComposerContext&&<span className="context-anchor"><button ref={contextAnchor} type="button" className="icon-button context-button" aria-label="Inspect context usage" aria-expanded={contextOpen} onClick={()=>setContextOpen(value=>!value)}><SlidersHorizontal size={15}/></button><ContextInspector open={contextOpen} anchor={contextAnchor} usage={thread?snapshot.usage[thread.id]:undefined} usageThreadId={thread?.id} thread={thread} close={()=>setContextOpen(false)} refresh={refresh} memoryRecall={preparedMemory.memoryRecall} memoryPreparation={memoryOwner ? {pending: preparedMemory.pending, error: preparedMemory.error, refresh: preparedMemory.refresh, disabled: busy || working} : undefined}/></span>}
-        trailing={working?<>{workbench?.enabled&&workbench.draft?.sendMode==='AFTER_CURRENT'&&<button type="button" className="secondary" disabled={busy||!retry&&preparedMemory.blocked||!ready||skillsBlocked||!draft.trim()} onClick={()=>void send()}>Queue after current</button>}{/^\/(?:btw|side)(?:\s|$)/i.test(draft.trim())&&<button type="button" className="send-button" aria-label="Send side question" disabled={busy||!ready||skillsBlocked} onClick={()=>void send()}><ArrowUp size={17}/></button>}<button type="button" className="send-button stop-button" aria-label="Stop agent" disabled={shared && sharedState.stopping} onClick={()=>{void (sharedComposers && sharedTarget ? sharedComposers.stop(sharedTarget) : command('run.stop',{},thread!.id)).then(()=>refresh()).catch(error=>fail(error));}}><CircleStop size={20}/></button></>:<button className="send-button" aria-label={retry ? "Retry send" : "Send message"} disabled={busy||!retry&&preparedMemory.blocked||!skillsReady||skillsBlocked||unavailable||!draft.trim() && !excerpts.length && !retry||!ready||!shared&&!excerptsReady} title={unavailable?'Connect an available model in Settings to send.':'Send message (Enter)'}>{busy?<LoaderCircle size={17} className="spinning"/>:<ArrowUp size={19}/>}</button>}
+        trailing={working?<>{workbench?.enabled&&workbench.draft?.sendMode==='AFTER_CURRENT'&&<button type="button" className="secondary" disabled={busy||!retry&&preparedMemory.blocked||!ready||skillsBlocked||!draft.trim()&&!pastes.length} onClick={()=>void send()}>Queue after current</button>}{/^\/(?:btw|side)(?:\s|$)/i.test(draft.trim())&&<button type="button" className="send-button" aria-label="Send side question" disabled={busy||!ready||skillsBlocked} onClick={()=>void send()}><ArrowUp size={17}/></button>}<button type="button" className="send-button stop-button" aria-label="Stop agent" disabled={shared && sharedState.stopping} onClick={()=>{void (sharedComposers && sharedTarget ? sharedComposers.stop(sharedTarget) : command('run.stop',{},thread!.id)).then(()=>refresh()).catch(error=>fail(error));}}><CircleStop size={20}/></button></>:<button className="send-button" aria-label={retry ? "Retry send" : "Send message"} disabled={busy||!retry&&preparedMemory.blocked||!skillsReady||skillsBlocked||unavailable||!draft.trim() && !excerpts.length && !pastes.length && !retry||!ready||!shared&&(!excerptsReady||!pastesReady)} title={unavailable?'Connect an available model in Settings to send.':'Send message (Enter)'}>{busy?<LoaderCircle size={17} className="spinning"/>:<ArrowUp size={19}/>}</button>}
       />
     </ComposerView>
-    <div className="composer-caption">{prediction.candidate ? <span className="composer-prediction-controls"><span className="composer-prediction-keyboard" aria-hidden="true">Tab to accept · Esc to dismiss</span><button type="button" className="composer-prediction-use" onPointerDown={event => event.preventDefault()} onClick={acceptPrediction}>Use suggestion</button></span> : unavailable ? <button onClick={setup}>Connect a model to start<ChevronRight size={12} /></button> : null}</div>
+    <div className="composer-caption">{pasteCaption ? <span className="muted">{pasteCaption}</span> : prediction.candidate ? <span className="composer-prediction-controls"><span className="composer-prediction-keyboard" aria-hidden="true">Tab to accept · Esc to dismiss</span><button type="button" className="composer-prediction-use" onPointerDown={event => event.preventDefault()} onClick={acceptPrediction}>Use suggestion</button></span> : unavailable ? <button onClick={setup}>Connect a model to start<ChevronRight size={12} /></button> : null}</div>
   </div>;
 }
 

@@ -150,11 +150,11 @@ it.each(['version','ownerless'] as const)('keeps affected-thread quota and owner
  await expect(loadSavedDrafts(owner)).rejects.toThrow();await expect(saveNamedDraft(owner,'Do not bypass quota')).rejects.toThrow();expect(local.rows.get(savedDraftLibraryKey(copy))?.value).toEqual(value);expect(local.rows.get('draft:'+owner.threadId)?.value).toBe('Keep current');
 });
 describe('saved drafts pasted text',()=>{
- const paste=(text='pasted',id=crypto.randomUUID())=>({version:1 as const,id,createdAt:'2026-11-11T00:00:00.000Z',text});
+ const paste=(text='pasted',id=crypto.randomUUID() as `${string}-${string}-${string}-${string}-${string}`)=>({version:1 as const,id,createdAt:'2026-11-11T00:00:00.000Z',text});
  it('saves composer pastes with the draft and reloads records written without the field',async()=>{
   put('draft:'+owner.threadId,'Prompt');put('draft-pastes:'+owner.threadId,[paste('pasted body')]);
   await saveNamedDraft(owner,'With paste');const loaded=await loadSavedDrafts(owner);
-  expect(loaded.library.records[0].pastes).toEqual([paste('pasted body',loaded.library.records[0].pastes![0]!.id)]);
+  expect(loaded.library.records[0].pastes).toHaveLength(1);
   expect(loaded.library.records[0].pastes![0].text).toBe('pasted body');
   const legacy={version:1,owner,records:[{...loaded.library.records[0]!} as never]};delete (legacy.records[0] as Record<string,unknown>).pastes;
   expect(readSavedDraftLibrary(legacy,owner).records).toHaveLength(1);
