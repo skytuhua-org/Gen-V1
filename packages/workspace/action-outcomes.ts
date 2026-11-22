@@ -1,5 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { HarnessError, type HostCommand, type Thread } from '../contracts/index.ts';
 import type { ProjectSummary } from '../contracts/workspace.ts';
 import {
@@ -38,6 +39,9 @@ interface Fence {
   credential?: { path: string; dev: string; ino: string };
 }
 const kind = 'workspaceActionOutcome';
+/** Bounded replayable receipt for the stash write types: fresh status + the
+ * action result (restored/conflicts/dropped/created). */
+const stashActionResultSchema = z.strictObject({ status: z.json(), result: z.json() });
 const duplicate = () => new HarnessError('DUPLICATE_COMMAND', 'Command ID reused with different content');
 const denied = () => new HarnessError('CAPABILITY_DENIED', 'The original action owner or access changed.');
 
@@ -176,6 +180,10 @@ export class WorkspaceActionOutcomes {
     return { operationId: command.id, operation: command.type.slice('project.'.length), state };
   }
   private receiptResult(command: HostCommand, state: WorkspaceActionOutcome['state'], result: unknown, repo?: string) {
+    if (state === 'confirmed' && command.type.startsWith('project.stash-')) {
+      const stash = stashActionResultSchema.parse(result);
+      return { ...this.summary(command, state), status: stash.status, result: stash.result };
+    }
     if (command.type !== 'project.create-pr' || state !== 'confirmed') return this.summary(command, state);
     const created = createdPullRequestResultSchema.parse(result);
     if (created.repo !== repo || created.head !== command.payload.head || created.revision !== command.payload.revision) throw denied();

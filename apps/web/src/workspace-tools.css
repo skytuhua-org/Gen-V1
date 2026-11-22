@@ -17,3 +17,37 @@
 .pr-checks-stale{max-width:64ch;margin:0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--warning-bg);color:var(--text);font-size:12px;line-height:1.5}
 .pr-checks .pr-check-list{max-width:480px;margin:0;gap:0;border:1px solid var(--border);border-radius:8px}.pr-checks .pr-check-list li{padding:6px 10px;font-size:13px}.pr-checks .pr-check-list li+li{border-top:1px solid var(--border)}
 .pr-check-list li[data-state=pass]::before{background:var(--success-fg)}.pr-check-list li[data-state=fail]::before{background:var(--danger-fg)}.pr-check-list li[data-state=pending]::before{background:var(--warning-fg)}.pr-check-list li[data-state=pass] small{color:var(--success-fg)}.pr-check-list li[data-state=fail] small{color:var(--danger-fg)}.pr-check-list li[data-state=pending] small{color:var(--warning-fg)}
+.stash-panel{display:flex;flex-direction:column;border-top:1px solid var(--border);max-height:40%;overflow:auto}
+.stash-toolbar{padding:4px 12px}
+.stash-disclosure{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--text);font-size:12px;padding:4px 6px;cursor:pointer}
+.stash-chevron{transition:transform var(--ui-motion-hover) var(--ui-ease-move)}
+.stash-disclosure[aria-expanded=true] .stash-chevron{transform:rotate(90deg)}
+.stash-disclosure small{color:var(--muted);font-size:11px}
+.stash-list{max-height:none;overflow:visible;padding:4px 8px}
+.stash-list>li{flex-wrap:wrap}
+.stash-icon{color:var(--muted);flex:none}
+.stash-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.stash-name-button{border:0;background:transparent;color:var(--text);font-size:13px;padding:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.stash-actions{display:flex;gap:4px;flex-wrap:wrap}
+.stash-actions button{font-size:12px;padding:2px 6px;min-height:24px}
+.stash-drop{color:var(--danger,var(--text))}
+.stash-files{list-style:none;margin:0;padding:0 0 6px 22px;width:100%;font:12px/1.7 var(--font-mono,monospace)}
+.stash-files li{display:flex;align-items:center;gap:8px}
+.stash-files button{border:0;background:transparent;color:var(--text);padding:0;cursor:pointer;text-decoration:underline}
+.stash-file-status{width:16px;color:var(--muted);flex:none;text-align:center}
+.stash-files small{color:var(--muted)}
+.stash-conflict{margin:4px 12px 8px;padding:8px 12px;border:1px solid var(--warning,var(--border));border-radius:8px;font-size:12px}
+.stash-conflict p{display:flex;align-items:center;gap:6px;margin:0 0 4px}
+.stash-conflict ul{list-style:none;margin:4px 0 0;padding:0}
+.stash-conflict ul button{border:0;background:transparent;color:var(--text);font-family:var(--font-mono,monospace);font-size:12px;padding:0;text-decoration:underline;cursor:pointer}
+.stash-create-popover form{display:grid;gap:8px;padding:10px}
+.stash-create-popover label{display:grid;gap:4px;font-size:12px}
+.stash-create-popover small{color:var(--muted);font-size:11px}
+.stash-drop-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.stash-list>li[data-inserted]{animation:stash-insert var(--ui-motion-insert) var(--ui-ease-enter) both}
+.stash-list>li{transition:opacity var(--ui-motion-remove) var(--ui-ease-move)}
+.stash-files,.stash-conflict{animation:stash-fade var(--ui-motion-panel-enter) var(--ui-ease-enter) both}
+@keyframes stash-insert{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@keyframes stash-fade{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.stash-list>li[data-inserted],.stash-files,.stash-conflict{animation-name:stash-fade-only;animation-duration:var(--ui-motion-press)}.stash-chevron{transition:none}}
+@keyframes stash-fade-only{from{opacity:0}to{opacity:1}}
