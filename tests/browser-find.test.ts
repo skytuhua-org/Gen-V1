@@ -44,6 +44,14 @@ describe('browser find controller',()=>{
   find.query('alpha');find.close();find.open();
   expect(last().query).toBe('alpha');expect(last().openRequest).toBe(2);
  });
+ it('restores the retained query results on reopen instead of showing cleared counts',()=>{
+  const{find,calls,last,request}=harness();
+  find.query('needle');find.found(request(),{matches:3,activeMatchOrdinal:1,finalUpdate:true});
+  find.close();find.open();
+  expect(calls.at(-1)).toEqual({text:'needle',findNext:false,forward:true});
+  find.found(request(),{matches:3,activeMatchOrdinal:1,finalUpdate:true});
+  expect(last().matches).toBe(3);expect(last().searching).toBe(false);
+ });
  it('issues a fenced literal query and reports the ordinal and total from the matching request',()=>{
   const{find,calls,last,request}=harness();
   find.query('needle');

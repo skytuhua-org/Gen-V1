@@ -42,7 +42,7 @@ export function createBrowserFind(native:BrowserFindNative,alive:()=>boolean,emi
  };
  return {
   get state(){return state;},
-  open(){if(!state.open||state.openRequest===0)apply({open:true,openRequest:state.openRequest+1});else apply({openRequest:state.openRequest+1});},
+  open(){apply({open:true,openRequest:state.openRequest+1});if(state.query)search(true,false);},
   query(text){
    if(!alive())return;
    const query=String(text);
