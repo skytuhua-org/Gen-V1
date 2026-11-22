@@ -189,6 +189,8 @@ it('does not inherit an operation outcome onto a forged invocation identity', as
 it.each([
   { admitted: ['path=/approved'], recorded: { path: '/approved' }, expected: 'SUCCEEDED' },
   { admitted: ['path=/changed'], recorded: { path: '/approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
+  { admitted: ['path=/approved', 'revision=2'], recorded: { path: '/approved', revision: 1 }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
+  { admitted: ['path=/approved'], recorded: { path: '/approved', revision: 1 }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
 ])('recovers a completed operation only when admitted target preconditions match ($expected)', async ({ admitted, recorded, expected }) => {
   const { store, ledger } = await fixture();
   ledger.admit({
