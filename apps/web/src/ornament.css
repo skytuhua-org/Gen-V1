@@ -1,44 +1,27 @@
 :root {
-  --ornament-grain-opacity:.03;
-  --ornament-sage:#6f8b5699;
-  --ornament-clay:#b47c5599;
-  --ornament-sage-field:#82946a38;
-  --ornament-clay-field:#ba8b6c30;
-  --ornament-sand-field:#bea77f26;
-  --ornament-vignette:#7158370e;
+  --ornament-grain-opacity:.035;
+  --ornament-canvas:#faf8f4;
+  --ornament-sidebar:#eae5dd;
+  --ornament-panel:#f1ede6;
+  --ornament-surface:#fffdf9;
+  --ornament-mark:#b8b5a0;
   --ornament-elevation:0 3px 8px #352b2008,0 16px 40px #352b2010;
   --ornament-scrollbar:#8c83736b;
   --ornament-selection:#e8ddc9;
-  --ornament-ground:radial-gradient(ellipse at 50% 46%,transparent 35%,var(--ornament-vignette)),radial-gradient(ellipse 65% 58% at 6% 10%,var(--ornament-sage-field),transparent 80%),radial-gradient(ellipse 55% 72% at 96% 78%,var(--ornament-clay-field),transparent 80%),radial-gradient(ellipse 48% 42% at 48% 100%,var(--ornament-sand-field),transparent 85%);
 }
 :root[data-theme=dark] {
-  --ornament-grain-opacity:.05;
-  --ornament-sage:#94ac7580;
-  --ornament-clay:#c09a7480;
-  --ornament-sage-field:#94a77c66;
-  --ornament-clay-field:#ba8b6c60;
-  --ornament-sand-field:#b9a58340;
-  --ornament-vignette:#0006;
+  --ornament-grain-opacity:.055;
+  --ornament-canvas:#151412;
+  --ornament-sidebar:#211e1a;
+  --ornament-panel:#1c1a17;
+  --ornament-surface:#25221e;
+  --ornament-mark:#555546;
   --ornament-elevation:0 4px 12px #0002,0 18px 44px #0004;
   --ornament-scrollbar:#b1a48b66;
   --ornament-selection:#494033;
 }
-@keyframes ornament-drift {
-  0%,100% { transform:translate3d(-1%,-.5%,0); opacity:1; }
-  50% { transform:translate3d(1%,1.5%,0); opacity:.88; }
-}
 @media (forced-colors:none) and (prefers-contrast:no-preference) and (prefers-reduced-transparency:no-preference) {
-  :root:not(:has(.app-shell[data-contrast=high])) body { isolation:isolate; }
-  :root:not(:has(.app-shell[data-contrast=high])) body::before {
-    content:'';
-    position:fixed;
-    inset:-6%;
-    z-index:-1;
-    pointer-events:none;
-    background-image:var(--ornament-ground);
-    animation:ornament-drift 52s ease-in-out infinite;
-    will-change:transform,opacity;
-  }
+  :root:not(:has(.app-shell[data-contrast=high])) :is(body,.app-shell) { background-color:var(--ornament-canvas); }
   :root:not(:has(.app-shell[data-contrast=high])) body::after {
     content:'';
     position:fixed;
@@ -51,20 +34,21 @@
   :root:not(:has(.app-shell[data-contrast=high])) :is(.split-workspace,.split-pane,.split-surface:not(.split-surface-float),.chat-view-surface[data-chat-mode=full],.workspace-canvas) { background-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) .split-pane { border-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) .split-pane:focus-visible { outline:2px solid var(--ui-focus-ring,#808080); outline-offset:-2px; }
-  :root:not(:has(.app-shell[data-contrast=high])) :is(.app-shell .sidebar,.workspace-right) { background-color:color-mix(in srgb,var(--surface) 42%,transparent); }
+  :root:not(:has(.app-shell[data-contrast=high])) .app-shell .sidebar { background-color:var(--ornament-sidebar); }
+  :root:not(:has(.app-shell[data-contrast=high])) .workspace-right { background-color:var(--ornament-panel); }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.split-pane-header,.split-workspace-tools) { background-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.workspace-switcher,.workspace-header,.workspace-plugin-notice,.split-pane-header,.split-workspace-tools,.workspace-right-header,.workspace-panel-content>.panel-toolbar,.canvas-panel-header,.artifact-header,.settings-page-heading,.settings-dialog>.ui-modal-header) { border-bottom-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) .sidebar :is(.thread-group-settled,.sidebar-footer,.plugin-navigation) { border-top-color:transparent; }
-  :root:not(:has(.app-shell[data-contrast=high])) :is(.app-shell .composer:not(.dragging),.app-shell .canvas-panel,.app-shell .artifact,.app-shell .decision,.app-shell .agents-grid-slot>.agents-agent,.ui-popover.ui-popover,.ui-modal.settings-dialog) {
+  :root:not(:has(.app-shell[data-contrast=high])) :is(.app-shell .composer:not(.dragging),.app-shell .canvas-panel,.app-shell .artifact,.app-shell .decision,.app-shell .agents-grid-slot>.agents-agent,.ui-popover.ui-popover) {
     box-shadow:var(--ornament-elevation);
-    background-color:color-mix(in srgb,var(--surface) 90%,transparent);
+    background-color:var(--ornament-surface);
   }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.app-shell .artifact,.app-shell .canvas-panel,.app-shell .decision,.app-shell .agents-grid-slot>.agents-agent) { border-color:transparent; }
   :root:not(:has(.app-shell[data-contrast=high])) .canvas-panel:focus-within { border-color:var(--ui-focus-ring,#808080); }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.canvas-panel,.workspace-right) .artifact { background:transparent; box-shadow:none; }
   :root:not(:has(.app-shell[data-contrast=high])) .app-shell .composer:focus-within { box-shadow:none; }
-  :root:not(:has(.app-shell[data-contrast=high])) .ui-modal.settings-dialog { background-image:var(--ornament-ground); }
-  :root:not(:has(.app-shell[data-contrast=high])) .settings-navigation { background-color:color-mix(in srgb,var(--surface) 42%,transparent); }
+  :root:not(:has(.app-shell[data-contrast=high])) .ui-modal.settings-dialog { background-color:var(--ornament-canvas); box-shadow:var(--ornament-elevation); }
+  :root:not(:has(.app-shell[data-contrast=high])) .settings-navigation { background-color:var(--ornament-sidebar); }
   :root:not(:has(.app-shell[data-contrast=high])) .sidebar .brand-mark {
     width:24px;
     height:24px;
@@ -72,7 +56,7 @@
     align-items:center;
     justify-content:center;
     border-radius:7px;
-    background:linear-gradient(135deg,var(--ornament-sage) 50%,var(--ornament-clay) 50%);
+    background:var(--ornament-mark);
   }
   :root:not(:has(.app-shell[data-contrast=high])) .sidebar .brand-mark>svg { display:none; }
   :root:not(:has(.app-shell[data-contrast=high])) .sidebar .brand-mark::before { content:'G' / ''; font-size:13px; font-weight:650; line-height:1; }
@@ -81,11 +65,4 @@
   :root:not(:has(.app-shell[data-contrast=high])) :is(.app-shell,.ui-modal,.ui-popover) ::-webkit-scrollbar { display:block; width:6px; height:6px; }
   :root:not(:has(.app-shell[data-contrast=high])) :is(.app-shell,.ui-modal,.ui-popover) ::-webkit-scrollbar-thumb { background:var(--ornament-scrollbar); border:1px solid transparent; background-clip:padding-box; border-radius:8px; }
   :root:not(:has(.app-shell[data-contrast=high])) ::selection { background:var(--ornament-selection); color:var(--text); }
-}
-@media (max-width:700px) and (forced-colors:none) and (prefers-contrast:no-preference) and (prefers-reduced-transparency:no-preference) {
-  :root:not(:has(.app-shell[data-contrast=high])) .app-shell .sidebar { background-color:var(--surface); background-image:var(--ornament-ground); }
-}
-:root:is([data-motion=off],[data-motion=reduced]) body::before { animation:none!important; transform:none; will-change:auto; }
-@media (prefers-reduced-motion:reduce) {
-  :root body::before { animation:none!important; transform:none; will-change:auto; }
 }
