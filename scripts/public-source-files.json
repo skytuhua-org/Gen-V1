@@ -3125,6 +3125,8 @@
     "tests/e2e/redundant-ui.spec.ts",
     "tests/e2e/redundant-ui.vite.config.ts",
     "tests/e2e/reserved-rail.spec.ts",
+    "tests/e2e/history-menu.playwright.config.ts",
+    "tests/e2e/history-menu.spec.ts",
     "tests/e2e/review-capture-theme.spec.ts",
     "tests/e2e/right-tools-fixture.tsx",
     "tests/e2e/right-tools.spec.ts",
