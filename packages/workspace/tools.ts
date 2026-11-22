@@ -216,7 +216,9 @@ export class ProjectTools{
     if(this.workspaceBusy(binding))throw new HarnessError('RUN_ACTIVE','Wait for the run to finish.');
     await git(['reset','--soft','HEAD^']);
     if(this.workspaceBusy(binding)){await git(['reset','--soft',eligibility.head!]).catch(()=>{});throw new HarnessError('RUN_ACTIVE','Wait for the run to finish.');}
-    const after=await this.status(metadata,path,signal,managed);
+    // A patch larger than the read cap would fail status after the write;
+    // keep the confirmed receipt with the fresh head instead.
+    let after:GitStatus;try{after=await this.status(metadata,path,signal,managed);}catch{after={...current,head:(await git(['rev-parse','--verify','HEAD'])).trim()};}
     return{...after,undo:{undoneHead:eligibility.head!,head:after.head,message}};
    }
    else throw new HarnessError('INVALID_INPUT','Unknown Git action.');return this.status(metadata,path,signal,managed);
