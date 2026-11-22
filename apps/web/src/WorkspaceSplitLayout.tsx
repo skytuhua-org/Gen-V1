@@ -38,6 +38,10 @@ interface CornerGesture {pointerId:number;paneId:string;x:number;y:number;elemen
 const edgeLabel:Record<SplitDropEdge,string>={left:'Left',right:'Side by side',top:'Above',bottom:'Below',center:'Open as tab'};
 const defaultTitle=(view:SurfaceRef)=>view.kind==='thread'?'Conversation':view.kind.replaceAll('-',' ');
 
+function hasStackedPanes(node:SplitWorkspaceNode):boolean{
+ return node.kind==='split'&&(node.axis==='vertical'||hasStackedPanes(node.first)||hasStackedPanes(node.second));
+}
+
 function keepFloatVisible(rect:ChatRect,viewport:ChatViewport):ChatRect{
  if(viewport.width<=0||viewport.height<=0)return rect;const bounds=chatBounds(viewport);
  // Keep rects a move drag could admit (64px leftward slack on edge-filling
@@ -77,7 +81,7 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  };
  const keyFloat=(event:KeyboardEvent<HTMLElement>,viewId:string)=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;const rect=floatRectOf(viewId);if(!rect)return;event.preventDefault();const step=event.shiftKey?24:8,dx=event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0,dy=event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0;const next=clampChatRect({...rect,x:rect.x+dx,y:rect.y+dy},{width:size.width,height:size.height});setFloatRects(current=>({...current,[viewId]:next}));onMoveFloat?.(viewId,next);};
  useEffect(()=>{const escape=(event:globalThis.KeyboardEvent)=>{if(event.key==='Escape'){if(floatGesture.current){event.preventDefault();cancelFloat();}setFloatMenu(null);}};const blur=()=>{cancelFloat();setFloatMenu(null);};window.addEventListener('keydown',escape);window.addEventListener('blur',blur);return()=>{window.removeEventListener('keydown',escape);window.removeEventListener('blur',blur);cancelFloat();};},[cancelFloat]);
- const minimum=minimumSplitSize(layout),narrow=size.width>0&&(size.width<minimum.width||(toolDock?size.height<minimum.height:size.width<700)),topBar=narrow?30:0;
+ const minimum=minimumSplitSize(layout),narrow=size.width>0&&(size.width<minimum.width||(toolDock?size.height<minimum.height:size.width<700)||(hasStackedPanes(layout.root)&&size.height<minimum.height)),topBar=narrow?30:0;
  const mainPaneId=resolveMainPaneId(layout);
  useEffect(()=>{if(menuPane&&(!layout.panes[menuPane]||layout.panes[menuPane].collapsed||narrow&&layout.focusedPaneId!==menuPane))setMenuPane(null);},[menuPane,layout.panes,layout.focusedPaneId,narrow]);
  const measure=useCallback(()=>{
