@@ -88,9 +88,16 @@ for (const width of [1440, 768]) test(`populated grid evidence at ${width} (${la
   await expect(page.locator('.agents-preview').first()).toContainText('Synthetic readable output.');
   await page.evaluate(() => document.fonts.ready);
   await page.evaluate(() => {(document.activeElement as HTMLElement)?.blur();});
-  await page.screenshot({path: join(proto, 'after3-agents-dark.png')});
+  const headerGeometry = await page.locator('.agents-grid-slot > .agents-agent > header').evaluateAll(headers => headers.map(header => {
+   const title = header.querySelector('h3')!, meta = header.querySelector('.agents-meta')!, open = header.querySelector('button')!, dot = header.querySelector('.agents-status-dot')!;
+   const t = title.getBoundingClientRect(), m = meta.getBoundingClientRect(), o = open.getBoundingClientRect(), d = dot.getBoundingClientRect();
+   return {titleFits: t.left >= d.right && t.right <= o.left, metaFits: m.top >= t.bottom && m.right <= o.left, ellipsis: getComputedStyle(title).textOverflow === 'ellipsis', open: o.width >= 32 && o.height >= 32};
+  }));
+  expect(headerGeometry.length).toBeGreaterThanOrEqual(4);
+  expect(headerGeometry.every(header => Object.values(header).every(Boolean))).toBe(true);
+  await page.screenshot({path: join(proto, 'agents-4col-dark.png')});
   await page.evaluate(() => {document.documentElement.dataset.theme = 'light';});
-  await page.screenshot({path: join(proto, 'after3-agents-light.png')});
+  await page.screenshot({path: join(proto, 'agents-4col-light.png')});
   await page.evaluate(() => {document.documentElement.dataset.theme = 'dark';});
   const parent = page.locator('.agents-grid-slot > .agents-agent').first();
   await parent.getByRole('button', {name: 'Show transcript', exact: true}).click();
@@ -101,7 +108,7 @@ for (const width of [1440, 768]) test(`populated grid evidence at ${width} (${la
   await parent.getByRole('button', {name: 'Hide transcript', exact: true}).click();
   await parent.getByRole('button', {name: '1 subagent', exact: true}).click();
   await page.setViewportSize({width: 390, height: 844});
-  await page.screenshot({path: join(proto, 'after3-agents-mobile.png')});
+  await page.screenshot({path: join(proto, 'agents-mobile.png')});
  }
  expect(metrics.length).toBeGreaterThan(0); expect(mounted.length).toBeGreaterThan(0); expect(fills).toBe(true);
  expect(focused.label).toBeTruthy();

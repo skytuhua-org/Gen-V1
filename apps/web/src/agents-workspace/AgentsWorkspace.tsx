@@ -28,7 +28,7 @@ export interface AgentsWorkspaceProps {
 }
 const Visibility = createContext<(id: string, visible: boolean) => void>(() => {});
 const statusLabel = (value: AgentStatus) => value.replaceAll('_', ' ');
-export const columnsForWidth = (width: number): number => Math.max(1, Math.floor((width + 10) / 350));
+export const columnsForWidth = (width: number): number => width < 600 ? 1 : Math.max(1, Math.floor((width + 10) / 274));
 const relativeTime = (value: string) => {
  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 60000));
  return !Number.isFinite(minutes) ? '' : minutes < 1 ? 'now' : minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;

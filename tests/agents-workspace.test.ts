@@ -16,6 +16,23 @@ function fixture(overrides: Partial<AgentTransport> = {}) {
 const settle = async () => {for (let i = 0; i < 20; i++) await Promise.resolve();};
 
 describe('compact agent workspace', () => {
+ it('retains a visible history error through neighboring visibility changes until retry', async () => {
+  let failed = true;
+  const f = fixture({inventory: vi.fn(async () => page([agent('a'), agent('b')])), history: vi.fn(async q => {
+   if (q.agentId === 'a' && failed) throw Error('History temporarily unavailable');
+   return history([message('Recovered')], {agentId: q.agentId});
+  })});
+  try {
+   await f.controller.start(); f.controller.setVisible(['a']); await settle();
+   expect(f.controller.transcript('a').error).toBe('History temporarily unavailable');
+   failed = false; f.controller.setVisible(['a', 'b']); await settle();
+   expect(f.controller.transcript('a').error).toBe('History temporarily unavailable');
+   expect(f.controller.transcript('a').pending).toBe(false);
+   await f.controller.retryHistory('a');
+   expect(f.controller.transcript('a').error).toBe('');
+   expect(f.controller.transcript('a').messages[0]?.content).toBe('Recovered');
+  } finally {f.controller.dispose();}
+ });
  it('retains independent continuations for two offscreen bursts and reads one bounded page per action', async () => {
   let total = 40;
   const f = fixture({history: vi.fn(async q => {

@@ -270,7 +270,7 @@ test('output while reading earlier retains position and exposes an explicit new-
  await expect(log.locator('.agents-message').first()).toContainText('Updated current transcript output');
  expect(await log.evaluate(node => node.scrollTop)).toBeGreaterThan(0);
 });
-for (const [theme, width, height, zoom, columns] of [['dark', 1920, 1080, 1, 4], ['dark', 1440, 900, 1, 3], ['light', 1024, 768, 1.25, 1], ['dark', 1280, 600, 1, 2], ['dark', 640, 520, 1.5, 1], ['light', 390, 844, 1, 1]] as const) {
+for (const [theme, width, height, zoom, columns] of [['dark', 1920, 1080, 1, 5], ['dark', 1440, 900, 1, 4], ['light', 1024, 768, 1.25, 1], ['dark', 1280, 600, 1, 3], ['dark', 640, 520, 1.5, 1], ['light', 390, 844, 1, 1]] as const) {
  test(`readable geometry ${theme} ${width}x${height} at ${zoom}`, async ({page}, info) => {
   await page.setViewportSize({width, height}); await page.emulateMedia({reducedMotion: 'reduce'}); await setup(page, true);
   await expect(page.locator('.workspace-host')).toBeVisible();
@@ -279,6 +279,20 @@ for (const [theme, width, height, zoom, columns] of [['dark', 1920, 1080, 1, 4],
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   expect(await page.locator('.agents-toolbar').evaluate(node => node.getBoundingClientRect().height / Number(document.documentElement.style.zoom || 1))).toBe(36);
   await expect.poll(() => page.locator('.agents-agent-grid').first().evaluate(node => getComputedStyle(node).gridTemplateColumns.split(' ').length)).toBe(columns);
+  const firstRowColumns = await page.locator('.agents-agent-grid').first().locator('.agents-grid-slot > .agents-agent').evaluateAll(cards => {
+   const bounds = cards.map(card => card.getBoundingClientRect());
+   return new Set(bounds.filter(rect => Math.abs(rect.top - bounds[0]!.top) < 1).map(rect => Math.round(rect.x))).size;
+  });
+  expect(firstRowColumns).toBe(columns);
+  if (width === 1440) expect(await page.locator('.sidebar').evaluate(node => node.getBoundingClientRect().width)).toBeGreaterThanOrEqual(240);
+  expect(await page.locator('.agents-projects').evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+  expect(await page.locator('.agents-grid-slot > .agents-agent').evaluateAll(cards => cards.every(card => {
+   const bounds = card.getBoundingClientRect();
+   return [...card.querySelectorAll('header, .agents-activity, .agents-preview, .agents-transcript-toggle, .agents-composer-entry, textarea, button, .agents-child-row')].filter(node => node.getClientRects().length).every(node => {
+    const rect = node.getBoundingClientRect();
+    return rect.left >= bounds.left && rect.right <= bounds.right;
+   }) && card.scrollWidth <= card.clientWidth + 1;
+  }))).toBe(true);
   const targets = await page.locator('.agents-workspace button:visible').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().height / Number(document.documentElement.style.zoom || 1)));
   expect(targets.every(size => size >= 32)).toBe(true);
   await page.screenshot({path: info.outputPath(`agents-${theme}-${width}-${zoom}.png`)});

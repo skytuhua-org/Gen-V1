@@ -193,7 +193,7 @@ export class AgentsWorkspaceController {
   const state = this.transcript(id);
   if (state.pending) {if (force) this.dirty.add(id); return;}
   const gap = earlier ? beforeId ? state.gaps.find(item => item.beforeId === beforeId) : state.gaps[0] : undefined;
-  if (earlier && !gap && !state.cursor || !earlier && state.loaded && !force) return;
+  if (earlier && !gap && !state.cursor || !earlier && (state.loaded || state.error) && !force) return;
   const abort = new AbortController(); this.histories.set(id, abort);
   state.pending = true; state.error = ''; this.emit();
   try {

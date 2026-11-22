@@ -44,7 +44,7 @@ describe('agents workspace grid layout', () => {
   }), width);
 
   it('lays out four equal columns at desktop content width and reaches every card vertically without horizontal overflow', async () => {
-    const page = await open(1440);
+    const page = await open(1200);
     try {
       expect(await trackCount(page)).toBe(4);
       const tops = await cards(page).evaluateAll(elements => elements.map(element => Math.round(element.getBoundingClientRect().top)));
@@ -52,14 +52,14 @@ describe('agents workspace grid layout', () => {
       expect(tops.slice(4, 8)).toEqual(new Array(4).fill(tops[4]));
       expect(tops[4]).toBeGreaterThan(tops[0]);
       expect(await projectSlotCoversGrid(page)).toBe(true);
-      expect(await noHorizontalOverflow(page, 1440)).toEqual({page: true, workspace: true});
+      expect(await noHorizontalOverflow(page, 1200)).toEqual({page: true, workspace: true});
       await cards(page).nth(7).scrollIntoViewIfNeeded();
       expect(await cards(page).nth(7).evaluate(element => {
         const card = element.getBoundingClientRect(), view = element.closest('.agents-projects')!.getBoundingClientRect();
         return card.top >= view.top - 1 && card.bottom <= view.bottom + 1;
       })).toBe(true);
       await page.setViewportSize({width: 1920, height: 1000});
-      expect(await trackCount(page)).toBe(5);
+      expect(await trackCount(page)).toBe(6);
       expect(await noHorizontalOverflow(page, 1920)).toEqual({page: true, workspace: true});
     } finally {await page.close();}
   });
@@ -76,11 +76,11 @@ describe('agents workspace grid layout', () => {
     } finally {await page.close();}
   });
 
-  it('fits as many 340px columns as available and collapses to one on small screens', async () => {
-    const page = await open(900);
+  it('fits as many 264px columns as available and collapses to one on small screens', async () => {
+    const page = await open(800);
     try {
       expect(await trackCount(page)).toBe(2);
-      expect(await noHorizontalOverflow(page, 900)).toEqual({page: true, workspace: true});
+      expect(await noHorizontalOverflow(page, 800)).toEqual({page: true, workspace: true});
       await page.setViewportSize({width: 600, height: 1000});
       expect(await trackCount(page)).toBe(1);
       expect(await noHorizontalOverflow(page, 600)).toEqual({page: true, workspace: true});
@@ -88,7 +88,7 @@ describe('agents workspace grid layout', () => {
   });
 
   it('navigates cards with arrow keys in grid order and leaves transcript scrolling alone', async () => {
-    const page = await open(1440);
+    const page = await open(1200);
     try {
       const label = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '');
       await page.locator('.agents-agent-grid').focus();
@@ -120,6 +120,7 @@ describe('agents workspace grid layout', () => {
     try {
       const card = cards(page).nth(3);
       await visible(card.locator('.agents-preview')).toContainText('transcript line');
+      await card.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
       const metrics = await card.evaluate(element => ({
         height: element.getBoundingClientRect().height,
         preview: element.querySelector('.agents-preview')!.getBoundingClientRect().height,

@@ -16,16 +16,19 @@
 .agents-project-header > span:last-child { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .agents-project-mark { width: 24px; height: 24px; display: inline-grid; place-items: center; flex: 0 0 24px; font-weight: 600; border-radius: 6px; color: var(--project-color, var(--text)); background: var(--subtle); }
 .agents-project-slot { container: agents-grid / inline-size; min-width: 0; }
-.agents-agent-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:10px; align-items:start; min-width:0; padding-bottom:12px; scroll-padding:8px; }
-@container agents-grid (max-width:339px) { .agents-agent-grid { grid-template-columns:minmax(0,1fr); } }
+.agents-agent-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(264px,1fr)); gap:10px; align-items:start; min-width:0; padding-bottom:12px; scroll-padding:8px; }
+@container agents-grid (width < 600px) { .agents-agent-grid { grid-template-columns:minmax(0,1fr); } }
 .agents-grid-slot { min-width:0; display:flex; }
-.agents-agent { position:relative; width:100%; min-width:0; display:flex; flex-direction:column; gap:8px; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--surface); overflow:clip; animation:ui-item-in var(--ui-motion-insert) var(--ui-ease-enter); transition:border-color var(--ui-motion-hover) var(--ui-ease-move); }
+.agents-agent { position:relative; width:100%; min-width:0; display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid var(--border); border-radius:10px; background:var(--surface); overflow:clip; animation:ui-item-in var(--ui-motion-insert) var(--ui-ease-enter); transition:border-color var(--ui-motion-hover) var(--ui-ease-move); }
 .agents-agent:hover { border-color:var(--control-border); }
-.agents-agent-header { display:flex; align-items:center; gap:6px; min-width:0; }
+.agents-agent-header { display:grid; grid-template-columns:7px minmax(0,1fr) auto; align-items:center; gap:4px 6px; min-width:0; }
+.agents-agent-header > .agents-status-dot { grid-column:1; grid-row:1; }
+.agents-agent-header > .agents-agent-title { grid-column:2; grid-row:1; }
+.agents-agent-header > .agents-icon { grid-column:3; grid-row:1 / span 2; }
 .agents-agent-title { flex:1 1 auto; min-width:0; }
 .agents-agent-title h3 { margin:0; font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .agents-agent-state,.agents-meta { color:var(--muted); font-size:12px; white-space:nowrap; }
-.agents-meta { margin-left:auto; max-width:48%; overflow:hidden; text-overflow:ellipsis; }
+.agents-meta { grid-column:2; grid-row:2; min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .agents-status-dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:0 0 7px; }
 .agents-status-dot[data-state="working"] { background:var(--accent); animation:agents-working 2s ease-in-out infinite; }
 .agents-status-dot[data-state="completed"] { background:var(--success); }
