@@ -1,5 +1,7 @@
-import {useLayoutEffect,useRef,useState,type ReactNode,type Ref} from 'react';
+import {useEffect,useLayoutEffect,useRef,useState,type ReactNode,type Ref,type RefObject} from 'react';
 import type {ModelInfo} from '../../../packages/contracts';
+import {Popover} from '../../../packages/ui-shell/Popover';
+import {useListNavigation} from '../../../packages/ui-shell/list-navigation';
 import {ModelPicker,type ModelPickerHandle} from './ModelPicker';
 import {useComposerPointerPress} from './composer-pointer-press';
 import './composer-toolbar.css';
@@ -32,6 +34,7 @@ const branch=<Glyph><circle cx="6" cy="4" r="1.7"/><circle cx="14" cy="5" r="1.7
 const changes=<Glyph><path d="M5 3.5h7l3 3v10H5zM12 3.5v3h3M7.5 10h5M7.5 13h3"/></Glyph>;
 const microphone=<Glyph><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4.5 9a5.5 5.5 0 0 0 11 0M10 14.5v3M7.5 17.5h5"/></Glyph>;
 const close=<Glyph><path d="m5 5 10 10M15 5 5 15"/></Glyph>;
+const ellipsis=<Glyph><circle cx="4" cy="10" r="1.4"/><circle cx="10" cy="10" r="1.4"/><circle cx="16" cy="10" r="1.4"/></Glyph>;
 const validCounts=(value:ComposerToolbarProps['changeSummary'])=>value&&Number.isSafeInteger(value.added)&&value.added>=0&&Number.isSafeInteger(value.removed)&&value.removed>=0?value:undefined;
 
 export function ComposerTaskActions({changeSummary,onChanges,onCreatePR,disabled=false,working=false}:Pick<ComposerToolbarProps,'changeSummary'|'onChanges'|'onCreatePR'|'disabled'|'working'>){
@@ -42,6 +45,55 @@ export function ComposerTaskActions({changeSummary,onChanges,onCreatePR,disabled
   <button type="button" className="composer-context-chip composer-changes" aria-label="Inspect changes" title="Inspect recorded changes" disabled={disabled} onClick={()=>void invoke(onChanges)}>{changes}{counts?<span className="composer-change-counts"><span>+{counts.added}</span><span>−{counts.removed}</span></span>:<span>Changes</span>}</button>
   <button type="button" className="composer-context-chip composer-pr" aria-label="Create PR" title={working?'Wait for the active run to finish':'Ask the agent to prepare a pull request'} disabled={disabled||working} onClick={()=>void invoke(onCreatePR)}>{branch}<span>Create PR</span></button>
   {error&&<div className="composer-toolbar-error" role="status">{error}<button type="button" className="composer-dismiss" aria-label="Dismiss task action error" onClick={()=>setError('')}>{close}</button></div>}
+ </div>;
+}
+
+// Tier-2 controls move into this overflow menu below the 560px composer
+// breakpoint (see composer-toolbar.css). The real controls stay mounted out of
+// flow so their state and anchored popovers survive; each row forwards a
+// click to the matching control, keeping behavior identical in both modes.
+const OVERFLOW_TARGETS=([
+ {key:'changes',selector:'.composer-secondary-actions .composer-changes'},
+ {key:'create-pr',selector:'.composer-secondary-actions .composer-pr'},
+ {key:'saved-drafts',selector:'.saved-drafts-trigger'},
+ {key:'usage',selector:'.composer-usage-launcher'},
+ {key:'context',selector:'.context-anchor .context-button'},
+ {key:'voice',selector:'.composer-voice'},
+] as const) satisfies readonly {key:string;selector:string}[];
+interface OverflowRow {label:string;title:string;disabled:boolean;target:HTMLElement}
+function ComposerOverflow({toolbar}:{toolbar:RefObject<HTMLDivElement|null>}){
+ const trigger=useRef<HTMLButtonElement>(null),first=useRef<HTMLButtonElement>(null);
+ const [rows,setRows]=useState<OverflowRow[]>([]);
+ const open=rows.length>0;
+ const dismiss=()=>setRows([]);
+ // The ⋯ trigger only exists below the container breakpoint; when the
+ // composer widens past it the trigger unmounts visually (offsetParent null)
+ // and any open menu must close with it.
+ useEffect(()=>{
+  const element=trigger.current;
+  if(!open||!element)return;
+  const observer=new ResizeObserver(()=>{if(!element.offsetParent)setRows([]);});
+  observer.observe(element);
+  return()=>observer.disconnect();
+ },[open]);
+ const navigation=useListNavigation(rows,index=>{rows[index].target.click();dismiss();},dismiss);
+ function openMenu(){
+  const scope=toolbar.current?.closest('.composer')??toolbar.current;
+  if(!scope)return;
+  const next:OverflowRow[]=[];
+  for(const {selector} of OVERFLOW_TARGETS){
+   const target=scope.querySelector<HTMLElement>(selector);
+   if(!target)continue;
+   const disabled=target instanceof HTMLButtonElement?target.disabled:target.getAttribute('aria-disabled')==='true';
+   next.push({label:(target.getAttribute('aria-label')||target.textContent||'').trim(),title:target.title||target.getAttribute('title')||'',disabled,target});
+  }
+  setRows(next);
+ }
+ return <div className="composer-overflow">
+  <button ref={trigger} type="button" className="icon-button composer-overflow-trigger" aria-label="More composer actions" title="More composer actions" aria-haspopup="menu" aria-expanded={open} onClick={openMenu}>{ellipsis}</button>
+  <Popover anchor={trigger} open={open} width={184} height={rows.length*32+8} preferredSide="above" align="end" role="menu" aria-label="More composer actions" className="composer-overflow-menu" onDismiss={dismiss} onKeyDown={navigation.onKeyDown} initialFocus={first}>
+   {rows.map((row,index)=><button key={index} ref={element=>{navigation.rows.current[index]=element;if(index===0)first.current=element;}} type="button" role="menuitem" className="composer-overflow-item" disabled={row.disabled} title={row.title||undefined} onClick={()=>{row.target.click();dismiss();}} onFocus={()=>navigation.onFocus(index)}>{row.label}</button>)}
+  </Popover>
  </div>;
 }
 
@@ -73,7 +125,8 @@ export function ComposerToolbar({modelPickerRef,models,modelId,onModelChange,thi
   try{recognition.start();setListening(true);}catch{revoke();setListening(false);setError('Voice input could not start. Try again.');}
  }
  async function invoke(action:()=>void|Promise<void>){setError('');try{await action();}catch(reason){setError(reason instanceof Error?reason.message:'The action could not finish. Try again.');}}
- return <div className="composer-toolbar" data-separated-actions={separateActions} {...pointerPress}>
+ const toolbar=useRef<HTMLDivElement>(null);
+ return <div ref={toolbar} className="composer-toolbar" data-separated-actions={separateActions} {...pointerPress}>
   {!separateActions&&<ComposerTaskActions changeSummary={changeSummary} onChanges={onChanges} onCreatePR={onCreatePR} disabled={disabled} working={working}/>}
   <div className="composer-footer-main">
    <div className="composer-project-controls" role="group" aria-label="Project and runtime">
@@ -81,7 +134,7 @@ export function ComposerToolbar({modelPickerRef,models,modelId,onModelChange,thi
    </div>
    <div className="composer-runtime-controls" role="group" aria-label="Model and voice">
     <ModelPicker ref={modelPickerRef} models={models} modelId={modelId} thinkingLevel={thinkingLevel} onThinkingChange={onThinkingChange} disabled={locked} onChange={onModelChange} scopeHint={modelScopeHint} onNewTask={onModelNewTask}/>
-    {context}<button type="button" className={`composer-tool composer-voice ${listening?'is-listening':''}`} aria-label={!Voice?'Voice input unavailable':listening?'Stop voice input':'Start voice input'} aria-pressed={listening} title={!Voice?'Voice input is unavailable in this browser':listening?'Stop listening':'Dictate into your draft'} disabled={locked||!Voice} onClick={startVoice}>{microphone}<span className="sr-only">{listening?'Listening':''}</span></button>{trailing}
+    {context}<button type="button" className={`composer-tool composer-voice ${listening?'is-listening':''}`} aria-label={!Voice?'Voice input unavailable':listening?'Stop voice input':'Start voice input'} aria-pressed={listening} title={!Voice?'Voice input is unavailable in this browser':listening?'Stop listening':'Dictate into your draft'} disabled={locked||!Voice} onClick={startVoice}>{microphone}<span className="sr-only">{listening?'Listening':''}</span></button><ComposerOverflow toolbar={toolbar}/>{trailing}
    </div>
   </div>
   {error&&<div className="composer-toolbar-error" role="status">{error}<button type="button" className="composer-dismiss" aria-label="Dismiss composer error" onClick={()=>setError('')}>{close}</button></div>}
