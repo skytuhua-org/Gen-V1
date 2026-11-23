@@ -1,10 +1,11 @@
-import {spawn,type ChildProcess} from 'node:child_process';
+import {spawn,type ChildProcessByStdio} from 'node:child_process';
 import {createReadStream} from 'node:fs';
 import {mkdir,lstat,readdir,realpath,readFile,writeFile} from 'node:fs/promises';
 import {createHash,randomUUID} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {dirname,isAbsolute,join,relative,resolve} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
+import type {Readable} from 'node:stream';
 import {terminateProcessTree} from '../packages/runtime-pi/process-tree.ts';
 
 type ManifestFile={path:string;bytes:number;sha256:string};
@@ -165,14 +166,15 @@ async function runProbe(host:string,node:string,directory:string,cursorRequired:
  const child=spawn(node,['--import',pathToFileURL(join(host,'node_modules/tsx/dist/loader.mjs')).href,'--input-type=module','-e',PROBE],{cwd:host,env,windowsHide:true,stdio:['ignore','pipe','pipe'],detached:process.platform!=='win32'});
  return JSON.parse(await captureProbeOutput(child));
 }
-export function captureProbeOutput(child:ChildProcess):Promise<string>{
+/** Captures a probe child's report: stdout stays buffered as bytes and is decoded once at close so a multi-byte UTF-8 character spanning two chunks stays intact; stderr keeps its bounded rolling text tail. */
+export function captureProbeOutput(child:ChildProcessByStdio<null,Readable,Readable>):Promise<string>{
  return new Promise<string>((accept,reject)=>{
-  let stdout='',stderr='',bytes=0,failed=false;
+  const stdout:Buffer[]=[];let stderr='',bytes=0,failed=false;
   const fail=(error:Error)=>{if(failed)return;failed=true;clearTimeout(timer);void terminateProcessTree(child).then(()=>reject(error),reject);};
   const timer=setTimeout(()=>fail(Error('Packaged runtime verification exceeded its deadline.')),90000);
   child.once('error',fail);
-  for(const stream of [child.stdout,child.stderr])stream.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>256*1024){fail(Error('Packaged verification output exceeded its bound.'));return;}if(stream===child.stdout)stdout+=String(chunk);else stderr=(stderr+String(chunk)).slice(-16000);});
-  child.once('close',code=>{clearTimeout(timer);if(failed)return;failed=true;code===0?accept(stdout.trim()):reject(Error('Packaged runtime verification exited '+code+'. No authentication or inference was requested. '+stderr));});
+  for(const stream of [child.stdout,child.stderr])stream.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>256*1024){fail(Error('Packaged verification output exceeded its bound.'));return;}if(stream===child.stdout)stdout.push(chunk);else stderr=(stderr+String(chunk)).slice(-16000);});
+  child.once('close',code=>{clearTimeout(timer);if(failed)return;failed=true;code===0?accept(Buffer.concat(stdout).toString('utf8').trim()):reject(Error('Packaged runtime verification exited '+code+'. No authentication or inference was requested. '+stderr));});
  });
 }
 async function probePackage(host:string,node:string,directory:string,cursorRequired:boolean):Promise<ProbeResult>{
