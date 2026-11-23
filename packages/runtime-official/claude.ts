@@ -24,8 +24,10 @@ export async function openClaude(context: DriverContext, sdk: ClaudeSdk, modelId
   if (!resuming) { context.manifest.value.sessionId = randomUUID(); await saveManifest(context.manifest); }
   if (!context.current()) throw new HarnessError('OFFICIAL_RUN_ABORTED', 'Official run authority was revoked.');
   const input = asyncQueue<SDKUserMessage>();
+  const registrationAbort = new AbortController();
   let query: Query;
   let closed = false;
+  let closing: Promise<void> | undefined;
   let failed: Error | undefined;
   let rejectIo!: (error: Error) => void;
   const ioFailure = new Promise<never>((_, reject) => { rejectIo = reject; });
@@ -48,11 +50,16 @@ export async function openClaude(context: DriverContext, sdk: ClaudeSdk, modelId
     skills: [], plugins: [], agents: {},
     systemPrompt: context.modelOnly?modelOnlySystemPrompt(context.purpose):hostSystemPrompt(context.memory),
     permissionMode: 'default', includePartialMessages: true,
-    mcpServers: context.modelOnly?{}:{ host: { type: 'http', url: context.mcp.url, headers: context.mcp.headers } },
+    mcpServers: {},
     canUseTool: async (name, args) => permit(name) ? { behavior: 'allow', updatedInput: args } : { behavior: 'deny', message: 'Only current-run host MCP tools are permitted.' },
     hooks: { PreToolUse: [{ hooks: [async hook => ({ hookSpecificOutput: { hookEventName: 'PreToolUse' as const, permissionDecision: permit('tool_name' in hook ? String(hook.tool_name) : '') ? 'allow' as const : 'deny' as const, permissionDecisionReason: 'Host-only run authority.' } })] }] },
     spawnClaudeCodeProcess: options => {
       authority();
+      // The pinned SDK serializes startup MCP options into argv. Only the
+      // session control pipe may carry the bridge credentials.
+      if (!options.args.includes('--strict-mcp-config') || options.args.some(arg => arg === '--mcp-config' || arg.startsWith('--mcp-config='))) {
+        throw new HarnessError('OFFICIAL_MCP_CONFIG_REJECTED', 'Claude Code supplied unexpected MCP launch arguments.');
+      }
       const child = spawn(options.command, options.args, { cwd: options.cwd, env: options.env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true, signal: options.signal });
       const failIo = () => {
         if (closed || failed || !context.current()) return;
@@ -70,7 +77,8 @@ export async function openClaude(context: DriverContext, sdk: ClaudeSdk, modelId
       return child as ReturnType<NonNullable<Options['spawnClaudeCodeProcess']>>;
     },
   };
-  query = sdk.query({ prompt: input, options });
+  try { query = sdk.query({ prompt: input, options }); }
+  catch (error) { closed = true; input.close(); throw error; }
   const driver: OfficialDriver = {
     models: [],
     async submit(wire) {
@@ -91,12 +99,16 @@ export async function openClaude(context: DriverContext, sdk: ClaudeSdk, modelId
         input.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: '/compact' } });
       }), 180_000, 'Official Claude Code did not confirm compaction at a terminal boundary.');
     },
-    async close() {
-      if (closed) return;
+    close() {
+      if (closing) return closing;
       closed = true; input.close();
+      registrationAbort.abort(new HarnessError('OFFICIAL_RUN_ABORTED', 'Official run authority was revoked.'));
       compact?.reject(new HarnessError('OFFICIAL_RUN_ABORTED', 'Compaction was cancelled.')); compact = undefined;
-      await bounded(query.interrupt().catch(() => undefined), 1000, 'Official interrupt grace elapsed.').catch(() => {});
-      query.close();
+      closing = Promise.resolve().then(async () => {
+        await bounded(query.interrupt().catch(() => undefined), 1000, 'Official interrupt grace elapsed.').catch(() => {});
+        query.close();
+      });
+      return closing;
     },
   };
   context.ready(driver);
@@ -171,6 +183,22 @@ export async function openClaude(context: DriverContext, sdk: ClaudeSdk, modelId
         if(context.thinkingLevel!==null&&!selected.thinkingLevels?.includes(context.thinkingLevel))throw new HarnessError('OFFICIAL_MODEL_UNAVAILABLE','The selected effort is not supported by this advertised Claude model.');
         await query.applyFlagSettings({effortLevel:context.thinkingLevel as Parameters<Query['applyFlagSettings']>[0]['effortLevel']});authority();
       }
+    }
+    if (!context.modelOnly) {
+      try {
+        const registration = query.setMcpServers({ host: { type: 'http', url: context.mcp.url, headers: context.mcp.headers } });
+        const result = await bounded(Promise.race([registration, ioFailure]), 30_000, 'Claude MCP registration timed out.', registrationAbort.signal);
+        if (!Array.isArray(result?.added) || result.added.length !== 1 || result.added[0] !== 'host' ||
+            !Array.isArray(result.removed) || result.removed.length !== 0 ||
+            !result.errors || typeof result.errors !== 'object' || Array.isArray(result.errors) || Object.keys(result.errors).length !== 0) {
+          throw new Error('Unexpected Claude MCP registration result.');
+        }
+      } catch {
+        authority();
+        // Native registration diagnostics can echo its configuration.
+        throw new HarnessError('OFFICIAL_MCP_CONFIG_REJECTED', 'Claude Code could not register the host MCP server.');
+      }
+      authority();
     }
     return driver;
   } catch (error) { await driver.close(); throw error; }

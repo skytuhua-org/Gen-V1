@@ -14,6 +14,7 @@ function scripted(account: Record<string, unknown> = { apiProvider: 'firstParty'
   let closeCount = 0;
   let hold: Promise<void> | undefined;
   const flagSettings:unknown[]=[];
+  const setMcpServers = vi.fn(async (_servers: Record<string, unknown>) => ({ added: ['host'], removed: [] as string[], errors: {} as Record<string, string> }));
   const entered = deferred<void>();
   const query = vi.fn(({ prompt, options: opts }: { prompt: AsyncIterable<unknown>; options?: Record<string, unknown> }) => {
     options = opts!;
@@ -24,13 +25,14 @@ function scripted(account: Record<string, unknown> = { apiProvider: 'firstParty'
       supportedModels: vi.fn(async () => [{ value: 'advertised-model', displayName: 'Official model', description: '', supportedEffortLevels:['low','high'] }]),
       supportedCommands: vi.fn(async () => [{ name: 'compact', description: '' }]),
       setModel: vi.fn(async () => {}),
+      setMcpServers,
       applyFlagSettings:vi.fn(async value=>{flagSettings.push(value);}),
       getContextUsage: vi.fn(async () => ({ totalTokens: 12, maxTokens: 100, categories: [] })),
       interrupt: vi.fn(async () => ({})), close() { closeCount++; events.stop(); },
     });
   });
   const dependencies: OfficialRuntimeDependencies = { claudeSdk: { query } as never, claudeHistory: async () => [] };
-  return { events, accepted, dependencies, query, flagSettings, entered, get options() { return options; }, get closeCount() { return closeCount; }, hold(value: Promise<void>) { hold = value; } };
+  return { events, accepted, dependencies, query, flagSettings, setMcpServers, entered, get options() { return options; }, get closeCount() { return closeCount; }, hold(value: Promise<void>) { hold = value; } };
 }
 const run = (extra: Partial<StartRun> = {}): StartRun => ({ threadId: 'thread', runId: 'run-1', epoch: 1, modelId: 'claude-code/advertised-model', inputId: 'input-1', prompt: 'hello', resources: [], sessionPath: null, ...extra });
 
@@ -49,8 +51,45 @@ describe('official Claude SDK runtime', () => {
     const fake=scripted(),events:RuntimeEvent[]=[],onTool=vi.fn(async()=>null),runtime=createOfficialRuntime({dataDir:await mkdtemp(join(tmpdir(),'official-text-')),modelOnly:true},fake.dependencies);
     runtime.configure({onEvent:event=>events.push(event),onTool});
     try{await runtime.start(run());await vi.waitFor(()=>expect(fake.accepted).toHaveLength(1));expect(fake.options).toMatchObject({tools:[],mcpServers:{},skills:[],plugins:[],agents:{}});expect(fake.options.systemPrompt).toContain('text-model transport for Hermes');expect(fake.options.systemPrompt).not.toContain('ui_present');expect((await fake.options.canUseTool!('mcp__host__skill_manage',{},{})).behavior).toBe('deny');
+      expect(fake.setMcpServers).not.toHaveBeenCalled();
       const content='<tool_call>{"name":"skill_manage"}</tool_call>';fake.events.push({type:'assistant',session_id:fake.options.sessionId,message:{content:[{type:'text',text:content}]}});await vi.waitFor(()=>expect(events.some(event=>event.type==='assistant.message'&&event.content===content)).toBe(true));expect(onTool).not.toHaveBeenCalled();
     }finally{await runtime.dispose();}
+  });
+  it.each(['error response', 'rejected control request'])('withholds input and redacts a failed MCP registration (%s)', async failure => {
+    const fake = scripted(), events: RuntimeEvent[] = [];
+    const runtime = createOfficialRuntime({ dataDir: await mkdtemp(join(tmpdir(), 'official-mcp-failed-')) }, fake.dependencies);
+    const diagnostic = 'Bearer fabricated-test-diagnostic';
+    if (failure === 'error response') fake.setMcpServers.mockResolvedValue({added: ['host'], removed: [], errors: {host: diagnostic}});
+    else fake.setMcpServers.mockRejectedValue(new Error(diagnostic));
+    runtime.configure({onEvent: event => events.push(event), onTool: async () => null});
+    try {
+      await expect(runtime.start(run())).rejects.toMatchObject({code: 'OFFICIAL_MCP_CONFIG_REJECTED', message: 'Claude Code could not register the host MCP server.'});
+      expect(JSON.stringify(events)).not.toContain(diagnostic);
+      expect(fake.accepted).toHaveLength(0);
+      expect(fake.closeCount).toBe(1);
+    } finally { await runtime.dispose(); }
+  });
+  it('cancels a pending MCP registration without waiting for the native response or submitting input', async () => {
+    const fake = scripted(), entered = deferred<void>();
+    const registration = deferred<{ added: string[]; removed: string[]; errors: Record<string, string> }>();
+    fake.setMcpServers.mockImplementation(() => { entered.resolve(); return registration.promise; });
+    const runtime = createOfficialRuntime({ dataDir: await mkdtemp(join(tmpdir(), 'official-mcp-cancel-')) }, fake.dependencies);
+    runtime.configure({onEvent() {}, onTool: async () => null});
+    const input = run();
+    const opening = runtime.start(input);
+    void opening.catch(() => {});
+    try {
+      expect(await Promise.race([entered.promise.then(() => true), opening.then(() => false)])).toBe(true);
+      expect(fake.accepted).toHaveLength(0);
+      await runtime.cancel(input);
+      await expect(opening).rejects.toMatchObject({code: 'OFFICIAL_RUN_ABORTED'});
+      registration.resolve({added: ['host'], removed: [], errors: {}});
+      expect(fake.accepted).toHaveLength(0);
+      expect(fake.closeCount).toBe(1);
+    } finally {
+      registration.resolve({added: ['host'], removed: [], errors: {}});
+      await runtime.dispose();
+    }
   });
   it('withholds natural settlement until native interrupt and close have completed',async()=>{
     const fake=scripted(),events:RuntimeEvent[]=[],runtime=createOfficialRuntime({dataDir:await mkdtemp(join(tmpdir(),'official-settlement-teardown-'))},fake.dependencies),barrier=deferred<void>();
