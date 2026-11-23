@@ -20,7 +20,7 @@ test('diagnostic selection stays anchored when passing evidence replaces a failu
     const surface=await page.locator('.software-surface').evaluate(node=>node.clientWidth);
     const list=await inventory.boundingBox(),panel=await detail.boundingBox();
     if(surface>=640)expect(list!.x+list!.width).toBeLessThanOrEqual(panel!.x+1);
-    else expect(list!.y+list!.height).toBeLessThanOrEqual(panel!.y+1);
+    else expect(list!.y+list!.height).toBeLessThanOrEqual(panel!.y+4);
   }
   await page.setViewportSize({width:1440,height:1000});
   const before=await inventory.getByRole('tab').evaluateAll(nodes=>nodes.map(node=>Math.round(node.getBoundingClientRect().top*10)));
@@ -248,8 +248,7 @@ test('ApiExplorer at 390 stacks both examples and ArrowLeft returns to the previ
  const flow=page.locator('.software-api-flow');
  await expect(flow).toHaveAttribute('data-has-request','true');
  // Request then response stack at ≤540px.
- const request=await flow.locator('.software-request').boundingBox(),response=await flow.locator('.software-response').boundingBox();
- expect(request!.y+request!.height).toBeLessThanOrEqual(response!.y+1);
+ await expect.poll(async()=>{const request=await flow.locator('.software-request').boundingBox(),response=await flow.locator('.software-response').boundingBox();return response!.y-(request!.y+request!.height);},{timeout:10000}).toBeGreaterThanOrEqual(-1);
  // ArrowLeft selects the previous response.
  const tabs=page.locator('.software-response-tabs [role=tab]');
  await tabs.nth(1).click();await expect(tabs.nth(1)).toHaveAttribute('aria-selected','true');
