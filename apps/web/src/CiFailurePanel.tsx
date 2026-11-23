@@ -1,9 +1,10 @@
-// #1326 T06 — Pull-requests panel: per-row failing-CI log disclosure (DESIGN 7.1–7.2).
+// #1326 T06+T07 — Pull-requests panel: per-row failing-CI log disclosure
+// (DESIGN 7.1–7.2) and the inline fix sheet (DESIGN 4, 7.3–7.4, R10–R15).
 // The flag gate lives in PullRequestsBody; these components render nothing
 // unless workspace.ciFixV1 is on (R01) and the row is a failed check.
 import {Fragment,useCallback,useEffect,useRef,useState} from 'react';
-import {ChevronRight} from 'lucide-react';
-import {authenticated,getShellSettings,read} from './api.ts';
+import {ChevronRight,Wrench} from 'lucide-react';
+import {ApiError,authenticated,command,getShellSettings,read} from './api.ts';
 import type {CiFailedJob,CiFailureReport} from '../../../packages/contracts/ci-failures.ts';
 
 const get=<T,>(url:string,signal?:AbortSignal)=>authenticated(()=>fetch(url,{credentials:'same-origin',cache:'no-store',signal})).then(read<T>);
@@ -25,8 +26,9 @@ export function useCiFailureReport(base:string,query:URLSearchParams,number:numb
  const keyRef=useRef(key);
  useEffect(()=>()=>{mounted.current=false;},[]);
  useEffect(()=>{started.current=false;keyRef.current=key;setState({error:'',loading:false});},[key]);
- const load=useCallback(()=>{if(started.current||number===null)return;started.current=true;const captured=keyRef.current;setState(current=>({...current,loading:true}));
-  void get<CiFailureReport>(`${base}/pull-requests/${number}/failures?${query}`).then(report=>{if(mounted.current&&keyRef.current===captured)setState({report,error:'',loading:false});}).catch(reason=>{if(mounted.current&&keyRef.current===captured)setState({error:message(reason),loading:false});});},[base,query,number]);
+ const load=useCallback((refresh=false)=>{if(started.current&&!refresh||number===null)return;started.current=true;const captured=keyRef.current;setState(current=>({...current,loading:true}));
+  const params=new URLSearchParams(query);if(refresh)params.set('refresh','1');
+  void get<CiFailureReport>(`${base}/pull-requests/${number}/failures?${params}`).then(report=>{if(mounted.current&&keyRef.current===captured)setState({report,error:'',loading:false});}).catch(reason=>{if(mounted.current&&keyRef.current===captured)setState({error:message(reason),loading:false});});},[base,query,number]);
  return{...state,load};
 }
 
@@ -82,5 +84,53 @@ export function CiCheckLogDisclosure({checkName,checkState,detailsUrl,repo,failu
   <button type="button" className="pr-check-log-toggle" aria-expanded={open} aria-label={(open?'Hide log for ':'Show log for ')+checkName}
    onClick={()=>{if(!open)failures.load();setOpen(!open);}}><ChevronRight size={14} aria-hidden="true"/></button>
   <Collapsible open={open}><LogRegion job={job} error={failures.error} loading={failures.loading&&!job}/></Collapsible>
+ </>;
+}
+
+// ── T07: fix sheet (DESIGN 4, 7.3–7.4) ───────────────────────────────────────
+
+const jobDisabledReason=(job:CiFailedJob)=>job.logState==='ready'?'':job.logState==='unavailable'?'GitHub no longer has this log.':job.logState==='too-large'?'This log is too large to preview.':'This check does not publish a GitHub Actions log.';
+const defaultInstruction=(number:number,jobs:CiFailedJob[])=>`Fix the failing CI on PR #${number}: ${jobs.filter(job=>job.logState==='ready').map(job=>job.checkName).join(', ')}. Use the attached logs. Find the cause, make the smallest fix in this working copy, run the relevant checks locally, and tell me what you changed. Don't push unless I ask.`;
+
+function CiFixSheet({report,threadId,prStale,staleText,close,refresh}: {report:CiFailureReport;threadId:string;prStale:boolean;staleText:string;close:(focus:boolean)=>void;refresh:()=>void}){
+ const[checked,setChecked]=useState<Set<string>>(()=>new Set(report.jobs.filter(job=>job.logState==='ready').map(job=>job.id)));
+ const[text,setText]=useState(()=>defaultInstruction(report.number,report.jobs));
+ const[sending,setSending]=useState(false),[sent,setSent]=useState(false),[error,setError]=useState<''|'expired'|string>(''),first=useRef<HTMLInputElement|null>(null),timer=useRef<ReturnType<typeof setTimeout>|null>(null);
+ useEffect(()=>{first.current?.focus();},[]);
+ useEffect(()=>{setError('');},[report.id]);
+ const send=()=>{
+  if(sending||!checked.size||!text.trim())return;setSending(true);setError('');const ids=report.jobs.map(job=>job.id).filter(id=>checked.has(id));
+  timer.current=setTimeout(()=>setSent(true),150);
+  void command('message.send',{content:text.trim(),ciFailure:{reportId:report.id,jobIds:ids}},threadId).then(()=>close(true)).catch(cause=>{
+   if(timer.current)clearTimeout(timer.current);setSending(false);setSent(false);
+   setError(cause instanceof ApiError&&cause.code==='CI_REPORT_EXPIRED'?'expired':message(cause));
+  });
+ };
+ const shown=report.jobs.slice(0,6);
+ return<div className="pr-fix-sheet" onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();close(false);}if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();send();}}}>
+  <strong className="pr-fix-title">Send failing checks to the agent</strong>
+  <div className="pr-fix-jobs">{shown.map((job,index)=>{
+   const reason=jobDisabledReason(job);
+   return<label key={job.id} className="pr-fix-job"><input ref={index===0?first:undefined} type="checkbox" checked={checked.has(job.id)} disabled={!!reason||sending} onChange={event=>setChecked(current=>{const next=new Set(current);if(event.target.checked)next.add(job.id);else next.delete(job.id);return next;})}/><span><strong>{job.workflowName} · {job.checkName}</strong><small className="pr-fix-sub">{reason||job.failedStep||''}</small></span></label>;
+  })}{report.jobs.length>shown.length&&<small className="pr-fix-sub">+{report.jobs.length-shown.length} more failed checks not included</small>}</div>
+  {prStale&&<p className="pr-checks-stale">{staleText}</p>}
+  <label className="pr-fix-instruction">Instruction<textarea value={text} disabled={sending} onChange={event=>setText(event.target.value)}/></label>
+  {error&&<p className="pr-fix-error" role="status">{error==='expired'?<>These logs expired. Refresh and send again. <button type="button" onClick={refresh}>Refresh</button></>:error}</p>}
+  <div className="pr-fix-actions"><button type="button" disabled={sending} onClick={()=>close(false)}>Cancel</button><button type="button" className="primary" disabled={!checked.size||!text.trim()||sending} onClick={send}>{sent||sending?'Sending…':'Send to agent'}</button></div>
+ </div>;
+}
+
+/** Checks-head "Fix with agent" launcher + inline sheet + sent status (7.3). */
+export function CiFixSection({hasFailed,threadId,prStale,staleText,failures}:{hasFailed:boolean;threadId:string|undefined;prStale:boolean;staleText:string;failures:ReturnType<typeof useCiFailureReport>}){
+ const[open,setOpen]=useState(false),[sent,setSent]=useState(false),button=useRef<HTMLButtonElement|null>(null);
+ useEffect(()=>{if(!sent)return;const timer=setTimeout(()=>setSent(false),6000);return()=>clearTimeout(timer);},[sent]);
+ if(!hasFailed)return null;
+ if(!threadId)return<small className="pr-fix-note">Open this panel from a thread to send failures to its agent.</small>;
+ const report=failures.report;
+ return<>
+  <span className="pr-fix-launcher"><button ref={button} type="button" className="primary" disabled={open} onClick={()=>{failures.load();setOpen(true);}}><Wrench size={14} aria-hidden="true"/>Fix with agent</button>{sent&&<small className="pr-fix-sent" role="status">Sent to the thread.</small>}</span>
+  <Collapsible open={open}>
+   {open&&(report?<CiFixSheet report={report} threadId={threadId} prStale={prStale} staleText={staleText} refresh={()=>failures.load(true)} close={focus=>{setOpen(false);if(focus)setSent(true);requestAnimationFrame(()=>button.current?.focus());}}/>:failures.error?<p className="pr-check-log-note" role="status">{failures.error}</p>:<div className="pr-check-log-skeleton" aria-hidden="true"><span/><span/><span/></div>)}
+  </Collapsible>
  </>;
 }
