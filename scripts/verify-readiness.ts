@@ -123,7 +123,7 @@ export async function runCheck(spec:CheckSpec):Promise<CheckResult>{
       if(!settled){settled=true;clearTimeout(timeoutTimer);if(killTimer!==undefined)clearTimeout(killTimer);killProcessTree(child);}
       resolvePromise(finish({status:'FAIL',errorKind:'log-error'}));
     });
-    // Decode each byte stream incrementally before merging and redacting lines.
+    // Decode each byte stream incrementally into its own line buffer before redacting.
     child.stdout?.setEncoding('utf8').on('data',chunk=>{if(!settled)stdoutSink.write(chunk);});
     child.stderr?.setEncoding('utf8').on('data',chunk=>{if(!settled)stderrSink.write(chunk);});
     child.once('error',(error:NodeJS.ErrnoException)=>{
