@@ -1,4 +1,4 @@
-import {spawn} from 'node:child_process';
+import {spawn,type ChildProcess} from 'node:child_process';
 import {createReadStream} from 'node:fs';
 import {mkdir,lstat,readdir,realpath,readFile,writeFile} from 'node:fs/promises';
 import {createHash,randomUUID} from 'node:crypto';
@@ -163,7 +163,10 @@ async function runProbe(host:string,node:string,directory:string,cursorRequired:
  const env:NodeJS.ProcessEnv={HARNESS_VERIFY_HOST:host,HARNESS_VERIFY_DIRECTORY:directory,HARNESS_VERIFY_CURSOR:cursorRequired?'1':'0',HARNESS_VERIFY_CURSOR_ONLY:cursorOnly?'1':'0'};
  for(const name of ['PATH','Path','SystemRoot','SYSTEMROOT','WINDIR','COMSPEC','PATHEXT','LANG','LC_ALL','TERM'])if(process.env[name]!==undefined)env[name]=process.env[name];
  const child=spawn(node,['--import',pathToFileURL(join(host,'node_modules/tsx/dist/loader.mjs')).href,'--input-type=module','-e',PROBE],{cwd:host,env,windowsHide:true,stdio:['ignore','pipe','pipe'],detached:process.platform!=='win32'});
- const output=await new Promise<string>((accept,reject)=>{
+ return JSON.parse(await captureProbeOutput(child));
+}
+export function captureProbeOutput(child:ChildProcess):Promise<string>{
+ return new Promise<string>((accept,reject)=>{
   let stdout='',stderr='',bytes=0,failed=false;
   const fail=(error:Error)=>{if(failed)return;failed=true;clearTimeout(timer);void terminateProcessTree(child).then(()=>reject(error),reject);};
   const timer=setTimeout(()=>fail(Error('Packaged runtime verification exceeded its deadline.')),90000);
@@ -171,7 +174,6 @@ async function runProbe(host:string,node:string,directory:string,cursorRequired:
   for(const stream of [child.stdout,child.stderr])stream.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>256*1024){fail(Error('Packaged verification output exceeded its bound.'));return;}if(stream===child.stdout)stdout+=String(chunk);else stderr=(stderr+String(chunk)).slice(-16000);});
   child.once('close',code=>{clearTimeout(timer);if(failed)return;failed=true;code===0?accept(stdout.trim()):reject(Error('Packaged runtime verification exited '+code+'. No authentication or inference was requested. '+stderr));});
  });
- return JSON.parse(output);
 }
 async function probePackage(host:string,node:string,directory:string,cursorRequired:boolean):Promise<ProbeResult>{
  const result=await runProbe(host,node,directory,cursorRequired);assertPackagedProbe(host,result,cursorRequired);

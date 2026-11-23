@@ -1,9 +1,10 @@
+import {spawn} from 'node:child_process';
 import {mkdtemp,mkdir,writeFile,symlink,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {describe,it,expect} from 'vitest';
-import {distributionManifest,assertDistributionMatches,assertContainedPath,cursorDependencyVersion,resolveCursorDistributions,assertPackagedProbe,probeCursorBootstrap} from '../scripts/verify-packaged-providers.ts';
+import {distributionManifest,assertDistributionMatches,assertContainedPath,cursorDependencyVersion,resolveCursorDistributions,assertPackagedProbe,probeCursorBootstrap,captureProbeOutput} from '../scripts/verify-packaged-providers.ts';
 
 async function cursorFixture(directory:string){
  await writeFile(join(directory,'package.json'),JSON.stringify({dependencies:{'@cursor/sdk':'1.0.38'}}));
@@ -107,6 +108,20 @@ describe('packaged provider custody',()=>{
    await expect(distributionManifest(join(directory,'root'))).rejects.toThrow(/link/i);
    expect(()=>assertContainedPath(join(directory,'real'),join(directory,'real-other','sdk.mjs'))).toThrow(/outside/i);
   }finally{await rm(directory,{recursive:true,force:true});}
+ });
+ it('preserves a legal UTF-8 character split across stdout chunks in the report capture',async()=>{
+  const report=JSON.stringify({node:{path:'packaged\\bünary\\Prüfung\ud83d\udd12.exe',version:'24'},checks:[],roots:{}});
+  const encoded=Buffer.from(report,'utf8');
+  const split=encoded.indexOf(0xC3)+1; // inside the ü sequence: chunk 1 ends with the lead byte, chunk 2 opens with a continuation byte
+  expect(split).toBeGreaterThan(0);
+  expect(encoded[split-1]&0xE0).toBe(0xC0);
+  expect(encoded[split]&0xC0).toBe(0x80);
+  const child=spawn(process.execPath,['-e',`const b=Buffer.from('${encoded.toString('base64')}','base64');process.stdout.write(b.subarray(0,${split}));setTimeout(()=>process.stdout.write(b.subarray(${split})),25)`],{stdio:['ignore','pipe','pipe']});
+  const text=await captureProbeOutput(child);
+  expect(JSON.parse(text)).toEqual(JSON.parse(report));
+  // the old per-chunk String(chunk) decode silently altered this path (U+FFFD)
+  const perChunk=String(encoded.subarray(0,split))+String(encoded.subarray(split));
+  expect(perChunk).not.toBe(text);
  });
  it('excludes dependency installation shape only when explicitly requested for the SDK package',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'harness-package-custody-'));
