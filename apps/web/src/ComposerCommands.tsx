@@ -3,7 +3,7 @@ import {Bot, LoaderCircle, Search, X} from 'lucide-react';
 import {Popover} from '../../../packages/ui-shell/Popover';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import type {SkillCatalogEntry, SkillCatalogPage} from '../../../packages/contracts/skill-catalog';
-import {commandToken, replaceCommandToken, type SkillBinding} from './composer-commands';
+import {commandPaletteHeight, commandToken, replaceCommandToken, type SkillBinding} from './composer-commands';
 import {getSkillCatalog, mergeSkillCatalogPages} from './skill-catalog-api';
 import './composer-commands.css';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
@@ -102,7 +102,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
     return () => {element.removeAttribute('aria-controls'); element.removeAttribute('aria-autocomplete'); element.removeAttribute('aria-activedescendant');};
   }, [open, selected?.id, id, input]);
   return <>
-    <Popover anchor={input} contentRef={content} open={open} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={close} className="composer-command-popover">
+    <Popover anchor={input} contentRef={content} open={open} width={600} height={commandPaletteHeight({options: options.length, loading, error: Boolean(error), skillStatus: Boolean(page?.skills.length), unavailableSources: unavailableSources.length, nextCursor: Boolean(page?.nextCursor)})} preferredSide="above" align="start" onDismiss={close} className="composer-command-popover">
       <div id={id} role="listbox" aria-label="Commands and skills" className="composer-command-list" onScroll={event => {const list = event.currentTarget; if (list.scrollHeight - list.scrollTop - list.clientHeight < 80) void loadMore();}}>
         {options.map(option => <div key={option.id} id={id + '-' + option.id} role="option" aria-selected={selected?.id === option.id} aria-disabled={!available(option)} className="composer-command-option" onPointerMove={() => {if (available(option)) setActive(option.id);}} onPointerDown={event => event.preventDefault()} onClick={() => void choose(option)}>
           {'builtin' in option ? <><span className="composer-command-name">/{option.builtin.id}</span><span className="composer-command-description">{option.builtin.description}</span></> : <><span className="composer-command-name">/skill:{option.skill.name}</span><span className="composer-command-description" title={option.skill.description}>{reason(option.skill) || option.skill.description}</span><span className="composer-command-source">{page?.sources.find(source => source.id === option.skill.sourceId)?.label}</span></>}
