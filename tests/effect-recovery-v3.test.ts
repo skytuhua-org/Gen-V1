@@ -209,14 +209,15 @@ it.each(['operation:op-crash@01', 'operation:op-crash@0001'] as const)('does not
   expect(ledger.get(invocationId)?.state).toBe('UNKNOWN_EXTERNAL_OUTCOME');
 });
 
-it.each([
+const recoveryTargetCases: { admitted: Record<string, string>; recorded: Record<string, string>; expected: 'SUCCEEDED' | 'UNKNOWN_EXTERNAL_OUTCOME' }[] = [
   { admitted: { path: '/approved' }, recorded: { path: '/approved' }, expected: 'SUCCEEDED' },
   { admitted: { path: '/changed' }, recorded: { path: '/approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
   { admitted: { path: '/approved', revision: '2' }, recorded: { path: '/approved', revision: '1' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
   { admitted: { path: '/approved' }, recorded: { path: '/approved', revision: '1' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
   { admitted: { path: 'draft=approved' }, recorded: { path: 'draft=approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
   { admitted: { path: 'draft=approved' }, recorded: { 'path=draft': 'approved' }, expected: 'UNKNOWN_EXTERNAL_OUTCOME' },
-])('recovers only an exact authenticated target ($expected)', async ({ admitted, recorded, expected }) => {
+];
+it.each(recoveryTargetCases)('recovers only an exact authenticated target ($expected)', async ({ admitted, recorded, expected }) => {
   const { store, ledger } = await fixture();
   commitAdmittedOperation(store, ledger, admitted, recorded);
   const outcome = recoverEffects(store, ledger);
