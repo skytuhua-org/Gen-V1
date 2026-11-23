@@ -90,8 +90,8 @@ export class FileSuggestions {
         if (this.clock() - started > WALK_BUDGET_MS) { complete = false; limitReason = 'time'; return false; }
         return true;
       };
-      outer:
-      while (queue.length) {
+      let exhausted = false;
+      while (queue.length && !exhausted) {
         if (!budget()) break;
         const current = queue.shift()!;
         // Re-verify a queued directory before opening it: an entry swapped for a
@@ -106,8 +106,8 @@ export class FileSuggestions {
         entries.sort((a, b) => codePoint(String(a.name), String(b.name)));
         const seen = new Set<string>();
         for (const entry of entries) {
-          if (++visited > MAX_ENTRIES) { complete = false; limitReason = 'entries'; break outer; }
-          if (visited % 64 === 0 && !budget()) break outer;
+          if (++visited > MAX_ENTRIES) { complete = false; limitReason = 'entries'; exhausted = true; break; }
+          if (visited % 64 === 0 && !budget()) { exhausted = true; break; }
           let name: string;
           try { name = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(entry.name); }
           catch { continue; } // undecodable names are never offered
