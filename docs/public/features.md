@@ -28,6 +28,10 @@ Projects and threads live in the left navigation. The compact composer holds pro
 
 In the Windows desktop app, open a conversation’s sidebar menu and choose **Detach thread** to move it into a pinned window. The main workspace stays available for other conversations. Canvas panels do not detach; context and usage minimize in the workspace. `/btw` and `/side` remain available for side conversations. See [the preview notes](release-notes.md) for current limits.
 
+## Quick ask from anywhere
+
+In the Windows desktop app, **Settings → General → Quick ask** enables a global keyboard shortcut (default `Alt+Space`) that opens a compact ask box on top of whatever you are doing. Type a message and send it to a **New thread** or the **Current thread** — focus returns to the Gen V1 conversation after send. **Escape** or clicking away hides the box and keeps your draft for next time. If another app already owns the chord, Settings shows the shortcut as **in use** so you can pick a different one; quitting the app releases the registration.
+
 ## Model choice with account continuity
 
 The model picker is searchable and exposes only the selected model’s advertised reasoning levels. Nine connection IDs route through Pi subscription adapters, native official runtimes, OAuth or dedicated plan keys. Saved accounts have separate local profiles; an existing task retains its captured account.
