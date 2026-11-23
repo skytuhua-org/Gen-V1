@@ -81,6 +81,7 @@ Expect Windows SmartScreen to show a
   inspectable provenance and protected MCP output.
 - Add a separately gated isolated-extension worker lane with leased lifecycle and
   declared-tool registration; activation requires a proven confined backend.
+- Verify saved GitHub Copilot sign-ins with a bounded Copilot token exchange.
 - Verify saved Kimi Code keys with a bounded authenticated account check;
   refused keys show **Not accepted**. Other saved credentials stay
   **Saved, not verified**.
