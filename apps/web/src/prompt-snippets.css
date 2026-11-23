@@ -2,7 +2,7 @@
 .prompt-snippets { padding:var(--ui-panel-inset); color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:var(--control-radius,8px); overflow:auto; scrollbar-width:thin; animation:prompt-snippets-in var(--ui-motion-popup-enter) var(--ui-ease-enter); }
 .prompt-snippets-picker { display:flex; flex-direction:column; gap:var(--ui-space-2); max-height:calc(420px - 2 * var(--ui-panel-inset)); }
 .prompt-snippets-title { margin:0; font-size:14px; font-weight:600; }
-.prompt-snippets-search { display:flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid var(--border); border-radius:var(--control-radius,8px); color:var(--muted); }
+.prompt-snippets-search { display:flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid var(--control-border); border-radius:var(--control-radius,8px); color:var(--muted); }
 .prompt-snippets-search input { flex:1; min-width:0; border:none; background:transparent; color:var(--text); font:inherit; font-size:12px; outline:none; }
 .prompt-snippets-helper, .prompt-snippets-hint { margin:0; font-size:11px; color:var(--muted); }
 .prompt-snippets-error { margin:0; font-size:12px; color:var(--danger,#dc3a49); }
@@ -20,7 +20,7 @@
 .prompt-snippets-undo { font-size:12px; text-decoration:underline; color:var(--accent,var(--text)); background:none; border:none; padding:0; cursor:pointer; }
 .prompt-snippets-dialog { width:min(640px, calc(100vw - 32px)); max-height:calc(100dvh - 50px); padding:var(--ui-dialog-inset); animation:prompt-snippets-in var(--ui-motion-popup-enter) var(--ui-ease-enter); }
 .prompt-snippets-dialog .prompt-snippets-editor { display:flex; flex-direction:column; gap:8px; }
-.prompt-snippets-editor input, .prompt-snippets-editor textarea { width:100%; box-sizing:border-box; font:inherit; font-size:13px; color:var(--text); background:var(--canvas,var(--surface)); border:1px solid var(--border); border-radius:var(--control-radius,8px); padding:8px 10px; }
+.prompt-snippets-editor input, .prompt-snippets-editor textarea { width:100%; box-sizing:border-box; font:inherit; font-size:13px; color:var(--text); background:var(--canvas,var(--surface)); border:1px solid var(--control-border); border-radius:var(--control-radius,8px); padding:8px 10px; }
 .prompt-snippets-count { align-self:flex-end; font-size:11px; color:var(--muted); }
 .prompt-snippets-manager ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; max-height:calc(100dvh - 240px); overflow-y:auto; }
 .prompt-snippets-manager li { display:flex; align-items:center; gap:8px; min-height:52px; padding:8px 12px; border:1px solid var(--border); border-radius:6px; }
