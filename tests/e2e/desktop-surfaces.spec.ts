@@ -24,8 +24,9 @@ test('desktop context and usage minimize in the workspace while thread detachmen
  await page.goto('/');
  await page.getByRole('button',{name:'Source-bound task fixture Ready',exact:true}).click();
  const overview=page.getByRole('region',{name:'Project overview window',exact:true});
- await expect(overview).toBeVisible({timeout:15000});
- const toggle=overview.locator('.docked-summary-toggle');if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click();
+ const toggle=page.getByRole('button',{name:/^(Expand|Collapse) Project overview$/});await expect(toggle).toBeVisible({timeout:15000});
+ if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click();
+ await expect(overview).toBeVisible();
  await expect(overview.getByRole('region',{name:'Plan summary',exact:true})).toContainText('Repair checkout failures');
  await page.getByRole('button',{name:'Collapse Project overview',exact:true}).click();
  await expect(toggle).toHaveAttribute('aria-expanded','false');

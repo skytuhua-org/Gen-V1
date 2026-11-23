@@ -43,8 +43,8 @@ async function ownerApp(page:Page,mode:'chat'|'split'|'desktop'|'loading'='chat'
  });
  await page.goto('/actual-app');
  if(mode==='loading')await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toBeDisabled();else await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();
  const overview=page.locator('.summary-overview:visible').first();
- await overview.getByRole('button',{name:'Expand Project overview',exact:true}).click();
  await expect(overview.locator('.project-context-card')).toContainText('Audit project');
  return {overview,fallback:overview.getByRole('button',{name:/^Changes/}),releaseSend};
 }
