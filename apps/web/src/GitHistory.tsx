@@ -42,13 +42,13 @@ export const relativeTime = (iso: string, now: number) => {
 	return format.format(-Math.floor(months / 12), "year");
 };
 
-const pageFrom = (value: unknown): GitHistoryPage => {
+export const pageFrom = (value: unknown): GitHistoryPage => {
 	const page = value as GitHistoryPage;
 	if (
 		!page ||
 		typeof page.snapshotId !== "string" ||
 		!Array.isArray(page.commits) ||
-		typeof page.headOid !== "string"
+		(page.headOid !== null && typeof page.headOid !== "string")
 	)
 		throw new ApiError("INVALID_RESPONSE", "Commit history unavailable");
 	return page;

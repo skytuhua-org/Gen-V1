@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { FileCheckpoints } from "../apps/web/src/FileCheckpoints.tsx";
-import { GitHistory, relativeTime } from "../apps/web/src/GitHistory.tsx";
+import { GitHistory, pageFrom, relativeTime } from "../apps/web/src/GitHistory.tsx";
 import { UnifiedDiff } from "../apps/web/src/UnifiedDiff.tsx";
 import type { UiPreferences } from "../packages/contracts/preferences.ts";
 
@@ -69,6 +69,20 @@ it("formats relative author time across every documented bucket", () => {
 	expect(relativeTime("2024-11-23T12:00:00Z", now)).toBe("2 years ago");
 	// A future timestamp must not read as past.
 	expect(relativeTime("2026-11-24T12:00:00Z", now)).toBe("just now");
+});
+
+it("accepts the empty-repository page payload instead of failing", () => {
+	const page = pageFrom({
+		snapshotId: "",
+		branch: "main",
+		headOid: null,
+		upstreamRef: null,
+		commits: [],
+		nextCursor: null,
+	});
+	expect(page.headOid).toBeNull();
+	expect(page.commits).toEqual([]);
+	expect(() => pageFrom({ commits: "nope" })).toThrowError();
 });
 
 it("trims checkpoint headers but renders committed patches verbatim", () => {
