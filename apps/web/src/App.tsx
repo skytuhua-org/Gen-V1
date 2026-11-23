@@ -309,6 +309,16 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
   const project=resources.find(resource=>resource.kind==='project');const changes=useMemo(()=>recordedChangeSummary(snapshot.data,thread?.id),[snapshot.data,thread?.id]);
   useEffect(()=>{const model=models.find(model=>model.id===modelId);if(model&&thinkingLevel&&!model.thinkingLevels?.includes(thinkingLevel))chooseThinking('');},[models,modelId,thinkingLevel]);
   useEffect(() => { if (shared) return; let current = true; void journalRead<string>(`draft:${key}`).then(value => { if (current) { setDraft(value ?? ''); setReady(true); } }).catch(() => { if (current) { setReady(true); setError('Draft recovery is unavailable. Keep this tab open until your message is sent.'); } }); return () => { current = false; }; }, [key, shared]);
+  const emptyConversation = !thread || (!snapshot.messages.some(message => message.threadId === thread.id) && !snapshot.messagesTruncated?.[thread.id]);
+  const didAutofocus = useRef(false);
+  useEffect(() => {
+    if (didAutofocus.current) return;
+    if (!emptyConversation || !ready || busy || working || predictionBlocked) return;
+    if (draft || document.querySelector('[role="dialog"],.ui-modal')) { didAutofocus.current = true; return; }
+    if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) return;
+    didAutofocus.current = true;
+    input.current?.focus({ preventScroll: true });
+  }, [emptyConversation, ready, busy, working, predictionBlocked, draft]);
   useEffect(() => shared ? undefined : journalSubscribe(`draft:${key}`, value => { if (draftTarget.current === key) { prediction.dismiss(); setDraft(typeof value === 'string' ? value : ''); } }), [key, shared]);
   const prediction = useComposerPrediction({ thread, snapshot, modelId, enabled: preferences.composerPredictions, ready, blocked: predictionBlocked || busy || unavailable || contextOpen, draft, generation: journalGeneration(`draft:${key}`), input });
   useLayoutEffect(() => {

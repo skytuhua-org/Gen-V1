@@ -52,3 +52,26 @@ test('fresh assistant messages reveal, while restored history and unchanged snap
  const snapshot=taskFixture(spec),host=await serveTaskFixture(page,snapshot);await page.goto('/');await expect(page.getByText(snapshot.messages[0].content,{exact:true})).toBeVisible();expect(await page.evaluate(()=>(window as unknown as {sentenceStarts:number}).sentenceStarts)).toBe(0);
  snapshot.messages.push({id:'new-answer',threadId:'task-thread',runId:null,role:'assistant',content:'The checkout failure comes from the quantity calculation. The public API can stay unchanged.',createdAt:new Date().toISOString()});await host.publish();await expect(page.getByText(snapshot.messages[1].content,{exact:true})).toBeVisible();await expect.poll(()=>page.evaluate(()=>(window as unknown as {sentenceStarts:number}).sentenceStarts)).toBeGreaterThan(0);const count=await page.evaluate(()=>(window as unknown as {sentenceStarts:number}).sentenceStarts);await host.publish();expect(await page.evaluate(()=>(window as unknown as {sentenceStarts:number}).sentenceStarts)).toBe(count);await page.reload();await expect(page.getByText(snapshot.messages[1].content,{exact:true})).toBeVisible();expect(await page.evaluate(()=>(window as unknown as {sentenceStarts:number}).sentenceStarts)).toBe(0);
 });
+
+test('the composer textarea is focused on a new conversation and on an empty thread',async({page})=>{
+ const empty=taskFixture(spec);empty.threads=[];empty.activeThreadId=null;empty.messages=[];empty.artifacts=[];empty.userStates=[];
+ await serveTaskFixture(page,empty);
+ await page.goto('/');
+ await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeFocused({timeout:15000});
+ const blank=taskFixture(spec);blank.messages=[];blank.artifacts=[];blank.userStates=[];
+ await serveTaskFixture(page,blank);
+ await page.goto('/');
+ const draft=page.getByRole('textbox',{name:'Message',exact:true});
+ await expect(draft).toBeFocused({timeout:15000});
+ await draft.pressSequentially('hello');
+ await expect(draft).toHaveValue('hello');
+});
+test('the composer does not steal focus on a conversation with history',async({page})=>{
+ const snapshot=taskFixture(spec);
+ await serveTaskFixture(page,snapshot);
+ await page.goto('/');
+ const draft=page.getByRole('textbox',{name:'Message',exact:true});
+ await expect(draft).toBeVisible();
+ await page.waitForTimeout(300);
+ expect(await page.evaluate(()=>document.activeElement instanceof HTMLElement?document.activeElement.getAttribute('aria-label'):null)).not.toBe('Message');
+});
