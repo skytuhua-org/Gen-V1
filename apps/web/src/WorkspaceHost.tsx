@@ -244,7 +244,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   const restoreSettingsFocus = () => {
     const invoker = settingsInvoker.current;
     settingsInvoker.current = null;
-    if (invoker?.isConnected && invoker.getClientRects().length) { invoker.focus({preventScroll: true}); return; }
+    if (invoker && invoker !== document.body && invoker !== document.documentElement && invoker.isConnected && invoker.getClientRects().length) { invoker.focus({preventScroll: true}); return; }
     (sidebar.current?.querySelector<HTMLElement>('button[aria-label="Settings"]') ?? searchRef.current)?.focus({preventScroll: true});
   };
   const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]); requestAnimationFrame(restoreSettingsFocus);});

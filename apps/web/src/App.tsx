@@ -125,7 +125,7 @@ function SettingsWindow(props: ComponentProps<SettingsComponent>) {
   const [error, setError] = useState(''), [reloading, setReloading] = useState(false);
   useEffect(() => () => {
     const invoker = opener.current;
-    if (invoker?.isConnected && invoker.getClientRects().length) { invoker.focus({ preventScroll: true }); return; }
+    if (invoker && invoker !== document.body && invoker !== document.documentElement && invoker.isConnected && invoker.getClientRects().length) { invoker.focus({ preventScroll: true }); return; }
     (document.querySelector<HTMLElement>('aside[aria-label="Thread navigation"] button[aria-label="Settings"]') ?? document.querySelector<HTMLElement>('input[aria-label="Search threads"]'))?.focus({ preventScroll: true });
   }, []);
   useEffect(() => {
