@@ -24,7 +24,7 @@ interface PullRequest{number:number;title:string;url:string;state:string;headRef
 export class GitHubTools{
  readonly auth:GitHubAuth;
  private readonly reviewComparisons=new ComparisonSnapshots();
- constructor(private readonly projects:ProjectTools,_terminals:TerminalHost,private readonly executable=bundledGh){this.auth=new GitHubAuth(projects.store.dataDir);}
+ constructor(private readonly projects:ProjectTools,_terminals:TerminalHost,private readonly executable=bundledGh,private readonly remoteUrl:(repo:string)=>string=(repo)=>'https://github.com/'+repo+'.git'){this.auth=new GitHubAuth(projects.store.dataDir);}
  private environment(){const root=join(this.projects.store.dataDir,'github');return{...processEnvironment(),HOME:root,USERPROFILE:root,GH_CONFIG_DIR:join(root,'config'),GH_HOST:'github.com',GH_PROMPT_DISABLED:'1',GH_NO_UPDATE_NOTIFIER:'1',GIT_TERMINAL_PROMPT:'0'};}
  private parseOutput(output:string){try{return JSON.parse(output) as unknown;}catch{throw new HarnessError('GITHUB_CLI_OUTPUT_INVALID','The GitHub CLI returned unreadable output. Check the bundled gh tool and the repository state.');}}
  private async run(path:string,args:string[]){
@@ -57,6 +57,30 @@ export class GitHubTools{
  }
  async repo(projectId:string,threadId?:string){const{path}=await this.projects.binding(projectId,threadId),url=(await this.projects.git(path,['remote','get-url','origin'])).trim(),match=/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(url);if(!match)throw new HarnessError('GITHUB_REMOTE_REQUIRED','Use an origin remote hosted on github.com.');return{path,repo:repository.parse(match[1])};}
  async list(projectId:string,threadId?:string){const{path,repo}=await this.repo(projectId,threadId),items=this.parseOutput(await this.run(path,['pr','list','--repo',repo,'--state','all','--limit','50','--json','number,title,url,state,headRefOid,headRefName,isDraft'])) as PullRequest[];return{repo,items};}
+ /** Fetch into the private family on an explicit user click (R3): signed-in credential helper when available, anonymous otherwise. */
+ async fetch(projectId:string,threadId:string|undefined,beforeWrite?:()=>void){
+  const{repo}=await this.repo(projectId,threadId);
+  let credentialConfig:string[]=[],environment:NodeJS.ProcessEnv={...this.environment(),GCM_INTERACTIVE:'never'},token:string|undefined;
+  try{token=await this.auth.token();}catch{/* anonymous fetch — works for public repositories */}
+  if(token){credentialConfig=['-c','credential.https://github.com.helper='+'!'+quote(this.executable)+' auth git-credential'];environment.GH_TOKEN=token;}
+  try{beforeWrite?.();return await this.projects.gitFetch(projectId,threadId,this.remoteUrl(repo),credentialConfig,environment);}
+  catch(error){
+   if(!(error instanceof HarnessError))throw error;
+   const result=error.details as {stderr?:string;timedOut?:boolean}|undefined,stderr=result?.stderr??'';
+   if(result?.timedOut||/timed out|timeout/i.test(stderr))throw new HarnessError('FETCH_TIMEOUT','Fetch timed out. Check your connection and try again.');
+   if(/Authentication failed|could not read Username|401|403|404/.test(stderr))throw new HarnessError('GITHUB_AUTH_REQUIRED','Sign in to GitHub to fetch from this repository.');
+   if(error.code==='GIT_ERROR'){
+    const redactor=createSecretRedactor(token?[token]:[]),line=redactor.redact(stderr.split('\n').find(text=>text.trim())??'').text.trim();
+    throw new HarnessError('FETCH_FAILED',`Fetch failed: ${line.slice(0,300)||'the remote did not answer'}. Try again.`);
+   }
+   throw error;
+  }
+ }
+ /** Pull = Fetch, then fast-forward when strictly behind (R4); the reviewed revision still matches because Fetch never touches head/index/tree. */
+ async pull(projectId:string,threadId:string|undefined,payload:{revision:string;expectedHead:string},beforeWrite?:()=>void){
+  await this.fetch(projectId,threadId,beforeWrite);
+  return this.projects.gitFastForward(projectId,threadId,{revision:payload.revision,head:payload.expectedHead});
+ }
  async create(projectId:string,threadId:string|undefined,input:Record<string,unknown>,beforeWrite?:()=>void){
   const{path,repo}=await this.repo(projectId,threadId),status=await this.projects.gitStatus(projectId,threadId);if(status.gitWrite!==true)throw new HarnessError('PROJECT_READ_ONLY','Pull request creation requires a writable managed working copy.');if(input.revision!==status.revision||input.head!==status.head)throw new HarnessError('REVISION_CHANGED','The reviewed working copy changed. Refresh before creating the pull request.');
   if(status.files.length)throw new HarnessError('UNCOMMITTED_CHANGES','Commit the reviewed changes before creating the pull request.');

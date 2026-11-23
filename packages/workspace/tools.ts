@@ -188,6 +188,26 @@ export class ProjectTools{
   return{branch:current.branch||null,head:current.head,revision:current.revision,remote,upstream,ahead,behind,state,lastFetchedAt:this.lastFetched.get(bound.workspace?.id??projectId)??null,blockers};
  }
  async gitSync(projectId:string,threadId?:string):Promise<GitSyncResult>{const bound=await this.binding(projectId,threadId);return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed)=>this.sync(projectId,metadata,path,signal,managed,bound,threadId)));}
+ /** User-triggered fetch into the private family (R3): moves only refs/remotes/origin/*, never branches, index or tree. */
+ async gitFetch(projectId:string,threadId:string|undefined,remoteUrl:string,credentialConfig:string[],environment:NodeJS.ProcessEnv):Promise<GitSyncResult>{
+  const bound=await this.binding(projectId,threadId);
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
+   await nativeGit(this.gitExecutable(),metadata,path,[...credentialConfig,'fetch','--no-tags','--prune','--no-write-fetch-head','--no-recurse-submodules','--',remoteUrl,'+refs/heads/*:refs/remotes/origin/*'],signal,environment);
+   this.lastFetched.set(bound.workspace?.id??projectId,new Date().toISOString());
+   return this.sync(projectId,metadata,path,signal,managed,bound,threadId);
+  }));
+ }
+ /** Pull (R4): re-resolve after the fetch, refuse unless strictly behind, then fast-forward. */
+ async gitFastForward(projectId:string,threadId:string|undefined,expected:{revision:string;head:string}):Promise<GitSyncResult>{
+  const bound=await this.binding(projectId,threadId);
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
+   const current=await this.sync(projectId,metadata,path,signal,managed,bound,threadId);
+   if(current.revision!==expected.revision||current.head!==expected.head)throw new HarnessError('REVISION_CHANGED','The working copy changed. Refresh, then pull again.');
+   if(current.blockers.length)throw new HarnessError('PULL_BLOCKED','Pull is not available for this working copy.',{blockers:current.blockers});
+   await nativeGit(this.gitExecutable(),metadata,path,['merge','--ff-only','--no-edit','--no-verify',current.upstream!.oid],signal);
+   return this.sync(projectId,metadata,path,signal,managed,bound,threadId);
+  }));
+ }
  /** Read-only origin through the same attested managed/legacy Git boundary. */
  async gitReviewOrigin(projectId:string,threadId?:string){return this.exclusive(projectId,async()=>{
   const binding=await this.binding(projectId,threadId),signal=new AbortController().signal;
