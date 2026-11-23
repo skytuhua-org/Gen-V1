@@ -545,7 +545,17 @@ export class Service {
   async controlTargets(threadId: string, mode: unknown) {
     const parsed = controlModeSchema.parse(mode);
     this.thread(threadId);
-    return { candidates: await this.controlRuntime.targets(parsed), control: this.controlConsent.surfaceModel(threadId) };
+    const pending = this.controlConsent.surfaceModel(threadId).pendingConsent;
+    if (pending?.state !== 'PENDING' || pending.mode !== parsed) {
+      throw new HarnessError('CAPABILITY_DENIED', 'Target selection requires a pending consent for this mode.');
+    }
+    const candidates = await this.controlRuntime.targets(parsed);
+    this.thread(threadId);
+    const control = this.controlConsent.surfaceModel(threadId);
+    if (control.state !== 'consent' || control.pendingConsent?.consentId !== pending.consentId) {
+      throw new HarnessError('CAPABILITY_DENIED', 'The consent changed while selecting targets.');
+    }
+    return { candidates, control };
   }
 
   /** S05: a consented observation only — bytes stay under the host artifact

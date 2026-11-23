@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../packages/storage/store.ts';
 import { Service } from '../packages/core/service.ts';
-import { BrowserConsentHost, ControlDriverRegistry } from '../packages/core/browser-consent.ts';
-import { ControlDispatcher, controlCapability, type ControlDriverHandle } from '../packages/core/desktop-control.ts';
+import { BrowserConsentHost, ControlDriverRegistry, hostControlDriverRegistry } from '../packages/core/browser-consent.ts';
+import { ControlDispatcher, controlCapability, type ControlDriverHandle, type ControlDriverOperations } from '../packages/core/desktop-control.ts';
 import { __setCapabilityFlagForTests } from '../packages/core/capability-flags.ts';
 import type { ControlDriverRegistrationV1, ControlTargetIdentityV1, InteractiveGrantV1, TargetObservationV1 } from '../packages/contracts/interactive-control.ts';
 import { HarnessError, type RuntimeAdapter, type Thread } from '../packages/contracts/index.ts';
@@ -190,6 +190,66 @@ it('M16-G03 control.stop through the real service revokes only the thread grant'
   expect(control.state).toBe('unavailable');
   expect(control.liveControlActive).toBe(false);
   expect(store.get<InteractiveGrantV1>('interactiveGrant', issued.grantId)?.revocationGeneration).toBe(1);
+});
+
+function attachTestTargetChooser(service: Service, candidates: ControlDriverOperations['candidates']) {
+  vi.spyOn(hostControlDriverRegistry, 'resolve').mockReturnValue(registration());
+  service.attachControlDriver({
+    candidates,
+    pickTarget: async () => null,
+    observe: async target => observation(target, Date.now()),
+    capture: async () => { throw new Error('Capture is outside the chooser fixture.'); },
+    dispatch: async () => { throw new Error('Dispatch is outside the chooser fixture.'); },
+    cancelInput: async () => {},
+  }, []);
+  __setCapabilityFlagForTests('control.selectedDesktopV1', true);
+  __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+}
+
+it('M16 lists candidate targets only for the pending consent mode', async () => {
+  const { service, thread } = serviceFixture();
+  const candidates = vi.fn<ControlDriverOperations['candidates']>().mockResolvedValue([{ target: app, title: 'Fixture app' }]);
+  attachTestTargetChooser(service, candidates);
+
+  await expect(service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION')).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+  expect(candidates).not.toHaveBeenCalled();
+
+  await service.command({ id: 'chooser-consent', type: 'control.request', threadId: thread.id, payload: { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true } });
+  await expect(service.controlTargets(thread.id, 'CONSENTED_EXISTING_TAB')).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+  expect(candidates).not.toHaveBeenCalled();
+
+  const result = await service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
+  expect(result.candidates).toEqual([{ target: app, title: 'Fixture app' }]);
+  expect(candidates).toHaveBeenCalledExactlyOnceWith('SELECTED_DESKTOP_APPLICATION');
+});
+
+it.each([
+  { change: 'stops', code: 'CAPABILITY_DENIED' },
+  { change: 'replaces consent', code: 'CAPABILITY_DENIED' },
+  { change: 'archives the thread', code: 'NOT_FOUND' },
+])('M16 discards an in-flight target list when the user $change', async ({ change, code }) => {
+  const { service, thread } = serviceFixture();
+  type CandidateList = Awaited<ReturnType<ControlDriverOperations['candidates']>>;
+  let completeList!: (targets: CandidateList) => void;
+  const list = new Promise<CandidateList>(resolve => { completeList = resolve; });
+  const candidates = vi.fn<ControlDriverOperations['candidates']>().mockReturnValue(list);
+  attachTestTargetChooser(service, candidates);
+  const payload = { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true };
+  await service.command({ id: 'chooser-request', type: 'control.request', threadId: thread.id, payload });
+
+  const listing = service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
+  expect(candidates).toHaveBeenCalledExactlyOnceWith('SELECTED_DESKTOP_APPLICATION');
+  if (change === 'archives the thread') {
+    await service.command({ id: 'chooser-archive', type: 'thread.archive', threadId: thread.id, payload: {} });
+  } else {
+    await service.command({ id: 'chooser-stop', type: 'control.stop', threadId: thread.id, payload: {} });
+    if (change === 'replaces consent') {
+      await service.command({ id: 'chooser-replacement', type: 'control.request', threadId: thread.id, payload });
+    }
+  }
+  completeList([{ target: app, title: 'Fixture app' }]);
+
+  await expect(listing).rejects.toMatchObject({ code });
 });
 
 /** Supporting assertion for G02: the M16 flags exist in the host registry and
