@@ -136,7 +136,9 @@ function ProjectFilesReader({
 	const checking = accepted && link.pending,
 		ready = link.value?.state === "ready" ? link.value : null,
 		unavailable = link.value?.state === "unavailable" ? link.value : null,
-		checkFailed = !!link.error;
+		checkFailed = !!link.error,
+		hiddenReason = !!unavailable &&
+			["no-origin", "origin-not-github"].includes(unavailable.reason);
 	const reasonText = (
 		data: Extract<GitHubFileLink, { state: "unavailable" }>,
 	): string => {
@@ -150,7 +152,7 @@ function ProjectFilesReader({
 			case "upstream-not-origin":
 				return "No GitHub link: this branch tracks a remote other than origin.";
 			case "not-on-upstream":
-				return `No GitHub link: commit ${data.detail?.commit ?? ""} isn’t on ${data.detail?.upstream ?? ""} yet. Push, then fetch.`;
+				return `No GitHub link: commit ${(data.detail?.commit ?? "").slice(0, 7)} isn’t on ${data.detail?.upstream ?? ""} yet. Push, then fetch.`;
 			case "untracked":
 				return "No GitHub link: this file isn’t committed.";
 			case "not-regular-file":
@@ -194,7 +196,7 @@ function ProjectFilesReader({
 				return (
 					<>
 						No GitHub link: commit{" "}
-						<code>{data.detail?.commit ?? ""}</code> isn’t on{" "}
+						<code>{(data.detail?.commit ?? "").slice(0, 7)}</code> isn’t on{" "}
 						<code>{data.detail?.upstream ?? ""}</code> yet. Push, then
 						fetch.
 					</>
@@ -324,7 +326,7 @@ function ProjectFilesReader({
 					: undefined
 			}
 			previewActions={
-				accepted && !link.hidden ? (
+				accepted && !link.hidden && !hiddenReason ? (
 					<span
 						className={`files-permalink-wrap${
 							checking
