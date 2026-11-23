@@ -1,4 +1,6 @@
-import {expect, it} from 'vitest';
+import {afterAll, beforeAll, describe, expect, it} from 'vitest';
+import {build} from 'esbuild';
+import {chromium, type Browser, type Page} from '@playwright/test';
 import {builtinOptions, commandToken, replaceCommandToken, skillBindingSchema} from '../apps/web/src/composer-commands';
 
 it('finds slash commands at the caret after text without interpreting URLs or paths', () => {
@@ -30,4 +32,87 @@ it('admits a bounded Personal selection identity without converting literal text
   expect(skillBindingSchema.parse(binding)).toEqual(binding);
   expect(skillBindingSchema.safeParse({...binding, ref: {...ref, scope: {kind: 'provider', providerId: 'private', scopeId: 'company'}}}).success).toBe(false);
   expect(skillBindingSchema.safeParse('/skill:Test').success).toBe(false);
+});
+
+const paletteFixture = `
+import React, {useRef, useState} from 'react';
+import {createRoot} from 'react-dom/client';
+import {ComposerCommands, type ComposerCommandsHandle} from './apps/web/src/ComposerCommands';
+
+const catalog = {scope:{kind:'personal'},sources:[],skills:[],inventoryRevision:'a'.repeat(64),nextCursor:null};
+window.fetch = (input: RequestInfo | URL) => Promise.resolve(new Response(JSON.stringify(
+  String(input).startsWith('/api/bootstrap') ? {csrfToken:'fixture'} : catalog
+), {status:200, headers:{'Content-Type':'application/json'}}));
+
+function Fixture(){
+  const input = useRef<HTMLTextAreaElement>(null), handle = useRef<ComposerCommandsHandle>(null);
+  const [draft, setDraft] = useState('');
+  return <>
+    <textarea id="ta" ref={input} value={draft}
+      onChange={event => setDraft(event.target.value)}
+      onKeyDown={event => handle.current?.keyDown(event)}/>
+    <ComposerCommands ref={handle} input={input} draft={draft} threadId="t1" projectId="p1"
+      onDraft={setDraft} onModel={async()=>{}} onMode={async()=>{}}/>
+  </>;
+}
+createRoot(document.getElementById('root')).render(<Fixture/>);
+`;
+
+describe('slash-command palette', () => {
+  let browser: Browser, script: string;
+  beforeAll(async () => {
+    script = (await build({stdin:{contents:paletteFixture,resolveDir:process.cwd(),loader:'tsx'},loader:{'.css':'empty'},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'}})).outputFiles[0]!.text;
+    browser = await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{})});
+  });
+  afterAll(async () => { await browser?.close(); });
+  async function openPage(): Promise<Page> {
+    const page = await browser.newPage();
+    await page.setContent('<div id="root"></div>');
+    await page.addScriptTag({content: script});
+    return page;
+  }
+  const palette = (page: Page) => page.locator('.composer-command-popover[data-state="open"]');
+
+  it('keeps the palette dismissed while editing the token after Escape', async () => {
+    const page = await openPage();
+    try {
+      const area = page.locator('#ta');
+      await area.click();
+      await area.pressSequentially('/');
+      await palette(page).waitFor();
+      await area.press('Escape');
+      await palette(page).waitFor({state:'detached'});
+      await area.pressSequentially('x');
+      await expect.poll(async () => await palette(page).count(), {timeout:1000}).toBe(0);
+    } finally { await page.close(); }
+  });
+
+  it('reopens for the next slash token after the dismissed one is deleted', async () => {
+    const page = await openPage();
+    try {
+      const area = page.locator('#ta');
+      await area.click();
+      await area.pressSequentially('/');
+      await palette(page).waitFor();
+      await area.press('Escape');
+      await area.press('Backspace');
+      await area.pressSequentially('/');
+      await palette(page).waitFor();
+    } finally { await page.close(); }
+  });
+
+  it('stays closed when the dismissed token regains focus', async () => {
+    const page = await openPage();
+    try {
+      const area = page.locator('#ta');
+      await area.click();
+      await area.pressSequentially('hello /mod');
+      await palette(page).waitFor();
+      await area.press('Escape');
+      await palette(page).waitFor({state:'detached'});
+      await page.locator('body').click();
+      await area.click();
+      await expect.poll(async () => await palette(page).count(), {timeout:1000}).toBe(0);
+    } finally { await page.close(); }
+  });
 });
