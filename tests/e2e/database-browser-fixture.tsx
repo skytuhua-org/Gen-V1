@@ -30,10 +30,11 @@ const orders: DatabaseQueryResultV1 = {
 	source: { table: { schema: 'main', name: 'orders', primaryKey: ['id'] } },
 };
 const nopk: DatabaseQueryResultV1 = { ...orders, columns: [{ name: 'message', type: 'TEXT' }], rows: [['boot'], ['ok']], rowCount: 2, source: { table: { schema: 'main', name: 'logs', primaryKey: [] } } };
+const perfColumnCount = params.has('wide') ? 40 : 20;
 const perfRows: DatabaseQueryResultV1 = {
 	...orders,
-	columns: Array.from({ length: 20 }, (_, index) => ({ name: `c${index}`, type: 'TEXT' })),
-	rows: Array.from({ length: 1000 }, (_, row) => Array.from({ length: 20 }, (_, col) => `r${row}c${col}`)),
+	columns: Array.from({ length: perfColumnCount }, (_, index) => ({ name: `c${index}`, type: 'TEXT' })),
+	rows: Array.from({ length: 1000 }, (_, row) => Array.from({ length: perfColumnCount }, (_, col) => `r${row}c${col}`)),
 	rowCount: 1000,
 };
 const writable = params.get('writable') !== '0';
@@ -44,11 +45,13 @@ const inventory = {
 const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
 const calls: string[] = [];
 (window as unknown as { __calls: string[] }).__calls = calls;
+const networkFetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 	const url = String(typeof input === 'object' && 'url' in input ? input.url : input);
 	const path = new URL(url, location.origin).pathname;
 	calls.push(path);
 	if (path === '/api/bootstrap') return json({ csrfToken: 'fixture' });
+	if (params.get('view') === 'connections' && path.startsWith('/api/threads/')) return networkFetch(input, init);
 	if (path === `/api/threads/${THREAD}/databases`) return json(inventory);
 	if (path.endsWith('/schema')) return json(schema);
 	if (path.endsWith('/query')) return json({ requestId: 'r1', dataId: 'd1', result: params.get('nopk') ? nopk : big ? perfRows : orders });
