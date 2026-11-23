@@ -86,7 +86,7 @@ function WidgetOwner({ ref: widgetRef, artifact, inputs, values, stateRevision, 
     let active = true;
     let checkpointing = false;
     const sameOwner = () => active && latest.current.artifact.id === artifact.id && latest.current.artifact.revision === artifact.revision && latest.current.artifact.stateId === artifact.stateId && latest.current.artifact.threadId === artifact.threadId;
-    const reportError = (error: unknown, fallback: string) => { if (sameOwner()) setError(error instanceof Error ? error.message : fallback); };
+    const reportError = (error: unknown, fallback: string) => { if (sameOwner()) setError(errorMessage(error, fallback)); };
     const send = (type: string, payload: Record<string, unknown> = {}) => {
       if (sameOwner()) runtime.current?.post({ channel: 'harness-widget', token: mount.token, mountId: mount.mountId, artifactId: artifact.id, type, payload });
     };

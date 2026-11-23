@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { GitBranch, History, Import } from 'lucide-react';
 import { ActionMenu, type ActionMenuItem } from '../../../packages/ui-shell/ActionMenu';
 import { Modal } from '../../../packages/ui-shell/Modal';
-import { ApiError } from './api';
+import {errorMessage} from '../../../packages/ui-shell/format-utils';
 import { Markdown } from './Markdown';
 import {
   cancelImport, commitImport, forkConversation, getCaptureMessages, getImportedMessages,
@@ -12,7 +12,7 @@ import {
 import type { Message, Thread } from '../../../packages/contracts/index';
 import './session-branch.css';
 
-const messageOf = (error: unknown) => error instanceof ApiError ? error.message : error instanceof Error ? error.message : String(error);
+const messageOf = (error: unknown) => errorMessage(error, String(error));
 
 export function useSessionBranchOverview(threadId: string | undefined, tick = 0) {
   const [overview, setOverview] = useState<SessionBranchOverview | null>(null);
