@@ -145,7 +145,7 @@ function SettingsWindow(props: ComponentProps<SettingsComponent>) {
 const AssistantProse = memo(function AssistantProse({message,arrivals,active,onJump}:{message:Message;arrivals:Set<string>;active:boolean;onJump?:(top:number)=>void}){
   const initial=useRef(arrivals.has(message.id));useEffect(()=>{arrivals.delete(message.id);},[message.id,arrivals]);
   const renderOutline=useCallback((headings:ReplyHeading[])=>onJump&&headings.length>=3?<ReplyContents headings={headings} onJump={onJump}/>:null,[onJump]);
-  if(!active&&onJump)return <ReplyMarkdown text={message.content} animate={active||initial.current} initialReveal={initial.current} renderOutline={renderOutline}/>;
+  if(onJump)return <ReplyMarkdown text={message.content} animate={active||initial.current} initialReveal={initial.current} renderOutline={active?undefined:renderOutline}/>;
   return <Markdown text={message.content} animate={active||initial.current} initialReveal={initial.current}/>;
 }, (previous, next) => previous.message === next.message && previous.arrivals === next.arrivals && previous.active === next.active && previous.onJump === next.onJump);
 function InputDecision({ request, refresh, snapshot }: { request: InputRequest; refresh: () => Promise<void>; snapshot:Snapshot }) {
