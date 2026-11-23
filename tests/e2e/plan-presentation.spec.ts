@@ -30,7 +30,7 @@ test('switching threads shows each plan in the shared overview and collapse pers
  const snapshot=fixture();snapshot.threads[0].title='First task';snapshot.data.push(row());const second={...snapshot.threads[0],id:'second',title:'Second task'};snapshot.threads.push(second,{...second,id:'empty',title:'Empty task'});snapshot.data.push({...row(),id:planDataId('second'),threadId:'second',revision:2});
  await serveTaskFixture(page,snapshot);await page.goto('/');const overview=page.getByRole('region',{name:'Project overview window',exact:true});const summary=overview.getByRole('region',{name:'Plan summary',exact:true});
  await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(summary).toBeVisible();await expect(summary).toHaveAttribute('data-plan-revision','1');
- await page.locator('.sidebar').getByText('Second task',{exact:true}).click();await expect(summary).toHaveAttribute('data-plan-revision','2');
+ await page.locator('.sidebar').getByText('Second task',{exact:true}).click();await expect(overview).toBeHidden();await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(summary).toBeVisible();await expect(summary).toHaveAttribute('data-plan-revision','2');
  await page.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect(overview).toBeHidden();
  await page.locator('.sidebar').getByText('First task',{exact:true}).click();await expect(overview).toBeHidden();
  await page.locator('.sidebar').getByText('Empty task',{exact:true}).click();await expect(overview.locator('[data-plan-revision]')).toHaveCount(0);

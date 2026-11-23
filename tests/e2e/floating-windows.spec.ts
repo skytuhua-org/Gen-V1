@@ -19,6 +19,7 @@ test('the protected context only minimizes and preserves its draft on reload',as
  await page.setViewportSize({width:1440,height:1000});await serveTaskFixture(page,fixture());await page.goto('/');const panel=await openPlan(page);
  await expect(page.getByRole('tab',{name:'Plan',exact:true})).toHaveCount(0);await page.getByRole('textbox',{name:'Message',exact:true}).fill('Keep this composer draft.');
  await expect(panel.getByRole('button',{name:/^Move |^Resize |^Close |^Detach |^Reset /})).toHaveCount(0);
+ await openPlan(page);
  await page.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect(panel).toBeHidden();
  await page.reload();const restored=page.getByRole('region',{name:'Project overview window',exact:true});await expect(page.getByRole('button',{name:'Expand Project overview',exact:true})).toHaveAttribute('aria-expanded','false');await expect(restored).toBeHidden();
  await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(page.getByRole('textbox',{name:'Message',exact:true})).toHaveValue('Keep this composer draft.');
@@ -41,8 +42,7 @@ test('live usage stays available and remembers its minimized state without close
 });
 
 test('both summaries fit a narrow viewport, retain keyboard access and leave Stop available',async({page})=>{
- await page.setViewportSize({width:390,height:844});await page.emulateMedia({reducedMotion:'reduce'});const snapshot=fixture();snapshot.threads[0].status='working';snapshot.threads[0].runId='fixture-run';await serveTaskFixture(page,snapshot);await page.goto('/');await openPlan(page);
- const usage=await openUsage(page);await usage.getByRole('button',{name:'Inspect live usage',exact:true}).click();
+ await page.setViewportSize({width:390,height:844});await page.emulateMedia({reducedMotion:'reduce'});const snapshot=fixture();snapshot.threads[0].status='working';snapshot.threads[0].runId='fixture-run';await serveTaskFixture(page,snapshot);await page.goto('/');const usage=await openUsage(page);await usage.getByRole('button',{name:'Inspect live usage',exact:true}).click();await openPlan(page);
  for(const name of ['Project overview window','Live usage']){const bounds=await page.getByRole('region',{name,exact:true}).boundingBox();expect(bounds!.x).toBeGreaterThanOrEqual(0);expect(bounds!.x+bounds!.width).toBeLessThanOrEqual(390);expect(bounds!.y).toBeGreaterThanOrEqual(0);expect(bounds!.y+bounds!.height).toBeLessThanOrEqual(844);}
  const stop=page.getByRole('button',{name:'Stop agent',exact:true});expect(await stop.evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));})).toBe(true);await expect(stop).toBeEnabled();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);

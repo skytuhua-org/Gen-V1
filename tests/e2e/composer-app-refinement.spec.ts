@@ -156,13 +156,16 @@ test('chat header omits retired controls while sidebar rename and archive remain
  await expect(page.getByRole('menuitem',{name:'Detach thread',exact:true})).toHaveCount(0);
 });
 
-test('a ready plan opens automatically and right-side tools can only be minimized',async({page})=>{
+test('a ready plan marks the overview available and right-side tools can only be minimized',async({page})=>{
  const host=await fixture(page),draft=page.getByRole('textbox',{name:'Message',exact:true});
  await draft.fill('Keep writing while the plan arrives');await draft.focus();
  const context=page.getByRole('region',{name:'Project overview window',exact:true});
  host.snapshot.data.push({id:planDataId('task-thread'),threadId:'task-thread',revision:1,provenance:PLANNING_PROVENANCE,createdAt:'2026-11-04T00:00:00Z',value:{version:1,title:'Review the next steps',steps:[{id:'inspect',title:'Inspect the current draft',status:'working',requirements:[],agentIds:[]}],agents:[]}});
- await host.publish();const rail=page.getByRole('region',{name:'Task plan: Review the next steps',exact:true});await expect(rail).toBeVisible();await expect(rail.getByText('Inspect the current draft',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(context.getByText('Review the next steps',{exact:true})).toBeVisible();await expect(draft).toHaveValue('Keep writing while the plan arrives');
- await page.getByRole('button',{name:'Show live usage',exact:true}).click();const usage=page.getByRole('region',{name:'Live usage',exact:true});await expect(usage).toBeVisible();
+ await host.publish();const rail=page.getByRole('region',{name:'Task plan: Review the next steps',exact:true});await expect(rail).toBeVisible();await expect(rail.getByText('Inspect the current draft',{exact:true})).toBeVisible();
+ const expand=page.getByRole('button',{name:'Expand Project overview',exact:true});await expect(expand.getByText('Update available',{exact:true})).toBeVisible();await expand.click();
+ await expect(context.getByText('Review the next steps',{exact:true})).toBeVisible();await expect(draft).toHaveValue('Keep writing while the plan arrives');
+ await page.getByRole('button',{name:'Show live usage',exact:true}).click();const usage=page.getByRole('region',{name:'Live usage',exact:true});await expect(usage).toBeVisible();await expect(context).toBeHidden();
+ await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(context.getByText('Review the next steps',{exact:true})).toBeVisible();
  for(const tool of [context,usage])await expect(tool.getByRole('button',{name:/close |detach|reset .*position|resize|^move /i})).toHaveCount(0);
  await page.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect(context).toBeHidden();
  await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(context.getByText('Review the next steps',{exact:true})).toBeVisible();

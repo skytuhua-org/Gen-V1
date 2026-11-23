@@ -64,22 +64,27 @@ test('default shell uses all space after navigation and centers artifact and com
   expect(artifact!.x+artifact!.width/2).toBeCloseTo(main!.x+main!.width/2,0);
   await expect(page.getByRole('region',{name:'Live usage',exact:true})).toBeHidden();
   await expect(page.getByRole('button',{name:'Show live usage',exact:true})).toBeVisible();
-  await expect(page.locator('.summary-dock [data-summary-id="plan"]')).toHaveAttribute('data-collapsed','true');
+  await expect(page.locator('.summary-dock [data-summary-id="plan"]')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Expand Project overview',exact:true})).toHaveAttribute('aria-expanded','false');
 });
 
-test('automatic Plan summary reserves task space while telemetry preserves the mounted conversation',async({page})=>{
+test('automatic Plan popover leaves task space unchanged while telemetry preserves the mounted conversation',async({page})=>{
   await page.setViewportSize({width:1600,height:1100});const snapshot=fixture();snapshot.usage['task-thread']={...EMPTY_USAGE,inputTokens:14210,outputTokens:960};await serveTaskFixture(page,snapshot);await page.goto('/');
   const input=page.getByRole('textbox',{name:'Review name',exact:true});await input.fill('Keep the current review');const original=await input.elementHandle();
   await page.getByRole('textbox',{name:'Message',exact:true}).fill('Keep my next message');
-  const overview=page.getByRole('region',{name:'Project overview window',exact:true});await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(overview).toHaveAttribute('data-collapsed','false');
-  const summary=overview.getByRole('region',{name:'Plan summary',exact:true});await expect(summary).toBeVisible();
-  const layout=await page.locator('.summary-layout').boundingBox(),dock=await page.locator('.summary-dock').boundingBox(),workspace=await page.locator('main.workspace').boundingBox();
-  expect(dock!.width).toBeGreaterThanOrEqual(270);expect(dock!.width).toBeLessThanOrEqual(310);
-  expect(workspace!.width).toBeCloseTo(layout!.width-dock!.width-6,0);await centered(page);
-  const body=await summary.elementHandle();
   await page.getByRole('button',{name:'Show live usage',exact:true}).click();await expect(page.getByRole('region',{name:'Live usage',exact:true})).toBeVisible();
+  const overview=page.getByRole('region',{name:'Project overview window',exact:true}),toggle=page.getByRole('button',{name:'Expand Project overview',exact:true});
+  const layoutBefore=await page.locator('.summary-layout[data-summaries="true"]').boundingBox(),workspaceBefore=await page.locator('main.workspace').boundingBox(),composerBefore=await page.locator('.composer-dock').boundingBox();
+  await toggle.click();await expect(overview).toHaveAttribute('data-collapsed','false');await expect(overview).toHaveAttribute('data-presentation','popover');
+  const summary=overview.getByRole('region',{name:'Plan summary',exact:true});await expect(summary).toBeVisible();
+  expect(await page.locator('.summary-dock [data-summary-id="plan"]').count()).toBe(0);
+  await expect(page.locator('.ui-popover[data-summary-id="plan"][data-presentation="popover"][data-state="open"]')).toHaveCount(1);
+  const layoutOpen=await page.locator('.summary-layout[data-summaries="true"]').boundingBox(),workspaceOpen=await page.locator('main.workspace').boundingBox(),composerOpen=await page.locator('.composer-dock').boundingBox();
+  for(const key of ['x','y','width','height'] as const){expect(Math.abs(layoutOpen![key]-layoutBefore![key])).toBeLessThanOrEqual(1);expect(Math.abs(workspaceOpen![key]-workspaceBefore![key])).toBeLessThanOrEqual(1);}
+  expect(Math.abs((composerOpen!.x+composerOpen!.width/2)-(composerBefore!.x+composerBefore!.width/2))).toBeLessThanOrEqual(1);await centered(page);
+  const body=await summary.elementHandle();
   await page.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect(overview).toBeHidden();
-  await expect.poll(async()=>(await page.locator('main.workspace').boundingBox())!.width).toBeCloseTo(layout!.width,0);
+  await expect.poll(async()=>(await page.locator('main.workspace').boundingBox())!.width).toBeCloseTo(workspaceBefore!.width,0);
   await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(overview).toHaveAttribute('data-collapsed','false');
   expect(await summary.evaluate((node,old)=>node===old,body)).toBe(true);
   expect(await input.evaluate((node,old)=>node===old,original)).toBe(true);await expect(input).toHaveValue('Keep the current review');

@@ -240,6 +240,7 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
       if (!held.active) { if (Math.abs(event.clientY - held.startY) > 9) cancel(); return; }
       event.preventDefault();
       held.node.style.transform = `translateY(${event.clientY - held.startY}px)`;
+      if (Math.abs(event.clientY - held.startY) <= 9) { setTarget(null); return; }
       const resolved = resolve(held.item, { x: event.clientX, y: event.clientY });
       setTarget(current => {
         if (!resolved) return current?.valid ? { ...current, valid: false } : current;

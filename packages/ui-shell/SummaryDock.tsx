@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { Popover } from './Popover';
 import './summary-dock.css';
 
 interface SummaryStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
@@ -61,44 +62,56 @@ export function DockedSummary({ id, title, children, open = true, defaultCollaps
   minimizeLabel, ariaLabel, className = '', focusOnOpen = false, expandRequest, disclosure: external }: DockedSummaryProps) {
   const own = useSummaryDisclosure(id, defaultCollapsed, !external), state = external ?? own;
   const { collapsed, updatePending: expansionPending, setUpdatePending: setExpansionPending, change, toggle: disclosure } = state;
-  const panel = useRef<HTMLElement>(null), opener = useRef<HTMLElement | null>(null);
+  const panel = useRef<HTMLElement>(null), popoverPanel = useRef<HTMLDivElement>(null), opener = useRef<HTMLElement | null>(null);
   const previousOpen = useRef<boolean | undefined>(undefined), bodyId = useId();
   const appliedExpansion = useRef<number | undefined>(undefined);
+  const externalPresentation = Boolean(external), presentationOpen = open && !(externalPresentation && collapsed);
   useLayoutEffect(() => {
-    const previous = previousOpen.current; previousOpen.current = open;
-    if (!open) {
-      if (previous && panel.current?.contains(document.activeElement) && opener.current?.isConnected) opener.current.focus({ preventScroll: true });
+    const previous = previousOpen.current; previousOpen.current = presentationOpen;
+    const content = externalPresentation ? popoverPanel.current : panel.current;
+    if (!presentationOpen) {
+      if (previous && content?.contains(document.activeElement) && opener.current?.isConnected) opener.current.focus({ preventScroll: true });
       return;
     }
     if (previous === false) {
       opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       if (focusOnOpen) disclosure.current?.focus({ preventScroll: true });
     }
-  }, [open, focusOnOpen]);
+  }, [presentationOpen, focusOnOpen, externalPresentation]);
   useLayoutEffect(() => {
     // Consume each publication once, so hide/reveal cannot undo a later manual collapse.
     if (expandRequest === undefined || !open || appliedExpansion.current === expandRequest) return;
     appliedExpansion.current = expandRequest;
     const dock = panel.current?.closest('.summary-dock');
-    if (!focusOnOpen && collapsed && dock && getComputedStyle(dock).flexDirection === 'row') {
-      // Keep released-rail headers compact until explicit expansion: a body would move the composer.
+    if (!focusOnOpen && collapsed && (externalPresentation || dock && getComputedStyle(dock).flexDirection === 'row')) {
+      // Keep collapsed summaries closed until explicit expansion.
       setExpansionPending(true); return;
     }
     change(false);
-  }, [expandRequest, open, focusOnOpen, collapsed]);
+  }, [expandRequest, open, focusOnOpen, collapsed, externalPresentation]);
+  if (external) {
+    const viewportHeight = typeof window === 'undefined' ? 536 : (window.visualViewport?.height ?? window.innerHeight);
+    return <Popover anchor={disclosure} contentRef={popoverPanel} open={presentationOpen} present width={320}
+      height={Math.max(1, Math.min(520, viewportHeight - 16))} preferredSide="below" align="end"
+      onDismiss={() => change(true)} className={`summary-overview ${className}`} role="region"
+      aria-label={ariaLabel ?? `${title} window`} data-presentation="popover" data-summary-id={id} data-collapsed={collapsed}>
+      <strong className="docked-summary-title">{title}</strong>
+      <div id={bodyId} className="docked-summary-content">{children}</div>
+    </Popover>;
+  }
   return <section ref={panel} className={`docked-summary ${className}`} aria-label={ariaLabel ?? `${title} window`}
-    hidden={!open || Boolean(external && collapsed)} data-collapsed={collapsed} data-summary-id={id} onKeyDown={event => {
+    hidden={!open} data-collapsed={collapsed} data-summary-id={id} onKeyDown={event => {
       if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || collapsed) return;
       event.preventDefault(); event.stopPropagation(); change(true); disclosure.current?.focus({ preventScroll: true });
     }}>
-    <header className="docked-summary-header">{external ? <strong className="docked-summary-title">{title}</strong> : <button ref={disclosure} type="button" className="docked-summary-toggle"
+    <header className="docked-summary-header"><button ref={disclosure} type="button" className="docked-summary-toggle"
       aria-label={collapsed ? collapsedLabel ?? `Expand ${title}` : minimizeLabel ?? `Collapse ${title}`}
       aria-expanded={!collapsed} aria-controls={bodyId} aria-describedby={expansionPending ? `${bodyId}-update` : undefined} onClick={() => change(!collapsed)}>
       <strong>{title}</strong>{collapsed && (expansionPending
         ? <span id={`${bodyId}-update`} className="docked-summary-caption" role="status">Update available</span>
         : summary != null && <span className="docked-summary-caption" aria-hidden="true">{summary}</span>)}
       <ChevronDown size={14} aria-hidden="true" />
-    </button>}</header>
+    </button></header>
     <div id={bodyId} className="docked-summary-content" hidden={collapsed} inert={collapsed || !open} aria-hidden={collapsed || !open}>{children}</div>
   </section>;
 }

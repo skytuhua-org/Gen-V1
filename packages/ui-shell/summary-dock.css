@@ -20,6 +20,8 @@
 .docked-summary:not([data-collapsed=true])>.docked-summary-header:has(>.docked-summary-toggle) { border-bottom:1px solid var(--border); }
 .docked-summary-caption { display:flex; gap:4px; align-items:center; font-size:12px; color:var(--muted); }
 .docked-summary-content { min-width:0; min-height:0; overflow:auto; }
+.ui-popover.summary-overview { height:auto !important; max-height:min(520px,calc(100vh - 80px)); box-sizing:border-box; display:flex; flex-direction:column; min-width:0; overflow:hidden; border:1px solid var(--border); border-radius:12px; background:var(--surface); color:var(--text); box-shadow:0 12px 32px rgb(0 0 0/.45); }
+.ui-popover.summary-overview>.docked-summary-content { flex:1; }
 .summary-usage { margin-top:auto; }
 .summary-usage .floating-usage-details { padding:12px; }
 .summary-usage .usage-context-summary { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; font-size:12px; }
