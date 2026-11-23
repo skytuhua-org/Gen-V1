@@ -53,7 +53,7 @@ export function ThreadHoverCard<Target>({facts, loadFacts, cache: suppliedCache,
     // Pointer hover can open the card while focus stays elsewhere. Let the
     // focused control handle Escape first, and never move its focus.
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229) interaction.dismiss();
+      if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); event.stopPropagation(); interaction.dismiss(); }
     };
     ownerDocument.addEventListener('keydown', escape);
     return () => ownerDocument.removeEventListener('keydown', escape);
