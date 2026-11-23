@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
 	ArrowLeft,
+	Download,
 	ChevronRight,
 	File,
 	Folder,
@@ -312,12 +313,17 @@ export function FilesView({
 								<strong title={displayFilePath(selected.path)}>
 									{displayFilePath(selected.name)}
 								</strong>
-								{(previewActions || download) && (
+								{(previewActions != null || download != null) && (
 									<div className="files-preview-actions">
 										{previewActions}
 										{download && (
-											<a href={download} download={selected.name}>
-												Download
+											<a
+												href={download}
+												download={selected.name}
+												aria-label={`Download ${displayFilePath(selected.name)}`}
+											>
+												<Download size={14} aria-hidden="true" />
+												<span>Download</span>
 											</a>
 										)}
 									</div>

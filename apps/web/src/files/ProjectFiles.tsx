@@ -90,8 +90,11 @@ function ProjectFilesReader({
 		);
 	const file = preview.value;
 	const [note, setNote] = useState<
-		| { kind: "success" | "unavailable" | "check-failed"; link: GitHubFileLink }
-		| { kind: "copy-failed" }
+		| {
+				kind: "success" | "unavailable" | "check-failed" | "copy-failed";
+				link?: GitHubFileLink;
+				leaving?: boolean;
+		  }
 		| null
 	>(null);
 	const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
@@ -104,6 +107,13 @@ function ProjectFilesReader({
 			noteTimer.current = null;
 		}
 	}, [selected?.path, path]);
+	const dismissNote = () => {
+		setNote((current) => (current ? { ...current, leaving: true } : null));
+		noteTimer.current = setTimeout(() => {
+			noteTimer.current = null;
+			setNote(null);
+		}, 140);
+	};
 	const accepted = !!(
 		selected &&
 		file &&
@@ -162,7 +172,7 @@ function ProjectFilesReader({
 		if (noteTimer.current) clearTimeout(noteTimer.current);
 		noteTimer.current = setTimeout(() => {
 			noteTimer.current = null;
-			setNote(null);
+			dismissNote();
 		}, 6000);
 	};
 	const reasonNote = (data: Extract<GitHubFileLink, { state: "unavailable" }>) => {
@@ -315,6 +325,15 @@ function ProjectFilesReader({
 			}
 			previewActions={
 				accepted && !link.hidden ? (
+					<span
+						className={`files-permalink-wrap${
+							checking
+								? " files-permalink-checking"
+								: !ready
+									? " files-permalink-unavailable"
+									: ""
+						}`}
+					>
 					<CopyButton
 						text={ready?.url ?? ""}
 						label="Copy GitHub permalink"
@@ -343,23 +362,24 @@ function ProjectFilesReader({
 							else if (unavailable) setNote({ kind: "unavailable", link: unavailable });
 						}}
 					/>
+					</span>
 				) : null
 			}
 			previewNote={
 				note ? (
 					<p
 						id={noteId}
-						className={`files-permalink-note${note.kind === "check-failed" || note.kind === "copy-failed" ? " files-permalink-danger" : ""}`}
+						className={`files-permalink-note${note.kind === "check-failed" || note.kind === "copy-failed" ? " files-permalink-danger" : ""}${note.leaving ? " files-permalink-leaving" : ""}`}
 						role="status"
 					>
-						{note.kind === "success" && note.link.state === "ready" ? (
+						{note.kind === "success" && note.link?.state === "ready" ? (
 							<>
 								Copied link to <code>{note.link.commit.slice(0, 7)}</code>{" "}
 								on <code>{note.link.upstream}</code> (last fetch). People
 								need access to <code>{note.link.repository}</code> to open
 								it.
 							</>
-						) : note.kind === "unavailable" && note.link.state === "unavailable" ? (
+						) : note.kind === "unavailable" && note.link?.state === "unavailable" ? (
 							reasonNote(note.link)
 						) : note.kind === "check-failed" ? (
 							<>

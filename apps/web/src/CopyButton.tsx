@@ -25,5 +25,5 @@ export function CopyButton({text,label='Copy',icon:Icon=Copy,copiedLabel='Copied
       if(generation.current===current){toast(failureMessage,{tone:'error'});onFailure?.();}
     }
   };
-  return <><button type="button" className="icon-button copy-button" aria-label={label} title={tooltip??(copied?copiedLabel:label)} aria-disabled={disabled||undefined} aria-busy={busy||undefined} aria-describedby={describedBy} onClick={()=>void copy()}>{copied?<Check size={14} aria-hidden="true"/>:<Icon size={14} aria-hidden="true"/>}</button>{(srLabel??copiedLabel)&&<span className="sr-only" role="status">{copied?(srLabel??copiedLabel):''}</span>}</>;
+  return <><button type="button" className="icon-button copy-button" data-copied={copied||undefined} aria-label={label} title={tooltip??(copied?copiedLabel:label)} aria-disabled={disabled||undefined} aria-busy={busy||undefined} aria-describedby={describedBy} onClick={()=>void copy()}>{copied?<Check size={14} aria-hidden="true"/>:<Icon size={14} aria-hidden="true"/>}</button>{(srLabel??copiedLabel)&&<span className="sr-only" role="status">{copied?(srLabel??copiedLabel):''}</span>}</>;
 }
