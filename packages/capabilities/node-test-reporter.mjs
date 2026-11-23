@@ -13,7 +13,7 @@ export default async function* repositoryTestReporter(source) {
   for await (const event of source) {
     if (event.type !== "test:pass" && event.type !== "test:fail") continue;
     const { name, nesting, file, line, column, details } = event.data;
-    const line = {
+    const record = {
       type: event.type === "test:pass" ? "pass" : "fail",
       name: capped(name, 8000),
       nesting,
@@ -27,13 +27,13 @@ export default async function* repositoryTestReporter(source) {
     };
     const error = details?.error?.cause ?? details?.error;
     if (error) {
-      line.error = {
+      record.error = {
         message: capped(error.message ?? error, 8000),
         expected: capped(error.expected, 20000),
         actual: capped(error.actual, 20000),
         stack: capped(error.stack, 16000),
       };
     }
-    yield JSON.stringify(line) + "\n";
+    yield JSON.stringify(record) + "\n";
   }
 }
