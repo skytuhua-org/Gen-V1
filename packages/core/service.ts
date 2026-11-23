@@ -1222,6 +1222,12 @@ export class Service {
       const grant: ResourceGrant = { id: randomUUID(), threadId: thread.id, path, kind: p.kind as ResourceGrant["kind"], label: typeof p.label === "string" ? p.label : basename(path), writable: p.writable === true, createdAt: now(), identity: { dev: String(identity.dev), ino: String(identity.ino) } };
       return this.store.command(command, () => { this.store.put("resource", grant.id, thread.id, grant); return grant; });
     }
+    if (command.type === "resource.revoke") {
+      const resourceId = text(p, "resourceId", 200);
+      const grant = this.store.get<ResourceGrant>("resource", resourceId);
+      if (!grant || grant.threadId !== thread.id) throw new HarnessError("CAPABILITY_DENIED", "Operation resource is not granted");
+      return this.store.command(command, () => { this.store.remove("resource", resourceId); return { removed: resourceId }; });
+    }
     if (command.type === "resource.upload") {
       const name = basename(text(p, "name", 200)).replace(/[^a-zA-Z0-9._ -]/g, "_");
       const base64 = text(p, "base64", 28 * 1024 * 1024);
