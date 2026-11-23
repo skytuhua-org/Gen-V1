@@ -129,6 +129,14 @@ it("reports a shallow-boundary commit's parent as unavailable, not root", async 
   });
 });
 
+it("does not parse parent lines inside a root commit's message", async () => {
+  const { git, context, snapshots } = await plainRepo();
+  git("commit", "--allow-empty", "-m", `Root\n\nparent ${"0".repeat(40)}`);
+  const page = await readHistoryPage(context, snapshots);
+  const detail = await readHistoryCommit(context, snapshots, page.snapshotId!, page.commits[0].oid);
+  expect(detail.basis).toBe("root");
+});
+
 it("reports an unborn HEAD as an empty page", async () => {
   const { context, snapshots } = await plainRepo();
   const page = await readHistoryPage(context, snapshots);

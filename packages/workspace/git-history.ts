@@ -299,7 +299,7 @@ async function assertPinned(context: HistoryContext, entry: HistoryEntry) {
 // The raw commit object keeps the parent a shallow graft hides from rev-list.
 async function parentsOf(context: HistoryContext, oid: string): Promise<{ first: string | null; missing: boolean }> {
   const raw = await run(context, ["cat-file", "-p", oid]);
-  const first = [...raw.matchAll(/^parent ([0-9a-f]{40})$/gm)][0]?.[1] ?? null;
+  const first = [...raw.split("\n\n", 1)[0].matchAll(/^parent ([0-9a-f]{40})$/gm)][0]?.[1] ?? null;
   if (!first || !oidPattern.test(first)) return { first: null, missing: false };
   const type = await run(context, ["cat-file", "-t", first])
     .then((value) => value.trim())
