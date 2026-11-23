@@ -51,9 +51,21 @@ export class AttentionRepository {
   // Completed observations remain useful history while a later run is active.
   const projectedIds=new Set(projected.map(value=>value.item.id));
   for(const saved of existing.values())if((saved.item.kind==='thread-completed'||saved.item.kind==='thread-failed')&&!projectedIds.has(saved.item.id)){const owner=threads.get(saved.item.threadId);if(owner&&owner.projectId===saved.item.projectId)projected.push(saved);}
+  // A muted thread's pending completions are consumed silently: history stays, delivery never sees them.
+  const mutedOwners=new Set(snapshot.threads.filter(thread=>thread.presentation?.completionAlertsMuted===true).map(thread=>thread.id));
+  if(mutedOwners.size)for(const value of projected)if(value.item.kind==='thread-completed'&&value.pending&&mutedOwners.has(value.item.threadId)){value.pending=false;value.claimedKey=value.item.notificationKey;}
   const changed=projected.filter(value=>JSON.stringify(existing.get(value.item.id))!==JSON.stringify(value));
-  if(!seeded||changed.length)this.store.internal('attention.projected',null,()=>{for(const value of changed)this.store.put('attentionItem',value.item.id,value.item.threadId,value);if(!seeded)this.store.put('attentionMeta','initialized',null,true);});
+  const persist=()=>{for(const value of changed)this.store.put('attentionItem',value.item.id,value.item.threadId,value);if(!seeded)this.store.put('attentionMeta','initialized',null,true);};
+  if(!seeded||changed.length){if(this.store.inTransaction)persist();else this.store.internal('attention.projected',null,persist);}
   return projected.map(value=>value.item).toSorted((a,b)=>b.createdAt.localeCompare(a.createdAt)||a.id.localeCompare(b.id)).slice(0,1000);
+ }
+ /** Synchronize, then durably consume every persisted pending completion of one thread before its mute state changes. Called inside a command transaction. */
+ prepareCompletionMuteChange(threadId:string):void{
+  this.sync();
+  const pending=this.store.all<StoredAttention>('attentionItem').filter(value=>value.item.threadId===threadId&&value.item.kind==='thread-completed'&&value.pending);
+  if(!pending.length)return;
+  const write=()=>{for(const saved of pending)this.store.put('attentionItem',saved.item.id,threadId,{...saved,pending:false,claimedKey:saved.item.notificationKey});};
+  if(this.store.inTransaction)write();else this.store.internal('attention.mute.consumed',threadId,write);
  }
  read():AttentionEnvelope{const items=this.sync();return{items,unread:items.filter(item=>!item.read).length,sequence:this.store.sequence};}
  watch():()=>void{return this.store.subscribe(event=>{if(event.type==='runtime.settled'||event.type==='run.failed')this.sync(event.type==='runtime.settled'?event:undefined);});}
@@ -62,9 +74,12 @@ export class AttentionRepository {
  /** Consume a new delivery before presentation: crash/reconnect cannot replay sound. The durable Inbox remains. */
  claimDelivery():AttentionDelivery{
   const items=this.sync(),now=this.now().getTime(),fresh:AttentionItem[]=[],consumed:{item:AttentionItem;saved:StoredAttention}[]=[];
+  const muted=new Set(this.store.all<Thread>('thread').filter(thread=>thread.presentation?.completionAlertsMuted===true).map(thread=>thread.id));
   for(const item of items){
    const saved=this.store.get<StoredAttention>('attentionItem',item.id);
    if(!saved?.pending||saved.claimedKey===item.notificationKey||item.read||item.popupDismissed||item.state==='resolved')continue;
+   // Defense in depth: a muted completion is consumed but never returned, regardless of batch size.
+   if(item.kind==='thread-completed'&&muted.has(item.threadId)){consumed.push({item,saved});continue;}
    const isFresh=now-Date.parse(saved.queuedAt??item.createdAt)<=5*60_000;
    if(isFresh){
     // Overflow is still eligible for the next poll, not part of this claim.
@@ -73,7 +88,7 @@ export class AttentionRepository {
    }
    consumed.push({item,saved});
   }
-  if(consumed.length)this.store.internal('attention.delivery.claimed',null,()=>{for(const {item,saved} of consumed)this.store.put('attentionItem',item.id,item.threadId,{...saved,pending:false,claimedKey:item.notificationKey});});
+  if(consumed.length){const write=()=>{for(const {item,saved} of consumed)this.store.put('attentionItem',item.id,item.threadId,{...saved,pending:false,claimedKey:item.notificationKey});};if(this.store.inTransaction)write();else this.store.internal('attention.delivery.claimed',null,write);}
   const preferences=getPreferences(this.store.get<Snapshot["settings"]>("settings","global")??{});
   return{items:fresh,preferences:{threadNotifications:preferences.threadNotifications,inAppNotifications:preferences.inAppNotifications,volume:preferences.notificationVolume,preview:preferences.notificationPreview,quietHours:preferences.notificationQuietHours}};
  }
