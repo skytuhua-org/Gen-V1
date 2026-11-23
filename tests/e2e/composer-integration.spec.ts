@@ -75,3 +75,16 @@ test('the composer does not steal focus on a conversation with history',async({p
  await page.waitForTimeout(300);
  expect(await page.evaluate(()=>document.activeElement instanceof HTMLElement?document.activeElement.getAttribute('aria-label'):null)).not.toBe('Message');
 });
+
+test('an open dialog at mount suppresses composer autofocus',async({page})=>{
+ const empty=taskFixture(spec);empty.messages=[];
+ await serveTaskFixture(page,empty);
+ await page.route(url=>url.pathname==='/'||url.pathname==='/index.html',async route=>{
+  const response=await route.fetch();const html=await response.text();
+  await route.fulfill({response,body:html.replace('</body>','<div role="dialog" aria-modal="true" id="fixture-modal"></div></body>')});
+ });
+ await page.goto('/');
+ const textarea=page.getByRole('textbox',{name:'Message',exact:true});await textarea.waitFor();
+ await expect(textarea).toBeEnabled();
+ expect(await page.evaluate(()=>document.activeElement?.tagName)).not.toBe('TEXTAREA');
+});
