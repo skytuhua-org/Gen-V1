@@ -428,6 +428,19 @@ describe('aggregate and manifest',()=>{
     expect(log).not.toContain('SYNTHETIC_UNTERMINATED_OTHER_PIPE');
   });
 
+  it('discards a split other-pipe key fragment without blocking the owner or leaking its later tail',async()=>{
+    const directory=temporaryDirectory();
+    const script=String.raw`process.stdout.write("-----BEGIN PRIVATE KEY-----\n");setTimeout(()=>process.stderr.write("SYNTHETIC_KEY_FRAGMENT_6831"),40);setTimeout(()=>process.stdout.write("-----END PRIVATE KEY-----\nafter\n"),80);setTimeout(()=>process.stderr.write("_TAIL_6831\nordinary-stderr\n"),120);`;
+    const result=await runCheck(specFor(directory,{args:['-e',script]}));
+    expect(result.status).toBe('PASS');
+    const log=readFileSync(result.artifact,'utf8');
+    expect(log).toContain('[REDACTED PRIVATE KEY]');
+    expect(log).toContain('after\n');
+    expect(log).toContain('ordinary-stderr\n');
+    expect(log).not.toContain('SYNTHETIC_KEY_FRAGMENT_6831');
+    expect(log).not.toContain('_TAIL_6831');
+  });
+
   it('redacts an ANSI-colored credential label assembled from child chunks',async()=>{
     const directory=temporaryDirectory();
     const script=String.raw`process.stdout.write("pa\x1b[31mss");setTimeout(()=>process.stdout.write("\x1b[0mword: ANSI_PASSWORD_CANARY_7341\n"),50);`;

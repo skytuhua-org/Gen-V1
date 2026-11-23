@@ -112,6 +112,15 @@ function redactedLogSink(stream:ReturnType<typeof createWriteStream>){
   };
   const writeChunk=(source:Source,chunk:string):void=>{
       const other:Source=source==='stdout'?'stderr':'stdout';
+      if(privateKeyEnd[other]!==null){
+        // Bytes received during an opposite-pipe PEM are untrusted key body.
+        // Discard them instead of buffering a tentative line that could stall
+        // the owning pipe's END marker and hide subsequent ordinary output.
+        carry[source]='';
+        tentativeSensitiveLine[source]=false;
+        taintedCarry[source]=true;
+        return;
+      }
       if(!unsafeControlOutput&&tentativeSensitiveLine[other]){
         const size=Buffer.byteLength(chunk,'utf8');
         if(pendingOtherPipeBytes+size>MAX_TENTATIVE_PIPE_BYTES){
