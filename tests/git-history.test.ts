@@ -124,6 +124,7 @@ it("reports a shallow-boundary commit's parent as unavailable, not root", async 
   };
   const page = await readHistoryPage(shallowContext, snapshots);
   expect(page.commits).toHaveLength(1);
+  expect(page.commits[0].filesChanged).toBeNull();
   await expect(readHistoryCommit(shallowContext, snapshots, page.snapshotId!, page.commits[0].oid)).rejects.toMatchObject({
     code: "HISTORY_GRAFTED",
   });

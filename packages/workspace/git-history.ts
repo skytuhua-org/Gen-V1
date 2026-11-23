@@ -223,13 +223,20 @@ export async function readHistoryPage(
   const commits: GitHistoryCommit[] = [];
   for (const [oid, parents, author, authoredAt, subject] of visible) {
     if (!oid || !parseOid(oid)) throw new HarnessError("UNSUPPORTED", "History enumeration returned malformed data.");
-    const parentOid = parseOid((parents ?? "").split(" ").filter(Boolean)[0] ?? "");
+    let parentOid = parseOid((parents ?? "").split(" ").filter(Boolean)[0] ?? "");
+    // %P hides a shallow graft's parent; only a genuine root counts as root.
+    let grafted = false;
+    if (!parentOid) {
+      const detail = await parentsOf(context, oid);
+      parentOid = detail.first;
+      grafted = detail.missing;
+    }
     commits.push({
       oid,
       subject: (subject ?? "").slice(0, 1024),
       author: (author ?? "").slice(0, 512),
       authoredAt: /^\d{4}-\d{2}-\d{2}T/.test(authoredAt ?? "") ? authoredAt! : "",
-      filesChanged: await fileCount(context, oid, parentOid),
+      filesChanged: grafted ? null : await fileCount(context, oid, parentOid),
       pushState: entry.unpushed === null ? "unknown" : entry.unpushed.has(oid) ? "unpushed" : "notMarked",
     });
     entry.served.add(oid);
