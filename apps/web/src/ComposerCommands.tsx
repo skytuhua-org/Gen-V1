@@ -39,10 +39,12 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   // The dismissal keys on the token's start; read the live DOM here because a
   // caret update can render before `draft` catches up, and the transient
   // null-token signature would otherwise clear the dismissal mid-keystroke.
+  // A non-collapsed selection also yields a null token, so fall back to the
+  // selection start: selecting inside the dismissed token must not clear it.
   useEffect(() => {
     setDismissed(previous => {
       if (!previous) return previous;
-      const element = input.current, live = element ? commandToken(element.value, element.selectionStart, element.selectionEnd) : null;
+      const element = input.current, live = element ? (commandToken(element.value, element.selectionStart, element.selectionEnd) ?? commandToken(element.value, element.selectionStart)) : null;
       return previous !== (live ? `${threadId ?? ''}:${projectId ?? ''}:${live.start}` : '') ? '' : previous;
     });
   }, [signature, input, threadId, projectId]);
