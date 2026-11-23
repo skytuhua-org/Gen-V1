@@ -17,3 +17,6 @@
 .memory-recovery { margin: 8px 0 0; font-size: 12px; line-height: 1.5; }
 .memory-recovery p { margin: 0 0 8px; }
 .memory-resume { margin-top: 8px; }
+.memory-count { justify-self: end; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.memory-count.is-full { color: var(--danger); }
+.memory-limit-note { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
