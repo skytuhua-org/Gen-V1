@@ -144,4 +144,19 @@ describe('slash-command palette', () => {
       await palette(page).waitFor();
     } finally { await page.close(); }
   });
+
+  it('reopens when the token is deleted and retyped after an outside dismiss without blur', async () => {
+    const page = await openPage();
+    try {
+      const area = page.locator('#ta');
+      await area.click();
+      await area.pressSequentially('hello /mod');
+      await palette(page).waitFor();
+      await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true})));
+      await palette(page).waitFor({state:'detached'});
+      for (let i = 0; i < 4; i++) await area.press('Backspace');
+      await area.pressSequentially('/');
+      await palette(page).waitFor();
+    } finally { await page.close(); }
+  });
 });
