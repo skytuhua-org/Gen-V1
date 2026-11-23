@@ -5,6 +5,7 @@ import { Select } from '../../../packages/ui-shell/Select';
 import type { Thread } from '../../../packages/contracts';
 import { usagePercent } from './usage-presentation';
 import { applyAppearance } from './useAppearance';
+import { Modal } from '../../../packages/ui-shell/Modal';
 import { projectColor, projectColorKey } from './project-colors';
 import { appearanceKeys, appearancePatch, rebaseAppearanceDraft, editedAppearancePatch } from './appearance-draft';
 import './appearance-settings.css';
@@ -42,7 +43,8 @@ export const APPEARANCE_FIELDS: readonly { id: string; label: string; terms: str
   { id: 'appearance-motion', label: 'Motion', terms: 'system reduced off animation' },
   { id: 'appearance-motionSpeed', label: 'Motion speed', terms: '0.75 1 1.25 duration' },
 ];
-export function AppearanceSettings({ preferences, theme, threads = [], projects: projectMetadata, busy, save }: { preferences: UiPreferences; theme: Theme; threads?: Pick<Thread, 'projectId' | 'projectName'>[]; projects?: {id: string; name: string}[]; busy: boolean; save: (patch: Partial<UiPreferences>, theme?: Theme) => Promise<boolean> }) {
+export interface AppearanceLeaveGuard { dirty: () => boolean; apply: () => Promise<boolean>; discard: () => void; }
+export function AppearanceSettings({ preferences, theme, threads = [], projects: projectMetadata, busy, save, registerLeaveGuard }: { preferences: UiPreferences; theme: Theme; threads?: Pick<Thread, 'projectId' | 'projectName'>[]; projects?: {id: string; name: string}[]; busy: boolean; save: (patch: Partial<UiPreferences>, theme?: Theme) => Promise<boolean>; registerLeaveGuard?: (guard: AppearanceLeaveGuard | null) => void }) {
   const [draft, setDraft] = useState(preferences), [draftTheme, setDraftTheme] = useState(theme), [preview, setPreview] = useState(false), [error, setError] = useState('');
   const [projectError, setProjectError] = useState('');
   const [numberDrafts,setNumberDrafts]=useState<Partial<Record<'uiFontSize'|'chatFontSize'|'codeFontSize',string>>>({});
@@ -55,6 +57,18 @@ export function AppearanceSettings({ preferences, theme, threads = [], projects:
   const accentError = draft.customAccent !== null && (!projectColorSchema.safeParse(draft.customAccent).success ? 'Use a six-digit hex color.' : Math.min(accentContrast(draft.customAccent, '#0F0F0F'), accentContrast(draft.customAccent, '#FFFFFF')) < 3 ? 'Choose a color with at least 3:1 contrast on both light and dark surfaces.' : '');
   const change = (patch: Partial<UiPreferences>) => { for (const key of Object.keys(patch)) edited.current.add(key); const next = { ...draft, ...patch }; setDraft(next); setError(''); if (preview && (!next.customAccent || projectColorSchema.safeParse(next.customAccent).success && Math.min(accentContrast(next.customAccent, '#0F0F0F'), accentContrast(next.customAccent, '#FFFFFF')) >= 3)) applyAppearance(next); };
   const restore = () => { edited.current.clear(); setDraft(preferences); setDraftTheme(theme); setPreview(false); setError(''); setProjectError(''); applyAppearance(preferences); applyTheme(theme); };
+  const applyChanges = async () => {
+    const patch = editedAppearancePatch(draft, edited.current), themeArg = edited.current.has('theme') ? draftTheme : undefined;
+    const ok = await save(patch, themeArg);
+    if (ok) { edited.current.clear(); setPreview(false); } else setError('Appearance could not be saved. Your changes are ready to retry.');
+    return ok;
+  };
+  const actionsRef = useRef({ dirty, applyChanges, restore }); actionsRef.current = { dirty, applyChanges, restore };
+  useEffect(() => {
+    if (!registerLeaveGuard) return;
+    registerLeaveGuard({ dirty: () => actionsRef.current.dirty, apply: () => actionsRef.current.applyChanges(), discard: () => actionsRef.current.restore() });
+    return () => registerLeaveGuard(null);
+  }, [registerLeaveGuard]);
   const choices = (key: keyof UiPreferences, label: string, options: readonly (readonly [string, string])[]) => <Select aria-label={label} value={String(draft[key])} disabled={busy} options={options.map(([value, text]) => ({ value, label: text }))} onValueChange={value => change({ [key]: typeof draft[key] === 'number' ? Number(value) : value, ...(key === 'uiFontSize' ? { fontSize: Number(value) } : {}), ...(key === 'motion' ? { panelAnimations: value !== 'off' } : {}) })}/>;
   const size = (key: 'uiFontSize' | 'chatFontSize' | 'codeFontSize', label: string, min: number, max: number) => <input type="number" aria-label={label} min={min} max={max} step={1} disabled={busy} value={numberDrafts[key]??draft[key]} onChange={event => { const text=event.target.value,value=event.target.valueAsNumber;setNumberDrafts(current=>({...current,[key]:text})); if (Number.isInteger(value) && value >= min && value <= max) change({ [key]: value, ...(key === 'uiFontSize' ? { fontSize: value } : {}) }); }} onBlur={()=>setNumberDrafts(current=>{const next={...current};delete next[key];return next;})}/>;
   const fonts = [['Inter', 'Inter'], ['system', 'System'], ['Arial', 'Arial'], ['Georgia', 'Georgia']] as const;
@@ -82,7 +96,7 @@ export function AppearanceSettings({ preferences, theme, threads = [], projects:
       {APPEARANCE_FIELDS.map(field => <AppearanceRow key={field.id} id={field.id} label={field.label} description={field.description}>{controls[field.id]}</AppearanceRow>)}
       {accentError && <p id="appearance-accent-error" role="status" className="error-text appearance-error">{accentError}</p>}
       {error && <p role="status" className="error-text appearance-error">{error}</p>}
-      <div className="appearance-actions"><button type="button" className="quiet" onClick={() => { appearanceKeys.forEach(key => edited.current.add(key)); edited.current.add('theme'); setDraft({ ...preferences, ...appearancePatch(DEFAULT_PREFERENCES) }); setDraftTheme('dark'); setPreview(false); applyAppearance(preferences); applyTheme(theme); }}><RotateCcw size={13}/>Reset appearance</button><span/>{dirty && <span className="appearance-dirty" role="status">Unsaved changes — Apply to keep them</span>}{preview && <span role="status">Preview</span>}<button type="button" className="secondary" disabled={!dirty || Boolean(accentError)} onClick={() => { applyAppearance(draft); applyTheme(draftTheme); setPreview(true); }}>Preview</button><button type="button" className="quiet" disabled={!dirty && !preview} onClick={restore}>Cancel</button><button type="button" className="primary" disabled={!dirty || Boolean(accentError)} onClick={() => { const patch = editedAppearancePatch(draft, edited.current); const themeArg = edited.current.has('theme') ? draftTheme : undefined; void save(patch, themeArg).then(ok => { if (ok) { edited.current.clear(); setPreview(false); } else setError('Appearance could not be saved. Your changes are ready to retry.'); }); }}>Apply</button></div>
+      <div className="appearance-actions"><button type="button" className="quiet" onClick={() => { appearanceKeys.forEach(key => edited.current.add(key)); edited.current.add('theme'); setDraft({ ...preferences, ...appearancePatch(DEFAULT_PREFERENCES) }); setDraftTheme('dark'); setPreview(false); applyAppearance(preferences); applyTheme(theme); }}><RotateCcw size={13}/>Reset appearance</button><span/>{dirty && <span className="appearance-dirty" role="status">Unsaved changes — Apply to keep them</span>}{preview && <span role="status">Preview</span>}<button type="button" className="secondary" disabled={!dirty || Boolean(accentError)} onClick={() => { applyAppearance(draft); applyTheme(draftTheme); setPreview(true); }}>Preview</button><button type="button" className="quiet" disabled={!dirty && !preview} onClick={restore}>Cancel</button><button type="button" className="primary" disabled={!dirty || Boolean(accentError)} onClick={() => void applyChanges()}>Apply</button></div>
     </fieldset>
     <section className="settings-card" data-setting-id="harness-project-colors" aria-labelledby="project-colors-heading"><h2 id="project-colors-heading">Project colors</h2>{projectError && <p role="status" className="error-text appearance-error">{projectError}</p>}{projects.length > 0 ? projects.map(project => {
       const key = projectColorKey({ kind: 'local' }, project.id), selected = projectColor({ kind: 'local' }, project.id, preferences.projectColors);
@@ -101,4 +115,17 @@ export function NotificationSettings({ preferences, busy, update, desktop = true
     <AppearanceRow label="Quiet hours" description="Keep items in Inbox without popups or sound."><button type="button" role="switch" className="settings-switch" aria-label="Quiet hours" aria-checked={hours.enabled} disabled={busy} onClick={() => void update({ notificationQuietHours: { ...hours, enabled: !hours.enabled } })}><span/></button></AppearanceRow>
     {hours.enabled && <div className="settings-card-row quiet-hours-times"><label>From<input type="time" aria-label="Quiet hours start" disabled={busy} value={hours.start} onChange={event => { if (event.target.value) void update({ notificationQuietHours: { ...hours, start: event.target.value } }); }}/></label><label>Until<input type="time" aria-label="Quiet hours end" disabled={busy} value={hours.end} onChange={event => { if (event.target.value) void update({ notificationQuietHours: { ...hours, end: event.target.value } }); }}/></label><small>Device time</small></div>}
   </section>;
+}
+
+export function DiscardAppearanceDialog({ open, applying, onKeep, onDiscard, onApply }: { open: boolean; applying: boolean; onKeep: () => void; onDiscard: () => void; onApply: () => void }) {
+  const keep = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (open) keep.current?.focus(); }, [open]);
+  return <Modal open={open} title="Discard appearance changes?" onClose={onKeep} className="dialog discard-appearance-dialog">
+    <p className="discard-appearance-copy">You have unsaved appearance changes. Apply them before leaving, or discard them.</p>
+    <div className="discard-appearance-actions">
+      <button ref={keep} type="button" className="secondary" disabled={applying} onClick={onKeep}>Keep editing</button>
+      <button type="button" className="secondary discard-appearance-danger" disabled={applying} onClick={onDiscard}>Discard changes</button>
+      <button type="button" className="primary" aria-busy={applying} disabled={applying} onClick={onApply}>{applying ? 'Applying…' : 'Apply changes'}</button>
+    </div>
+  </Modal>;
 }

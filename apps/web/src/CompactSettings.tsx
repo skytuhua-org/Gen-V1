@@ -10,7 +10,7 @@ import {LoadingState} from './LoadingState';
 import {SettingsSkeleton} from './ViewSkeletons';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
 
-export type CompactSettingsProps = Pick<SettingsActions, 'close' | 'addResource' | 'initialSection' | 'openBrowser' | 'environmentSettings'> & {
+export type CompactSettingsProps = Pick<SettingsActions, 'close' | 'addResource' | 'initialSection' | 'openBrowser' | 'environmentSettings' | 'leaveGuard'> & {
   /** Host identity. Changing it disposes this Settings view and its metadata scope. */
   scopeKey: string;
 };

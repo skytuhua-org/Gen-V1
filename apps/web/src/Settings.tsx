@@ -21,7 +21,7 @@ import { SUBSCRIPTION_CONNECTIONS } from '../../../packages/contracts/connection
 import { SkillLibrary } from './SkillLibrary';
 import { IntegrationSettings } from './IntegrationSettings';
 import { UpdateControl } from './UpdateControl';
-import { AppearanceSettings, NotificationSettings, APPEARANCE_FIELDS } from './AppearanceSettings';
+import { AppearanceSettings, NotificationSettings, APPEARANCE_FIELDS, DiscardAppearanceDialog, type AppearanceLeaveGuard } from './AppearanceSettings';
 import { PairedDevicesPanel } from './PairedDevicesPanel';
 import { version } from '../../../package.json';
 import {settingsDataFromSnapshot, type SettingsData} from './settings-data';
@@ -88,21 +88,26 @@ function PreferenceControl({ item, preferences, update, busy }: { item: Settings
 function ShortcutInput({ action, label, value, save, busy }: { action: string; label: string; value: string; save: (key: string, value: string) => void; busy: boolean }) {
   return <input aria-label={`${label} shortcut`} title="Focus and press a shortcut" readOnly value={value} disabled={busy} onKeyDown={event => { if (event.nativeEvent.isComposing || event.keyCode === 229 || event.key === 'Tab') return; event.preventDefault(); event.stopPropagation(); if (['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return; const key = event.key === ',' ? 'Comma' : event.key.length === 1 ? event.key.toUpperCase() : event.key; save(action, [event.ctrlKey ? 'Ctrl' : '', event.metaKey ? 'Meta' : '', event.altKey ? 'Alt' : '', event.shiftKey ? 'Shift' : '', key].filter(Boolean).join('+')); }}/>;
 }
+export interface LeaveGuardChannel { current: {dirty: () => boolean; pending: () => boolean; confirm: (proceed: () => void) => void} | null; }
 export interface SettingsActions {
   environmentSettings?: ReactNode; openBrowser?: (url: string) => Promise<void>;
   modelError: string; refresh: () => Promise<void>; loadModels: (refresh?: boolean) => Promise<void>;
-  close: () => void; addResource: () => void; initialSection?: string;
+  close: () => void; addResource: () => void; initialSection?: string; leaveGuard?: LeaveGuardChannel;
 }
 export function Settings({snapshot, ...actions}: SettingsActions & {snapshot: Snapshot}) {
   return <SettingsView {...actions} data={settingsDataFromSnapshot(snapshot)} draftReferences={() => Promise.resolve(snapshotDraftReferences(snapshot))}/>;
 }
-export function SettingsView({data, draftReferences, modelError, refresh, loadModels, close, addResource, initialSection = 'general', environmentSettings, openBrowser}: SettingsActions & {data: SettingsData; draftReferences: DraftReferenceSource}) {
+export function SettingsView({data, draftReferences, modelError, refresh, loadModels, close, addResource, initialSection = 'general', environmentSettings, openBrowser, leaveGuard}: SettingsActions & {data: SettingsData; draftReferences: DraftReferenceSource}) {
   const desktop = useDesktop();
   useLayoutEffect(() => registerEditorHandoff('settings-writes', settleSettingsOperations), []);
   const navigation = useRef<HTMLElement>(null), content = useRef<HTMLElement>(null);
   const target = legacySections[initialSection] ?? initialSection;
   const [section, setSection] = useState(SETTINGS_SECTIONS.some(([id]) => id === target) ? target : 'general');
   const [query, setQuery] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [saved, setSaved] = useState(false);
+  const appearanceGuard = useRef<AppearanceLeaveGuard | null>(null);
+  const [leaveRequest, setLeaveRequest] = useState<null | {proceed: () => void}>(null), [applying, setApplying] = useState(false);
+  const leaveRequestRef = useRef(leaveRequest); leaveRequestRef.current = leaveRequest;
+  const requestLeave = (proceed: () => void) => { if (appearanceGuard.current?.dirty()) setLeaveRequest({ proceed }); else proceed(); };
   const [pendingTarget, setPendingTarget] = useState<string | null>(null);
   const [connectionProvider,setConnectionProvider]=useState('openai');
   const [connectionsOpened,setConnectionsOpened]=useState(target==='providers');
@@ -124,6 +129,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const preferences = getPreferences(data.settings);
   const [browserUrl, setBrowserUrl] = useState(preferences.browserStartUrl);
   useLayoutEffect(() => { navigation.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView({ block: 'nearest' }); content.current?.scrollTo(0, 0); }, [section]);
+  useLayoutEffect(() => { if (leaveGuard) leaveGuard.current = { dirty: () => appearanceGuard.current?.dirty() ?? false, pending: () => leaveRequestRef.current !== null, confirm: (proceed) => setLeaveRequest({ proceed }) }; return () => { if (leaveGuard) leaveGuard.current = null; }; }, [leaveGuard]);
   // A selected search result scrolls to its real target and focuses its control (T06).
   useLayoutEffect(() => {
     if (!pendingTarget) return;
@@ -156,7 +162,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const HeadingIcon = searching ? Search : SECTION_ICONS[section] ?? Settings2;
   const showAppearance = !searching && section === 'appearance';
   const customRows = new Set(['harness-personalization', 'chat-width', 'word-wrap', 'harness-project-colors', 'harness-notification-controls', 'harness-accounts', 'harness-skills', 'harness-integrations', 'harness-keyboard-reference', 'harness-paired-devices', 'browser-start-page', 'app-version', ...APPEARANCE_FIELDS.map(field => field.id), ...SUBSCRIPTION_CONNECTIONS.map(connection => `provider-${connection.id}`)]);
-  const chooseSection = (id: string) => { if(id==='providers')setConnectionsOpened(true);setQuery(''); setSection(id); };
+  const chooseSection = (id: string) => { requestLeave(() => { if(id==='providers')setConnectionsOpened(true);setQuery(''); setSection(id); }); };
   const revealTarget = (item: SupportedSettingRow) => { if(item.targetId.startsWith('provider-'))setConnectionProvider(item.targetId.slice('provider-'.length));chooseSection(item.section); setPendingTarget(item.targetId); };
   const details = (item: SettingsInventoryRow): { description: string; control: ReactNode } => {
     if (item.id === 'thread-notifications') return { description: desktop ? preferenceRows[item.id]!.description : `${preferenceRows[item.id]!.description} System popups and sound are unavailable in this browser build; in-app notices stay active.`, control: <PreferenceControl item={item} preferences={preferences} update={update} busy={busy}/> };
@@ -196,7 +202,8 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
         </div>
         {rows.length === 0 && <p className="settings-empty">No matching settings.</p>}
       </> : <>
-      {showAppearance && <div data-setting-id="harness-personalization"><AppearanceSettings preferences={preferences} theme={data.settings.theme} projects={data.projects} busy={busy} save={(patch, theme) => persist({ preferences: patch, ...(theme ? { theme } : {}) })}/></div>}
+      {showAppearance && <div data-setting-id="harness-personalization"><AppearanceSettings preferences={preferences} theme={data.settings.theme} projects={data.projects} busy={busy} save={(patch, theme) => persist({ preferences: patch, ...(theme ? { theme } : {}) })} registerLeaveGuard={guard => { appearanceGuard.current = guard; }}/></div>}
+      <DiscardAppearanceDialog open={!!leaveRequest} applying={applying} onKeep={() => setLeaveRequest(null)} onDiscard={() => { appearanceGuard.current?.discard(); const proceed = leaveRequest?.proceed; setLeaveRequest(null); proceed?.(); }} onApply={() => { const proceed = leaveRequest?.proceed; setApplying(true); void appearanceGuard.current?.apply().then(ok => { setApplying(false); if (ok) { setLeaveRequest(null); proceed?.(); } }).catch(() => setApplying(false)); }}/>
       {rows.filter(item => !customRows.has(item.id)).map(item => { const { description, control } = details(item); return <section key={item.id} className="settings-row" data-setting-id={item.id==='harness-runtime'?'harness-runtime-summary':item.id}><div className="settings-row-copy"><h2>{item.title}</h2>{description&&<p>{description}</p>}</div><div className="settings-row-control">{control}</div></section>; })}
       {matches('harness-keyboard-reference') && <div data-setting-id="harness-keyboard-reference"><KeyboardReference keybindings={preferences.keybindings}/></div>}
       {matches('harness-notification-controls') && <div data-setting-id="harness-notification-controls"><NotificationSettings preferences={preferences} busy={busy} update={update} desktop={Boolean(desktop)}/></div>}
