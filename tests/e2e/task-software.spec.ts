@@ -121,10 +121,10 @@ test('a four-stage linear rail responds to its content width',async({page})=>{
   expect(await rail.getByRole('tab').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')))).toEqual(['Lint','Types','Tests','Build']);
   await page.evaluate(()=>{document.querySelector<HTMLElement>('.software-stage-graph')!.style.width='615px';});
   await expect(rail).toHaveAttribute('aria-orientation','vertical');
-  expect(new Set(await rail.getByRole('tab').evaluateAll(nodes=>nodes.map(node=>Math.round(node.getBoundingClientRect().top)))).size).toBe(4);
+  await expect.poll(async()=>new Set(await rail.getByRole('tab').evaluateAll(nodes=>nodes.map(node=>Math.round(node.getBoundingClientRect().top)))).size).toBe(4);
   await page.evaluate(()=>{document.querySelector<HTMLElement>('.software-stage-graph')!.style.width='616px';});
   await expect(rail).toHaveAttribute('aria-orientation','horizontal');
-  expect(new Set(await rail.getByRole('tab').evaluateAll(nodes=>nodes.map(node=>Math.round(node.getBoundingClientRect().top)))).size).toBe(1);
+  await expect.poll(async()=>new Set(await rail.getByRole('tab').evaluateAll(nodes=>nodes.map(node=>Math.round(node.getBoundingClientRect().top)))).size).toBe(1);
   const edge=await page.evaluate(()=>{
     const graph=document.querySelector('.software-stage-graph')!,rect=graph.getBoundingClientRect();
     const button=document.querySelector('[data-stage-id="c"]')!.getBoundingClientRect();
