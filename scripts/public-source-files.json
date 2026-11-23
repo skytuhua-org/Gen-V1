@@ -3550,6 +3550,8 @@
     "tests/workspace-native-layout.test.ts",
     "tests/workspace-native-panels.test.ts",
     "tests/workspace-native-transaction.test.ts",
+    "tests/workspace-tabstrip-surface-stub.tsx",
+    "tests/workspace-tabstrip.test.ts",
     "third-party/git-tools/manifest.json",
     "third-party/hermes-agent/LICENSE",
     "third-party/hermes-agent/README.md",
