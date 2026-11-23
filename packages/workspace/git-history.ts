@@ -361,16 +361,64 @@ const patch = (
 ): GitHistoryPatch => ({ comparisonId, file, state, text, ...(reason ? { reason } : {}) });
 // Keep only the file sections matching the served paths: a literal pathspec still
 // matches descendants when a file was replaced by a same-named directory.
+function gitUnquote(value: string): string {
+  if (!value.startsWith('"') || !value.endsWith('"')) return value;
+  const body = value.slice(1, -1),
+    bytes: number[] = [],
+    escapes: Record<string, number> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '"': 34, "\\": 92 };
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== "\\") {
+      bytes.push(body.charCodeAt(i));
+      continue;
+    }
+    const next = body[++i];
+    if (next >= "0" && next <= "7") {
+      bytes.push(parseInt(body.slice(i, i + 3), 8));
+      i += 2;
+    } else bytes.push(escapes[next] ?? next.charCodeAt(0));
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+// `diff --git` headers quote each `a/…`/`b/…` side independently when it needs it.
+function gitCQuote(value: string): string {
+  return (
+    '"' +
+    Array.from(Buffer.from(value, "utf8"), (byte) =>
+      byte === 34 ? '\\"' : byte === 92 ? "\\\\" : byte < 32 || byte > 126 ? "\\" + byte.toString(8).padStart(3, "0") : String.fromCharCode(byte),
+    ).join("") +
+    '"'
+  );
+}
+// `--- `/`+++ ` lines carry the path raw, a trailing TAB when it contains spaces,
+// or C-style quoting under core.quotepath.
+function headerPath(line: string | undefined): string | undefined {
+  if (line === undefined) return undefined;
+  let value = line.slice(4);
+  if (value.endsWith("\t")) value = value.slice(0, -1);
+  value = gitUnquote(value);
+  return value.startsWith("/") ? value : value.replace(/^[ab]\//, "");
+}
 function filterPatch(text: string, wanted: Set<string>): string {
   return text
     .split(/(?=^diff --git )/m)
     .filter((section) => {
       const lines = section.split("\n").slice(0, 20);
-      const from = lines.find((line) => line.startsWith("--- "))?.slice(4).replace(/^a\//, "");
-      const to = lines.find((line) => line.startsWith("+++ "))?.slice(4).replace(/^b\//, "");
+      const from = headerPath(lines.find((line) => line.startsWith("--- ")));
+      const to = headerPath(lines.find((line) => line.startsWith("+++ ")));
       if (from === undefined && to === undefined) {
         const head = lines[0] ?? "";
-        for (const a of wanted) for (const b of wanted) if (head === `diff --git a/${a} b/${b}`) return true;
+        for (const a of wanted)
+          for (const b of wanted) {
+            const left = `a/${a}`,
+              right = `b/${b}`;
+            if (
+              head === `diff --git ${left} ${right}` ||
+              head === `diff --git ${gitCQuote(left)} ${gitCQuote(right)}` ||
+              head === `diff --git ${gitCQuote(left)} ${right}` ||
+              head === `diff --git ${left} ${gitCQuote(right)}`
+            )
+              return true;
+          }
         return false;
       }
       return (from === undefined || from === "/dev/null" || wanted.has(from)) && (to === undefined || to === "/dev/null" || wanted.has(to));

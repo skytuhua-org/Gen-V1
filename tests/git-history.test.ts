@@ -91,6 +91,21 @@ it("scopes a deleted file's patch away from same-named directory contents", asyn
   expect(patch.text).not.toContain("+b");
 });
 
+it("serves patches for filenames needing spaces, tabs or quoting", async () => {
+  const { commit, context, snapshots } = await plainRepo();
+  await commit("space name.txt", "one\n", "Spaced");
+  await commit("üñïcode.txt", "two\n", "Unicode");
+  const page = await readHistoryPage(context, snapshots);
+  const spaced = await readHistoryCommit(context, snapshots, page.snapshotId!, page.commits[1].oid);
+  const spacedPatch = await readHistoryFile(context, snapshots, spaced.comparisonId, "space name.txt");
+  expect(spacedPatch.state).toBe("text");
+  expect(spacedPatch.text).toContain("+one");
+  const unicode = await readHistoryCommit(context, snapshots, page.snapshotId!, page.commits[0].oid);
+  const unicodePatch = await readHistoryFile(context, snapshots, unicode.comparisonId, "üñïcode.txt");
+  expect(unicodePatch.state).toBe("text");
+  expect(unicodePatch.text).toContain("+two");
+});
+
 it("reports an unborn HEAD as an empty page", async () => {
   const { context, snapshots } = await plainRepo();
   const page = await readHistoryPage(context, snapshots);
