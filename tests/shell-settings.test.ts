@@ -14,6 +14,11 @@ describe('recoverable browser shell layout', () => {
     const value = readShellLayout();
     expect(value.sidebarWidth).toBe(380); expect(value.rightPanelWidth).toBe(280); expect(value.activeTab).toBe('artifact'); expect(value.folded).toEqual({ valid: true });
   });
+  it('always keeps the active tab inside the open tab list', () => {
+    vi.stubGlobal('localStorage', { getItem: () => JSON.stringify({ activeTab: 'diff', openTabs: ['files'] }) });
+    const value = readShellLayout();
+    expect(value.activeTab).toBe('diff'); expect(value.openTabs).toContain('diff');
+  });
   it('uses a usable layout when browser storage is corrupt or unavailable', () => {
     vi.stubGlobal('localStorage', { getItem: () => '{broken' }); expect(readShellLayout().sidebarWidth).toBe(248);
     vi.stubGlobal('localStorage', { getItem: () => { throw new Error('Unavailable'); } }); expect(readShellLayout().rightPanelOpen).toBe(false);
