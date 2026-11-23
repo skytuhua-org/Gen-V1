@@ -2885,6 +2885,7 @@
     "tests/context-result-host.test.ts",
     "tests/context-results-v3.test.ts",
     "tests/conversation-find.test.ts",
+    "tests/conversation-message-time.test.ts",
     "tests/conversation-placement.test.ts",
     "tests/conversation-scroll.test.ts",
     "tests/credential-slots.test.ts",
