@@ -2871,6 +2871,7 @@
     "tests/composer-prediction-client.test.ts",
     "tests/composer-prediction-service.test.ts",
     "tests/composer-prediction.test.ts",
+    "tests/composer-send-timeout.test.ts",
     "tests/connection-login.test.ts",
     "tests/context-compiler-v3.test.ts",
     "tests/context-contract-preservation-v6.test.ts",
