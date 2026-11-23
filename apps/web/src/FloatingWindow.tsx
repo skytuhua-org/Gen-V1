@@ -2,6 +2,8 @@ import {useContext,useEffect,useId,useLayoutEffect,useRef,useState,type CSSPrope
 import {ChevronDown,ChevronUp,GripVertical,RotateCcw,X} from 'lucide-react';
 import {clampFloatingLayout,FLOATING_COLLAPSED_HEIGHT,readFloatingLayout,writeFloatingLayout,type FloatingAnchor,type FloatingLayout,type FloatingSize,type FloatingViewport} from './floating-layout';
 import {bringForward,layerFor,removeLayer,subscribeLayer} from './floating-order';
+import {chordFor} from './keyboard-bindings';
+import {matchesShortcut} from './shell-layout';
 import {animateTask,reducedMotion} from './task-motion';
 import {FloatingRailSlotContext} from './FloatingRail';
 import './floating-window.css';
@@ -156,7 +158,7 @@ export function FloatingWindow({id,title,children,open=true,onClose,anchor='top-
   };
   const style:CSSProperties={left:layout.x,top:layout.y,width:layout.width,height:layout.collapsed?FLOATING_COLLAPSED_HEIGHT:layout.height,zIndex:layer};
   return <section ref={shell} hidden={!open&&!rendered} inert={!open} aria-hidden={!open} className={`floating-window ${className}`} data-floating-id={id} data-floating={layout.floating===true||!rail} data-axis={minimizeOnly?'none':'both'} data-minimize-only={minimizeOnly} data-collapsed={layout.collapsed} data-interacting={interacting} data-adjusting={adjusting} style={style} aria-label={ariaLabel??`${title} window`} onFocusCapture={()=>bringForward(id)} onPointerDownCapture={()=>{entrance.current?.cancel();bringForward(id);}} onKeyDownCapture={()=>entrance.current?.cancel()} onKeyDown={event=>{
-    if(event.defaultPrevented||event.nativeEvent.isComposing||event.nativeEvent.keyCode===229||event.key!=='Escape'||event.shiftKey||event.ctrlKey||event.altKey||event.metaKey)return;
+    if(event.defaultPrevented||event.nativeEvent.isComposing||event.nativeEvent.keyCode===229||!matchesShortcut(event,chordFor('window-close')))return;
     event.preventDefault();event.stopPropagation();if(minimizeOnly){if(!current.current.collapsed)collapse(true);}else if(escapeBehavior==='collapse'&&!current.current.collapsed)collapse(true);else close();
   }}>
     {!minimizeOnly&&<p className="sr-only" id={description}>Use the arrow keys to move this window. {sizing==='manual'&&'Hold Shift to resize it. '}Home restores its edge position.</p>}
