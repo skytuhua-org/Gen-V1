@@ -28,7 +28,10 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   const [dismissed, setDismissed] = useState(''), [closedAt, setClosedAt] = useState(''), [captured, setCaptured] = useState<{key: string; page: SkillCatalogPage} | null>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [active, setActive] = useState('model'), [reload, setReload] = useState(0);
   const token = position.focused && !position.composing && !disabled ? commandToken(draft, position.caret, position.end) : null;
   const signature = token ? `${threadId ?? ''}:${projectId ?? ''}:${token.start}` : '';
-  const open = Boolean(token && signature !== dismissed && signature !== closedAt), query = token?.query.replace(/^skill:/i, '') ?? '';
+  // The transient outside-dismissal keys on the token's contents, so any edit —
+  // including deleting and retyping a slash at the same position — reopens it.
+  const editKey = token ? `${signature}:${token.end}:${token.query}` : '';
+  const open = Boolean(token && signature !== dismissed && editKey !== closedAt), query = token?.query.replace(/^skill:/i, '') ?? '';
 
   const catalogKey = JSON.stringify([threadId, projectId, query]), page = captured?.key === catalogKey ? captured.page : null;
   const unavailableSources = page?.sources.filter(source => source.availability.status === 'unavailable') ?? [];
@@ -117,7 +120,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
     return () => {element.removeAttribute('aria-controls'); element.removeAttribute('aria-autocomplete'); element.removeAttribute('aria-activedescendant');};
   }, [open, selected?.id, id, input]);
   return <>
-    <Popover anchor={input} contentRef={content} open={open} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={() => setClosedAt(signature)} className="composer-command-popover">
+    <Popover anchor={input} contentRef={content} open={open} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={() => setClosedAt(editKey)} className="composer-command-popover">
       <div id={id} role="listbox" aria-label="Commands and skills" className="composer-command-list" onScroll={event => {const list = event.currentTarget; if (list.scrollHeight - list.scrollTop - list.clientHeight < 80) void loadMore();}}>
         {options.map(option => <div key={option.id} id={id + '-' + option.id} role="option" aria-selected={selected?.id === option.id} aria-disabled={!available(option)} className="composer-command-option" onPointerMove={() => {if (available(option)) setActive(option.id);}} onPointerDown={event => event.preventDefault()} onClick={() => void choose(option)}>
           {'builtin' in option ? <><span className="composer-command-name">/{option.builtin.id}</span><span className="composer-command-description">{option.builtin.description}</span></> : <><span className="composer-command-name">/skill:{option.skill.name}</span><span className="composer-command-description" title={option.skill.description}>{reason(option.skill) || option.skill.description}</span><span className="composer-command-source">{page?.sources.find(source => source.id === option.skill.sourceId)?.label}</span></>}
