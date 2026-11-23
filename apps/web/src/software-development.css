@@ -152,7 +152,7 @@
 .software-stage-node.software-state-running { border-color:color-mix(in srgb,var(--accent-fg) 50%,var(--border)); }
 .software-dependencies { display:flex; align-items:center; gap:6px; margin:0 0 16px; color:var(--muted); font-size:11px; }
 .software-blocking-checks { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
-.software-blocking-checks button { display:flex; align-items:center; gap:7px; padding:5px 9px; border:0; border-radius:6px; background:var(--subtle); color:var(--text); font-size:11px; }
+.software-blocking-checks button { display:flex; align-items:center; gap:7px; padding:5px 9px; border:1px solid var(--control-border); border-radius:6px; background:var(--subtle); color:var(--text); font-size:11px; }
 .software-stage-description { margin:8px 0; color:var(--text); font-size:12px; }
 .software-command { display:flex; gap:8px; align-items:flex-start; padding:8px 10px; margin-top:10px; border-radius:7px; background:var(--subtle); color:var(--muted); font-size:11px; }
 .software-command code { overflow-wrap:anywhere; white-space:pre-wrap; font:inherit; }
