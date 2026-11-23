@@ -172,3 +172,24 @@ test('unrelated snapshots preserve user scrolling after first-open selected-row 
   await page.getByRole('button', { name: 'Unrelated update 0' }).dispatchEvent('click');
   await expect.poll(() => list.evaluate(node => node.scrollTop)).toBe(0);
 });
+
+test('modal height fits content on short lists and caps at 520px on long lists', async ({ page }) => {
+  const modal = () => page.locator('.ui-modal.project-picker');
+  const open = async (count: number) => {
+    await page.goto(`/project-picker?count=${count}`);
+    await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
+    await expect(modal()).toBeVisible();
+    return modal().evaluate(node => node.clientHeight);
+  };
+  const empty = await open(0);
+  expect(empty).toBeLessThan(400);
+  await expect(page.getByRole('option', { name: 'No project', exact: true })).toBeVisible();
+  const two = await open(2);
+  expect(two).toBeLessThan(400);
+  expect(two).toBeGreaterThanOrEqual(32 * 2 + 100);
+  const forty = await open(40);
+  expect(forty).toBeLessThanOrEqual(520);
+  expect(forty).toBeGreaterThan(400);
+  const list = page.getByRole('listbox', { name: 'Projects' });
+  expect(await list.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
+});
