@@ -1,6 +1,7 @@
 import {useLayoutEffect,useRef,useState,type ReactNode,type Ref} from 'react';
 import type {ModelInfo} from '../../../packages/contracts';
 import {ModelPicker,type ModelPickerHandle} from './ModelPicker';
+import type {ModelSource} from './project-model-defaults';
 import {useComposerPointerPress} from './composer-pointer-press';
 import './composer-toolbar.css';
 export interface ComposerToolbarProps {
@@ -11,6 +12,8 @@ export interface ComposerToolbarProps {
  onProject:()=>void|Promise<void>;onChanges:()=>void|Promise<void>;onCreatePR:()=>void|Promise<void>;
  onTranscript:(text:string)=>void;disabled?:boolean;working?:boolean;
  modelScopeHint?:string;onModelNewTask?:(modelId:string)=>void;
+ /** Model selection provenance shown on the picker trigger. */
+ modelSource?:ModelSource;modelProjectColor?:string;modelProjectName?:string;
  separateActions?:boolean;leading?:ReactNode;runtime?:ReactNode;context?:ReactNode;trailing?:ReactNode;
 }
 interface VoiceResult {isFinal:boolean;length:number;[index:number]:{transcript:string}}
@@ -45,7 +48,7 @@ export function ComposerTaskActions({changeSummary,onChanges,onCreatePR,disabled
  </div>;
 }
 
-export function ComposerToolbar({modelPickerRef,models,modelId,onModelChange,thinkingLevel,onThinkingChange,projectLabel,changeSummary,onProject,onChanges,onCreatePR,onTranscript,disabled=false,working=false,modelScopeHint,onModelNewTask,separateActions=false,leading,runtime,context,trailing}:ComposerToolbarProps){
+export function ComposerToolbar({modelPickerRef,models,modelId,onModelChange,thinkingLevel,onThinkingChange,projectLabel,changeSummary,onProject,onChanges,onCreatePR,onTranscript,disabled=false,working=false,modelScopeHint,onModelNewTask,modelSource,modelProjectColor,modelProjectName,separateActions=false,leading,runtime,context,trailing}:ComposerToolbarProps){
  const pointerPress=useComposerPointerPress();
  const [listening,setListening]=useState(false),[error,setError]=useState('');
  const session=useRef<{recognition:VoiceRecognition;epoch:number;seen:Set<number>}|null>(null),epoch=useRef(0),transcript=useRef(onTranscript);
@@ -80,7 +83,7 @@ export function ComposerToolbar({modelPickerRef,models,modelId,onModelChange,thi
     {leading}<button type="button" className="composer-tool composer-project" aria-label="Select project" title={projectLabel?'Select project · '+projectLabel:'Select project'} disabled={disabled} onClick={()=>void invoke(onProject)}>{folder}<span>{projectLabel??'Select project'}</span></button>{runtime}
    </div>
    <div className="composer-runtime-controls" role="group" aria-label="Model and voice">
-    <ModelPicker ref={modelPickerRef} models={models} modelId={modelId} thinkingLevel={thinkingLevel} onThinkingChange={onThinkingChange} disabled={locked} onChange={onModelChange} scopeHint={modelScopeHint} onNewTask={onModelNewTask}/>
+    <ModelPicker ref={modelPickerRef} models={models} modelId={modelId} thinkingLevel={thinkingLevel} onThinkingChange={onThinkingChange} disabled={locked} onChange={onModelChange} scopeHint={modelScopeHint} onNewTask={onModelNewTask} modelSource={modelSource} modelProjectColor={modelProjectColor} modelProjectName={modelProjectName}/>
     {context}<button type="button" className={`composer-tool composer-voice ${listening?'is-listening':''}`} aria-label={!Voice?'Voice input unavailable':listening?'Stop voice input':'Start voice input'} aria-pressed={listening} title={!Voice?'Voice input is unavailable in this browser':listening?'Stop listening':'Dictate into your draft'} disabled={locked||!Voice} onClick={startVoice}>{microphone}<span className="sr-only">{listening?'Listening':''}</span></button>{trailing}
    </div>
   </div>

@@ -10,6 +10,11 @@ export function projectModelDefaultFor(preferences: UiPreferences, authority: Wo
   return preferences.projectModelDefaults[projectColorKey(authority, projectId)] ?? null;
 }
 
+/** R05: a model pick in an unbound draft/thread whose project declares a default stays thread-scoped; the global default is not rewritten. */
+export function modelPickWritesGlobal(projectDefault: { modelId: string } | null | undefined, bound: boolean): boolean {
+  return bound || !projectDefault;
+}
+
 /** Resolution order for an unbound thread or draft: explicit composer choice > project default > global default > first advertised model (R03). Pure; the composers supply their already-loaded catalog. */
 export function resolveNewThreadModel(input: {
   bound: boolean;
