@@ -45,7 +45,7 @@ vi.mock('../apps/desktop/attention-popups.ts',()=>({createAttentionPopups:()=>({
 class TestWindow extends EventEmitter {
  destroyed=false;
  webContents=Object.assign(new EventEmitter(),{
-  id:41,mainFrame:{url:''},getURL:()=>this.webContents.mainFrame.url,send:vi.fn(),
+  id:41,mainFrame:{url:''},getURL:()=>this.webContents.mainFrame.url,send:vi.fn(),reload:vi.fn(),
   setWindowOpenHandler:vi.fn(),session:Object.assign(new EventEmitter(),{
    setPermissionRequestHandler:vi.fn(),setPermissionCheckHandler:vi.fn(),
   }),
@@ -130,6 +130,30 @@ describe('desktop main window lifecycle with a synthetic sidecar and shell',()=>
   expect(request).toBeTypeOf('string');
   await expect(invoke(channels.closeAnswer,{requestId:request,allow:true})).resolves.toBeUndefined();
   expect(window.destroyed).toBe(true);
+ });
+
+ it.each(['renderer','native'] as const)('reloads an anchored window at its original bootstrap URL after %s reload',async source=>{
+  const {window,invoke}=await launch(), contents=window.webContents;
+  const originalUrl=contents.getURL(), anchor=new URL(originalUrl);anchor.hash='step-inspect';
+  contents.mainFrame.url=anchor.href;
+  contents.emit('did-navigate-in-page',{},anchor.href,true,10,1);
+  const preventDefault=vi.fn();
+  if(source==='renderer'){
+   contents.emit('will-navigate',{preventDefault},anchor.href);
+   expect(preventDefault).not.toHaveBeenCalled();
+  }
+  contents.emit('will-navigate',{preventDefault},'http://127.0.0.1:4357/?desktopWindow=other');
+  expect(preventDefault).toHaveBeenCalledOnce();
+  contents.emit('did-navigate',{},anchor.href,200,'OK');
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  expect(contents.getURL()===originalUrl).toBe(true);
+  expect(runtime.loaded).toHaveBeenCalledTimes(2);
+  contents.emit('did-navigate-in-page',{},originalUrl,true,10,1);
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  expect(contents.reload).toHaveBeenCalledOnce();
+  contents.emit('did-navigate',{},originalUrl,200,'OK');
+  expect(runtime.loaded).toHaveBeenCalledTimes(2);
+  await expect(invoke(channels.context)).resolves.toMatchObject({surface:{kind:'main'}});
  });
 
  it('reuses the original window bootstrap identity after an automatic sidecar restart',async()=>{

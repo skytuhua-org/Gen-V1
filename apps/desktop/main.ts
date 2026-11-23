@@ -165,11 +165,44 @@ async function openSurface(raw:unknown,sourceBounds?:DesktopBounds):Promise<Desk
  const record:WindowRecord={id,surface,window:native,url,ready:false,settled:false,visible:previous?.visible!==false,normalBounds:createNormalBounds(bounds),placement:placement??captureDesktopPlacement(bounds,all),appliedBounds:bounds,monitorRescued:!!placement&&!all.some(display=>display.id===placement.displayId),resolveReady,rejectReady,readyPromise,readyTimer:setTimeout(()=>{if(record.ready)return;if(surface.kind==='main')startupDiagnostic('main-deadline');record.settled=true;record.rejectReady(Error('The detached window did not become ready. Your original view remains available.'));loseBrowserOwner(record);native.destroy();},20000)};
  windows.set(id,record);broadcast();
  native.webContents.setWindowOpenHandler(()=>({action:'deny'}));native.webContents.on('will-attach-webview',event=>event.preventDefault());
- native.webContents.on('will-navigate',(event,next)=>{if(next!==url)event.preventDefault();});native.webContents.on('will-redirect',(event,next)=>{if(next!==url)event.preventDefault();});
- native.webContents.on('did-navigate-in-page',(_event,next,isMainFrame)=>{
-  if(isMainFrame&&next.split('#',1)[0]===url.split('#',1)[0])record.url=next;
+ let restoringLaunchDocument=false;
+ const restoreLaunchDocument=(next:string)=>{
+  if(restoringLaunchDocument||next!==record.url||next===url||quitting||native.isDestroyed())return;
+  restoringLaunchDocument=true;
+  // A new document needs the original launch fragment. Use the URL owned
+  // by this window and keep fragment navigation within the current document.
+  setImmediate(()=>{
+   // Starting another navigation inside Electron's commit handler can
+   // interfere with the previous navigation completing.
+   if(quitting||native.isDestroyed()||record.url!==next||native.webContents.getURL()!==next){restoringLaunchDocument=false;return;}
+   record.url=url;
+   void native.loadURL(url).catch(error=>{
+    restoringLaunchDocument=false;
+    if(native.isDestroyed())return;
+    if(record.url===url&&native.webContents.getURL()===next)record.url=next;
+    if(surface.kind==='main')startupDiagnostic('main-load-failed',startupErrorDiagnostic(error));
+   });
+  });
+ };
+ native.webContents.on('will-navigate',(event,next)=>{
+  // A reload of the current anchored document remains on the exact owned URL.
+  if(next!==url&&next!==record.url)event.preventDefault();
  });
- native.webContents.on('did-navigate',(_event,next)=>{if(next===url)record.url=url;});
+ native.webContents.on('will-redirect',(event,next)=>{if(next!==url)event.preventDefault();});
+ native.webContents.on('did-navigate-in-page',(_event,next,isMainFrame)=>{
+  if(!isMainFrame||next.split('#',1)[0]!==url.split('#',1)[0])return;
+  record.url=next;
+  if(restoringLaunchDocument&&next===url){
+   restoringLaunchDocument=false;
+   // Chromium can restore the fragment without creating a new document.
+   // Reload only after the canonical fragment has committed.
+   setImmediate(()=>{if(!quitting&&!native.isDestroyed()&&native.webContents.getURL()===url)native.webContents.reload();});
+  }
+ });
+ native.webContents.on('did-navigate',(_event,next)=>{
+  if(next===url){restoringLaunchDocument=false;record.url=url;}
+  else restoreLaunchDocument(next);
+ });
  native.webContents.on('will-frame-navigate',event=>{if(!event.isMainFrame&&!trustedDesktopSubframe(event.url,backendOrigin,`http://localhost:${widgetPort}`))event.preventDefault();});
  native.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));native.webContents.session.setPermissionCheckHandler(()=>false);secureSessionDownloads(native.webContents.session);
  native.on('close',event=>{if(!quitting){event.preventDefault();void requestClose(record).then(allow=>{if(allow)destroyWindow(record);else cancelClose(record);}).catch(()=>cancelClose(record));}});
