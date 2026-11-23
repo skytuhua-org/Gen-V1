@@ -63,7 +63,7 @@ function CommitDetail({adapter,comparison,onBack}:{adapter:GitHistoryAdapter;com
   {comparison.files.length===0?<p className="file-checkpoints-empty">No files changed in this commit</p>
    :<ul className="file-checkpoints-list">
     {comparison.files.map(file=>{
-     const entry=patches[file.path];
+     const entry=Object.hasOwn(patches,file.path)?patches[file.path]:undefined;
      const label=statusLabel[file.status as keyof typeof statusLabel]??file.status;
      return <li key={file.path}><details className="workspace-diff git-history-file" onToggle={event=>{if(event.currentTarget.open&&!entry)load(file.path);}}>
       <summary title={file.oldPath?file.oldPath+' → '+file.path:file.path}><span className="git-history-file-path">{file.path}</span>{' '}<small>{label}{file.additions==null?'':' +'+file.additions+' −'+file.deletions}</small></summary>
@@ -107,7 +107,7 @@ export function GitHistory({adapter,active,timeFormat='system'}:{adapter:GitHist
   adapter.commit(snapshot!.snapshotId,row.oid,new AbortController().signal).then(comparison=>{if(mounted.current&&id===request.current)setDetail({state:'ready',comparison});}).catch(reason=>{if(mounted.current&&id===request.current)setDetail({state:'error',oid:row.oid,error:toError(reason)});});
  };
 
- const back=()=>{setDetail(null);queueMicrotask(()=>listRef.current?.querySelector('[data-oid="'+lastOid.current+'"] button')?.focus());};
+ const back=()=>{setDetail(null);queueMicrotask(()=>listRef.current?.querySelector<HTMLButtonElement>('[data-oid="'+lastOid.current+'"] button')?.focus());};
 
  const busy=phase==='loading'||phase==='more';
  const shownError=error&&(isStale(error)?staleMessage:error);
