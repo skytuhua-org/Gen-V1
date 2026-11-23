@@ -359,6 +359,24 @@ const patch = (
   text: string | null = null,
   reason?: GitHistoryPatch["reason"],
 ): GitHistoryPatch => ({ comparisonId, file, state, text, ...(reason ? { reason } : {}) });
+// Keep only the file sections matching the served paths: a literal pathspec still
+// matches descendants when a file was replaced by a same-named directory.
+function filterPatch(text: string, wanted: Set<string>): string {
+  return text
+    .split(/(?=^diff --git )/m)
+    .filter((section) => {
+      const lines = section.split("\n").slice(0, 20);
+      const from = lines.find((line) => line.startsWith("--- "))?.slice(4).replace(/^a\//, "");
+      const to = lines.find((line) => line.startsWith("+++ "))?.slice(4).replace(/^b\//, "");
+      if (from === undefined && to === undefined) {
+        const head = lines[0] ?? "";
+        for (const a of wanted) for (const b of wanted) if (head === `diff --git a/${a} b/${b}`) return true;
+        return false;
+      }
+      return (from === undefined || from === "/dev/null" || wanted.has(from)) && (to === undefined || to === "/dev/null" || wanted.has(to));
+    })
+    .join("");
+}
 export async function readHistoryFile(
   context: HistoryContext,
   snapshots: GitHistorySnapshots,
@@ -377,8 +395,10 @@ export async function readHistoryFile(
   const args = [...diffArgs(comparison.parentOid, comparison.oid, "-p"), ...paths];
   const statArgs = [...diffArgs(comparison.parentOid, comparison.oid, "--numstat"), ...paths];
   try {
-    const [text, stats] = await Promise.all([run(context, args), run(context, statArgs)]);
-    if (stats.startsWith("-\t-\t")) return patch(comparisonId, file, "binary");
+    const [raw, stats] = await Promise.all([run(context, args), run(context, statArgs)]);
+    const stat = numstat(stats).get(name) ?? (file.oldPath ? numstat(stats).get(file.oldPath) : undefined);
+    if (stat && stat.additions === null) return patch(comparisonId, file, "binary");
+    const text = filterPatch(raw, new Set([name, ...(file.oldPath ? [file.oldPath] : [])]));
     if (Buffer.byteLength(text) > CODE_REVIEW_LIMITS.patchBytes)
       return patch(comparisonId, file, "truncated", null, "resource-limit");
     return patch(comparisonId, file, text ? "text" : "empty", text);

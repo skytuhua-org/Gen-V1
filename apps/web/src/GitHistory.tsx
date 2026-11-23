@@ -23,18 +23,18 @@ const stale=(error:unknown)=>error instanceof ApiError&&['HISTORY_EXPIRED','HIST
 export function GitHistory({base,query,preferences}:{base:string;query:URLSearchParams;preferences:UiPreferences}){
   const [commits,setCommits]=useState<GitHistoryCommit[]>([]),[snapshotId,setSnapshotId]=useState<string>(),[upstreamRef,setUpstreamRef]=useState<string|null>(null),[nextCursor,setNextCursor]=useState<string>(),[selected,setSelected]=useState<GitHistoryCommit>();
   const [error,setError]=useState<{text:string;stale:boolean}>(),[loading,setLoading]=useState(true),[attempt,setAttempt]=useState(0),[cursor,setCursor]=useState<string>();
-  const opener=useRef<HTMLButtonElement|null>(null);
+  const opener=useRef<HTMLButtonElement|null>(null),queryKey=query.toString();
   const refresh=()=>{setCommits([]);setSelected(undefined);setCursor(undefined);setAttempt(value=>value+1);};
   useEffect(()=>{
     const controller=new AbortController();setLoading(true);setError(undefined);
-    const params=new URLSearchParams(query);if(cursor)params.set('cursor',cursor);
+    const params=new URLSearchParams(queryKey);if(cursor)params.set('cursor',cursor);
     void get<GitHistoryPage>(base+'/git/history?'+params,controller.signal).then(page=>{
       if(controller.signal.aborted)return;
       setCommits(previous=>cursor?[...previous,...page.commits]:page.commits);
       setSnapshotId(page.snapshotId??undefined);setUpstreamRef(page.upstreamRef);setNextCursor(page.nextCursor??undefined);
     }).catch(cause=>{if(!controller.signal.aborted)setError({text:stale(cause)?'History changed. Refresh history to continue.':errorMessage(cause),stale:stale(cause)});}).finally(()=>{if(!controller.signal.aborted)setLoading(false);});
     return()=>controller.abort();
-  },[base,query,attempt,cursor]);
+  },[base,queryKey,attempt,cursor]);
   return <div className="file-checkpoints-history git-history">
     <div hidden={Boolean(selected)}>
       <div className="file-checkpoints-heading"><h3>Git history</h3><button type="button" className="file-checkpoints-quiet" disabled={loading} onClick={refresh}><RotateCw size={13} aria-hidden="true"/>Refresh history</button></div>
@@ -55,27 +55,27 @@ export function GitHistory({base,query,preferences}:{base:string;query:URLSearch
       </li>)}</ul>}
       {nextCursor&&<button type="button" className="file-checkpoints-quiet file-checkpoints-more" disabled={loading} onClick={()=>setCursor(nextCursor)}>Load more commits</button>}
     </div>
-    {selected&&snapshotId&&<GitHistoryCommitView key={selected.oid+':'+snapshotId} base={base} query={query} snapshotId={snapshotId} commit={selected} preferences={preferences} onBack={()=>{setSelected(undefined);queueMicrotask(()=>opener.current?.focus());}}/>}
+    {selected&&snapshotId&&<GitHistoryCommitView key={selected.oid+':'+snapshotId} base={base} query={query} snapshotId={snapshotId} commit={selected} preferences={preferences} onBack={()=>{setSelected(undefined);queueMicrotask(()=>opener.current?.focus());}} onRefresh={refresh}/>}
   </div>;
 }
-function GitHistoryCommitView({base,query,snapshotId,commit,preferences,onBack}:{base:string;query:URLSearchParams;snapshotId:string;commit:GitHistoryCommit;preferences:UiPreferences;onBack:()=>void}){
-  const [detail,setDetail]=useState<GitHistoryCommitDetail>(),[error,setError]=useState<{text:string;stale:boolean}>(),[attempt,setAttempt]=useState(0),[file,setFile]=useState<string>();
+function GitHistoryCommitView({base,query,snapshotId,commit,preferences,onBack,onRefresh}:{base:string;query:URLSearchParams;snapshotId:string;commit:GitHistoryCommit;preferences:UiPreferences;onBack:()=>void;onRefresh:()=>void}){
+  const [detail,setDetail]=useState<GitHistoryCommitDetail>(),[error,setError]=useState<{text:string;stale:boolean}>(),[attempt,setAttempt]=useState(0),[file,setFile]=useState<string>(),queryKey=query.toString();
   const back=useRef<HTMLButtonElement>(null);
   useEffect(()=>{back.current?.focus();},[]);
   useEffect(()=>{
     const controller=new AbortController();setDetail(undefined);setError(undefined);setFile(undefined);
-    const params=new URLSearchParams(query);params.set('snapshotId',snapshotId);params.set('oid',commit.oid);
+    const params=new URLSearchParams(queryKey);params.set('snapshotId',snapshotId);params.set('oid',commit.oid);
     void get<GitHistoryCommitDetail>(base+'/git/history/commit?'+params,controller.signal)
       .then(value=>{if(!controller.signal.aborted)setDetail(value);})
       .catch(cause=>{if(!controller.signal.aborted)setError({text:stale(cause)?'History changed. Refresh history to continue.':errorMessage(cause),stale:stale(cause)});});
     return()=>controller.abort();
-  },[base,query,snapshotId,commit.oid,attempt]);
+  },[base,queryKey,snapshotId,commit.oid,attempt]);
   return <section aria-label="Commit review" className="file-checkpoints-review git-history-commit">
     <button ref={back} type="button" className="file-checkpoints-back" onClick={onBack}><ChevronLeft size={14} aria-hidden="true"/>Back to Git history</button>
     <h3>{commit.subject||commit.oid.slice(0,10)}</h3>
     <p className="file-checkpoints-meta">{commit.author||'Unknown author'}{commit.authoredAt&&<> · <time dateTime={commit.authoredAt}>{formatTime(commit.authoredAt,preferences)}</time></>}</p>
     <p className="file-checkpoints-meta git-history-sha"><code>{commit.oid}</code><CopyButton text={commit.oid} label="Copy SHA"/></p>
-    {error?<ErrorState message={error.text} retryLabel={error.stale?'Refresh history':undefined} onRetry={()=>setAttempt(value=>value+1)}/>:!detail?<p role="status" className="file-checkpoints-note">Loading changed files…</p>:<>
+    {error?<ErrorState message={error.text} retryLabel={error.stale?'Refresh history':'Retry'} onRetry={error.stale?onRefresh:()=>setAttempt(value=>value+1)}/>:!detail?<p role="status" className="file-checkpoints-note">Loading changed files…</p>:<>
       <p className="file-checkpoints-note">{detail.basis==='root'?'Root commit — compared with an empty tree.':'Compared with its first parent.'}{detail.filesTruncated?' File list truncated.':''}</p>
       {detail.files.length===0&&<p className="file-checkpoints-empty"><span>No file changes.</span></p>}
       {detail.files.length>0&&<ul className="file-checkpoints-list file-checkpoints-entries git-history-files">{detail.files.map(item=><li key={item.path}>
@@ -88,15 +88,15 @@ function GitHistoryCommitView({base,query,snapshotId,commit,preferences,onBack}:
   </section>;
 }
 function GitHistoryFileDiff({base,query,comparisonId,file}:{base:string;query:URLSearchParams;comparisonId:string;file:string}){
-  const [patch,setPatch]=useState<GitHistoryPatch>(),[error,setError]=useState('');
+  const [patch,setPatch]=useState<GitHistoryPatch>(),[error,setError]=useState(''),queryKey=query.toString();
   useEffect(()=>{
     const controller=new AbortController();setPatch(undefined);setError('');
-    const params=new URLSearchParams(query);params.set('comparisonId',comparisonId);params.set('path',file);
+    const params=new URLSearchParams(queryKey);params.set('comparisonId',comparisonId);params.set('path',file);
     void get<GitHistoryPatch>(base+'/git/history/file?'+params,controller.signal)
       .then(value=>{if(!controller.signal.aborted)setPatch(value);})
       .catch(cause=>{if(!controller.signal.aborted)setError(errorMessage(cause));});
     return()=>controller.abort();
-  },[base,query,comparisonId,file]);
+  },[base,queryKey,comparisonId,file]);
   if(error)return <p role="status" className="file-checkpoints-note">{error}</p>;
   if(!patch)return <p role="status" className="file-checkpoints-note">Loading diff…</p>;
   const note=patch.state==='binary'?'Binary file, no preview':patch.state==='truncated'?'Too large to preview':patch.state==='unavailable'?(patch.reason==='conflict'?'Patch unavailable for this entry.':patch.reason==='unsupported-path'?'This path cannot be shown.':patch.reason==='unsupported-file'?'This file cannot be shown.':'No patch available.'):patch.state==='empty'?'No differences.':'';

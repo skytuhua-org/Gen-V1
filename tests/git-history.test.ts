@@ -70,6 +70,27 @@ it("reads pages, details and patches directly against a plain repository", async
   expect(rootPatch.text).toContain("+base");
 });
 
+it("scopes a deleted file's patch away from same-named directory contents", async () => {
+  const { git, context, snapshots, source } = await plainRepo();
+  await writeFile(join(source, "gone.txt"), "a\n");
+  git("add", "--", "gone.txt");
+  git("commit", "-m", "File");
+  git("rm", "gone.txt");
+  await mkdir(join(source, "gone.txt"));
+  await writeFile(join(source, "gone.txt", "x"), "b\n");
+  git("add", "--", "gone.txt");
+  git("commit", "-m", "File to directory");
+  const page = await readHistoryPage(context, snapshots);
+  const detail = await readHistoryCommit(context, snapshots, page.snapshotId!, page.commits[0].oid);
+  const deleted = detail.files.find((file) => file.path === "gone.txt" && file.status === "D");
+  expect(deleted).toBeDefined();
+  const patch = await readHistoryFile(context, snapshots, detail.comparisonId, "gone.txt");
+  expect(patch.state).toBe("text");
+  expect(patch.text).toContain("gone.txt");
+  expect(patch.text).not.toContain("gone.txt/x");
+  expect(patch.text).not.toContain("+b");
+});
+
 it("reports an unborn HEAD as an empty page", async () => {
   const { context, snapshots } = await plainRepo();
   const page = await readHistoryPage(context, snapshots);
