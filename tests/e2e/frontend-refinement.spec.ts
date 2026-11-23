@@ -38,8 +38,8 @@ test('a different pointer cannot end the active scrollbar drag',async({page})=>{
 });
 test('disconnected context is compact and connected context leads with useful project facts',async({page})=>{
  const card=page.getByLabel('Project context',{exact:true});await expect(card).toContainText('Fixture project');
- await expect(card.getByRole('button',{name:'Connect project'})).toBeVisible();expect((await card.boundingBox())!.height).toBeLessThan(140);
- await page.getByRole('button',{name:'Connect project'}).click();await expect(card).toContainText('Fixture project');await expect(card).toContainText('feature/ui');
+ await expect(card.getByRole('button',{name:'Connect this project to a local folder',exact:true})).toBeVisible();expect((await card.boundingBox())!.height).toBeLessThan(140);
+ await page.getByRole('button',{name:'Connect this project to a local folder',exact:true}).click();await expect(card).toContainText('Fixture project');await expect(card).toContainText('feature/ui');
  await expect(card.getByText('Unknown',{exact:true})).toHaveCount(0);await expect(card.getByRole('button',{name:'Commit',exact:true})).toBeHidden();
  await card.getByText('Project tools',{exact:true}).click();await expect(card.getByRole('button',{name:'Commit',exact:true})).toBeVisible();
  await card.getByRole('button',{name:'Changes',exact:false}).click();await expect(page.getByRole('status')).toHaveText('Changes opened');
