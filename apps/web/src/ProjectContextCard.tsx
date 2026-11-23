@@ -1,6 +1,7 @@
-import {useId,useState,type ReactNode} from 'react';
-import {Bot,CalendarClock,ChevronDown,ChevronRight,Code2,FileDiff,Folder,GitBranch,GitCommitHorizontal,ListChecks,MessageSquare,Plus,Server,Terminal} from 'lucide-react';
-import type {Snapshot} from '../../../packages/contracts/index.ts';
+import {useEffect,useId,useState,type ReactNode} from 'react';
+import {Bot,CalendarClock,Check,ChevronDown,ChevronRight,Code2,FileDiff,Folder,GitBranch,GitCommitHorizontal,ListChecks,MessageSquare,Plus,Server,SlidersHorizontal,Terminal} from 'lucide-react';
+import {Select} from '../../../packages/ui-shell/Select';
+import type {ModelInfo,Snapshot} from '../../../packages/contracts/index.ts';
 import type {ProjectContext} from '../../../packages/contracts/workspace.ts';
 import {contextCompanions} from './project-context-summary';
 import {LoadingState,PendingStatus} from './LoadingState';
@@ -18,12 +19,25 @@ export interface ProjectContextCardProps {
  composerChangesAvailable?:boolean;
  snapshot?:Snapshot;threadId?:string;onOpenDetailedPlan?:()=>void;
  automationItems?:{id:string;title:string;status:string;nextRunAt?:string}[];automationsAvailable?:boolean;
+ /** Increments to expand the new-thread defaults row. */
+ modelDefaultOpen?:number;
+ modelDefault?:{modelId:string;thinkingLevel:string|null}|null;
+ onSaveModelDefault?:(value:{modelId:string;thinkingLevel:string|null}|null)=>Promise<void>;
+ loadDefaultCatalog?:(signal:AbortSignal)=>Promise<ModelInfo[]>;
 }
 /** Data and callbacks only: this card is safe to consume from either authority's shell. */
-export function ProjectContextCard({context,loading,error,threadTitle,plan,planOpen=false,onTogglePlan,fullPlanVisible=false,onAction,onSelectThread,onShowChanges,onConnect,snapshot,threadId,onOpenDetailedPlan,automationItems=[],automationsAvailable=false,composerChangesAvailable=false}:ProjectContextCardProps){
- const planId=useId(),[expanded,setExpanded]=useState<'scripts'|'branch'|'commit'|'lineage'|null>(null),[busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[scriptName,setScriptName]=useState(''),[scriptCommand,setScriptCommand]=useState(''),[branch,setBranch]=useState(''),[commit,setCommit]=useState('');
+export function ProjectContextCard({context,loading,error,threadTitle,plan,planOpen=false,onTogglePlan,fullPlanVisible=false,onAction,onSelectThread,onShowChanges,onConnect,snapshot,threadId,onOpenDetailedPlan,automationItems=[],automationsAvailable=false,composerChangesAvailable=false,modelDefaultOpen,modelDefault,onSaveModelDefault,loadDefaultCatalog}:ProjectContextCardProps){
+ const planId=useId(),[expanded,setExpanded]=useState<'scripts'|'branch'|'commit'|'lineage'|'model'|null>(null),[busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[scriptName,setScriptName]=useState(''),[scriptCommand,setScriptCommand]=useState(''),[branch,setBranch]=useState(''),[commit,setCommit]=useState('');
  const run=(type:string,payload:Record<string,unknown>={})=>{if(!onAction||busy)return;setBusy(true);setActionError('');void onAction(type,payload).then(()=>{setExpanded(null);setCommit('');}).catch(cause=>setActionError(cause instanceof Error?cause.message:'The project action could not finish.')).finally(()=>setBusy(false));};
  const toggle=(name:NonNullable<typeof expanded>)=>setExpanded(value=>value===name?null:name);
+ useEffect(()=>{if(modelDefaultOpen)setExpanded('model');},[modelDefaultOpen]);
+ const [modelCatalog,setModelCatalog]=useState<ModelInfo[]|undefined>(undefined),[modelCatalogError,setModelCatalogError]=useState(''),[modelDraft,setModelDraft]=useState<{modelId:string;thinkingLevel:string|null}|null>(null),[modelSaving,setModelSaving]=useState(false),[modelSaved,setModelSaved]=useState(false),[modelSaveError,setModelSaveError]=useState('');
+ const loadModelCatalog=()=>{if(!loadDefaultCatalog)return;const controller=new AbortController();setModelCatalogError('');void loadDefaultCatalog(controller.signal).then(list=>{if(!controller.signal.aborted)setModelCatalog(list);}).catch(cause=>{if(!controller.signal.aborted)setModelCatalogError(cause instanceof Error?cause.message:"Couldn't load models. Try again.");});};
+ useEffect(()=>{if(expanded==='model'&&!modelCatalog&&!modelCatalogError)loadModelCatalog();},[expanded,modelCatalog,modelCatalogError]);
+ useEffect(()=>{if(expanded==='model'&&modelDraft===null)setModelDraft(modelDefault?{modelId:modelDefault.modelId,thinkingLevel:modelDefault.thinkingLevel}:{modelId:'',thinkingLevel:null});},[expanded,modelDefault,modelDraft]);
+ const modelDefaultMissing=Boolean(modelDefault&&modelCatalog&&!modelCatalog.some(model=>model.id===modelDefault.modelId));
+ const modelDraftEntry=modelDraft&&(modelCatalog??[]).find(model=>model.id===modelDraft.modelId);
+ const saveModelDefault=(next:{modelId:string;thinkingLevel:string|null}|null)=>{if(!onSaveModelDefault)return;setModelSaving(true);setModelSaveError('');setModelSaved(false);void onSaveModelDefault(next).then(()=>{setModelSaved(true);if(!next)setModelDraft({modelId:'',thinkingLevel:null});}).catch(cause=>setModelSaveError(cause instanceof Error?cause.message:'Could not save the project default.')).finally(()=>setModelSaving(false));};
  const connected=Boolean(context&&(context.project.rootPath||context.capabilities.git||context.capabilities.terminal||context.editor.available));
  const total=(value:number)=>compactCount.format(value);
  const lineage=context?.lineage.toSorted((a,b)=>Number(b.status==='working')-Number(a.status==='working'))??[];
@@ -39,6 +53,17 @@ export function ProjectContextCard({context,loading,error,threadTitle,plan,planO
      {!composerChangesAvailable&&<button className="project-context-row" disabled={!onShowChanges} onClick={onShowChanges} title={context.changes.files===null?'Changes unavailable':context.changes.files+' changed files'}><FileDiff size={16}/><span>Changes</span>
       {context.changes.added===null&&context.changes.removed===null?<small>Unavailable</small>:<>{context.changes.added!==null&&<small className="project-added">+{total(context.changes.added)}</small>}{context.changes.removed!==null&&<small className="project-removed">−{total(context.changes.removed)}</small>}</>}
      </button>}
+     {onSaveModelDefault&&<><button className="project-context-row" aria-expanded={expanded==='model'} onClick={()=>toggle('model')}><SlidersHorizontal size={16}/><span>New thread defaults</span>{modelDefault?<small className={modelDefaultMissing?'project-model-unavailable':''}>{modelDefaultMissing?`${modelDefault.modelId} · unavailable`:`${modelCatalog?.find(model=>model.id===modelDefault.modelId)?.name??modelDefault.modelId} · ${modelDefault.thinkingLevel??'Model default'}`}</small>:<small>Global default</small>}<ChevronDown size={13}/></button>
+      <div className="project-plan-expansion project-model-expansion" data-open={expanded==='model'} inert={expanded!=='model'}><div>
+       {expanded==='model'&&<form className="project-context-detail" onSubmit={event=>{event.preventDefault();if(modelDraft?.modelId)saveModelDefault({modelId:modelDraft.modelId,thinkingLevel:modelDraft.thinkingLevel});}}>
+        <label>Model<Select aria-label="Model" value={modelDraft?.modelId??''} disabled={modelSaving||!modelCatalog} onValueChange={next=>setModelDraft(current=>({modelId:next,thinkingLevel:current?.thinkingLevel??null}))} options={[{value:'',label:'Choose a model'},...(modelCatalog??[]).map(model=>({value:model.id,label:model.name})),...(modelDraft?.modelId&&modelCatalog&&!modelCatalog.some(model=>model.id===modelDraft.modelId)?[{value:modelDraft.modelId,label:`${modelDraft.modelId} · unavailable`}]:[])]}/></label>
+        <label>Reasoning<Select aria-label="Reasoning" value={modelDraft?.thinkingLevel??''} disabled={modelSaving||!modelDraftEntry?.thinkingLevels?.length} onValueChange={next=>setModelDraft(current=>current?{...current,thinkingLevel:next||null}:current)} options={[{value:'',label:'Model default'},...(modelDraftEntry?.thinkingLevels??[]).map(level=>({value:level,label:level}))]}/></label>
+        <p className="project-model-helper">New threads in this project start with these. You can still change them in the composer for one thread. Stored in Gen, not in the project.</p>
+        {modelCatalogError&&<p className="project-model-helper error-text" role="alert">{modelCatalogError} <button type="button" className="quiet" onClick={loadModelCatalog}>Retry</button></p>}
+        <div className="project-model-actions"><button className="secondary" aria-busy={modelSaving} disabled={modelSaving||!modelCatalog||!modelDraft?.modelId}>Save</button><button type="button" className="quiet" disabled={modelSaving||!modelDefault} onClick={()=>saveModelDefault(null)}>Use global default</button>{modelSaved&&<small className="project-model-saved"><Check size={12}/>Saved</small>}</div>
+        {modelSaveError&&<p className="project-model-helper error-text" role="alert">{modelSaveError}</p>}
+       </form>}
+      </div></div></>}
     </>}
    </section>
    {summary?<section className="project-context-plan-summary" aria-label="Plan summary" data-plan-revision={summary.revision}><div className="project-context-summary-title"><ListChecks size={15}/><strong>{summary.title}</strong></div>{summary.total>0&&<><div className="project-context-summary-progress" role="progressbar" aria-label="Plan tasks completed" aria-valuemin={0} aria-valuemax={summary.total} aria-valuenow={summary.completed}><span style={{width:`${summary.completed/summary.total*100}%`}}/></div><p>{summary.completed} of {summary.total} tasks complete</p></>}{summary.currentStep&&!fullPlanVisible&&<p className={summary.blocked?'project-context-summary-blocked':''}>{summary.blocked?'Blocked: ':''}{summary.currentStep}</p>}{onOpenDetailedPlan&&!fullPlanVisible&&<button type="button" className="quiet" onClick={onOpenDetailedPlan}>Open full plan<ChevronRight size={13}/></button>}</section>:Boolean(plan)&&<section className="project-context-plan"><button className="project-context-row" aria-expanded={planOpen} aria-controls={planId} onClick={onTogglePlan}><ListChecks size={16}/><span>Task plan</span>{planOpen?<ChevronDown size={14}/>:<ChevronRight size={14}/>}</button><div id={planId} className="project-plan-expansion" data-open={planOpen} inert={!planOpen}><div>{plan}</div></div></section>}
