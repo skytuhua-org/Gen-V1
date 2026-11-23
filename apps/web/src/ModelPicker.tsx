@@ -116,12 +116,12 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
        <button type="button" className="model-picker-favorite" aria-pressed={favorite} aria-label={(favorite?'Remove ':'Add ')+model.id+(favorite?' from favorites':' to favorites')} tabIndex={model.id===active?.id?0:-1} onClick={event=>{event.stopPropagation();toggleFavorite(model);}}><Star size={14} aria-hidden="true" fill={favorite?'currentColor':'none'}/></button>
       </div>;
      })}</div>)}
+     {!visible.length&&(filter.kind==='favorites'&&favoriteCount===0
+      ?<p className="model-picker-empty" role="status">No favorites yet<span>Star a model to keep it here.</span></p>
+      :<p className="model-picker-empty" role="status">No models found<span>Try another model or provider name.</span></p>)}
     </div>
     {scopeHint&&<p className="model-picker-scope" role="note">{scopeHint}</p>}
     {onNewTask&&<button type="button" className="model-picker-new-task" disabled={!modelId} onClick={()=>{onNewTask(modelId);close();}}>Start new task with {name}</button>}
-    {!visible.length&&(filter.kind==='favorites'&&favoriteCount===0
-     ?<p className="model-picker-empty" role="status">No favorites yet<span>Star a model to keep it here.</span></p>
-     :<p className="model-picker-empty" role="status">No models found<span>Try another model or provider name.</span></p>)}
    </div>
    {combined&&<div className="model-picker-reasoning" role="group" aria-label="Reasoning">
     <div className="model-picker-reasoning-head"><span>Reasoning</span><small>{selected?.name??(modelId||'Select model')}</small></div>
