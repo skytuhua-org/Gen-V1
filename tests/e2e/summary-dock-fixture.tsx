@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { DockedSummary, SummaryDock, SummaryLayout } from '../../packages/ui-shell/SummaryDock';
+import { DockedSummary, SummaryDock, SummaryLayout, SummaryToggle, useSummaryDisclosure } from '../../packages/ui-shell/SummaryDock';
 import { UsageFooter } from '../../apps/web/src/UsageFooter';
 import { EMPTY_USAGE } from '../../packages/contracts';
 import '../../apps/web/src/styles.css';
@@ -43,4 +43,25 @@ function Fixture() {
     </section>
   </div>;
 }
-createRoot(document.getElementById('root')!).render(<Fixture />);
+function ExternalFixture() {
+  const disclosure = useSummaryDisclosure('plan');
+  const focusMain = new URLSearchParams(location.search).has('focus-main');
+  return <div className="app-shell" style={{ height: '100dvh', minHeight: 0 }}>
+    <section className="shell-workarea">
+      <SummaryLayout active={false} summaries={<SummaryDock>
+        <DockedSummary id="plan" title="Project overview" disclosure={disclosure}>
+          <button type="button">Open full plan</button>
+          <button type="button">Connect project</button>
+        </DockedSummary>
+      </SummaryDock>}>
+        <main className="workspace">
+          <header className="workspace-header"><SummaryToggle title="Project overview" disclosure={disclosure}><span aria-hidden="true">i</span></SummaryToggle></header>
+          <div className="conversation-scroll"><div className="conversation"><p>Workspace content remains in place.</p></div></div>
+          <div className="composer-dock"><div className="composer"><input aria-label="Main draft" autoFocus={focusMain}/></div></div>
+        </main>
+      </SummaryLayout>
+    </section>
+  </div>;
+}
+const external = new URLSearchParams(location.search).has('external');
+createRoot(document.getElementById('root')!).render(external ? <ExternalFixture/> : <Fixture/>);
