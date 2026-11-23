@@ -74,3 +74,92 @@ test('flag off renders no toggle and no GitHub link',async({page})=>{
  await expect(region.locator('.pr-check-log-toggle')).toHaveCount(0);
  await expect(region.locator('.pr-check-github')).toHaveCount(0);
 });
+
+// #1326 T07 — Fix sheet + send (DESIGN 4, 7.3–7.4).
+const fixReport=()=>report([job('101','lint'),job('103','retention',{logState:'unavailable',excerpt:'',excerptLines:0,errorLines:[]})]);
+const twoJobs=async(page:import('@playwright/test').Page,options?:Parameters<typeof panel>[1])=>{
+ const region=await panel(page,options);
+ await page.route('**/api/projects/project-one/pull-requests/12/failures?*',route=>route.fulfill({json:fixReport()}));
+ return region;
+};
+
+test('fix launcher only with a failed check and a thread',async({page})=>{
+ // All green -> nothing.
+ const green=await twoJobs(page,{checks:[{name:'build',status:'COMPLETED',conclusion:'SUCCESS'}]});
+ await expect(green.getByRole('button',{name:'Fix with agent'})).toHaveCount(0);
+ await expect(green.getByText('Open this panel from a thread to send failures to its agent.')).toHaveCount(0);
+ // Failed check + thread -> launcher.
+ const region=await twoJobs(page);
+ await expect(region.getByRole('button',{name:'Fix with agent'})).toBeVisible();
+ // Failed check, no thread -> note instead of the button.
+ await page.goto('/shared-panels-check?project=1&pr-panels=pull-request&nothread=1');
+ const bare=page.getByRole('region',{name:'first PR panel'});
+ await bare.getByRole('button',{name:'#12 PR 12',exact:true}).click();
+ await expect(bare.getByRole('button',{name:'Fix with agent'})).toHaveCount(0);
+ await expect(bare.getByText('Open this panel from a thread to send failures to its agent.')).toBeVisible();
+});
+
+test('sheet defaults: ready jobs checked, disabled rows carry the reason, stale note shown',async({page})=>{
+ const region=await twoJobs(page);
+ await region.getByRole('button',{name:'Fix with agent'}).click();
+ const sheet=region.locator('.pr-fix-sheet');
+ await expect(sheet).toBeVisible();
+ await expect(sheet.getByText('Send failing checks to the agent')).toBeVisible();
+ const lint=sheet.getByRole('checkbox',{name:/CI · lint/});
+ await expect(lint).toBeChecked();
+ const retention=sheet.getByRole('checkbox',{name:/CI · retention/});
+ await expect(retention).not.toBeChecked();
+ await expect(retention).toBeDisabled();
+ await expect(sheet).toContainText('GitHub no longer has this log.');
+ const instruction=sheet.getByRole('textbox',{name:'Instruction'});
+ await expect(instruction).toHaveValue(/Fix the failing CI on PR #12: lint\./);
+ // Report head (b) differs from local head (a) -> stale note.
+ await expect(sheet).toContainText('Your local copy is on a different version, so your files may not match what was checked.');
+ // Cancel restores the launcher state.
+ await sheet.getByRole('button',{name:'Cancel'}).click();
+ await expect(sheet).toHaveCount(0);
+});
+
+test('Ctrl+Enter sends one message.send command with checked jobIds and the instruction',async({page})=>{
+ const sent:{type?:string;threadId?:string;payload?:Record<string,unknown>}[]=[];
+ const region=await twoJobs(page);
+ await page.route('**/api/commands',route=>{
+  if(route.request().method()==='POST'){sent.push(route.request().postDataJSON());return route.fulfill({json:{commandId:'c1',result:{ok:true},eventSeq:1}});}
+  return route.fallback();
+ });
+ await region.getByRole('button',{name:'Fix with agent'}).click();
+ const instruction=region.locator('.pr-fix-sheet').getByRole('textbox',{name:'Instruction'});
+ await instruction.press('Control+Enter');
+ await expect.poll(()=>sent.length).toBe(1);
+ expect(sent[0].type).toBe('message.send');
+ expect(sent[0].threadId).toBe('task-thread');
+ expect(sent[0].payload?.content).toBe('Fix the failing CI on PR #12: lint. Use the attached logs. Find the cause, make the smallest fix in this working copy, run the relevant checks locally, and tell me what you changed. Don\'t push unless I ask.');
+ expect(sent[0].payload?.ciFailure).toEqual({reportId:'r'.repeat(64),jobIds:['101']});
+ await expect(region.locator('.pr-fix-sheet')).toHaveCount(0);
+ await expect(region.getByText('Sent to the thread.')).toBeVisible();
+});
+
+test('Escape cancels and returns focus to the launcher',async({page})=>{
+ const region=await twoJobs(page);
+ const launcher=region.getByRole('button',{name:'Fix with agent'});
+ await launcher.click();
+ await region.locator('.pr-fix-sheet').getByRole('textbox',{name:'Instruction'}).press('Escape');
+ await expect(region.locator('.pr-fix-sheet')).toHaveCount(0);
+ await expect(launcher).toBeFocused();
+});
+
+test('expired report keeps the draft and offers Refresh',async({page})=>{
+ let refreshes=0;
+ const region=await twoJobs(page);
+ await page.route('**/api/commands',route=>route.fulfill({status:400,json:{error:{code:'CI_REPORT_EXPIRED',message:'The saved failure report expired.'}}}));
+ await page.route('**/api/projects/project-one/pull-requests/12/failures?*refresh=1*',route=>{refreshes+=1;return route.fulfill({json:{...fixReport(),id:'s'.repeat(64)}});});
+ await region.getByRole('button',{name:'Fix with agent'}).click();
+ const sheet=region.locator('.pr-fix-sheet');
+ await sheet.getByRole('button',{name:'Send to agent'}).click();
+ await expect(sheet.getByText('These logs expired. Refresh and send again.')).toBeVisible();
+ // Draft retained.
+ await expect(sheet.getByRole('textbox',{name:'Instruction'})).toHaveValue(/Fix the failing CI on PR #12/);
+ await sheet.getByRole('button',{name:'Refresh'}).click();
+ await expect.poll(()=>refreshes).toBe(1);
+ await expect(sheet.getByText('These logs expired.')).toHaveCount(0);
+});
