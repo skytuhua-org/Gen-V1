@@ -537,6 +537,53 @@ describe("isolated process adapter", () => {
     }
   });
 
+  it("rejects a late START reply after the Pi transport fails", async () => {
+    const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
+    const spawnWorker = workers.spawnWorker.getMockImplementation()!;
+    workers.spawnWorker.mockImplementation((...args) => {
+      const child = spawnWorker(...args) as unknown as typeof workers.children[number];
+      const send = child.send.getMockImplementation() as (message: {command?:string;requestId?:string}, callback: (error: Error | null) => void) => boolean;
+      child.send.mockImplementation((message, callback) => {
+        if (message.command !== "start") return send(message, callback);
+        Object.assign(child, { pid: 101 });
+        queueMicrotask(() => {
+          child.emit("error", Error("Synthetic transport interruption"));
+          child.emit("message", { type: "response", requestId: message.requestId, value: null });
+          callback(null);
+        });
+        return true;
+      });
+      return child as never;
+    });
+    runtime.configure({ onTool: async () => null, onEvent: () => {} });
+    try {
+      await expect(runtime.start(input)).rejects.toMatchObject({ code: "PI_WORKER_TRANSPORT_FAILED" });
+      expect(workers.terminate).toHaveBeenCalledOnce();
+    } finally { await runtime.dispose(); }
+  });
+
+  it("retries native Pi cancellation without releasing unconfirmed custody", async () => {
+    const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
+    const onEvent = vi.fn();
+    runtime.configure({ onTool: async () => null, onEvent });
+    await runtime.start(input);
+    workers.terminate.mockRejectedValueOnce(Error("Synthetic native cancellation failure"));
+    try {
+      await expect(runtime.cancel(ctx)).rejects.toThrow("Synthetic native cancellation failure");
+      expect(onEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "settled" }));
+      await expect(runtime.cancel(ctx)).resolves.toBeUndefined();
+      expect(workers.terminate).toHaveBeenCalledTimes(2);
+      expect(onEvent).toHaveBeenCalledWith({ ...ctx, type: "settled", aborted: true });
+    } finally {
+      const child = workers.children[0];
+      if (Reflect.get(child, "exitCode") === null) {
+        Object.assign(child, { connected: false, exitCode: 1 });
+        child.emit("exit", 1, null);
+      }
+      await runtime.dispose();
+    }
+  });
+
   it("retains worker custody after a transport error without confirmed native exit", async () => {
     const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
     const onEvent = vi.fn();

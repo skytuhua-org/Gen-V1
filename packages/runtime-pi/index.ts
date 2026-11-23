@@ -22,6 +22,7 @@ interface Worker {
   input?:StartRun;sessionPath?:string;checkpointWork?:Promise<void>;
 }
 interface RunAuthority { ctx: RunContext; revoked: boolean; settled?: boolean; worker?: Worker }
+const failedTransport = () => new HarnessError("PI_WORKER_TRANSPORT_FAILED", "Pi worker transport failed before completing the request.");
 
 export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }: { dataDir: string;modelOnly?:boolean;purpose?:ModelPurpose }): RuntimeAdapter {
   const modelOnly=requestedModelOnly||purpose==='prediction'||purpose==='memory-extraction';
@@ -124,12 +125,15 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
     });
     // A lifecycle observer cannot veto worker cleanup or the next notification.
     const notifyExit = (notify: () => void) => { try { notify(); } catch { /* The native worker still needs to be released. */ } };
+    const rejectPending = (error: Error) => {
+      for (const pending of worker.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
+      worker.pending.clear();
+    };
     let didEnd = false;
     const ended = () => {
       if (didEnd) return;
       didEnd = true;
-      for (const pending of worker.pending.values()) { clearTimeout(pending.timer); pending.reject(new HarnessError("PI_WORKER_EXITED", "Pi worker exited before completing the request. Run pnpm install if the SDK cannot load; retry or sign in with pnpm agent:login.")); }
-      worker.pending.clear();
+      rejectPending(new HarnessError("PI_WORKER_EXITED", "Pi worker exited before completing the request. Run pnpm install if the SDK cannot load; retry or sign in with pnpm agent:login."));
       if (worker.active && !worker.stopping) {
         notifyExit(() => emit(worker, "error", "Pi worker exited unexpectedly. Persisted history will determine which inputs were delivered."));
         const ctx = worker.ctx;
@@ -146,14 +150,22 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
     child.once("exit", ended);
     child.on("error", error => {
       if (didEnd) return;
-      notifyExit(() => emit(worker, "error", safeError(error)));
-      // IPC can fail while a spawned process is still running.
-      if (!child.pid || child.exitCode !== null || child.signalCode !== null) ended();
-      else worker.transportFailed = true;
+      // IPC can fail while a spawned process is still running. Reject pending
+      // replies without treating the transport failure as confirmed native exit.
+      if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
+        notifyExit(() => emit(worker, "error", safeError(error)));
+        ended();
+        return;
+      }
+      const report = current(worker);
+      worker.transportFailed = true;
+      rejectPending(failedTransport());
+      if (report && ctx) notifyExit(() => callbacks?.onEvent({ ...ctx, type: "error", message: safeError(error) }));
     });
     return worker;
   }
   function request(worker: Worker, command: string, args: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<unknown> {
+    if (worker.transportFailed && command !== "abort") return Promise.reject(failedTransport());
     if (!worker.process.connected) return Promise.reject(new Error("Pi worker is disconnected."));
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {
@@ -179,7 +191,11 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       await terminateProcessTree(worker.process);
       await worker.exited;
       await worker.checkpointWork?.catch(()=>{});
-    })();
+    })().catch(error => {
+      // Keep the stopped worker in custody while allowing a later teardown attempt.
+      worker.termination = undefined;
+      throw error;
+    });
     return worker.termination;
   }
   async function prepare(authority: RunAuthority) {
