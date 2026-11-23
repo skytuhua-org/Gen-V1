@@ -83,14 +83,18 @@ export function Diagnostics({element:{props}}:ComponentRenderProps){
 
 type PatchLine={text:string;kind:'hunk'|'added'|'removed'|'context'|'metadata';oldLine?:number;newLine?:number};
 function patchLines(patch:string):PatchLine[]{
-  let oldLine:number|undefined,newLine:number|undefined;
+  let oldLine:number|undefined,newLine:number|undefined,inHunk=false;
   return patch.split('\n').map(text=>{
     const hunk=/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
-    if(hunk){oldLine=Number(hunk[1]);newLine=Number(hunk[2]);return {text,kind:'hunk'};}
-    if(/^(?:diff |index |--- |\+\+\+ |\\)/.test(text))return {text,kind:'metadata'};
+    if(hunk){oldLine=Number(hunk[1]);newLine=Number(hunk[2]);inHunk=true;return {text,kind:'hunk'};}
+    // Outside a hunk, header/meta rows keep the full text. Inside one, '-'
+    // and '+' always mark content ('-- ' or '++ ' payloads included).
+    if(!inHunk&&/^(?:diff |index |--- |\+\+\+ |\\)/.test(text))return {text,kind:'metadata'};
+    if(text.startsWith('diff ')){inHunk=false;return {text,kind:'metadata'};}
+    if(inHunk&&text.startsWith('\\'))return {text,kind:'metadata'};
     if(text.startsWith('-'))return {text:text.slice(1),kind:'removed',oldLine:oldLine===undefined?undefined:oldLine++};
     if(text.startsWith('+'))return {text:text.slice(1),kind:'added',newLine:newLine===undefined?undefined:newLine++};
-    if(text.startsWith(' '))return {text:text.slice(1),kind:'context',oldLine:oldLine===undefined?undefined:oldLine++,newLine:newLine===undefined?undefined:newLine++};
+    if(text.startsWith(' ')||inHunk)return {text:text.startsWith(' ')?text.slice(1):text,kind:'context',oldLine:oldLine===undefined?undefined:oldLine++,newLine:newLine===undefined?undefined:newLine++};
     return {text,kind:'metadata'};
   });
 }
