@@ -9,7 +9,7 @@ import {createDesktopUpdater,type DesktopUpdater,type DesktopUpdateDriver,type U
 import {checkInstalledCompatibility} from '../../packages/plugins/installation.ts';
 import {resolve,join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {DESKTOP_CHANNELS as channels,desktopId,desktopSurfaceKey,parseDesktopSurface,parseDesktopLayout,parseDesktopWindowControl,type DesktopLayout,type DesktopLayoutEntry,type DesktopSurface,type DesktopWindowInfo,type DesktopContext,type DesktopState,type DesktopBrowserState} from '../../packages/desktop-contract/index.ts';
+import {DESKTOP_CHANNELS as channels,desktopId,desktopSurfaceKey,parseDesktopSurface,parseDesktopLayout,parseDesktopWindowControl,parseDesktopSettingsExportRequest,type DesktopLayout,type DesktopLayoutEntry,type DesktopSurface,type DesktopWindowInfo,type DesktopContext,type DesktopState,type DesktopBrowserState} from '../../packages/desktop-contract/index.ts';
 import {allowRemoteBrowserUrl,clampDesktopBounds,pluginDesktopChannelAllowed,pluginDesktopRequiresGrant,nativeTitlebarOptions,nativeTitlebarTheme,needsEditorHandoff,desktopSurfaceAllowed,isTrustedDesktopSender,parseBrowserCommand,remoteBrowserUrl,surfaceSize,trustedDesktopUrl,trustedDesktopSubframe,type DesktopBounds} from './window-policy.ts';
 import {createBrowserProxy,type BrowserProxy} from './browser-proxy.ts';
 import {createStartupOutputCapture,finishBackendStartup,nodeSidecarArguments,requestBackendShutdown,startupErrorDiagnostic,waitForBackendReady,writeStartupDiagnostic,type StartupDiagnostic,type StartupObservation} from './backend-policy.ts';
@@ -24,6 +24,7 @@ import {workspaceEvents} from './workspace-events.ts';
 import {applyNativeLayout,requestNativeClose,type NativeCloseOwner} from './layout-transaction.ts';
 import {createPersistenceQueue,reconcileSavedWindows} from './persistence.ts';
 import {createMemoryExportDownloads} from './memory-export.ts';
+import {createSettingsExportDownloads} from './settings-export.ts';
 import {createAttentionPopups,attentionPopupHtml,type AttentionPopupAction,type AttentionPopupWindow} from './attention-popups.ts';
 import {attentionDeliverySchema} from '../../packages/contracts/attention.ts';
 const persistence=createPersistenceQueue();
@@ -119,6 +120,7 @@ function secureBrowserSession(value:Session){
  const ready=(async()=>{const proxy=await (proxyPromise??=createBrowserProxy());await value.setProxy({mode:'fixed_servers',proxyRules:'http=127.0.0.1:'+proxy.port+';https=127.0.0.1:'+proxy.port,proxyBypassRules:'<-loopback>'});await value.closeAllConnections();})();configuredBrowserSessions.set(value,ready);return ready;
 }
 const memoryExports=createMemoryExportDownloads();
+const settingsExports=createSettingsExportDownloads(memoryExports);
 function secureSessionDownloads(value:Session){memoryExports.guard(value);}
 function browserRecord(id:string):BrowserRecord {
  const existing=browsers.get(id);if(existing)return existing;
@@ -238,6 +240,7 @@ function registerIpc(){
  ipcMain.handle(channels.attentionPopupAction,async(event,value:unknown)=>{const native=attentionNative;if(!native||native.isDestroyed()||event.sender.id!==native.webContents.id||event.senderFrame!==event.sender.mainFrame||event.senderFrame.url!==attentionUrl||event.sender.getURL()!==attentionUrl)throw Error('Notification action denied.');if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==2)throw Error('Invalid notification action.');const action=value as Record<string,unknown>;if(!['open','dismiss','pause','resume'].includes(String(action.type))||typeof action.eventId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9:_.-]{0,999}$/.test(action.eventId))throw Error('Invalid notification action.');await attentionAction?.(action as unknown as AttentionPopupAction);});
  handle(channels.attentionOpen,async(record,value)=>{if(record.surface.kind!=='main'||typeof value!=='string')throw Error('Notification action denied.');await openAttention(value);});
  handle(channels.context,record=>context(record));
+ handle(channels.settingsExport,(record,value)=>{if(record.surface.kind!=='main')throw Error('Settings export denied.');const request=parseDesktopSettingsExportRequest(value);return settingsExports.export({contents:record.window.webContents,surface:record.surface,documentUrl:record.url,isCurrent:()=>!quitting&&!quitPending&&windows.get(record.id)===record&&!record.window.isDestroyed()&&record.ready},request.serialized,request.filename);});
  handle(channels.memoryExport,(record,value)=>memoryExports.export({contents:record.window.webContents,surface:record.surface,documentUrl:record.url,isCurrent:()=>!quitting&&!quitPending&&windows.get(record.id)===record&&!record.window.isDestroyed()&&record.ready},value));
  handle(channels.theme,(record,value)=>{const theme=nativeTitlebarTheme(value);if(process.platform==='win32')record.window.setTitleBarOverlay(theme);});
  handle(channels.update,async(_record,value)=>{if(value!=='check'&&value!=='restart')throw Error('Invalid update action.');if(value==='check')return updater?await updater.check():updateStatus;if(updateStatus.state!=='ready'&&updateStatus.state!=='deferred')return updateStatus;if(osSessionEnding||signInFlows.isBusy()||(await backendRequest('harness.update.readiness')).idle!==true){updateStatus={state:'deferred',message:'Finish the current work before restarting to update.'};broadcast();return updateStatus;}restartForUpdate=true;app.quit();return updateStatus;});
