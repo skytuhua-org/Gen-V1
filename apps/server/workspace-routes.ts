@@ -16,6 +16,7 @@ import {capabilityEnabled} from '../../packages/core/capability-flags.ts';
 import {workspaceOwnerScope} from '../../packages/workspace/edit-journal.ts';
 import {CheckpointService} from '../../packages/workspace/checkpoints.ts';
 import type {CheckpointScope} from '../../packages/contracts/workspace-checkpoints.ts';
+import {terminalDirectorySelectionSchema} from '../../packages/workspace/terminal-directory.ts';
 
 const identifier=z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/),record=z.record(z.string(),z.unknown());
 const envelope=z.strictObject({id:identifier,type:z.string().min(1).max(100),payload:record,threadId:identifier.optional()});
@@ -66,7 +67,7 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
   const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,...input}=ComparisonFileRequestSchema.extend({threadId:identifier.optional()}).parse(request.query);
   return github.comparisonFile(projectId,threadId,input);
  });
- app.get('/api/projects/:projectId/files',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path}=querySchema.parse(request.query);return projects.files(projectId,threadId,path);});
+ app.get('/api/projects/:projectId/files',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path,terminalLaunch}=querySchema.extend({terminalLaunch:z.literal('1').optional()}).parse(request.query);return projects.files(projectId,threadId,path,terminalLaunch==='1');});
  app.get('/api/projects/:projectId/file',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path}=querySchema.parse(request.query);return projects.file(projectId,threadId,z.string().min(1).parse(path));});
  app.get('/api/projects/:projectId/pull-requests',async request=>{
   const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,linked}=pullQuerySchema.parse(request.query);if(!linked)return github.list(projectId,threadId);
@@ -152,7 +153,7 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
   if(input.type==='open-editor'){const{spawn}=await import('node:child_process');if(process.platform!=='win32')throw new HarnessError('UNAVAILABLE','This editor launcher is available on Windows.');await new Promise<void>((accept,reject)=>{const child=spawn((process.env.SystemRoot??'C:/Windows')+'/explorer.exe',[binding.path],{windowsHide:true,stdio:'ignore'});child.once('spawn',()=>{child.unref();accept();});child.once('error',reject);});return{opened:true};}
   throw new HarnessError('INVALID_INPUT','Unknown project action.');
  });
- app.post('/api/terminals',{bodyLimit:4096},async request=>terminals.open(z.strictObject({projectId:identifier,threadId:identifier.optional(),terminalId:identifier.optional(),cols:z.number().int().optional(),rows:z.number().int().optional()}).parse(request.body)));
+ app.post('/api/terminals',{bodyLimit:4096},async request=>{const input=z.strictObject({projectId:identifier,threadId:identifier.optional(),terminalId:identifier.optional(),cols:z.number().int().optional(),rows:z.number().int().optional(),directory:terminalDirectorySelectionSchema.optional()}).parse(request.body);if(input.directory&&!input.terminalId)throw new HarnessError('INVALID_INPUT','A directory launch requires a caller terminal ID.');return terminals.open(input);});
  app.get('/api/terminals/:terminalId',async request=>{const{terminalId}=z.object({terminalId:identifier}).parse(request.params),p=z.strictObject({projectId:identifier,threadId:identifier.optional(),cursor:z.coerce.number().int().nonnegative().optional()}).parse(request.query);return terminals.read(terminalId,p.projectId,p.threadId,p.cursor);});
  app.post('/api/terminals/:terminalId/commands',{bodyLimit:128*1024},async request=>{const{terminalId}=z.object({terminalId:identifier}).parse(request.params),p=z.strictObject({projectId:identifier,threadId:identifier.optional(),type:z.enum(['input','resize','stop']),data:z.string().optional(),cols:z.number().optional(),rows:z.number().optional()}).parse(request.body);return terminals.command(terminalId,p.projectId,p.threadId,p);});
  app.get('/api/integrations',async()=>({integrations:host.integrations?await host.integrations.inventory():[]}));

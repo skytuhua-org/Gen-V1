@@ -64,18 +64,50 @@ function Fixture() {
 					border: "1px solid var(--border)",
 				}}
 			>
-				<WorkspaceSurfaceBody
-					kind="files"
-					binding={{
-						authority: { kind: "local" },
-						threadId,
-						...(!params.has("granted") ? { projectId } : {}),
-						...(preferred ? { resourceId: preferred } : {}),
-					}}
-					snapshot={snapshot}
-					refresh={async () => {}}
-					active={active}
-				/>
+				{params.has("attach") ? (
+					<WorkspaceSurfaceBody
+						kind="terminal"
+						binding={{
+							authority: { kind: "local" },
+							threadId,
+							projectId,
+							terminalId: "term-attach",
+							terminalAttachOnly: true,
+						}}
+						snapshot={snapshot}
+						refresh={async () => {}}
+						active={active}
+					/>
+				) : (
+					<WorkspaceSurfaceBody
+						kind="files"
+						binding={{
+							authority: { kind: "local" },
+							threadId,
+							...(!params.has("granted") ? { projectId } : {}),
+							...(preferred ? { resourceId: preferred } : {}),
+						}}
+						snapshot={snapshot}
+						refresh={async () => {}}
+						active={active}
+						onOpenTerminalInDirectory={async (pid, tid, dir) => {
+							const w = window as unknown as {
+								__terminalLaunches?: {
+									projectId: string;
+									threadId: string | undefined;
+									dir: { path: string; proof: string };
+								}[];
+							};
+							const first = (w.__terminalLaunches ?? []).length === 0;
+							w.__terminalLaunches = [
+								...(w.__terminalLaunches ?? []),
+								{ projectId: pid, threadId: tid, dir },
+							];
+							if (params.has("launch-fail") && first)
+								throw new Error("Placement refused");
+						}}
+					/>
+				)}
 			</div>
 		</>
 	);

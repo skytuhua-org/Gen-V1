@@ -13,6 +13,7 @@ import {
 	PanelLeft,
 	RefreshCw,
 	Search,
+	SquareTerminal,
 } from "lucide-react";
 import { Select } from "../../../../packages/ui-shell/Select";
 import type { FilesRead } from "./useFilesRead";
@@ -38,6 +39,13 @@ export interface FilesEntry {
 	path: string;
 	kind: string;
 	bytes?: number;
+	terminalDirectoryProof?: string;
+}
+export interface TerminalLaunch {
+	pending: boolean;
+	error: string | null;
+	open: (path: string, proof: string) => void;
+	onRetry: () => void;
 }
 export function FilesView({
 	source,
@@ -50,6 +58,7 @@ export function FilesView({
 	download,
 	limitNote,
 	projectSearch,
+	terminalLaunch,
 	onDirectory,
 	onSelect,
 	onRefresh,
@@ -59,7 +68,7 @@ export function FilesView({
 	source: "project" | "granted";
 	rootLabel: string;
 	path: string;
-	folder: FilesRead<{ entries: FilesEntry[] }>;
+	folder: FilesRead<{ entries: FilesEntry[]; terminalDirectoryProof?: string }>;
 	selected: FilesEntry | null;
 	preview: FilesRead<unknown> & { body: ReactNode };
 	selector?: ReactNode;
@@ -69,6 +78,7 @@ export function FilesView({
 		available: boolean;
 		body: (openPreview: () => void) => ReactNode;
 	};
+	terminalLaunch?: TerminalLaunch;
 	onDirectory: (path: string) => void;
 	onSelect: (entry: FilesEntry) => void;
 	onRefresh: () => void;
@@ -130,6 +140,22 @@ export function FilesView({
 						<RefreshCw size={14} />
 						<span>Refresh</span>
 					</button>
+					{terminalLaunch && folder.value?.terminalDirectoryProof && (
+						<button
+							type="button"
+							disabled={terminalLaunch.pending}
+							aria-busy={terminalLaunch.pending}
+							onClick={() =>
+								terminalLaunch.open(
+									path,
+									folder.value!.terminalDirectoryProof!,
+								)
+							}
+						>
+							<SquareTerminal size={14} />
+							<span>Open terminal here</span>
+						</button>
+					)}
 				</div>
 				<nav className="files-breadcrumb" aria-label="Folder breadcrumb">
 					<button
@@ -163,6 +189,22 @@ export function FilesView({
 					))}
 				</nav>
 			</div>
+			{terminalLaunch?.pending && (
+				<p className="files-message files-launch-status" role="status">
+					Opening terminal…
+				</p>
+			)}
+			{terminalLaunch?.error && (
+				<div className="files-message files-error" role="alert">
+					<p>{terminalLaunch.error}</p>
+					<button type="button" onClick={terminalLaunch.onRetry}>
+						Retry opening
+					</button>
+					<button type="button" onClick={onRefresh}>
+						Refresh files
+					</button>
+				</div>
+			)}
 			<div
 				className="files-content"
 				data-tree-open={treeOpen}
@@ -275,6 +317,24 @@ export function FilesView({
 													</small>
 												) : null}
 											</button>
+											{terminalLaunch && entry.terminalDirectoryProof && (
+												<button
+													type="button"
+													className="files-entry-action"
+													title={`Open terminal here: ${displayFilePath(entry.name)}`}
+													aria-label={`Open terminal here: ${displayFilePath(entry.name)}`}
+													disabled={terminalLaunch.pending}
+													aria-busy={terminalLaunch.pending}
+													onClick={() =>
+														terminalLaunch.open(
+															entry.path,
+															entry.terminalDirectoryProof!,
+														)
+													}
+												>
+													<SquareTerminal size={13} />
+												</button>
+											)}
 										</li>
 									))}
 								</ul>

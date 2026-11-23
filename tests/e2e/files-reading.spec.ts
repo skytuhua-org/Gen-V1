@@ -954,3 +954,158 @@ for (const source of ["project", "granted"])
 			).toBeVisible();
 		},
 	);
+
+const launchEntries = () => [
+	{
+		name: "next",
+		path: "next",
+		kind: "directory",
+		terminalDirectoryProof: "proof-next",
+	},
+	{ name: "ok.txt", path: "ok.txt", kind: "file", bytes: 10 },
+];
+async function launchMocks(page: Page) {
+	await page.route("**/api/projects/*/files?*", (route) =>
+		route.fulfill({
+			json: { entries: launchEntries(), terminalDirectoryProof: "proof-root" },
+		}),
+	);
+	await page.route("**/api/projects/*/file?*", (route) =>
+		route.fulfill({ json: text() }),
+	);
+}
+
+test("directory terminal launch: toolbar and row actions call the coordinator once with each directory's own proof", async ({
+	page,
+}) => {
+	const go = await fixture(page);
+	await launchMocks(page);
+	await go();
+	const toolbar = page.getByRole("button", {
+		name: "Open terminal here",
+		exact: true,
+	});
+	await expect(toolbar).toBeVisible();
+	const rowAction = page.getByRole("button", {
+		name: "Open terminal here: next",
+	});
+	await expect(rowAction).toBeVisible();
+	await rowAction.click();
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as unknown as { __terminalLaunches?: unknown[] })
+						.__terminalLaunches?.length ?? 0,
+			),
+		)
+		.toBe(1);
+	const launch = await page.evaluate(
+		() =>
+			(window as unknown as { __terminalLaunches: { dir: unknown }[] })
+				.__terminalLaunches[0],
+	);
+	expect(launch).toMatchObject({
+		projectId: "project-one",
+		threadId: "task-thread",
+		dir: { path: "next", proof: "proof-next" },
+	});
+	await toolbar.click();
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as unknown as { __terminalLaunches?: unknown[] })
+						.__terminalLaunches?.length ?? 0,
+			),
+		)
+		.toBe(2);
+	const root = await page.evaluate(
+		() =>
+			(
+				window as unknown as {
+					__terminalLaunches: { dir: { path: string; proof: string } }[];
+				}
+			).__terminalLaunches[1],
+	);
+	expect(root.dir).toMatchObject({ path: "", proof: "proof-root" });
+});
+
+test("directory terminal launch failure stays scoped to the files surface and the retry reopens", async ({
+	page,
+}) => {
+	const go = await fixture(page, "?launch-fail");
+	await launchMocks(page);
+	await go();
+	await page
+		.getByRole("button", { name: "Open terminal here: next" })
+		.click();
+	await expect(page.locator(".files-error[role=alert]")).toContainText(
+		"Placement refused",
+	);
+	await page.getByRole("button", { name: "Retry opening" }).click();
+	await expect(page.locator(".files-error[role=alert]")).toHaveCount(0);
+	await expect
+		.poll(() =>
+			page.evaluate(
+				() =>
+					(window as unknown as { __terminalLaunches?: unknown[] })
+						.__terminalLaunches?.length ?? 0,
+			),
+		)
+		.toBe(2);
+});
+
+test("attach-only terminal reads the owning session and never posts a new start", async ({
+	page,
+}) => {
+	const go = await fixture(page, "?attach=1");
+	let posts = 0;
+	await page.route("**/api/terminals", (route) => {
+		posts++;
+		route.fulfill({
+			status: 500,
+			json: { error: { message: "Start must not be posted" } },
+		});
+	});
+	await page.route("**/api/terminals/term-attach?*", (route) =>
+		route.fulfill({
+			json: {
+				id: "term-attach",
+				projectId: "project-one",
+				threadId: "task-thread",
+				output: "attached output",
+				start: 0,
+				cursor: 15,
+				exited: false,
+				exitCode: null,
+			},
+		}),
+	);
+	await go();
+	await expect(page.locator(".live-terminal")).toBeVisible();
+	await expect(
+		page.locator(".live-terminal .panel-toolbar [role=status]"),
+	).toContainText("Running");
+	expect(posts).toBe(0);
+});
+
+test("attach-only terminal surfaces a denied attach instead of falling back to a new start", async ({
+	page,
+}) => {
+	const go = await fixture(page, "?attach=1");
+	let posts = 0;
+	await page.route("**/api/terminals", (route) => {
+		posts++;
+		route.fulfill({
+			status: 500,
+			json: { error: { message: "Start must not be posted" } },
+		});
+	});
+	await page.route("**/api/terminals/term-attach?*", (route) => deny(route));
+	await go();
+	await expect(page.locator(".live-terminal .error-text")).toContainText(
+		"Denied",
+	);
+	expect(posts).toBe(0);
+});
