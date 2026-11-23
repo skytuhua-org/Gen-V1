@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { RemoteSync } from '../../apps/web/src/RemoteSync';
 import { Toaster } from '../../packages/ui-shell/Toast';
 import '../../apps/web/src/styles.css';
+import '../../apps/web/src/shell.css';
 import '../../apps/web/src/remote-sync.css';
 
 function Fixture() {
