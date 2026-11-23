@@ -27,14 +27,24 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   const [position, setPosition] = useState({caret: 0, end: 0, focused: false, composing: false});
   const [dismissed, setDismissed] = useState(''), [captured, setCaptured] = useState<{key: string; page: SkillCatalogPage} | null>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [active, setActive] = useState('model'), [reload, setReload] = useState(0);
   const token = position.focused && !position.composing && !disabled ? commandToken(draft, position.caret, position.end) : null;
-  const signature = token ? `${threadId ?? ''}:${projectId ?? ''}:${token.start}:${token.end}:${token.query}` : '';
+  const signature = token ? `${threadId ?? ''}:${projectId ?? ''}:${token.start}` : '';
   const open = Boolean(token && signature !== dismissed), query = token?.query.replace(/^skill:/i, '') ?? '';
+
   const catalogKey = JSON.stringify([threadId, projectId, query]), page = captured?.key === catalogKey ? captured.page : null;
   const unavailableSources = page?.sources.filter(source => source.availability.status === 'unavailable') ?? [];
   const options: Option[] = [...(token?.query.toLowerCase().startsWith('skill:') ? [] : builtinOptions(query, mode).map(builtin => ({id: builtin.id, builtin}))), ...(page?.skills ?? []).map(skill => ({id: skill.id, skill}))];
   const selected = options.find(option => option.id === active && available(option)) ?? options.find(available);
   const close = () => setDismissed(signature);
-  useEffect(() => {setDismissed(previous => previous && previous !== signature ? '' : previous);}, [signature]);
+  // The dismissal keys on the token's start; read the live DOM here because a
+  // caret update can render before `draft` catches up, and the transient
+  // null-token signature would otherwise clear the dismissal mid-keystroke.
+  useEffect(() => {
+    setDismissed(previous => {
+      if (!previous) return previous;
+      const element = input.current, live = element ? commandToken(element.value, element.selectionStart, element.selectionEnd) : null;
+      return previous !== (live ? `${threadId ?? ''}:${projectId ?? ''}:${live.start}` : '') ? '' : previous;
+    });
+  }, [signature, input, threadId, projectId]);
   useLayoutEffect(() => {
     const element = input.current; if (!element) return;
     const update = () => setPosition(previous => {
@@ -43,12 +53,16 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
     });
     const start = () => setPosition(previous => ({...previous, composing: true}));
     const finish = () => {setPosition(previous => ({...previous, composing: false})); update();};
-    const focus = () => {setDismissed(''); update();};
+    // On refocus, re-dismiss only when the caret is already inside a token:
+    // keep the dismissal when it is the same token, drop it for a different
+    // token so that one can open. Outside any token there is nothing to open,
+    // so the dismissal is preserved for the next edit in place.
+    const focus = () => {const current = commandToken(element.value, element.selectionStart, element.selectionEnd), sig = current ? `${threadId ?? ''}:${projectId ?? ''}:${current.start}` : ''; setDismissed(previous => sig && sig !== previous ? '' : previous); update();};
     for (const name of ['select', 'click', 'keyup', 'input']) element.addEventListener(name, update);
     element.addEventListener('focus', focus);
     element.addEventListener('compositionstart', start); element.addEventListener('compositionend', finish); update();
     return () => {for (const name of ['select', 'click', 'keyup', 'input']) element.removeEventListener(name, update); element.removeEventListener('focus', focus); element.removeEventListener('compositionstart', start); element.removeEventListener('compositionend', finish);};
-  }, [input]);
+  }, [input, threadId, projectId]);
   useLayoutEffect(() => {const element = input.current; if (element) setPosition(previous => ({...previous, caret: element.selectionStart, end: element.selectionEnd, focused: element.ownerDocument.activeElement === element}));}, [draft, input]);
   useEffect(() => {
     const generation = ++request.current, controller = new AbortController(); loadingMore.current = false; setCaptured(null); setError('');
