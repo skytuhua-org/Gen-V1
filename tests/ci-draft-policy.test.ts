@@ -10,9 +10,9 @@ const jobs=starts.map((match,index)=>{
   const shards=/^        shard:\s*(\[[^\]\n]+\])/m.exec(block)?.[1];
   return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',shards:shards?JSON.parse(shards) as number[]:null};
 });
-const requiredJobs=['checks','test/1','test/2','test/3','test/4','browser','hermes','desktop','installed-memory'];
+const requiredJobs=['checks','test/1','test/2','test/3','test/4','browser','installed-memory'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
-type CiEvent={name:'pull_request'|'push'|'workflow_dispatch';action?:string;draft?:boolean;ref?:string};
+type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string};
 function context(event:CiEvent){return {workflow:'CI',ref:event.ref??'refs/pull/42/merge',event_name:event.name,event:event.name==='pull_request'?{action:event.action,pull_request:{number:42,draft:event.draft}}:{}};}
 function evaluate(expression:string,event:CiEvent):unknown {
   // The policy uses boolean/string comparisons and property access, whose
@@ -26,6 +26,7 @@ function scheduledJobs(event:CiEvent):string[]|null {
     if(!branches.includes((event.ref??'').replace(/^refs\/heads\//,'')))return null;
   }
   if(event.name==='workflow_dispatch'&&!/^  workflow_dispatch:/m.test(workflow))return null;
+  if(event.name==='merge_group'&&!/^  merge_group:/m.test(workflow))return null;
   return jobs.filter(job=>evaluate(job.condition,event)).flatMap(job=>job.shards?job.shards.map(shard=>job.id+'/'+shard):[job.id]);
 }
 
@@ -35,7 +36,7 @@ it.each(['opened','synchronize','reopened'])('keeps draft %s events out of every
 it.each(['opened','synchronize','reopened'])('runs every required job for reviewable %s events',action=>{
   expect(scheduledJobs({name:'pull_request',action,draft:false})).toEqual(requiredJobs);
 });
-it('starts all nine jobs when a draft becomes ready without another commit',()=>{
+it('starts all seven jobs when a draft becomes ready without another commit',()=>{
   expect(scheduledJobs({name:'pull_request',action:'opened',draft:true})).toEqual([]);
   expect(scheduledJobs({name:'pull_request',action:'ready_for_review',draft:false})).toEqual(requiredJobs);
 });
@@ -59,6 +60,17 @@ it.each(['main','agent/m05-v3'])('preserves every job for pushes to %s without a
 it('preserves every job for a manual dispatch without a pull request payload',()=>{
   expect(scheduledJobs({name:'workflow_dispatch',ref:'refs/heads/main'})).toEqual(requiredJobs);
 });
+it('runs every job for a merge queue entry before it reaches main',()=>{
+  expect(scheduledJobs({name:'merge_group',ref:'refs/heads/gh-readonly-queue/main/pr-42-'+'a'.repeat(40)})).toEqual(requiredJobs);
+});
+it('reports every failing check in the folded job instead of stopping at the first',()=>{
+  const checks=jobSource.split(/^  checks:\n/m)[1]?.split(/^  test:\n/m)[0]??'';
+  const steps=checks.split(/^      - name:/m).slice(1);
+  expect(steps.length).toBeGreaterThan(10);
+  for(const step of steps.slice(2))expect(step).toMatch(/^        if: \$\{\{ !cancelled\(\) && steps\.(setup|visuals|build)\.outcome == 'success' \}\}$/m);
+  for(const step of steps)expect(step).not.toMatch(/continue-on-error|always\(\)/);
+  for(const command of ['pnpm lint','pnpm typecheck','pnpm build','pnpm desktop:build','pnpm test:ui-guard','tests/hermes_source_contract.py','tests/hermes_atomic_controls.py','tests/hermes_source_worker.py','tests/memory_native_checkpoint_v3.py','tests/memory_native_checkpoint_worker_v3.py','tests/plugin-api-package.test.mjs'])expect(checks).toContain(command);
+});
 
 it('does not let a successful visuals package build mask a failed typecheck',()=>{
   const checks=jobSource.split(/^  checks:\n/m)[1]?.split(/^  test:\n/m)[0]??'';
@@ -67,8 +79,11 @@ it('does not let a successful visuals package build mask a failed typecheck',()=
   expect(typecheck).toBeDefined();
   expect(build).toBeDefined();
   expect(typecheck).not.toBe(build);
-  expect(typecheck).not.toMatch(/^        (?:if|continue-on-error):/m);
-  expect(build).not.toMatch(/^        (?:if|continue-on-error):/m);
+  expect(typecheck).not.toMatch(/^        continue-on-error:/m);
+  expect(build).not.toMatch(/^        continue-on-error:/m);
+  // Both gate only on the shared dependency install, never on each other.
+  expect(typecheck).not.toMatch(/steps\.(?!visuals\b)\w+\.outcome/);
+  expect(build).not.toMatch(/steps\.(?!visuals\b)\w+\.outcome/);
 });
 
 const auditWorkflow=readFileSync(new URL('../.github/workflows/m01-m03-audit.yml',import.meta.url),'utf8').replaceAll('\r\n','\n');
