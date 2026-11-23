@@ -311,6 +311,14 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
   useEffect(() => { if (shared) return; let current = true; void journalRead<string>(`draft:${key}`).then(value => { if (current) { setDraft(value ?? ''); setReady(true); } }).catch(() => { if (current) { setReady(true); setError('Draft recovery is unavailable. Keep this tab open until your message is sent.'); } }); return () => { current = false; }; }, [key, shared]);
   useEffect(() => shared ? undefined : journalSubscribe(`draft:${key}`, value => { if (draftTarget.current === key) { prediction.dismiss(); setDraft(typeof value === 'string' ? value : ''); } }), [key, shared]);
   const prediction = useComposerPrediction({ thread, snapshot, modelId, enabled: preferences.composerPredictions, ready, blocked: predictionBlocked || busy || unavailable || contextOpen, draft, generation: journalGeneration(`draft:${key}`), input });
+  const autofocusKey = useRef('');
+  const emptyConversation = !thread || !snapshot.messages.some(message => message.threadId === thread.id);
+  useEffect(() => {
+    if (autofocusKey.current === key || !ready || !emptyConversation || busy || predictionBlocked) return;
+    if (document.querySelector('dialog[open],[role="dialog"][aria-modal="true"],[role="dialog"][data-state="open"]')) return;
+    autofocusKey.current = key;
+    input.current?.focus({ preventScroll: true });
+  }, [key, ready, emptyConversation, busy, predictionBlocked]);
   useLayoutEffect(() => {
     const textarea = input.current;
     if (!textarea) return;
