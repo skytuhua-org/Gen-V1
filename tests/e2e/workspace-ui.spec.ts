@@ -1,4 +1,4 @@
-import {test,expect,type Page} from '@playwright/test';
+import {test,expect,type Locator,type Page} from '@playwright/test';
 import {writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {taskFixture,serveTaskFixture} from './task-interface-fixture';
@@ -356,3 +356,67 @@ test('a completed old project action cannot refresh over a retargeted context wh
  await page.evaluate(value=>(window as any).__pendingWorkspaceReads.filter((read:any)=>read.url.includes('/new-project/context')&&!read.aborted&&!read.completed).forEach((read:any)=>read.complete(value)),value('new-project','Refreshed current owner'));
  await expect(editor).toBeEnabled();await expect(tile).toContainText('Refreshed current owner');
 });
+
+async function expectPanelErrorInset(error: Locator, message: string, inset: number) {
+  await expect(error).toBeVisible();
+  await expect(error).toContainText(message);
+  const metrics = await error.evaluate((element, { message, inset }) => {
+    const paragraph = element.querySelector('p') ?? element;
+    const node = [...paragraph.childNodes].find(child => child.textContent === message);
+    if (!node) throw new Error('The original error text must remain in the panel.');
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const rect = element.getBoundingClientRect();
+    const panel = element.closest('.workspace-right')!.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    const lines = [...range.getClientRects()];
+    return {
+      left: parseFloat(style.paddingLeft), right: parseFloat(style.paddingRight),
+      fits: lines.length > 0 && lines.every(line => line.left >= Math.max(rect.left, panel.left) + inset - 1 &&
+        line.right <= Math.min(rect.right, panel.right) - inset + 1)
+    };
+  }, { message, inset });
+  expect(metrics).toEqual({ left: inset, right: inset, fits: true });
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  for (const { panelWidth, viewport } of [
+    { panelWidth: 280, viewport: 1700 }, { panelWidth: 520, viewport: 1700 },
+    { panelWidth: 720, viewport: 1700 }, { panelWidth: 520, viewport: 700 },
+  ]) {
+    test(`right-panel errors wrap in Files, Diff and Terminal at ${panelWidth}px (${theme}, viewport ${viewport})`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport, height: 1000 });
+      await page.addInitScript(width => localStorage.setItem('harness:shell-layout:v1',
+        JSON.stringify({ sidebarCollapsed: true, rightPanelWidth: width })), panelWidth);
+      const host = await fixture(page, [], undefined, 'workspace');
+      host.snapshot.threads[0].projectId = 'fixture-project';
+      host.snapshot.settings.theme = theme;
+      await host.publish();
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+
+      const message = 'Project data is temporarily unavailable for ' + 'projectfolder'.repeat(12);
+      const response = { status: 503, json: { error: { code: 'PROJECT_UNAVAILABLE', message } } };
+      await page.route('**/api/projects/fixture-project/files?*', route => route.fulfill(response));
+      await page.route('**/api/projects/fixture-project/git?*', route => route.fulfill(response));
+      await page.route('**/api/terminals', route => route.fulfill(response));
+      await page.getByRole('button', { name: 'Open workspace panel', exact: true }).click();
+      const panel = page.getByRole('complementary', { name: 'Workspace panel', exact: true });
+      if (viewport > 700) await expect.poll(async () => Math.round((await panel.boundingBox())?.width ?? 0)).toBe(panelWidth);
+      for (const surface of ['Files', 'Diff', 'Terminal']) {
+        await panel.getByRole('button', { name: 'Add surface', exact: true }).click();
+        await page.getByRole('menuitem', { name: surface, exact: true }).click();
+        const tab = panel.getByRole('tabpanel', { name: surface, exact: true });
+        if (surface === 'Files') {
+          const error = tab.locator('.files-message.files-error');
+          await expect(error.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+          const width = (await tab.locator('.files-surface').boundingBox())!.width;
+          await expectPanelErrorInset(error, message, width <= 400 ? 12 : 16);
+        } else {
+          const error = tab.locator(surface === 'Diff' ? '.live-review > .error-text' : '.live-terminal > .error-text');
+          await expectPanelErrorInset(error, message, 12);
+          await expect(error).toHaveCSS('line-height', '18px');
+        }
+      }
+    });
+  }
+}

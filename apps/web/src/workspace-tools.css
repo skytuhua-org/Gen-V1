@@ -3,7 +3,8 @@
 .live-navigation{display:flex;flex-direction:column;gap:4px;padding:10px;overflow:auto;height:100%;box-sizing:border-box}.live-navigation button{display:grid;gap:5px;text-align:left;border:0;background:transparent;padding:10px;border-radius:8px}.live-navigation button[aria-current]{background:var(--surface-hover,#242424)}.live-navigation small{color:var(--muted)}.live-navigation strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .canvas-panel :is(.live-terminal,.live-pull-requests,.live-review)>.panel-toolbar {min-height:36px;padding:8px 12px;gap:8px;border-bottom:1px solid var(--border);}
 .canvas-panel :is(.live-terminal,.live-pull-requests,.live-review)>.error-text {padding:8px 12px;line-height:1.5;}
-:is(.workspace-right,.workspace-panel-content)>.error-text {padding:8px 12px;line-height:1.5;margin:0;}
+:is(.workspace-right,.workspace-panel-content)>.error-text,
+.workspace-panel-content :is(.live-review,.live-terminal)>.error-text {padding:8px 12px;line-height:1.5;margin:0;}
 .canvas-panel .panel-toolbar>strong {font-size:13px;font-weight:550;}
 .canvas-panel .panel-toolbar>button {font-size:12px;padding:4px 6px;min-height:28px;}
 .canvas-panel .panel-empty {padding:24px 18px;max-width:52ch;margin-inline:auto;line-height:1.55;}
