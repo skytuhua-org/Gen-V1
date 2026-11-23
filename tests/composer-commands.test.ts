@@ -115,4 +115,19 @@ describe('slash-command palette', () => {
       await expect.poll(async () => await palette(page).count(), {timeout:1000}).toBe(0);
     } finally { await page.close(); }
   });
+
+  it('stays closed when the dismissed token is edited through a selection', async () => {
+    const page = await openPage();
+    try {
+      const area = page.locator('#ta');
+      await area.click();
+      await area.pressSequentially('hello /mod');
+      await palette(page).waitFor();
+      await area.press('Escape');
+      await palette(page).waitFor({state:'detached'});
+      await area.evaluate(element => {(element as HTMLTextAreaElement).setSelectionRange(7, 9); element.dispatchEvent(new Event('select'));});
+      await area.pressSequentially('x');
+      await expect.poll(async () => await palette(page).count(), {timeout:1000}).toBe(0);
+    } finally { await page.close(); }
+  });
 });
