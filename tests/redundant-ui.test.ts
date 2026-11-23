@@ -69,6 +69,6 @@ describe('proven duplicate removals',()=>{
  it('explains disabled pull request actions instead of leaving dead ends',()=>{
   const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic'}}}});
   const html=renderToStaticMarkup(createElement(WorkspaceSurfaceBody,{kind:'pull-request',binding:{authority:{kind:'local'},projectId:'project-one',threadId:'task-thread'},snapshot,refresh:async()=>{},preferences:DEFAULT_PREFERENCES}));
-  expect(html).toContain('title="Sign in to GitHub to draft PRs"');expect(html).toMatch(/<button[^>]*disabled[^>]*title="[^"]+">Link<\/button>/);
+  expect(html).toContain('title="Sign in to GitHub to draft PRs"');expect(html).toMatch(/<button[^>]*disabled[^>]*title="[^"]+"[^>]*>Link<\/button>/);expect(html).toMatch(/aria-describedby="[^"]+"/);
  });
 });
