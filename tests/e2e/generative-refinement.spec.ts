@@ -33,6 +33,19 @@ const spec: TaskSpec = { root: 'wrap', elements: {
   note: { type: 'Input', props: { label: 'Live note', stateKey: 'note' } },
 } };
 
+// The artifact mutation below must reach a host that already consumed the
+// zero-artifact baseline and is subscribed to snapshot events; otherwise the
+// artifact can ride the first applied snapshot and classify as a bootstrap
+// restore instead of a live entry. A probe publication proves both.
+async function consumeBaseline(page: Page, host: Awaited<ReturnType<typeof serveTaskFixture>>, snapshot: ReturnType<typeof taskFixture>) {
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText('Synthetic local source data for the reusable renderer.')).toBeVisible();
+  await expect(page.locator('.artifact')).toHaveCount(0);
+  snapshot.messages.push({ id: 'probe', threadId: 'task-thread', role: 'assistant', content: 'Subscription probe marker', runId: null, createdAt: '2026-10-29T23:00:00.000Z' });
+  await host.publish();
+  await expect(page.getByText('Subscription probe marker')).toBeVisible();
+}
+
 test('a live publication enters once and stays quiet across republish, unrelated input and theme change', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await recordEffects(page);
@@ -41,7 +54,7 @@ test('a live publication enters once and stays quiet across republish, unrelated
   const artifact = snapshot.artifacts[0]; snapshot.artifacts = [];
   const host = await serveTaskFixture(page, snapshot);
   await page.goto('/');
-  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible({ timeout: 30_000 });
+  await consumeBaseline(page, host, snapshot);
   snapshot.artifacts = [artifact];
   await host.publish();
   const note = page.getByRole('textbox', { name: 'Live note', exact: true });
@@ -85,7 +98,7 @@ test('off mid-entrance settles the artifact, and an opacity-only full effect set
   const artifact = snapshot.artifacts[0]; snapshot.artifacts = [];
   const host = await serveTaskFixture(page, snapshot);
   await page.goto('/');
-  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible({ timeout: 30_000 });
+  await consumeBaseline(page, host, snapshot);
   snapshot.artifacts = [artifact];
   await host.publish();
   await expect(page.locator('.artifact')).toHaveAttribute('data-entry-phase', 'entering');
