@@ -18,7 +18,9 @@ export function toast(message: string, options: ToastOptions = {}) {
   const text = message.trim();
   if (!text) return 0;
   const id = nextId++;
-  publish([...entries.filter(entry => entry.message !== text).slice(-(MAX_VISIBLE - 1)), { ...options, id, message: text, leaving: false }]);
+  const next = [...entries.filter(entry => entry.message !== text), { ...options, id, message: text, leaving: false }];
+  let visible = next.filter(entry => !entry.leaving).length;
+  publish(next.map(entry => (visible > MAX_VISIBLE && !entry.leaving ? (visible--, { ...entry, leaving: true }) : entry)));
   return id;
 }
 export function dismissToast(id: number) { publish(entries.map(entry => entry.id === id ? { ...entry, leaving: true } : entry)); }
