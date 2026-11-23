@@ -12,7 +12,7 @@ export interface NavigationPage extends ShellPage<ThreadNavigationRow> {
   order: 'created-desc';
   stats: {pinned: number; working: number; waiting: number; settled: number; minOrder: number; maxOrder: number};
 }
-export type ShellResourceRow = Pick<ResourceGrant, 'id' | 'threadId' | 'kind' | 'label' | 'writable' | 'path'>;
+export type ShellResourceRow = Pick<ResourceGrant, 'id' | 'threadId' | 'kind' | 'label' | 'writable' | 'path'> & { threadTitle?: string };
 export interface ShellSettingsReadModel {
   sequence: number;
   settings: Snapshot['settings'];

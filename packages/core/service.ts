@@ -1232,6 +1232,12 @@ export class Service {
       const grant: ResourceGrant = { id: command.id, threadId: thread.id, path, label: name, kind: "attachment", writable: false, createdAt: now() };
       return this.store.command(command, () => { this.store.put("resource", grant.id, thread.id, grant); return grant; });
     }
+    if (command.type === "resource.revoke") {
+      const grantId = text(p, "grantId", 200);
+      const grant = this.store.get<ResourceGrant>("resource", grantId);
+      if (!grant || grant.threadId !== thread.id) throw new HarnessError("NOT_FOUND", "That resource is not granted to this thread.");
+      return this.store.command(command, () => { this.store.remove("resource", grantId); return this.store.all<ResourceGrant>("resource", thread.id); });
+    }
     const receipt = this.store.command(command, () => this.applyCommand(command, this.thread(thread.id)));
     if (["request.respond","request.detail","action.submit","operation.reject"].includes(command.type)) this.background(this.deliverOutbox(thread.id));
     if (command.type === "operation.approve" || command.type === "action.submit") {

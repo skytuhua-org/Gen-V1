@@ -57,6 +57,12 @@
 .quiet-hours-times label { display:flex;align-items:center;gap:8px;font-size:12px; }
 .settings-records>div { display:flex;flex-direction:column;gap:4px;padding:12px 0;border-bottom:1px solid var(--border);font-size:12px; }
 .settings-records :is(span,code) { color:var(--muted);overflow-wrap:anywhere; }
+.settings-grant-row { transition:opacity 160ms ease-out,max-height 160ms ease-out;max-height:240px; }
+.settings-grant-row[data-removing] { opacity:0;max-height:0;padding-top:0;padding-bottom:0;border-bottom:0;overflow:hidden; }
+.settings-grant-revoke { align-self:flex-start;min-height:32px;padding:4px 10px;font-size:12px; }
+.settings-grant-error { color:var(--danger);font-size:12px; }
+@media (prefers-reduced-motion:reduce) { .settings-grant-row { transition:none; } }
+
 .settings-content>.notice { margin-bottom:12px; }
 .settings-content .settings-card form { display:grid;gap:12px; }
 

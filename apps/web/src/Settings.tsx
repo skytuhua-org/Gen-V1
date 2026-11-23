@@ -24,7 +24,7 @@ import { UpdateControl } from './UpdateControl';
 import { AppearanceSettings, NotificationSettings, APPEARANCE_FIELDS } from './AppearanceSettings';
 import { PairedDevicesPanel } from './PairedDevicesPanel';
 import { version } from '../../../package.json';
-import {settingsDataFromSnapshot, type SettingsData} from './settings-data';
+import {settingsDataFromSnapshot, groupGrantRows, type SettingsData} from './settings-data';
 import {snapshotDraftReferences, type DraftReferenceSource} from './draft-transfer';
 import './settings.css';
 
@@ -108,6 +108,8 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const [connectionsOpened,setConnectionsOpened]=useState(target==='providers');
   const [newTaskModels, setNewTaskModels] = useState<ModelInfo[]>([]), [newTaskModelError, setNewTaskModelError] = useState(modelError);
   const catalogRequest = useRef(0), catalogRead = useRef<AbortController|null>(null);
+  const [revokingGrant,setRevokingGrant]=useState<string|null>(null),[grantErrors,setGrantErrors]=useState<Record<string,string>>({}),[removedGrants,setRemovedGrants]=useState<Set<string>>(new Set()),[grantNote,setGrantNote]=useState('');
+  const grantButtons=useRef(new Map<string,HTMLButtonElement>());
   const selectedAccountsKey = JSON.stringify(Object.entries(data.settings.selectedAccounts ?? {}).sort(([left], [right]) => left.localeCompare(right)));
   const catalogSelection = useRef(selectedAccountsKey); catalogSelection.current = selectedAccountsKey;
   const selectedAccounts=useRef(data.settings.selectedAccounts);selectedAccounts.current=data.settings.selectedAccounts;
@@ -205,7 +207,26 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
       {matches('harness-integrations') && <div data-setting-id="harness-integrations"><IntegrationSettings/></div>}
       {matches('harness-paired-devices') && <div data-setting-id="harness-paired-devices"><PairedDevicesPanel/></div>}
       {newTaskModelError && rows.some(item => item.section === 'providers') && <p role="status" className="error-text">{newTaskModelError}</p>}
-      {matches('project-overview') && <div className="settings-records">{data.resources.map(resource => <div key={resource.id}><strong>{resource.label}</strong><span>{resource.kind} · {resource.writable ? 'Approved changes allowed' : 'Read only'}</span><code>{resource.path}</code></div>)}</div>}
+      {matches('project-overview') && <div className="settings-records">{(() => {
+        const truncateTitle=(value:string)=>value.length>40?value.slice(0,39)+'…':value;
+        const rows=groupGrantRows(data.resources);
+        const revokeGroup=async(group:typeof rows[number])=>{
+          if(revokingGrant)return;setRevokingGrant(group.key);setGrantErrors(current=>({...current,[group.key]:''}));
+          try{for(const grant of group.grants)await command('resource.revoke',{grantId:grant.id},grant.threadId);
+            setRemovedGrants(current=>new Set(current).add(group.key));setGrantNote(`${group.name} revoked`);void refresh().catch(()=>{});
+            const next=rows.find(row=>row.key!==group.key&&!removedGrants.has(row.key));
+            (next?grantButtons.current.get(next.key):content.current?.querySelector<HTMLElement>('[data-setting-id="project-overview"]'))?.focus();
+          }catch{setGrantErrors(current=>({...current,[group.key]:'Could not revoke — try again.'}));}finally{setRevokingGrant(null);}
+        };
+        return <>{grantNote&&<p role="status" className="sr-only">{grantNote}</p>}{rows.length===0&&<p className="settings-empty">No granted resources.</p>}{rows.map(group=>
+          <div key={group.key} className="settings-grant-row" aria-busy={revokingGrant===group.key||undefined} data-removing={removedGrants.has(group.key)||undefined}>
+            <strong>{group.name}</strong>
+            <span>{group.grants.length>1?`Granted to ${group.grants.length} threads`:`Granted to ${truncateTitle(group.title)}`} · {group.kind} · {group.writable?'Approved changes allowed':'Read only'}</span>
+            <code>{group.path}</code>
+            {grantErrors[group.key]?<span className="settings-grant-error">{grantErrors[group.key]}</span>:null}
+            <button type="button" className="secondary settings-grant-revoke" ref={node=>{if(node)grantButtons.current.set(group.key,node);else grantButtons.current.delete(group.key);}} aria-label={`Revoke ${group.name}`} disabled={busy||revokingGrant!==null} onClick={()=>void revokeGroup(group)}>Revoke</button>
+          </div>)}</>;
+      })()}</div>}
       {matches('archive') && <div className="settings-records">{data.counts.archivedThreads !== data.archivedThreads.length && <p className="settings-empty">Showing {data.archivedThreads.length} archived conversations available in navigation. The total also includes conversations outside this list.</p>}{data.archivedThreads?.length ? data.archivedThreads.map(thread => <section className="settings-row" key={thread.id}><div className="settings-row-copy"><h2>{thread.title}</h2><p>{thread.projectName ?? 'Conversation'} · {thread.status}</p></div><button type="button" className="secondary" disabled={busy} onClick={() => { setBusy(true); void settingsOperation(() => command('thread.restore', {}, thread.id).then(refresh)).catch(cause => setError(String(cause))).finally(() => setBusy(false)); }}>Restore thread</button></section>) : <p className="settings-empty">{data.counts.archivedThreads ? 'No archived conversations are available in navigation.' : 'No archived threads.'}</p>}</div>}
       {matches('app-version') && <div data-setting-id="app-version"><p className="settings-version">Gen V1 {version} · {desktop ? 'Windows desktop' : 'Browser build'}</p><UpdateControl/></div>}
       {matches('browser-start-page') && <section className="settings-card" data-setting-id="browser-start-page"><h2>Manual browser</h2>{openBrowser ? <form onSubmit={event => { event.preventDefault(); void persist({ preferences: { browserStartUrl: browserUrl } }); }}><label className="field">Start page<input aria-label="Browser start page" type="url" placeholder="Blank page" maxLength={2048} value={browserUrl} disabled={busy} onChange={event => setBrowserUrl(event.target.value)}/></label><div className="settings-inline-controls"><button className="secondary" disabled={busy || browserUrl === preferences.browserStartUrl}>Save start page</button><button type="button" className="secondary" disabled={busy} onClick={() => { setBusy(true); void openBrowser(preferences.browserStartUrl).then(close).catch(cause => setError(String(cause))).finally(() => setBusy(false)); }}>Open browser</button></div></form> : <p className="settings-card-intro">Open the manual browser from the Windows desktop workspace. Navigation, reload and stop stay in its toolbar.</p>}</section>}
