@@ -1,10 +1,17 @@
-# M14 follow-up — stale fixture + fail-closed cleanup (local, pending review)
+# M14 follow-up for fixture reconciliation and fail-closed cleanup
 
-Base: `c4460fe1949f713d412a0b06ec1081a672b9dd94` (current main at
-preparation time; post-#343-merge). Branch `agent/m14-followup-x1` —
-local only, not pushed. Historical cuts preserved: 27/42 WSL2 custody
-classification stays bound to `a99f6d07`; the independent verifier's
-review cut `75196a246a3708463caa1aa493e64112c5ec2dc5` is untouched.
+Historical preparation base on 2026-11-18 was
+`c4460fe1949f713d412a0b06ec1081a672b9dd94`, after #343 merged.
+The follow-up branch `agent/m14-followup-x1` was published as draft #869.
+The 27/42 WSL2 custody classification stays bound to `a99f6d07`.
+The independent verifier's review cut
+`75196a246a3708463caa1aa493e64112c5ec2dc5` is preserved.
+
+On 2026-11-23 the real x86_64 WSL2 ext4 broker passed the ordinary
+`credential-lease` fixture at `6911e81ff8f8a0a03a9ef0715573370561f4ef90`.
+The synthetic run verified acquire, literal read, settled release and a
+later write, with disposable state removed. The receipt records the
+broker, fixture and lockfile digests. [Exact-cut ordinary custody receipt](https://github.com/skytuhua-org/Gen-V1/issues/1022#issuecomment-7096799756)
 
 ## X1 / WSL2 63/63 manifest
 
@@ -159,9 +166,9 @@ No guard, check, or rejection was removed; no permission widened.
 Verifier ordinal 34 recorded a PASS of a distinct ordinary-only WSL
 fixture (fixture SHA256
 fa6be7135069e4000bc55064f2094cf7a4b8aeebcce4058f8028dc22b48ba2f2) on
-pristine production code at this head: awaited synthetic store write,
+historical cut `bd107dc9`: awaited synthetic store write,
 single acquire, assert/read, release/settled, exit 0, no leaked
-mounts or processes.
+mounts or processes. [Ordinal 34 checkpoint](https://github.com/skytuhua-org/Gen-V1/issues/1022#issuecomment-7027996684)
 
 The earlier O_RDWR fd-23-on-mount-173 attribution to the parked
 `withLockAsync` remains qualified: the cited scratch command stream
@@ -171,8 +178,8 @@ writable descriptor on the credential parent — `proper-lockfile` is a
 mkdir/stat/utimes protocol (no held fd), `writable` is the only
 O_RDWR ever opened and `await writable.close()` drops its writer
 before the `await` resolves — so no broker or SDK change is
-justified. The broker fence and the combined `credential-barrier`
-regression are unchanged.
+justified by that investigation. It preserved the broker fence and the
+combined `credential-barrier` regression.
 
 New fixture mode `credential-lease` in
 `tests/fixtures/linux-path-guard/native.mjs` reproduces the
