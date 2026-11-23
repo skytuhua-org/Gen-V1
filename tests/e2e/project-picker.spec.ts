@@ -185,8 +185,14 @@ test('modal height fits content on short lists and caps at 520px on long lists',
   expect(empty).toBeLessThan(400);
   await expect(page.getByRole('option', { name: 'No project', exact: true })).toBeVisible();
   const two = await open(2);
-  expect(two).toBeLessThan(400);
+  expect(two).toBeLessThan(360);
   expect(two).toBeGreaterThanOrEqual(32 * 2 + 100);
+  const dialogBox = await modal().boundingBox();
+  const hintBox = await page.locator('.project-picker-hint').boundingBox();
+  expect(dialogBox!.y + dialogBox!.height - (hintBox!.y + hintBox!.height)).toBeLessThanOrEqual(28);
+  await page.getByRole('combobox', { name: 'Search projects' }).fill('zzz-no-match');
+  await expect(page.locator('.project-picker-empty')).toHaveText('No matching projects.');
+  expect(await modal().evaluate(node => node.clientHeight)).toBeLessThan(360);
   const forty = await open(40);
   expect(forty).toBeLessThanOrEqual(520);
   expect(forty).toBeGreaterThan(400);
