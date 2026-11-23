@@ -69,7 +69,7 @@ export class GitHubTools{
    const result=error.details as {stderr?:string;timedOut?:boolean}|undefined,stderr=result?.stderr??'';
    if(result?.timedOut||/timed out|timeout/i.test(stderr))throw new HarnessError('FETCH_TIMEOUT','Fetch timed out. Check your connection and try again.');
    // Only negotiation-phase auth refusals: these always precede ref updates, so the outcome layer may record not-applied. A bare HTTP status could appear mid-fetch after refs moved.
-   if(/Authentication failed|could not read (Username|Password)|Repository not found/.test(stderr))throw new HarnessError('GITHUB_AUTH_REQUIRED','Sign in to GitHub to fetch from this repository.');
+   if(/Authentication failed|could not read (Username|Password)|Repository not found|SAML SSO|Personal access token.*(SAML|expired|revoked)/i.test(stderr))throw new HarnessError('GITHUB_AUTH_REQUIRED','Sign in to GitHub to fetch from this repository.');
    if(error.code==='GIT_ERROR'){
     const redactor=createSecretRedactor(token?[token]:[]),line=redactor.redact(stderr.split('\n').find(text=>text.trim())??'').text.trim();
     throw new HarnessError('FETCH_FAILED',`Fetch failed: ${line.slice(0,300)||'the remote did not answer'}. Try again.`);
