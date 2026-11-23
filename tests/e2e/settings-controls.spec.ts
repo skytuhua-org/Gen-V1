@@ -492,7 +492,7 @@ test('Granted resources dedupes per-thread grants and revokes a resource',async(
 test('a failed revoke restores the row with an inline error',async({page})=>{
   const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Grants fixture'}}}});
   snapshot.resources=[{id:'g1',threadId:'task-thread',kind:'file',writable:false,createdAt:'2026-11-22',path:'C:/docs/agreement.pdf',label:'agreement.pdf'}];
-  const host=await serveTaskFixture(page,snapshot);
+  await serveTaskFixture(page,snapshot);
   await page.route('**/api/commands',async route=>{
     const command=route.request().postDataJSON() as HostCommand;
     if(command.type!=='resource.revoke')return route.fallback();
