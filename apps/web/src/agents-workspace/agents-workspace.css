@@ -47,7 +47,8 @@
 .agents-message img { max-width: 100%; }
 .agents-earlier { width: 100%; margin-bottom: 8px; text-align: center; }
 .agents-new-output { position: absolute; bottom: 8px; right: 12px; border: 1px solid var(--control-border); background: var(--surface); box-shadow: var(--elevation); }
-.agents-workspace .agents-composer.composer { position: static; display: flex; flex-direction: column; gap: 4px; margin: 4px 12px 8px; padding: 0; width: auto; min-width: 0; border: 1px solid var(--control-border); border-radius: 6px; box-shadow: none; background: var(--surface); }
+.agents-workspace .agents-composer.composer { position: static; display: flex; flex-direction: column; gap: 4px; margin: 4px 12px 8px; padding: 0; width: auto; min-width: 0; border: 1px solid var(--border); border-radius: 6px; box-shadow: none; background: var(--surface); }
+.agents-workspace .agents-composer.composer:focus-within,.agents-workspace .agents-composer.composer.dragging { border-color: var(--composer-focus-border); }
 .agents-workspace .agents-composer textarea { width: 100%; min-height: 32px; max-height: 72px; border: 0; border-radius: 6px; padding: 6px 12px; font-size: 14px; line-height: 1.5; background: transparent; field-sizing: content; overflow-y: auto; }
 .agents-composer-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 0 8px 8px; }
 .agents-composer-actions > span { font-size: 12px; color: var(--muted); margin-right: auto; overflow-wrap: anywhere; min-width: 0; }

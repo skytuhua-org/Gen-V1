@@ -44,7 +44,7 @@ Side-by-side chat keeps at least 420px; tools stay between 280px and min(720px, 
 ### Spacing, color and compact surfaces
 
 - Shared tokens live in `packages/ui-shell/tokens.css`. Normal content inset is 16px, panels 12px, dialogs 24px, compact control text at least 8px. Intentional code/media edge-to-edge layouts declare their exception; badges use 2px vertical and 6px horizontal inset.
-- Navigation highlights have a 4px gap. Selected, hovered and keyboard-focused states are visually distinct. Compact/Comfortable/Touch controls use 32/36/44px minimum rows; long text can grow a row.
+- Navigation highlights have a 4px gap. Selected navigation uses a neutral fill only; hover and keyboard focus remain distinct. Compact/Comfortable/Touch controls use 32/36/44px minimum rows; long text can grow a row.
 - Keep dark black/near-black and neutral light equivalents from the established palette. Use stable project-color dots or monograms with editable palette/custom color; no decorative colored rails. Communicate status with text/icon as well as color.
 - Thread hover cards are 304px wide with 12px inset and 8px section gaps; keep the full 16px title. Show exact thread/working-copy/project/environment/branch/model/activity and linked PR facts only when known.
 - Context popovers are 328px wide with 12px inset and 34px information rows. On-demand category details are 220px. Conversation token capacity stays separate from provider quotas/reset times in Usage.
