@@ -20,7 +20,7 @@ describe('agents workspace grid layout', () => {
       'apps/web/src/loading-state.css', 'apps/web/src/markdown.css', 'apps/web/src/composer-commands.css', 'apps/web/src/native-chrome.css',
       'apps/web/src/agents-workspace/agents-workspace.css',
     ].map(file => readFile(file, 'utf8')))).join('\n');
-    server = createServer((_request, response) => {response.setHeader('content-type', 'text/html'); response.end(`<style>${css}</style><div id="root"></div><script>${script}</script>`);});
+    server = createServer((_request, response) => {response.setHeader('content-type', 'text/html; charset=utf-8'); response.end(`<style>${css}</style><div id="root"></div><script>${script}</script>`);});
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
     base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
