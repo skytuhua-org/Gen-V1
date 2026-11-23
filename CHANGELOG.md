@@ -163,6 +163,11 @@ These items are in 0.6.5 scope but not merged and ship only if they pass freeze 
   compact composer, plan and workspace-surface behavior.
 - Retain a known-bad integration denial when advisory refresh fails (#936),
   rather than losing the prior denial during a failed refresh.
+- Global quick-ask hotkey (#1332): an optional, off-by-default system shortcut
+  that opens a small always-on-top prompt from any app and sends to a new or
+  current thread, with draft retention on dismiss and an in-use status when
+  another app owns the chord. Native Windows acceptance passed; front end team
+  review pending.
 - Independent installed-Windows memory retention and opt-in qualification (#782):
   draft CI-only work, not completed acceptance or a user-facing feature.
 

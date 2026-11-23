@@ -101,6 +101,8 @@ export function QuickAsk() {
     setClosing(true);
     closeTimer.current = setTimeout(() => { closeTimer.current = null; void bridge.quickAskHide?.().catch(() => {}); }, ms + 40);
   }, [bridge, closing]);
+  // BrowserWindow 'blur' is not delivered for this always-on-top surface on Windows; the DOM blur is.
+  useEffect(() => { const onBlur = () => hide(); window.addEventListener('blur', onBlur); return () => window.removeEventListener('blur', onBlur); }, [hide]);
   const send = useCallback(async () => {
     const attempt = pending.current ?? { commandId: crypto.randomUUID(), content: draft.trim(), target };
     if (!attempt.content || busy || projectMissing) return;
