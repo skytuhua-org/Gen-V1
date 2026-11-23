@@ -15,7 +15,7 @@ import { Artifact } from './Artifact';
 import { Markdown } from './Markdown';
 import {CopyButton} from './CopyButton';
 import { groupWorkActivity, WorkActivity } from './WorkActivity';
-import { runEventAnnouncements } from './run-announcements';
+import { announcementRegionText, runEventAnnouncements } from './run-announcements';
 import { display, schemaDefaults, SchemaFields } from './registry';
 import { useModalRegion } from './focus';
 import { validateSchema } from './schema-validator';
@@ -752,7 +752,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const [latestAvailable, setLatestAvailable] = useState(false);
   const [announcement, setAnnouncement] = useState('');
   const [alert, setAlert] = useState('');
-  const previousRunEvent = useRef<{ status: string | null; pending: number } | null>(null);
+  const previousRunEvent = useRef<{ status: string | null; pending: string[] } | null>(null);
   const [historyCounts, setHistoryCounts] = useState<Record<string, number>>({});
   const historyStarts = useRef(new Map<string, number>());
   const [historyAnchor] = useState(createHistoryAnchor);
@@ -811,15 +811,17 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const canLoadActiveHistory=Boolean(thread&&canLoadConversationHistory(activeHistoryStart,snapshot.messagesTruncated?.[activeHistoryId]??0,activeOlder.length));
   const requests = snapshot.requests.filter(item => item.threadId === thread?.id && item.status === 'pending');
   useEffect(() => {
-    const pending = requests.length + snapshot.operations.filter(item => item.threadId === thread?.id && item.status === 'prepared' && !item.approved).length;
+    const pending = [
+      ...requests.map(item => item.title),
+      ...snapshot.operations.filter(item => item.threadId === thread?.id && item.status === 'prepared' && !item.approved).map(item => item.description || item.kind),
+    ];
     const previous = previousRunEvent.current;
     previousRunEvent.current = { status: thread?.status ?? null, pending };
     if (!previous) return;
-    for (const { text, assertive } of runEventAnnouncements({ previousStatus: previous.status, status: thread?.status ?? null, error: thread?.error, previousPendingApprovals: previous.pending, pendingApprovals: pending })) {
-      const repeat = (value: string) => value === text ? `${text}\u00a0` : text;
-      if (assertive) setAlert(repeat); else setAnnouncement(repeat);
-    }
-  }, [thread?.id, thread?.status, thread?.error, requests.length, snapshot.operations]);
+    const events = runEventAnnouncements({ previousStatus: previous.status, status: thread?.status ?? null, error: thread?.error, previousPendingApprovals: previous.pending, pendingApprovals: pending });
+    setAlert(value => announcementRegionText(value, events.filter(event => event.assertive).map(event => event.text)));
+    setAnnouncement(value => announcementRegionText(value, events.filter(event => !event.assertive).map(event => event.text)));
+  }, [thread?.id, thread?.status, thread?.error, snapshot.requests, snapshot.operations]);
   useLayoutEffect(() => {
     const element = conversation.current;
     if (!element || !loaded) return;
