@@ -94,6 +94,15 @@ function basisFromLayout(layout:SplitWorkspaceLayout,paneId:string):MainBasis{
  const pane=layout.panes[paneId];
  return {paneId,activeViewId:pane?.activeViewId??null,viewIds:[...(pane?.viewIds??[])],revision:layout.revision};
 }
+/** Placement equals the default split only when no floating views and the resolved main pane are overridden. */
+export function isDefaultPlacement(placement:ConversationPlacementRecord|null,layout:SplitWorkspaceLayout|null):boolean{
+ return !placement||!layout||(!Object.keys(placement.floating).length&&placement.mainPaneId===resolveMainPaneId(layout));
+}
+/** The pristine placement record a layout reset writes: default main pane, no floating views, kept main selection. */
+export function defaultPlacementRecord(layout:SplitWorkspaceLayout,stored?:ConversationPlacementRecord|null):ConversationPlacementRecord{
+ const mainPaneId=resolveMainPaneId(layout);
+ return {version:1,workspaceId:layout.id,mainPaneId,mainSelection:stored?.mainSelection??{kind:'empty'},floating:{},mainBasis:basisFromLayout(layout,mainPaneId)};
+}
 /** Membership agreement ignores revision so ratio-only/unrelated-pane updates keep intentional empty/new. */
 function mainMembershipAgrees(layout:SplitWorkspaceLayout,paneId:string,basis:MainBasis):boolean{
  if(basis.paneId!==paneId)return false;
