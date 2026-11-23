@@ -199,7 +199,7 @@ export function annotateSnapshot(before:string,after:string,options:AnnotateOpti
     beforeKeep:options.hideWhitespace?oldLines.map((_,i)=>i).filter(i=>!hiddenOld.has(i)):undefined,
     afterKeep:options.hideWhitespace?newLines.map((_,i)=>i).filter(i=>!hiddenNew.has(i)):undefined};
 }
-const rangeIndexes=(lines:string[],from:number,to:number)=>{const out:number[]=[];for(let i=from;i<to;i++)out.push(i);return out;};
+const rangeIndexes=(_lines:string[],from:number,to:number)=>{const out:number[]=[];for(let i=from;i<to;i++)out.push(i);return out;};
 
 interface UnifiedHunk{header:number;oldCount:number;newCount:number;rows:{index:number;kind:'context'|'removed'|'added'|'meta';content:string}[];valid:boolean}
 function parseUnified(patch:string):UnifiedHunk[]{
@@ -256,7 +256,7 @@ export function annotateUnified(patch:string,options:AnnotateOptions&{maxRows?:n
       }
     };
     for(const row of hunk.rows){
-      if(row.kind==='removed'||row.kind==='added'){region.push(row);continue;}
+      if(row.kind==='removed'||row.kind==='added'){region.push({index:row.index,kind:row.kind,content:row.content});continue;}
       close();
     }
     close();

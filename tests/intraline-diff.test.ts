@@ -129,8 +129,7 @@ describe('budgets and fallbacks', () => {
   it('returns null when Intl.Segmenter is unavailable', () => {
     const intl = Intl as { Segmenter?: unknown };
     const saved = intl.Segmenter;
-    // @ts-expect-error test-only override
-    intl.Segmenter = undefined;
+    delete intl.Segmenter;
     try {
       expect(annotateSnapshot('const a = 1;', 'const a = 2;', { hideWhitespace: false })!.before).toHaveLength(0);
       expect(annotateUnified('diff --git a/f b/f\nindex 1..2 1\n--- a/f\n+++ b/f\n@@ -1,1 +1,1 @@\n-const a = 1;\n+const a = 2;')!.size).toBe(0);

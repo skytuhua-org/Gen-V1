@@ -62,7 +62,7 @@ export function WorkspaceSurfaceBody({kind,binding,snapshot,refresh,active=true,
  if(kind==='output')return <OutputPanel snapshot={snapshot} threadId={threadId} preferences={prefs}/>;
  if(kind==='workspace')return <WorkspaceLauncher onOpenTool={onOpenTool}/>;
  if(kind==='navigation')return <NavigationSurface snapshot={snapshot} selectedId={threadId} select={onSelectThread}/>;
- const files=<GrantedFiles snapshot={snapshot} threadId={threadId} preferredResourceId={binding.resourceId}/>,recordedDiff=<RecordedDiffPanel snapshot={snapshot} threadId={threadId} preferences={prefs}/>;
+ const files=<GrantedFiles snapshot={snapshot} threadId={threadId} preferredResourceId={binding.resourceId}/>,recordedDiff=<RecordedDiffPanel snapshot={snapshot} threadId={threadId} preferences={prefs} active={active}/>;
  if(!projectId&&kind==='files')return files;
  if(!projectId&&kind==='diff')return recordedDiff;
  if(!projectId&&(kind==='pull-request'||kind==='linked-pull-requests'))return <><GitHubSignIn active={active} timeFormat={prefs.timeFormat}/><p className="panel-note">Connect a project to use {panelLabels[kind].toLowerCase()}.</p></>;

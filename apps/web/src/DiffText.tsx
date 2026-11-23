@@ -1,10 +1,11 @@
 import type {ReactNode} from 'react';
 import type {IntralineRange} from './intraline-diff';
+import './intraline-diff.css';
 
 // Plain-text renderer for intraline diff ranges: escaped text nodes plus
 // noninteractive spans. The caller keeps owning line text, numbering and
 // controls; a missing or empty range list renders the raw text untouched.
-export function DiffText({text,ranges,tone}:{text:string;ranges:IntralineRange[]|undefined;tone:'removed'|'added'}){
+export function DiffText({text,ranges,tone}:{text:string;ranges?:IntralineRange[]|undefined;tone:'removed'|'added'}){
   if(!ranges||!ranges.length)return <>{text}</>;
   const out:ReactNode[]=[];let at=0;
   ranges.forEach((range,i)=>{
