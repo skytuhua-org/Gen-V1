@@ -17,6 +17,7 @@ function Fixture(){
   <ComposerAttachments resources={resources}/>
   <details><summary>Disclosure</summary><p>Body</p></details>
   <div role="tabpanel"><p>Panel</p></div>
+  <div className="empty-state"><p>Welcome</p></div>
   <div className="message" data-arrival="true"><p>New reply</p></div>
   <aside id="panel" className="workspace-right" data-state="closed" onAnimationEnd={event=>{if(event.animationName==='panel-exit')window.left=true;}} />
  </>;
@@ -28,7 +29,7 @@ describe('content motion', () => {
   let browser: Browser, server: Server, base: string, script: string, css: string;
   beforeAll(async () => {
     script = (await build({stdin:{contents:fixture,resolveDir:process.cwd(),loader:'tsx'},loader:{'.css':'empty'},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'}})).outputFiles[0]!.text;
-    css = await readFile('packages/ui-shell/tokens.css','utf8') + await readFile('packages/ui-shell/feedback.css','utf8') + await readFile('apps/web/src/styles.css','utf8') + await readFile('apps/web/src/shell.css','utf8') + await readFile('apps/web/src/loading-state.css','utf8');
+    css = await readFile('packages/ui-shell/tokens.css','utf8') + await readFile('packages/ui-shell/feedback.css','utf8') + await readFile('apps/web/src/styles.css','utf8') + await readFile('apps/web/src/shell.css','utf8') + await readFile('apps/web/src/loading-state.css','utf8') + await readFile('apps/web/src/appearance.css','utf8');
     server = createServer((_request, response) => { response.setHeader('content-type', 'text/html'); response.end(`<style>${css}</style><div id="root"></div><script>${script}</script>`); });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address(); base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
@@ -89,6 +90,18 @@ describe('content motion', () => {
     await panel.waitFor();
     expect(await panel.evaluate(el => getComputedStyle(el).animationName)).toBe('ui-item-in');
     expect(await page.locator('.message[data-arrival]').evaluate(el => getComputedStyle(el).animationName)).toBe('ui-item-in');
+    await page.close();
+  });
+
+  it('animates the welcome empty state once and stays still under reduced motion', async () => {
+    const page = await open();
+    const empty = page.locator('.empty-state');
+    await empty.waitFor();
+    expect(await empty.evaluate(el => getComputedStyle(el).animationName)).toBe('ui-item-in');
+    await page.evaluate(`document.documentElement.dataset.motion='reduced'`);
+    expect(await empty.evaluate(el => getComputedStyle(el).animationName)).toBe('none');
+    await page.evaluate(`document.documentElement.dataset.motion='off'`);
+    expect(await empty.evaluate(el => getComputedStyle(el).animationName)).toBe('none');
     await page.close();
   });
 
