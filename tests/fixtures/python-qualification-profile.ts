@@ -4,12 +4,8 @@ import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import type { PythonRuntimeConfiguration } from '../../packages/runtime/python-program-worker.ts';
 
-// TEST-ONLY selection of the pinned Python runtime used by the native M12
-// suites. Without the opt-in environment the historical host paths are
-// returned unchanged. The alternate profile is accepted only from a staging
-// manifest whose exact SHA-256 is supplied, only for the one qualification
-// profile, and only at its exact disposable root. Nothing here approves a
-// production runtime, changes a production pin or enables a flag.
+// The native M12 suites require an explicit Linux x64 qualification profile
+// from a hash-verified staging manifest at the pinned disposable root.
 
 export const QUALIFICATION_ENV = Object.freeze({
   manifest: 'M12_PYTHON_QUALIFICATION_MANIFEST',
@@ -36,27 +32,13 @@ export interface PythonRuntimeInspectionInput {
 }
 export interface PythonQualificationProfile {
   readonly id: string;
-  readonly source: 'historical-host' | 'staging-manifest';
+  readonly source: 'staging-manifest';
   readonly inspection: PythonRuntimeInspectionInput;
-  /** Present only for the manifest profile: the exact runtime the inspection must reproduce. */
-  readonly expected?: { readonly runtime: PythonRuntimeConfiguration; readonly runtimeFingerprint: string; readonly manifestSha256: string };
+  /** The exact runtime the inspection must reproduce. */
+  readonly expected: { readonly runtime: PythonRuntimeConfiguration; readonly runtimeFingerprint: string; readonly manifestSha256: string };
 }
 
 const BACKEND_ID = 'm12-linux-bwrap-python-v1';
-const historical = (): PythonQualificationProfile => ({
-  id: 'historical-host-v3', source: 'historical-host',
-  inspection: {
-    backendId: BACKEND_ID, bwrapPath: '/usr/bin/bwrap', interpreterPath: '/usr/bin/python3.13', stdlibPath: '/usr/lib/python3.13',
-    libraries: [
-      { path: '/lib/x86_64-linux-gnu/libc.so.6', mountPath: '/lib/x86_64-linux-gnu/libc.so.6' },
-      { path: '/lib/x86_64-linux-gnu/libm.so.6', mountPath: '/lib/x86_64-linux-gnu/libm.so.6' },
-      { path: '/lib/x86_64-linux-gnu/libz.so.1', mountPath: '/lib/x86_64-linux-gnu/libz.so.1' },
-      { path: '/lib/x86_64-linux-gnu/libexpat.so.1', mountPath: '/lib/x86_64-linux-gnu/libexpat.so.1' },
-      { path: '/lib/x86_64-linux-gnu/libffi.so.8', mountPath: '/lib/x86_64-linux-gnu/libffi.so.8' },
-      { path: '/lib64/ld-linux-x86-64.so.2', mountPath: '/lib64/ld-linux-x86-64.so.2' },
-    ],
-  },
-});
 
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
 const pinned = z.strictObject({ path: z.string(), sha256: hash });
@@ -108,12 +90,15 @@ export function profileFromManifest(bytes: Buffer, expectedSha256: string, profi
     expected: Object.freeze({ runtime, runtimeFingerprint: profile.runtimeFingerprint, manifestSha256: actual }) });
 }
 
-/** Opt-in only: all three variables set selects the manifest profile; none set
- * keeps the historical host profile; any partial setting is refused. */
-export function pythonQualificationProfile(env: NodeJS.ProcessEnv = process.env): PythonQualificationProfile {
+/** An unset environment skips native qualification. Any opt-in must be complete and valid. */
+export function pythonQualificationProfile(
+  env: NodeJS.ProcessEnv = process.env,
+  host: Pick<NodeJS.Process, 'platform' | 'arch'> = process,
+): PythonQualificationProfile | undefined {
   const values = [env[QUALIFICATION_ENV.manifest], env[QUALIFICATION_ENV.manifestSha256], env[QUALIFICATION_ENV.profile]];
-  if (values.every(value => value === undefined)) return historical();
+  if (values.every(value => value === undefined)) return undefined;
   if (values.some(value => !value)) refuse('set all of M12_PYTHON_QUALIFICATION_MANIFEST, _MANIFEST_SHA256 and _PROFILE, or none');
+  if (host.platform !== 'linux' || host.arch !== 'x64') refuse('native qualification requires Linux x64');
   const [path, sha, id] = values as string[];
   if (!isAbsolute(path)) refuse('manifest path must be absolute');
   const info = lstatSync(path);

@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { lstat, mkdir, mkdtemp, readdir, rm, stat, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -25,7 +26,6 @@ import { pythonQualificationProfile } from './fixtures/python-qualification-prof
 // checked separately against inclusive 64 MiB ceilings before launch and after
 // the stopped-state proof. This is accepted retained-state accounting, not a
 // filesystem quota; no confinement bypass or adversarial case is exercised.
-const native = process.platform === 'linux' && process.arch === 'x64';
 const qualification = pythonQualificationProfile();
 const CEILING = Number(PYTHON_RETAINED_DATA_LIMITS.maxLogicalBytes);
 const MIB = 1024 * 1024;
@@ -64,14 +64,13 @@ const allocatedOnly = (path: string, bytes: number) => execFileSync('fallocate',
 const ran = "open('/work/ran', 'w').close()\nresult = 1";
 const absent = async (path: string) => { await expect(lstat(path)).rejects.toMatchObject({ code: 'ENOENT' }); };
 
-describe.runIf(native)('M12-D06 retained-data accounting through the actual Python worker', () => {
+describe.runIf(qualification !== undefined)('M12-D06 retained-data accounting through the actual Python worker', () => {
   beforeAll(async () => {
+    assert(qualification);
     runtime = await inspectPythonRuntime(qualification.inspection);
     expect(runtime.interpreter.sha256).toBe('889c603f0d17cb54060951bcf4c4f9b8c9ebd9e52b392c70209bbb9755d797d9');
-    if (qualification.expected) {
-      expect(runtime).toEqual(qualification.expected.runtime);
-      expect(pythonRuntimeFingerprint(runtime)).toBe(qualification.expected.runtimeFingerprint);
-    }
+    expect(runtime).toEqual(qualification.expected.runtime);
+    expect(pythonRuntimeFingerprint(runtime)).toBe(qualification.expected.runtimeFingerprint);
   });
 
   it('admits exactly 64 MiB of logical length before launch', async () => {

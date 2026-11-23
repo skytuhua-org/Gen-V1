@@ -79,13 +79,35 @@ Not run at this cut: `pnpm lint`, `pnpm test` (full), `pnpm build`, `pnpm test:b
 
 ## Platform holds (unprovable here — NOT_RUN, not waived)
 
-- Linux-x64-only Python confinement suites (`python-program-backend-v3`, `python-program-integration-v3`) gate on `process.arch` x64 and skip on aarch64; linux-x64 evidence remains historical only.
+- At the recorded arm64 cut, the Linux x64 Python confinement suites (`python-program-backend-v3`, `python-program-integration-v3`) were skipped. Linux x64 evidence for those two suites remains historical.
 - No whole-process-tree memory bound: only the 128 MiB guest WASM linear-memory bound is proved (`memoryScope: GUEST_WASM_LINEAR`, `wholeExecutorMemoryLimitBytes: null`).
 - Retained-data accounting (M12-D06) for the private Python directory: separate inclusive 64 MiB ceilings for logical length and allocated bytes, checked before launch and after the stopped-state proof before a result is accepted (overage fails the cell, RESET_REQUIRED, files kept); unavailable accounting fails closed. Fixture-tested via `tests/python-retained-data-v6.test.ts`; worker wiring through the native interpreter is not exercised while the native suites are held. **This is accepted retained-state accounting, not a hard filesystem quota**: transient disk use during a cell stays unbounded (HOLD_PLATFORM_BOUND).
-- Native qualification (test-only, opt-in): `tests/fixtures/python-qualification-profile.ts` selects the historical host paths by default. When `M12_PYTHON_QUALIFICATION_MANIFEST`, `_MANIFEST_SHA256` and `_PROFILE` are all set, it accepts only `debian13-security-current` at `/var/tmp/m12-qual-debian13-20261107T144357Z/root` from a hash-verified staging manifest and requires the inspected runtime and fingerprint to equal it. The zlib +b1 reproduction profile is provenance-only and refused. `tests/python-retained-data-native-v6.test.ts` covers D06 through the real worker and Service. Because D06 also walks after the stopped proof, the native entry-count/depth case in `python-program-backend-v3` now expects the over-bound cell itself to fail (stricter), with its files retained and the next cell refused. No production pin, runtime approval or flag change.
+- Native retained-data qualification covers D06 through the worker and Service. The post-stop check also means the backend entry-count/depth case expects the over-bound cell itself to fail, with its files retained and the next cell refused.
 - No hard noncooperative host-I/O teardown deadline (D05 proves only that such operations stay owned/uncertain).
 - No Windows or installed-desktop proof on this target.
 - `pnpm test:browser` chrome-channel suites need `/opt/google/chrome`/`msedge`, absent here; the channel is not changed to obtain passes.
+
+## Running native qualification
+
+Ordinary test runs skip the three native Python suites. To run them on Linux
+x64, stage the pinned Debian runtime, then set these environment variables:
+
+- `M12_PYTHON_QUALIFICATION_MANIFEST` to the absolute path of the staging manifest.
+- `M12_PYTHON_QUALIFICATION_MANIFEST_SHA256` to its independently recorded SHA-256.
+- `M12_PYTHON_QUALIFICATION_PROFILE` to `debian13-security-current`.
+
+The fixture checks the manifest hash, the pinned root
+`/var/tmp/m12-qual-debian13-20261107T144357Z/root`, and the inspected runtime and
+fingerprint. The zlib +b1 profile is retained as historical evidence. Run from
+the repository root:
+
+```sh
+pnpm exec vitest run tests/python-program-backend-v3.test.ts tests/python-program-integration-v3.test.ts tests/python-retained-data-native-v6.test.ts --maxWorkers=1
+```
+
+A partial configuration, unsupported host, missing staging files, or runtime
+mismatch fails qualification. Report skipped suites separately from a
+completed native qualification.
 
 ## Flags and approval
 

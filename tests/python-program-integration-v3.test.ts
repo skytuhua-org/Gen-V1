@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,8 +17,6 @@ import type { ToolProgramResult } from '../packages/core/tool-programs.ts';
 import { testEffectAuthenticator } from './fixtures/effect-authenticator.ts';
 import { pythonQualificationProfile } from './fixtures/python-qualification-profile.ts';
 
-const native = process.platform === 'linux' && process.arch === 'x64';
-// Historical host paths unless the test-only qualification manifest is explicitly selected.
 const qualification = pythonQualificationProfile();
 const cleanups: (() => Promise<void>)[] = [], executors: ProgramExecutor[] = [];
 let runtime: PythonRuntimeConfiguration;
@@ -88,15 +87,13 @@ async function waitForFile(path: string): Promise<void> {
   throw new Error('The actual Python process did not reach the expected cell boundary');
 }
 
-describe.runIf(native)('M03 Python provider through actual Service and M02 integration', () => {
+describe.runIf(qualification !== undefined)('M03 Python provider through actual Service and M02 integration', () => {
   beforeAll(async () => {
+    assert(qualification);
     runtime = await inspectPythonRuntime(qualification.inspection);
     expect(runtime.interpreter.sha256).toBe('889c603f0d17cb54060951bcf4c4f9b8c9ebd9e52b392c70209bbb9755d797d9');
-    if (qualification.expected) {
-      // Opt-in staged profile: every pinned byte and the fingerprint must equal the hash-verified manifest.
-      expect(runtime).toEqual(qualification.expected.runtime);
-      expect(pythonRuntimeFingerprint(runtime)).toBe(qualification.expected.runtimeFingerprint);
-    }
+    expect(runtime).toEqual(qualification.expected.runtime);
+    expect(pythonRuntimeFingerprint(runtime)).toBe(qualification.expected.runtimeFingerprint);
   });
 
   it.each([

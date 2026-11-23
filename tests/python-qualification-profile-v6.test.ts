@@ -8,8 +8,8 @@ import {
 } from './fixtures/python-qualification-profile.ts';
 
 // Test-only runtime profile selection. These cases need no native runtime:
-// they prove the default stays the historical host profile and that the
-// opt-in staged profile is hash-verified, path-checked and exact.
+// they prove the default skips native qualification and that the opt-in
+// staged profile is hash-verified, path-checked and exact.
 const R = QUALIFICATION_ROOT, H = (n: string) => n.repeat(64).slice(0, 64);
 const lib = (name: string, mountPath: string) => ({ path: `${R}/usr/lib/x86_64-linux-gnu/${name}`, mountPath, sha256: H('a') });
 const runtime = {
@@ -35,24 +35,21 @@ const dirs: string[] = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 
 describe('M12 test-only Python qualification profile', () => {
-  it('keeps the historical host paths byte-for-byte when not opted in', () => {
-    const profile = pythonQualificationProfile({});
-    expect(profile).toEqual({ id: 'historical-host-v3', source: 'historical-host', inspection: {
-      backendId: 'm12-linux-bwrap-python-v1', bwrapPath: '/usr/bin/bwrap', interpreterPath: '/usr/bin/python3.13', stdlibPath: '/usr/lib/python3.13',
-      libraries: [
-        { path: '/lib/x86_64-linux-gnu/libc.so.6', mountPath: '/lib/x86_64-linux-gnu/libc.so.6' },
-        { path: '/lib/x86_64-linux-gnu/libm.so.6', mountPath: '/lib/x86_64-linux-gnu/libm.so.6' },
-        { path: '/lib/x86_64-linux-gnu/libz.so.1', mountPath: '/lib/x86_64-linux-gnu/libz.so.1' },
-        { path: '/lib/x86_64-linux-gnu/libexpat.so.1', mountPath: '/lib/x86_64-linux-gnu/libexpat.so.1' },
-        { path: '/lib/x86_64-linux-gnu/libffi.so.8', mountPath: '/lib/x86_64-linux-gnu/libffi.so.8' },
-        { path: '/lib64/ld-linux-x86-64.so.2', mountPath: '/lib64/ld-linux-x86-64.so.2' },
-      ] } });
-    expect(profile.expected).toBeUndefined();
+  const linuxX64 = { platform: 'linux', arch: 'x64' } as const;
+
+  it('leaves native qualification unselected on ordinary Linux x64 runs', () => {
+    expect(pythonQualificationProfile({}, linuxX64)).toBeUndefined();
   });
 
   it('refuses partial opt-in and relative manifest paths', () => {
-    for (const index of [0, 1, 2]) expect(() => pythonQualificationProfile({ [ENV[index]]: 'x' })).toThrow(/all of/);
-    expect(() => pythonQualificationProfile({ [ENV[0]]: 'manifest.json', [ENV[1]]: H('0'), [ENV[2]]: QUALIFICATION_PROFILE_ID })).toThrow(/absolute/);
+    for (const index of [0, 1, 2]) expect(() => pythonQualificationProfile({ [ENV[index]]: 'x' }, linuxX64)).toThrow(/all of/);
+    expect(() => pythonQualificationProfile({ [ENV[0]]: 'manifest.json', [ENV[1]]: H('0'), [ENV[2]]: QUALIFICATION_PROFILE_ID }, linuxX64)).toThrow(/absolute/);
+  });
+
+  it('fails explicit qualification on an unsupported platform', () => {
+    const env = { [ENV[0]]: 'manifest.json', [ENV[1]]: H('0'), [ENV[2]]: QUALIFICATION_PROFILE_ID };
+    expect(() => pythonQualificationProfile(env, { ...linuxX64, arch: 'arm64' })).toThrow(/Linux x64/);
+    expect(() => pythonQualificationProfile(env, { ...linuxX64, platform: 'win32' })).toThrow(/Linux x64/);
   });
 
   it('derives the staged inspection paths from the pinned root and returns the exact expected runtime', () => {
@@ -122,9 +119,9 @@ describe('M12 test-only Python qualification profile', () => {
     const { bytes, sha } = manifest(); const path = join(dir, 'manifest.json'); await writeFile(path, bytes);
     const env = { [ENV[0]]: path, [ENV[1]]: sha, [ENV[2]]: QUALIFICATION_PROFILE_ID };
     let staged = true; try { verifyQualificationRoot(R); } catch { staged = false; }
-    if (staged) expect(pythonQualificationProfile(env).expected?.manifestSha256).toBe(sha);
-    else expect(() => pythonQualificationProfile(env)).toThrow(/not present/);
+    if (staged) expect(pythonQualificationProfile(env, linuxX64)?.expected.manifestSha256).toBe(sha);
+    else expect(() => pythonQualificationProfile(env, linuxX64)).toThrow(/not present/);
     const link = join(dir, 'link.json'); await symlink(path, link);
-    expect(() => pythonQualificationProfile({ ...env, [ENV[0]]: link })).toThrow(/regular file/);
+    expect(() => pythonQualificationProfile({ ...env, [ENV[0]]: link }, linuxX64)).toThrow(/regular file/);
   });
 });

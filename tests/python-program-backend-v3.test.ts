@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,8 +27,6 @@ vi.mock('node:fs/promises', async importOriginal => {
   } };
 });
 
-const native = process.platform === 'linux' && process.arch === 'x64';
-// Historical host paths unless the test-only qualification manifest is explicitly selected.
 const qualification = pythonQualificationProfile();
 const workers: ProgramExecutor[] = [], directories: string[] = [];
 let runtime: PythonRuntimeConfiguration;
@@ -65,17 +64,15 @@ async function fixture(over: Partial<PythonProgramWorkerOptions> = {}) {
   return { worker, directory, launch, options };
 }
 
-describe.runIf(native)('actual Linux Python program confinement with explicit test approval', () => {
+describe.runIf(qualification !== undefined)('actual Linux Python program confinement with explicit test approval', () => {
   beforeAll(async () => {
+    assert(qualification);
     runtime = await inspectPythonRuntime(qualification.inspection);
     // This matrix is for these installed executables, never for arbitrary PATH resolution.
     expect(runtime.interpreter.sha256).toBe('889c603f0d17cb54060951bcf4c4f9b8c9ebd9e52b392c70209bbb9755d797d9');
     expect(runtime.bwrap.sha256).toBe('573236e5328ac2ebb08f59ae3a9805b4f8d12bdef14be8af4450d5463294985f');
-    if (qualification.expected) {
-      // Opt-in staged profile: every pinned byte and the fingerprint must equal the hash-verified manifest.
-      expect(runtime).toEqual(qualification.expected.runtime);
-      expect(pythonRuntimeFingerprint(runtime)).toBe(qualification.expected.runtimeFingerprint);
-    }
+    expect(runtime).toEqual(qualification.expected.runtime);
+    expect(pythonRuntimeFingerprint(runtime)).toBe(qualification.expected.runtimeFingerprint);
   });
 
   it('requires explicit operator approval and a matching real-platform proof before execution', async () => {
