@@ -539,7 +539,7 @@ Primary implementation sources:
 - [json-render streaming](https://json-render.dev/docs/streaming)
 - [json-render generation modes](https://json-render.dev/docs/generation-modes)
 - [json-render external store API](https://json-render.dev/docs/api/react)
-- [T3 architecture](https://github.com/pingdotgg/t3code/blob/main/docs/internals/overview.md)
+- [T3 architecture](https://github.com/pingdotgg/t3code/blob/76de50bc0d3fdd9fc2c5816de4142fbda1ce8364/docs/internals/overview.md)
 - [T3 visual replies](https://github.com/pingdotgg/t3code/blob/main/docs/user/html-renders.md)
 - [T3 Pi provider](https://github.com/pingdotgg/t3code/blob/main/docs/user/providers-pi.md)
 - [DSH browser architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/web-client.md)
