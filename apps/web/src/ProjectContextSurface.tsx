@@ -24,7 +24,7 @@ export function ProjectContextSurface({thread,snapshot,planOpen,onTogglePlan,ful
  useEffect(()=>{setMemoryOwner('');},[memoryKey]);
  useEffect(()=>{onContext?.(project.context);},[onContext,project.context]);
  const envelopeProject=thread?.projectId?workspaceProjects?.find(item=>item.id===thread.projectId):undefined;
- const preferences=getPreferences(snapshot.settings);
+ const preferences=getPreferences(snapshot.settings ?? {});
  const modelDefault=envelopeProject?projectModelDefaultFor(preferences,envelopeProject.authority,envelopeProject.id):null;
  const saveModelDefault=envelopeProject?async(value:{modelId:string;thinkingLevel:string|null}|null)=>{
   const live=getPreferences((await getSnapshot()).settings),next:UiPreferences['projectModelDefaults']={...live.projectModelDefaults};
