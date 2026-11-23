@@ -29,7 +29,7 @@ test('minimizing and Escape retain the same task content without a delete contro
  await expect(panel.getByRole('separator')).toHaveCount(0);
  await page.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect(body).toBeHidden();await expect(panel).toBeHidden();
  await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(body).toBeVisible();expect(await body.evaluate((node,old)=>node===old,original)).toBe(true);
- await page.getByRole('button',{name:'Collapse Project overview',exact:true}).focus();await page.keyboard.press('Escape');await expect(panel).toBeHidden();await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();expect(await body.evaluate((node,old)=>node===old,original)).toBe(true);
+ await page.getByRole('button',{name:'Collapse Project overview',exact:true}).focus();await page.keyboard.press('Escape');await expect(panel).toBeHidden();await expect(page.getByRole('button',{name:'Expand Project overview',exact:true})).toHaveAttribute('aria-expanded','false');await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();expect(await body.evaluate((node,old)=>node===old,original)).toBe(true);
 });
 
 test('live usage stays available and remembers its minimized state without close or resize controls',async({page})=>{

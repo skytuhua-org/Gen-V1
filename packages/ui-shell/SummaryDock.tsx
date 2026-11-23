@@ -44,7 +44,10 @@ export function SummaryToggle({ title, disclosure, children, className = '' }: {
   const { collapsed, updatePending } = disclosure, statusId = useId();
   return <button ref={disclosure.toggle} type="button" className={`icon-button summary-toggle ${collapsed ? '' : 'selected'} ${className}`}
     aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`} aria-expanded={!collapsed} title={title}
-    aria-describedby={updatePending ? statusId : undefined} onClick={() => disclosure.change(!collapsed)}>
+    aria-describedby={updatePending ? statusId : undefined} onKeyDown={event => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || collapsed) return;
+      event.preventDefault(); event.stopPropagation(); disclosure.change(true);
+    }} onClick={() => disclosure.change(!collapsed)}>
     {children}{updatePending && <span id={statusId} className="summary-toggle-update" role="status">Update available</span>}
   </button>;
 }
