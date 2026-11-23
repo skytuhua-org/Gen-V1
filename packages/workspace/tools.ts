@@ -183,6 +183,8 @@ export class ProjectTools{
   if(state==='diverged')blockers.push('DIVERGED');
   if(state==='behind'&&upstream){
    const changed=(await git(['-c','diff.renames=false','diff','--name-only','-z',current.head,upstream.oid])).split('\0').filter(Boolean),fold=(p:string)=>process.platform==='win32'?p.toLowerCase():p,remoteChanged=new Set(changed.map(fold)),dirty=new Set(current.files.flatMap(file=>[file.path,...(file.oldPath?[file.oldPath]:[])].map(fold)));
+   // Ignored untracked files are absent from status files but a fast-forward still overwrites them.
+   for(const ignored of (await git(['ls-files','-z','--others','--ignored','--exclude-standard','--',...changed]).catch(()=>'')).split('\0').filter(Boolean))dirty.add(fold(ignored));
    if([...dirty].some(dirtyPath=>remoteChanged.has(dirtyPath)))blockers.push('DIRTY_OVERLAP');
   }
   return{branch:current.branch||null,head:current.head,revision:current.revision,remote,upstream,ahead,behind,state,lastFetchedAt:this.lastFetched.get(bound.workspace?.id??projectId)??null,blockers};
