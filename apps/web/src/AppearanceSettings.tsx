@@ -67,7 +67,11 @@ export function AppearanceSettings({ preferences, theme, threads = [], projects:
     return <div className="appearance-size-field">
       <div className="appearance-size-input"><input type="number" aria-label={label} min={min} max={max} step={1} disabled={busy}
         value={numberDrafts[key] ?? draft[key]} className={invalid ? 'invalid' : undefined} aria-invalid={invalid || undefined} aria-describedby={invalid ? hintId : undefined}
-        onChange={event => { const text = event.target.value; setNumberDrafts(c => ({...c, [key]: text})); commit(text); }}
+        onChange={event => {
+          const text = event.target.value;
+          setNumberDrafts(c => ({...c, [key]: text}));
+          if (!commit(text)) setInvalidSizes(c => ({...c, [key]: true}));
+        }}
         onKeyDown={event => {
           if (event.key === 'Enter') { event.preventDefault(); if (!commit(event.currentTarget.value)) setInvalidSizes(c => ({...c, [key]: true})); else setNumberDrafts(c => { const n = {...c}; delete n[key]; return n; }); }
           if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setNumberDrafts(c => { const n = {...c}; delete n[key]; return n; }); setInvalidSizes(c => ({...c, [key]: false})); }

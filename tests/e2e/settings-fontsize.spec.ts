@@ -36,7 +36,10 @@ test.describe('font-size input validation (#1729)', () => {
   test('out-of-range text stays in the field with red border and exact hint', async ({page}) => {
     const host = await setup(page);
     const input = host.settings.getByRole('spinbutton', {name: 'UI size', exact: true});
-    await input.fill('99'); await input.blur();
+    await input.fill('99');
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+    await expect.poll(() => input.evaluate(field => getComputedStyle(field).boxShadow)).not.toBe('none');
+    await input.blur();
     await expect(input).toHaveValue('99');
     await expect(input).toHaveAttribute('aria-invalid', 'true');
     const hint = host.settings.getByRole('alert');
