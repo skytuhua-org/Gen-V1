@@ -68,3 +68,10 @@ test('Escape and Close restore the rendered Find trigger',async({page})=>{
  await setup(page);const trigger=page.getByRole('button',{name:'Find in conversation',exact:true});await trigger.focus();await page.keyboard.press('Enter');await expect(phrase(page)).toBeFocused();await page.keyboard.press('Escape');await expect(trigger).toBeFocused();
  await page.keyboard.press('Enter');await page.getByRole('button',{name:'Close find',exact:true}).click();await expect(trigger).toBeFocused();
 });
+test('empty transcript disables the trigger and the Ctrl+F shortcut',async({page})=>{
+ await setup(page,0);
+ const trigger=page.getByRole('button',{name:'Find in conversation',exact:true});
+ await expect(trigger).toBeDisabled();await expect(trigger).toHaveAttribute('title','No messages to search');
+ await page.locator('.composer textarea').focus();await page.keyboard.press('Control+f');
+ await expect(phrase(page)).toHaveCount(0);
+});
