@@ -13,7 +13,7 @@ import {WorkspaceSplitLayout} from './apps/web/src/WorkspaceSplitLayout.tsx';
 import {createSplitWorkspaceLayout,applySplitWorkspaceCommand} from './packages/core/split-workspace-layout.ts';
 let initial=createSplitWorkspaceLayout('test-layout');
 initial=applySplitWorkspaceCommand(initial,'view.open',{view:{id:'one',kind:'thread',binding:{authority:{kind:'local'},threadId:'one'}}});
-initial=applySplitWorkspaceCommand(initial,'pane.split',{paneId:'pane-main',newPaneId:'right',splitId:'columns',axis:'horizontal',view:{id:'two',kind:'thread',binding:{authority:{kind:'local'},threadId:'two'}}});
+if(!(window as any).singlePane)initial=applySplitWorkspaceCommand(initial,'pane.split',{paneId:'pane-main',newPaneId:'right',splitId:'columns',axis:'horizontal',view:{id:'two',kind:'thread',binding:{authority:{kind:'local'},threadId:'two'}}});
 window.mounts={};window.commands=[];window.editorChoices=[];window.flushRejected=false;window.deferEditorChoice=false;
 function Editor({id,active}){const[value,setValue]=useState('');useEffect(()=>{window.mounts[id]=(window.mounts[id]||0)+1;},[]);return <div><label>{id}<input aria-label={'Draft '+id} value={value} onChange={e=>setValue(e.target.value)}/></label><iframe title={'Frame '+id} srcDoc='<input value="same renderer"/>'/><span>{active?'visible':'hidden'}</span></div>}
 function Fixture(){const[layout,setLayout]=useState(initial);window.currentLayout=layout;window.issue=(type,payload)=>setLayout(current=>applySplitWorkspaceCommand(current,type,payload));return <WorkspaceSplitLayout layout={layout} showHistory={false} emptyMainPaneId={window.emptyMain?'pane-main':undefined} editorOptions={[{id:'thread',title:'Conversation'},{id:'diff',title:'Diff'}]} onSelectEditor={async(kind,paneId)=>{window.editorChoices.push({kind,paneId});if(window.deferEditorChoice)await new Promise(resolve=>{window.finishEditorChoice=resolve;});}} onDropThread={async()=>{window.threadDrops=(window.threadDrops||0)+1;}} title={view=>view.id} prepare={async()=>{if(window.flushRejected)throw Error('Draft flush failed. Keep this view open.');}} onCommand={async(type,payload)=>{window.commands.push({type,payload});setLayout(current=>applySplitWorkspaceCommand(current,type,payload));}} renderView={(view,active)=><Editor id={view.id} active={active}/>}/>}
@@ -26,7 +26,7 @@ beforeAll(async()=>{
  browser=await chromium.launch({headless:true,...(process.env.GEN_TEST_BROWSER_CHANNEL?{channel:process.env.GEN_TEST_BROWSER_CHANNEL}:{})});
 });
 afterAll(async()=>{await browser?.close();});
-async function page(){const page=await browser.newPage({viewport:{width:1440,height:900}});await page.setContent('<html><head></head><body style="margin:0"><div id="root" style="display:flex;height:100vh"></div></body></html>');await page.addStyleTag({content:css});await page.addScriptTag({content:script});await page.getByRole('textbox',{name:'Draft one'}).waitFor({state:'visible'});return page;}
+async function page(options:{singlePane?:boolean;emptyMain?:boolean}={}){const page=await browser.newPage({viewport:{width:1440,height:900}});await page.setContent('<html><head></head><body style="margin:0"><div id="root" style="display:flex;height:100vh"></div></body></html>');await page.addStyleTag({content:css});await page.evaluate(({singlePane,emptyMain})=>{(window as any).singlePane=Boolean(singlePane);(window as any).emptyMain=Boolean(emptyMain);},options);await page.addScriptTag({content:script});if(options.emptyMain)await page.locator('[data-split-pane="pane-main"] .split-empty').waitFor({state:'visible'});else await page.getByRole('textbox',{name:'Draft one'}).waitFor({state:'visible'});return page;}
 async function issue(page:Page,type:string,payload:Record<string,unknown>){await page.evaluate(({type,payload})=>(window as unknown as {issue:(type:string,payload:Record<string,unknown>)=>void}).issue(type,payload),{type,payload});}
 
 it('uses the shared area menu for keyboard editor selection, Escape and outside dismissal',async()=>{
@@ -46,6 +46,18 @@ it('uses the shared area menu for keyboard editor selection, Escape and outside 
   await tab.waitForFunction(()=>!document.querySelector('[role="menu"][data-state="open"]')&&(document.activeElement as HTMLElement)?.getAttribute('aria-label')==='Area actions');
   expect(await tab.getByRole('menu').count()).toBe(0);expect(await trigger.evaluate(node=>node===document.activeElement)).toBe(true);
   await trigger.click();await tab.getByRole('menu').waitFor();await tab.getByRole('textbox',{name:'Draft two'}).click();await tab.waitForFunction(()=>!document.querySelector('[role="menu"][data-state="open"]'));expect(await tab.getByRole('menu').count()).toBe(0);
+ }finally{await tab.close();}
+});
+
+it('keeps the tab strip reachable when a single thread pane is empty',async()=>{
+ const tab=await page({singlePane:true,emptyMain:true});try{
+  const workspace=tab.locator('.split-workspace'),pane=tab.locator('[data-split-pane="pane-main"]'),strip=pane.locator('.split-tab-strip');
+  expect(await workspace.getAttribute('data-inline-chrome')).toBeNull();
+  expect(await pane.locator('.split-empty').isVisible()).toBe(true);
+  expect(await strip.isVisible()).toBe(true);expect((await strip.boundingBox())!.width).toBeGreaterThan(20);
+  const threadTab=strip.getByRole('tab',{name:'one',exact:true});await threadTab.click();
+  await tab.waitForFunction(()=>(window as any).commands.some((command:any)=>command.type==='view.activate'));
+  expect(await threadTab.getAttribute('aria-selected')).toBe('true');
  }finally{await tab.close();}
 });
 

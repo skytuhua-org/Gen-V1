@@ -49,7 +49,7 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  const[floatRects,setFloatRects]=useState<Record<string,ChatRect>>({});
  const[floatMenu,setFloatMenu]=useState<string|null>(null),[dockedPreview,setDockedPreview]=useState<string|null>(null);
  const singlePaneId=Object.keys(layout.panes).length===1?Object.keys(layout.panes)[0]:undefined,singlePane=singlePaneId?layout.panes[singlePaneId]:undefined,singleView=singlePane?.activeViewId?layout.views[singlePane.activeViewId]:undefined;
- const inlineChromeViewId=singlePane&&!singlePane.collapsed&&singlePane.viewIds.length===1&&singleView?.kind==='thread'?singleView.id:undefined;
+ const inlineChromeViewId=singlePane&&!singlePane.collapsed&&singlePane.viewIds.length===1&&singlePaneId!==emptyMainPaneId&&singleView?.kind==='thread'?singleView.id:undefined;
  const floatDragged=useRef(false);
  const floatGripAnchor=useRef<HTMLElement|null>(null),floatMenuContent=useRef<HTMLDivElement|null>(null),floatMenuItem=useRef<HTMLButtonElement|null>(null);
  const dockedFloatCleanup=useRef<(()=>void)|null>(null);
