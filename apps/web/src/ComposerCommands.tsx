@@ -92,8 +92,8 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
     }
     if (['Home', 'End', 'PageUp', 'PageDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
       if (event.shiftKey) return false;
+      const selectable = options.filter(available); if (!selectable.length) return false;
       event.preventDefault();
-      const selectable = options.filter(available); if (!selectable.length) return true;
       const index = selectable.findIndex(option => option.id === selected?.id);
       if (event.key === 'Home') setActive(selectable[0]!.id);
       else if (event.key === 'End') {setActive(selectable[selectable.length - 1]!.id); if (page?.nextCursor) void loadMore();}
