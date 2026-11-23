@@ -103,6 +103,7 @@ function RuleRow({
 							{rule.helpUrl && (
 								<a
 									className="a11y-learn-more"
+									aria-label={`Learn more about ${rule.ruleId}`}
 									href={rule.helpUrl}
 									target="_blank"
 									rel="noreferrer"
