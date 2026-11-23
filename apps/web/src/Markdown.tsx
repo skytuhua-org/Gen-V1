@@ -137,7 +137,7 @@ export const ReplyMarkdown = memo(function ReplyMarkdown({ text,animate=false,in
       for(const heading of headings)counts.set(heading.label,(counts.get(heading.label)??0)+1);
       for(const heading of headings){
         const total=counts.get(heading.label)!;
-        if(total>1){const order=(seen.get(heading.label)??0)+1;heading.label=`${heading.label} (${order} of ${total})`;seen.set(heading.label,order);}
+        if(total>1){const order=(seen.get(heading.label)??0)+1;seen.set(heading.label,order);heading.label=`${heading.label} (${order} of ${total})`;}
       }
     }
     return {nodes,headings};
