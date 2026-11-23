@@ -145,6 +145,19 @@ describe('feedback primitives', () => {
     await page.close();
   });
 
+  it('evicts with the opacity-only fade under reduced motion', async () => {
+    const page = await open();
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    for (const m of ['r1', 'r2', 'r3']) await page.evaluate(`window.toast('${m}', {durationMs: 60000})`);
+    await page.evaluate(`window.toast('r4', {durationMs: 60000})`);
+    const evicted = page.locator('.ui-toast[data-state="closed"]', {hasText: 'r1'});
+    await evicted.waitFor();
+    expect(await evicted.evaluate(el => getComputedStyle(el).animationDuration)).toBe('0.08s');
+    expect(await evicted.evaluate(el => getComputedStyle(el).transform)).toBe('none');
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(3);
+    await page.close();
+  });
+
   it('uses brief opacity-only fades under reduced motion', async () => {
     const page = await open();
     await page.emulateMedia({reducedMotion: 'reduce'});
