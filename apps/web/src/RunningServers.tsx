@@ -35,7 +35,7 @@ export function RunningServersView({items,unavailable='',onStop,stoppingId=null,
   target?.focus();
  },[items]);
  if(items.length===0){
-  return unavailable?<p className="running-servers-error" role="alert">{unavailable}</p>:null;
+  return unavailable?<p className="running-servers-error">{unavailable}</p>:null;
  }
  const confirmStop=(row:DevServer,index:number)=>{
   focusNext.current=items[index+1]?.id??items[index-1]?.id??null;
@@ -48,7 +48,7 @@ export function RunningServersView({items,unavailable='',onStop,stoppingId=null,
  };
  return <section className="running-servers" aria-label="Running servers">
   <h3 className="running-servers-heading"><Server size={14} aria-hidden="true"/><span>Running</span><span className="running-servers-count">{items.length}</span></h3>
-  {unavailable&&<p className="running-servers-error" role="alert">{unavailable}</p>}
+  {unavailable&&<p className="running-servers-error">{unavailable}</p>}
   <ul className="running-servers-list">
    {items.map((row,index)=>{
     const busy=stoppingId===row.id,error=errors[row.id];
