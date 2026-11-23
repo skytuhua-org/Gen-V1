@@ -115,7 +115,9 @@ describe('M12 Python retained-data accounting (accepted retained state, not a fi
   });
 
   it.runIf(linuxFs)('keeps the existing special-file refusal for a FIFO', async () => {
-    const special = await root(); execFileSync('mkfifo', [join(special, 'pipe')]);
+    const special = await root();
+    // eslint-disable-next-line bun/no-unportable-commands -- This Linux-only case requires a real FIFO.
+    execFileSync('mkfifo', [join(special, 'pipe')]);
     expect((await lstat(join(special, 'pipe'))).isFIFO()).toBe(true);
     await expect(inspectPythonPrivateDirectory(special)).rejects.toMatchObject({ code: 'PYTHON_PROFILE_DENIED' });
   });

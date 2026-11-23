@@ -162,7 +162,9 @@ describe.runIf(process.platform === 'linux')('Linux native descriptor-bound regu
   it('rejects directories and FIFOs without blocking, and retains the original namespace guard refusal', async () => {
     const f = await fixture();
     await expect(boundRead()(f.source, f.signal, path => access.readBoundFile(path, 4096))).rejects.toMatchObject(denied);
-    const fifo = join(f.source, 'fifo'); const made = spawnSync('/usr/bin/mkfifo', [fifo], { encoding: 'utf8' });
+    const fifo = join(f.source, 'fifo');
+    // eslint-disable-next-line bun/no-unportable-commands -- The Linux-only suite requires a real FIFO.
+    const made = spawnSync('/usr/bin/mkfifo', [fifo], { encoding: 'utf8' });
     expect(made.status, made.stderr).toBe(0);
     await expect(boundRead()(fifo, f.signal, path => access.readBoundFile(path, 4096))).rejects.toMatchObject(denied);
     await expect(access.withPathGuard([{ path: f.filename, leaf: true, readOnly: true }], f.signal,

@@ -66,7 +66,7 @@ async function fixture(over: Partial<PythonProgramWorkerOptions> = {}) {
 
 describe.runIf(qualification !== undefined)('actual Linux Python program confinement with explicit test approval', () => {
   beforeAll(async () => {
-    assert(qualification);
+    assert.ok(qualification);
     runtime = await inspectPythonRuntime(qualification.inspection);
     // This matrix is for these installed executables, never for arbitrary PATH resolution.
     expect(runtime.interpreter.sha256).toBe('889c603f0d17cb54060951bcf4c4f9b8c9ebd9e52b392c70209bbb9755d797d9');

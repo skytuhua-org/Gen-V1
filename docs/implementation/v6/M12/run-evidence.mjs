@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+if (process.platform === 'win32') throw new Error('The M12 evidence runner requires a POSIX shell.');
+
 const root = '<worktree:m12-v6>';
 const logsDir = resolve(root, 'docs/implementation/v6/M12/logs');
 mkdirSync(logsDir, { recursive: true });
@@ -50,6 +52,7 @@ writeFileSync(logPath, log);
 const receipt = {
   argv,
   cwdIdentity: root,
+  // eslint-disable-next-line bun/no-unportable-commands -- The runner requires POSIX command resolution.
   executableIdentity: execFileSync('sh', ['-c', `command -v ${argv[0]}`], { env: { ...process.env, PATH: `<toolchain>:${process.env.PATH}` }, encoding: 'utf8' }).trim(),
   startedAt,
   endedAt,

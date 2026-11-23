@@ -66,7 +66,7 @@ const absent = async (path: string) => { await expect(lstat(path)).rejects.toMat
 
 describe.runIf(qualification !== undefined)('M12-D06 retained-data accounting through the actual Python worker', () => {
   beforeAll(async () => {
-    assert(qualification);
+    assert.ok(qualification);
     runtime = await inspectPythonRuntime(qualification.inspection);
     expect(runtime.interpreter.sha256).toBe('889c603f0d17cb54060951bcf4c4f9b8c9ebd9e52b392c70209bbb9755d797d9');
     expect(runtime).toEqual(qualification.expected.runtime);
