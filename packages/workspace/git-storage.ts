@@ -146,7 +146,7 @@ export async function withLegacyGitView<T>(family:PrivateGitFamily,root:string,w
   if(names.length>10000)throw new HarnessError('RESOURCE_LIMIT','Tracked source projection exceeds 10000 entries.');let bytes=0;
   for(const name of new Set(names)){
    if(isAbsolute(name)||name.includes('\\')||name.includes(':')||name.split('/').some(p=>!p||p==='.'||p==='..'||p.toLowerCase()==='.git'))throw denied();
-   const path=join(root,...name.split('/'));try{const s=await lstat(path,{bigint:true});if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1n)throw denied();if((bytes+=Number(s.size))>64*1024*1024)throw new HarnessError('RESOURCE_LIMIT','Tracked source projection exceeds 64 MiB.');tracked.push({path,dev:String(s.dev),ino:String(s.ino),directory:false,size:Number(s.size)});}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
+   const path=join(root,...name.split('/'));try{const s=await lstat(path,{bigint:true});if(!s.isFile()||s.isSymbolicLink())continue;if(s.nlink!==1n)throw denied();if((bytes+=Number(s.size))>64*1024*1024)throw new HarnessError('RESOURCE_LIMIT','Tracked source projection exceeds 64 MiB.');tracked.push({path,dev:String(s.dev),ino:String(s.ino),directory:false,size:Number(s.size)});}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
   }
   return withPathGuard(tracked.map(e=>({path:e.path,leaf:true,readOnly:true,dev:e.dev,ino:e.ino})),active,async()=>{
    for(const entry of tracked){const destination=join(snapshot,relative(root,entry.path));await parents(snapshot,destination,owned);await copyBoundGitMetadata(entry,destination,active,s=>owned.push({path:destination,...s,directory:false}));}
