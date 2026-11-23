@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseSearchPathFilter } from './search-path-filter.ts';
 
 const unicode = z.string().refine(value => new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(new TextEncoder().encode(value)) === value, 'Use valid Unicode.');
 export const projectSearchIdSchema = z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/);
@@ -15,10 +16,21 @@ export const projectOwnerSchema = z.strictObject({
   projectId: projectSearchIdSchema, threadId: projectSearchIdSchema.nullable(),
   workingCopyId: projectSearchIdSchema.nullable(), binding: sha256,
 });
+// Optional include/exclude path filters (#1635): canonical blank becomes absent,
+// invalid grammar is rejected, and both sides share the same pure validator.
+const pathFilter = unicode.superRefine((value, context) => {
+  const parsed = parseSearchPathFilter(value);
+  if (!parsed.ok) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Use a valid path glob filter.' });
+}).transform(value => {
+  const parsed = parseSearchPathFilter(value);
+  return parsed.ok ? parsed.filter?.canonical : undefined;
+}).optional();
+
 export const searchRequestSchema = z.strictObject({
   threadId: projectSearchIdSchema.optional(),
   q: unicode.transform(value => value.trim()).refine(value => [...value].length >= 1 && [...value].length <= 200, 'Use 1–200 code points.'),
   limit: z.number().int().min(1).max(100).optional(), cursor: unicode.optional(),
+  include: pathFilter, exclude: pathFilter,
 });
 export const searchMatchSchema = z.strictObject({
   path: projectSearchPathSchema, kind: z.enum(['path', 'text']),

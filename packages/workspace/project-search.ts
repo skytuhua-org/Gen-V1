@@ -4,6 +4,7 @@ import { lstat, open, opendir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { HarnessError } from '../contracts/index.ts';
 import { projectSearchIdSchema, projectSearchPathSchema, searchRequestSchema, type ProjectOwner, type SearchIssue, type SearchMatch, type SearchRequest, type SearchResponse } from '../contracts/project-search.ts';
+import { matchSearchPathFilter, parseSearchPathFilter, type SearchPathFilter } from '../contracts/search-path-filter.ts';
 import { withPathGuard } from '../core/file-access.ts';
 import { assertNotStorage, inside } from '../core/security.ts';
 import type { ProjectTools } from './tools.ts';
@@ -14,7 +15,7 @@ const EXCLUSIONS = ['.git', 'node_modules', '.harness-directory-guard', 'links/r
 const excludedNames = new Set(['.git', 'node_modules', '.harness-directory-guard']);
 type Identity = { dev: string; ino: string };
 type Directory = { path: string; identity: Identity };
-type Snapshot = { response: SearchResponse; query: string; limit: number; expires: number };
+type Snapshot = { response: SearchResponse; query: string; limit: number; include?: string; exclude?: string; expires: number };
 const identity = (info: BigIntStats): Identity => ({ dev: String(info.dev), ino: String(info.ino) });
 const equal = (a: Identity, b: Identity) => a.dev === b.dev && a.ino === b.ino;
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
@@ -87,12 +88,12 @@ export class ProjectSearch {
       if (String(offset) !== parts[2]) return this.invalidCursor();
       if (!timingSafeEqual(Buffer.from(request.cursor), Buffer.from(this.cursor(handle, offset)))) return this.invalidCursor();
       const saved = this.snapshots.get(handle);
-      if (!saved || offset < 1 || offset >= saved.response.matches.length || saved.query !== query || saved.limit !== limit || saved.response.owner.projectId !== projectId || saved.response.owner.threadId !== (request.threadId ?? null)) return this.invalidCursor();
+      if (!saved || offset < 1 || offset >= saved.response.matches.length || saved.query !== query || saved.limit !== limit || saved.include !== request.include || saved.exclude !== request.exclude || saved.response.owner.projectId !== projectId || saved.response.owner.threadId !== (request.threadId ?? null)) return this.invalidCursor();
       snapshot = saved;
     } else {
       const admitted = await this.admission(projectId, request.threadId);
-      const response = await this.scan(admitted, query, signal);
-      snapshot = { response, query, limit, expires: this.clock.now() + TTL };
+      const response = await this.scan(admitted, query, this.filters(request), signal);
+      snapshot = { response, query, limit, include: request.include, exclude: request.exclude, expires: this.clock.now() + TTL };
       handle = randomBytes(32).toString('hex');
     }
     let owner: ProjectOwner;
@@ -135,7 +136,18 @@ export class ProjectSearch {
     return structuredClone(page);
   }
 
-  private async scan(admitted: Awaited<ReturnType<ProjectSearch['admission']>>, query: string, external?: AbortSignal): Promise<SearchResponse> {
+  // The request schema already normalized the pair; compile each nonempty glob once.
+  private filters(request: SearchRequest): { include?: SearchPathFilter; exclude?: SearchPathFilter } {
+    const compile = (canonical?: string): SearchPathFilter | undefined => {
+      if (!canonical) return undefined;
+      const parsed = parseSearchPathFilter(canonical);
+      if (!parsed.ok || !parsed.filter) throw new HarnessError('INVALID_INPUT', 'Invalid search path filter.');
+      return parsed.filter;
+    };
+    return { include: compile(request.include), exclude: compile(request.exclude) };
+  }
+
+  private async scan(admitted: Awaited<ReturnType<ProjectSearch['admission']>>, query: string, filters: { include?: SearchPathFilter; exclude?: SearchPathFilter }, external?: AbortSignal): Promise<SearchResponse> {
     const response: SearchResponse = { owner: admitted.owner, matches: [], nextCursor: null, complete: true, issues: [], issuesTruncated: false, exclusions: [...EXCLUSIONS], limits: { ...PROJECT_SEARCH_LIMITS } };
     const controller = new AbortController(), signal = controller.signal, started = this.clock.monotonic();
     let stopped = false, files = 0, readBytes = 0, retainedBytes = bytes(response);
@@ -253,6 +265,10 @@ export class ProjectSearch {
               if (info.isDirectory()) { await walk({ path, identity: identity(info) }, child, directories); continue; }
               if (files >= PROJECT_SEARCH_LIMITS.files) { stop('file_limit'); throw new Stopped(); }
               files++;
+              // User path filters gate before size/byte admission: a rejected file
+              // consumes no content-read bytes and yields no issue rows.
+              if (filters.include && !matchSearchPathFilter(filters.include, child)) continue;
+              if (filters.exclude && matchSearchPathFilter(filters.exclude, child)) continue;
               if (info.size > BigInt(PROJECT_SEARCH_LIMITS.fileBytes)) { issue(child, 'too_large'); continue; }
               if (readBytes + Number(info.size) > PROJECT_SEARCH_LIMITS.bytes) { stop('byte_limit'); throw new Stopped(); }
               await read(path, child, info, directories);
