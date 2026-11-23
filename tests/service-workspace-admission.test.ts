@@ -126,8 +126,62 @@ it('Stop All waits for actual native cancellation and keeps the host available',
 it('replaying Stop waits for the same native teardown instead of acknowledging it early',async()=>{
  const f=fixture(),thread=await f.create();await f.message(thread.id);let release!:()=>void;const gate=new Promise<void>(done=>{release=done;});vi.mocked(f.runtime.cancel).mockImplementation(()=>gate);
  const command={id:'stop-replay',type:'run.stop',threadId:thread.id,payload:{}};let replayed=false;
- const first=f.service.command(command);await vi.waitFor(()=>expect(f.runtime.cancel).toHaveBeenCalledOnce());const second=f.service.command(command).then(result=>{replayed=true;return result;});
- try{await new Promise(resolve=>setTimeout(resolve,10));expect(replayed).toBe(false);release();expect(await second).toEqual(await first);}finally{release();await Promise.allSettled([first,second]);}
+ let second!:ReturnType<Service['command']>;
+ const unsubscribe=f.store.subscribe(event=>{
+  if(event.type==='run.stop'){
+   unsubscribe();
+   second=f.service.command(command).then(result=>{replayed=true;return result;});
+  }
+ });
+ const first=f.service.command(command);
+ try{
+  await vi.waitFor(()=>expect(f.runtime.cancel).toHaveBeenCalledOnce());
+  expect(second).toBeDefined();expect(replayed).toBe(false);
+  release();expect(await second).toEqual(await first);
+ }finally{unsubscribe();release();await Promise.allSettled([first,second]);}
+});
+it('coalesces a failed Stop retry for the exact run and leaves the replacement running',async()=>{
+ const f=fixture(),thread=await f.create();
+ await f.message(thread.id);
+ const {threadId,runId,epoch}=f.starts[0],ctx={threadId,runId,epoch};
+ const command={id:'failed-stop-replay',type:'run.stop',threadId,payload:{}};
+ const failure=Error('Synthetic teardown remains unconfirmed');
+ const cancel=vi.mocked(f.runtime.cancel);
+ cancel.mockRejectedValueOnce(failure);
+ await expect(f.service.command(command)).rejects.toBe(failure);
+ const receipt=f.store.receipt(command);
+ expect(receipt).toMatchObject({result:{stopped:true,nativeOwner:ctx}});
+ await expect(f.send('run.resume',{},threadId)).rejects.toMatchObject({code:'RUN_BUSY'});
+ const retryFailure=Error('Synthetic retry could not confirm teardown');
+ cancel.mockRejectedValueOnce(retryFailure);
+ const rejected={status:'rejected',reason:retryFailure};
+ expect(await Promise.allSettled([f.service.command(command),f.service.command(command)])).toEqual([rejected,rejected]);
+ expect(cancel.mock.calls).toEqual([[ctx],[ctx]]);
+ await expect(f.send('run.resume',{},threadId)).rejects.toMatchObject({code:'RUN_BUSY'});
+ let confirm!:()=>void;
+ const gate=new Promise<void>(resolve=>{confirm=resolve;});
+ cancel.mockImplementationOnce(()=>gate);
+ const completed=vi.fn();
+ const replay=f.service.command(command).then(result=>{completed();return result;});
+ const newStop=f.send('run.stop',{},threadId).then(result=>{completed();return result;});
+ const join=Promise.all([replay,newStop]);
+ void join.catch(()=>{});
+ try{
+  await vi.waitFor(()=>expect(cancel).toHaveBeenCalledTimes(3));
+  expect(cancel.mock.calls).toEqual([[ctx],[ctx],[ctx]]);
+  expect(completed).not.toHaveBeenCalled();
+  await expect(f.send('run.resume',{},threadId)).rejects.toMatchObject({code:'RUN_BUSY'});
+  confirm();
+  const [replayed,second]=await join;
+  expect(replayed).toEqual(receipt);
+  expect(second.result).toEqual(receipt?.result);
+  await f.send('run.resume',{},threadId);
+  const replacement=f.starts[1];
+  expect(replacement.epoch).toBeGreaterThan(epoch);
+  await expect(f.service.command(command)).resolves.toEqual(receipt);
+  expect(f.service.thread(threadId)).toMatchObject({runId:replacement.runId,epoch:replacement.epoch,status:'working'});
+  expect(cancel).toHaveBeenCalledTimes(3);
+ }finally{confirm();await Promise.allSettled([replay,newStop]);}
 });
 it('replaying a failed Stop retains its unconfirmed teardown outcome',async()=>{
  const f=fixture(),thread=await f.create();await f.message(thread.id);vi.mocked(f.runtime.cancel).mockRejectedValue(Error('Native cancellation was not confirmed.'));const command={id:'failed-stop-replay',type:'run.stop',threadId:thread.id,payload:{}};

@@ -5,11 +5,14 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Service} from '../packages/core/service.ts';
 import {Store} from '../packages/storage/store.ts';
-import type {RuntimeAdapter,RuntimeCallbacks,StartRun,Thread} from '../packages/contracts/index.ts';
+import type {RunContext,RuntimeAdapter,RuntimeCallbacks,StartRun,Thread} from '../packages/contracts/index.ts';
 import type {SkillDetail,SkillProposal} from '../packages/contracts/skills.ts';
+import {accountResolver,beginAccountLogin} from '../packages/core/accounts.ts';
+import {createHermesRuntime} from '../packages/runtime-hermes/index.ts';
+import type {HermesClient} from '../packages/runtime-hermes/client.ts';
 const cleanup:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
-async function fixture(){
+async function fixture(useHermes=false){
  const directory=await mkdtemp(join(tmpdir(),'hermes-service-')),store=new Store(directory);let callbacks!:RuntimeCallbacks;const starts:StartRun[]=[];
  const runtime:RuntimeAdapter={configure:value=>{callbacks=value;},models:async()=>[{id:'openai/source-test',provider:'openai',name:'Scripted source transport'}],start:async input=>{starts.push(input);},followUp:async input=>{starts.push(input);},cancel:async()=>{},compact:async()=>{},history:async()=>[],dispose:async()=>{}};
  const sourceCalls=vi.fn(async(_method:string,_params?:Record<string,unknown>)=>({prompt:'ORIGINAL LEARN PROMPT'}));
@@ -17,10 +20,82 @@ async function fixture(){
  const detail:SkillDetail={skill:{name:'source',description:'Source fixture',category:'general',revision:1,state:'active',enabled:true,protected:false,origin:'user',managed:false,author:'user',createdAt:'',updatedAt:'',lastUsedAt:null,useCount:0,patchCount:0},content:'source',files:[],versions:[],nextVersionOffset:null};
  const proposal:SkillProposal={id:'source',createdAt:'',status:'pending',actor:{kind:'user'},targets:[],operations:[]};
  const library={initialize:vi.fn(async()=>({migrated:0})),refresh:vi.fn(async()=>{}),command:vi.fn(async(command:{id:string})=>({commandId:command.id,eventSeq:store.sequence,result:{status:'applied',changes:[]}})),view:vi.fn(async()=>detail),proposal:vi.fn(async()=>proposal)};
- const service=new Service(store,runtime,{source:{runtime:controller,library},approvedWriteHooks:true});cleanup.push(async()=>{await service.dispose();store.close();await rm(directory,{recursive:true,force:true,maxRetries:5});});
+ const sources:ReturnType<typeof stopSource>[]=[];
+ const hermes=useHermes?createHermesRuntime({
+  dataDir:directory,nativeCatalog:runtime,hostTools:[],accounts:accountResolver(store),onSourceEvent:event=>service.sourceEvent(event),
+ },{createClient:options=>{const source=stopSource(options);sources.push(source);return source;}}):undefined;
+ const service=new Service(store,hermes??runtime,{source:{runtime:hermes??controller,library},approvedWriteHooks:true});
+ cleanup.push(async()=>{try{await service.dispose();}finally{store.close();await rm(directory,{recursive:true,force:true,maxRetries:5});}});
  const send=(type:string,payload:Record<string,unknown>={},threadId?:string)=>service.command({id:crypto.randomUUID(),type,payload,threadId});
- return {service,store,controller,library,starts,send,sourceCalls,get callbacks(){return callbacks;}};
+ return {service,store,controller,library,starts,send,sourceCalls,hermes,sources,get callbacks(){return callbacks;}};
 }
+function stopSource(options:ConstructorParameters<typeof HermesClient>[0]){
+ const admitted:RunContext[]=[];
+ const cancel=vi.fn(async()=>({accepted:true})),cancelBackground=vi.fn(async()=>({accepted:true}));
+ const request=async<T>(method:string,params?:Record<string,unknown>):Promise<T>=>{
+  if(method==='hello')return {protocolVersion:1,engineClass:'run_agent.AIAgent',sourceCommit:'c627ec84664d43e0b18b95d9d86d8963747d56c7'} as T;
+  if(method==='agent.start'){admitted.push(params!.ctx as RunContext);return {accepted:true} as T;}
+  if(method==='agent.cancel')return await cancel() as T;
+  if(method==='agent.cancelBackground')return await cancelBackground() as T;
+  return {} as T;
+ };
+ const event=(name:string,ctx=admitted.at(-1)!)=>options.onEvent?.({event:name,ctx:{...ctx,phase:'foreground'},data:{}});
+ return {admitted,cancel,cancelBackground,request,event,fail:()=>options.onFailure?.(Error('Synthetic source worker failure')),dispose:vi.fn(async()=>{})};
+}
+async function hermesRun(x:Awaited<ReturnType<typeof fixture>>,thread?:Thread){
+ thread??=(await x.send('thread.create')).result as Thread;
+ await x.send('message.send',{content:'Run the synthetic source',modelId:'openai/source-test'},thread.id);
+ await vi.waitFor(()=>expect(x.sources.at(-1)?.admitted.at(-1)?.threadId).toBe(thread.id));
+ const source=x.sources.at(-1)!,{threadId,runId,epoch}=source.admitted.at(-1)!;
+ return {thread,source,ctx:{threadId,runId,epoch}};
+}
+it('retries the held Hermes owner through Stop after foreground settlement',async()=>{
+ const x=await fixture(true),{thread,source,ctx}=await hermesRun(x),hermes=x.hermes!;
+ source.event('foreground_settled');
+ source.event('review_started');
+ expect(x.service.thread(thread.id)).toMatchObject({runId:null,epoch:ctx.epoch});
+ source.dispose.mockRejectedValueOnce(Error('Synthetic first source disposal failure'));
+ source.fail();
+ await vi.waitFor(()=>expect(source.dispose).toHaveBeenCalledOnce());
+ expect(hermes.reviewBusy).toBe(true);
+ expect(x.store.all('accountUse')).toHaveLength(1);
+ await expect(x.send('run.stop',{},thread.id)).resolves.toMatchObject({result:{stopped:true,nativeOwner:ctx}});
+ expect(source.dispose).toHaveBeenCalledTimes(2);
+ expect(x.store.all('accountUse')).toHaveLength(0);
+ expect(hermes.reviewBusy).toBe(false);
+ expect(x.store.snapshot().learning).toMatchObject({status:'idle',lastReview:{sourceRunId:ctx.runId,status:'cancelled',cleanupConfirmed:true}});
+});
+it('acknowledges the exact failed Stop receipt after the Hermes owner confirms cleanup',async()=>{
+ const x=await fixture(true),{thread,source,ctx}=await hermesRun(x),hermes=x.hermes!;
+ const command={id:'hermes-stop-replay',type:'run.stop',threadId:thread.id,payload:{}};
+ source.cancel.mockRejectedValueOnce(Error('Synthetic missing cancel acknowledgement'));
+ source.dispose.mockRejectedValueOnce(Error('Synthetic first source disposal failure'));
+ await expect(x.service.command(command)).rejects.toThrow('Hermes owned cleanup could not be confirmed');
+ const receipt=x.store.receipt(command);
+ expect(receipt).toMatchObject({result:{stopped:true,nativeOwner:ctx}});
+ expect(x.store.all('accountUse')).toHaveLength(1);
+ expect(()=>beginAccountLogin(x.store,'openai',null)).toThrow(expect.objectContaining({code:'ACCOUNT_BUSY'}));
+ await hermes.cancel(ctx);
+ expect(source.dispose).toHaveBeenCalledTimes(2);
+ expect(x.store.all('accountUse')).toHaveLength(0);
+ await expect(x.service.command(command)).resolves.toEqual(receipt);
+});
+it('does not retry another thread’s held Hermes review when stopping an unrelated thread',async()=>{
+ const x=await fixture(true),{source,thread}=await hermesRun(x);
+ const other=(await x.send('thread.create')).result as Thread;
+ source.event('foreground_settled');
+ source.dispose.mockRejectedValueOnce(Error('Synthetic first source disposal failure'));
+ source.fail();
+ await vi.waitFor(()=>expect(source.dispose).toHaveBeenCalledOnce());
+ await expect(x.send('run.stop',{},other.id)).resolves.toMatchObject({result:{stopped:true}});
+ expect(source.cancelBackground).not.toHaveBeenCalled();
+ expect(source.dispose).toHaveBeenCalledOnce();
+ expect(x.store.all('accountUse')).toHaveLength(1);
+ expect(()=>beginAccountLogin(x.store,'openai',null)).toThrow(expect.objectContaining({code:'ACCOUNT_BUSY'}));
+ await x.send('run.stop',{},thread.id);
+ expect(source.dispose).toHaveBeenCalledTimes(2);
+ expect(x.store.all('accountUse')).toHaveLength(0);
+});
 it('initializes the canonical source library and routes explicit UI writes to it',async()=>{
  const x=await fixture();await x.service.recover();expect(x.library.initialize).toHaveBeenCalledOnce();expect(x.store.snapshot().learning?.supported).toBe(true);
  await x.send('skill.manage',{operations:[]});expect(x.library.command).toHaveBeenCalledWith(expect.objectContaining({type:'skill.manage'}));

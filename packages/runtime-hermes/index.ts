@@ -130,7 +130,7 @@ export function createHermesEngine(options:HermesEngineOptions,dependencies:Herm
     if(typeof data.text==='string')assistant(owner,data.text);
     const result=data.result as Record<string,unknown>|undefined;
     if(data.error||result?.error||result?.failed===true)emit(owner,'error',{message:'The original Hermes conversation could not complete.'});
-    if(!owner.uiSettled){owner.uiSettled=true;emit(owner,'settled',{aborted:result?.interrupted===true||data.cancelled===true});}
+    if(!owner.uiSettled){owner.uiSettled=true;emit(owner,'settled',{aborted:result?.interrupted===true||data.cancelled===true,sourceCleanupPending:true});}
    }
    if(event.event==='review_started')owner.review=true;
    if(event.event==='review_settled')owner.review=false;
@@ -244,6 +244,7 @@ export function createHermesEngine(options:HermesEngineOptions,dependencies:Herm
    if(active===owner)active=undefined;
    if(!owner.maintenance&&!owner.failure&&!owner.sourceClosing)retained=owner;
    if(!owner.uiSettled){owner.uiSettled=true;if(data.error||owner.failure)emit(owner,'error',{message:'The original Hermes conversation could not complete.'});emit(owner,'settled',{aborted:data.cancelled===true});}
+   else if(!owner.maintenance)emit(owner,'hermes.cleanup.confirmed',{aborted:data.cancelled===true});
    owner.finish();
   }).catch(failure=>{
    owner.failure??=failure;
