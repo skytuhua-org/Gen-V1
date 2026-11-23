@@ -2883,6 +2883,7 @@
     "tests/code-review-unit.test.ts",
     "tests/compaction-model-requests.test.ts",
     "tests/compaction-v3.test.ts",
+    "tests/composer-commands.test.ts",
     "tests/composer-evidence.test.ts",
     "tests/composer-prediction-client.test.ts",
     "tests/composer-prediction-service.test.ts",

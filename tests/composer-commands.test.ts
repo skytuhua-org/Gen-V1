@@ -1,5 +1,6 @@
 import {expect, it} from 'vitest';
 import {commandToken, replaceCommandToken, skillBindingSchema} from '../apps/web/src/composer-commands';
+import {builtinCommands} from '../apps/web/src/ComposerCommands';
 
 it('finds slash commands at the caret after text without interpreting URLs or paths', () => {
   expect(commandToken('Please explain /', 16)).toEqual({start: 15, end: 16, query: ''});
@@ -22,4 +23,12 @@ it('admits a bounded Personal selection identity without converting literal text
   expect(skillBindingSchema.parse(binding)).toEqual(binding);
   expect(skillBindingSchema.safeParse({...binding, ref: {...ref, scope: {kind: 'provider', providerId: 'private', scopeId: 'company'}}}).success).toBe(false);
   expect(skillBindingSchema.safeParse('/skill:Test').success).toBe(false);
+});
+it('hides the already-active mode command while keeping model and query filtering', () => {
+  const ids = (mode?: 'plan' | 'build', query = '') => builtinCommands(query, mode).map(item => item.id);
+  expect(ids('build')).toEqual(['model', 'plan']);
+  expect(ids('plan')).toEqual(['model', 'default']);
+  expect(ids('build', 'def')).toEqual([]);
+  expect(ids('plan', 'def')).toEqual(['default']);
+  expect(ids(undefined)).toEqual(['model', 'plan', 'default']);
 });
