@@ -150,10 +150,10 @@ class ExpandedReviewRuntime implements RuntimeAdapter{
         await this.present(input,everydaySpec(Boolean(selected)),'Project overview',{choosePlan:{kind:'agent',prompt:'Save the selected project plan preference'}});
       }
       else if(scenario==='interactions'){
-        this.source(input,'reviewItems',INTERACTION_REVIEW_DATA.ReviewQueue);this.source(input,'editableRecords',INTERACTION_REVIEW_DATA.EditableTable);this.source(input,'parameters',INTERACTION_REVIEW_DATA.ParameterControls);
+        this.source(input,'reviewItems',INTERACTION_REVIEW_DATA.ReviewQueue);this.source(input,'editableRecords',INTERACTION_REVIEW_DATA.EditableTable);this.source(input,'parameters',INTERACTION_REVIEW_DATA.ParameterControls);this.source(input,'queryResult',INTERACTION_REVIEW_DATA.QueryResult);
         const accepted=this.store.all<{actionId:string;payload:unknown;acceptedAt:string}>('acceptedAction',input.threadId).filter(item=>['sendReview','submitRecords','applyParameters'].includes(item.actionId)).sort((a,b)=>b.acceptedAt.localeCompare(a.acceptedAt))[0];
         const spec=interactionSpec();if(accepted){spec.elements.interactionTabs.children!.push('received');spec.elements.interactionTabs.props.labels=[...(spec.elements.interactionTabs.props.labels as string[]),'Submitted'];spec.elements.received={type:'Text',props:{text:accepted.actionId==='sendReview'?'Your review is ready for the next revision.':accepted.actionId==='submitRecords'?'The proposed record changes are ready to inspect.':'The selected parameters are ready for the task.'}};}
-        await this.present(input,spec,'Review and refine',{sendReview:{kind:'agent',prompt:'Inspect the submitted content review'},submitRecords:{kind:'agent',prompt:'Inspect the submitted record change proposal'},applyParameters:{kind:'agent',prompt:'Inspect the submitted parameter choices'}});
+        await this.present(input,spec,'Review and refine',{sendReview:{kind:'agent',prompt:'Inspect the submitted content review'},submitRecords:{kind:'agent',prompt:'Inspect the submitted record change proposal'},applyParameters:{kind:'agent',prompt:'Inspect the submitted parameter choices'},inspectQuery:{kind:'agent',prompt:'Inspect the supplied query result'}});
       }
       else await this.planningFlow(input);
       controller.signal.throwIfAborted();this.service.assertRun(input);event('assistant.message',{messageId,content:prose,inputIds:ids});event('settled',{aborted:false});
