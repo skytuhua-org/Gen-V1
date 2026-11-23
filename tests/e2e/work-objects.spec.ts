@@ -229,3 +229,16 @@ test('trace zero-duration spans are exact start markers and the caption counts s
  const geometry=await zero.evaluate(el=>{const rect=el.getBoundingClientRect(),track=el.parentElement!.getBoundingClientRect();return {width:rect.width,start:(rect.left-track.left)/track.width};});
  expect(geometry.width).toBeCloseTo(2,0);expect(geometry.start).toBeCloseTo(50/160,3);
 });
+test('architecture and trace detail terms keep the 11px metadata floor in both themes',async({page})=>{
+ for(const [kind,data,selection,detail] of [['ArchitectureCanvas',suppliedGraph,'Document preview','.architecture-detail'],['TraceWaterfall',suppliedTrace,'Parse document','.trace-detail']] as const){
+  const {host}=await fixture(page,kind,data);
+  for(const theme of ['light','dark'] as const){
+   host.snapshot.settings.theme=theme;await page.emulateMedia({colorScheme:theme});await page.goto('/');
+   await page.getByRole(kind==='TraceWaterfall'?'treeitem':'button',{name:selection,exact:true}).click();
+   const terms=page.locator(`${detail} dt`);await expect(terms.first()).toBeVisible();
+   const sizes=await terms.evaluateAll(nodes=>nodes.filter(node=>(node as HTMLElement).offsetParent!==null).map(node=>parseFloat(getComputedStyle(node).fontSize)));
+   expect(sizes.length).toBeGreaterThan(0);for(const size of sizes)expect(size).toBeGreaterThanOrEqual(11);
+  }
+  await page.unrouteAll({behavior:'wait'});
+ }
+});
