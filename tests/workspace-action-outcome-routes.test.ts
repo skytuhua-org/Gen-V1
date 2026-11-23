@@ -141,3 +141,20 @@ it.each(['before write','after write'] as const)('keeps credential-bearing %s fa
  expect(publicAndDurable).not.toContain(token);
  expect(publicAndDurable).not.toContain(encoded);
 },60000);
+
+it('serves the local-only sync read at /git/sync with no-store, 4xx on unknown project, READ_ONLY on legacy',async()=>{
+ const f=await fixture(),app=Fastify(),service={store:f.store} as Service;
+ registerWorkspaceHost(service,{projects:f.projects,github:f.github,terminals:{dispose:async()=>{}} as TerminalHost});
+ registerWorkspaceRoutes(app,service);cleanup.push(()=>app.close());
+ const response=await app.inject({method:'GET',url:'/api/projects/'+f.projectId+'/git/sync?threadId='+f.thread.id});
+ expect(response.statusCode).toBe(200);expect(response.headers['cache-control']).toBe('no-store');
+ const body=response.json();expect(body).toMatchObject({branch:expect.anything(),head:expect.stringMatching(/^[a-f0-9]{40}$/),revision:expect.stringMatching(/^[a-f0-9]{64}$/),remote:{name:'origin',repo:'example/fixture'}});
+ expect(blockersOf(body)).toContain('NO_UPSTREAM');
+ expect((await app.inject({method:'GET',url:'/api/projects/00000000-0000-4000-8000-000000000000/git/sync'})).statusCode).toBeGreaterThanOrEqual(400);
+ // Legacy project: connected folder without a managed working copy stays read-only.
+ const legacyPath=join(f.root,'legacy');await mkdir(legacyPath);
+ const connected=await f.projects.connect({id:randomUUID(),type:'workspace.project.connect',payload:{name:'Legacy',path:legacyPath}}),legacyId=(connected.result as {projects:{id:string}[]}).projects[0]!.id;
+ const legacy=await app.inject({method:'GET',url:'/api/projects/'+legacyId+'/git/sync'});
+ expect(legacy.statusCode).toBe(200);expect(blockersOf(legacy.json())).toContain('READ_ONLY');
+},60000);
+const blockersOf=(body:unknown)=>(body as {blockers:string[]}).blockers;
