@@ -587,6 +587,11 @@
 
 /* --- Drag to pin / reorder --- */
 
+/* An empty section is only a drop target, so it appears while a thread is being dragged. */
+.sidebar:not([data-dragging='true']) .thread-group.is-empty {
+  display: none;
+}
+
 .sidebar .sidebar-pinned-empty {
   margin: 0 0 3px;
   padding: 8px 9px;

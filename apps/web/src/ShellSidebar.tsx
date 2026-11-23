@@ -338,7 +338,7 @@ export function ShellSidebar({
     if (!items.length && !opts.keepVisible) return null;
     const folded = layout.folded[key] ?? false;
     return (
-      <section key={key} className={`thread-group thread-group-${key}`} data-thread-list={opts.list}>
+      <section key={key} className={`thread-group thread-group-${key}${items.length ? '' : ' is-empty'}`} data-thread-list={opts.list}>
         <h2>
           <button
             type="button"
