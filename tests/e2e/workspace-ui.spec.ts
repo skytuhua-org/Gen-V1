@@ -356,3 +356,31 @@ test('a completed old project action cannot refresh over a retargeted context wh
  await page.evaluate(value=>(window as any).__pendingWorkspaceReads.filter((read:any)=>read.url.includes('/new-project/context')&&!read.aborted&&!read.completed).forEach((read:any)=>read.complete(value)),value('new-project','Refreshed current owner'));
  await expect(editor).toBeEnabled();await expect(tile).toContainText('Refreshed current owner');
 });
+
+test('error text inside the workspace panel carries panel padding', async ({ page }) => {
+  await fixture(page, [], undefined, 'workspace');
+  await page.getByRole('button', { name: 'Open workspace panel', exact: true }).click();
+  const panel = page.getByRole('complementary', { name: 'Workspace panel', exact: true });
+  const padding = (selector: string, host: string) => page.evaluate(([selector, host]) => {
+    const container = document.querySelector(host);
+    const note = document.createElement('p');
+    note.className = 'error-text';
+    note.textContent = 'probe';
+    container!.appendChild(note);
+    const style = getComputedStyle(document.querySelector(selector)!);
+    const result = { left: style.paddingLeft, line: style.lineHeight };
+    note.remove();
+    return result;
+  }, [selector, host]);
+  expect(await padding('.workspace-panel-content > .error-text', '.workspace-panel-content')).toEqual({ left: '12px', line: '18px' });
+  await page.evaluate(() => {
+    const surface = document.createElement('div');
+    surface.className = 'live-review';
+    const note = document.createElement('p');
+    note.className = 'error-text';
+    note.textContent = 'probe';
+    surface.appendChild(note);
+    document.querySelector('.workspace-panel-content')!.appendChild(surface);
+  });
+  expect(await page.locator('.live-review > .error-text').evaluate(node => getComputedStyle(node).paddingLeft)).toBe('12px');
+});
