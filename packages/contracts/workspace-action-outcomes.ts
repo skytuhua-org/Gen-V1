@@ -7,7 +7,7 @@ const identifier = z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/);
 const revision = z.string().regex(/^[a-f0-9]{64}$/),
   oid = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const repo = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
-export const workspaceActionTypeSchema = z.enum(['stage', 'unstage', 'commit', 'review-pr', 'create-pr']);
+export const workspaceActionTypeSchema = z.enum(['stage', 'unstage', 'commit', 'review-pr', 'create-pr', 'fetch', 'pull']);
 type WorkspaceActionType = z.infer<typeof workspaceActionTypeSchema>;
 export const workspaceActionEnvelopeSchema = z.strictObject({
   id: identifier,
@@ -51,6 +51,8 @@ export const workspaceActionPayloadSchemas = {
     head: oid,
     revision,
   }),
+  fetch: z.strictObject({ ...local }),
+  pull: z.strictObject({ ...local }),
 };
 type WorkspaceActionPayload = z.infer<(typeof workspaceActionPayloadSchemas)[WorkspaceActionType]>;
 export const workspaceActionOwnerSchema = z.strictObject({
