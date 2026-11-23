@@ -381,3 +381,38 @@ test('workspace surface tabs close by button, middle-click and Delete with a sta
   await expect(panel.getByRole('button', { name: 'Close Artifact tab', exact: true })).toHaveCount(0);
   await expect(panel.getByRole('tab', { name: 'Artifact', exact: true })).toHaveAttribute('aria-selected', 'true');
 });
+
+test('workspace tab strip scrolls the active tab into view and supports APG arrow navigation', async ({ page }) => {
+  await fixture(page, [], undefined, 'workspace');
+  await page.getByRole('button', { name: 'Open workspace panel', exact: true }).click();
+  const panel = page.getByRole('complementary', { name: 'Workspace panel', exact: true });
+  const strip = panel.getByRole('tablist', { name: 'Workspace views', exact: true });
+  for (const label of ['Files', 'Diff', 'Notes', 'Output', 'Terminal', 'Pull request', 'Linked pull requests']) {
+    await panel.getByRole('button', { name: 'Add surface', exact: true }).click();
+    await page.getByRole('menuitem', { name: label, exact: true }).click();
+  }
+  expect(await strip.evaluate(node => node.scrollWidth > node.clientWidth)).toBe(true);
+  const linked = panel.getByRole('tab', { name: 'Linked pull requests', exact: true });
+  await expect(linked).toHaveAttribute('aria-selected', 'true');
+  const fullyVisible = (tab: typeof linked) => tab.evaluate(node => { const strip = node.closest('[role="tablist"]')!.getBoundingClientRect(), box = node.getBoundingClientRect(); return box.left >= strip.left - 1 && box.right <= strip.right + 1; });
+  await expect.poll(() => fullyVisible(linked)).toBe(true);
+  expect(await panel.getByRole('tab').evaluateAll(nodes => nodes.map(node => node.tabIndex))).toEqual([-1, -1, -1, -1, -1, -1, -1, 0]);
+  await linked.focus();
+  await page.keyboard.press('ArrowLeft');
+  const pullRequest = panel.getByRole('tab', { name: 'Pull request', exact: true });
+  await expect(pullRequest).toHaveAttribute('aria-selected', 'true');
+  await expect(pullRequest).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(linked).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('Home');
+  const artifact = panel.getByRole('tab', { name: 'Artifact', exact: true });
+  await expect(artifact).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => fullyVisible(artifact)).toBe(true);
+  await page.keyboard.press('ArrowLeft');
+  await expect(linked).toHaveAttribute('aria-selected', 'true');
+  await expect(linked).toBeFocused();
+  await expect.poll(() => fullyVisible(linked)).toBe(true);
+  await page.keyboard.press('End');
+  await expect(linked).toHaveAttribute('aria-selected', 'true');
+  await expect(linked).toBeFocused();
+});
