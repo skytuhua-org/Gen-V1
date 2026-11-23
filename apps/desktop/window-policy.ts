@@ -28,7 +28,7 @@ export function trustedDesktopSubframe(raw:string,origin:string,widgetOrigin:str
   return raw===new URL(pluginFrameSource(match[1],session,theme,surface,workspace),origin).href;
  }catch{return false;}
 }
-const pluginChannels=new Set<string>([DESKTOP_CHANNELS.theme,DESKTOP_CHANNELS.context,DESKTOP_CHANNELS.ready,DESKTOP_CHANNELS.list,DESKTOP_CHANNELS.control,DESKTOP_CHANNELS.minimize,DESKTOP_CHANNELS.reset,DESKTOP_CHANNELS.focus,DESKTOP_CHANNELS.closeAnswer,DESKTOP_CHANNELS.detach,DESKTOP_CHANNELS.reattach]);
+const pluginChannels=new Set<string>([DESKTOP_CHANNELS.theme,DESKTOP_CHANNELS.context,DESKTOP_CHANNELS.ready,DESKTOP_CHANNELS.list,DESKTOP_CHANNELS.control,DESKTOP_CHANNELS.minimize,DESKTOP_CHANNELS.reset,DESKTOP_CHANNELS.focus,DESKTOP_CHANNELS.closeAnswer,DESKTOP_CHANNELS.detach,DESKTOP_CHANNELS.reattach,DESKTOP_CHANNELS.zoom]);
 export function pluginDesktopChannelAllowed(channel:string){return pluginChannels.has(channel);}
 export function pluginDesktopRequiresGrant(channel:string){return channel!==DESKTOP_CHANNELS.closeAnswer;}
 export function nativeTitlebarTheme(value:unknown){if(value!=='light'&&value!=='dark')throw Error('Invalid window theme.');return {color:value==='light'?'#ffffff':'#0f0f0f',symbolColor:value==='light'?'#1f1f1f':'#eeeeee',height:42};}
