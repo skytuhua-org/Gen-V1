@@ -22,7 +22,7 @@ import {
 import {threadNavigationRevision,type ThreadNavigationRow as Thread} from '../../../packages/contracts/shell-read-models';
 import type { UiPreferences } from '../../../packages/contracts/preferences';
 import type { ShellLayout } from './shell-layout';
-import { ariaKeyShortcuts } from './keyboard-bindings';
+import { ariaKeyShortcuts, shortcutKeys } from './keyboard-bindings';
 import { MotionRegion } from './task-motion';
 import { UpdateControl } from './UpdateControl';
 import { useWorkspace } from './workspace-context';
@@ -378,6 +378,8 @@ export function ShellSidebar({
           type="button"
           className="icon-button sidebar-close"
           aria-label={mobile ? 'Close navigation' : 'Collapse sidebar'}
+          title={mobile ? 'Close navigation' : `Collapse sidebar (${shortcutKeys(preferences.keybindings.toggleSidebar)})`}
+          aria-keyshortcuts={ariaKeyShortcuts(['toggle-sidebar'], preferences.keybindings)}
           onClick={mobile ? close : toggleCollapsed}
         >
           <PanelLeftClose size={16} />
@@ -389,6 +391,8 @@ export function ShellSidebar({
           <input
             ref={searchRef}
             aria-label="Search threads"
+            title={`Search threads (${shortcutKeys(preferences.keybindings.search)})`}
+            aria-keyshortcuts={ariaKeyShortcuts(['search'], preferences.keybindings)}
             placeholder="Search"
             value={search}
             onChange={event => setSearch(event.target.value)}
@@ -419,7 +423,8 @@ export function ShellSidebar({
           type="button"
           className="icon-button sidebar-action-btn new-thread"
           aria-label="New thread"
-          title={`New thread (${preferences.keybindings.newThread})`}
+          title={`New thread (${shortcutKeys(preferences.keybindings.newThread)})`}
+          aria-keyshortcuts={ariaKeyShortcuts(['new-thread'], preferences.keybindings)}
           onClick={create}
           disabled={!loaded || creating}
         >
@@ -477,7 +482,7 @@ export function ShellSidebar({
       </nav>
       {navigation}
       <div className="sidebar-footer" aria-label="App controls">
-        <button type="button" onClick={settings} aria-label="Settings" title="Settings">
+        <button type="button" onClick={settings} aria-label="Settings" title={`Settings (${shortcutKeys(preferences.keybindings.openSettings)})`} aria-keyshortcuts={ariaKeyShortcuts(['open-settings'], preferences.keybindings)}>
           <Settings2 size={16} />
           <span>Settings</span>
         </button>

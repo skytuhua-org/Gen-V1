@@ -20,6 +20,7 @@ import {SettingsSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
 import {ShellSidebar} from './ShellSidebar';
 import {getShellNavigationItem} from './shell-read-api';
 import {matchesShortcut, readShellLayout, useShellLayout} from './shell-layout';
+import {chordFor} from './keyboard-bindings';
 import {useSidebarCollapse} from './sidebar-collapse';
 import {useShellNavigation} from './shell-navigation';
 import {useAppearance} from './useAppearance';
@@ -212,6 +213,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   const [unpin, setUnpin] = useState<{ row: ThreadNavigationRow; patch: NonNullable<ThreadNavigationRow['presentation']>; decide: (accepted: boolean) => void }>();
   const mutationPending = useRef(false), [mutationBusy, setMutationBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTarget, setSettingsTarget] = useState<string>();
   const sidebar = useRef<HTMLElement>(null), scrim = useRef<HTMLButtonElement>(null), searchRef = useRef<HTMLInputElement>(null);
   const prepareSidebarToggle = useSidebarCollapse(sidebar, layout.sidebarCollapsed, preferences.panelAnimations && preferences.motionDuration > 0, mobile);
   const latestAttention = useRef(openConversation); latestAttention.current = openConversation;
@@ -225,13 +227,20 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
     update(); query.addEventListener('change', update); return () => query.removeEventListener('change', update);
   }, [settings.theme]);
   const action = (kind: ConversationIntent) => fail(() => openConversation(undefined, kind));
-  const openSettings = () => fail(async () => {await prepare(); setSettingsOpen(true);});
+  const openSettings = (target?: string) => fail(async () => {setSettingsTarget(target); await prepare(); setSettingsOpen(true);});
+  const toggleShortcuts = () => {if (settingsOpen) {void closeSettings(); return;} if (!document.querySelector('dialog[open]')) void openSettings('keybindings');};
   const stopFocused = () => {const card=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('[data-agent-id]');const agent=card?controller.getSnapshot().agents.find(item=>item.agentId===card.dataset.agentId):undefined;if(agent&&agent.status==='working')void composers.stop(agent);};
-  const shortcuts = useRef({action, openSettings, stopFocused}); shortcuts.current = {action, openSettings, stopFocused};
+  const shortcuts = useRef({action, openSettings, stopFocused, toggleShortcuts}); shortcuts.current = {action, openSettings, stopFocused, toggleShortcuts};
   const keybindings = JSON.stringify(preferences.keybindings);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || document.querySelector('dialog[open]')) return;
+      if (event.defaultPrevented) return;
+      if (matchesShortcut(event, chordFor('show-shortcuts'))) {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest?.('input,textarea,select,[contenteditable="true"]')) return;
+        event.preventDefault(); shortcuts.current.toggleShortcuts(); return;
+      }
+      if (document.querySelector('dialog[open]')) return;
       if (matchesShortcut(event, preferences.keybindings.openSettings)) {event.preventDefault(); shortcuts.current.openSettings();}
       else if (matchesShortcut(event, preferences.keybindings.newThread)) {event.preventDefault(); shortcuts.current.action('new-thread');}
       else if (matchesShortcut(event, preferences.keybindings.search)) {event.preventDefault(); setOpen(true); setLayout(value => ({...value, sidebarCollapsed: false})); requestAnimationFrame(() => searchRef.current?.focus());}
@@ -294,7 +303,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
         onOpenConversation={(id,kind) => fail(() => openConversation(id,kind))}/></div>
     </div>
     <Modal open={settingsOpen} title="Settings" className="settings-dialog" onClose={closeSettings}>
-      {settingsOpen && <CompactSettingsContent scopeKey="personal-main" close={closeSettings} addResource={() => action('resources')} openBrowser={openBrowser}/>}
+      {settingsOpen && <CompactSettingsContent scopeKey="personal-main" initialSection={settingsTarget} close={closeSettings} addResource={() => action('resources')} openBrowser={openBrowser}/>}
     </Modal>
     <Modal open={Boolean(rename)} title="Rename thread" onClose={() => {if (!mutationPending.current) setRename(undefined);}}><form onSubmit={event => {event.preventDefault(); if (rename && title.trim()) mutate(async () => {await command('thread.rename', {title: title.trim()}, rename.id); await navigation.refresh(); setRename(undefined);});}}>
       <label>Thread name<input autoFocus disabled={mutationBusy} value={title} maxLength={180} onChange={event => setTitle(event.target.value)}/></label><button disabled={mutationBusy || !title.trim()}>Save name</button>
