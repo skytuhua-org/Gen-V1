@@ -6,9 +6,26 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RuntimeEvent, StartRun } from '../packages/contracts/index.ts';
 import { createOfficialRuntime, type OfficialRuntimeDependencies } from '../packages/runtime-official/index.ts';
 
-function queue<T>() { const values: T[] = []; let wake = deferred<void>(); let stopped = false; return { push(value: T) { values.push(value); wake.resolve(); }, stop() { stopped = true; wake.resolve(); }, async *[Symbol.asyncIterator]() { while (!stopped) { if (!values.length) { await wake.promise; wake = deferred<void>(); } while (values.length) yield values.shift()!; } } }; }
+function queue<T>() {
+  const values: T[] = [];
+  let wake = deferred<void>();
+  let stopped = false;
+  let failure: Error | undefined;
+  return {
+    push(value: T) { values.push(value); wake.resolve(); },
+    stop() { stopped = true; wake.resolve(); },
+    fail(error: Error) { failure = error; wake.resolve(); },
+    async *[Symbol.asyncIterator]() {
+      while (!stopped) {
+        if (!values.length) { await wake.promise; wake = deferred<void>(); }
+        if (failure) throw failure;
+        while (values.length) yield values.shift()!;
+      }
+    },
+  };
+}
 function scripted(account: Record<string, unknown> = { apiProvider: 'firstParty', subscriptionType: 'Claude Max', apiKeySource: 'none' }) {
-  const events = queue<{type?:string;session_id?:string;subtype?:string;message?:unknown;user_message_uuids?:unknown[];queued_turn_count?:number;usage?:unknown;parent_tool_use_id?:unknown;user_message_uuid?:string;errors?:unknown}>();
+  const events = queue<{type?:string;session_id?:string;subtype?:string;message?:unknown;user_message_uuids?:unknown[];queued_turn_count?:number;usage?:unknown;parent_tool_use_id?:unknown;user_message_uuid?:string;errors?:unknown;error?:unknown}>();
   const accepted: {uuid?:string;message?:{content?:unknown}}[] = [];
   let options!: {sessionId?:string;systemPrompt?:string;allowedTools?:unknown;canUseTool?(name:string,input:Record<string,unknown>,context:unknown):Promise<{behavior?:string}>;[key:string]:unknown};
   let closeCount = 0;
@@ -90,6 +107,42 @@ describe('official Claude SDK runtime', () => {
       registration.resolve({added: ['host'], removed: [], errors: {}});
       await runtime.dispose();
     }
+  });
+  it('publishes a safe connection failure and withholds input when the SDK iterator fails during MCP registration', async () => {
+    const fake = scripted(), entered = deferred<void>(), events: RuntimeEvent[] = [];
+    const registration = deferred<{ added: string[]; removed: string[]; errors: Record<string, string> }>();
+    fake.setMcpServers.mockImplementation(() => { entered.resolve(); return registration.promise; });
+    const runtime = createOfficialRuntime({ dataDir: await mkdtemp(join(tmpdir(), 'official-mcp-iterator-failed-')) }, fake.dependencies);
+    runtime.configure({onEvent: event => events.push(event), onTool: async () => null});
+    const opening = runtime.start(run());
+    void opening.catch(() => {});
+    const message = 'The native Claude connection closed unexpectedly. Reconnect the provider and refresh models.';
+    try {
+      expect(await Promise.race([entered.promise.then(() => true), opening.then(() => false)])).toBe(true);
+      expect(fake.accepted).toHaveLength(0);
+      fake.events.fail(new Error('fabricated-private-iterator-diagnostic'));
+      await vi.waitFor(() => expect(events.filter(event => event.type === 'error')).toEqual([expect.objectContaining({message})]));
+      await expect(opening).rejects.toMatchObject({code: 'OFFICIAL_PROCESS_IO_FAILED', message});
+      await vi.waitFor(() => expect(events.filter(event => event.type === 'settled')).toEqual([expect.objectContaining({aborted: false})]));
+      expect(events.some(event => event.type === 'input.processing')).toBe(false);
+      expect(fake.accepted).toHaveLength(0);
+      expect(fake.closeCount).toBe(1);
+    } finally {
+      registration.resolve({added: ['host'], removed: [], errors: {}});
+      await runtime.dispose();
+    }
+  });
+  it('withholds diagnostics carried by a native assistant error frame', async () => {
+    const fake = scripted(), events: RuntimeEvent[] = [];
+    const runtime = createOfficialRuntime({ dataDir: await mkdtemp(join(tmpdir(), 'official-assistant-error-')) }, fake.dependencies);
+    runtime.configure({onEvent: event => events.push(event), onTool: async () => null});
+    try {
+      await runtime.start(run());
+      const diagnostic = 'fabricated-private-assistant-diagnostic';
+      fake.events.push({type: 'assistant', session_id: fake.options.sessionId, error: diagnostic, message: {content: [{type: 'text', text: diagnostic}]}});
+      await vi.waitFor(() => expect(events.filter(event => event.type === 'error')).toEqual([expect.objectContaining({message: 'Official Claude Code reported an assistant error.'})]));
+      expect(JSON.stringify(events)).not.toContain(diagnostic);
+    } finally { await runtime.dispose(); }
   });
   it('withholds natural settlement until native interrupt and close have completed',async()=>{
     const fake=scripted(),events:RuntimeEvent[]=[],runtime=createOfficialRuntime({dataDir:await mkdtemp(join(tmpdir(),'official-settlement-teardown-'))},fake.dependencies),barrier=deferred<void>();
