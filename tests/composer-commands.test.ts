@@ -130,4 +130,18 @@ describe('slash-command palette', () => {
       await expect.poll(async () => await palette(page).count(), {timeout:1000}).toBe(0);
     } finally { await page.close(); }
   });
+
+  it('reopens on refocus after an outside click without Escape', async () => {
+    const page = await openPage();
+    try {
+      const area = page.locator('#ta');
+      await area.click();
+      await area.pressSequentially('/mod');
+      await palette(page).waitFor();
+      await page.locator('body').click();
+      await palette(page).waitFor({state:'detached'});
+      await area.click();
+      await palette(page).waitFor();
+    } finally { await page.close(); }
+  });
 });
