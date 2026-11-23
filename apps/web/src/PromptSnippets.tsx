@@ -241,7 +241,12 @@ export function usePromptSnippets(owner: PromptSnippetsOwner): PromptSnippetsSta
       else setMessage(result.message);
     } finally { setBusyId(null); }
   }, [conflict, profileId, accept, enterConflict]);
-  const conflictCancel = useCallback(() => setConflict(null), []);
+  const conflictCancel = useCallback(() => {
+    // The user reviewed the latest persisted version: rebase the editor's
+    // generation so a re-save is a deliberate overwrite, not a repeat conflict.
+    setEditorState(current => current ? { ...current, generation: generation.current } : current);
+    setConflict(null);
+  }, []);
 
   const askDelete = useCallback((snippet: PromptSnippet) => setConfirm({ snippet, generation: generation.current }), []);
   const cancelConfirm = useCallback(() => setConfirm(null), []);
@@ -391,7 +396,7 @@ export function PromptSnippetsOverlay({ snippets }: { snippets: PromptSnippetsSt
           </div>
         </div>
       : snippets.editor ? <div className="prompt-snippets-editor">
-          <label>Name<input value={snippets.editor.name} maxLength={SNIPPET_NAME_LIMIT} onChange={event => snippets.setEditor({ name: event.target.value })} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); void snippets.saveEditor(); } }} /></label>
+          <label>Name<input value={snippets.editor.name} maxLength={SNIPPET_NAME_LIMIT} onChange={event => snippets.setEditor({ name: event.target.value })} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); event.stopPropagation(); void snippets.saveEditor(); } }} /></label>
           <span className="prompt-snippets-count">{snippets.editor.name.length}/{SNIPPET_NAME_LIMIT}</span>
           <label>Text<textarea rows={8} value={snippets.editor.body} maxLength={SNIPPET_BODY_LIMIT} onChange={event => snippets.setEditor({ body: event.target.value })} /></label>
           <span className="prompt-snippets-count">{snippets.editor.body.length.toLocaleString()}/{SNIPPET_BODY_LIMIT.toLocaleString()}</span>
