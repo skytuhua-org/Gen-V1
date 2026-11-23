@@ -353,7 +353,7 @@ describe("database attachment tools", () => {
       const edit = new DatabaseSync(join(s.root, "data.sqlite")); edit.exec("UPDATE tasks SET title='raced' WHERE id=2"); edit.close();
       await expect(executeDomainOperation(approve(stale), ctx)).rejects.toThrow(/version|changed|precondition/i);
       const ro = await setup(s, false);
-      const denied = { ...approve(op), id: randomUUID() };
+      const denied = { ...approve(op), id: randomUUID(), args: { ...op.args, attachmentId: ro.attachment.id } };
       await expect(executeDomainOperation(denied, ro.ctx)).rejects.toThrow(/read-only|denied/i);
       const mysqlConnection = { ...ro.connection, id: randomUUID(), engine: "mysql" as const, sqlite: undefined, network: { host: "127.0.0.1", port: 3306, database: "d", user: "u", tls: "disable" as const, secretRefId: "x" } };
       const mysqlAttachment = { ...ro.attachment, id: randomUUID(), connectionId: mysqlConnection.id, writable: true };
