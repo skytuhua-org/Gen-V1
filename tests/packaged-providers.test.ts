@@ -83,18 +83,31 @@ describe('packaged provider custody',()=>{
    expect(result.check.bootstrap.nativeHelper.versionOutput).toMatch(/^ripgrep /);
   }finally{await rm(directory,{recursive:true,force:true});}
  },45000);
- it('preserves a UTF-8 path split across packaged report stdout chunks',async()=>{
+ it.each(['controlled chunks','a live child'] as const)('preserves a UTF-8 path split across packaged report stdout chunks using %s',async transport=>{
   const directory=await mkdtemp(join(tmpdir(),'harness-cursor-report-'));
   try{
    const {sdk,native}=await cursorFixture(directory);
-   const home=join(directory,'résumé'),rg=join(native,'bin/rg.exe');
+   const home=join(directory,'résumé-🔒'),rg=join(native,'bin/rg.exe');
    const report=Buffer.from(JSON.stringify({node:{path:process.execPath,version:process.versions.node},roots:{cursorSdk:sdk,cursorNative:native},checks:[{
     provider:'cursor-sdk',entry:join(sdk,'dist/esm/index.js'),versionOutput:'1.0.38',elapsedMs:1,arguments:[],home,auth:false,inference:false,
     bootstrap:{credentialStore:'empty-memory',authStatus:'logged-out',agentCreate:true,networkRequests:0,sandboxExecution:false,nativeHelper:{entry:rg,versionOutput:'ripgrep 14.1.1',arguments:['--version']}},
    }]}));
    const split=report.indexOf(Buffer.from('résumé'))+2;
-   const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stderr:new PassThrough()});
+   expect(report[split-1]).toBe(0xc3);expect(report[split]).toBe(0xa9);
+   const nativeSpawn=(await vi.importActual<typeof import('node:child_process')>('node:child_process')).spawn;
    const launch=vi.mocked(spawn).mockImplementationOnce(()=>{
+    if(transport==='a live child'){
+     // Acknowledge the first read so the two writes cannot coalesce in the pipe.
+     const program=[
+      'const report=Buffer.from(process.argv[1],"base64"), split=Number(process.argv[2]);',
+      'process.stdin.once("data",()=>process.stdout.end(report.subarray(split)));',
+      'process.stdout.write(report.subarray(0,split));',
+     ].join('\n');
+     const child=nativeSpawn(process.execPath,['-e',program,report.toString('base64'),String(split)],{stdio:['pipe','pipe','pipe']});
+     child.stdout.once('data',()=>child.stdin.end('continue'));
+     return child;
+    }
+    const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stderr:new PassThrough()});
     queueMicrotask(()=>{
      child.stdout.write(report.subarray(0,split));
      child.stdout.end(report.subarray(split));
