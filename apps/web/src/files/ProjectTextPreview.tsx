@@ -45,6 +45,8 @@ interface ProjectTextPreviewProps {
 	text: string;
 	wrap: boolean;
 	onToggleWrap: () => void;
+	/** True while a replacement read is in flight: the shown text is stale, so navigation stays disabled. */
+	pending?: boolean;
 	preferences?: UiPreferences;
 	/** Fresh search target: line to reveal centrally and highlight. `targetSeq` must increase per new target so repeats re-reveal. */
 	targetLine?: number;
@@ -55,6 +57,7 @@ export function ProjectTextPreview({
 	text,
 	wrap,
 	onToggleWrap,
+	pending = false,
 	preferences = DEFAULT_PREFERENCES,
 	targetLine,
 	targetSeq = 0,
@@ -160,9 +163,24 @@ export function ProjectTextPreview({
 		[scrollTo, total],
 	);
 	revealRef.current = reveal;
+	// A file/owner change clears the navigation highlight, selection and dialog; must precede the reveal effect.
+	useEffect(() => {
+		setTarget(null);
+		setSelection(null);
+		setGotoOpen(false);
+		setStatus("");
+	}, [text]);
 	useEffect(() => {
 		if (targetLine !== undefined && targetSeq) revealRef.current(targetLine);
 	}, [targetLine, targetSeq]);
+	// Never navigate stale content while a replacement read is in flight.
+	useEffect(() => {
+		if (pending) setGotoOpen(false);
+	}, [pending]);
+	// Opening the dialog pre-fills and selects the current target (or top visible line).
+	useEffect(() => {
+		if (gotoOpen) inputRef.current?.select();
+	}, [gotoOpen]);
 	// Retries a pending reveal until the target row is mounted and measured, then recenters once.
 	useLayoutEffect(() => {
 		const pending = pendingReveal.current;
@@ -358,6 +376,7 @@ export function ProjectTextPreview({
 		(event: React.KeyboardEvent<HTMLDivElement>) => {
 			if (event.nativeEvent.isComposing) return;
 			if (matchesShortcut(event.nativeEvent, goChord)) {
+				if (pending) return;
 				event.preventDefault();
 				setGotoError("");
 				setGotoOpen(true);
@@ -462,6 +481,7 @@ export function ProjectTextPreview({
 					aria-label="Go to line"
 					aria-keyshortcuts={ariaShortcut(goChord)}
 					title={`Go to line (${shortcutKeys(goChord, shortcutPlatform())})`}
+					disabled={pending}
 					onClick={() => {
 						setGotoError("");
 						setGotoOpen((open) => !open);
@@ -505,6 +525,15 @@ export function ProjectTextPreview({
 				align="end"
 				onDismiss={() => setGotoOpen(false)}
 				className="ui-control-popup files-goto-popover"
+				onKeyDown={(event) => {
+					if (
+						!event.nativeEvent.isComposing &&
+						matchesShortcut(event.nativeEvent, goChord)
+					) {
+						event.preventDefault();
+						setGotoOpen(false);
+					}
+				}}
 			>
 				<form
 					key={`${gotoOpen ? "open" : "closed"}-${target ?? -1}-${first}`}

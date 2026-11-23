@@ -157,6 +157,7 @@ function ProjectFilesReader({
 								<ProjectTextPreview
 									text={file.text ?? ""}
 									wrap={wrap}
+									pending={preview.pending}
 									onToggleWrap={() =>
 										setWrapOverride((value) =>
 											value === null ? !wrap : !value,
