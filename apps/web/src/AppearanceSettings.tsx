@@ -46,17 +46,37 @@ export function AppearanceSettings({ preferences, theme, threads = [], projects:
   const [draft, setDraft] = useState(preferences), [draftTheme, setDraftTheme] = useState(theme), [preview, setPreview] = useState(false), [error, setError] = useState('');
   const [projectError, setProjectError] = useState('');
   const [numberDrafts,setNumberDrafts]=useState<Partial<Record<'uiFontSize'|'chatFontSize'|'codeFontSize',string>>>({});
+  const [invalidSizes,setInvalidSizes]=useState<Partial<Record<'uiFontSize'|'chatFontSize'|'codeFontSize',boolean>>>({});
   const edited = useRef(new Set<string>());
   const current = useRef({ preferences, theme }); current.current = { preferences, theme };
   useEffect(() => () => { applyAppearance(current.current.preferences); applyTheme(current.current.theme); }, []);
   // Rebase untouched fields from the latest acknowledged preferences; keep user-edited fields (AUD-08).
   useEffect(() => { setDraft(value => rebaseAppearanceDraft(value, preferences, edited.current)); if (!edited.current.has('theme')) setDraftTheme(theme); }, [preferences, theme]);
-  const dirty = JSON.stringify(appearancePatch(draft)) !== JSON.stringify(appearancePatch(preferences)) || draftTheme !== theme;
+  const dirty = JSON.stringify(appearancePatch(draft)) !== JSON.stringify(appearancePatch(preferences)) || draftTheme !== theme || Object.values(invalidSizes).some(Boolean);
   const accentError = draft.customAccent !== null && (!projectColorSchema.safeParse(draft.customAccent).success ? 'Use a six-digit hex color.' : Math.min(accentContrast(draft.customAccent, '#0F0F0F'), accentContrast(draft.customAccent, '#FFFFFF')) < 3 ? 'Choose a color with at least 3:1 contrast on both light and dark surfaces.' : '');
   const change = (patch: Partial<UiPreferences>) => { for (const key of Object.keys(patch)) edited.current.add(key); const next = { ...draft, ...patch }; setDraft(next); setError(''); if (preview && (!next.customAccent || projectColorSchema.safeParse(next.customAccent).success && Math.min(accentContrast(next.customAccent, '#0F0F0F'), accentContrast(next.customAccent, '#FFFFFF')) >= 3)) applyAppearance(next); };
   const restore = () => { edited.current.clear(); setDraft(preferences); setDraftTheme(theme); setPreview(false); setError(''); setProjectError(''); applyAppearance(preferences); applyTheme(theme); };
   const choices = (key: keyof UiPreferences, label: string, options: readonly (readonly [string, string])[]) => <Select aria-label={label} value={String(draft[key])} disabled={busy} options={options.map(([value, text]) => ({ value, label: text }))} onValueChange={value => change({ [key]: typeof draft[key] === 'number' ? Number(value) : value, ...(key === 'uiFontSize' ? { fontSize: Number(value) } : {}), ...(key === 'motion' ? { panelAnimations: value !== 'off' } : {}) })}/>;
-  const size = (key: 'uiFontSize' | 'chatFontSize' | 'codeFontSize', label: string, min: number, max: number) => <input type="number" aria-label={label} min={min} max={max} step={1} disabled={busy} value={numberDrafts[key]??draft[key]} onChange={event => { const text=event.target.value,value=event.target.valueAsNumber;setNumberDrafts(current=>({...current,[key]:text})); if (Number.isInteger(value) && value >= min && value <= max) change({ [key]: value, ...(key === 'uiFontSize' ? { fontSize: value } : {}) }); }} onBlur={()=>setNumberDrafts(current=>{const next={...current};delete next[key];return next;})}/>;
+  const size = (key: 'uiFontSize' | 'chatFontSize' | 'codeFontSize', label: string, min: number, max: number) => {
+    const hintId = `appearance-${key}-error`, invalid = invalidSizes[key] === true;
+    const commit = (text: string) => {
+      const value = Number(text.trim());
+      if (Number.isInteger(value) && value >= min && value <= max) { change({ [key]: value, ...(key === 'uiFontSize' ? { fontSize: value } : {}) }); setInvalidSizes(c => ({...c, [key]: false})); return true; }
+      return false;
+    };
+    return <div className="appearance-size-field">
+      <div className="appearance-size-input"><input type="number" aria-label={label} min={min} max={max} step={1} disabled={busy}
+        value={numberDrafts[key] ?? draft[key]} className={invalid ? 'invalid' : undefined} aria-invalid={invalid || undefined} aria-describedby={invalid ? hintId : undefined}
+        onChange={event => { const text = event.target.value; setNumberDrafts(c => ({...c, [key]: text})); commit(text); }}
+        onKeyDown={event => {
+          if (event.key === 'Enter') { event.preventDefault(); if (!commit(event.currentTarget.value)) setInvalidSizes(c => ({...c, [key]: true})); else setNumberDrafts(c => { const n = {...c}; delete n[key]; return n; }); }
+          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setNumberDrafts(c => { const n = {...c}; delete n[key]; return n; }); setInvalidSizes(c => ({...c, [key]: false})); }
+        }}
+        onBlur={event => { if (!commit(event.target.value)) setInvalidSizes(c => ({...c, [key]: true})); else setNumberDrafts(c => { const n = {...c}; delete n[key]; return n; }); }}/>
+      <span>px</span></div>
+      <p className="settings-field-error" role={invalid ? 'alert' : undefined} id={hintId}>{invalid ? `Enter a whole number from ${min} to ${max}.` : ''}</p>
+    </div>;
+  };
   const fonts = [['Inter', 'Inter'], ['system', 'System'], ['Arial', 'Arial'], ['Georgia', 'Georgia']] as const;
   const projects = projectMetadata ?? [...new Map(threads.filter(thread => thread.projectId).map(thread => [thread.projectId!, { id: thread.projectId!, name: thread.projectName ?? 'Project' }])).values()];
   const controls: Record<string, ReactNode> = {
@@ -67,9 +87,9 @@ export function AppearanceSettings({ preferences, theme, threads = [], projects:
     'appearance-interfaceFont': choices('interfaceFont', 'Interface font', fonts),
     'appearance-promptFont': choices('promptFont', 'Composer font', fonts),
     'appearance-codeFont': choices('codeFont', 'Code font', [['monospace', 'System monospace'], ['Consolas', 'Consolas'], ['Cascadia Code', 'Cascadia Code']]),
-    'appearance-uiFontSize': <>{size('uiFontSize', 'UI size', 13, 16)}<span>px</span></>,
-    'appearance-chatFontSize': <>{size('chatFontSize', 'Chat size', 14, 20)}<span>px</span></>,
-    'appearance-codeFontSize': <>{size('codeFontSize', 'Code size', 12, 18)}<span>px</span></>,
+    'appearance-uiFontSize': size('uiFontSize', 'UI size', 13, 16),
+    'appearance-chatFontSize': size('chatFontSize', 'Chat size', 14, 20),
+    'appearance-codeFontSize': size('codeFontSize', 'Code size', 12, 18),
     'appearance-controlRadius': choices('controlRadius', 'Control radius', [['0', 'Square · 0 px'], ['6', 'Rounded · 6 px'], ['10', 'Soft · 10 px']]),
     'chat-width': choices('chatWidth', 'Chat width', [['comfortable', '680 px'], ['wide', '760 px'], ['full', 'Full available width']]),
     'word-wrap': <button type="button" role="switch" className="settings-switch" aria-label="Code line wrap" aria-checked={draft.wordWrap} onClick={() => change({ wordWrap: !draft.wordWrap })}><span/></button>,
