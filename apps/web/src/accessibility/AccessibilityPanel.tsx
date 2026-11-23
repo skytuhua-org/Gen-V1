@@ -108,7 +108,8 @@ function RuleRow({
 									target="_blank"
 									rel="noreferrer"
 								>
-									Learn more <ExternalLink size={12} />
+									Learn more about {rule.ruleId}{" "}
+									<ExternalLink size={12} />
 								</a>
 							)}
 						</span>
