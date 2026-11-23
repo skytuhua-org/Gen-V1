@@ -75,3 +75,12 @@ test('empty transcript disables the trigger and the Ctrl+F shortcut',async({page
  await page.locator('.composer textarea').focus();await page.keyboard.press('Control+f');
  await expect(phrase(page)).toHaveCount(0);
 });
+
+test('find trigger re-enables when the transcript has messages',async({page})=>{
+ await setup(page,1);
+ const trigger=page.getByLabel('Find in conversation',{exact:true});
+ await expect(trigger).toBeEnabled();
+ await expect(trigger).toHaveAttribute('title','Find in conversation (Ctrl+F)');
+ await trigger.click();
+ await expect(phrase(page)).toBeFocused();
+});
