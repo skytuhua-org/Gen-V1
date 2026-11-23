@@ -78,3 +78,76 @@ export interface ComparisonPatch {
   text: string | null;
   reason?: "patch-omitted" | "unsupported-path" | "conflict" | "resource-limit" | "unsupported-file";
 }
+
+/** Read-only committed-history contracts (Git history tab). No write authority. */
+export const GIT_HISTORY_LIMITS = {
+  pageSize: 50,
+  rows: 1000,
+  upstreamWalk: 10001,
+  snapshotsPerOwner: 8,
+  snapshots: 64,
+  expiryMs: 15 * 60 * 1000,
+  detailsPerSnapshot: 8,
+} as const;
+export const gitHistoryOidSchema = z.string().regex(/^[0-9a-f]{40}$/);
+export const gitHistoryTokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const gitHistoryCursorSchema = z.string().regex(/^h\.[a-f0-9]{64}\.[0-9]{1,6}$/);
+export const GitHistoryPageRequestSchema = z.strictObject({ cursor: gitHistoryCursorSchema.optional() });
+export const GitHistoryCommitRequestSchema = z.strictObject({
+  snapshotId: gitHistoryTokenSchema,
+  oid: gitHistoryOidSchema,
+});
+export const GitHistoryFileRequestSchema = z.strictObject({
+  comparisonId: gitHistoryTokenSchema,
+  path: z
+    .string()
+    .min(1)
+    .max(4096)
+    .refine((value) => !value.includes("\0")),
+});
+export type GitHistoryPushState = "unpushed" | "notMarked" | "unknown";
+export interface GitHistoryRow {
+  oid: string;
+  subject: string;
+  author: string;
+  authoredAt: string;
+  /** Exact count within limits, or null when it cannot be proven inside the read budget. */
+  filesChanged: number | null;
+  pushState: GitHistoryPushState;
+}
+export interface GitHistoryPage {
+  snapshotId: string;
+  branch: string | null;
+  headOid: string | null;
+  /** Exact local remote-tracking ref used as the comparison basis; null when unavailable. */
+  upstreamRef: string | null;
+  commits: GitHistoryRow[];
+  nextCursor: string | null;
+}
+export interface CommitComparisonIdentity {
+  kind: "commit";
+  id: string;
+  snapshotId: string;
+  oid: string;
+  parentOid: string | null;
+  basis: "first-parent" | "root";
+}
+export type GitHistoryCommitRead =
+  | {
+      state: "ready";
+      comparisonId: string;
+      oid: string;
+      parentOid: string | null;
+      basis: "first-parent" | "root";
+      files: ComparisonFile[];
+      filesTruncated: boolean;
+    }
+  | { state: "unavailable"; reason: "missing-parent" | "unavailable" | "resource-limit" };
+/** Patch for one file of a served commit comparison; same state/text/reason conventions as ComparisonPatch. */
+export interface GitHistoryFilePatch {
+  identity: CommitComparisonIdentity;
+  file: ComparisonFile;
+  state: "text" | "empty" | "binary" | "truncated" | "unavailable";
+  text: string | null;
+  reason?: "patch-omitted" | "unsupported-path" | "resource-limit" | "unsupported-file";
+}
