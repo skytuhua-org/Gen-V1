@@ -2950,6 +2950,7 @@
     "tests/e2e/chat-view-modes.playwright.config.ts",
     "tests/e2e/chat-view-modes.spec.ts",
     "tests/e2e/ci-failure-panel.spec.ts",
+    "tests/e2e/ci-fix.spec.ts",
     "tests/e2e/clarity-data-work.spec.ts",
     "tests/e2e/clarity-review-parameters.playwright.config.ts",
     "tests/e2e/clarity-review-parameters.spec.ts",
