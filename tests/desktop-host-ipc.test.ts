@@ -66,7 +66,8 @@ vi.mock('electron',()=>{
   app:{setName:vi.fn(),getPath:()=>process.env.HARNESS_DESKTOP_TEST_DATA_DIR,setPath:vi.fn(),commandLine:{appendSwitch:vi.fn()},requestSingleInstanceLock:()=>true,on:runtime.appOn,whenReady:async()=>{},exit:runtime.appExit},
   BrowserWindow:TestWindow,ipcMain:{handle:runtime.handle},powerMonitor:{on:vi.fn()},
   screen:{getAllDisplays:()=>[display],getPrimaryDisplay:()=>display,on:vi.fn()},
-  Menu:{setApplicationMenu:vi.fn(),buildFromTemplate:vi.fn()},nativeImage:{createFromBitmap:vi.fn()},
+  Menu:{setApplicationMenu:vi.fn(),buildFromTemplate:vi.fn()},
+  nativeImage:{createFromBitmap:vi.fn(),createFromDataURL:()=>({addRepresentation:vi.fn()})},
   Tray:class {on(){} setToolTip(){} setContextMenu(){} destroy(){}},shell:{openExternal:runtime.openExternal},dialog:{},session:{},WebContentsView:class {},
  };
 });
