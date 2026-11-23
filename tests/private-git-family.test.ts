@@ -130,7 +130,8 @@ it('does not turn a rejected side context into project facts after catching Git 
 
 it('mints stable per-file review identities that change only with their own endpoints',async()=>{
  const f=await fixture(),binding=await f.add('review-one');
- await writeFile(join(binding.path,'one.txt'),'first\n');await writeFile(join(binding.path,'two.txt'),'other\n');
+ await writeFile(join(binding.path,'one.txt'),'first\n');
+ await writeFile(join(binding.path,'two.txt'),'other\n');f.git('-C',binding.path,'add','two.txt');f.git('-C',binding.path,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','seed two');await writeFile(join(binding.path,'two.txt'),'other-revised\n');
  const before=await f.tools.gitStatus(f.projectId,'review-one');
  expect(before.review).toMatchObject({version:1,owner:expect.any(String)});
  const one=before.files.find(file=>file.path==='one.txt')!,two=before.files.find(file=>file.path==='two.txt')!;
@@ -148,7 +149,7 @@ it('mints stable per-file review identities that change only with their own endp
  const staged=await f.tools.gitStatus(f.projectId,'review-one');
  const stagedOne=staged.files.find(file=>file.path==='one.txt')!;
  expect(stagedOne.review?.staged).toEqual({fingerprint:expect.any(String)});
- f.git('-C',binding.path,'commit','-qm','advance');
+ f.git('-C',binding.path,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','advance');
  const committed=await f.tools.gitStatus(f.projectId,'review-one');
  const committedTwo=committed.files.find(file=>file.path==='two.txt')!;
  expect((committedTwo.review!.unstaged as {fingerprint:string}).fingerprint).toBe((two.review!.unstaged as {fingerprint:string}).fingerprint);
@@ -156,7 +157,7 @@ it('mints stable per-file review identities that change only with their own endp
 
 it('distinguishes same-size binary edits and gives owners that differ per worktree',async()=>{
  const f=await fixture(),one=await f.add('bin-one'),two=await f.add('bin-two');
- await writeFile(join(one.path,'blob.bin'),Buffer.from([1,2,3]));await writeFile(join(two.path,'blob.bin'),Buffer.from([9,9,9]));
+ for(const binding of [one,two]){await writeFile(join(binding.path,'blob.bin'),Buffer.from([1,2,3]));f.git('-C',binding.path,'add','blob.bin');f.git('-C',binding.path,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','seed blob');await writeFile(join(binding.path,'blob.bin'),Buffer.from([9,9,9]));}
  const a=await f.tools.gitStatus(f.projectId,'bin-one'),b=await f.tools.gitStatus(f.projectId,'bin-two');
  expect(a.review?.owner).not.toBe(b.review?.owner);
  const first=(a.files[0]!.review!.unstaged as {fingerprint:string}).fingerprint;
