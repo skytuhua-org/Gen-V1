@@ -172,3 +172,22 @@ test('unrelated snapshots preserve user scrolling after first-open selected-row 
   await page.getByRole('button', { name: 'Unrelated update 0' }).dispatchEvent('click');
   await expect.poll(() => list.evaluate(node => node.scrollTop)).toBe(0);
 });
+
+test('dialog hugs short lists, keeps one empty-state row and caps long lists', async ({ page }) => {
+  await page.goto('/project-picker?few=1');
+  await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Select project' });
+  await expect(page.getByRole('option')).toHaveCount(3);
+  const hint = page.locator('.project-picker-hint');
+  const small = await dialog.boundingBox(), hintBox = await hint.boundingBox();
+  expect(small!.height).toBeLessThan(360);
+  expect(small!.y + small!.height - (hintBox!.y + hintBox!.height)).toBeLessThanOrEqual(28);
+  await page.getByRole('combobox', { name: 'Search projects' }).fill('zzz-no-match');
+  await expect(page.locator('.project-picker-empty')).toHaveText('No matching projects.');
+  const empty = await dialog.boundingBox();
+  expect(empty!.height).toBeLessThan(360);
+  await page.goto('/project-picker');
+  await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
+  const long = await page.getByRole('dialog', { name: 'Select project' }).boundingBox();
+  expect(long!.height).toBeLessThanOrEqual(520);
+});
