@@ -25,8 +25,12 @@ async function fixture(page: Page, differentSizes = false) {
 const ready = async (page: Page) => { await bootstraps.get(page); await expect(page.locator('html')).toHaveAttribute('data-motion', /^(system|reduced|off)$/); await expect(page.getByRole('slider', { name: 'Comparison position', exact: true })).toBeEnabled(); };
 test('another pointer losing capture cannot end the active comparison drag', async ({ page }) => {
   await fixture(page); await page.goto('/'); await ready(page);
-  const stage = page.locator('.image-compare-stage'), slider = page.getByRole('slider', { name: 'Comparison position', exact: true }), bounds = (await stage.boundingBox())!;
+  const stage = page.locator('.image-compare-stage'), slider = page.getByRole('slider', { name: 'Comparison position', exact: true });
+  await stage.scrollIntoViewIfNeeded();
+  const bounds = (await stage.boundingBox())!;
   await page.mouse.move(bounds.x + bounds.width * .3, bounds.y + bounds.height * .5); await page.mouse.down();
+  // Prove the real drag owns the stage before the foreign pointer arrives; CDP input delivery is asynchronous.
+  await expect(slider).toHaveValue('30');
   await stage.dispatchEvent('pointerdown', { pointerId: 77, pointerType: 'touch', isPrimary: true, button: 0, bubbles: true });
   await stage.dispatchEvent('lostpointercapture', { pointerId: 77, pointerType: 'touch', bubbles: true });
   await page.mouse.move(bounds.x + bounds.width * .72, bounds.y + bounds.height * .5); await page.mouse.up();
@@ -35,7 +39,7 @@ test('another pointer losing capture cannot end the active comparison drag', asy
 test('comparison follows the pointer immediately and keeps keyboard and saved view state through reload', async ({ page }) => {
   const host = await fixture(page); await page.goto('/'); await ready(page);
   const slider = page.getByRole('slider', { name: 'Comparison position', exact: true }); await slider.focus(); await slider.press('End'); await expect(slider).toHaveValue('100'); await slider.press('Home'); await expect(slider).toHaveValue('0'); await slider.press('ArrowRight'); await expect(slider).toHaveValue('1');
-  const stage = page.locator('.image-compare-stage'), bounds = (await stage.boundingBox())!;
+  const stage = page.locator('.image-compare-stage'); await stage.scrollIntoViewIfNeeded(); const bounds = (await stage.boundingBox())!;
   await page.mouse.move(bounds.x + bounds.width * .3, bounds.y + bounds.height * .5); await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width * .72, bounds.y + bounds.height * .5, { steps: 3 }); await page.mouse.up();
   await expect.poll(() => host.snapshot.userStates[0].values.comparison).toMatchObject({ percent: 72, mode: 'overlay' });
   expect(await stage.evaluate(node => node.querySelector('.image-compare-before')!.getAnimations().length)).toBe(0);
@@ -112,4 +116,31 @@ test('System follows a live OS reduction without replaying image geometry',async
  await page.emulateMedia({reducedMotion:'no-preference'});await fixture(page);await page.goto('/');await ready(page);await page.getByRole('button',{name:'Side by side',exact:true}).click();
  await page.emulateMedia({reducedMotion:'reduce'});await expect.poll(()=>page.locator('.image-compare-stage').evaluate(node=>(node as HTMLElement).style.getPropertyValue('--image-compare-width'))).toBe('50%');
  await page.emulateMedia({reducedMotion:'no-preference'});expect(await page.locator('.image-compare-stage').evaluate(node=>(node as HTMLElement).style.getPropertyValue('--image-compare-width'))).toBe('50%');
+});
+
+test('split height follows the shared formula and hides overlay-only controls', async ({ page }) => {
+  await page.setViewportSize({ width: 780, height: 900 });
+  await fixture(page); await page.goto('/'); await ready(page);
+  const stage = page.locator('.image-compare-stage');
+  const measured = await stage.evaluate(node => {
+    const r = node.getBoundingClientRect();
+    return { width: r.width, height: r.height, innerH: window.innerHeight };
+  });
+  const ratio = 320 / 200; // fixture pair is 320x200 (aspect 1.6)
+  const cap = Math.min(540, measured.innerH * 0.7);
+  const expected = Math.min(cap, Math.max(0, measured.width / (2 * ratio)));
+  await page.getByRole('button', { name: 'Side by side', exact: true }).click();
+  await expect.poll(async () => Math.abs((await stage.boundingBox())!.height - expected)).toBeLessThanOrEqual(1);
+  const split = await stage.boundingBox();
+  expect(Math.abs(split!.height - expected)).toBeLessThanOrEqual(1);
+  // split keeps no comparison-position row and no divider in the accessibility tree
+  await expect(page.getByRole('slider', { name: 'Comparison position', exact: true })).toHaveCount(0);
+  expect(await page.locator('.image-compare-position').count()).toBe(0);
+  const divider = page.locator('.image-compare-divider');
+  if (await divider.count()) { // hidden from hit-testing and visibility when split
+    const st = await divider.evaluate(el => getComputedStyle(el));
+    expect(st.visibility === 'hidden' || st.display === 'none' || st.pointerEvents === 'none').toBeTruthy();
+  }
+  // same img handles, no extra fetch
+  expect(await page.locator('.image-compare-images img').count()).toBe(2);
 });
