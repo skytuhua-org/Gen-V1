@@ -128,11 +128,15 @@ export async function verifyInstalledMemoryUI(page: Page, seed: InstalledMemoryS
   page.on('request', observeCommand);
   try {
     await page.getByRole('button', {name: fixture.threadTitle + ' Completed', exact: true}).click({timeout: 30000});
-    const overview = page.getByRole('region', {name: 'Project overview window', exact: true});
+    if (await page.locator('.workspace-right').count() === 0) await page.getByRole('button', {name: 'Open workspace panel', exact: true}).click({timeout: 30000});
+    if (await page.getByRole('tab', {name: 'Project', exact: true}).count() === 0) {
+      await page.getByRole('button', {name: 'Add surface', exact: true}).click({timeout: 30000});
+      await page.getByRole('menuitem', {name: 'Project', exact: true}).click({timeout: 30000});
+    }
+    const overviewTab = page.getByRole('tab', {name: 'Overview', exact: true});
+    if (await overviewTab.getAttribute('aria-selected') !== 'true') await overviewTab.click({timeout: 30000});
+    const overview = page.locator('.project-context-card');
     await expect(overview).toBeVisible({timeout: 30000});
-    await expect(overview).toHaveAttribute('data-collapsed', /^(true|false)$/);
-    if (await overview.getAttribute('data-collapsed') === 'true') await overview.getByRole('button', {name: 'Expand Project overview', exact: true}).click();
-    await expect(overview).toHaveAttribute('data-collapsed', 'false');
     const memoryButton = overview.getByRole('button', {name: 'Project memory', exact: true});
     await expect(memoryButton).toBeEnabled({timeout: 30000});
     await memoryButton.click({timeout: 30000});
