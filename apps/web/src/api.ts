@@ -82,16 +82,17 @@ const snapshotSchema = z.looseObject({
 export let csrfToken = '';
 export let widgetOrigin = 'http://localhost:4318';
 let bootstrapPromise: Promise<void> | undefined;
-// Desktop windows carry a per-boot launch secret in the URL fragment; it is
-// exchanged once for the session cookie and never sent in requests itself.
-function launchToken(): string | undefined {
+// Keep the initial desktop launch secret in this document's memory so anchor
+// navigation cannot replace the value used for session bootstrap and renewal.
+function readLaunchToken(): string | undefined {
   try {
     const token = new URLSearchParams(location.hash.slice(1)).get('launch');
     return token && /^[a-f0-9]{32,128}$/i.test(token) ? token : undefined;
   } catch { return undefined; }
 }
+const desktopLaunchToken = readLaunchToken();
 export function bootstrap() {
-  const token = launchToken(), headers = token ? { 'x-harness-launch': token } : undefined;
+  const headers = desktopLaunchToken ? { 'x-harness-launch': desktopLaunchToken } : undefined;
   return bootstrapPromise ??= fetch('/api/bootstrap', { credentials: 'same-origin', ...(headers ? { headers } : {}) }).then(readSchema(bootstrapSchema)).then(value => { csrfToken = value.csrfToken; if (value.widgetOrigin) widgetOrigin = value.widgetOrigin; }).catch(error => { bootstrapPromise = undefined; throw error; });
 }
 

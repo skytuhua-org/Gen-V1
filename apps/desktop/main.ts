@@ -166,6 +166,10 @@ async function openSurface(raw:unknown,sourceBounds?:DesktopBounds):Promise<Desk
  windows.set(id,record);broadcast();
  native.webContents.setWindowOpenHandler(details=>githubDevicePopup(details,{surface,expectedUrl:url.split('#')[0]!,currentUrl:native.webContents.mainFrame.url.split('#')[0]!},()=>shell.openExternal(GITHUB_DEVICE_URL,{activate:true})));native.webContents.on('will-attach-webview',event=>event.preventDefault());
  native.webContents.on('will-navigate',(event,next)=>{if(next!==url)event.preventDefault();});native.webContents.on('will-redirect',(event,next)=>{if(next!==url)event.preventDefault();});
+ native.webContents.on('did-navigate-in-page',(_event,next,isMainFrame)=>{
+  if(isMainFrame&&next.split('#',1)[0]===url.split('#',1)[0])record.url=next;
+ });
+ native.webContents.on('did-navigate',(_event,next)=>{if(next===url)record.url=url;});
  native.webContents.on('will-frame-navigate',event=>{if(!event.isMainFrame&&!trustedDesktopSubframe(event.url,backendOrigin,`http://localhost:${widgetPort}`))event.preventDefault();});
  native.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));native.webContents.session.setPermissionCheckHandler(()=>false);secureSessionDownloads(native.webContents.session);
  native.on('close',event=>{if(!quitting){event.preventDefault();void requestClose(record).then(allow=>{if(allow)destroyWindow(record);else cancelClose(record);}).catch(()=>cancelClose(record));}});
