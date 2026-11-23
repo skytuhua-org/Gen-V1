@@ -67,10 +67,11 @@ def within(root, path):
     return path == root or path.startswith(root.rstrip('/') + '/')
 
 
-def mount_readonly(fd, enabled):
+def mount_readonly(fd, enabled, *, recursive=True):
     attributes = MountAttr(1 if enabled else 0, 0 if enabled else 1, 0, 0)
-    # Change existing mounts recursively; creating a new cover leaves old FDs writable.
-    syscall(442, ctypes.c_int(fd), ctypes.c_char_p(b''), ctypes.c_uint(0x1000 | 0x8000), ctypes.byref(attributes), ctypes.c_size_t(ctypes.sizeof(attributes)))
+    # Change the existing mount; a new cover would leave old FDs writable.
+    flags = 0x1000 | (0x8000 if recursive else 0)  # AT_EMPTY_PATH | AT_RECURSIVE
+    syscall(442, ctypes.c_int(fd), ctypes.c_char_p(b''), ctypes.c_uint(flags), ctypes.byref(attributes), ctypes.c_size_t(ctypes.sizeof(attributes)))
 
 
 def identity_namespace(uid, gid, storage_uid, storage_gid):
@@ -212,7 +213,7 @@ class DirectoryGuard:
         original = prepared['identity']
         if target['path'] != parent or (current.st_dev, current.st_ino) != (original.st_dev, original.st_ino) or current.st_uid != self.uid or current.st_mode & 0o022:
             raise PermissionError('Credential mount identity changed')
-        descendants = []
+        descendants = {}
         for record in records:
             if within(parent, record['path']):
                 relative = os.path.relpath(record['path'], parent)
@@ -221,13 +222,16 @@ class DirectoryGuard:
                 # A ledgered read-only leaf (a pinned child-write marker or an
                 # explicit read-only file) is the guard's own custody: it stays
                 # fenced instead of tracking the barrier's readonly state.
-                leaf = record['path'] in self.readonly_pins and stat.S_ISREG(info)
-                if record['path'] not in self.pins or record['dev'] != target['dev'] or record['root'] != expected or record['filesystem'] != 'ext4' or not (stat.S_ISDIR(info) or leaf) or ('ro' in record['flags']) != (readonly or leaf):
+                leaf = record['path'] in self.readonly_pins
+                expected_type = stat.S_ISREG(info) if leaf else stat.S_ISDIR(info)
+                expected_readonly = True if leaf else readonly
+                matches_flags = expected_readonly is None or ('ro' in record['flags']) == expected_readonly
+                if record['path'] not in self.pins or record['dev'] != target['dev'] or record['root'] != expected or record['filesystem'] != 'ext4' or not expected_type or not matches_flags:
                     raise PermissionError('Unsupported credential submount')
-                descendants.append(record['id'])
+                descendants[record['id']] = record['path']
             elif record['dev'] == target['dev'] and (within(record['root'], target['root']) or within(target['root'], record['root'])) and not within(record['path'], parent) and 'ro' not in record['flags']:
                 raise PermissionError('Writable credential mount alias')
-        return set(descendants)
+        return descendants
 
     def credential_processes(self, prepared, mounts):
         parent = prepared['path']
@@ -319,7 +323,7 @@ class DirectoryGuard:
         if type(duration) is not int or not 1 <= duration <= 300000 or parent not in self.credentials or any(value['parent'] == parent for value in self.barriers.values()):
             raise PermissionError('Credential parent is unavailable')
         prepared = self.credentials[parent]
-        mounts = self.credential_mounts(prepared, False)
+        mounts = set(self.credential_mounts(prepared, False))
         self.credential_processes(prepared, mounts)
         held = [record['path'] for record in mount_records() if record['id'] in mounts]
         pinned = []
@@ -336,7 +340,7 @@ class DirectoryGuard:
         try:
             mount_readonly(prepared['fd'], True)
             barrier['fenced'] = True
-            if self.credential_mounts(prepared, True) != mounts:
+            if set(self.credential_mounts(prepared, True)) != mounts:
                 raise PermissionError('Credential mount set changed')
             self.credential_processes(prepared, mounts)
             try:
@@ -348,28 +352,55 @@ class DirectoryGuard:
             self.release_credential(identifier)
             raise
 
+    def restore_credential_fence(self, prepared, barrier):
+        # Recovery may begin with mixed directory flags. Revalidate the mount
+        # set and permanent read-only leaves before touching any mount.
+        if set(self.credential_mounts(prepared, None)) != barrier['mounts']:
+            raise PermissionError('Credential mount set changed before recovery')
+        mount_readonly(prepared['fd'], True)
+        if set(self.credential_mounts(prepared, True)) != barrier['mounts']:
+            raise PermissionError('Credential fence recovery did not settle')
+        barrier.pop('refence_pending', None)
+
     def release_credential(self, identifier):
         barrier = self.barriers[identifier]
         if barrier['fenced']:
             prepared = self.credentials[barrier['parent']]
+            restoring = False
             try:
-                if self.credential_mounts(prepared, True) != barrier['mounts']:
+                if barrier.get('refence_pending'):
+                    self.restore_credential_fence(prepared, barrier)
+                mounts = self.credential_mounts(prepared, True)
+                if set(mounts) != barrier['mounts']:
                     raise PermissionError('Credential mount set changed')
-                mount_readonly(prepared['fd'], False)
-                for path in barrier['held']:
-                    # The recursive un-fence also clears each leaf pin's
-                    # permanent fence; restore it so custody matches the ledger.
-                    if path in self.readonly_pins:
-                        leaf = os.open(path, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
+                has_readonly_leaf = any(path in self.readonly_pins for path in mounts.values())
+                if has_readonly_leaf:
+                    # Preserve permanent leaf flags and leave auth.json's
+                    # directory fenced until descendant directories settle.
+                    for expected_mount_id, path in mounts.items():
+                        if path == prepared['path'] or path in self.readonly_pins:
+                            continue
+                        fd = os.open(path, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
                         try:
-                            mount_readonly(leaf, True)
+                            if mount_id(fd) != expected_mount_id:
+                                raise PermissionError('Credential mount identity changed')
+                            restoring = True
+                            mount_readonly(fd, False, recursive=False)
                         finally:
-                            os.close(leaf)
-                barrier['fenced'] = False
-                if self.credential_mounts(prepared, False) != barrier['mounts']:
+                            os.close(fd)
+                restoring = True
+                mount_readonly(prepared['fd'], False, recursive=not has_readonly_leaf)
+                if set(self.credential_mounts(prepared, False)) != barrier['mounts']:
                     raise PermissionError('Credential restoration did not settle')
             except BaseException as error:
+                if restoring:
+                    barrier['refence_pending'] = True
+                    try:
+                        self.restore_credential_fence(prepared, barrier)
+                    except BaseException as refence_error:
+                        raise CustodyUncertain('Credential fence restoration is uncertain') from refence_error
                 raise CustodyUncertain('Retain credential custody') from error
+            barrier['fenced'] = False
         unresolved = self.release_paths(barrier['held'])
         if unresolved:
             # Keep the barrier owning exactly the paths that stayed fenced —

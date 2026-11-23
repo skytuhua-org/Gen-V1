@@ -221,9 +221,29 @@ class PinFaultInjection(unittest.TestCase):
                     guard.pin_leaf("/r/f", False)  # refused before any syscall
 
 
+    def test_pin_leaf_readonly_attribute_failure_unwinds_or_quarantines(self):
+        for detach in (0, -1):
+            with self.subTest(detach=detach):
+                guard = _new_guard()
+                with patch("os.open", side_effect=[42, 43]), \
+                     patch("os.fstat", return_value=_file()), \
+                     patch("os.close") as close, \
+                     patch.object(_guard, "LIBC") as libc, \
+                     patch.object(_guard, "checked", _checked), \
+                     patch.object(_guard, "syscall", side_effect=OSError("synthetic attribute refusal")):
+                    libc.mount.return_value = 0
+                    libc.umount2.return_value = detach
+                    with self.assertRaisesRegex(OSError, "synthetic attribute refusal"):
+                        guard.pin_leaf("/r/f", True)
+                    libc.umount2.assert_called_once_with(b"/r/f", 2)
+                    self.assertEqual([args[0] for args, _ in close.call_args_list], [43, 42])
+                self.assertEqual((guard.pins, guard.readonly_pins), ({}, set()))
+                self.assertEqual(guard.quarantined, {"/r/f"} if detach == -1 else set())
+
+
 PARENT = "/r/accounts/pa/pi"
 TASKS = PARENT + "/tasks"
-LEAF = PARENT + "/.harness-directory-guard"
+LEAF = TASKS + "/.harness-directory-guard"
 
 
 def _stat(mode, uid=None):
@@ -267,10 +287,10 @@ class CredentialMountAdmission(unittest.TestCase):
         prepared, stats, records = _credential_harness(guard)
         with patch.object(_guard, "mount_records", new=lambda: records()), \
              patch("os.stat", side_effect=lambda path, *a, **k: stats[path]):
-            self.assertEqual(guard.credential_mounts(prepared, False), {"7", "10", "11"})
+            self.assertEqual(set(guard.credential_mounts(prepared, False)), {"7", "10", "11"})
         with patch.object(_guard, "mount_records", new=lambda: records(directories_readonly=True)), \
              patch("os.stat", side_effect=lambda path, *a, **k: stats[path]):
-            self.assertEqual(guard.credential_mounts(prepared, True), {"7", "10", "11"})
+            self.assertEqual(set(guard.credential_mounts(prepared, True)), {"7", "10", "11"})
 
     def test_foreign_alias_unpinned_and_writable_leaf_stay_rejected(self):
         guard = _new_guard()
@@ -292,61 +312,84 @@ class CredentialMountAdmission(unittest.TestCase):
                 with self.assertRaisesRegex(PermissionError, message):
                     guard.credential_mounts(prepared, False)
 
-    def test_release_restores_leaf_fences_after_recursive_unfence(self):
+    def test_release_keeps_nested_leaf_readonly_during_restoration_and_retry(self):
+        for failure in (None, "parent", "refence", "identity"):
+            with self.subTest(failure=failure):
+                guard = _new_guard()
+                prepared, stats, records = _credential_harness(guard)
+                for path in (PARENT, TASKS, LEAF):
+                    guard.pins[path] = 2
+                guard.credentials[PARENT] = prepared
+                guard.barriers["L1"] = {
+                    "parent": PARENT, "mounts": {"7", "10", "11"},
+                    "held": [PARENT, TASKS, LEAF], "expires": 0, "fenced": True,
+                }
+                state = {PARENT: "ro", TASKS: "ro", LEAF: "ro"}
+                fd_paths = {99: PARENT, 42: TASKS, 43: LEAF}
+                leaf_states, operations = [], []
+                fail_parent = failure in ("parent", "refence")
+                fail_refence = failure == "refence"
+
+                def observed_records():
+                    return [
+                        {**record, "flags": [state[record["path"]]]} if record["path"] in state else record
+                        for record in records()
+                    ]
+
+                def change_readonly(fd, enabled, *, recursive=True):
+                    nonlocal fail_parent, fail_refence
+                    operations.append((fd_paths[fd], enabled, recursive))
+                    if not recursive and fd == 99 and not enabled and fail_parent:
+                        fail_parent = False
+                        raise OSError("synthetic parent restoration refusal")
+                    if recursive and enabled and fail_refence:
+                        fail_refence = False
+                        raise OSError("synthetic recovery refusal")
+                    for path in state:
+                        if path == fd_paths[fd] or recursive and _guard.within(fd_paths[fd], path):
+                            state[path] = "ro" if enabled else "rw"
+                    leaf_states.append(state[LEAF])
+
+                identity = ["replacement", "10"] if failure == "identity" else ["10", "10"]
+                with patch.object(_guard, "mount_records", new=observed_records), \
+                     patch.object(_guard, "mount_readonly", new=change_readonly), \
+                     patch.object(_guard, "mount_id", side_effect=identity), \
+                     patch("os.stat", side_effect=lambda path, *a, **k: stats[path]), \
+                     patch("os.open", side_effect=lambda path, *args: {TASKS: 42, LEAF: 43}[path]), \
+                     patch("os.close"):
+                    if failure:
+                        with self.assertRaises(_guard.CustodyUncertain):
+                            guard.release_credential("L1")
+                        self.assertEqual(state, {
+                            PARENT: "ro", TASKS: "rw" if failure == "refence" else "ro", LEAF: "ro",
+                        })
+                        self.assertTrue(guard.barriers["L1"]["fenced"])
+                        if failure == "refence":
+                            self.assertTrue(guard.barriers["L1"].get("refence_pending"))
+                        elif failure == "identity":
+                            self.assertEqual(operations, [])
+                    before_retry = len(operations)
+                    guard.release_credential("L1")
+
+                final_operations = [(TASKS, False, False), (PARENT, False, False)]
+                if failure == "refence":
+                    final_operations.insert(0, (PARENT, True, True))
+                self.assertEqual(operations[before_retry:], final_operations)
+                self.assertTrue(leaf_states)
+                self.assertTrue(all(flag == "ro" for flag in leaf_states))
+                self.assertEqual(state, {PARENT: "rw", TASKS: "rw", LEAF: "ro"})
+                self.assertNotIn("L1", guard.barriers)
+                self.assertEqual(guard.pins[LEAF], 1)
+                self.assertEqual(guard.readonly_pins, {LEAF})
+
+    def test_credential_mounts_rejects_a_directory_in_the_readonly_leaf_ledger(self):
         guard = _new_guard()
         prepared, stats, records = _credential_harness(guard)
-        guard.pins = {"/r": 1, "/r/accounts": 1, "/r/accounts/pa": 1, PARENT: 2, TASKS: 2, LEAF: 2}
-        guard.credentials[PARENT] = prepared
-        guard.barriers["L1"] = {"parent": PARENT, "mounts": {"7", "10", "11"}, "held": [PARENT, TASKS, LEAF], "expires": 0, "fenced": True}
-        mount_state = {PARENT: "ro", TASKS: "ro", LEAF: "ro"}
-        calls = []
-
-        def fenced_records():
-            result = records()
-            for record in result:
-                if record["path"] in mount_state:
-                    record["flags"] = [mount_state[record["path"]]]
-            return result
-
-        def mount_readonly(fd, enabled):
-            calls.append((fd, enabled))
-            if fd == 99:  # Recursive on the parent: every mount beneath it.
-                for path in mount_state:
-                    mount_state[path] = "ro" if enabled else "rw"
-            else:
-                mount_state[LEAF] = "ro" if enabled else "rw"
-
-        with patch.object(_guard, "mount_records", new=fenced_records), \
-             patch.object(_guard, "mount_readonly", new=mount_readonly), \
-             patch("os.stat", side_effect=lambda path, *a, **k: stats[path]), \
-             patch("os.open", return_value=42), \
-             patch("os.close"):
-            guard.release_credential("L1")
-        self.assertEqual(calls, [(99, False), (42, True)])  # un-fence, then re-fence the leaf
-        self.assertNotIn("L1", guard.barriers)
-        self.assertEqual(mount_state[LEAF], "ro")
-        self.assertEqual(guard.pins[LEAF], 1)  # barrier ref dropped; group ref stays
-        self.assertEqual(guard.readonly_pins, {LEAF})
-
-    def test_leaf_fence_restore_failure_is_explicitly_uncertain(self):
-        guard = _new_guard()
-        prepared, stats, records = _credential_harness(guard)
-        guard.pins = {"/r": 1, "/r/accounts": 1, "/r/accounts/pa": 1, PARENT: 2, TASKS: 2, LEAF: 2}
-        guard.credentials[PARENT] = prepared
-        guard.barriers["L2"] = {"parent": PARENT, "mounts": {"7", "10", "11"}, "held": [PARENT, TASKS, LEAF], "expires": 0, "fenced": True}
-
-        def mount_readonly(fd, enabled):
-            if fd != 99:
-                raise OSError("synthetic leaf re-fence failure")
-
+        guard.readonly_pins.add(TASKS)
         with patch.object(_guard, "mount_records", new=lambda: records(directories_readonly=True)), \
-             patch.object(_guard, "mount_readonly", new=mount_readonly), \
-             patch("os.stat", side_effect=lambda path, *a, **k: stats[path]), \
-             patch("os.open", return_value=42), \
-             patch("os.close"):
-            with self.assertRaises(_guard.CustodyUncertain):
-                guard.release_credential("L2")
-        self.assertTrue(guard.barriers["L2"]["fenced"])  # custody retained, not claimed released
+             patch("os.stat", side_effect=lambda path, *args, **kwargs: stats[path]):
+            with self.assertRaisesRegex(PermissionError, "credential submount"):
+                guard.credential_mounts(prepared, True)
 
 
 class CredentialLifecycleRollback(unittest.TestCase):
