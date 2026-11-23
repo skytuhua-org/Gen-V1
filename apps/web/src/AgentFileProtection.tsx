@@ -69,8 +69,7 @@ export function AgentFileProtection({projects,busy}:{projects:readonly ScopeOpti
       <p>Deny rules keep matching files out of agent reads, listings, search and mentions.</p>
       <label className="field">Scope<Select aria-label="Rules scope" disabled={busy||working} value={scope} onValueChange={choose} options={scopes.map(({id,label})=>({value:id,label}))}/></label>
       {scope!=='global'&&<div className="afp-inherited"><h3>Inherited from all local projects</h3>{globalRules.length?<ul>{globalRules.map(rule=><li key={rule}><code>{rule}</code></li>)}</ul>:<p className="settings-empty">No default rules.</p>}</div>}
-      <label className="field afp-editor">Deny rules — one pattern per line
-        <textarea ref={field} aria-describedby="afp-errors afp-hint" aria-invalid={errors.length>0} spellCheck={false} disabled={busy||working} value={draft} onChange={event=>setDraft(event.target.value)} placeholder={'.env\n.env.*\nsecrets/**\n*.pem'}/>
+      <label className="field afp-editor">Deny rules — one pattern per line<textarea ref={field} aria-describedby="afp-errors afp-hint" aria-invalid={errors.length>0} spellCheck={false} disabled={busy||working} value={draft} onChange={event=>setDraft(event.target.value)} placeholder={'.env\n.env.*\nsecrets/**\n*.pem'}/>
       </label>
       {errors.length>0&&<ul id="afp-errors" className="afp-errors" role="alert">{errors.map(error=><li key={error.line}>Line {error.line}: {error.message}</li>)}</ul>}
       <p id="afp-hint" className="afp-footer">Blocks supported file tools, project search, and file references. It doesn't sandbox terminals or remove content already shared.</p>
