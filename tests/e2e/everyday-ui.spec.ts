@@ -22,9 +22,19 @@ test('statistical trends leave gaps for missing evidence and provide the exact v
 test('comparison keeps all options visible, filters only equal criteria and submits only a selected identity',async({page})=>{
  const {host}=await open(page,'Comparison',choices);await page.goto('/');
  const table=page.getByRole('table',{name:'Compare options',exact:true});await expect(table).toContainText('Starter');await expect(table).toContainText('Team');await expect(table).toContainText('Unavailable');
- await page.getByRole('button',{name:'Select Team',exact:true}).click();await page.getByRole('checkbox',{name:'Differences only',exact:true}).check();await expect(table.getByRole('rowheader',{name:'Region',exact:true})).toHaveCount(0);await expect(table.getByRole('rowheader',{name:/Monthly price/})).toBeVisible();
- await expect.poll(()=>host.snapshot.userStates[0].values.selected).toMatchObject({selectedId:'large',differencesOnly:true});await page.reload();await expect(page.getByRole('button',{name:'Select Team',exact:true})).toHaveAttribute('aria-pressed','true');await expect(page.getByRole('checkbox',{name:'Differences only',exact:true})).toBeChecked();
+ await page.getByRole('radio',{name:/^Team/}).click();await page.getByRole('checkbox',{name:'Differences only',exact:true}).check();await expect(table.getByRole('rowheader',{name:'Region',exact:true})).toHaveCount(0);await expect(table.getByRole('rowheader',{name:/Monthly price/})).toBeVisible();
+ await expect.poll(()=>host.snapshot.userStates[0].values.selected).toMatchObject({selectedId:'large',differencesOnly:true});await page.reload();await expect(page.getByRole('radio',{name:/^Team/})).toHaveAttribute('aria-checked','true');await expect(page.getByRole('checkbox',{name:'Differences only',exact:true})).toBeChecked();
  await page.getByRole('button',{name:'Review selected plan',exact:true}).click();await expect.poll(()=>host.commands.filter(command=>command.type==='action.submit').length).toBe(1);expect(host.commands.find(command=>command.type==='action.submit')?.payload.payload).toEqual({optionId:'large',label:'Team'});
+});
+
+test('comparison radios follow keyboard selection and disclosures leave selection intact',async({page})=>{
+ await open(page,'Comparison',choices);await page.goto('/');
+ const group=page.getByRole('radiogroup',{name:'Options'}),starter=group.getByRole('radio',{name:/^Starter/}),team=group.getByRole('radio',{name:/^Team/});
+ await starter.focus();await page.keyboard.press('ArrowRight');
+ await expect(team).toBeFocused();await expect(team).toBeChecked();
+ await page.getByLabel('Details for Starter',{exact:true}).click();
+ await expect(team).toBeChecked();
+ await team.focus();await page.keyboard.press('Home');await expect(starter).toBeFocused();await expect(starter).toBeChecked();
 });
 
 test('comparison retains complete decision facts at desktop and narrow widths',async({page})=>{
@@ -88,7 +98,7 @@ test('a late credential acknowledgment cannot replace the newer slot version aft
 });
 for(const name of ['Stats','Comparison'] as const)test(`${name} supports narrow keyboard selection and rejects oversized sources`,async({page})=>{
  await page.setViewportSize({width:390,height:844});await page.emulateMedia({reducedMotion:'reduce'});const {host}=await open(page,name,name==='Stats'?metrics:choices);await page.goto('/');
- if(name==='Stats'){await page.getByRole('tab',{name:'Response time',exact:true}).focus();await page.keyboard.press('ArrowRight');await expect(page.getByRole('tab',{name:'Requests',exact:true})).toBeFocused();}else{await page.getByRole('button',{name:'Select Team',exact:true}).focus();await page.keyboard.press('Enter');await expect(page.getByRole('button',{name:'Select Team',exact:true})).toHaveAttribute('aria-pressed','true');}
+ if(name==='Stats'){await page.getByRole('tab',{name:'Response time',exact:true}).focus();await page.keyboard.press('ArrowRight');await expect(page.getByRole('tab',{name:'Requests',exact:true})).toBeFocused();}else{await page.getByRole('radio',{name:/^Team/}).focus();await page.keyboard.press('Enter');await expect(page.getByRole('radio',{name:/^Team/})).toHaveAttribute('aria-checked','true');}
  expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);host.setInput('data',name==='Stats'?{metrics:new Array(13)}:{options:new Array(7),criteria:[]});await host.publish();await expect(page.locator('.everyday-unavailable')).toBeVisible();await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeEnabled();
 });
 
@@ -124,7 +134,7 @@ test('a late preference acknowledgment cannot confirm another option',async({pag
  const detail=page.locator('.everyday-column-details').first();await expect(detail).not.toHaveAttribute('open');await expect(detail.locator('summary')).toHaveText('Details');
  await action.click();await expect(action).toHaveText(/Submitting…/);
  widths.push(await action.evaluate(node=>node.getBoundingClientRect().width));
- await page.getByRole('button',{name:'Select Team',exact:true}).click();
+ await page.getByRole('radio',{name:/^Team/}).click();
  release();await expect.poll(()=>host.commands.filter(command=>command.type==='action.submit').length).toBe(1);
  await expect(page.getByRole('button',{name:'Preference submitted',exact:true})).toHaveCount(0);
  await action.click();await expect(page.getByRole('button',{name:'Preference submitted',exact:true})).toBeVisible();
@@ -201,7 +211,7 @@ test('comparison keeps a long summary behind Details and its submit edge within 
  const top=()=>toggle.evaluate(node=>node.getBoundingClientRect().top-(node.closest('.everyday-comparison')?.getBoundingClientRect().top??0));
  const before=await top();
  // Selecting the option moves no chrome: the summary lives on one 18px preview line.
- await page.getByRole('button',{name:'Select Starter',exact:true}).click();
+ await page.getByRole('radio',{name:/^Starter/}).click();
  const summary=page.locator('.everyday-selected-summary');
  await expect(summary).toBeVisible();expect(Math.abs((await summary.boundingBox())!.height-18)).toBeLessThanOrEqual(1);
  expect(Math.abs(await top()-before)).toBeLessThanOrEqual(1);
