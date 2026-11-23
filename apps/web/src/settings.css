@@ -116,3 +116,26 @@
 .settings-shortcuts-keys { display:flex;flex:0 0 auto;gap:4px; }
 .settings-shortcuts-keys kbd { padding:1px 5px;border:1px solid var(--border);border-radius:4px;font-size:11px;color:var(--muted);white-space:nowrap; }
 .settings-shortcuts-label small { display:block;margin-top:1px;font-size:12px;line-height:1.4;color:var(--muted); }
+.settings-transfer-controls { display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end; }
+.settings-transfer-controls button { display:inline-flex;align-items:center;gap:6px; }
+.settings-transfer-subtitle { margin:0 0 12px;font-size:12px;color:var(--muted); }
+.settings-transfer-modal h3 { margin:14px 0 8px;font-size:13px;font-weight:600; }
+.settings-transfer-changes { width:100%;border-collapse:collapse; }
+.settings-transfer-changes th,.settings-transfer-changes td { padding:8px 6px;text-align:left;font-size:13px;border-bottom:1px solid var(--border); }
+.settings-transfer-changes thead th { color:var(--muted);font-weight:500;font-size:12px; }
+.settings-transfer-changes tbody th { font-weight:500;width:40%; }
+.settings-transfer-changes tbody td { width:30%;color:var(--muted); }
+.settings-transfer-changes td.settings-transfer-new { color:var(--text);box-shadow:inset 2px 0 0 var(--accent); }
+.settings-transfer-group th { padding:6px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted); }
+.settings-transfer-swatch { display:inline-block;width:12px;height:12px;border-radius:4px;background:var(--swatch);margin-right:6px;vertical-align:-1px; }
+.settings-transfer-change { animation:settings-transfer-row-in var(--ui-motion-press) var(--ui-ease-enter) both;animation-delay:calc(var(--stagger) * 15ms); }
+@keyframes settings-transfer-row-in { from { opacity:0;transform:translateY(4px); } to { opacity:1;transform:none; } }
+.settings-transfer-same summary { color:var(--muted);font-size:13px; }
+.settings-transfer-ignored { margin:0;padding-left:0;list-style:none; }
+.settings-transfer-ignored li { display:flex;align-items:center;gap:6px;padding:3px 0;font-size:13px;color:var(--warning,#b8860b); }
+.settings-transfer-footer { display:flex;justify-content:flex-end;gap:8px;margin-top:16px; }
+.settings-transfer-undo { animation:settings-transfer-fade-in var(--ui-motion-hover) var(--ui-ease-enter) both; }
+@keyframes settings-transfer-fade-in { from { opacity:0; } to { opacity:1; } }
+@media(prefers-reduced-motion:reduce) {
+  .settings-transfer-change { animation-name:settings-transfer-fade-in;animation-duration:var(--ui-motion-press); }
+}
