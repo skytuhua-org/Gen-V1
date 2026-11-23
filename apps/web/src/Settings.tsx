@@ -53,9 +53,9 @@ const preferenceRows: Record<string, { key: keyof UiPreferences; options?: reado
   'live-usage': { key: 'showUsageFooter', description: 'Show the compact Live usage summary.' },
   'send-shortcut': { key: 'sendShortcut', options: ['enter', 'mod-enter-multiline', 'mod-enter'], labels: ['Enter to send', 'Ctrl / ⌘ Enter; expandable input', 'Ctrl / ⌘ Enter to send'], description: 'Shift Enter inserts a new line.' },
   'diff-layout': { key: 'diffLayout', options: ['stacked', 'split'], labels: ['Stacked', 'Side by side'], description: 'Layout for recorded before/after comparisons. Unified source patches stay verbatim.' },
-  'hide-whitespace-changes': { key: 'hideWhitespace', description: 'Hide whitespace-only differences and unchanged lines in recorded before/after comparisons.' },
+  'hide-whitespace-changes': { key: 'hideWhitespace', description: 'In recorded comparisons, hide unchanged and whitespace-only lines. In unified patches, hide whitespace emphasis without changing the patch text.' },
   'default-diff-file-state': { key: 'diffDefaultExpanded', description: 'Expand executor diff records when opening review.' },
-  'diff-color-scheme': { key: 'diffColors', options: ['red-green', 'blue-orange'], labels: ['Red and green', 'Blue and orange'], description: 'Before/after tint for recorded comparisons.' },
+  'diff-color-scheme': { key: 'diffColors', options: ['red-green', 'blue-orange'], labels: ['Red and green', 'Blue and orange'], description: 'Colors for additions and removals in recorded, checkpoint, and selected change diffs.' },
 };
 const row = (id: string, title: string, section: string, terms = ''): SettingsInventoryRow => ({ id, title, section, terms });
 export const SETTINGS_ROWS: SettingsInventoryRow[] = [

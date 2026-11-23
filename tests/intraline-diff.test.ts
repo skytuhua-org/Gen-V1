@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { annotateSnapshot, annotateUnified, diffTokens, type IntralineRange } from '../apps/web/src/intraline-diff';
+import { DiffText } from '../apps/web/src/DiffText';
 
 const marked = (text: string, ranges: IntralineRange[] = []) => ranges.map(r => text.slice(r.start, r.end)).join('|');
 const hasSegmenter = typeof (Intl as { Segmenter?: unknown }).Segmenter === 'function';
@@ -136,5 +139,21 @@ describe('budgets and fallbacks', () => {
       intl.Segmenter = saved;
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('DiffText rendering', () => {
+  it('reconstructs the exact text and marks only the ranged runs', () => {
+    const html = renderToStaticMarkup(createElement(DiffText, { text: 'const a = 1;', ranges: [{ start: 10, end: 11 }], tone: 'removed' }));
+    expect(html).toBe('const a = <span class="intraline-mark intraline-mark-removed">1</span>;');
+  });
+  it('renders plain text with no ranges and keeps HTML escaped', () => {
+    expect(renderToStaticMarkup(createElement(DiffText, { text: 'a<b', tone: 'added' }))).toBe('a&lt;b');
+    expect(renderToStaticMarkup(createElement(DiffText, { text: 'x', ranges: [], tone: 'added' }))).toBe('x');
+  });
+  it('emits only text nodes and noninteractive spans', () => {
+    const html = renderToStaticMarkup(createElement(DiffText, { text: 'hello world', ranges: [{ start: 0, end: 5 }, { start: 6, end: 11 }], tone: 'added' }));
+    expect(html).toBe('<span class="intraline-mark intraline-mark-added">hello</span> <span class="intraline-mark intraline-mark-added">world</span>');
+    expect(html).not.toMatch(/tabindex|aria-|title=|<a|<button/);
   });
 });
