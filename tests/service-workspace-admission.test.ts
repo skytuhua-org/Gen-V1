@@ -3,6 +3,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Service,type ServiceOptions} from '../packages/core/service.ts';
+import {AgentWorkCoordinator} from '../packages/core/agent-work.ts';
 import {Store} from '../packages/storage/store.ts';
 import type {RunContext,RuntimeAdapter,StartRun,Thread} from '../packages/contracts/index.ts';
 
@@ -182,6 +183,61 @@ it('coalesces a failed Stop retry for the exact run and leaves the replacement r
   expect(f.service.thread(threadId)).toMatchObject({runId:replacement.runId,epoch:replacement.epoch,status:'working'});
   expect(cancel).toHaveBeenCalledTimes(3);
  }finally{confirm();await Promise.allSettled([replay,newStop]);}
+});
+it('coalesces a fresh Stop ID published by a synchronous receipt subscriber',async()=>{
+ const f=fixture(),thread=await f.create();
+ await f.message(thread.id);
+ const {threadId,runId,epoch}=f.starts[0],ctx={threadId,runId,epoch};
+ const command={id:'first-reentrant-stop',type:'run.stop',threadId,payload:{}};
+ const secondCommand={...command,id:'second-reentrant-stop'};
+ let reject!: (error:Error)=>void;
+ const gate=new Promise<void>((_resolve,fail)=>{reject=fail;});
+ const cancel=vi.mocked(f.runtime.cancel);
+ cancel.mockImplementationOnce(()=>gate);
+ let second!:ReturnType<Service['command']>;
+ const completed=vi.fn();
+ const unsubscribe=f.store.subscribe(event=>{
+  if(event.type!=='run.stop')return;
+  unsubscribe();
+  second=f.service.command(secondCommand).then(result=>{completed();return result;});
+  void second.catch(()=>{});
+ });
+ const first=f.service.command(command).then(result=>{completed();return result;});
+ void first.catch(()=>{});
+ const failure=Error('Synthetic unconfirmed native exit');
+ try{
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  expect(f.store.receipt(command)?.result).toEqual({stopped:true,nativeOwner:ctx});
+  expect(f.store.receipt(secondCommand)?.result).toEqual({stopped:true,nativeOwner:ctx});
+  expect(f.service.thread(threadId)).toMatchObject({epoch:epoch+1,runId:null,status:'stopped'});
+  expect(cancel.mock.calls).toEqual([[ctx]]);
+  expect(completed).not.toHaveBeenCalled();
+  reject(failure);
+  const rejected={status:'rejected',reason:failure};
+  expect(await Promise.allSettled([first,second])).toEqual([rejected,rejected]);
+  await expect(f.send('run.stop',{},threadId)).resolves.toMatchObject({result:{nativeOwner:ctx}});
+  expect(cancel.mock.calls).toEqual([[ctx],[ctx]]);
+  expect(f.service.thread(threadId).epoch).toBe(epoch+1);
+ }finally{unsubscribe();reject(failure);await Promise.allSettled([first,second]);}
+});
+it('waits for child revocation before returning a native Stop failure',async()=>{
+ const f=fixture(),thread=await f.create();
+ await f.message(thread.id);
+ const failure=Error('Synthetic native Stop failure');
+ vi.mocked(f.runtime.cancel).mockRejectedValueOnce(failure);
+ let release!:()=>void;
+ const gate=new Promise<void>(resolve=>{release=resolve;});
+ const revoke=vi.spyOn(AgentWorkCoordinator.prototype,'revokeForParent').mockImplementationOnce(()=>gate);
+ const rejected=vi.fn();
+ const stop=f.send('run.stop',{},thread.id).catch(rejected);
+ try{
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  expect(revoke).toHaveBeenCalledWith(thread.id);
+  expect(rejected).not.toHaveBeenCalled();
+  release();
+  await stop;
+  expect(rejected).toHaveBeenCalledWith(failure);
+ }finally{release();await stop;revoke.mockRestore();}
 });
 it('replaying a failed Stop retains its unconfirmed teardown outcome',async()=>{
  const f=fixture(),thread=await f.create();await f.message(thread.id);vi.mocked(f.runtime.cancel).mockRejectedValue(Error('Native cancellation was not confirmed.'));const command={id:'failed-stop-replay',type:'run.stop',threadId:thread.id,payload:{}};

@@ -10,6 +10,7 @@ import type {SkillDetail,SkillProposal} from '../packages/contracts/skills.ts';
 import {accountResolver,beginAccountLogin} from '../packages/core/accounts.ts';
 import {createHermesRuntime} from '../packages/runtime-hermes/index.ts';
 import type {HermesClient} from '../packages/runtime-hermes/client.ts';
+import {HermesSourceLibrary} from '../packages/runtime-hermes/library.ts';
 const cleanup:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 async function fixture(useHermes=false){
@@ -24,7 +25,8 @@ async function fixture(useHermes=false){
  const hermes=useHermes?createHermesRuntime({
   dataDir:directory,nativeCatalog:runtime,hostTools:[],accounts:accountResolver(store),onSourceEvent:event=>service.sourceEvent(event),
  },{createClient:options=>{const source=stopSource(options);sources.push(source);return source;}}):undefined;
- const service=new Service(store,hermes??runtime,{source:{runtime:hermes??controller,library},approvedWriteHooks:true});
+ const sourceLibrary=hermes?new HermesSourceLibrary({store,source:{request:(method,params)=>hermes.sourceRequest(method,params)}}):library;
+ const service=new Service(store,hermes??runtime,{source:{runtime:hermes??controller,library:sourceLibrary},approvedWriteHooks:true});
  cleanup.push(async()=>{try{await service.dispose();}finally{store.close();await rm(directory,{recursive:true,force:true,maxRetries:5});}});
  const send=(type:string,payload:Record<string,unknown>={},threadId?:string)=>service.command({id:crypto.randomUUID(),type,payload,threadId});
  return {service,store,controller,library,starts,send,sourceCalls,hermes,sources,get callbacks(){return callbacks;}};
@@ -32,15 +34,18 @@ async function fixture(useHermes=false){
 function stopSource(options:ConstructorParameters<typeof HermesClient>[0]){
  const admitted:RunContext[]=[];
  const cancel=vi.fn(async()=>({accepted:true})),cancelBackground=vi.fn(async()=>({accepted:true}));
+ const curate=vi.fn(async()=>({success:true}));
  const request=async<T>(method:string,params?:Record<string,unknown>):Promise<T>=>{
   if(method==='hello')return {protocolVersion:1,engineClass:'run_agent.AIAgent',sourceCommit:'c627ec84664d43e0b18b95d9d86d8963747d56c7'} as T;
   if(method==='agent.start'){admitted.push(params!.ctx as RunContext);return {accepted:true} as T;}
   if(method==='agent.cancel')return await cancel() as T;
   if(method==='agent.cancelBackground')return await cancelBackground() as T;
+  if(method==='skills.snapshot')return {catalog:{skills:[],archived:[],usage:{}},inspections:{},proposals:[]} as T;
+  if(method==='skills.curate')return await curate() as T;
   return {} as T;
  };
  const event=(name:string,ctx=admitted.at(-1)!)=>options.onEvent?.({event:name,ctx:{...ctx,phase:'foreground'},data:{}});
- return {admitted,cancel,cancelBackground,request,event,fail:()=>options.onFailure?.(Error('Synthetic source worker failure')),dispose:vi.fn(async()=>{})};
+ return {admitted,cancel,cancelBackground,curate,request,event,fail:()=>options.onFailure?.(Error('Synthetic source worker failure')),dispose:vi.fn(async()=>{})};
 }
 async function hermesRun(x:Awaited<ReturnType<typeof fixture>>,thread?:Thread){
  thread??=(await x.send('thread.create')).result as Thread;
@@ -95,6 +100,42 @@ it('does not retry another thread’s held Hermes review when stopping an unrela
  await x.send('run.stop',{},thread.id);
  expect(source.dispose).toHaveBeenCalledTimes(2);
  expect(x.store.all('accountUse')).toHaveLength(0);
+});
+it('stops only the owning thread’s explicit Hermes consolidation and waits for cleanup',async()=>{
+ const x=await fixture(true),{source,thread,ctx}=await hermesRun(x);
+ const other=(await x.send('thread.create')).result as Thread;
+ source.event('foreground_settled');
+ source.event('settled');
+ await vi.waitFor(()=>expect(x.hermes!.reviewBusy).toBe(false));
+ const previousStop={id:'stop-before-consolidation',type:'run.stop',threadId:thread.id,payload:{}};
+ const previousReceipt=await x.service.command(previousStop),projectionEpoch=x.service.thread(thread.id).epoch;
+ let finish!: (result:{success:boolean})=>void;
+ source.curate.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+ const curating=x.send('learning.curate',{consolidate:true});
+ void curating.catch(()=>{});
+ const completed=vi.fn();
+ let stop:ReturnType<typeof x.send>|undefined;
+ try{
+  await vi.waitFor(()=>expect(source.curate).toHaveBeenCalledOnce());
+  expect(x.store.all('accountUse')).toHaveLength(1);
+  await expect(x.service.command(previousStop)).resolves.toEqual(previousReceipt);
+  await x.send('run.stop',{},other.id);
+  expect(source.cancel).not.toHaveBeenCalled();
+  expect(source.cancelBackground).not.toHaveBeenCalled();
+  stop=x.send('run.stop',{},thread.id).then(receipt=>{completed();return receipt;});
+  void stop.catch(()=>{});
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  expect(source.cancel).toHaveBeenCalledOnce();
+  await vi.waitFor(()=>expect(source.cancelBackground).toHaveBeenCalledOnce());
+  expect(completed).not.toHaveBeenCalled();
+  expect(x.store.all('accountUse')).toHaveLength(1);
+  finish({success:true});
+  const receipt=await stop;
+  expect(receipt.result).toMatchObject({stopped:true,nativeOwner:{threadId:thread.id,epoch:ctx.epoch}});
+  expect((receipt.result as {nativeOwner:RunContext}).nativeOwner.runId).not.toBe(ctx.runId);
+  expect(x.service.thread(thread.id).epoch).toBe(projectionEpoch+1);
+  expect(x.store.all('accountUse')).toHaveLength(0);
+ }finally{finish?.({success:true});await Promise.allSettled([curating,stop]);}
 });
 it('initializes the canonical source library and routes explicit UI writes to it',async()=>{
  const x=await fixture();await x.service.recover();expect(x.library.initialize).toHaveBeenCalledOnce();expect(x.store.snapshot().learning?.supported).toBe(true);
