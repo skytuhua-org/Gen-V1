@@ -13,7 +13,7 @@ const cleanup:(()=>Promise<void>)[]=[];afterEach(async()=>{vi.restoreAllMocks();
 it('releases the spawned terminal when durable registration fails',async()=>{
  const root=await mkdtemp(join(tmpdir(),'gen-pty-persist-'));await mkdir(join(root,'project'));
  const store=new Store(join(root,'data')),tools=new ProjectTools(store),host=new TerminalHost(tools);
- cleanup.push(async()=>{await host.dispose().catch(()=>{});store.close();await rm(root,{recursive:true,force:true,maxRetries:5});});
+ cleanup.push(async()=>{await host.dispose().catch(()=>{});store.close();await rm(root,{recursive:true,force:true,maxRetries:20,retryDelay:250});});
  const receipt=await tools.connect({id:'connect',type:'workspace.project.connect',payload:{name:'Terminal fixture',path:join(root,'project')}});
  const projectId=(receipt.result as {projects:{id:string}[]}).projects[0]!.id;
  const original=store.internal.bind(store);

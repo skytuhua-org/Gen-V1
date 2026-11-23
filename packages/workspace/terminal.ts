@@ -67,6 +67,11 @@ export class TerminalHost{
    try{session.pty.kill();}catch{/* The failed open still releases its process. */}
    let timer:ReturnType<typeof setTimeout>|undefined;
    try{await Promise.race([session.done,new Promise<void>(resolve=>{timer=setTimeout(resolve,3000)})]);}finally{clearTimeout(timer);}
+   // ConPTY raises the exit event when the child dies, but the console host
+   // it spawned (sharing the same cwd) tears down asynchronously after it;
+   // give the pseudoconsole a moment so callers removing the directory do
+   // not hit EBUSY on Windows.
+   await new Promise<void>(resolve=>setTimeout(resolve,500));
    throw error;
   }
 
