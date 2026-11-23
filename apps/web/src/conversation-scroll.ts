@@ -1,4 +1,5 @@
 import {createSpringValue} from './motion-spring';
+import {clamp} from '../../../packages/ui-shell/format-utils';
 import {readMotionPolicy,observeMotionPolicy} from './motion-policy';
 
 export type ConversationPosition={top:number;tail:boolean};
@@ -70,7 +71,7 @@ export function createConversationScroll(element:HTMLElement){
  return {
   beginManualScroll(){if(!disposed){nativePointer=undefined;dragging=true;interrupt();}},
   scrollTo(top:number):ConversationPosition{
-   if(!disposed&&Number.isFinite(top)){interrupt();element.scrollTop=Math.max(0,Math.min(maximum(),top));following=!dragging&&nearTail();}
+   if(!disposed&&Number.isFinite(top)){interrupt();element.scrollTop=clamp(top,0,maximum());following=!dragging&&nearTail();}
    return {top:element.scrollTop,tail:following};
   },
   endManualScroll(){if(!disposed){nativePointer=undefined;dragging=false;following=nearTail();}},

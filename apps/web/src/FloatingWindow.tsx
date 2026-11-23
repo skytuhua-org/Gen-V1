@@ -1,5 +1,6 @@
 import {useContext,useEffect,useId,useLayoutEffect,useRef,useState,type CSSProperties,type KeyboardEvent,type PointerEvent,type ReactNode} from 'react';
 import {ChevronDown,ChevronUp,GripVertical,RotateCcw,X} from 'lucide-react';
+import {clamp} from '../../../packages/ui-shell/format-utils';
 import {clampFloatingLayout,FLOATING_COLLAPSED_HEIGHT,readFloatingLayout,writeFloatingLayout,type FloatingAnchor,type FloatingLayout,type FloatingSize,type FloatingViewport} from './floating-layout';
 import {bringForward,layerFor,removeLayer,subscribeLayer} from './floating-order';
 import {animateTask,reducedMotion} from './task-motion';
@@ -44,7 +45,7 @@ export function FloatingWindow({id,title,children,open=true,onClose,anchor='top-
   const [layer,setLayer]=useState(()=>layerFor(id)),[interacting,setInteracting]=useState(false),[adjusting,setAdjusting]=useState(Boolean(rail)),[rendered,setRendered]=useState(open);
   const update=(next:FloatingLayout,persist=false,intent=persist)=>{
     floating.current=!rail||next.floating===true;
-    const area=areaFor(next.collapsed),available=(area.bottom??area.height)-Math.max(area.top??0,next.y),preferred=sizing==='content'?{...next,height:next.collapsed?contentHeight.current:Math.min(contentHeight.current,Math.max(minSize.height,available))}:next,valid=clampFloatingLayout(rail&&!floating.current?{...preferred,width:minimizeOnly?Math.min(defaultSize.width,area.width):area.width}:preferred,area,minSize);current.current=valid;setLayout(valid);if(intent)resizeOrigin.current={layout:valid,width:area.width,height:area.height};if(persist)writeLayout(id,valid);
+    const area=areaFor(next.collapsed),available=(area.bottom??area.height)-Math.max(area.top??0,next.y),preferred=sizing==='content'?{...next,height:next.collapsed?contentHeight.current:clamp(available,minSize.height,contentHeight.current)}:next,valid=clampFloatingLayout(rail&&!floating.current?{...preferred,width:minimizeOnly?Math.min(defaultSize.width,area.width):area.width}:preferred,area,minSize);current.current=valid;setLayout(valid);if(intent)resizeOrigin.current={layout:valid,width:area.width,height:area.height};if(persist)writeLayout(id,valid);
   };
   useLayoutEffect(()=>{rail?.report({open:open||rendered,collapsed:layout.collapsed});},[rail,open,rendered,layout.collapsed]);
   useLayoutEffect(()=>()=>rail?.report(null),[rail]);

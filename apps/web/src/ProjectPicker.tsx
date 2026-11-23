@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, Folder, FolderPlus, Palette, Search } from 'lucide-react';
 import type { ProjectSummary, WorkspaceAuthority } from '../../../packages/contracts/workspace';
 import { projectColorSchema } from '../../../packages/contracts/preferences';
+import {errorMessage} from '../../../packages/ui-shell/format-utils';
 import { Modal } from '../../../packages/ui-shell/Modal';
 import { Popover } from '../../../packages/ui-shell/Popover';
 import { isComposing } from '../../../packages/ui-shell/list-navigation';
@@ -67,7 +68,7 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
     if (busy || pending.current) return;
     pending.current = true; setWorking(true); setFailure(''); setColorError('');
     try { await action(); }
-    catch (cause) { const message = cause instanceof Error ? cause.message : String(cause); if (color) setColorError(message); else setFailure(message); }
+    catch (cause) { const message = errorMessage(cause, String(cause)); if (color) setColorError(message); else setFailure(message); }
     finally { pending.current = false; setWorking(false); }
   };
   const closeColor = () => { if (!pending.current && !busy) { setColorKey(null); colorAnchor.current?.focus(); } };

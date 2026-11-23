@@ -1,4 +1,5 @@
 const CHAT_MIN_WIDTH = 420;
+import {clamp} from '../../../packages/ui-shell/format-utils';
 const PANEL_MIN_WIDTH = 280;
 const PANEL_MAX_WIDTH = 720;
 const PANEL_GAP = 6;
@@ -9,5 +10,5 @@ export function workspacePanelBounds(ownerWidth: number, preferred: number) {
   const maximum = stacked ? owner : Math.min(PANEL_MAX_WIDTH, owner - CHAT_MIN_WIDTH - PANEL_GAP);
   const minimum = stacked ? owner : PANEL_MIN_WIDTH;
   const desired = Number.isFinite(preferred) ? preferred : 520;
-  return { stacked, minimum, maximum, width: Math.max(minimum, Math.min(maximum, desired)) };
+  return { stacked, minimum, maximum, width: clamp(desired, minimum, maximum) };
 }
