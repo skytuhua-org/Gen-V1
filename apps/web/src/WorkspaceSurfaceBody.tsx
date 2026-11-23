@@ -16,6 +16,8 @@ import {useDesktopCloseGuard} from './desktop-context.tsx';
 import {GitHubSignIn} from './GitHubSignIn.tsx';
 import {FileCheckpoints} from './FileCheckpoints';
 import {createHttpCheckpointAdapter,disabledCheckpointAdapter,type CheckpointOwner} from './file-checkpoint-api';
+import {GitHistory} from './GitHistory';
+import {createHttpGitHistoryAdapter,disabledGitHistoryAdapter} from './git-history-api';
 import type {TerminalExcerptComposer} from './TerminalBody';
 import {TerminalBody} from './TerminalBody.tsx';
 export {TerminalBody} from './TerminalBody.tsx';
@@ -48,7 +50,8 @@ function ChangesBody({base,query,active,recorded,preferences}:{base:string;query
  const threadId=query.get('threadId')??undefined;
  const{value}=useProjectRequest<{available:boolean;restore:boolean;owner?:CheckpointOwner}>(base+'/checkpoints/capability?'+query,active);
  const adapter=useMemo(()=>value?.available?createHttpCheckpointAdapter(base,threadId,value.restore===true):disabledCheckpointAdapter,[value?.available,value?.restore,base,threadId]);
- return <FileCheckpoints preferences={preferences} owner={value?.available?value.owner:undefined} adapter={adapter} current={<DiffBody base={base} query={query} active={active} fallback={recorded}/>} recorded={recorded}/>;
+ const historyAdapter=useMemo(()=>value?.available?createHttpGitHistoryAdapter(base,threadId):disabledGitHistoryAdapter,[value?.available,base,threadId]);
+ return <FileCheckpoints preferences={preferences} owner={value?.available?value.owner:undefined} adapter={adapter} current={<DiffBody base={base} query={query} active={active} fallback={recorded}/>} recorded={recorded} history={value?.available?<GitHistory adapter={historyAdapter} active={active} timeFormat={preferences.timeFormat}/>:undefined}/>;
 }
 export type ReviewRequest = {id:number;repo:string;number:number;threadId:string;projectId:string;panelId:string};
 export function WorkspaceSurfaceBody({kind,binding,snapshot,refresh,active=true,preferences,onSelectThread,onOpenTool,panelId,excerptComposer,reviewRequest,onReviewHandled}:{reviewRequest?:ReviewRequest;onReviewHandled?:(id:number)=>void;excerptComposer?:TerminalExcerptComposer;kind:WorkspacePanelKind;binding:PanelBinding;snapshot:Snapshot;refresh:()=>Promise<void>;active?:boolean;preferences?:UiPreferences;panelId?:string;onSelectThread?:(id:string)=>void|Promise<void>;onOpenTool?:(kind:WorkspacePanelKind)=>void|Promise<void>}){

@@ -78,3 +78,61 @@ export interface ComparisonPatch {
   text: string | null;
   reason?: "patch-omitted" | "unsupported-path" | "conflict" | "resource-limit" | "unsupported-file";
 }
+
+/** Read-only committed-history contracts. These identifiers do not authorize Git writes. */
+export const GIT_HISTORY_LIMITS = {
+  page: 50,
+  snapshotsPerOwner: 8,
+  snapshotsGlobal: 64,
+  snapshotIdleMs: 15 * 60 * 1000,
+  snapshotRows: 1000,
+  unpushedWalk: 10001,
+} as const;
+export const GitHistoryPageQuerySchema = z.strictObject({
+  cursor: z.string().min(1).max(256).optional(),
+});
+export const GitHistoryCommitQuerySchema = z.strictObject({
+  snapshotId: z.string().regex(/^[a-f0-9]{64}$/),
+  oid: z.string().regex(/^[0-9a-f]{40}$/),
+});
+/** A committed-tree comparison identity: never a staged/worktree snapshot. */
+export interface GitCommitIdentity {
+  kind: "commit";
+  id: string;
+  oid: string;
+  parentOid: string | null;
+  basis: "first-parent" | "root";
+  snapshotId: string;
+}
+export type GitHistoryPushState = "unpushed" | "notMarked" | "unknown";
+export interface GitHistoryCommitRow {
+  oid: string;
+  subject: string;
+  author: string;
+  authoredAt: string;
+  filesChanged: number | null;
+  pushState: GitHistoryPushState;
+}
+export interface GitHistoryPage {
+  snapshotId: string;
+  branch: string | null;
+  headOid: string | null;
+  upstreamRef: string | null;
+  commits: GitHistoryCommitRow[];
+  nextCursor: string | null;
+}
+export type GitHistoryRead =
+  | { state: "error"; error: { code: string; message: string } }
+  | { state: "ready" | "empty"; value: GitHistoryPage };
+/** A committed-file patch carries the commit identity, never a live comparison one. */
+export interface GitCommitPatch extends Omit<ComparisonPatch, "identity"> {
+  identity: GitCommitIdentity;
+}
+export interface GitCommitComparison {
+  comparisonId: string;
+  oid: string;
+  parentOid: string | null;
+  basis: "first-parent" | "root";
+  files: ComparisonFile[];
+  filesTruncated: boolean;
+}

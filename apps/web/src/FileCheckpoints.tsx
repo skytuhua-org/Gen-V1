@@ -7,14 +7,15 @@ import {checkpointOwnerKey,checkpointReviewPaths,disabledCheckpointAdapter,readC
 import './file-checkpoints.css';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
 
-const sources=['Current','Recorded','History'] as const;
-type Source=typeof sources[number];
+const baseSources=['Current','Recorded','History'] as const;
+type Source=typeof baseSources[number]|'Git history';
 export interface FileCheckpointsProps {
-  owner?:CheckpointOwner;preferences:UiPreferences;current:ReactNode;recorded:ReactNode;
+  owner?:CheckpointOwner;preferences:UiPreferences;current:ReactNode;recorded:ReactNode;history?:ReactNode;
   adapter?:FileCheckpointAdapter;initialSource?:Source;
 }
-export function FileCheckpoints({owner,preferences,current,recorded,adapter=disabledCheckpointAdapter,initialSource='Current'}:FileCheckpointsProps){
+export function FileCheckpoints({owner,preferences,current,recorded,history,adapter=disabledCheckpointAdapter,initialSource='Current'}:FileCheckpointsProps){
   const [source,setSource]=useState<Source>(initialSource),id=useId();
+  const sources:readonly Source[]=history?[...baseSources,'Git history']:baseSources;
   return <div className="file-checkpoints">
     <div className="file-checkpoints-toolbar"><strong>Changes</strong>
       <div role="tablist" aria-label="Changes source">{sources.map((name,index)=><button key={name} type="button" role="tab" id={`${id}-${name}`} aria-controls={`${id}-body`} aria-selected={source===name} tabIndex={source===name?0:-1} onClick={()=>setSource(name)} onKeyDown={event=>{
@@ -26,6 +27,7 @@ export function FileCheckpoints({owner,preferences,current,recorded,adapter=disa
     <div role="tabpanel" id={`${id}-body`} aria-labelledby={`${id}-${source}`} tabIndex={0}>
       <div hidden={source!=='Current'}>{current}</div><div hidden={source!=='Recorded'}>{recorded}</div>
       {source==='History'&&(owner?<CheckpointHistory key={checkpointOwnerKey(owner)} owner={owner} adapter={adapter} preferences={preferences}/>:<p className="file-checkpoints-note">Checkpoint history unavailable.</p>)}
+      {source==='Git history'&&history}
     </div>
   </div>;
 }

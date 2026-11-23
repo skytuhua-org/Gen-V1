@@ -3,6 +3,10 @@ import {createRoot} from 'react-dom/client';
 import {FileCheckpoints} from '../../apps/web/src/FileCheckpoints';
 import {disabledCheckpointAdapter,type CheckpointOwner,type FileCheckpoint,type FileCheckpointAdapter} from '../../apps/web/src/file-checkpoint-api';
 import {RecordedDiffPanel} from '../../apps/web/src/WorkspacePanelBodies';
+import {GitHistory} from '../../apps/web/src/GitHistory';
+import type {GitHistoryAdapter} from '../../apps/web/src/git-history-api';
+import {ApiError} from '../../apps/web/src/api';
+import type {GitCommitComparison} from '../../packages/contracts/code-review';
 import {ComposerTaskActions} from '../../apps/web/src/ComposerToolbar';
 import {DEFAULT_PREFERENCES} from '../../packages/contracts/preferences';
 import {taskFixture} from './task-interface-fixture';
@@ -28,6 +32,32 @@ if(query.get('ws')){
  snapshot.data.push({id:'unified-record',threadId:'task-thread',revision:1,createdAt:'2026-11-10T18:42:00Z',provenance:'executor; git diff; synthetic',value:{stdout:'@@ -1 +1 @@\n-alpha\n+beta'}});
 }
 const hash='a'.repeat(64),otherHash='b'.repeat(64);
+const git=query.get('git'),snapshotId='c'.repeat(64),comparisonId='d'.repeat(64);
+const oid=(index:number)=>String(index).padStart(40,'0');
+const gitRows=Array.from({length:55},(_,index)=>({oid:oid(index+2),subject:'Commit '+(index+2)+(index===0?' with a very long subject that keeps going past what fits on a single row comfortably':''),author:'Fixture Author',authoredAt:new Date(Date.UTC(2026,10,22,12,0-index,0)).toISOString(),filesChanged:index===4?null:index%3+1,pushState:index<4?'unpushed':index===5?'unknown':'notMarked'} as const));
+const gitDetail=(oidValue:string):GitCommitComparison=>({comparisonId,oid:oidValue,parentOid:oidValue===oid(2)?null:oid(1),basis:oidValue===oid(2)?'root':'first-parent',files:git==='no-files'?[]:[{path:'src/workspace-layout.ts',status:'M',untracked:false,additions:3,deletions:1},{path:'assets/logo.png',status:'A',untracked:false,additions:null,deletions:null}],filesTruncated:false});
+const gitAdapter:GitHistoryAdapter={
+ page:async(cursor)=>{
+  if(git==='loading')await wait();
+  if(git==='error')throw new ApiError('HISTORY_UNAVAILABLE','Commit history is unavailable.');
+  if(git==='stale')throw new ApiError('REVISION_CHANGED','History changed. Refresh history to continue.');
+  if(git==='empty'||git==='unborn')return {snapshotId,branch:git==='unborn'?null:'main',headOid:git==='unborn'?null:gitRows[0].oid,upstreamRef:null,commits:[],nextCursor:null};
+  const skip=cursor?50:0;
+  return {snapshotId,branch:git==='detached'?null:'main',headOid:gitRows[0].oid,upstreamRef:git==='no-upstream'?null:'refs/remotes/origin/main',commits:gitRows.slice(skip,skip+50),nextCursor:skip+50<gitRows.length?snapshotId:null};
+ },
+ commit:async(_sid,oidValue)=>{
+  if(git==='stale-detail')throw new ApiError('REVISION_CHANGED','History changed. Refresh history to continue.');
+  if(git==='detail-error')throw new ApiError('GIT_ERROR','Commit details are unavailable.');
+  return gitDetail(oidValue);
+ },
+ file:async(_cid,path)=>{
+  if(git==='patch-error')throw new ApiError('GIT_ERROR','This file diff is unavailable.');
+  const base={kind:'commit' as const,id:comparisonId,oid:oid(2),parentOid:oid(1),basis:'first-parent' as const,snapshotId};
+  if(path==='assets/logo.png')return {identity:base,file:{path,status:'A',untracked:false,additions:null,deletions:null},state:'binary',text:null};
+  if(git==='truncated')return {identity:base,file:{path,status:'M',untracked:false,additions:null,deletions:null},state:'truncated',text:null};
+  return {identity:base,file:{path,status:'M',untracked:false,additions:3,deletions:1},state:'text',text:'diff --git a/'+path+' b/'+path+'\nindex 1111111..2222222 100644\n--- a/'+path+'\n+++ b/'+path+'\n@@ -1,3 +1,4 @@\n const panelWidth = 360;\n+const panelHeight = 420;\n-old line\n+new line'};
+ },
+};
 const checkpoints:FileCheckpoint[]=[{id:'layout',label:'Before updating workspace layout',createdAt:'2026-11-10T18:42:00Z',provenance:{kind:'guarded_write',operationId:'layout-edit'},revision:hash,fileCount:(state==='full-100'||state?.startsWith('long-'))?100:2,expiresAt:null},{id:'guide',label:'Before editing the project guide',createdAt:'2026-11-09T23:18:00Z',provenance:{kind:'guarded_write',operationId:'guide-edit'},revision:otherHash,fileCount:1,expiresAt:null}];
 const pathsById:Record<string,string[]>={layout:state?.startsWith('long-')?Array.from({length:100},(_,i)=>`src/${i}/${'a'.repeat(200)}/${'b'.repeat(200)}/file.ts`):state==='full-100'?Array.from({length:100},(_,i)=>`src/file-${i}.ts`):state==='controls'?['src/notes\t2026.txt','src/notes\n2026.txt']:state==='leading-space'?[' src/a','src/a']:['src/workspace-layout.ts','src/workspace-layout.test.ts'],guide:['docs/project-guide.md']};
 if(state==='stress')for(const checkpoint of checkpoints){checkpoint.label+=' extraordinarily-long-project-and-file-name-with-unbroken-content-abcdefghijklmnopqrstuvwxyz0123456789';pathsById[checkpoint.id]=pathsById[checkpoint.id].map(path=>'very/long/nested/folder/abcdefghijklmnopqrstuvwxyz0123456789/'+path);}
@@ -67,7 +97,8 @@ function Fixture(){
    <strong>Audit the workspace</strong><p className="panel-note">Example content</p><p>Review the workspace, sidebar and composer. This is synthetic audit content.</p>
    <div className="wo5-checkpoints-composer"><textarea aria-label="Prompt" placeholder="Ask anything…"/><ComposerTaskActions onChanges={()=>{}} onCreatePR={()=>{}}/></div>
   </section><section className="wo5-checkpoints-tool" aria-label="Changes">
-   <FileCheckpoints owner={currentOwner} preferences={{...DEFAULT_PREFERENCES,diffDefaultExpanded:true}} initialSource="History" adapter={state==='unavailable'?undefined:adapter}
+   <FileCheckpoints owner={currentOwner} preferences={{...DEFAULT_PREFERENCES,diffDefaultExpanded:true}} initialSource={git?'Git history':'History'} adapter={state==='unavailable'?undefined:adapter}
+    history={git?<GitHistory adapter={gitAdapter} active={true} timeFormat="system"/>:undefined}
     current={<div className="panel-empty"><strong>Live working-copy changes</strong><p>Synthetic current Git source · work-one</p></div>}
     recorded={<RecordedDiffPanel snapshot={snapshot} threadId="task-thread" preferences={recordedPreferences}/>}/>
   </section></div>

@@ -4,7 +4,7 @@ import {z} from 'zod';
 import type {Service} from '../../packages/core/service.ts';
 import {HarnessError} from '../../packages/contracts/index.ts';
 import {integrationIdSchema} from '../../packages/contracts/integrations.ts';
-import {ComparisonFileRequestSchema,ComparisonScopeSchema} from '../../packages/contracts/code-review.ts';
+import {ComparisonFileRequestSchema,ComparisonScopeSchema,GitHistoryCommitQuerySchema,GitHistoryPageQuerySchema} from '../../packages/contracts/code-review.ts';
 import {workspaceHost,githubFor} from './workspace-host.ts';
 import {registerEnvironmentRoutes} from './environment-routes.ts';
 import {registerIntegrationSecretReferenceRoutes} from './integration-secret-reference-routes.ts';
@@ -55,6 +55,22 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
   reply.header('Cache-Control','no-store');
   const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,...input}=ComparisonFileRequestSchema.extend({threadId:identifier.optional()}).parse(request.query);
   return projects.gitComparisonFile(projectId,threadId,input);
+ });
+ // Read-only committed history; snapshots and cursors stay server-side per owner.
+ app.get('/api/projects/:projectId/git/history',async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,...input}=GitHistoryPageQuerySchema.extend({threadId:identifier.optional()}).parse(request.query);
+  return projects.gitHistory(projectId,threadId,input);
+ });
+ app.get('/api/projects/:projectId/git/history/commit',async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,...input}=GitHistoryCommitQuerySchema.extend({threadId:identifier.optional()}).parse(request.query);
+  return projects.gitHistoryCommit(projectId,threadId,input);
+ });
+ app.get('/api/projects/:projectId/git/history/file',async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,...input}=ComparisonFileRequestSchema.extend({threadId:identifier.optional()}).parse(request.query);
+  return projects.gitHistoryFile(projectId,threadId,input);
  });
  app.get('/api/projects/:projectId/pull-requests/:number/comparison',async(request,reply)=>{
   reply.header('Cache-Control','no-store');
