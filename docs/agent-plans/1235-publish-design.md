@@ -1,65 +1,116 @@
-# Design: Publish (commit, push and PR from a thread) — front-end spec (issue #1235 task T09; covers #1272 T06, #1273 T07, #1274 T08)
+# Design and animation spec: Commit, push and PR from a thread (issue #1235, task T09)
 
-Front-end design spec. Structure/behavior lives in the sub-plans (`1235-t06-publish-review-ui.md`, `1235-t07-pr-card.md`, `1235-t08-recovery-ui.md`); this file owns layout, tokens, copy and motion.
+## META
+- Feature: visual design and motion spec for the thread "Publish" flow — review sheet, step progress, in-thread PR card, recovery.
+- Repo: skytuhua-org/Gen-V1
+- Spec revision: r1, 2026-11-21 (UTC)
+- Baseline: `main` @ `1f9466ab3fde0713b42430d0e59e08f744637d52`
+- Implementation plan: `docs/agent-plans/thread-publish-pr.md @ 5c18b5e` (issue #1235), task T09
+- Status: DESIGN ONLY. Implementers build exactly what is written here; this file is the complete design decision record — no open choices.
+- Source provenance: `DESIGN.md` (visual contract, motion tokens), `packages/ui-shell/tokens.css`, `apps/web/src/shell.css`, `apps/web/src/workspace-tools.css`, `apps/web/src/WorkspaceSurfaceBody.tsx` (PullRequestsBody, prJournalSchema, checkSummary), `apps/web/src/ComposerToolbar.tsx`, `apps/web/src/ProjectContextCard.tsx`.
 
-Mockups: `docs/agent-plans/assets/design/publish-review-sheet.png`, `docs/agent-plans/assets/design/publish-pr-card-recovery.png`
+## OBJECTIVE
+The user reviews exactly what will be published and approves once. The sheet reads as a review, not a form: content first, one action. After approval, progress is honest per step and the result is a small PR card inside the thread. The feature is behind `workspace.publishV1` (off by default); when off, zero visual change.
 
-## 1. Composer "Create PR" chip
+Measurable: the review fits in one screen at 100% zoom on the default 760px chat width; every state named in this spec renders identically to the tokens it cites.
 
-- Lives in the composer control row as a `chip`-style action when the thread has a managed copy: `⎇ Create PR · <n> files` — `background:var(--accent-bg)`, `color:var(--accent-fg)`, 16px radius, 12px.
-- Hidden when the `publishV1` flag is off or the working copy is clean. While a publish is in flight the chip reads `Publishing…` and is disabled.
+## SHARED DECISIONS
+- All values use existing tokens and classes. No new color, shadow, radius or duration is introduced. New CSS goes in `apps/web/src/publish.css`, scoped under `.publish-*`.
+- Surfaces: `--surface`, border `--border`, text `--text`, secondary text `--muted`, mono `--font-mono`, selection `--selection-bg`, success `--ok`, warning `--warning`/`--warning-bg`, error `--danger`.
+- Radius: cards and panels 10px; small inline chips/inputs 4px (existing pattern in workspace-tools.css); badges 4px.
+- Type: sheet title 14px/600, section heads 13px/600, body 13px/1.5, notes 12px `--muted`, mono facts 11px `--font-mono`.
+- Spacing: dialog inset `--ui-dialog-inset` (24px); section gaps 12px (`--ui-panel-inset`); row gaps 8px.
+- Mode: Operate. Compact, dense, no decoration (per DESIGN.md and S's compact preference).
 
-## 2. Review sheet (T06)
+## 1. Composer chip (entry point)
+- Existing `.composer-pr` chip keeps its position and size. Label changes only when the flag is on and the thread has a writable managed copy: icon `GitBranch` (unchanged) + text `Publish PR`.
+- `aria-label="Publish draft PR"`, `title="Review and publish these changes to GitHub"`. When `working` (active run), chip stays enabled-looking but `title="Wait for the active run to finish"` and `disabled` — identical to today.
+- When flag off or no managed copy: byte-for-byte current behavior (inserts prompt text, label "Create PR").
 
-Shared modal: `var(--ui-modal-scrim)` + 6px backdrop blur, `max-width:720px`, `border-radius:12px`, `var(--surface)`, `var(--elevation)`. Header 14px/600 `Review before publishing`, red `×` close. Body `padding:16px 18px`, footer right-aligned ghost+primary.
+## 2. Publish review sheet
+- Shared Modal primitive: `<dialog class="ui-modal publish-review">`, `width: min(560px, calc(100vw - 32px))`, `max-height: calc(100dvh - 64px)`, inset 24px, radius 12px, `--border`, backdrop `var(--ui-modal-scrim)` + `blur(6px)` (already global on `dialog:modal::backdrop`).
+- Header: `.ui-modal-header` — title `Review and publish` (14px/600) at top; below it one `--muted` 12px line: `<branch name> → <base branch>` (mono for branch names). Close button top-right, `aria-label="Close"`, 32px target.
+- Body (`display:grid; gap:12px`), in order:
+  1. **Files** — head row: `Files to publish` (13px/600) + right-aligned count `<n> selected`. List inside `border:1px solid --border; border-radius:8px; max-height:220px; overflow:auto`. Rows 32px (`--ui-row-compact`), `padding:6px 10px`, separated by `1px --border` like `.pr-check-list`. Each row: 16px checkbox (`accent-color: var(--control-accent,current)` is NOT allowed — use default checkbox or shared control; unchecked = excluded), mono path truncated middle-ellipsis, then right-aligned `+added` (`--ok`) `−removed` (`--danger`) 12px, and `untracked` badge (2px/6px padding, 4px radius, 11px, `--muted` border) for new files.
+  2. **Commit message** — label `Commit message`; single-line input, 36px, mono 12px, prefilled (thread title, 72 chars max).
+  3. **Base branch** — label `Base branch`; single-line input 36px mono, prefilled from `defaultBranch`. When fallback `main` is used, note under field (12px `--muted`): `Default branch could not be read — check this before publishing.`
+  4. **Pull request** — label; Title input 36px (prefilled, 200 max), Description textarea `min-height:90px` 13px (prefilled template, 64000 max).
+  5. Inline `GitHubSignIn` region appears under the header (not in body order) when `GITHUB_AUTH_REQUIRED`.
+- Errors: banner above footer, `border:1px solid --border; border-radius:8px; padding:8px 10px; background:var(--warning-bg); font-size:12px; line-height:1.5`. Copy verbatim:
+  - `GitHub sign-in required.` → renders `GitHubSignIn` instead of fields.
+  - `This repository has no GitHub remote.` (`GITHUB_REMOTE_REQUIRED`)
+  - `This working copy is read-only.` (`PROJECT_READ_ONLY`)
+  - `The working copy changed. Review it again.` (`REVISION_CHANGED` — sheet reloads draft behind the dialog, fields refresh)
+  - `The GitHub branch changed. Refresh and review again.` (push rejected)
+  - `The result is unclear. Check what happened before retrying.` (`UNCERTAIN`)
+- Footer: right-aligned `Cancel` (secondary) + primary `Commit, push and open draft PR`. Primary disabled while any field is empty or busy; shows `aria-busy` while running.
+- Empty tree edge: when there are no changed files but the branch is ahead of base, the Files section shows one 32px row `Nothing to commit — the branch will be pushed as-is.` (12px `--muted`).
 
-Sections, in order, each with an 11px `var(--muted)` label (`field-label`, `margin:14px 0 6px`):
+## 3. Step progress (during execution)
+- On approve, body replaces with a step list (`role="status"`), same `gap:8px`, three steps:
+  1. `Commit changes`
+  2. `Push and open draft PR`
+  3. `Link pull request to thread`
+- Each step row: 20px status mark + 13px label + 12px `--muted` detail (receipt text once known, e.g. `c0ffee1` or `#421`).
+- Marks: pending = 14px empty circle `--border` border; running = 14px spinner `border:2px solid --border; border-top-color:var(--muted); border-radius:50%; animation:spin .8s linear infinite`; confirmed = 14px filled `--ok` circle with white check (8px); not-applied = 14px circle with `--muted` dash; uncertain = 14px `--warning` circle with `!`; failed = `--danger` circle with `×`.
+- Detail under uncertain/failed step adds one `--muted` line naming the recovery action.
+- Footer while running: `Cancel` becomes `Close` (dialog stays; operation continues server-side); primary is replaced by nothing — the step list is the action surface.
 
-1. **Branch to push** — one mono line `devin/<slug> → origin`, 12px.
-2. **Files · <n> changed** — inset card (`1px var(--border)`, 10px radius, `padding:4px 6px`). Each row 7px padding: checkbox (16px, `var(--accent-solid)` fill when on) + mono path + right-aligned `+a −b` (`var(--success)`/`var(--danger)`, 12px). `new` files get a neutral pill. Excluded/untracked rows at `opacity:.6` with meta `untracked — excluded`. Hover: `var(--subtle)`. Whole-file include/exclude only.
-3. **Commit message** — single-line input, mono.
-4. **Pull request** — title input + body textarea (`min-height:72px`) prefilled by the plan's template.
-5. **Base branch** — `ui-select`, default = repo default.
+## 4. In-thread PR card (after success)
+- `.publish-pr-card`: renders in the thread (placement per T01; fallback = composer dock above task actions). `border:1px solid --border; border-radius:10px; padding:12px; display:grid; gap:8px; font-size:13px`, width = composer width (matches inline artifact rule: one container, chat measure).
+- Row 1: `GitPullRequestDraft` 16px icon (`--muted`) + `#<n>` mono + title (600, truncated 1 line) + right-aligned `Draft` badge (2px/6px, 4px radius, 11px, `--muted` border — neutral, not purple).
+- Row 2 (checks): summary text identical to `checkSummary` output (`2 passed · 1 running`, 12px `--muted`) + the same 7px-dot list from `.pr-check-list` capped at 4 rows (rest behind `+N more`).
+- Row 3 (actions): `View on GitHub` (link-style button, opens URL), `Refresh checks` (secondary button, `aria-busy` while fetching), `Open in Pull request panel` (secondary).
+- States: `Refresh checks` disabled while no checks endpoint; checks area shows `No checks reported yet.` when empty; error = `Checks could not be read.` (12px, `--warning-bg` banner 8px/10px).
+- Card persists via stored link (not animation). Auto-refresh every 30s up to 30 min, only while visible — no visual difference on refresh; check rows update via the 180/140ms insert/remove motion.
 
-Footer: `Cancel` (ghost) / `Commit, push & open PR` (`.primary`).
+## 5. Recovery state
+- Reopening a thread with an unfinished operation shows the same PR card shell with a `--warning-bg` banner: `Publishing stopped at <step>.` + buttons `Check what happened` then `Continue from <next step>` (the second rendered only once inspection returns confirmed/not-applied on the predecessor). Completed card = section 4.
 
-### States
+## 6. Motion (all from the token table — names, not new values)
+- Sheet open/close: dialog appears instantly (no size tween); content uses popover enter `180ms var(--ui-ease-enter)` opacity + 4px translate.
+- File list insert/remove on select/deselect: opacity only, `120ms` (hover/focus token — rows never reorder, only checkbox state changes).
+- Draft load: structure-matched skeleton rows (3 file rows + field blocks) after 150ms delay; static under reduced motion.
+- Step transitions: status crossfade `160ms`; each confirmed step emits the single `240ms` success pulse on its mark only. Steps appear all at once — no stagger.
+- PR card entering the thread: list-insert `180ms var(--ui-ease-enter)` opacity + 4px translate, exactly once (not on reload/restore — "do not replay whole-view entrances on restore").
+- Check list updates: insert/remove `180/140ms`, stagger `30ms`, max `150ms` delay.
+- Buttons: press `80ms` scale .97 (shared control behavior); hover `120ms`.
+- Reduced motion (`[data-motion="reduced"|"off"]` and `prefers-reduced-motion`): no translate, no stagger, no spinner rotation (static `--muted` half-ring or hourglass glyph), no success pulse — state change shown as opacity ≤80ms. Skeleton rows are static.
 
-- Loading contents: structure-matched skeleton inside the sheet (DESIGN.md loading rules), buttons disabled.
-- Empty diff / nothing publishable: sheet doesn't open; the chip is hidden. If reached directly, one line `Nothing to publish — the working copy is clean.`
-- Step in flight: primary button `Publishing…` disabled; per-step status text replaces the button row: `Committing…` → `Pushing…` → `Opening PR…` (12px `var(--muted)`), cancel stays available.
-- Step failed: error line in the sheet — `Push failed: <reason>` `var(--danger)` + `Retry` — the sheet does not close; review fields keep edits.
+## 7. Copy (verbatim)
+- Chip: `Publish PR`
+- Sheet title: `Review and publish`; subtitle: `{branch} → {base}`
+- Sections: `Files to publish` · `Commit message` · `Base branch` · `Pull request`
+- Primary: `Commit, push and open draft PR`; secondary: `Cancel` / `Close`
+- Steps: `Commit changes` · `Push and open draft PR` · `Link pull request to thread`
+- Card: badge `Draft`; links `View on GitHub` · `Refresh checks` · `Open in Pull request panel`; empty checks `No checks reported yet.`
+- Recovery: `Publishing stopped at {step}.` · `Check what happened` · `Continue from {step}`
 
-## 3. In-thread PR card (T07)
+## 8. Accessibility
+- Sheet: focus trapped in modal; focus lands on commit-message input; Escape cancels unless an operation is running (then it only closes the dialog). Checkbox rows are real `<label>` + `<input type="checkbox">` with the path as accessible name.
+- Step list `role="status"`; each step `aria-label` includes its state (`Commit changes — running`).
+- Card: checks summary is plain text (readable by screen reader), color dots are `aria-hidden` decoration.
+- All interactive targets ≥32px; keyboard path: chip → dialog fields → approve; card buttons tabbable.
+- Status communicated by text + icon, never color alone (DESIGN.md rule).
 
-`.card` at narrative width, `padding:12px 14px`:
+## REPO_MAP
+| Path | Use |
+|---|---|
+| `apps/web/src/PublishReview.tsx` (new) | sheet + step progress; classes `.publish-*` |
+| `apps/web/src/ThreadPullRequestCard.tsx` (new) | `.publish-pr-card` |
+| `apps/web/src/publish.css` (new) | all new CSS, tokens only |
+| `apps/web/src/WorkspaceSurfaceBody.tsx` | reuse `checkSummary`, `prJournalSchema` pattern |
+| `apps/web/src/ComposerToolbar.tsx` | chip label/props |
+| `packages/ui-shell/tokens.css`, `apps/web/src/workspace-tools.css` | tokens and `.pr-check-list` patterns |
 
-- Line 1: success `PR` pill + bold 13px `#<n> · <title>` + muted sub `devin/<slug> → main · open|draft` + right-aligned checks pill: `Checks running · 3/5` (`var(--warning-fg)`/`bg`), `Checks passed` (success), `Checks failed` (danger).
-- Line 2 (12px links, `var(--accent-fg)`, `gap:14px`): `View on GitHub` · `Refresh checks` · `Open in Pull requests`.
-- Insert: list-insert motion, 180ms; check-status pill crossfades 160ms; no polling spinners (auto-refresh swaps text in place).
-- Draft PRs: `open` in the sub-line reads `draft`.
+## VALIDATION
+- `pnpm lint && pnpm typecheck`; Playwright spec `tests/e2e/publish-thread.spec.ts` (from T06–T08) asserts: sheet layout tokens, all copy strings, step states, card rows, reduced-motion computed styles (no transform/animation-duration >80ms), keyboard-only flow.
+- Visual check at 760px/Comfortable/Full chat widths, dark + light, 100/125/150% zoom.
 
-## 4. Recovery (T08)
+## STATE
+- Spec r1 complete. No implementation. Next: implementer applies this spec on the issue's T06–T08 structure (task T09), then T10 verification.
 
-- Reopened thread with an uncertain step shows the PR card in **uncertain** form: `var(--warning-fg/bg)` pill `Uncertain`, title `Push may not have completed` (or the actual last step), muted sub `The app closed before the push was confirmed. Nothing was retried.`
-- Actions: `Check what happened` (ghost, enabled — runs inspect) and `Continue from “<next step>”` (ghost, **disabled** until the predecessor confirms). Confirmed state swaps to the normal card with a 160ms crossfade and one 240ms success pulse.
-- Terminal failure keeps the card with `danger` pill `Failed`, plain-sentence error naming the next action, and `Retry`/`Discard` actions.
-
-## 5. Motion summary
-
-- Modal: shared modal entrance; scrim fade only (no scale beyond popover rules).
-- Chip/card insert: 180ms insert; status pill changes 160ms crossfade; success pulse 240ms once.
-- Reduced motion: opacity ≤80ms; the success pulse becomes a static state change.
-
-## 6. Accessibility
-
-- Sheet: `role="dialog"`, labelled by the title, focus trapped, Esc cancels (with edits kept), `×` `aria-label="Close"`.
-- File rows: real checkboxes with `aria-label="Include <path>"`.
-- PR card: `role="region"` `aria-label="Pull request"`; check pill is text + color.
-- Recovery card announces via `role="status"` when it changes.
-
-## 7. Copy
-
-- Sheet title `Review before publishing`; CTA `Commit, push & open PR`.
-- Step text `Committing…`/`Pushing…`/`Opening PR…`.
-- Uncertain: `Push may not have completed` / `The app closed before the push was confirmed. Nothing was retried.` / `Check what happened` / `Continue from “Open PR”`.
+## REFERENCES
+- Issue: https://github.com/skytuhua-org/Gen-V1/issues/1235
+- Implementation plan: `docs/agent-plans/thread-publish-pr.md`
+- Visual contract: `DESIGN.md` (motion token table, popup/modal rules, spacing/color rules)
