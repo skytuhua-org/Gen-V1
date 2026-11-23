@@ -29,6 +29,6 @@ export function groupGrants(resources: ShellResourceRow[]): GrantedResourceGroup
 }
 
 export function grantMeta(group: GrantedResourceGroup, title: string | undefined): string {
-  if (group.threadIds.length === 1 && title) return 'Granted to ' + (title.length > 40 ? title.slice(0, 40) + '…' : title);
+  if (group.threadIds.length === 1 && title) return 'Granted to ' + (title.length > 40 ? title.slice(0, 39) + '…' : title);
   return `Granted to ${group.threadIds.length} ${group.threadIds.length === 1 ? 'thread' : 'threads'}`;
 }

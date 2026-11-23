@@ -19,7 +19,7 @@ it('collapses identical per-thread grants into one sorted row', () => {
   expect(groups[0].threadIds.sort()).toEqual(['catalog', 'shell', 'signing']);
   expect(grantMeta(groups[0], undefined)).toBe('Granted to 3 threads');
   expect(grantMeta(groups[1], 'Sign the service agreement')).toBe('Granted to Sign the service agreement');
-  expect(grantMeta(groups[1], 'A thread title that goes well beyond forty characters')).toBe('Granted to ' + 'A thread title that goes well beyond forty characters'.slice(0, 40) + '…');
+  expect(grantMeta(groups[1], 'A thread title that goes well beyond forty characters')).toBe('Granted to ' + 'A thread title that goes well beyond forty characters'.slice(0, 39) + '…');
 });
 
 it('keeps distinct kinds and paths as separate rows', () => {
