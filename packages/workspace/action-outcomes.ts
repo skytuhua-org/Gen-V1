@@ -272,20 +272,23 @@ export class WorkspaceActionOutcomes {
         ? await withPathGuard([{ ...fence.credential, leaf: true, readOnly: true }], new AbortController().signal, write)
         : await write();
       return this.current(fence) ? result : { state: 'revoked' };
-    } catch {
-      if (started) return { state: 'uncertain' };
+    } catch (error) {
+      // Provably pre-write refusals (auth negotiation fails before any ref update) may roll a 'started' marker back to not-applied and surface the real error code.
+      const refused = error instanceof HarnessError && error.code === 'GITHUB_AUTH_REQUIRED';
+      if (started && !refused) return { state: 'uncertain' };
       // This invocation owns the reservation and has never entered a write tool.
       try {
         this.store.internal('project.action.not-applied', input.threadId ?? null, () => {
           const current = this.read(command);
-          if (!current || current.status !== 'prepared' || current.ownerFence !== fence.hash) throw denied();
+          if (!current || current.ownerFence !== fence.hash || (refused ? current.status !== 'prepared' && current.status !== 'started' : current.status !== 'prepared')) throw denied();
           this.store.put(kind, input.id, input.threadId ?? null, { ...current, status: 'not-applied' });
           return this.summary(command, this.current(fence) ? 'not-applied' : 'revoked');
         });
-        return this.current(fence) ? { state: 'not-applied' } : { state: 'revoked' };
       } catch {
         return { state: 'uncertain' };
       }
+      if (refused) throw error;
+      return this.current(fence) ? { state: 'not-applied' } : { state: 'revoked' };
     }
   }
   /** Read only: no commands, retries, current diff inspection, or remote review searches. */
