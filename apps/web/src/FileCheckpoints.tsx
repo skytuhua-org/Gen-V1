@@ -5,15 +5,16 @@ import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import {displayFilePath} from './files/FilesView';
 import {checkpointOwnerKey,checkpointReviewPaths,disabledCheckpointAdapter,readCheckpointDetail,readCheckpointList,readCheckpointReview,readRestorePlan,readRestoreResult,type CheckpointOwner,type CheckpointRestorePlan,type CheckpointReview,type FileCheckpoint,type FileCheckpointAdapter} from './file-checkpoint-api';
 import './file-checkpoints.css';
+import {UnifiedDiff} from './UnifiedDiff';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
 
-const sources=['Current','Recorded','History'] as const;
+const sources=['Current','Recorded','History','Git history'] as const;
 type Source=typeof sources[number];
 export interface FileCheckpointsProps {
-  owner?:CheckpointOwner;preferences:UiPreferences;current:ReactNode;recorded:ReactNode;
+  owner?:CheckpointOwner;preferences:UiPreferences;current:ReactNode;recorded:ReactNode;gitHistory?:ReactNode;
   adapter?:FileCheckpointAdapter;initialSource?:Source;
 }
-export function FileCheckpoints({owner,preferences,current,recorded,adapter=disabledCheckpointAdapter,initialSource='Current'}:FileCheckpointsProps){
+export function FileCheckpoints({owner,preferences,current,recorded,gitHistory,adapter=disabledCheckpointAdapter,initialSource='Current'}:FileCheckpointsProps){
   const [source,setSource]=useState<Source>(initialSource),id=useId();
   return <div className="file-checkpoints">
     <div className="file-checkpoints-toolbar"><strong>Changes</strong>
@@ -26,6 +27,7 @@ export function FileCheckpoints({owner,preferences,current,recorded,adapter=disa
     <div role="tabpanel" id={`${id}-body`} aria-labelledby={`${id}-${source}`} tabIndex={0}>
       <div hidden={source!=='Current'}>{current}</div><div hidden={source!=='Recorded'}>{recorded}</div>
       {source==='History'&&(owner?<CheckpointHistory key={checkpointOwnerKey(owner)} owner={owner} adapter={adapter} preferences={preferences}/>:<p className="file-checkpoints-note">Checkpoint history unavailable.</p>)}
+      {source==='Git history'&&(gitHistory??<p className="file-checkpoints-note">Commit history unavailable</p>)}
     </div>
   </div>;
 }
@@ -34,14 +36,7 @@ const plural=(count:number,word:string)=>`${count} ${word}${count===1?'':'s'}`;
 const formatTime=(value:string,preferences:UiPreferences)=>new Date(value).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short',hour12:preferences.timeFormat==='system'?undefined:preferences.timeFormat==='12h'});
 const provenance=(checkpoint:FileCheckpoint)=>checkpoint.provenance.kind==='restore_backup'?'Saved before a restore':'Saved before an edit';
 const statusNote=(status:string)=>status==='missing'?'Not in your files now':status==='binary'?'Binary file, no preview':status==='too_large'?'Too large to preview':status==='unreadable'?'Could not be read':'No preview available';
-const diffLineKind=(line:string)=>line.startsWith('@@')?'hunk':line.startsWith('+')?'add':line.startsWith('-')?'remove':'context';
-function CheckpointDiff({diff}:{diff:string}){
-  const all=diff.split('\n'),firstHunk=all.findIndex(line=>line.startsWith('@@'));
-  const headerEnd=firstHunk===-1?Math.min(2,all.length):firstHunk;
-  const lines=all.filter((line,index)=>index>=headerEnd||!(line.startsWith('--- ')||line.startsWith('+++ ')));
-  if(!lines.some(line=>line.trim()))return <pre className="unified-diff"><span data-kind="context">No differences.</span></pre>;
-  return <pre className="unified-diff">{lines.map((line,index)=><span key={index} data-kind={diffLineKind(line)}>{line||' '}{'\n'}</span>)}</pre>;
-}
+const CheckpointDiff=({diff}:{diff:string})=><UnifiedDiff diff={diff} trimHeaders/>;
 function CheckpointHistory({owner,adapter,preferences}:{owner:CheckpointOwner;preferences:UiPreferences}&{adapter:FileCheckpointAdapter}){
   const [items,setItems]=useState<FileCheckpoint[]>([]),[nextCursor,setNextCursor]=useState<string>(),[error,setError]=useState(''),[loading,setLoading]=useState(true),[attempt,setAttempt]=useState(0),[cursor,setCursor]=useState<string>(),[checkpoint,setCheckpoint]=useState<FileCheckpoint>();
   const opener=useRef<HTMLButtonElement|null>(null);
