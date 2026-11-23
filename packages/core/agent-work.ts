@@ -454,7 +454,10 @@ export class AgentWorkCoordinator {
       kind: args.kind, text: args.text, dedupeKey: args.dedupeKey, sourceRefs: args.sourceRefs,
     }, {liveSteer: live?.child.supportsLiveSteer === true && work.state === 'RUNNING'});
     if (record.delivery !== 'ACCEPTED') return record;
-    if (!live || AGENT_WORK_TERMINAL_STATES.has(work.state)) return this.inbox.markUnknown(record.inputId);
+    const target = record.targetOwner;
+    if (!live || AGENT_WORK_TERMINAL_STATES.has(work.state) || target.runId !== live.runId ||
+        target.epoch !== work.childOwner.epoch || target.threadId !== work.childOwner.threadId)
+      return this.inbox.markUnknown(record.inputId);
     live.delivery = live.delivery.then(async () => {
       const current = this.inbox.inspect(record.inputId);
       if (!current || current.delivery !== 'ACCEPTED') return;

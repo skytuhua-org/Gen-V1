@@ -398,7 +398,7 @@ describe('live-steer semantics, revocation revalidation and dispatch race', () =
     expect(child.disposed).toBe(true);
   });
 
-  it('does not dispatch queued ordinary input to the retired child after resume', async () => {
+  it.each([false,true])('does not dispatch queued ordinary input after resume (resubmitted=%s)', async resubmit => {
     let acknowledge!: () => void;
     const wait = new Promise<void>(resolve => { acknowledge = resolve; });
     const first = new FakeChild(true, input => input.inputId === 'queued-one' ? wait : undefined);
@@ -412,6 +412,7 @@ describe('live-steer semantics, revocation revalidation and dispatch race', () =
       await vi.waitFor(() => expect(first.sent.map(input => input.inputId)).toContain('queued-one'));
       await f.coordinator.stop(f.ctx, work.workId);
       await f.coordinator.resume(f.ctx, work.workId);
+      if (resubmit) expect(send('queued-two').delivery).toBe('UNKNOWN');
     } finally { acknowledge(); }
     await vi.waitFor(() => expect(f.coordinator.inbox.inspect('queued-two')?.delivery).not.toBe('ACCEPTED'));
     expect(f.coordinator.inbox.inspect('queued-two')).toMatchObject({delivery: 'UNKNOWN'});
