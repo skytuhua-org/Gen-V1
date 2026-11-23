@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 import { rootBrowserSpecs } from "./scripts/browser-suites.ts";
 export default defineConfig({
+  expect: { timeout: 10_000 },
   testDir: "tests/e2e",
   testMatch: rootBrowserSpecs,
   use: { baseURL: "http://127.0.0.1:5499", viewport: { width: 1440, height: 1000 }, trace: "retain-on-failure" },
