@@ -1106,7 +1106,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const splitRoot=splitEnabled&&Boolean(thread||convSplitState.layout&&Object.keys(convSplitState.layout.views).length);
   const panelToggle=!embeddedThreadId?<button type="button" className={`icon-button workspace-panel-toggle ${layout.rightPanelOpen ? 'selected' : ''}`} aria-label={layout.rightPanelOpen ? 'Hide workspace panel' : 'Open workspace panel'} aria-pressed={layout.rightPanelOpen} title={layout.rightPanelOpen ? 'Close right panel' : 'Open right panel'} onClick={() => setLayout(value => value.rightPanelOpen ? { ...value, rightPanelOpen: false, rightPanelMaximized: false } : { ...value, rightPanelOpen: true })}><PanelRight size={17} /></button>:null;
   const rightWindowOpen=layout.rightPanelOpen||sideOpen||Boolean(documentWindow&&documentWindow.placement==='docked')||Boolean(desktop?.state.dockedBrowser);
-  const overviewToggle=!embeddedThreadId&&!canvasActive&&!detachedPlan&&!rightWindowOpen?<SummaryToggle title="Project overview" disclosure={overviewDisclosure}><Info size={16} aria-hidden="true"/></SummaryToggle>:null;
+  const overviewToggle=!embeddedThreadId&&!canvasActive&&!detachedPlan&&!rightWindowOpen&&!selectedPluginId?<SummaryToggle title="Project overview" disclosure={overviewDisclosure}><Info size={16} aria-hidden="true"/></SummaryToggle>:null;
   // Live Usage follows an eligible visible conversation focus; main placement remains its own navigation owner.
   const usagePlaneLayout=customDock?customConversationLayout:convSplitState.layout;
   const activeUsageViewIds=liveUsageViews.workspaceId===usagePlaneLayout?.id?liveUsageViews.viewIds:[];
