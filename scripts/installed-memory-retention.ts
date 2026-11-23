@@ -137,7 +137,7 @@ export async function verifyInstalledMemoryUI(page: Page, seed: InstalledMemoryS
     if (await overviewTab.getAttribute('aria-selected') !== 'true') await overviewTab.click({timeout: 30000});
     const overview = page.locator('.project-context-card');
     await expect(overview).toBeVisible({timeout: 30000});
-    const memoryButton = overview.getByRole('button', {name: 'Project memory', exact: true});
+    const memoryButton = page.locator('.project-memory-launcher').getByRole('button', {name: 'Project memory', exact: true});
     await expect(memoryButton).toBeEnabled({timeout: 30000});
     await memoryButton.click({timeout: 30000});
     const panel = page.getByRole('dialog', {name: 'Project memory', exact: true});
