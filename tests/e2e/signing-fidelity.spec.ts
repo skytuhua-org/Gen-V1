@@ -258,7 +258,7 @@ test('step transition keeps both panels mounted, outgoing controls inert and sav
   await page.getByRole('radio', { name: 'Work', exact: true }).check();
   await page.evaluate(() => Object.assign(window, { signingPanel: document.querySelector('.task-step-content>div') }));
   const observed = await page.evaluate(async () => {
-    document.querySelector<HTMLButtonElement>('button[aria-label="Next step"]')!.click();
+    document.querySelector<HTMLButtonElement>('button[aria-label="Next step"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const panels = [...document.querySelectorAll<HTMLElement>('.task-step-content>div')];
     return panels.map(element => ({ hidden: element.hidden, inert: element.inert, phase: element.dataset.phase, animations: element.getAnimations().map(animation => animation.effect?.getTiming().duration) }));

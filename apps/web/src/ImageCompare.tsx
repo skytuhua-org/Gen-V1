@@ -174,16 +174,16 @@ function ImagePair({ props, view, change }: { props: ImageCompareProps; view: Vi
 export function ImageCompare(props: ImageCompareProps) {
   const store = useStateStore(), title = useContext(ArtifactTitle), evidence = useDocumentEvidence();
   const parsed = IMAGE_COMPARE_SCHEMAS.ImageCompare.safeParse(props);
-  if (!parsed.success) return <p className="error-text" role="status">Choose two granted images to compare.</p>;
   const grants = [props.beforeResourceId, props.afterResourceId].map(id => evidence?.resources.find(resource => resource.id === id && resource.threadId === evidence.threadId && resource.kind !== 'project' && resource.kind !== 'database'));
-  if (grants.some(grant => !grant)) return <p className="error-text" role="status">One of these images is no longer available to this thread. Attach it again to compare.</p>;
-  const key = JSON.stringify(grants.map(grant => [grant!.id, grant!.threadId, grant!.path, grant!.identity ?? null]));
+  const granted = parsed.success && grants.every(grant => grant !== undefined);
+  const key = granted ? JSON.stringify(grants.map(grant => [grant!.id, grant!.threadId, grant!.path, grant!.identity ?? null])) : '';
   // pairKey is the SHA-256 of the pair identity JSON; the digest resolves off
   // render and only ever binds the record it was computed for.
   const firstKey = useRef(key), multipleOwners = firstKey.current !== key;
   const [digest, setDigest] = useState<string | null | undefined>(undefined);
   const pending = useRef<View | null>(null);
   useEffect(() => {
+    if (!key) return;
     let live = true;
     pending.current = null; // owner change clears a write queued for the old digest
     crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))
@@ -208,6 +208,8 @@ export function ImageCompare(props: ImageCompareProps) {
     const next = pending.current; pending.current = null;
     store.set(statePath(props.stateKey), { ...next, pairKey: digest });
   }, [digest]);
+  if (!parsed.success) return <p className="error-text" role="status">Choose two granted images to compare.</p>;
+  if (!granted) return <p className="error-text" role="status">One of these images is no longer available to this thread. Attach it again to compare.</p>;
   return <figure className="image-compare" aria-label={props.title ?? 'Image comparison'}>
     {props.title && props.title !== title && <figcaption>{props.title}</figcaption>}
     <ImagePair key={key} props={props} view={view} change={change} />
