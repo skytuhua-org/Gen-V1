@@ -470,7 +470,7 @@ describe.runIf(enabled)('actual App split workspace',()=>{
    const metadata=page.locator('[data-split-view="thread:thread-a"] .conversation-metadata');
    await metadata.waitFor({state:'visible'});
    await pw(metadata).toContainText('Model A');
-   await pw(metadata).toContainText('First project');
+   await pw(metadata).not.toContainText('First project');
    await pw(metadata).toContainText('Ready');
    const toggle=async()=>{
     await page.getByRole('button',{name:'Settings',exact:true}).dispatchEvent('click');
@@ -568,8 +568,8 @@ describe.runIf(enabled)('actual App split workspace',()=>{
 
  it('uses one canonical plan in the overview and detailed pane with actual companion sections',async()=>{
   const host=await fixture({plan:true}),{page}=host;try{
-   const overview=page.getByRole('region',{name:'Project overview window',exact:true});await overview.waitFor({state:'visible'});
-   if(await overview.getByRole('button',{name:'Expand Project overview',exact:true}).isVisible())await overview.getByRole('button',{name:'Expand Project overview',exact:true}).click();
+   const overview=page.getByRole('region',{name:'Project overview window',exact:true});await pw(overview).toBeHidden();
+   await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await overview.waitFor({state:'visible'});
    const summary=overview.getByRole('region',{name:'Plan summary',exact:true});await summary.waitFor({state:'visible'});expect(await summary.getAttribute('data-plan-revision')).toBe('7');expect(await summary.textContent()).toContain('Inspect then verify');expect(await summary.textContent()).toContain('1 of 2 tasks complete');
    await overview.locator('summary').filter({hasText:'Agents and history'}).click();expect(await overview.textContent()).toContain('Inspect source');await overview.locator('summary').filter({hasText:'Side conversations'}).click();expect(await overview.textContent()).toContain('Related discussion');expect(await overview.locator('summary').filter({hasText:'Automations'}).count()).toBe(0);
    const detailed=page.locator('[data-split-view="plan:thread-a"]').getByRole('region',{name:/^Task plan(?::|$)/});await detailed.waitFor({state:'visible'});expect(await summary.getByRole('button',{name:'Open full plan',exact:false}).count()).toBe(0);expect(await detailed.getAttribute('aria-label')).toBe('Task plan: Inspect then verify');expect(await detailed.textContent()).toContain('Verify the result');const planPane=Object.values(host.layout.panes).find(pane=>pane.viewIds.includes('plan:thread-a'))!,planBounds=await page.locator('[data-split-pane="'+planPane.id+'"]').boundingBox();expect(planBounds!.width).toBeGreaterThanOrEqual(240);expect(planBounds!.height).toBeGreaterThanOrEqual(180);expect(Object.values(host.layout.views).filter(view=>view.kind==='plan')).toHaveLength(1);expect(host.errors).toEqual([]);
@@ -698,7 +698,8 @@ describe.runIf(enabled)('actual App split workspace',()=>{
   const host=await fixture({mode:'chat',plan:true}),{page}=host;try{
    expect(await page.locator('.split-workspace').count()).toBeGreaterThan(0);
    const message=page.locator('[data-split-view="thread:thread-a"]').getByRole('textbox',{name:'Message',exact:true});await message.waitFor({state:'visible'});
-   const overview=page.getByRole('region',{name:'Project overview window',exact:true});await overview.waitFor({state:'visible'});
+   const overview=page.getByRole('region',{name:'Project overview window',exact:true});await pw(overview).toBeHidden();
+   await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await overview.waitFor({state:'visible'});
    await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();
    const panel=page.getByRole('complementary',{name:'Workspace panel',exact:true});await panel.waitFor({state:'visible'});
     expect(await panel.getByRole('button',{name:'Close workspace panel',exact:true}).count()).toBe(0);

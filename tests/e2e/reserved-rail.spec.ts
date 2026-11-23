@@ -56,7 +56,7 @@ test('protected context has only minimize controls while keeping the composer dr
 });
 
 test('minimizing context releases the chat frame and preserves the artifact renderer',async({page})=>{
- await page.setViewportSize({width:1440,height:1000});const plan=await open(page),body=await page.getByText('Inspect the checkout calculation.',{exact:true}).elementHandle(),before=(await page.locator('main.workspace').boundingBox())!;
+ await page.setViewportSize({width:1440,height:1000});await open(page);const body=await page.getByText('Inspect the checkout calculation.',{exact:true}).elementHandle(),before=(await page.locator('main.workspace').boundingBox())!;
  await page.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect.poll(async()=>(await page.locator('main.workspace').boundingBox())!.width).toBeGreaterThan(before.width);
  await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();expect(await page.getByText('Inspect the checkout calculation.',{exact:true}).evaluate((node,old)=>node===old,body)).toBe(true);
 });
