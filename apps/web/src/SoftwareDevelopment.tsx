@@ -91,7 +91,8 @@ function patchLines(patch:string):PatchLine[]{
     // and '+' always mark content ('-- ' or '++ ' payloads included).
     if(!inHunk&&/^(?:diff |index |--- |\+\+\+ |\\)/.test(text))return {text,kind:'metadata'};
     if(text.startsWith('diff ')){inHunk=false;return {text,kind:'metadata'};}
-    if(inHunk&&text.startsWith('\\'))return {text,kind:'metadata'};
+    // parseUnified ends a hunk on an empty row (e.g. trailing newline)
+    if(inHunk&&(text===''||text.startsWith('\\'))){if(text==='')inHunk=false;return {text,kind:'metadata'};}
     if(text.startsWith('-'))return {text:text.slice(1),kind:'removed',oldLine:oldLine===undefined?undefined:oldLine++};
     if(text.startsWith('+'))return {text:text.slice(1),kind:'added',newLine:newLine===undefined?undefined:newLine++};
     if(text.startsWith(' ')||inHunk)return {text:text.startsWith(' ')?text.slice(1):text,kind:'context',oldLine:oldLine===undefined?undefined:oldLine++,newLine:newLine===undefined?undefined:newLine++};
