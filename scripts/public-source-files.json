@@ -2699,6 +2699,7 @@
     "packages/workspace/repo-map.ts",
     "packages/workspace/selective-commit.ts",
     "packages/workspace/terminal.ts",
+    "packages/workspace/terminal-directory.ts",
     "packages/workspace/tools.ts",
     "patches/node-pty-1.1.0.patch",
     "playwright.config.ts",
@@ -4824,6 +4825,7 @@
     "packages/workspace/repo-map.ts",
     "packages/workspace/selective-commit.ts",
     "packages/workspace/terminal.ts",
+    "packages/workspace/terminal-directory.ts",
     "packages/workspace/tools.ts"
   ]
 }
