@@ -36,12 +36,15 @@ export function resourceContentUrl(resourceId: string, resourcePath?: string) {
 }
 
 /** Read incrementally: an absent or dishonest Content-Length cannot bypass the byte limit. */
-export async function fetchPdfBytes(url: string, signal: AbortSignal): Promise<Uint8Array> {
+async function fetchPdfBytes(url: string, signal: AbortSignal): Promise<Uint8Array> {
   if (!/^\/api\/resources\/[^/?#]+\/content(?:\?path=[^#]*)?$/.test(url)) throw new Error('Choose a PDF attachment or granted local PDF.');
   await bootstrap(); signal.throwIfAborted();
   const parsed = new URL(url, window.location.origin);
   const response = await getResourceContent(decodeURIComponent(parsed.pathname.split('/')[3]), parsed.searchParams.get('path') ?? '', signal);
-  if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? 'This PDF is no longer available to this thread. Reattach it or renew its grant.' : `The PDF could not be loaded (${response.status}). Check the resource and try again.`);
+  if (!response.ok) {
+    if (response.status === 404) throw new Error('This PDF is no longer available to this thread.');
+    throw new Error(response.status === 401 || response.status === 403 ? 'This PDF is no longer available to this thread. Reattach it or renew its grant.' : `The PDF could not be loaded (${response.status}). Check the resource and try again.`);
+  }
   if (Number(response.headers.get('content-length')) > MAX_BYTES) { await response.body?.cancel(); throw new Error('Preview supports PDFs up to 20 MiB.'); }
   if (!response.body) throw new Error('The PDF response was empty.');
   const reader = response.body.getReader(), chunks: Uint8Array[] = [];
@@ -123,7 +126,7 @@ export function DocumentPreview(props: DocumentPreviewProps) {
   const [error, setError] = useState(''), [activity, setActivity] = useState('Loading PDF…'), [retry, setRetry] = useState(0);
   const [currentPage, setCurrentPage] = useState(props.page ?? 1), [zoom, setZoom] = useState(1), [focusField, setFocusField] = useState(props.fit !== 'page'), [width, setWidth] = useState(300), [height, setHeight] = useState(260), [signatureUrl, setSignatureUrl] = useState('');
   const displayedZoom = inline ? Math.min(zoom, 1) : zoom;
-  const scroll = useRef<HTMLDivElement>(null), paper = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null), generation = useRef(0), committedDocument = useRef<Loaded | null>(null), sourceOrigins = useRef(new WeakMap<Uint8Array, string>()), identity = useRef(sourceUrl);
+  const root = useRef<HTMLElement>(null), retryButton = useRef<HTMLButtonElement>(null), scroll = useRef<HTMLDivElement>(null), paper = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null), generation = useRef(0), committedDocument = useRef<Loaded | null>(null), sourceOrigins = useRef(new WeakMap<Uint8Array, string>()), identity = useRef(sourceUrl);
   const navJump = useRef(false);
   const [navTick, setNavTick] = useState(0), [pointerFocus, setPointerFocus] = useState(false), [navChange, setNavChange] = useState(false);
   const navigation = useRef<ReturnType<typeof documentNavigation> | null>(null);
@@ -346,6 +349,8 @@ export function DocumentPreview(props: DocumentPreviewProps) {
     }).catch(cause => { if (alive && committedDocument.current === navigatingDocument) failPreview(cause); });
     return () => { alive = false; };
   }, [frame?.page, frame?.width, frame?.height, JSON.stringify(field ?? null), activeName, focusField, factor, boxJson, awaitingPage, sourceUrl, waitingForExport, navigationIntent, navTick]);
+  // Move focus to the retry control only when focus was inside the preview.
+  useEffect(() => { if (error && root.current?.contains(document.activeElement)) retryButton.current?.focus(); }, [error]);
   const title = props.title || 'PDF document', busy = Boolean(activity), changedSignature = Boolean(frame && props.signatureBox?.page === frame.page && (pendingSignature || signatureValid && frame.signatureJson !== signatureJson));
   const changePage = (next: number) => { setFocusField(false); setPointerFocus(false); setCurrentPage(next); };
   // Native button clicks with detail>0 are pointer; keyboard and assistive
@@ -353,7 +358,7 @@ export function DocumentPreview(props: DocumentPreviewProps) {
   const navActivate = (event: { detail: number }, action: () => void) => { navJump.current = event.detail === 0; action(); };
   const focusCommand = (event: { detail: number }) => navActivate(event, () => { setPointerFocus(event.detail > 0); if (focusField) setNavTick(tick => tick + 1); setFocusField(true); });
   const overlay = (rect: Rectangle) => ({ left: `${rect.left / Math.max(1, (frame?.width ?? 1) * factor) * 100}%`, top: `${rect.top / Math.max(1, (frame?.height ?? 1) * factor) * 100}%`, width: `${rect.width / Math.max(1, (frame?.width ?? 1) * factor) * 100}%`, height: `${rect.height / Math.max(1, (frame?.height ?? 1) * factor) * 100}%` });
-  return <section className="document-preview" aria-label={title} aria-busy={busy} data-fit={displayedFit} data-export-handoff={handoffState ?? undefined} data-focus-entry={pointerFocus && focusField ? 'pointer' : undefined} data-preview-state={activity.includes('paused') ? 'suspended' : busy ? 'updating' : error ? 'error' : 'ready'}>
+  return <section ref={root} className="document-preview" aria-label={title} aria-busy={busy} data-fit={displayedFit} data-export-handoff={handoffState ?? undefined} data-focus-entry={pointerFocus && focusField ? 'pointer' : undefined} data-preview-state={activity.includes('paused') ? 'suspended' : busy ? 'updating' : error ? 'error' : 'ready'}>
     <div className="document-preview-toolbar"><div className="document-preview-paging" role="group" aria-label="PDF pages">
       <button type="button" aria-label="Previous PDF page" disabled={!frame || frame.page <= 1} onClick={event => navActivate(event, () => changePage((frame?.page ?? 1) - 1))}><ChevronLeft size={14} /></button><button type="button" aria-label="Next PDF page" disabled={!frame || frame.page >= frame.pages} onClick={event => navActivate(event, () => changePage((frame?.page ?? 1) + 1))}><ChevronRight size={14} /></button>
       {frame && <span className="document-preview-fraction" aria-label={`Page ${frame.page} of ${frame.pages}`}>{frame.page} / {frame.pages}</span>}
@@ -366,7 +371,7 @@ export function DocumentPreview(props: DocumentPreviewProps) {
     <div className="document-preview-scroll" ref={scroll} tabIndex={0} role="region" aria-label="Document viewport" hidden={!frame && Boolean(error)}><div className="document-preview-page" ref={paper} style={{ width: frame ? frame.width * factor : 1, height: frame ? frame.height * factor : 1, transition: frameVisible && !navChange ? undefined : 'none' }}><canvas ref={canvas} role="img" aria-label={`${title}, page ${frame?.page ?? currentPage}. Form values and visual marks are a draft preview.`} />{geometry.highlight && <span key={`${frame?.page}:${activeName}`} className="document-active-field" aria-hidden="true" style={overlay(geometry.highlight)} />}
       {changedSignature && geometry.signature && <svg className="document-signature-overlay" style={overlay(geometry.signature)} viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"><rect width="1000" height="1000" fill="white" />{pendingSignature || mark?.kind === 'image' ? <image href={pendingSignature || signatureUrl} width="1000" height="1000" preserveAspectRatio="none" /> : mark?.kind === 'drawn' ? signatureStrokes(mark).map((stroke, index) => <polyline key={index} points={stroke.map(point => `${point.x * 1000},${point.y * 1000}`).join(' ')} fill="none" stroke="#191b33" strokeWidth={1.5 * geometry.signature!.width / props.signatureBox!.width} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />) : mark?.kind === 'typed' ? <text x="0" y="650" fontFamily="Helvetica,Arial,sans-serif" fontStyle="italic" fontSize="400" fill="#191b33" textLength="980" lengthAdjust="spacingAndGlyphs">{mark.text}</text> : null}</svg>}
     </div></div>
-    {error && <ErrorState className={`document-preview-failure ${frame ? 'has-frame' : ''}`} message={error} retryLabel="Retry preview" onRetry={() => setRetry(value => value + 1)}>{sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener noreferrer">Open source PDF</a>}</ErrorState>}
+    {error && <ErrorState className={`document-preview-failure ${frame ? 'has-frame' : ''}`} message={error} retryLabel="Reload PDF" retryRef={retryButton} onRetry={() => setRetry(value => value + 1)}>{sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener noreferrer">Open source PDF</a>}</ErrorState>}
     <div className="document-preview-footer"><p role="status" aria-live="polite">{frame?.status ?? (error ? 'Preview unavailable' : activity)}</p>{frame && busy && <span className="document-preview-activity">{activity}</span>}</div>
   </section>;
 }

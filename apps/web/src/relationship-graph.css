@@ -91,7 +91,7 @@
 .task-node-progress-track { display:block; height:2px; margin-top:1px; border-radius:1px; background:color-mix(in srgb,currentColor 18%,transparent); overflow:hidden; }
 .task-node-progress-fill { display:block; height:100%; border-radius:1px; background:currentColor; }
 .task-node-progress.progress-indeterminate .task-node-progress-fill { width:38%; }
-.task-graph-check { position:relative; display:flex; align-items:center; gap:5px; padding:3px 8px; border:1px solid var(--border); border-radius:14px; font-size:12px; line-height:1.4; cursor:default; }
+.task-graph-check { position:relative; display:flex; align-items:center; gap:5px; padding:3px 8px; border:1px solid var(--control-border); border-radius:14px; font-size:12px; line-height:1.4; cursor:default; }
 .task-graph-check[data-check-new] { animation:task-check-in var(--ui-motion-tab) linear both; }
 .task-graph-check>span:first-of-type { color:var(--text); }
 .task-graph-footer-row { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:42px; }

@@ -150,10 +150,9 @@ function GraphTooltip({ id, children, wide = false, compact = false, dismissOnSe
 function Excerpts({ node }: { node: SourceNode }) {
   return <>{node.detail && <span className="task-node-context-detail">{node.detail}</span>}{node.excerpts?.length ? <span className="task-node-excerpts">{node.excerpts.map((excerpt, index) => <span key={index}><small>{excerpt.label}</small><code>{excerpt.text}</code></span>)}</span> : null}</>;
 }
-const conflictLabel = (count: number) => `${count} ${count === 1 ? 'conflict' : 'conflicts'}`;
 function NodeDetailContent({ node, related }: { node: SourceNode; related: string[] }) {
   return <><strong>{node.label}</strong>{(node.hash || node.author || node.time) && <span className="task-node-context-meta">{node.hash && <code>{node.hash}</code>}{node.author}{node.time}</span>}<Excerpts node={node} />
-    {node.conflictCount !== undefined && <span>source {conflictLabel(node.conflictCount)}</span>}
+    {node.conflictCount !== undefined && <span>{node.conflictCount} source {node.conflictCount === 1 ? 'conflict' : 'conflicts'}</span>}
     {node.checks?.map((check, index) => <span key={index} className={`task-node-check status-${check.status}`}><StatusIcon status={check.status} /><span>{check.label}{check.detail && <small>{check.detail}</small>}</span></span>)}
     {node.progress && <NodeProgress progress={node.progress} />}
     {related.length > 0 && <small className="task-node-context-detail">{related.join(' · ')}</small>}</>;
@@ -336,7 +335,7 @@ export function RelationshipGraph({ element: { props }, children }: ComponentRen
   const nodeTone = (node: SourceNode): Tone => { const value = node.tone ?? branchLabels?.find(branch => branch.lane === (node.lane ?? 0))?.tone ?? 'neutral'; return tone === 'merged' && value === 'blue' ? 'purple' : value; };
   const width = geometry.width, height = geometry.height;
   const label = typeof props.label === 'string' ? props.label : 'Relationships';
-  const conflicts = nodes.filter(node => (node.conflictCount ?? 0) > 0), conflictCount = conflicts.reduce((total, node) => total + node.conflictCount!, 0);
+  const conflicts = nodes.filter(node => (node.conflictCount ?? 0) > 0), conflictCount = conflicts.reduce((total, node) => total + node.conflictCount!, 0), conflictsWord = conflictCount === 1 ? 'conflict' : 'conflicts';
   const hasActions = Children.count(children) > 0, conflictTip = `${id}-conflicts`;
   return <figure ref={surface} className={`task-graph task-graph-${horizontal ? 'horizontal' : 'vertical'} ${schematic ? 'task-graph-schematic' : ''}`} aria-label={label} data-orientation={horizontal ? 'horizontal' : 'vertical'} data-tone={tone ?? 'neutral'} style={{ '--graph-rail-width': `${horizontal ? rail : geometry.width}px` } as CSSProperties}>
     {label !== artifactTitle && props.label ? <figcaption>{label}</figcaption> : null}
@@ -368,7 +367,7 @@ export function RelationshipGraph({ element: { props }, children }: ComponentRen
     <MotionRegion open={Boolean(checkView.items.length || summary || conflictCount || hasActions)} duration={TASK_MOTION.status} className="task-graph-footer">
       {checkView.items.length ? <div className={`task-graph-checks${checkView.leaving ? ' is-leaving' : ''}`} aria-label="Source check summaries" aria-hidden={checkView.leaving || undefined} inert={checkView.leaving}>{checkView.items.map((check, index) => <span key={check.label} className={`task-graph-check status-${check.status}`} tabIndex={0} aria-describedby={`${id}-check-${index}`}><StatusIcon status={check.status} /><span>{check.label}</span>{check.detail && <GraphTooltip id={`${id}-check-${index}`} compact>{check.detail}</GraphTooltip>}</span>)}</div> : null}
       <div className="task-graph-footer-row">
-        {(summary || conflictCount > 0) && <div ref={summaryElement} data-pulse={pulse && summary?.status === 'merged' ? '' : undefined} className={`task-graph-summary status-${summary?.status ?? 'pending'}`} role="status"><StatusIcon status={summary?.status ?? 'pending'} /><span>{conflictCount > 0 ? <button type="button" className="task-graph-conflict-summary" aria-label={`Inspect ${conflictLabel(conflictCount)}`} aria-describedby={conflictTip}>{summary?.label ?? conflictLabel(conflictCount)}<GraphTooltip id={conflictTip} wide><strong>{conflictLabel(conflictCount)} in the supplied source</strong>{conflicts.slice(0, 4).map(node => <span key={node.id} className="task-conflict-group"><strong>{node.label}</strong><Excerpts node={node} /></span>)}{conflicts.length > 4 && <small>Inspect source for {conflicts.length - 4} more comparisons.</small>}</GraphTooltip></button> : summary?.label}{summary?.detail && <small>{summary.detail}</small>}</span></div>}
+        {(summary || conflictCount > 0) && <div ref={summaryElement} data-pulse={pulse && summary?.status === 'merged' ? '' : undefined} className={`task-graph-summary status-${summary?.status ?? 'pending'}`} role="status"><StatusIcon status={summary?.status ?? 'pending'} /><span>{conflictCount > 0 ? <button type="button" className="task-graph-conflict-summary" aria-label={`Inspect ${conflictCount} ${conflictsWord}`} aria-describedby={conflictTip}>{summary?.label ?? `${conflictCount} ${conflictsWord}`}<GraphTooltip id={conflictTip} wide><strong>{conflictCount} {conflictsWord} in the supplied source</strong>{conflicts.slice(0, 4).map(node => <span key={node.id} className="task-conflict-group"><strong>{node.label}</strong><Excerpts node={node} /></span>)}{conflicts.length > 4 && <small>Inspect source for {conflicts.length - 4} more comparisons.</small>}</GraphTooltip></button> : summary?.label}{summary?.detail && <small>{summary.detail}</small>}</span></div>}
         {hasActions && <div className="task-graph-footer-actions">{children}</div>}
       </div>
     </MotionRegion>

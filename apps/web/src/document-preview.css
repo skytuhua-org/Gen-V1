@@ -17,9 +17,11 @@
 .document-active-field { position:absolute; pointer-events:none; border:1px solid #526edb; background:#4f6cda18; border-radius:2px; }
 .document-preview-footer { display:flex; justify-content:space-between; align-items:center; gap:8px; min-height:34px; padding:3px 8px; background:var(--surface,#fff); border-top:1px solid var(--border,#e9e9ec); }
 .document-preview-footer p { margin:0; color:var(--muted,#717177); font-size:11px; }
+.document-preview[data-preview-state="error"] .document-preview-toolbar { opacity:.4; pointer-events:none; }
+.document-preview-failure .ui-error-retry { height:32px; padding:0 12px; }
 .document-preview-failure { position:absolute; z-index:3; inset:36px 0 34px; display:flex; flex-wrap:wrap; align-items:center; align-content:center; gap:10px; min-height:180px; padding:20px 14px; font-size:12px; background:var(--subtle,#f5f5f6); overflow:auto; }
 .document-preview-failure p { flex-basis:100%; margin:0; line-height:1.6; max-height:6.4em; overflow:auto; overflow-wrap:anywhere; }
-.document-preview-failure button { border:1px solid var(--border,#e9e9ec); border-radius:6px; background:var(--surface,#fff); padding:6px 9px; color:var(--text,#202023); }
+.document-preview-failure button { border:1px solid var(--control-border); border-radius:6px; background:var(--surface,#fff); padding:6px 9px; color:var(--text,#202023); }
 .document-preview-failure a { color:var(--accent,#4765d6); text-underline-offset:3px; }
 .document-preview :is(button,a):focus-visible,.signature-pad :is(button,input,canvas):focus-visible { outline:2px solid var(--ui-focus-ring,#808080); outline-offset:2px; }
 .signature-pad { min-width:0; color:var(--text,#202023); font-size:13px; }
@@ -31,6 +33,7 @@
 .signature-style-change { flex:none; height:28px; padding:0 10px; border:1px solid var(--border,#d9d9df); border-radius:var(--radius-sm,6px); background:var(--surface,#fff); color:var(--muted,#717177); font-size:12px; font-weight:500; cursor:pointer; }
 .signature-style-change:hover:not(:disabled) { color:var(--text,#202023); border-color:var(--border-strong,var(--border,#d9d9df)); }
 .signature-style-change:disabled { opacity:.45; cursor:default; }
+.signature-style-change:focus-visible { outline:2px solid var(--focus-ring,var(--text,#202023)); outline-offset:2px; }
 .signature-modes button { display:flex; flex:1; align-items:center; justify-content:center; gap:6px; border:0; background:transparent; color:var(--muted,#717177); padding:7px 10px; border-radius:5px; font-size:12px; cursor:pointer; }
 .signature-modes button[aria-pressed="true"] { background:var(--surface,#fff); color:var(--text,#202023); box-shadow:0 1px 3px -1px #10101535; }
 .signature-well { position:relative; width:100%; aspect-ratio:2.15; min-height:132px; max-height:230px; overflow:hidden; border-radius:9px; background:var(--subtle,#f5f5f6); color:var(--text,#202023); }
@@ -55,7 +58,7 @@
 .document-signature-overlay { position:absolute; pointer-events:none; }
 .document-preview-failure.has-frame { inset:auto; bottom:42px; left:8px; right:8px; min-height:0; padding:10px; background:var(--surface,#fff); border:1px solid var(--border,#e9e9ec); border-radius:8px; box-shadow:0 2px 10px #0001; }
 .document-preview-activity { max-width:40%; color:var(--muted,#717177); font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.signature-name-input { width:100%; margin:8px 0 12px; padding:9px 11px; border:1px solid var(--border,#ddd); border-radius:6px; color:var(--text,#202023); background:var(--surface,#fff); }
+.signature-name-input { width:100%; margin:8px 0 12px; padding:9px 11px; border:1px solid var(--control-border); border-radius:6px; color:var(--text,#202023); background:var(--surface,#fff); }
 .signature-name-editor { margin-top:10px; }
 .signature-name-editor label { font-size:11px; color:var(--muted,#717177); }
 .signature-image-preview { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:20px 26px; }
