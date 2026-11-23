@@ -10,3 +10,4 @@
 .conversation-find :is(input,button):focus-visible,.conversation-find-trigger:focus-visible {outline:2px solid var(--ui-focus-ring,#808080);outline-offset:-2px;}
 ::highlight(conversation-find-all) {background-color:var(--pending);color:var(--canvas);}
 ::highlight(conversation-find-current) {background-color:var(--accent);color:var(--canvas);text-decoration:underline;}
+.conversation-find-trigger:disabled{cursor:default}
