@@ -147,8 +147,8 @@
 .workspace-right-header [role=tablist][data-overflow-start=true][data-overflow-end=true] { mask-image:linear-gradient(to right,transparent,black 24px,black calc(100% - 24px),transparent); -webkit-mask-image:linear-gradient(to right,transparent,black 24px,black calc(100% - 24px),transparent); }
 .workspace-right-header [role=tab] { flex-shrink:0; white-space:nowrap; color:var(--muted); font-size:12px; padding:17px 8px 15px; border-bottom:2px solid transparent; transition:color var(--ui-motion-tab) var(--ui-ease-move),border-bottom-color var(--ui-motion-tab) var(--ui-ease-move); }
 .workspace-right-header [role=tab][aria-selected=true] { color:var(--text); border-bottom-color:var(--text); }
-.workspace-right-header .workspace-tab { flex-shrink:0; display:flex; align-items:center; }
-.workspace-right-header .workspace-tab-close { flex:none; width:18px; height:18px; display:flex; align-items:center; justify-content:center; margin-left:2px; margin-right:4px; padding:0; color:var(--muted); background:transparent; border-radius:4px; opacity:0; transition:opacity 100ms var(--ui-ease-enter),color var(--ui-motion-hover) var(--ui-ease-move),background-color var(--ui-motion-hover) var(--ui-ease-move); }
+.workspace-right-header .workspace-tab { flex-shrink:0; display:flex; }
+.workspace-right-header .workspace-tab-close { flex:none; align-self:center; width:18px; height:18px; display:flex; align-items:center; justify-content:center; margin-left:2px; margin-right:4px; padding:0; color:var(--muted); background:transparent; border-radius:4px; opacity:0; transition:opacity 100ms var(--ui-ease-enter),color var(--ui-motion-hover) var(--ui-ease-move),background-color var(--ui-motion-hover) var(--ui-ease-move); }
 .workspace-right-header .workspace-tab:hover .workspace-tab-close,
 .workspace-right-header .workspace-tab:focus-within .workspace-tab-close,
 .workspace-right-header .workspace-tab:has([role=tab][aria-selected=true]) .workspace-tab-close { opacity:1; }
