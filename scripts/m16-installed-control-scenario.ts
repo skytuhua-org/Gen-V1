@@ -96,10 +96,18 @@ export async function runInstalledBrowserControlScenario(input:InstalledControlS
   if(reply.status!==200)throw Error('Command '+type+' failed: '+JSON.stringify(reply.body).slice(0,400));
   return (reply.body as {result:unknown}).result;
  };
- const targets=async(threadId:string)=>((await call('/api/threads/'+encodeURIComponent(threadId)+'/control-targets?mode=CONSENTED_EXISTING_TAB')).body as {candidates?:{target:JsonRecord;title:string|null}[]}).candidates??[];
+ const targets=async(threadId:string)=>{
+  const reply=await call('/api/threads/'+encodeURIComponent(threadId)+'/control-targets?mode=CONSENTED_EXISTING_TAB');
+  if(reply.status!==200)throw Error('Target enumeration failed: '+JSON.stringify(reply.body).slice(0,400));
+  return (reply.body as {candidates:{target:JsonRecord;title:string|null}[]}).candidates;
+ };
  // 1. Owned thread + owned browser surface.
  const thread=await command('thread.create',{title:'M16 installed browser control proof'}) as {id:string};
  mark('thread-created',{threadId:thread.id});
+ // Start Observe-only consent before any target enumeration.
+ const consentReply=await command('control.request',{mode:'CONSENTED_EXISTING_TAB',observe:true,operations:[]},thread.id) as {consent:{consentId:string;state:string};control:{state:string}};
+ if(consentReply.consent.state!=='PENDING')throw Error('Consent request did not open pending: '+JSON.stringify(consentReply.consent).slice(0,300));
+ mark('consent-requested',{consentId:consentReply.consent.consentId});
  const baseline=new Set((await targets(thread.id)).map(row=>String((row.target as {creationIdentity:string}).creationIdentity)));
  guard();
  await bounded(page.evaluate(async()=>{const desktop=(window as {harnessDesktop?:{browser(command:{type:string}):Promise<unknown>}}).harnessDesktop;if(!desktop)throw Error('Desktop bridge unavailable.');await desktop.browser({type:'open'});}),CALL_BOUND_MS,'Browser open');
@@ -108,10 +116,6 @@ export async function runInstalledBrowserControlScenario(input:InstalledControlS
  let selected:{target:JsonRecord;title:string|null}|undefined;
  await bounded((async()=>{const deadline=Date.now()+CANDIDATE_TIMEOUT_MS;while(Date.now()<deadline){const rows=(await targets(thread.id)).filter(row=>!baseline.has(String((row.target as {creationIdentity:string}).creationIdentity)));if(rows.length===1){selected=rows[0];return;}if(rows.length>1)throw Error('Ambiguous new browser candidates.');await new Promise(done=>setTimeout(done,500));}throw Error('No new browser candidate appeared.');})(),CANDIDATE_TIMEOUT_MS+5000,'Candidate enumeration');
  mark('browser-opened',{creationIdentity:(selected!.target as {creationIdentity:string}).creationIdentity,title:selected!.title});
- // 2. Explicit fixture consent — Observe only; Interact stays unrequested.
- const consentReply=await command('control.request',{mode:'CONSENTED_EXISTING_TAB',observe:true,operations:[]},thread.id) as {consent:{consentId:string;state:string};control:{state:string}};
- if(consentReply.consent.state!=='PENDING')throw Error('Consent request did not open pending: '+JSON.stringify(consentReply.consent).slice(0,300));
- mark('consent-requested',{consentId:consentReply.consent.consentId});
  const grantReply=await command('control.grant',{consentId:consentReply.consent.consentId,target:selected!.target},thread.id) as {grant:{grantId:string;capturePermission:boolean;permittedOperations:string[];expiresAtMs:number;target:JsonRecord};control:{state:string}};
  if(grantReply.grant.capturePermission!==true||grantReply.grant.permittedOperations.length!==0||grantReply.control.state!=='active')throw Error('Grant did not bind Observe-only: '+JSON.stringify(grantReply).slice(0,400));
  // The recorded grant target identity must be the selected fixture identity —

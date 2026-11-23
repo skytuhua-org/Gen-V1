@@ -39,19 +39,19 @@ creation and process cleanup remain with the calling installed verifier.
 
 | # | Step | Call | Assertion |
 |---|------|------|-----------|
-| 0 | Baseline targets | `GET /api/threads/:id/control-targets?mode=CONSENTED_EXISTING_TAB` | snapshot `creationIdentity` set |
 | 1 | Owned thread | command `thread.create` | thread id returned |
-| 2 | Owned browser | `window.harnessDesktop.browser({type:'open'})` (docked app-owned BrowserView) | — |
-| 3 | New candidate | `control-targets` poll ≤30s | exactly **one** new `creationIdentity` row — the exact selected target |
-| 4 | Fixture consent request | command `control.request {mode: CONSENTED_EXISTING_TAB, observe: true, operations: []}` | `consent.state === 'PENDING'` |
-| 5 | Grant | command `control.grant {consentId, target}` | `capturePermission===true`, `permittedOperations===[]`, surface `active` |
-| 6 | Bounded capture | `POST /control-capture` | `artifactRef` under `control-captures/`, 64-hex `sha256`, positive `frameDimensions`, `captureScope.kind==='TAB'`; then the actual PNG bytes under `<profile>/host/` are read back — PNG magic, nonzero size, `sha256` must equal the record (runtime enforces `CAPTURE_BOUNDS_EXCEEDED`) |
-| 7 | Independent Interact | `POST /control-action {CLICK}` | HTTP error with `CAPABILITY_DENIED` — Observe ≠ Interact; recorded as a **consent-scope denial**, not in-flight input cancellation |
-| 8 | Independent Stop | command `control.stop` then `POST /control-capture` | post-stop capture `CAPABILITY_DENIED` — revocation fail-closed |
-| 9 | Clean exit | (harness-owned) `window.close()` + wait + health poll | `assertInstalledCleanExit`, `/health` dark ≤15s |
+| 2 | Fixture consent request | command `control.request {mode: CONSENTED_EXISTING_TAB, observe: true, operations: []}` | `consent.state === 'PENDING'` |
+| 3 | Baseline targets | `GET /api/threads/:id/control-targets?mode=CONSENTED_EXISTING_TAB` | snapshot `creationIdentity` set |
+| 4 | Owned browser | `window.harnessDesktop.browser({type:'open'})` (docked app-owned BrowserView) | — |
+| 5 | New candidate | `control-targets` poll ≤30s | exactly **one** new `creationIdentity` row — the exact selected target |
+| 6 | Grant | command `control.grant {consentId, target}` | `capturePermission===true`, `permittedOperations===[]`, surface `active` |
+| 7 | Bounded capture | `POST /control-capture` | `artifactRef` under `control-captures/`, 64-hex `sha256`, positive `frameDimensions`, `captureScope.kind==='TAB'`; then the actual PNG bytes under `<profile>/host/` are read back — PNG magic, nonzero size, `sha256` must equal the record (runtime enforces `CAPTURE_BOUNDS_EXCEEDED`) |
+| 8 | Independent Interact | `POST /control-action {CLICK}` | HTTP error with `CAPABILITY_DENIED` — Observe ≠ Interact; recorded as a **consent-scope denial**, not in-flight input cancellation |
+| 9 | Independent Stop | command `control.stop` then `POST /control-capture` | post-stop capture `CAPABILITY_DENIED` — revocation fail-closed |
+| 10 | Clean exit | (harness-owned) `window.close()` + wait + health poll | `assertInstalledCleanExit`, `/health` dark ≤15s |
 
 `FRESH_VERIFICATION_BROWSER` returns zero candidates by design and is not
-silently satisfied by an existing tab — the fresh-row diff in step 3 is the
+silently satisfied by an existing tab — the fresh-row diff in step 5 is the
 exact-target proof instead. The scenario returns a bounded receipt (timings,
 ids, digests, counts — no window titles beyond the owned browser's, no page
 content, no machine paths); the caller merges it into `verification.json`.
@@ -200,8 +200,8 @@ Recorded honestly — proof is NOT obtained here:
    (unreaped owned PowerShell) and must not be used.
 2. The integration hook (§2a) or an equivalent thin wrapper driving
    `runInstalledBrowserControlScenario` on the verified installed page —
-   expected receipt phases: `session-bound → thread-created → browser-opened →
-   consent-requested → consent-granted → capture-bound → interact-denied →
+   expected receipt phases: `session-bound → thread-created → consent-requested →
+   browser-opened → consent-granted → capture-bound → interact-denied →
    stop-revoked`, then the harness's own clean-exit proof.
    The scenario cannot run standalone (no launcher) — by design, so the
    installed receipt cannot be minted from an unrelated payload.

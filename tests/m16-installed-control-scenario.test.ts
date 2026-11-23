@@ -31,8 +31,8 @@ const provenance:InstalledControlProvenance={
  * fetch(path) relay — and answers with a small state machine that mirrors the
  * production consent/grant/capture/stop semantics, writing real PNG bytes
  * under the disposable profile's host root. */
-function fakeHost(directory:string,options:{tamperArtifact?:boolean;wrongTarget?:boolean;allowPostStopCapture?:boolean}={}){
- let browserOpen=false,consent:'none'|'pending'|'granted'|'stopped'='none',artifactPng=pngBytes(800,600);
+function fakeHost(directory:string,options:{tamperArtifact?:boolean;wrongTarget?:boolean;allowPostStopCapture?:boolean;refuseTargetList?:boolean}={}){
+ let browserOpen=false,offeredTarget=false,consent:'none'|'pending'|'granted'|'stopped'='none',artifactPng=pngBytes(800,600);
  const grantTarget=options.wrongTarget?{...TARGET,creationIdentity:'tab:browser-9@7'}:TARGET;
  const routes=async(path:string,init?:{method?:string;body?:unknown})=>{
   const body=(init?.body??{}) as Record<string,unknown>;
@@ -40,11 +40,14 @@ function fakeHost(directory:string,options:{tamperArtifact?:boolean;wrongTarget?
    const type=String(body.type),threadId=body.threadId as string|undefined;
    if(type==='thread.create')return {status:200,body:{result:{id:'thread-1'}}};
    if(type==='control.request'&&threadId==='thread-1'){consent='pending';return {status:200,body:{result:{consent:{consentId:'consent-1',state:'PENDING'},control:{state:'consent'}}}}};
-   if(type==='control.grant'&&threadId==='thread-1'&&consent==='pending'){consent='granted';return {status:200,body:{result:{grant:{grantId:'grant-1',capturePermission:true,permittedOperations:[],expiresAtMs:Date.now()+600000,target:grantTarget},control:{state:'active'}}}}};
+   if(type==='control.grant'&&threadId==='thread-1'&&consent==='pending'&&offeredTarget){consent='granted';return {status:200,body:{result:{grant:{grantId:'grant-1',capturePermission:true,permittedOperations:[],expiresAtMs:Date.now()+600000,target:grantTarget},control:{state:'active'}}}}};
    if(type==='control.stop'&&threadId==='thread-1'){consent='stopped';return {status:200,body:{result:{control:{state:'unavailable'}}}}};
    return {status:400,body:{error:{code:'INVALID_INPUT',message:'unknown command'}}};
   }
   if(path.includes('/control-targets')){
+   if(consent!=='pending')throw Error('Target enumeration requires pending consent.');
+   if(options.refuseTargetList)return {status:403,body:{error:{code:'CAPABILITY_DENIED'}}};
+   offeredTarget=browserOpen;
    return {status:200,body:{candidates:browserOpen?[{target:TARGET,title:'Fixture'}]:[]}};
   }
   if(path.includes('/control-capture')){
@@ -64,7 +67,10 @@ function fakeHost(directory:string,options:{tamperArtifact?:boolean;wrongTarget?
   async evaluate(fn,arg){
    const source=fn.toString();
    if(source.includes('/api/bootstrap'))return 'csrf-test' as never;
-   if(source.includes('harnessDesktop')){browserOpen=true;return undefined as never;}
+   if(source.includes('harnessDesktop')){
+    if(options.refuseTargetList)throw Error('The browser opened after a refused baseline.');
+    browserOpen=true;return undefined as never;
+   }
    if(source.includes('fetch(path')){const input=arg as {path:string;init?:{method?:string;body?:unknown}};return routes(input.path,input.init) as never;}
    throw Error('Unexpected page function: '+source.slice(0,120));
   },
@@ -82,13 +88,18 @@ it('runs the consented Observe-only capture and independent Stop proof',async()=
  expect(receipt.status).toBe('PASS');
  expect(receipt.provenance).toEqual(provenance);
  const phases=(receipt.phases as {phase:string}[]).map(row=>row.phase);
- expect(phases).toEqual(['session-bound','thread-created','browser-opened','consent-requested','consent-granted','capture-bound','interact-denied','stop-revoked']);
+ expect(phases).toEqual(['session-bound','thread-created','consent-requested','browser-opened','consent-granted','capture-bound','interact-denied','stop-revoked']);
  const bound=(receipt.phases as JsonRow[]).find(row=>row.phase==='capture-bound')!;
  expect(bound.sha256).toBe(createHash('sha256').update(pngBytes(800,600)).digest('hex'));
  expect(bound.bytes).toBe(33);expect(bound.width).toBe(800);expect(bound.height).toBe(600);
  expect(((receipt.phases as JsonRow[]).find(row=>row.phase==='interact-denied'))!.scope).toBe('consent-scope-denial');
  const granted=(receipt.phases as JsonRow[]).find(row=>row.phase==='consent-granted')!;
  expect(granted.target).toEqual(TARGET);
+});
+
+it('reports a refusal from the target list before opening the browser',async()=>{
+ const {page}=fakeHost(directory,{refuseTargetList:true});
+ await expect(runInstalledBrowserControlScenario({page,directory,origin:ORIGIN,provenance})).rejects.toThrow(/target enumeration failed/i);
 });
 
 it('refuses a grant whose recorded target differs from the selected fixture identity',async()=>{
