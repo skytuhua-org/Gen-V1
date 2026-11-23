@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {commandToken, replaceCommandToken, skillBindingSchema} from '../apps/web/src/composer-commands';
+import {commandOfferedInMode, commandToken, replaceCommandToken, skillBindingSchema, type ComposerMode} from '../apps/web/src/composer-commands';
 
 it('finds slash commands at the caret after text without interpreting URLs or paths', () => {
   expect(commandToken('Please explain /', 16)).toEqual({start: 15, end: 16, query: ''});
@@ -22,4 +22,17 @@ it('admits a bounded Personal selection identity without converting literal text
   expect(skillBindingSchema.parse(binding)).toEqual(binding);
   expect(skillBindingSchema.safeParse({...binding, ref: {...ref, scope: {kind: 'provider', providerId: 'private', scopeId: 'company'}}}).success).toBe(false);
   expect(skillBindingSchema.safeParse('/skill:Test').success).toBe(false);
+});
+
+it('hides the active mode\'s own no-op command but always offers /model', () => {
+  const offered = (mode: ComposerMode, query: string) => ['model', 'plan', 'default'].filter(id => id.includes(query) && commandOfferedInMode(id, mode));
+  // Build mode: `/default` (Switch to Build) is a no-op -> excluded; `/plan` and `/model` remain.
+  expect(offered('build', '')).toEqual(['model', 'plan']);
+  expect(offered('build', 'def')).toEqual([]);
+  // Plan mode: `/plan` is a no-op -> excluded; `/default` and `/model` remain.
+  expect(offered('plan', '')).toEqual(['model', 'default']);
+  expect(offered('plan', 'pla')).toEqual([]);
+  // `/model` is offered in both modes; query filtering still applies on top of the mode filter.
+  expect(offered('build', 'mo')).toEqual(['model']);
+  expect(offered('plan', 'mo')).toEqual(['model']);
 });

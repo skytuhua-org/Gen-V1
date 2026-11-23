@@ -425,7 +425,7 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
       <WorkbenchComposer title={thread?.title??'New conversation'} working={working} disabled={busy||!ready||retry}/>
       <ComposerAttachments resources={resources} excerpts={excerpts} disabled={busy||!ready||retry} onEditExcerpt={(id,text)=>updateExcerpt(id,text)} onRemoveExcerpt={id=>updateExcerpt(id)} timeFormat={getPreferences(snapshot.settings).timeFormat}/>
       <ComposerSkillBindings bindings={skills} retry={retry} onRemove={id=>{void (sharedComposers&&sharedTarget?sharedComposers.removeSkill(sharedTarget,id):localSkills.remove(id)).catch(cause=>fail(cause));}}/>
-      <ComposerCommands ref={commands} input={input} draft={draft} threadId={thread?.id} projectId={thread?.projectId} disabled={!ready||!skillsReady||busy||predictionBlocked} onDraft={updateDraft} onModel={()=>modelPicker.current?.open()} onMode={chooseMode}/>
+      <ComposerCommands ref={commands} input={input} draft={draft} threadId={thread?.id} projectId={thread?.projectId} disabled={!ready||!skillsReady||busy||predictionBlocked} mode={thread?.mode ?? draftMode} onDraft={updateDraft} onModel={()=>modelPicker.current?.open()} onMode={chooseMode}/>
       <div className="composer-entry-row">
       <div className="composer-input">
         <textarea ref={input} aria-label="Message" placeholder={prediction.candidate ? '' : dragging ? 'Drop files to attach' : 'Ask anything…'} value={draft} disabled={!ready} onChange={event => updateDraft(event.target.value)} onPaste={prediction.dismiss} onCompositionStart={prediction.dismiss} onKeyDown={event => {

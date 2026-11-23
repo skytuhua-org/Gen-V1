@@ -22,3 +22,9 @@ export const skillBindingSchema = z.strictObject({
 });
 export const skillBindingsSchema = z.array(skillBindingSchema).max(8).refine(items => new Set(items.map(item => item.id)).size === items.length);
 export type SkillBinding = z.infer<typeof skillBindingSchema>;
+
+export type ComposerMode = 'plan' | 'build';
+/** `/plan` is a no-op while already in Plan mode, `/default` (Build) while in Build; `/model` always applies. */
+export function commandOfferedInMode(id: string, mode: ComposerMode) {
+  return id === 'model' || (id === 'plan') !== (mode === 'plan');
+}
