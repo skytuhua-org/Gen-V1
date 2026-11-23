@@ -72,14 +72,14 @@ function checkDetails(obs: CheckObservationV1 | VisualObservationV1): Verificati
 export async function verificationPanelModel(store: Store, threadId: string, signal?: AbortSignal): Promise<VerificationPanelModel> {
   signal?.throwIfAborted();
   let declaration = store.get<VerificationDeclarationV1>('verificationDeclaration', threadId);
-  // Re-digest the declared inputs on each read. A lost root or changed
-  // declaration makes that cut indeterminate for the current projection.
+  // Re-digest the declared inputs on each read. A lost root, changed input
+  // or changed declaration makes that cut indeterminate.
   let current: { codeDigest: string; dependencyDigest: string; environmentId: string } | null = null;
   if (declaration) {
     const basis = sourceBasis(declaration);
     try {
       const cut = await readVerificationSourceCut(store, threadId, declaration, signal);
-      cut.assertCurrentRoot();
+      cut.assertCurrent();
       current = cut;
     } catch {
       signal?.throwIfAborted();

@@ -1,5 +1,5 @@
 import {afterEach, expect, it, vi} from 'vitest';
-import {mkdtempSync, readSync, rmSync, writeFileSync, lstatSync} from 'node:fs';
+import {mkdtempSync, readSync, renameSync, rmSync, utimesSync, writeFileSync, lstatSync} from 'node:fs';
 import {open, type FileHandle} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -60,6 +60,85 @@ it('reads declared source and dependencies without synchronous file reads', asyn
   expect(model.label).toBe('VERIFIED');
   expect(readSync).not.toHaveBeenCalled();
   expect(vi.mocked(open).mock.calls.map(([path]) => path)).toEqual([join(f.root, 'app.ts'), join(f.root, 'lock.yaml')]);
+});
+
+it.each(['app.ts', 'lock.yaml'])('discards a cut if %s is edited while a later dependency read is pending', async edited => {
+  const f = fixture();
+  writeFileSync(join(f.root, 'z-lock.yaml'), 'version: 1\n');
+  f.declaration.dependencyFiles.push('z-lock.yaml');
+  f.observation.dependencyDigest = sourceDigestSync(f.root, f.declaration.dependencyFiles);
+  f.save();
+
+  const originalOpen = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).open;
+  let enterRead!: () => void, releaseRead!: () => void;
+  const entered = new Promise<void>(resolve => {enterRead = resolve;});
+  const held = new Promise<void>(resolve => {releaseRead = resolve;});
+  vi.mocked(open).mockImplementationOnce(originalOpen).mockImplementationOnce(originalOpen).mockImplementationOnce(async (...args) => {
+    const file = await originalOpen(...args);
+    const read = file.read.bind(file);
+    vi.spyOn(file, 'read').mockImplementationOnce(async (...readArgs) => {
+      enterRead();
+      await held;
+      return Reflect.apply(read, undefined, readArgs);
+    });
+    return file;
+  });
+
+  const pending = verificationPanelModel(f.store, 't1');
+  try {
+    await Promise.race([entered, pending.then(() => {throw new Error('The panel returned before the dependency read was held.');})]);
+    const path = join(f.root, edited);
+    writeFileSync(path, edited === 'app.ts' ? 'export const version = 2;\n' : 'version: 2\n');
+    utimesSync(path, 1_600_000_000, 1_600_000_000);
+  } finally {
+    releaseRead();
+  }
+  const model = await pending;
+  expect(model.label).toBe('COMPLETED_UNVERIFIED');
+  expect(model.rows[0]).toMatchObject({outcome: 'PASS', freshness: 'INDETERMINATE'});
+  expect((await verificationPanelModel(f.store, 't1')).rows[0].freshness).toBe('STALE');
+});
+
+it('stops before hashing a source file replaced between path inspection and open', async () => {
+  const f = fixture(); f.save();
+  const originalOpen = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).open;
+  const replacement = join(f.root, 'replacement.ts');
+  writeFileSync(replacement, 'export const version = 1;\n');
+  let read: ReturnType<typeof vi.spyOn> | undefined;
+  vi.mocked(open).mockClear().mockImplementationOnce(async (...args) => {
+    renameSync(replacement, join(f.root, 'app.ts'));
+    const file = await originalOpen(...args);
+    read = vi.spyOn(file, 'read');
+    return file;
+  });
+
+  const model = await verificationPanelModel(f.store, 't1');
+  expect(model.label).toBe('COMPLETED_UNVERIFIED');
+  expect(model.rows[0].freshness).toBe('INDETERMINATE');
+  expect(read).not.toHaveBeenCalled();
+  expect(open).toHaveBeenCalledTimes(1);
+});
+
+it('rejects a source that changes during its own chunk read before opening dependencies', async () => {
+  const f = fixture(); f.save();
+  const originalOpen = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).open;
+  vi.mocked(open).mockClear().mockImplementationOnce(async (...args) => {
+    const file = await originalOpen(...args);
+    const read = file.read.bind(file);
+    vi.spyOn(file, 'read').mockImplementationOnce(async (...readArgs) => {
+      const chunk = await Reflect.apply(read, undefined, readArgs);
+      const path = join(f.root, 'app.ts');
+      writeFileSync(path, 'export const version = 2;\n');
+      utimesSync(path, 1_600_000_000, 1_600_000_000);
+      return chunk;
+    });
+    return file;
+  });
+
+  const model = await verificationPanelModel(f.store, 't1');
+  expect(model.label).toBe('COMPLETED_UNVERIFIED');
+  expect(model.rows[0].freshness).toBe('INDETERMINATE');
+  expect(open).toHaveBeenCalledTimes(1);
 });
 
 it('closes the current file and skips the dependency pass when cancelled after a chunk', async () => {
