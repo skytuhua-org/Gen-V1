@@ -118,6 +118,18 @@ test('a resolving publication reveals only the new node title and reports determ
     if (extra) nodes.splice(3, 0, { id: 'parked', label: 'Archive prints', lane: 2, column: 3, kind: 'point', tone: 'neutral' });
     return { ...updated, nodes, edges: [...updated.edges.filter(edge => edge.to !== 'end'), { from: 'next', to: 'resolution', status: 'running' }, { from: 'topic', to: 'resolution', status: 'running' }, { from: 'resolution', to: 'end', prospective: true, status: 'pending' }] };
   };
+  const titleStarts = await page.locator('.task-graph').evaluateHandle(graph => {
+    const titles: string[] = [];
+    graph.addEventListener('animationstart', event => {
+      if (event instanceof AnimationEvent && event.animationName === 'task-title-in' &&
+          event.target instanceof Element && event.target.matches('.task-node-title')) {
+        titles.push(event.target.textContent ?? '');
+      }
+    });
+    return titles;
+  });
+  const revealedTitles = () => titleStarts.evaluate(titles => [...titles]);
+  const activeTitles = page.locator('.task-graph .task-node-title[data-title-reveal]');
   host.setInput('network', insertResolution(1, false)); await host.publish();
   const bar = page.locator('.task-graph [role="progressbar"]');
   await expect(bar).toBeVisible(); await expect(bar).toHaveCount(1);
@@ -125,16 +137,17 @@ test('a resolving publication reveals only the new node title and reports determ
   await expect(bar).toContainText('Tests · 1/42');
   await expect(retained).toHaveAttribute('data-retained', 'yes');
   await expect(summary).toContainText('Three comparisons need review');
-  const revealing = () => page.locator('.task-node-title[data-title-reveal]').evaluateAll(elements => elements.map(element => element.textContent));
-  await expect.poll(revealing).toEqual(['Resolve overlaps']);
-  await expect.poll(revealing, { timeout: 4_000 }).toEqual([]);
+  await expect.poll(revealedTitles).toEqual(['Resolve overlaps']);
+  await expect(activeTitles).toHaveCount(0, { timeout: 4_000 });
   host.setInput('network', insertResolution(42, true)); await host.publish();
   await expect(bar).toHaveAttribute('aria-valuenow', '42'); await expect(bar).toContainText('Tests · 42/42');
-  await expect.poll(revealing).toEqual(['Archive prints']);
-  await expect.poll(revealing, { timeout: 4_000 }).toEqual([]);
+  await expect.poll(revealedTitles).toEqual(['Resolve overlaps', 'Archive prints']);
+  await expect(activeTitles).toHaveCount(0, { timeout: 4_000 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   host.setInput('network', insertResolution(42, false)); await host.publish();
+  await expect(graphNode(page, 'Archive prints')).toHaveCount(0);
   await expect.poll(() => page.locator('.task-graph').evaluate(element => element.getAnimations({ subtree: true }).filter(animation => animation.playState === 'running').length)).toBe(0);
+  expect(await revealedTitles()).toEqual(['Resolve overlaps', 'Archive prints']);
   const edgeEnds = await page.locator('.graph-edge[data-to="resolution"]').evaluateAll(elements => elements.map(path => { const parts = (path.getAttribute('d') ?? '').split(/[ ,C]+/); return { x: Number(parts.at(-2)), y: Number(parts.at(-1)) }; }));
   const target = await dot(page, 'Resolve overlaps').boundingBox();
   const center = { x: target!.x + target!.width / 2, y: target!.y + target!.height / 2 };
