@@ -163,11 +163,12 @@ export class ProjectTools{
   const remote=origin?{name:'origin' as const,repo:origin}:null;
   let upstream:GitSyncResult['upstream']=null;
   if(current.branch){
-   const remoteName=(await git(['config','--get','branch.'+current.branch+'.remote']).catch(()=>'')).trim(),merge=(await git(['config','--get','branch.'+current.branch+'.merge']).catch(()=>'')).trim();
+   const pairs=(await git(['config','--get-regexp','^branch\\.'+current.branch.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\.(remote|merge)$']).catch(()=>'')).trim().split('\n').filter(Boolean),config=Object.fromEntries(pairs.map(line=>{const[key,...rest]=line.split(/\s+/);return[key,rest.join(' ')];}));
    const candidates:string[]=[];
-   if(remoteName==='origin'&&merge.startsWith('refs/heads/'))candidates.push('refs/remotes/origin/'+merge.slice('refs/heads/'.length));
+   if(config['branch.'+current.branch+'.remote']==='origin'&&config['branch.'+current.branch+'.merge']?.startsWith('refs/heads/'))candidates.push('refs/remotes/origin/'+config['branch.'+current.branch+'.merge'].slice('refs/heads/'.length));
    candidates.push('refs/remotes/origin/'+current.branch);
-   for(const ref of candidates){const oid=(await git(['rev-parse','--verify','--quiet',ref]).catch(()=>'')).trim();if(/^[a-f0-9]{40}$/.test(oid)){upstream={ref,short:ref.slice('refs/remotes/'.length),oid};break;}}
+   const remoteRefs=(await git(['for-each-ref','--format=%(refname) %(objectname)','refs/remotes/origin']).catch(()=>'')).split('\n').filter(Boolean),oids=Object.fromEntries(remoteRefs.map(line=>{const[ref,oid]=line.split(' ');return[ref,oid];}));
+   for(const ref of candidates){const oid=oids[ref];if(oid&&/^[a-f0-9]{40}$/.test(oid)){upstream={ref,short:ref.slice('refs/remotes/'.length),oid};break;}}
   }
   let ahead:number|null=null,behind:number|null=null;
   if(upstream){const[left,right]=(await git(['rev-list','--left-right','--count',upstream.oid+'...'+current.head])).trim().split(/\s+/);behind=Number(left);ahead=Number(right);}
