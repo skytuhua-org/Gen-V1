@@ -11,6 +11,7 @@ import {ComposerCommands, ComposerSkillBindings, type ComposerCommandsHandle} fr
 import {ModelPicker, type ModelPickerHandle} from './ModelPicker';
 import {command, getModels} from './api';
 import {journalWrite} from './journal';
+import {modelChoiceKey} from './project-model-defaults';
 import {useDesktop, useDetachedSurface, usePendingSurface} from './desktop-context';
 import type {ConversationComposerTarget, SharedAgentComposers} from './agents-workspace/composer';
 
@@ -50,7 +51,7 @@ export function ScopedConversationComposer({context,composers,openConversation,r
    <div className="scoped-owner-composer-actions">
     {savedDraftOwner&&savedDraftOwner.threadId===context.owner.threadId&&<SavedDrafts owner={savedDraftOwner} input={input} disabled={held||!state.ready||state.busy||state.retry}/>}
     <button type="button" className="quiet" aria-label="Open conversation" disabled={held||state.busy||state.stopping} onClick={()=>{void openConversation(context.owner.threadId).catch(()=>setError('The conversation could not open. Keep this draft and retry.'));}}><MessageSquare size={14}/></button>
-    <ModelPicker ref={picker} models={models} modelId={modelId} thinkingLevel={state.thinkingLevel??''} onChange={id=>{setModelId(id);if(state.thinkingLevel&&!models.find(model=>model.id===id)?.thinkingLevels?.includes(state.thinkingLevel))void journalWrite('thinking:'+context.owner.threadId,'').catch(()=>setError('The reasoning choice could not be saved.'));}} onThinkingChange={level=>{void journalWrite('thinking:'+context.owner.threadId,level).catch(()=>setError('The reasoning choice could not be saved.'));}} disabled={held||state.busy||state.stopping||working}/>
+    <ModelPicker ref={picker} models={models} modelId={modelId} thinkingLevel={state.thinkingLevel??''} onChange={id=>{setModelId(id);void journalWrite(modelChoiceKey(context.owner.threadId),id).catch(()=>{});if(state.thinkingLevel&&!models.find(model=>model.id===id)?.thinkingLevels?.includes(state.thinkingLevel))void journalWrite('thinking:'+context.owner.threadId,'').catch(()=>setError('The reasoning choice could not be saved.'));}} onThinkingChange={level=>{void journalWrite('thinking:'+context.owner.threadId,level).catch(()=>setError('The reasoning choice could not be saved.'));}} disabled={held||state.busy||state.stopping||working}/>
     {working?<button type="button" className="send-button stop-button" aria-label="Stop agent" disabled={held||state.stopping} onClick={()=>{if(!held)void composers.stop(target);}}><CircleStop size={18}/></button>:<button className="send-button" aria-label={state.retry?'Retry send':'Send message'} disabled={held||skillsBlocked||!models.some(model=>model.id===modelId)||!composers.canSend(target)||!state.retry&&!state.draft.trim()&&!state.excerpts?.length}><ArrowUp size={18}/></button>}
    </div>
    {(error||state.error)&&<p role="alert" className="error-text">{error||state.error}</p>}
