@@ -296,11 +296,15 @@ async function assertPinned(context: HistoryContext, entry: HistoryEntry) {
   if (!current || current.headOid !== entry.headOid || current.branch !== entry.branch)
     throw new HarnessError("HISTORY_CHANGED", "History changed. Refresh history to continue.");
 }
-async function parentsOf(context: HistoryContext, oid: string): Promise<string[]> {
-  const raw = await run(context, ["rev-list", "--parents", "--max-count=1", "--end-of-options", oid, "--"]);
-  const parts = raw.trim().split(" ").filter(Boolean);
-  if (parts[0] !== oid) throw new HarnessError("NOT_FOUND", "The selected commit is not in this history.");
-  return parts.slice(1).filter((value) => oidPattern.test(value));
+// The raw commit object keeps the parent a shallow graft hides from rev-list.
+async function parentsOf(context: HistoryContext, oid: string): Promise<{ first: string | null; missing: boolean }> {
+  const raw = await run(context, ["cat-file", "-p", oid]);
+  const first = [...raw.matchAll(/^parent ([0-9a-f]{40})$/gm)][0]?.[1] ?? null;
+  if (!first || !oidPattern.test(first)) return { first: null, missing: false };
+  const type = await run(context, ["cat-file", "-t", first])
+    .then((value) => value.trim())
+    .catch(() => null);
+  return { first, missing: type !== "commit" };
 }
 function diffArgs(parentOid: string | null, oid: string, kind: "--name-status" | "--numstat" | "-p") {
   return parentOid
@@ -319,8 +323,10 @@ export async function readHistoryCommit(
   const entry = snapshots.get(context.owner, snapshotId);
   if (!entry.served.has(oid)) throw new HarnessError("NOT_FOUND", "The selected commit is not in this history.");
   await assertPinned(context, entry);
-  const [firstParent] = await parentsOf(context, oid);
-  const parentOid = firstParent ?? null;
+  const { first, missing } = await parentsOf(context, oid);
+  if (missing)
+    throw new HarnessError("HISTORY_GRAFTED", "This commit's parent is outside the local clone; its diff is unavailable.");
+  const parentOid = first;
   const [names, stats] = await Promise.all([
     run(context, diffArgs(parentOid, oid, "--name-status")),
     run(context, diffArgs(parentOid, oid, "--numstat")),

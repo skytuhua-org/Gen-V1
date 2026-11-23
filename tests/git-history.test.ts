@@ -106,6 +106,29 @@ it("serves patches for filenames needing spaces, tabs or quoting", async () => {
   expect(unicodePatch.text).toContain("+two");
 });
 
+it("reports a shallow-boundary commit's parent as unavailable, not root", async () => {
+  const { git, source, context, snapshots } = await plainRepo();
+  await writeFile(join(source, "a.txt"), "1\n");
+  git("add", "--", "a.txt");
+  git("commit", "-m", "one");
+  await writeFile(join(source, "a.txt"), "2\n");
+  git("add", "--", "a.txt");
+  git("commit", "-m", "two");
+  const shallow = join(source, "..", "shallow");
+  execFileSync("git", ["clone", "--depth", "1", "--no-tags", `file://${source}`, shallow], { windowsHide: true });
+  const shallowContext = {
+    git: async (args: string[]) =>
+      execFileSync("git", ["-C", shallow, ...args], { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 }),
+    signal: context.signal,
+    owner: context.owner,
+  };
+  const page = await readHistoryPage(shallowContext, snapshots);
+  expect(page.commits).toHaveLength(1);
+  await expect(readHistoryCommit(shallowContext, snapshots, page.snapshotId!, page.commits[0].oid)).rejects.toMatchObject({
+    code: "HISTORY_GRAFTED",
+  });
+});
+
 it("reports an unborn HEAD as an empty page", async () => {
   const { context, snapshots } = await plainRepo();
   const page = await readHistoryPage(context, snapshots);
