@@ -86,6 +86,7 @@ function PreferenceControl({ item, preferences, update, busy }: { item: Settings
   return <button type="button" role="switch" aria-label={item.title} aria-checked={Boolean(value)} disabled={busy} className="settings-switch" onClick={() => void update({ [definition.key]: !value })}><span/></button>;
 }
 function ShortcutInput({ action, label, value, save, busy }: { action: string; label: string; value: string; save: (key: string, value: string) => void; busy: boolean }) {
+  const desktop = useDesktop();
   const [error, setError] = useState(''), clear = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (clear.current) clearTimeout(clear.current); }, []);
   return <div style={{display: 'flex', flexDirection: 'column'}}>
@@ -96,7 +97,8 @@ function ShortcutInput({ action, label, value, save, busy }: { action: string; l
       setError(''); if (clear.current) { clearTimeout(clear.current); clear.current = null; }
       const key = event.key === ',' ? 'Comma' : event.key.length === 1 ? event.key.toUpperCase() : event.key;
       const chord = [event.ctrlKey ? 'Ctrl' : '', event.metaKey ? 'Meta' : '', event.altKey ? 'Alt' : '', event.shiftKey ? 'Shift' : '', key].filter(Boolean).join('+');
-      if (isReservedChord(chord)) { setError('Chrome keeps that shortcut — pick another.'); clear.current = setTimeout(() => setError(''), 4000); return; }
+      // Browser-reserved only: the desktop app registers real accelerators and may honor chords Chrome keeps.
+      if (!desktop && isReservedChord(chord)) { setError('Chrome keeps that shortcut — pick another.'); clear.current = setTimeout(() => setError(''), 4000); return; }
       save(action, chord);
     }}/>
     <span role="alert" style={{fontSize: 11, color: 'var(--danger)', minHeight: 14, display: 'block'}}>{error}</span>
