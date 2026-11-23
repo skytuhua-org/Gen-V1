@@ -2235,7 +2235,7 @@ export class Service {
         throw new HarnessError("OPERATION_FAILED", "The check did not finish successfully", result);
       }
       const renewedGrant = await this.replacementGrant(op, result);
-      if (!this.closed) this.store.internal("operation.succeeded", op.threadId, () => { const ended: Operation = { ...op, status: "succeeded", result }; if (renewedGrant) this.store.put("resource", renewedGrant.id, op.threadId, renewedGrant); this.store.put("operation", id, op.threadId, ended); this.operationData(ended); this.enqueueOperationResult(ended,writeEvidence); return { operationId: id }; });
+      if (!this.closed) this.store.internal("operation.succeeded", op.threadId, () => { const ended: Operation = { ...op, status: "succeeded", result }; if (renewedGrant && this.store.get<ResourceGrant>("resource", renewedGrant.id)) this.store.put("resource", renewedGrant.id, op.threadId, renewedGrant); this.store.put("operation", id, op.threadId, ended); this.operationData(ended); this.enqueueOperationResult(ended,writeEvidence); return { operationId: id }; });
       // Journal receipts append in their own transactions — Store rejects a
       // nested transaction, so they must run after the success commit returns.
       for(const pending of this.m08PendingReceipts.splice(0))this.recordEditReceipt(pending.operation,pending.evidence);
