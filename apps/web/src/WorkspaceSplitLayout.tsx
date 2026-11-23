@@ -93,7 +93,7 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  const locateDropAt=(clientX:number,clientY:number)=>{
   const host=root.current;if(!host)return null;const box=host.getBoundingClientRect(),x=clientX-box.left,y=clientY-box.top;
   const entry=Object.entries(rects).find(([paneId,rect])=>(!narrow||paneId===layout.focusedPaneId)&&rect.width>0&&rect.height>0&&x>=rect.left&&x<=rect.left+rect.width&&y>=rect.top-36&&y<=rect.top+rect.height);
-  if(!entry)return null;const[paneId,rect]=entry,outerEdge:SplitDropEdge|undefined=!narrow?(x<16?'left':x>box.width-16?'right':y>box.height-16?'bottom':y<topBar+20?'top':undefined):undefined;return{paneId,edge:outerEdge??splitDropEdge({x:x-rect.left,y:y-rect.top,width:rect.width,height:rect.height}),...(outerEdge?{outer:true}:{})};
+  if(!entry)return null;const[paneId,rect]=entry,outerEdge:SplitDropEdge|undefined=!narrow?(x<16?'left':x>box.width-16?'right':y>box.height-16?'bottom':y<topBar+20?'top':undefined):undefined;return{paneId,edge:y<rect.top+36?'center':(outerEdge??splitDropEdge({x:x-rect.left,y:y-rect.top,width:rect.width,height:rect.height})),...(outerEdge?{outer:true}:{})};
  };
  const locateDrop=(event:DragEvent<HTMLDivElement>)=>locateDropAt(event.clientX,event.clientY);
  const recognized=(event:DragEvent)=>Array.from(event.dataTransfer.types).some(type=>type===GEN_THREAD_DRAG_TYPE||type===GEN_VIEW_DRAG_TYPE);
