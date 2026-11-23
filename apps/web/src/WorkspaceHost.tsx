@@ -225,7 +225,8 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
     update(); query.addEventListener('change', update); return () => query.removeEventListener('change', update);
   }, [settings.theme]);
   const action = (kind: ConversationIntent) => fail(() => openConversation(undefined, kind));
-  const openSettings = () => fail(async () => {await prepare(); setSettingsOpen(true);});
+  const settingsInvoker = useRef<HTMLElement | null>(null);
+  const openSettings = () => fail(async () => {settingsInvoker.current = document.activeElement as HTMLElement | null; await prepare(); setSettingsOpen(true);});
   const stopFocused = () => {const card=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('[data-agent-id]');const agent=card?controller.getSnapshot().agents.find(item=>item.agentId===card.dataset.agentId):undefined;if(agent&&agent.status==='working')void composers.stop(agent);};
   const shortcuts = useRef({action, openSettings, stopFocused}); shortcuts.current = {action, openSettings, stopFocused};
   const keybindings = JSON.stringify(preferences.keybindings);
@@ -240,7 +241,13 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
     };
     window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key);
   }, [keybindings, mobile]);
-  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]);});
+  const restoreSettingsFocus = () => {
+    const invoker = settingsInvoker.current;
+    settingsInvoker.current = null;
+    if (invoker?.isConnected && invoker.getClientRects().length) { invoker.focus({preventScroll: true}); return; }
+    (sidebar.current?.querySelector<HTMLElement>('button[aria-label="Settings"]') ?? searchRef.current)?.focus({preventScroll: true});
+  };
+  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]); requestAnimationFrame(restoreSettingsFocus);});
   const openBrowser = desktop?.context.surface.kind === 'main' ? async (url: string) => {
     const owner = desktop.context.windowId;
     await prepare();
