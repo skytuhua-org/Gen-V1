@@ -17,8 +17,8 @@ beforeAll(async()=>{
   import {SecureArtifactProvider} from './apps/web/src/secure-artifact-context.tsx';
   const api=window;api.regionCloses=0;api.documentClosed=0;api.popupClosed=0;api.updates=0;
   const store=createStateStore({values:{}});api.store=store;store.subscribe(()=>api.updates++);
-  const query=new URLSearchParams(location.search),kind=query.get('kind'),mode=query.get('mode');
-  function Document(){const [documentWindow,setDocumentWindow]=useState(null);api.hideDocument=()=>setDocumentWindow(null);return <StateProvider store={store}><SecureArtifactProvider value={{artifactId:'ime',threadId:'thread',revision:1,active:true,editable:true}}><WorkspaceProvider value={{activeArtifactId:'ime',requestOpenArtifact:()=>{},closeArtifact:()=>{},rightPanelOpen:true,activeTab:'artifact',setActiveTab:()=>{},documentWindow,requestOpenDocument:id=>setDocumentWindow({id,placement:'floating'}),closeDocument:()=>{api.documentClosed++;setDocumentWindow(null)},placeDocument:(id,placement)=>{api.placeCalls=(api.placeCalls??0)+1;setDocumentWindow(value=>value?.id===id?{id,placement}:value)}}}><WindowDocument text="Original" props={{title:'IME notes',editableStateKey:'draft'}}/></WorkspaceProvider></SecureArtifactProvider></StateProvider>}
+  const query=new URLSearchParams(location.search),kind=query.get('kind'),mode=query.get('mode'),launcherLabel=query.get('label'),readOnly=query.get('ro')==='1';
+  function Document(){const [documentWindow,setDocumentWindow]=useState(null);api.hideDocument=()=>setDocumentWindow(null);return <StateProvider store={store}><SecureArtifactProvider value={{artifactId:'ime',threadId:'thread',revision:1,active:true,editable:true}}><WorkspaceProvider value={{activeArtifactId:'ime',requestOpenArtifact:()=>{},closeArtifact:()=>{},rightPanelOpen:true,activeTab:'artifact',setActiveTab:()=>{},documentWindow,requestOpenDocument:id=>setDocumentWindow({id,placement:'floating'}),closeDocument:()=>{api.documentClosed++;setDocumentWindow(null)},placeDocument:(id,placement)=>{api.placeCalls=(api.placeCalls??0)+1;setDocumentWindow(value=>value?.id===id?{id,placement}:value)}}}><WindowDocument text="Original" props={{title:'IME notes',...(readOnly?{}:{editableStateKey:'draft'}),...(launcherLabel?{linkLabel:launcherLabel}:{})}}/></WorkspaceProvider></SecureArtifactProvider></StateProvider>}
   function Region(){const ref=useRef(null),[open,setOpen]=useState(true),[popup,setPopup]=useState(true);useModalRegion(ref,open,()=>{api.regionCloses++;setOpen(false)},'#outer-editor');return open?<section ref={ref} className="artifact" id="region"><textarea id="outer-editor" aria-label="Outer editor" defaultValue="Retained draft"/>{kind==='nested'?<Document/>:null}{kind==='hierarchy'&&popup?<section data-escape-scope id="popup" onKeyDown={event=>{if(event.key==='Escape'){event.stopPropagation();api.popupClosed++;setPopup(false)}}}><textarea aria-label="Popup editor" defaultValue="Retained draft"/></section>:null}</section>:null}
   function Floating(){const [open,setOpen]=useState(true);return <FloatingWindow id="ime-floating" title="IME floating" open={open} escapeBehavior={mode==='collapse'?'collapse':'close'} minimizeOnly={mode==='minimize'} onClose={()=>{api.regionCloses++;setOpen(false)}}><textarea aria-label="Floating editor" defaultValue="Retained draft"/></FloatingWindow>}
   const root=createRoot(document.getElementById('root'));api.dispose=()=>root.unmount();
@@ -33,7 +33,7 @@ async function mount(page:Page,kind:string,mode='close'){
  await page.goto(`${origin}/?kind=${kind}&mode=${mode}`);await page.locator('#prior').focus();await page.evaluate(()=>(window as any).mount());
 }
 async function documentEditor(page:Page){
- await page.getByRole('button',{name:'Open document',exact:true}).click();const editor=page.getByRole('textbox',{name:'Document text',exact:true});
+ await page.getByRole('button',{name:'Edit document',exact:true}).click();const editor=page.getByRole('textbox',{name:'Document text',exact:true});
  await browserExpect(editor).toBeEditable();await editor.fill('Retained draft');
  expect(await page.evaluate(()=>(window as any).store.get('/values/draft'))).toMatchObject({text:'Retained draft',sourceId:'binding:text'});return editor;
 }
@@ -105,5 +105,20 @@ it('hierarchy fixture delegates nested scope and restores focus/inert on region 
   expect(await page.locator('#prior').evaluate(element=>(element as HTMLElement).inert)).toBe(false);expect(await page.locator('#already-inert').evaluate(element=>(element as HTMLElement).inert)).toBe(true);
   await page.evaluate(()=>{const replacement=document.createElement('textarea');replacement.id='replacement';replacement.value='Retained draft';document.getElementById('root')!.append(replacement);replacement.focus();});await page.locator('#replacement').press('Escape');
   expect(await page.evaluate(()=>(window as any).regionCloses)).toBe(0);await browserExpect(page.locator('#replacement')).toBeFocused();await browserExpect(page.locator('#replacement')).toHaveValue('Retained draft');
+ }finally{await page.close();}
+});
+it('an authored link label opens the editable document',async()=>{
+ const page=await browser.newPage();try{
+  await page.goto(`${origin}/?kind=document&label=Edit%20handoff`);await page.evaluate(()=>(window as any).mount());
+  await page.getByRole('button',{name:'Edit handoff',exact:true}).click();
+  await browserExpect(page.getByRole('textbox',{name:'Document text',exact:true})).toBeEditable();
+ }finally{await page.close();}
+});
+it('a read-only document opens through the Open document label without an editor',async()=>{
+ const page=await browser.newPage();try{
+  await page.goto(`${origin}/?kind=document&ro=1`);await page.evaluate(()=>(window as any).mount());
+  await page.getByRole('button',{name:'Open document',exact:true}).click();
+  await browserExpect(page.getByRole('region',{name:'IME notes document window'})).toBeVisible();
+  expect(await page.getByRole('textbox',{name:'Document text',exact:true}).count()).toBe(0);
  }finally{await page.close();}
 });

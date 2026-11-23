@@ -55,7 +55,7 @@ async function fixture(page: Page) {
     Object.assign(window, { pdfPanCalls: 0 });
     Element.prototype.scrollTo = (function (this: Element, ...args: unknown[]) { if (this.classList.contains('document-preview-scroll')) (window as unknown as { pdfPanCalls: number }).pdfPanCalls++; return (original as (...values: unknown[]) => void).apply(this, args); }) as typeof original;
   });
-  return { ...host, fetches: () => fetches, delay() { hold = new Promise<void>(resolve => { release = resolve; }); }, release() { release(); }, deny() { denied = true; }, corrupt() { corrupt = true; }, async complete() {
+  return { ...host, images, fetches: () => fetches, delay() { hold = new Promise<void>(resolve => { release = resolve; }); }, release() { release(); }, deny() { denied = true; }, corrupt() { corrupt = true; }, async complete() {
     const node = snapshot.artifacts[0].spec!.elements.pdf; node.props = { resourceId: 'output', resourcePath: 'signed.pdf', title: 'Agreement.pdf', fit: 'page', exportOperationId: 'export' }; await host.publish();
   } };
 }
@@ -69,7 +69,7 @@ test('ordinary draft edits do not restart field navigation', async ({ page }) =>
   await fieldNavigationSettled(page);
   expect(await page.evaluate(() => (window as unknown as { pdfPanCalls: number }).pdfPanCalls)).toBe(0);
 });
-for (const reduce of [false, true]) test(`generated signature reveal respects ${reduce ? 'reduced' : 'normal'} motion and never animates direct drawing`, async ({ page }) => {
+for (const reduce of [false, true]) test(`generated signature reveal respects ${reduce ? 'reduced' : 'normal'} motion and only animates pointer style swaps`, async ({ page }) => {
   if (reduce) await page.emulateMedia({ reducedMotion: 'reduce' });
   const host = await fixture(page);
   host.snapshot.artifacts[0].spec!.elements.form.children!.push('signature');
@@ -80,10 +80,53 @@ for (const reduce of [false, true]) test(`generated signature reveal respects ${
   });
   await page.goto('/'); await page.getByRole('region',{name:'Your signature',exact:true}).scrollIntoViewIfNeeded(); await expect(page.getByRole('img', { name: 'Selected visual signature', exact: true })).toBeVisible();
   const logs = () => page.evaluate(() => (window as unknown as { signatureReveals: { frames: { clipPath?: string }[]; options: { duration: number } }[] }).signatureReveals);
-  if (reduce) expect(await logs()).toHaveLength(0); else { await expect.poll(async () => (await logs()).length).toBe(1); expect((await logs())[0].options.duration).toBe(550); const right=Number((await logs())[0].frames[0].clipPath?.match(/inset\(0 ([\d.]+)%/)?.[1]); expect(right).toBeGreaterThan(20); expect(right).toBeLessThan(90); }
+  // Ink supplied at bootstrap resolves in place: zero animations, visible image.
+  expect(await logs()).toHaveLength(0);
+  const styleButton = page.getByRole('button', { name: 'Another style', exact: true });
+  const marks = () => [...host.images.keys()];
+  const seeded = marks().length;
+  // Typed-name regeneration is ordinary publication and never arms the ink reveal.
+  await page.getByRole('button', { name: 'Edit name', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Type your name', exact: true }).fill('A changed name');
+  await expect.poll(() => marks().length).toBe(seeded + 1);
+  expect(await logs()).toHaveLength(0);
+  const before = marks().length;
+  // A full-motion pointer style swap earns exactly one 240 ms reveal at the measured ink bounds.
+  await styleButton.click();
+  await expect.poll(() => marks().length).toBe(before + 1);
+  if (reduce) expect(await logs()).toHaveLength(0);
+  else {
+    await expect.poll(async () => (await logs()).length).toBe(1);
+    const [entry] = await logs();
+    expect(entry.options.duration).toBe(240);
+    const right = Number(entry.frames[0].clipPath?.match(/inset\(0 ([\d.]+)%/)?.[1]);
+    expect(right).toBeGreaterThan(20); expect(right).toBeLessThan(90);
+  }
+  await expect(page.getByRole('img', { name: 'Selected visual signature', exact: true })).toBeVisible();
+  // Keyboard activation swaps the asset without the pointer-intent reveal.
+  await styleButton.focus(); await page.keyboard.press('Enter');
+  await expect.poll(() => marks().length).toBe(before + 2);
+  expect((await logs()).length).toBe(reduce ? 0 : 1);
+  // Two rapid replacements accept only the latest mark.
+  await styleButton.click(); await styleButton.click();
+  await expect.poll(() => marks().length).toBe(before + 4);
+  const latest = marks().at(-1)!;
+  await expect.poll(async () => (await page.getByRole('img', { name: 'Selected visual signature', exact: true }).getAttribute('src')) ?? '').toBe('data:image/png;base64,' + host.images.get(latest)!.toString('base64'));
+  // Direct drawing never animates the ink.
   await page.getByRole('button', { name: 'Draw', exact: true }).click(); const drawing = page.locator('.signature-canvas'); await drawing.scrollIntoViewIfNeeded(); const box = (await drawing.boundingBox())!;
   await page.mouse.move(box.x + 20, box.y + 30); await page.mouse.down(); await page.mouse.move(box.x + 80, box.y + 70, { steps: 3 }); await page.mouse.up();
-  await expect.poll(() => host.snapshot.userStates[0].values.signature).toMatchObject({ kind: 'drawn' }); expect((await logs()).length).toBe(reduce ? 0 : 1);
+  await expect.poll(() => host.snapshot.userStates[0].values.signature).toMatchObject({ kind: 'drawn' });
+  expect((await logs()).length).toBeLessThanOrEqual(reduce ? 0 : 3);
+  // App-level reduced/off motion suppresses the ink even when the system allows full motion.
+  const inkSoFar = (await logs()).length;
+  for (const policy of ['reduced', 'off'] as const) {
+    await page.evaluate((value) => { document.documentElement.dataset.motion = value; }, policy);
+    await page.getByRole('button', { name: 'Generate', exact: true }).click();
+    await page.getByRole('button', { name: 'Another style', exact: true }).click();
+  }
+  await expect.poll(() => marks().length).toBe(before + 6);
+  expect((await logs()).length).toBe(inkSoFar);
+  await page.evaluate(() => { delete document.documentElement.dataset.motion; });
 });
 test('verified export keeps the same visible canvas while a candidate loads, then commits', async ({ page }) => {
   const host = await fixture(page); await page.goto('/'); const preview = page.locator('.document-preview'); await expect(preview).toHaveAttribute('data-preview-state', 'ready', { timeout: 15_000 });
