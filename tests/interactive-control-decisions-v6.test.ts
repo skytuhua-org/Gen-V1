@@ -194,16 +194,18 @@ it('M16-G03 control.stop through the real service revokes only the thread grant'
 
 function attachTestTargetChooser(service: Service, candidates: ControlDriverOperations['candidates']) {
   vi.spyOn(hostControlDriverRegistry, 'resolve').mockReturnValue(registration());
-  service.attachControlDriver({
+  const adapter: ControlDriverOperations = {
     candidates,
     pickTarget: async () => null,
     observe: async target => observation(target, Date.now()),
     capture: async () => { throw new Error('Capture is outside the chooser fixture.'); },
     dispatch: async () => { throw new Error('Dispatch is outside the chooser fixture.'); },
     cancelInput: async () => {},
-  }, []);
+  };
+  service.attachControlDriver(adapter, []);
   __setCapabilityFlagForTests('control.selectedDesktopV1', true);
   __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+  return adapter;
 }
 
 it('M16 lists candidate targets only for the pending consent mode', async () => {
@@ -223,24 +225,58 @@ it('M16 lists candidate targets only for the pending consent mode', async () => 
   expect(candidates).toHaveBeenCalledExactlyOnceWith('SELECTED_DESKTOP_APPLICATION');
 });
 
+it('M16 grants only a target offered for the exact current consent', async () => {
+  const { service, store, thread } = serviceFixture();
+  attachTestTargetChooser(service, async () => [{ target: app, title: 'Fixture app' }]);
+  const payload = { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true };
+  const request = async (id: string) => {
+    const receipt = await service.command({ id, type: 'control.request', threadId: thread.id, payload });
+    return (receipt.result as { consent: { consentId: string } }).consent.consentId;
+  };
+  const approve = (id: string, consentId: string, target = app) => service.command({
+    id, type: 'control.grant', threadId: thread.id, payload: { consentId, target },
+  });
+
+  const original = await request('target-request');
+  await expect(approve('before-offer', original)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+  await service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
+  await expect(approve('unknown-target', original, { ...app, creationIdentity: 'different-window' }))
+    .rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+  const replacement = await request('replacement-request');
+  await expect(approve('superseded-offer', original)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+  await expect(approve('stale-offer', replacement)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+  expect(store.all('interactiveGrant', thread.id)).toHaveLength(0);
+  await service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
+  await approve('offered-target', replacement);
+  expect(store.all('interactiveGrant', thread.id)).toHaveLength(1);
+});
+
 it.each([
   { change: 'stops', code: 'CAPABILITY_DENIED' },
   { change: 'replaces consent', code: 'CAPABILITY_DENIED' },
   { change: 'archives the thread', code: 'NOT_FOUND' },
+  { change: 'archives and restores the thread', code: 'CAPABILITY_DENIED' },
+  { change: 'reattaches the same driver', code: 'CAPABILITY_DENIED' },
 ])('M16 discards an in-flight target list when the user $change', async ({ change, code }) => {
   const { service, thread } = serviceFixture();
   type CandidateList = Awaited<ReturnType<ControlDriverOperations['candidates']>>;
   let completeList!: (targets: CandidateList) => void;
   const list = new Promise<CandidateList>(resolve => { completeList = resolve; });
   const candidates = vi.fn<ControlDriverOperations['candidates']>().mockReturnValue(list);
-  attachTestTargetChooser(service, candidates);
+  const adapter = attachTestTargetChooser(service, candidates);
   const payload = { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true };
   await service.command({ id: 'chooser-request', type: 'control.request', threadId: thread.id, payload });
 
   const listing = service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
   expect(candidates).toHaveBeenCalledExactlyOnceWith('SELECTED_DESKTOP_APPLICATION');
-  if (change === 'archives the thread') {
+  if (change === 'reattaches the same driver') {
+    service.detachControlDriver();
+    service.attachControlDriver(adapter, []);
+  } else if (change.startsWith('archives')) {
     await service.command({ id: 'chooser-archive', type: 'thread.archive', threadId: thread.id, payload: {} });
+    if (change === 'archives and restores the thread') {
+      await service.command({ id: 'chooser-restore', type: 'thread.restore', threadId: thread.id, payload: {} });
+    }
   } else {
     await service.command({ id: 'chooser-stop', type: 'control.stop', threadId: thread.id, payload: {} });
     if (change === 'replaces consent') {
@@ -250,6 +286,96 @@ it.each([
   completeList([{ target: app, title: 'Fixture app' }]);
 
   await expect(listing).rejects.toMatchObject({ code });
+});
+
+it('M16 refuses to enumerate or grant after the consent owner scope changes', async () => {
+  const { service, store, thread } = serviceFixture();
+  const candidates = vi.fn<ControlDriverOperations['candidates']>().mockResolvedValue([{ target: app, title: 'Fixture app' }]);
+  attachTestTargetChooser(service, candidates);
+  const receipt = await service.command({
+    id: 'old-scope', type: 'control.request', threadId: thread.id,
+    payload: { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true },
+  });
+  const { consent } = receipt.result as { consent: { consentId: string } };
+  await service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
+  store.internal('fixture.scope', thread.id, () => {
+    store.put('thread', thread.id, thread.id, { ...thread, epoch: thread.epoch + 1, accountId: 'other-scope' });
+  });
+
+  await expect(service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION')).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+  expect(candidates).toHaveBeenCalledExactlyOnceWith('SELECTED_DESKTOP_APPLICATION');
+  await expect(service.command({
+    id: 'stale-scope', type: 'control.grant', threadId: thread.id,
+    payload: { consentId: consent.consentId, target: app },
+  })).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+});
+
+it('M16 shares a single target snapshot across concurrent requests for the same consent', async () => {
+  const { service, thread } = serviceFixture();
+  const candidates = vi.fn<ControlDriverOperations['candidates']>().mockResolvedValue([{ target: app, title: 'Fixture app' }]);
+  attachTestTargetChooser(service, candidates);
+  await service.command({
+    id: 'shared-chooser', type: 'control.request', threadId: thread.id,
+    payload: { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true },
+  });
+
+  const lists = await Promise.all([
+    service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION'),
+    service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION'),
+  ]);
+  expect(lists[0]?.candidates).toEqual(lists[1]?.candidates);
+  expect(candidates).toHaveBeenCalledExactlyOnceWith('SELECTED_DESKTOP_APPLICATION');
+
+  const refreshed = [{ target: { ...app, sessionIdentity: 'new-geometry' }, title: 'Refreshed fixture' }];
+  candidates.mockResolvedValue(refreshed);
+  await expect(service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION')).resolves.toMatchObject({ candidates: refreshed });
+  expect(candidates).toHaveBeenCalledTimes(2);
+});
+
+it('M16 revokes control on archive and hides stale persisted grants on restart', async () => {
+  const { service, store, thread } = serviceFixture();
+  attachTestTargetChooser(service, async () => [{ target: app, title: 'Fixture app' }]);
+  const payload = { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true };
+  const oldGrant = { ...grant(app, Date.now()), capturePermission: true };
+  store.internal('fixture.old-session', thread.id, () => {
+    store.put('interactiveGrant', oldGrant.grantId, thread.id, oldGrant);
+  });
+  const receipt = await service.command({ id: 'replacement-control', type: 'control.request', threadId: thread.id, payload });
+  const { consent } = receipt.result as { consent: { consentId: string } };
+  expect(service.controlConsent.surfaceModel(thread.id).state).toBe('consent');
+  await service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
+  const issued = await service.command({
+    id: 'approve-replacement', type: 'control.grant', threadId: thread.id,
+    payload: { consentId: consent.consentId, target: app },
+  });
+  const active = (issued.result as { grant: InteractiveGrantV1 }).grant;
+  await service.command({ id: 'archive-with-grant', type: 'thread.archive', threadId: thread.id, payload: {} });
+  await service.command({ id: 'restore-without-grant', type: 'thread.restore', threadId: thread.id, payload: {} });
+  const saved = store.get<InteractiveGrantV1>('interactiveGrant', active.grantId);
+  expect(saved?.revocationGeneration).toBe(1);
+  await expect(service.controlCapture(thread.id)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+});
+
+it('M16 honors the consent origin allowlist for new grants and persisted captures', () => {
+  const { store } = serviceFixture();
+  const registry = new ControlDriverRegistry();
+  registry.register(registration('browser-tab'));
+  __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+  const host = new BrowserConsentHost(store, { registry });
+  const target = { kind: 'BROWSER_TAB' as const, creationIdentity: 'tab-1', sessionIdentity: 'nav-1', origin: 'https://outside.example' };
+  const request = host.requestConsent(owner, {
+    mode: 'CONSENTED_EXISTING_TAB', observe: true, allowedOrigins: ['https://approved.example'],
+  });
+  expect(codeOf(() => host.grant(request.consentId, owner, target, { deviceId: 'd', sessionId: 's' }))).toBe('CAPABILITY_DENIED');
+
+  const persisted = {
+    ...grant(target, Date.now()), mode: 'CONSENTED_EXISTING_TAB' as const,
+    capturePermission: true, allowedOrigins: ['https://approved.example'],
+  };
+  store.internal('fixture.legacy', owner.threadId, () => {
+    store.put('interactiveGrant', persisted.grantId, owner.threadId, persisted);
+  });
+  expect(codeOf(() => host.authorizeAction(persisted, 'CAPTURE'))).toBe('CAPABILITY_DENIED');
 });
 
 /** Supporting assertion for G02: the M16 flags exist in the host registry and

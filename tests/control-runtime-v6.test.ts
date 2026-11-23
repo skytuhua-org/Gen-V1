@@ -45,12 +45,12 @@ function driver(over: Partial<ControlDriverOperations> = {}): ControlDriverOpera
   };
 }
 
-function harness() {
+function harness(currentOwner?: (threadId: string) => ToolOwner) {
   const dir = mkdtempSync(join(tmpdir(), 'm16-runtime-'));
   const store = new Store(dir);
   const registry = new ControlDriverRegistry();
   const consent = new BrowserConsentHost(store, { registry });
-  const runtime = new ControlRuntime(store, consent, { registry, device, artifactRoot: dir });
+  const runtime = new ControlRuntime(store, consent, { registry, device, artifactRoot: dir, currentOwner });
   // The pending request has to be recorded while the capability is enabled;
   // the tests themselves drive the flag from here on.
   __setCapabilityFlagForTests('control.consentedBrowserV1', true);
@@ -59,12 +59,17 @@ function harness() {
   return { dir, store, registry, consent, runtime, request };
 }
 
+async function offerTargets(runtime: ControlRuntime, consentId: string) {
+  const offer = await runtime.targets('CONSENTED_EXISTING_TAB', owner.threadId, consentId);
+  runtime.recordTargetOffer(owner.threadId, offer);
+}
+
 describe('M16 ControlRuntime host ownership', () => {
   it('D01/D02 unattached driver still resolves DRIVER_UNAVAILABLE for targets', async () => {
-    const { dir, store, registry, runtime } = harness();
+    const { dir, store, registry, runtime, request } = harness();
     try {
       __setCapabilityFlagForTests('control.consentedBrowserV1', true);
-      await expect(runtime.targets('CONSENTED_EXISTING_TAB')).rejects.toMatchObject({ code: 'DRIVER_UNAVAILABLE' });
+      await expect(runtime.targets('CONSENTED_EXISTING_TAB', owner.threadId, request.consentId)).rejects.toMatchObject({ code: 'DRIVER_UNAVAILABLE' });
       expect(() => registry.resolve('CONSENTED_EXISTING_TAB')).toThrow(HarnessError);
     } finally {
       __setCapabilityFlagForTests('control.consentedBrowserV1', false);
@@ -74,14 +79,14 @@ describe('M16 ControlRuntime host ownership', () => {
   });
 
   it('targets require the capability flag even with a driver attached', async () => {
-    const { dir, store, registry, runtime } = harness();
+    const { dir, store, registry, runtime, request } = harness();
     try {
       registry.register(registration);
       runtime.attachDriver(driver());
-      await expect(runtime.targets('CONSENTED_EXISTING_TAB')).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+      await expect(runtime.targets('CONSENTED_EXISTING_TAB', owner.threadId, request.consentId)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
       __setCapabilityFlagForTests('control.consentedBrowserV1', true);
-      const targets = await runtime.targets('CONSENTED_EXISTING_TAB');
-      expect(targets[0]!.target).toEqual(target);
+      const targets = await runtime.targets('CONSENTED_EXISTING_TAB', owner.threadId, request.consentId);
+      expect(targets.candidates[0]!.target).toEqual(target);
     } finally {
       __setCapabilityFlagForTests('control.consentedBrowserV1', false);
       store.close();
@@ -95,6 +100,7 @@ describe('M16 ControlRuntime host ownership', () => {
       __setCapabilityFlagForTests('control.consentedBrowserV1', true);
       registry.register(registration);
       runtime.attachDriver(driver());
+      await offerTargets(runtime, request.consentId);
       const grant = runtime.grant(request.consentId, owner, target);
       const { capture, artifactRef } = await runtime.capture(owner.threadId);
       const absolute = join(dir, artifactRef);
@@ -116,6 +122,7 @@ describe('M16 ControlRuntime host ownership', () => {
       const observeOff = consent.requestConsent(owner, { mode: 'CONSENTED_EXISTING_TAB', observe: false, operations: ['CLICK'], allowedOrigins: ['https://public.example'] });
       registry.register(registration);
       runtime.attachDriver(driver());
+      await offerTargets(runtime, observeOff.consentId);
       runtime.grant(observeOff.consentId, owner, target);
       await expect(runtime.capture(owner.threadId)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
       expect(store.all('controlCapture', owner.threadId)).toHaveLength(0);
@@ -132,6 +139,7 @@ describe('M16 ControlRuntime host ownership', () => {
       __setCapabilityFlagForTests('control.consentedBrowserV1', true);
       registry.register(registration);
       runtime.attachDriver(driver());
+      await offerTargets(runtime, request.consentId);
       runtime.grant(request.consentId, owner, target);
       const observation = { observationId: 'obs-fresh', target, geometry: { x: 0, y: 0, width: 400, height: 300, dpiScale: 1 }, observedAtMs: Date.now() };
       const result = await runtime.action(owner.threadId, owner, { action: 'CLICK', parameters: { x: 5, y: 5 }, observation });
@@ -154,6 +162,7 @@ describe('M16 ControlRuntime host ownership', () => {
       let finishCapture!: (frame: Frame) => void;
       const frame = new Promise<Frame>(resolve => { finishCapture = resolve; });
       runtime.attachDriver(driver({ capture: () => frame }));
+      await offerTargets(runtime, request.consentId);
       runtime.grant(request.consentId, owner, target);
 
       const capturing = runtime.capture(owner.threadId);
@@ -176,6 +185,7 @@ describe('M16 ControlRuntime host ownership', () => {
       __setCapabilityFlagForTests('control.consentedBrowserV1', true);
       registry.register(registration);
       runtime.attachDriver(driver());
+      await offerTargets(runtime, request.consentId);
       runtime.grant(request.consentId, owner, target);
       let finishPreparing!: () => void;
       const preparation = new Promise<void>(resolve => { finishPreparing = resolve; });
@@ -219,6 +229,7 @@ describe('M16 ControlRuntime host ownership', () => {
       const consentRequest = dispatchFirst ? request : consent.requestConsent(owner, {
         mode: 'CONSENTED_EXISTING_TAB', observe: true, operations: [], allowedOrigins: ['https://public.example'],
       });
+      await offerTargets(runtime, consentRequest.consentId);
       runtime.grant(consentRequest.consentId, owner, target);
 
       if (dispatchFirst) {
@@ -237,12 +248,62 @@ describe('M16 ControlRuntime host ownership', () => {
     }
   });
 
+  it('cancels queued input when the live owner changes during observation', async () => {
+    let currentOwner = owner;
+    const { dir, store, registry, runtime, request } = harness(() => currentOwner);
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      const observed = await driver().observe(target);
+      let finishObservation!: (result: typeof observed) => void;
+      const observing = new Promise<typeof observed>(resolve => { finishObservation = resolve; });
+      const dispatch = vi.fn<ControlDriverOperations['dispatch']>().mockResolvedValue({ receipt: 'sent' });
+      runtime.attachDriver(driver({ observe: () => observing, dispatch }));
+      await offerTargets(runtime, request.consentId);
+      runtime.grant(request.consentId, owner, target);
+
+      const action = runtime.action(owner.threadId, owner, { action: 'CLICK', observation: observed });
+      currentOwner = { ...owner, epoch: owner.epoch + 1 };
+      finishObservation(observed);
+
+      await expect(action).resolves.toMatchObject({ outcome: 'CANCELLED' });
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('revokes an issued grant when its driver is detached and reattached', async () => {
+    const { dir, store, registry, runtime, request, consent } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      const attached = driver();
+      runtime.attachDriver(attached);
+      await offerTargets(runtime, request.consentId);
+      runtime.grant(request.consentId, owner, target);
+
+      runtime.detachDriver();
+      runtime.attachDriver(attached);
+
+      expect(consent.activeGrant(owner.threadId)).toBeNull();
+      await expect(runtime.capture(owner.threadId)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('stop revokes the grant and drops the thread dispatcher', async () => {
     const { dir, store, registry, runtime, request, consent } = harness();
     try {
       __setCapabilityFlagForTests('control.consentedBrowserV1', true);
       registry.register(registration);
       runtime.attachDriver(driver());
+      await offerTargets(runtime, request.consentId);
       runtime.grant(request.consentId, owner, target);
       const surface = await runtime.stop(owner.threadId);
       expect(surface.state).toBe('unavailable');

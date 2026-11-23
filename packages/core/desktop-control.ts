@@ -69,6 +69,7 @@ export interface ControlDispatcherOptions {
   registration?: ControlDriverRegistrationV1;
   nowMs?: () => number;
   sleepMs?: (ms: number) => Promise<void>;
+  isGrantLive?: (grant: InteractiveGrantV1) => boolean;
 }
 
 export class ControlDispatcher {
@@ -161,7 +162,9 @@ export class ControlDispatcher {
    * must match the generation recorded at enqueue, Stop must not have run and
    * the grant must still be active under that generation. */
   private permissionLive(item: QueuedControlAction): boolean {
-    return !this.stopped && item.generation === this.generation && grantState(item.grant, this.now(), this.generation) === 'ACTIVE';
+    return !this.stopped && item.generation === this.generation &&
+      grantState(item.grant, this.now(), this.generation) === 'ACTIVE' &&
+      (this.options.isGrantLive?.(item.grant) ?? true);
   }
 
   private async drain(): Promise<void> {

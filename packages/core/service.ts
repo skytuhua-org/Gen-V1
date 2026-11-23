@@ -1,5 +1,6 @@
 import {attestVerificationArtifacts} from './verification-artifacts.ts';
 import { randomUUID, createHash } from "node:crypto";
+import { isDeepStrictEqual } from 'node:util';
 import { MODEL_ONLY_MAX_PROMPT_BYTES } from '../runtime/model-only.ts';
 import type { ContextRequestObservationV1 } from '../contracts/request-context.ts';
 import { createContextResults, encodeContextResult, CONTEXT_PREVIEW_CAP_BYTES, MAX_TRACKED_RESULTS, type ContextResultStorage } from './context-results.ts';
@@ -273,9 +274,15 @@ export class Service {
       finalize:async(preparation,input)=>{const memory=this.memoryHostInstance?await this.memoryHostInstance.finalize(preparation,input):{sources:[]},extra=await options.requestContextHooks?.finalize?.(preparation,input);return{sources:[...memory.sources,...(extra?.sources??[])],assertCurrent:()=>{memory.assertCurrent?.();extra?.assertCurrent?.();}};},
       released:(preparation,reason)=>{this.memoryHostInstance?.released(preparation,reason);options.requestContextHooks?.released?.(preparation,reason);},
     });
-    this.controlConsent = new BrowserConsentHost(store, {registry: hostControlDriverRegistry});
+    this.controlConsent = new BrowserConsentHost(store, {
+      registry: hostControlDriverRegistry,
+      isGrantAttached: grant => this.controlRuntime.ownsGrant(grant),
+    });
     this.controlDevice = { deviceId: 'device:' + createHash('sha256').update(hostname() + '|' + store.dataDir).digest('hex').slice(0, 32), sessionId: 'session-' + randomUUID() };
-    this.controlRuntime = new ControlRuntime(store, this.controlConsent, { registry: hostControlDriverRegistry, device: this.controlDevice, artifactRoot: store.dataDir });
+    this.controlRuntime = new ControlRuntime(store, this.controlConsent, { registry: hostControlDriverRegistry, device: this.controlDevice, artifactRoot: store.dataDir, currentOwner: threadId => {
+      const thread = store.get<Thread>('thread', threadId);
+      return thread && !store.get('archivedThread', threadId) ? this.controlOwner(thread) : null;
+    } });
     this.sourceWorkbench = new SourceWorkbench(store, requestId => this.requestCustody.release(requestId, 'cancelled'), {
       requestContextEnabled: () => this.requestContextEnabled(),
       readMemoryModule: async owner => {
@@ -541,21 +548,27 @@ export class Service {
   }
   detachControlDriver(): void { this.controlRuntime.detachDriver(); }
 
+  private controlOwner(thread: Thread): ToolOwner {
+    return { ...ownerFor(thread), runId: null };
+  }
+
   /** S02/U02: approved-driver candidate targets for a pending consent. */
   async controlTargets(threadId: string, mode: unknown) {
     const parsed = controlModeSchema.parse(mode);
-    this.thread(threadId);
+    const owner = this.controlOwner(this.thread(threadId));
     const pending = this.controlConsent.surfaceModel(threadId).pendingConsent;
-    if (pending?.state !== 'PENDING' || pending.mode !== parsed) {
+    if (pending?.state !== 'PENDING' || pending.mode !== parsed || !isDeepStrictEqual(pending.owner, owner)) {
       throw new HarnessError('CAPABILITY_DENIED', 'Target selection requires a pending consent for this mode.');
     }
-    const candidates = await this.controlRuntime.targets(parsed);
-    this.thread(threadId);
+    const offer = await this.controlRuntime.targets(parsed, threadId, pending.consentId);
+    const currentOwner = this.controlOwner(this.thread(threadId));
     const control = this.controlConsent.surfaceModel(threadId);
-    if (control.state !== 'consent' || control.pendingConsent?.consentId !== pending.consentId) {
+    if (control.state !== 'consent' || control.pendingConsent?.consentId !== pending.consentId ||
+        !isDeepStrictEqual(pending.owner, currentOwner)) {
       throw new HarnessError('CAPABILITY_DENIED', 'The consent changed while selecting targets.');
     }
-    return { candidates, control };
+    this.controlRuntime.recordTargetOffer(threadId, offer);
+    return { candidates: offer.candidates, control };
   }
 
   /** S05: a consented observation only — bytes stay under the host artifact
@@ -1149,9 +1162,10 @@ export class Service {
     if(command.type==='control.request')return this.store.command(command,()=>{
       const thread=this.thread(command.threadId!),mode=p.mode;
       if(mode!=='FRESH_VERIFICATION_BROWSER'&&mode!=='CONSENTED_EXISTING_TAB'&&mode!=='SELECTED_DESKTOP_APPLICATION')throw new HarnessError('INVALID_INPUT','Choose a control mode.');
-      const owner={threadId:thread.id,runId:null,epoch:thread.epoch,projectId:thread.projectId??null,workspaceId:thread.workspaceId??null,accountBinding:thread.accountId??null};
+      const owner=this.controlOwner(thread);
       const OPS=['CLICK','TYPE','KEYPRESS','UPLOAD','DOWNLOAD','NAVIGATE'] as const;
       const operations=Array.isArray(p.operations)?p.operations.filter((o):o is (typeof OPS)[number]=>typeof o==='string'&&(OPS as readonly string[]).includes(o)):[];
+      this.controlRuntime.discardTargetOffer(thread.id);
       const request=this.controlConsent.requestConsent(owner,{mode,observe:p.observe===true,operations,allowedOrigins:Array.isArray(p.allowedOrigins)?p.allowedOrigins.filter((o):o is string=>typeof o==='string'):[]});
       return {consent:request,control:this.controlConsent.surfaceModel(thread.id)};
     });
@@ -1159,7 +1173,7 @@ export class Service {
       const thread=this.thread(command.threadId!);
       const consentId=text(p,'consentId',200);
       const target=controlTargetIdentityV1Schema.parse(p.target);
-      const owner={threadId:thread.id,runId:null,epoch:thread.epoch,projectId:thread.projectId??null,workspaceId:thread.workspaceId??null,accountBinding:thread.accountId??null};
+      const owner=this.controlOwner(thread);
       const grant=this.controlRuntime.grant(consentId,owner,target);
       return {grant,control:this.controlConsent.surfaceModel(thread.id)};
     });
@@ -1387,6 +1401,8 @@ export class Service {
       case "thread.archive": {
         if(thread.runId)throw new HarnessError("RUN_BUSY","Stop the thread before archiving");
         if(this.planning.hasActiveChildren(thread.id)||this.store.all<Thread>('thread').some(side=>(side.sideParentId===thread.id||side.parentThreadId===thread.id)&&side.runId&&!this.store.get('archivedThread',side.id)))throw new HarnessError('RUN_BUSY','Finish or stop the child conversation before archiving this thread');
+        void this.controlRuntime.stopDispatch(thread.id);
+        this.controlConsent.stop(thread.id);
         this.store.put("archivedThread",thread.id,thread.id,true);return {archived:true};
       }
       case "edit.begin": {

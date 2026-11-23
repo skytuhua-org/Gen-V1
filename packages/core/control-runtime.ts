@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { rmSync, writeFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { HarnessError } from '../contracts/index.ts';
 import type { ToolOwner } from '../contracts/tool-effects.ts';
 import {
@@ -15,7 +16,7 @@ import {
   type StoredCaptureV1,
 } from '../contracts/interactive-control.ts';
 import type { Store } from '../storage/store.ts';
-import type { BrowserConsentHost, ControlDriverRegistry } from './browser-consent.ts';
+import { sameTargetIdentity, type BrowserConsentHost, type ControlDriverRegistry } from './browser-consent.ts';
 import { ControlDispatcher, type ControlDriverOperations, type QueuedControlAction } from './desktop-control.ts';
 
 /** M16 C3/C4 host runtime (followup/m16-windows-control-bridge). Owns the
@@ -32,9 +33,18 @@ export interface ControlDriverAttachment {
 const ACTION_KINDS = ['CAPTURE', 'CLICK', 'TYPE', 'KEYPRESS', 'UPLOAD', 'DOWNLOAD', 'NAVIGATE'] as const;
 type ActionKind = (typeof ACTION_KINDS)[number];
 
+interface TargetOffer {
+  consentId: string;
+  pending: Promise<ControlTargetCandidateV1[]>;
+  targets?: ControlTargetIdentityV1[];
+}
+
 export class ControlRuntime {
   private driver: ControlDriverOperations | null = null;
+  private driverGeneration = 0;
+  private readonly driverGrants = new Map<string, InteractiveGrantV1>();
   private readonly dispatchers = new Map<string, ControlDispatcher>();
+  private readonly targetOffers = new Map<string, TargetOffer>();
   private readonly now: () => number;
 
   constructor(
@@ -45,6 +55,7 @@ export class ControlRuntime {
       device: { deviceId: string; sessionId: string };
       artifactRoot: string;
       nowMs?: () => number;
+      currentOwner?: (threadId: string) => ToolOwner | null;
     },
   ) {
     this.now = deps.nowMs ?? Date.now;
@@ -53,11 +64,21 @@ export class ControlRuntime {
   /** Attach the single approved driver. Registration entries were already
    * validated and registered by the caller's host path; this only wires the
    * executable handle. Detach leaves input functions unregistered again (D07). */
-  attachDriver(driver: ControlDriverOperations): void { this.driver = driver; }
+  attachDriver(driver: ControlDriverOperations): void {
+    this.detachDriver();
+    this.driver = driver;
+  }
   detachDriver(): void {
+    this.driverGeneration += 1;
+    this.targetOffers.clear();
+    const grants = [...this.driverGrants.values()];
+    for (const threadId of new Set([...this.dispatchers.keys(), ...this.driverGrants.keys()])) {
+      void this.stopDispatch(threadId);
+    }
     this.driver = null;
-    for (const dispatcher of this.dispatchers.values()) void dispatcher.stop();
-    this.dispatchers.clear();
+    for (const grant of grants) {
+      if (this.store.get('interactiveGrant', grant.grantId)) this.consent.revoke(grant.grantId);
+    }
   }
   driverAttached(): boolean { return this.driver !== null; }
 
@@ -70,16 +91,50 @@ export class ControlRuntime {
    * driver's registered in-app targets; the desktop-application mode lists the
    * driver's app-owned consent-chooser rows (each carries its own proven
    * window handle — the system picker's pickTarget stays held). */
-  async targets(mode: ControlMode): Promise<ControlTargetCandidateV1[]> {
+  async targets(mode: ControlMode, threadId: string, consentId: string) {
     const driver = this.requireDriver();
-    return this.consent.listTargets(mode, () => driver.candidates(mode));
+    const existing = this.targetOffers.get(threadId);
+    const offer = existing?.consentId === consentId && !existing.targets ? existing : {
+      consentId, pending: this.consent.listTargets(mode, () => driver.candidates(mode)),
+    };
+    this.targetOffers.set(threadId, offer);
+    try {
+      const candidates = await (offer === existing
+        ? this.consent.listTargets(mode, () => offer.pending)
+        : offer.pending);
+      return { offer, candidates };
+    } catch (error) {
+      if (this.targetOffers.get(threadId) === offer) this.discardTargetOffer(threadId);
+      throw error;
+    }
+  }
+
+  recordTargetOffer(threadId: string, result: Awaited<ReturnType<ControlRuntime['targets']>>): void {
+    if (this.targetOffers.get(threadId) !== result.offer) {
+      throw new HarnessError('CAPABILITY_DENIED', 'The target selection was invalidated.');
+    }
+    result.offer.targets = result.candidates.map(({ target }) => ({ ...target }));
+  }
+
+  discardTargetOffer(threadId: string): void {
+    this.targetOffers.delete(threadId);
   }
 
   /** Consent resolution stays a synchronous host command path: the grant is
    * written under the open command transaction with this host's authenticated
    * device/session identity. */
   grant(consentId: string, owner: ToolOwner, target: ControlTargetIdentityV1): InteractiveGrantV1 {
-    return this.consent.grant(consentId, owner, target, this.deps.device);
+    const offer = this.targetOffers.get(owner.threadId);
+    const offeredTarget = offer?.consentId === consentId
+      ? offer.targets?.find(candidate => sameTargetIdentity(candidate, target) && candidate.origin === target.origin)
+      : undefined;
+    if (!offeredTarget) {
+      throw new HarnessError('CAPABILITY_DENIED', 'Select a target offered for this consent.');
+    }
+    const grant = this.consent.grant(consentId, owner, offeredTarget, this.deps.device);
+    this.discardTargetOffer(owner.threadId);
+    this.driverGrants.set(owner.threadId, grant);
+    return grant;
   }
 
   private dispatcherFor(threadId: string, grant: InteractiveGrantV1): ControlDispatcher {
@@ -89,14 +144,22 @@ export class ControlRuntime {
       driver: this.requireDriver(),
       registration: this.deps.registry.resolve(grant.mode),
       nowMs: this.now,
+      isGrantLive: candidate => this.ownsGrant(candidate) && this.consent.activeGrant(threadId)?.grantId === candidate.grantId,
     });
     this.dispatchers.set(threadId, dispatcher);
     return dispatcher;
   }
 
+  ownsGrant(grant: InteractiveGrantV1): boolean {
+    return this.driver !== null && this.driverGrants.get(grant.owner.threadId)?.grantId === grant.grantId &&
+      (!this.deps.currentOwner || isDeepStrictEqual(grant.owner, this.deps.currentOwner(grant.owner.threadId)));
+  }
+
   private activeGrant(threadId: string): InteractiveGrantV1 {
     const grant = this.consent.activeGrant(threadId);
-    if (!grant) throw new HarnessError('CAPABILITY_DENIED', 'No active control grant for this thread.');
+    if (!grant || !this.ownsGrant(grant)) {
+      throw new HarnessError('CAPABILITY_DENIED', 'No active control grant for this driver attachment and thread scope.');
+    }
     return grant;
   }
 
@@ -108,9 +171,11 @@ export class ControlRuntime {
     this.consent.authorizeAction(grant, 'CAPTURE');
     const registration = this.deps.registry.resolve(grant.mode);
     const driver = this.requireDriver();
+    const generation = this.driverGeneration;
     const assertCaptureAuthorized = () => {
+      this.activeGrant(threadId);
       this.consent.authorizeAction(grant, 'CAPTURE');
-      if (this.driver !== driver) throw new HarnessError('DRIVER_UNAVAILABLE', 'The capture driver is no longer attached.');
+      if (this.driverGeneration !== generation) throw new HarnessError('DRIVER_UNAVAILABLE', 'The capture driver is no longer attached.');
     };
     const frame = await driver.capture(grant.target);
     assertCaptureAuthorized();
@@ -186,7 +251,9 @@ export class ControlRuntime {
   /** G03 rollback for dispatch: the dispatcher's generation is revoked before
    * queued actions are cancelled. Unconditional for this thread. */
   async stopDispatch(threadId: string): Promise<void> {
-    const target = this.consent.activeGrant(threadId)?.target;
+    this.discardTargetOffer(threadId);
+    const target = this.driverGrants.get(threadId)?.target;
+    this.driverGrants.delete(threadId);
     const dispatcher = this.dispatchers.get(threadId);
     if (dispatcher) {
       this.dispatchers.delete(threadId);

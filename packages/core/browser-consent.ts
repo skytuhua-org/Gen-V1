@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { HarnessError } from '../contracts/index.ts';
 import type { ToolOwner } from '../contracts/tool-effects.ts';
 import {
@@ -61,6 +62,10 @@ export function sameTargetIdentity(a: ControlTargetIdentityV1, b: ControlTargetI
   return a.kind === b.kind && a.creationIdentity === b.creationIdentity && a.sessionIdentity === b.sessionIdentity;
 }
 
+function allowsOrigin(target: ControlTargetIdentityV1, origins: readonly string[], origin = target.origin): boolean {
+  return target.kind !== 'BROWSER_TAB' || origins.length === 0 || (origin !== null && origins.includes(origin));
+}
+
 export type GrantState = 'ACTIVE' | 'EXPIRED' | 'REVOKED' | 'NEEDS_NEW_PERMISSION';
 
 export function grantState(grant: InteractiveGrantV1, nowMs: number, currentRevocationGeneration?: number): GrantState {
@@ -75,7 +80,7 @@ export function grantState(grant: InteractiveGrantV1, nowMs: number, currentRevo
 export class BrowserConsentHost {
   constructor(
     private readonly store: Store,
-    private readonly deps: { registry: ControlDriverRegistry; nowMs?: () => number } = { registry: hostControlDriverRegistry },
+    private readonly deps: { registry: ControlDriverRegistry; nowMs?: () => number; isGrantAttached?: (grant: InteractiveGrantV1) => boolean } = { registry: hostControlDriverRegistry },
   ) {}
   private now(): number { return (this.deps.nowMs ?? Date.now)(); }
 
@@ -90,13 +95,17 @@ export class BrowserConsentHost {
     return this.store.all<InteractiveGrantV1>('interactiveGrant', threadId).filter(item => item.owner.threadId === threadId);
   }
   activeGrant(threadId: string): InteractiveGrantV1 | null {
-    return this.grants(threadId).find(grant => grantState(grant, this.now()) === 'ACTIVE') ?? null;
+    return this.grants(threadId).find(grant => grantState(grant, this.now()) === 'ACTIVE' && (this.deps.isGrantAttached?.(grant) ?? true)) ?? null;
   }
   private consents(threadId: string): ConsentRequestV1[] {
     return this.store.all<ConsentRequestV1>('controlConsent', threadId);
   }
+  private unresolvedConsents(threadId: string): ConsentRequestV1[] {
+    return this.consents(threadId).filter(item => item.state === 'PENDING' || item.state === 'UNAVAILABLE');
+  }
+
   pendingConsent(threadId: string): ConsentRequestV1 | null {
-    return this.consents(threadId).find(item => item.state === 'PENDING' || item.state === 'UNAVAILABLE') ?? null;
+    return this.unresolvedConsents(threadId).at(-1) ?? null;
   }
 
   /** U02 consent preview: Observe and Interact permissions stay separated,
@@ -126,6 +135,9 @@ export class BrowserConsentHost {
       resolvedAtMs: enabled ? null : this.now(),
     });
     return this.write('control.consent.requested', owner.threadId, () => {
+      for (const prior of this.unresolvedConsents(owner.threadId)) {
+        this.store.put('controlConsent', prior.consentId, owner.threadId, { ...prior, state: 'DENIED', reason: 'superseded', resolvedAtMs: this.now() });
+      }
       this.store.put('controlConsent', record.consentId, owner.threadId, record);
       return record;
     });
@@ -136,10 +148,13 @@ export class BrowserConsentHost {
    * registration. Never extends a grant automatically (C01). */
   grant(consentId: string, owner: ToolOwner, target: ControlTargetIdentityV1, device: { deviceId: string; sessionId: string }): InteractiveGrantV1 {
     const consent = this.store.get<ConsentRequestV1>('controlConsent', consentId);
-    if (!consent || consent.owner.threadId !== owner.threadId || consent.state !== 'PENDING') throw new HarnessError('CAPABILITY_DENIED', 'No pending consent request for this grant.');
+    if (!consent || !isDeepStrictEqual(consent.owner, owner) || consent.state !== 'PENDING' || this.pendingConsent(owner.threadId)?.consentId !== consentId) throw new HarnessError('CAPABILITY_DENIED', 'No pending consent request for this grant.');
     if (!capabilityEnabled(flagFor(consent.mode))) throw new HarnessError('CAPABILITY_DENIED', 'This control capability is disabled on this host.');
     const expectedKind = consent.mode === 'SELECTED_DESKTOP_APPLICATION' ? 'APPLICATION' : 'BROWSER_TAB';
     if (target.kind !== expectedKind) throw new HarnessError('INVALID_INPUT', 'The selected target does not match the consented mode.');
+    if (!allowsOrigin(target, consent.allowedOrigins)) {
+      throw new HarnessError('CAPABILITY_DENIED', 'The selected origin is outside the consent.');
+    }
     this.deps.registry.resolve(consent.mode);
     const now = this.now();
     const grant: InteractiveGrantV1 = interactiveGrantV1Schema.parse({
@@ -183,8 +198,8 @@ export class BrowserConsentHost {
    * and grant/consent records are retained as receipts. */
   stop(threadId: string): ControlSurfaceModelV1 {
     const actives = this.grants(threadId).filter(grant => grantState(grant, this.now()) === 'ACTIVE');
-    const pending = actives.length ? null : this.pendingConsent(threadId);
-    if (!actives.length && !pending) return this.surfaceModel(threadId);
+    const unresolved = this.unresolvedConsents(threadId);
+    if (!actives.length && !unresolved.length) return this.surfaceModel(threadId);
     this.write('control.stopped', threadId, () => {
       // Stop is unconditional for this thread: every active grant is revoked,
       // never only the first one the lookup happens to return.
@@ -192,7 +207,7 @@ export class BrowserConsentHost {
         const current = this.store.get<InteractiveGrantV1>('interactiveGrant', grant.grantId);
         if (current) this.store.put('interactiveGrant', grant.grantId, threadId, { ...current, revocationGeneration: current.revocationGeneration + 1 });
       }
-      if (!actives.length && pending) {
+      for (const pending of unresolved) {
         this.store.put('controlConsent', pending.consentId, threadId, { ...pending, state: 'DENIED', reason: 'stopped', resolvedAtMs: this.now() });
       }
     });
@@ -212,7 +227,7 @@ export class BrowserConsentHost {
     // A declared origin list authorizes only a proven member: an unreported
     // origin is outside it, never silently inside. A grant that declares no
     // origins keeps origin out of its policy.
-    if (live.target.kind === 'BROWSER_TAB' && live.allowedOrigins.length > 0 && (origin === null || !live.allowedOrigins.includes(origin))) return 'NEEDS_NEW_PERMISSION';
+    if (!allowsOrigin(live.target, live.allowedOrigins, origin)) return 'NEEDS_NEW_PERMISSION';
     return 'ACTIVE';
   }
 
@@ -225,6 +240,7 @@ export class BrowserConsentHost {
     // after issue must not stay authorized (S03/D04).
     const live = this.store.get<InteractiveGrantV1>('interactiveGrant', grant.grantId) ?? grant;
     if (grantState(live, this.now(), currentRevocationGeneration) !== 'ACTIVE') throw new HarnessError('CAPABILITY_DENIED', 'The control grant is expired or revoked.');
+    if (!allowsOrigin(live.target, live.allowedOrigins)) throw new HarnessError('CAPABILITY_DENIED', 'The selected origin is outside the consent.');
     if (action === 'CAPTURE') { if (!live.capturePermission) throw new HarnessError('CAPABILITY_DENIED', 'Observation was not consented for this target.'); return; }
     if (!live.permittedOperations.includes(action)) throw new HarnessError('CAPABILITY_DENIED', `Operation ${action} is not consented for this target.`);
   }
