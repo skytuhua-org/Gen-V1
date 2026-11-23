@@ -581,7 +581,8 @@ export class Service {
   /** Fresh observation straight from the driver for pre-dispatch binding. */
   async controlObserve(threadId: string) {
     this.thread(threadId);
-    return { observation: await this.controlRuntime.observe(threadId) };
+    const { observation } = await this.controlRuntime.observe(threadId);
+    return { observation };
   }
 
   /** One consent-admitted input action through the serialized dispatcher;
@@ -590,9 +591,10 @@ export class Service {
    * observations are never dispatch authority (S06). */
   async controlAction(threadId: string, input: { action?: unknown; parameters?: unknown }) {
     const thread = this.thread(threadId);
-    const owner = { threadId: thread.id, runId: null, epoch: thread.epoch, projectId: thread.projectId ?? null, workspaceId: thread.workspaceId ?? null, accountBinding: thread.accountId ?? null };
-    const observation = await this.controlRuntime.observe(threadId);
+    const owner = this.controlOwner(thread);
+    const { grantId, observation } = await this.controlRuntime.observe(threadId);
     return this.controlRuntime.action(threadId, owner, {
+      grantId,
       action: String(input.action ?? ''),
       parameters: input.parameters && typeof input.parameters === 'object' && !Array.isArray(input.parameters) ? input.parameters as Record<string, unknown> : {},
       observation,

@@ -529,7 +529,7 @@ class WgcSession {
     }
     if (!frame) return false;
     const auto size = frame.ContentSize();
-    if (size.Width <= 0 || size.Height <= 0) return false;
+    require(size.Width > 0 && size.Height > 0, "The captured content is empty.");
 
     ComPtr<ID3D11Texture2D> source;
     ComPtr<IDirect3DDxgiInterfaceAccess> access;
@@ -538,13 +538,15 @@ class WgcSession {
 
     D3D11_TEXTURE2D_DESC desc{};
     source->GetDesc(&desc);
-    // ContentSize may change while the pool still owns its original texture.
-    // Reject clipped content and undefined padding before staging or mapping.
-    if (static_cast<UINT>(size.Width) != desc.Width || static_cast<UINT>(size.Height) != desc.Height) return false;
-    if (desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM ||
-        desc.Width > std::numeric_limits<UINT>::max() / 4 / desc.Height) return false;
-    const UINT stride = desc.Width * 4;
-    std::vector<BYTE> pixels(static_cast<size_t>(stride) * desc.Height);
+    // The pool keeps its original texture size. On shrink only the
+    // top-left content rectangle is defined, and on growth it may be clipped.
+    const UINT contentWidth = static_cast<UINT>(size.Width);
+    const UINT contentHeight = static_cast<UINT>(size.Height);
+    require(contentWidth <= desc.Width && contentHeight <= desc.Height, "The captured content exceeds the frame texture.");
+    require(desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM &&
+            contentWidth <= std::numeric_limits<UINT>::max() / 4 / contentHeight, "Unsupported captured frame layout.");
+    const UINT stride = contentWidth * 4;
+    std::vector<BYTE> pixels(static_cast<size_t>(stride) * contentHeight);
     desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     desc.Usage = D3D11_USAGE_STAGING;
     desc.BindFlags = 0;
@@ -556,9 +558,9 @@ class WgcSession {
     hr(context_->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped), "The captured frame is unreadable.");
     if (!mapped.pData || mapped.RowPitch < stride) {
       context_->Unmap(staging.Get(), 0);
-      return false;
+      throw std::runtime_error("The mapped frame cannot hold the captured content.");
     }
-    for (uint32_t row = 0; row < desc.Height; ++row) {
+    for (uint32_t row = 0; row < contentHeight; ++row) {
       memcpy(pixels.data() + static_cast<size_t>(row) * stride,
           static_cast<const BYTE*>(mapped.pData) + static_cast<size_t>(row) * mapped.RowPitch, stride);
     }
@@ -568,7 +570,7 @@ class WgcSession {
     ComPtr<IWICImagingFactory> wic;
     hr(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic)), "The PNG encoder is unavailable.");
     ComPtr<IWICBitmap> bitmap;
-    hr(wic->CreateBitmapFromMemory(desc.Width, desc.Height, GUID_WICPixelFormat32bppBGRA, stride, (UINT)pixels.size(), pixels.data(), &bitmap), "The captured frame is unreadable.");
+    hr(wic->CreateBitmapFromMemory(contentWidth, contentHeight, GUID_WICPixelFormat32bppBGRA, stride, (UINT)pixels.size(), pixels.data(), &bitmap), "The captured frame is unreadable.");
     ComPtr<IWICStream> stream;
     hr(wic->CreateStream(&stream), "The PNG encoder is unavailable.");
     ComPtr<IStream> memory;
@@ -580,7 +582,7 @@ class WgcSession {
     ComPtr<IWICBitmapFrameEncode> frameEncode;
     hr(encoder->CreateNewFrame(&frameEncode, nullptr), "The PNG encoder is unavailable.");
     hr(frameEncode->Initialize(nullptr), "The PNG encoder is unavailable.");
-    hr(frameEncode->SetSize(desc.Width, desc.Height), "The PNG encoder is unavailable.");
+    hr(frameEncode->SetSize(contentWidth, contentHeight), "The PNG encoder is unavailable.");
     WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
     hr(frameEncode->SetPixelFormat(&format), "The PNG encoder is unavailable.");
     require(format == GUID_WICPixelFormat32bppBGRA, "The PNG encoder is unavailable.");
@@ -595,8 +597,8 @@ class WgcSession {
     ULONG read = 0;
     hr(memory->Read(png.data(), (ULONG)png.size(), &read), "The PNG encoder is unavailable.");
     require(read == png.size(), "The PNG encoder is unavailable.");
-    width = desc.Width;
-    height = desc.Height;
+    width = contentWidth;
+    height = contentHeight;
     return true;
   }
 
@@ -640,7 +642,7 @@ void captureOnSta(void* raw) {
     }
     const bool bindingLost = binding.closed->load() || !binding.marker->matches();
     if (bindingLost || !hasFrame) {
-      // An unusable frame ends the binding after the session releases it.
+      // Terminal frame starvation ends the binding after the session releases it.
       bindings().erase(found);
       result->error = bindingLost ? "The selected window binding closed during capture."
                                   : "The selected window produced no capturable frame.";

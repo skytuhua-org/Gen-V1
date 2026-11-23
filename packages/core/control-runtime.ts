@@ -163,6 +163,12 @@ export class ControlRuntime {
     return grant;
   }
 
+  private requireCurrentGrant(threadId: string, grantId: string): InteractiveGrantV1 {
+    const current = this.activeGrant(threadId);
+    if (current.grantId !== grantId) throw new HarnessError('CAPABILITY_DENIED', 'The original control grant is no longer active.');
+    return current;
+  }
+
   /** Observe permission is independent of interact permission (D03). The PNG
    * bytes are private task data: they are written only under the host artifact
    * root with a recorded digest and are never sent anywhere else (S05/S08). */
@@ -173,7 +179,7 @@ export class ControlRuntime {
     const driver = this.requireDriver();
     const generation = this.driverGeneration;
     const assertCaptureAuthorized = () => {
-      this.activeGrant(threadId);
+      this.requireCurrentGrant(threadId, grant.grantId);
       this.consent.authorizeAction(grant, 'CAPTURE');
       if (this.driverGeneration !== generation) throw new HarnessError('DRIVER_UNAVAILABLE', 'The capture driver is no longer attached.');
     };
@@ -216,9 +222,12 @@ export class ControlRuntime {
    * The action is validated against the live grant, host-classified (D05),
    * enqueued with a fresh observation and settled before the durable
    * 'controlAction' record is written. Nothing bypasses the queue. */
-  async action(threadId: string, _owner: ToolOwner, input: { action: string; parameters?: Record<string, unknown>; observation: unknown }): Promise<{ action: ControlActionV1; outcome: QueuedControlAction['outcome']; reason?: string }> {
+  async action(threadId: string, owner: ToolOwner, input: { grantId: string; action: string; parameters?: Record<string, unknown>; observation: unknown }): Promise<{ action: ControlActionV1; outcome: QueuedControlAction['outcome']; reason?: string }> {
     if (!ACTION_KINDS.includes(input.action as ActionKind) || input.action === 'CAPTURE') throw new HarnessError('INVALID_INPUT', 'Choose a valid control input action.');
-    const grant = this.activeGrant(threadId);
+    const grant = this.requireCurrentGrant(threadId, input.grantId);
+    if (!isDeepStrictEqual(grant.owner, owner)) {
+      throw new HarnessError('CAPABILITY_DENIED', 'The original control owner scope is no longer active.');
+    }
     const kind = input.action as Exclude<ActionKind, 'CAPTURE'>;
     this.consent.authorizeAction(grant, kind);
     if (!input.observation || typeof input.observation !== 'object') throw new HarnessError('INVALID_INPUT', 'A fresh target observation is required.');
@@ -240,12 +249,13 @@ export class ControlRuntime {
 
   /** Fresh observation of the granted target straight from the driver —
    * callers enqueue input only against a current observation (S06). */
-  async observe(threadId: string): Promise<import('../contracts/interactive-control.ts').TargetObservationV1> {
+  async observe(threadId: string) {
     const grant = this.activeGrant(threadId);
     const observation = await this.requireDriver().observe(grant.target);
+    this.requireCurrentGrant(threadId, grant.grantId);
     const state = this.consent.validateTarget(grant, observation.target, observation.target.origin);
     if (state !== 'ACTIVE') throw new HarnessError(state === 'NEEDS_NEW_PERMISSION' ? 'NEEDS_NEW_PERMISSION' : 'CAPABILITY_DENIED', 'The controlled target needs renewed consent.');
-    return observation;
+    return { grantId: grant.grantId, observation };
   }
 
   /** G03 rollback for dispatch: the dispatcher's generation is revoked before

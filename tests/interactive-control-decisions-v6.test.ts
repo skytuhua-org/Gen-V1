@@ -356,6 +356,52 @@ it('M16 revokes control on archive and hides stale persisted grants on restart',
   await expect(service.controlCapture(thread.id)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
 });
 
+it('M16 drops captures and input admitted under a replaced grant', async () => {
+  const { service, store, thread } = serviceFixture();
+  const driver = attachTestTargetChooser(service, async () => [{ target: app, title: 'Fixture app' }]);
+  type Capture = Awaited<ReturnType<ControlDriverOperations['capture']>>;
+  let finishCapture!: (result: Capture) => void;
+  let finishObserve!: (result: TargetObservationV1) => void;
+  const capturePending = new Promise<Capture>(resolve => { finishCapture = resolve; });
+  const observePending = new Promise<TargetObservationV1>(resolve => { finishObserve = resolve; });
+  driver.capture = vi.fn(() => capturePending);
+  driver.observe = vi.fn(() => observePending);
+  driver.dispatch = vi.fn(async () => ({ receipt: 'sent' }));
+
+  const issue = async (suffix: string, observe: boolean) => {
+    const request = await service.command({
+      id: 'request-' + suffix, type: 'control.request', threadId: thread.id,
+      payload: { mode: 'SELECTED_DESKTOP_APPLICATION', observe, operations: ['CLICK'] },
+    });
+    const { consent } = request.result as { consent: { consentId: string } };
+    await service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
+    await service.command({
+      id: 'grant-' + suffix, type: 'control.grant', threadId: thread.id,
+      payload: { consentId: consent.consentId, target: app },
+    });
+  };
+  await issue('old-scope', true);
+  const results = Promise.allSettled([
+    service.controlCapture(thread.id),
+    service.controlAction(thread.id, { action: 'CLICK' }),
+  ]);
+  expect(driver.capture).toHaveBeenCalledExactlyOnceWith(app);
+  expect(driver.observe).toHaveBeenCalledExactlyOnceWith(app);
+  store.internal('fixture.owner-changed', thread.id, () => {
+    store.put('thread', thread.id, thread.id, { ...thread, epoch: thread.epoch + 1 });
+  });
+  await issue('new-scope', false);
+  finishCapture({ data: Buffer.from([1, 2, 3]), width: 1, height: 1, mimeType: 'image/png' });
+  finishObserve(observation(app, Date.now()));
+
+  expect(await results).toMatchObject([
+    { status: 'rejected', reason: { code: 'CAPABILITY_DENIED' } },
+    { status: 'rejected', reason: { code: 'CAPABILITY_DENIED' } },
+  ]);
+  expect(store.all('controlCapture', thread.id)).toHaveLength(0);
+  expect(driver.dispatch).not.toHaveBeenCalled();
+});
+
 it('M16 honors the consent origin allowlist for new grants and persisted captures', () => {
   const { store } = serviceFixture();
   const registry = new ControlDriverRegistry();

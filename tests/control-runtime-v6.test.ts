@@ -140,9 +140,9 @@ describe('M16 ControlRuntime host ownership', () => {
       registry.register(registration);
       runtime.attachDriver(driver());
       await offerTargets(runtime, request.consentId);
-      runtime.grant(request.consentId, owner, target);
+      const issued = runtime.grant(request.consentId, owner, target);
       const observation = { observationId: 'obs-fresh', target, geometry: { x: 0, y: 0, width: 400, height: 300, dpiScale: 1 }, observedAtMs: Date.now() };
-      const result = await runtime.action(owner.threadId, owner, { action: 'CLICK', parameters: { x: 5, y: 5 }, observation });
+      const result = await runtime.action(owner.threadId, owner, { grantId: issued.grantId, action: 'CLICK', parameters: { x: 5, y: 5 }, observation });
       expect(result.outcome).toBe('DISPATCHED');
       const records = store.all<unknown>('controlAction', owner.threadId);
       expect(records).toHaveLength(1);
@@ -230,11 +230,11 @@ describe('M16 ControlRuntime host ownership', () => {
         mode: 'CONSENTED_EXISTING_TAB', observe: true, operations: [], allowedOrigins: ['https://public.example'],
       });
       await offerTargets(runtime, consentRequest.consentId);
-      runtime.grant(consentRequest.consentId, owner, target);
+      const issued = runtime.grant(consentRequest.consentId, owner, target);
 
       if (dispatchFirst) {
         const observation = await controlDriver.observe(target);
-        const result = await runtime.action(owner.threadId, owner, { action: 'CLICK', observation });
+        const result = await runtime.action(owner.threadId, owner, { grantId: issued.grantId, action: 'CLICK', observation });
         expect(result.outcome).toBe('DISPATCHED');
       }
 
@@ -260,9 +260,9 @@ describe('M16 ControlRuntime host ownership', () => {
       const dispatch = vi.fn<ControlDriverOperations['dispatch']>().mockResolvedValue({ receipt: 'sent' });
       runtime.attachDriver(driver({ observe: () => observing, dispatch }));
       await offerTargets(runtime, request.consentId);
-      runtime.grant(request.consentId, owner, target);
+      const issued = runtime.grant(request.consentId, owner, target);
 
-      const action = runtime.action(owner.threadId, owner, { action: 'CLICK', observation: observed });
+      const action = runtime.action(owner.threadId, owner, { grantId: issued.grantId, action: 'CLICK', observation: observed });
       currentOwner = { ...owner, epoch: owner.epoch + 1 };
       finishObservation(observed);
 
