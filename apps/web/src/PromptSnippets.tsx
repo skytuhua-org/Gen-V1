@@ -21,8 +21,9 @@ export interface PromptSnippetsOwner {
   profileId?: string;
 }
 
-interface EditorState { mode: 'new' | 'edit'; id?: string; original: { name: string; body: string }; name: string; body: string; error: string }
+interface EditorState { mode: 'new' | 'edit'; id?: string; generation?: string; original: { name: string; body: string }; name: string; body: string; error: string }
 interface ConflictState { id?: string; name: string; body: string; latest: PromptSnippet | undefined }
+export interface ConfirmState { snippet: PromptSnippet; generation?: string }
 
 const defaultProfileId = () => (typeof window === 'undefined' ? 'default' : window.location.origin);
 
@@ -60,7 +61,7 @@ export interface PromptSnippetsState {
   conflictUseMine: () => Promise<void>;
   conflictSaveNew: () => Promise<void>;
   conflictCancel: () => void;
-  confirm: PromptSnippet | null;
+  confirm: ConfirmState | null;
   askDelete: (snippet: PromptSnippet) => void;
   doDelete: () => Promise<void>;
   cancelConfirm: () => void;
@@ -90,13 +91,14 @@ export function usePromptSnippets(owner: PromptSnippetsOwner): PromptSnippetsSta
   const [manage, setManage] = useState(false);
   const [editor, setEditorState] = useState<EditorState | null>(null);
   const [conflict, setConflict] = useState<ConflictState | null>(null);
-  const [confirm, setConfirm] = useState<PromptSnippet | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const invocationText = useRef<string | null>(null);
   const [discard, setDiscard] = useState(false);
   const [receipt, setReceiptState] = useState<{ receipt: InsertionReceipt; name: string } | null>(null);
 
   // Owner change clears all feature state (capture/receipt fencing lives in T03).
   useEffect(() => {
-    setOpen(false); setInvocation(null); setSearch(''); setActive(0); setMessage('');
+    setOpen(false); setInvocation(null); invocationText.current = null; setSearch(''); setActive(0); setMessage('');
     setManage(false); setEditorState(null); setConflict(null); setConfirm(null); setDiscard(false); setReceiptState(null);
   }, [owner.signature]);
 
@@ -133,14 +135,14 @@ export function usePromptSnippets(owner: PromptSnippetsOwner): PromptSnippetsSta
 
   const items = library ? filterSnippets(library, search) : [];
 
-  const openForToken = useCallback((token: CommandToken) => { setInvocation(token); setOpen(true); setSearch(''); setActive(0); }, []);
-  const toggle = useCallback(() => { setOpen(value => { if (!value) { setSearch(''); setActive(0); setInvocation(null); } return !value; }); }, []);
-  const close = useCallback(() => { setOpen(false); setInvocation(null); setSearch(''); setActive(0); }, []);
+  const openForToken = useCallback((token: CommandToken) => { invocationText.current = owner.input.current?.value ?? null; setInvocation(token); setOpen(true); setSearch(''); setActive(0); }, [owner]);
+  const toggle = useCallback(() => { setOpen(value => { if (!value) { setSearch(''); setActive(0); setInvocation(null); invocationText.current = null; } return !value; }); }, []);
+  const close = useCallback(() => { setOpen(false); setInvocation(null); invocationText.current = null; setSearch(''); setActive(0); }, []);
 
   const insert = useCallback((snippet: PromptSnippet) => {
     const element = owner.input.current;
     const cap: SnippetCapture | null = invocation
-      ? (element ? { signature: signatureRef.current, text: element.value, start: invocation.start, end: invocation.end, direction: 'none' } : null)
+      ? (element && invocationText.current !== null ? { signature: signatureRef.current, text: invocationText.current, start: invocation.start, end: invocation.end, direction: 'none' } : null)
       : insertion.capture;
     if (!element || !cap || !owner.editable()) { setMessage('Pick an insertion point in the draft first.'); return; }
     const result = insertSnippet(element, cap, signatureRef.current, snippet.body);
@@ -150,6 +152,7 @@ export function usePromptSnippets(owner: PromptSnippetsOwner): PromptSnippetsSta
     setMessage('');
     setOpen(false);
     setInvocation(null);
+    invocationText.current = null;
     element.focus();
   }, [owner, invocation, insertion]);
 
@@ -170,14 +173,17 @@ export function usePromptSnippets(owner: PromptSnippetsOwner): PromptSnippetsSta
   const openManage = useCallback(() => { setManage(true); setOpen(false); setInvocation(null); setMessage(''); }, []);
   const closeManage = useCallback(() => { setManage(false); setEditorState(null); setConflict(null); setConfirm(null); setDiscard(false); }, []);
 
-  const openNew = useCallback(() => setEditorState({ mode: 'new', original: { name: '', body: '' }, name: '', body: '', error: '' }), []);
+  const openNew = useCallback(() => {
+    setEditorState({ mode: 'new', generation: generation.current, original: { name: '', body: '' }, name: '', body: '', error: '' });
+    setManage(true); setOpen(false); setInvocation(null); invocationText.current = null;
+  }, []);
   const openSelection = useCallback(() => {
     const cap = insertion.capture;
     const body = cap && cap.start < cap.end ? cap.text.slice(cap.start, cap.end) : '';
-    setEditorState({ mode: 'new', original: { name: '', body }, name: '', body, error: '' });
+    setEditorState({ mode: 'new', generation: generation.current, original: { name: '', body }, name: '', body, error: '' });
     setManage(true); setOpen(false);
   }, [insertion]);
-  const openEdit = useCallback((snippet: PromptSnippet) => setEditorState({ mode: 'edit', id: snippet.id, original: { name: snippet.name, body: snippet.body }, name: snippet.name, body: snippet.body, error: '' }), []);
+  const openEdit = useCallback((snippet: PromptSnippet) => setEditorState({ mode: 'edit', id: snippet.id, generation: generation.current, original: { name: snippet.name, body: snippet.body }, name: snippet.name, body: snippet.body, error: '' }), []);
   const setEditor = useCallback((patch: Partial<EditorState>) => setEditorState(current => current ? { ...current, ...patch } : current), []);
   const closeEditor = useCallback(() => {
     setEditorState(current => {
@@ -202,8 +208,8 @@ export function usePromptSnippets(owner: PromptSnippetsOwner): PromptSnippetsSta
     setEditorState(current => current ? { ...current, error: '' } : current);
     try {
       const result = draft.mode === 'new'
-        ? await createSnippet(profileId, generation.current, { name: draft.name, body: draft.body })
-        : await updateSnippet(profileId, generation.current, draft.id!, { name: draft.name, body: draft.body });
+        ? await createSnippet(profileId, draft.generation, { name: draft.name, body: draft.body })
+        : await updateSnippet(profileId, draft.generation, draft.id!, { name: draft.name, body: draft.body });
       if (result.ok) { accept(result); setEditorState(null); return; }
       if (result.error === 'conflict') await enterConflict(draft.id, draft.name, draft.body);
       else setEditorState(current => current ? { ...current, error: result.message } : current);
@@ -237,20 +243,20 @@ export function usePromptSnippets(owner: PromptSnippetsOwner): PromptSnippetsSta
   }, [conflict, profileId, accept, enterConflict]);
   const conflictCancel = useCallback(() => setConflict(null), []);
 
-  const askDelete = useCallback((snippet: PromptSnippet) => setConfirm(snippet), []);
+  const askDelete = useCallback((snippet: PromptSnippet) => setConfirm({ snippet, generation: generation.current }), []);
   const cancelConfirm = useCallback(() => setConfirm(null), []);
   const doDelete = useCallback(async () => {
-    const snippet = confirm;
-    if (!snippet) return;
-    setBusyId(snippet.id);
+    const pending = confirm;
+    if (!pending) return;
+    setBusyId(pending.snippet.id);
     try {
-      const result = await deleteSnippet(profileId, generation.current, snippet.id);
+      const result = await deleteSnippet(profileId, pending.generation, pending.snippet.id);
       if (result.ok) { accept(result); setConfirm(null); return; }
       if (result.error === 'conflict') { const fresh = await refreshSnippetLibrary(profileId); if (fresh.ok) accept(fresh); }
       setConfirm(null);
       setMessage(result.error === 'conflict' ? 'Snippets changed in another window. Review and try again.' : result.message);
     } finally { setBusyId(null); }
-  }, [confirm, profileId, accept]);
+  }, [confirm, profileId, accept, enterConflict]);
 
   return {
     trigger, pickerId, listId, open, toggle, close, openForToken, invocation,
@@ -370,7 +376,7 @@ export function PromptSnippetsOverlay({ snippets }: { snippets: PromptSnippetsSt
           </div>
         </div>
       : snippets.confirm ? <div className="prompt-snippets-delete">
-          <p>Delete “{snippets.confirm.name}”?</p>
+          <p>Delete “{snippets.confirm.snippet.name}”?</p>
           <p className="prompt-snippets-note">This removes it from this profile's snippet library. Text already inserted in drafts is kept.</p>
           <div className="prompt-snippets-actions">
             <button type="button" className="danger" disabled={Boolean(snippets.busyId)} onClick={() => void snippets.doDelete()}>Delete snippet</button>
@@ -385,7 +391,7 @@ export function PromptSnippetsOverlay({ snippets }: { snippets: PromptSnippetsSt
           </div>
         </div>
       : snippets.editor ? <div className="prompt-snippets-editor">
-          <label>Name<input value={snippets.editor.name} maxLength={SNIPPET_NAME_LIMIT} onChange={event => snippets.setEditor({ name: event.target.value })} /></label>
+          <label>Name<input value={snippets.editor.name} maxLength={SNIPPET_NAME_LIMIT} onChange={event => snippets.setEditor({ name: event.target.value })} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); void snippets.saveEditor(); } }} /></label>
           <span className="prompt-snippets-count">{snippets.editor.name.length}/{SNIPPET_NAME_LIMIT}</span>
           <label>Text<textarea rows={8} value={snippets.editor.body} maxLength={SNIPPET_BODY_LIMIT} onChange={event => snippets.setEditor({ body: event.target.value })} /></label>
           <span className="prompt-snippets-count">{snippets.editor.body.length.toLocaleString()}/{SNIPPET_BODY_LIMIT.toLocaleString()}</span>
