@@ -13,6 +13,7 @@ export interface ModelPickerProps {
  thinkingLevel?:string;onThinkingChange?:(level:string)=>void;
  /** New-task binding note; selecting a profile never rebinds an existing thread. */
  scopeHint?:string;onNewTask?:(modelId:string)=>void;
+ heldReason?:string;
 }
 const providerLabel=(provider:string)=>SUBSCRIPTION_CONNECTIONS.find(connection=>connection.id===provider)?.label??provider;
 const effortLabel=(value:string)=>value==='xhigh'?'Extra high':value.replaceAll('_',' ').replaceAll('-',' ').replace(/\b\w/g,letter=>letter.toUpperCase());
@@ -22,7 +23,7 @@ function readFavorites():string[]{
 }
 type ModelFilter={kind:'all'|'favorites'}|{kind:'provider';provider:string};
 
-export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinkingLevel='',onThinkingChange,scopeHint,onNewTask}:ModelPickerProps){
+export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinkingLevel='',onThinkingChange,scopeHint,onNewTask,heldReason}:ModelPickerProps){
  const id=useId(),trigger=useRef<HTMLButtonElement>(null),popover=useRef<HTMLDivElement>(null),search=useRef<HTMLInputElement>(null),efforts=useRef<HTMLDivElement>(null);
  const [open,setOpen]=useState(false),[present,setPresent]=useState(false),[query,setQuery]=useState(''),[activeId,setActiveId]=useState(modelId);
  const [keyboard,setKeyboard]=useState(false),[filter,setFilter]=useState<ModelFilter>({kind:'all'}),[favorites,setFavorites]=useState(readFavorites);
@@ -44,6 +45,9 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
  const visible=groups.flatMap(([,group])=>group),active=visible.find(model=>model.id===activeId)??visible[0];
  const optionId=(model:ModelInfo)=>id+'-option-'+models.indexOf(model);
  const name=selected?.name??(modelId||'Select model'),caption=combined&&selectedEffort?effortLabel(selectedEffort):'';
+ const emptyModels=!models.length,label=emptyModels?'No model':name;
+ const triggerTitle=emptyModels?'No model connected — open Settings › Models to connect one':heldReason&&disabled?`Model selection is locked — thread is ${heldReason}`:disabled?'Wait for the active run to finish to change models':name+(caption?' · '+caption:'');
+ const triggerLabel=emptyModels||heldReason&&disabled?triggerTitle:'Model';
  function close(restoreFocus=false){setOpen(false);if(restoreFocus)trigger.current?.focus();}
  function show(){if(locked)return;setQuery('');setActiveId(modelId);setKeyboard(false);setPresent(true);setOpen(true);}
  useImperativeHandle(ref,()=>({open:show}));
@@ -84,8 +88,8 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
   const frame=requestAnimationFrame(()=>requestAnimationFrame(()=>{popover.current?.ownerDocument.getElementById(optionId(active))?.scrollIntoView({block:opened?'center':'nearest'});}));
   return()=>cancelAnimationFrame(frame);},[open,active?.id]);
  return <>
-  <button ref={trigger} type="button" role="combobox" aria-label="Model" aria-expanded={open&&!locked} aria-haspopup={combined?'dialog':'listbox'} aria-controls={open?(combined?id+'-picker':id+'-list'):undefined} disabled={locked} className="composer-tool model-picker-trigger" title={disabled?'Wait for the active run to finish to change models':name+(caption?' · '+caption:'')} onClick={()=>open?close(true):show()} onKeyDown={event=>{if(isComposing(event)||event.altKey||event.ctrlKey||event.metaKey)return;if(['ArrowDown','ArrowUp','Enter',' '].includes(event.key)){event.preventDefault();if(open)search.current?.focus();else show();}}}>
-   <Bot className="model-picker-trigger-icon" size={16} aria-hidden="true"/><span className="model-picker-trigger-name">{name}</span>{caption&&<span className="model-picker-trigger-effort">{caption}</span>}<ChevronDown size={12} data-open={open}/>
+  <button ref={trigger} type="button" role="combobox" aria-label={triggerLabel} aria-expanded={open&&!locked} aria-haspopup={combined?'dialog':'listbox'} aria-controls={open?(combined?id+'-picker':id+'-list'):undefined} disabled={locked} className="composer-tool model-picker-trigger" title={triggerTitle} onClick={()=>open?close(true):show()} onKeyDown={event=>{if(isComposing(event)||event.altKey||event.ctrlKey||event.metaKey)return;if(['ArrowDown','ArrowUp','Enter',' '].includes(event.key)){event.preventDefault();if(open)search.current?.focus();else show();}}}>
+   <Bot className="model-picker-trigger-icon" size={16} aria-hidden="true"/><span className="model-picker-trigger-name">{label}</span>{caption&&<span className="model-picker-trigger-effort">{caption}</span>}<ChevronDown size={12} data-open={open}/>
   </button>
   <Popover anchor={trigger} contentRef={popover} initialFocus={search} open={open&&!locked} present={present}
    onReady={()=>{popover.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({block:'nearest'});}}
