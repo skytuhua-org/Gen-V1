@@ -3306,6 +3306,7 @@
     "tests/frontend-schema-validator.test.ts",
     "tests/generated-ui-endurance-v3.test.ts",
     "tests/gesture-cleanup.test.ts",
+    "tests/git-history-ui.test.tsx",
     "tests/git-history.test.ts",
     "tests/git-metadata-guard.test.ts",
     "tests/github-workspace.test.ts",

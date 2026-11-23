@@ -10,7 +10,7 @@ import {ErrorState} from '../../../packages/ui-shell/Feedback';
 import './git-history.css';
 
 const get=<T,>(url:string,signal?:AbortSignal)=>authenticated(()=>fetch(url,{credentials:'same-origin',cache:'no-store',signal})).then(read<T>);
-const relative=(iso:string)=>{
+export const relative=(iso:string)=>{
   const then=Date.parse(iso);if(!Number.isFinite(then))return '';
   const span=Math.max(0,Date.now()-then),minute=60_000,hour=60*minute,day=24*hour;
   if(span<minute)return 'just now';if(span<hour)return plural(Math.floor(span/minute),'minute')+' ago';
