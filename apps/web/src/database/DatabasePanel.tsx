@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleAlert, Copy, Database, MoreHorizontal, Play, RefreshCw, Square, Table2 } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { CircleAlert, Copy, Database, MoreHorizontal, Play, RefreshCw, Square, Table2, PencilLine } from 'lucide-react';
 import { ActionMenu } from '../../../../packages/ui-shell/ActionMenu';
 import { Popover } from '../../../../packages/ui-shell/Popover';
 import { Select } from '../../../../packages/ui-shell/Select';
 import { errorMessage } from '../../../../packages/ui-shell/format-utils';
 import type { PanelBinding } from '../../../../packages/contracts/workspace.ts';
 import type { DatabaseAttachmentV1, DatabaseConnectionV1, DatabaseQueryResultV1, DatabaseSchemaV1 } from '../../../../packages/contracts/database.ts';
-import { cancelQuery, detachDatabase, fetchSchema, listThreadDatabases, runQuery } from '../database-api';
+import { cancelQuery, detachDatabase, fetchSchema, listThreadDatabases, prepareEdits, runQuery } from '../database-api';
 import { DatabaseAttachDialog } from './DatabaseAttachDialog';
 import { recordSqlHistory, SqlEditor } from './SqlEditor';
 import { SchemaTree } from './SchemaTree';
@@ -34,7 +34,10 @@ const useDelayed = (active: boolean) => {
 };
 
 export function DatabasePanel({ binding }: { binding: PanelBinding }) {
-	const threadId = binding.threadId;
+	return <ThreadDatabasePanel key={binding.threadId} threadId={binding.threadId}/>;
+}
+
+function ThreadDatabasePanel({ threadId }: { threadId?: string }) {
 	const [connections, setConnections] = useState<DatabaseConnectionV1[]>([]);
 	const [attachments, setAttachments] = useState<DatabaseAttachmentV1[]>([]);
 	const [attachmentId, setAttachmentId] = useState('');
@@ -51,6 +54,10 @@ export function DatabasePanel({ binding }: { binding: PanelBinding }) {
 	const [result, setResult] = useState<DatabaseQueryResultV1 | null>(null);
 	const [queryError, setQueryError] = useState('');
 	const [sentToChat, setSentToChat] = useState(false);
+	const [editing, setEditing] = useState(false);
+	const [edits, setEdits] = useState<Record<string, string>>({});
+	const [editBusy, setEditBusy] = useState(false);
+	const [editNote, setEditNote] = useState('');
 	const [selectedObject, setSelectedObject] = useState('');
 	const [narrow, setNarrow] = useState(false);
 	const [treeOpen, setTreeOpen] = useState(false);
@@ -59,6 +66,18 @@ export function DatabasePanel({ binding }: { binding: PanelBinding }) {
 	const root = useRef<HTMLDivElement>(null);
 	const treeToggle = useRef<HTMLButtonElement>(null);
 	const drag = useRef(false);
+	const owner = useMemo(() => ({ threadId, attachmentId }), [threadId, attachmentId]);
+	const currentOwner = useRef<typeof owner | null>(null);
+	const isCurrent = useCallback(() => currentOwner.current === owner, [owner]);
+	// Keep the editor draft and layout when switching connections. Every selection,
+	// including a return to the same connection, owns its own requests and results.
+	useLayoutEffect(() => {
+		currentOwner.current = owner;
+		setSchema(null); setSchemaError(''); setSchemaLoading(false); setSelectedObject('');
+		setResult(null); setRunning(null); setQueryError(''); setSentToChat(false);
+		setEditing(false); setEdits({}); setEditNote(''); setEditBusy(false);
+		return () => { currentOwner.current = null; };
+	}, [owner]);
 
 	const load = useCallback(() => {
 		if (!threadId) return;
@@ -70,16 +89,17 @@ export function DatabasePanel({ binding }: { binding: PanelBinding }) {
 	useEffect(load, [load]);
 
 	const attachment = attachments.find(row => row.id === attachmentId);
+	useEffect(() => { setEdits({}); setEditing(false); setEditNote(''); }, [result]);
 	const connection = connections.find(row => row.id === attachment?.connectionId);
 	const refreshSchema = useCallback((bypass = false) => {
 		if (!threadId || !attachmentId) { setSchema(null); return; }
 		setSchemaLoading(true); setSchemaError('');
 		fetchSchema(threadId, attachmentId, bypass)
-			.then(setSchema)
-			.catch(cause => { setSchema(null); setSchemaError(errorMessage(cause, 'The schema could not load.')); })
-			.finally(() => setSchemaLoading(false));
-	}, [threadId, attachmentId]);
-	useEffect(() => { setResult(null); setQueryError(''); refreshSchema(false); }, [refreshSchema]);
+			.then(value => { if (isCurrent()) setSchema(value); })
+			.catch(cause => { if (isCurrent()) { setSchema(null); setSchemaError(errorMessage(cause, 'The schema could not load.')); } })
+			.finally(() => { if (isCurrent()) setSchemaLoading(false); });
+	}, [threadId, attachmentId, isCurrent]);
+	useEffect(() => { refreshSchema(false); }, [refreshSchema]);
 	useEffect(() => {
 		const element = root.current;
 		if (!element) return;
@@ -95,13 +115,48 @@ export function DatabasePanel({ binding }: { binding: PanelBinding }) {
 		setRunning(requestId); setQueryError('');
 		if (connection) recordSqlHistory(connection.id, sql);
 		runQuery(threadId, attachmentId, sql, limit, requestId)
-			.then(response => { setResult(response.result); setSentToChat(false); })
-			.catch(cause => setQueryError(errorMessage(cause, 'The query could not run.')))
-			.finally(() => setRunning(null));
-	}, [threadId, attachmentId, running, sql, limit, connection]);
+			.then(response => { if (isCurrent()) { setResult(response.result); setSentToChat(false); } })
+			.catch(cause => { if (isCurrent()) setQueryError(errorMessage(cause, 'The query could not run.')); })
+			.finally(() => { if (isCurrent()) setRunning(null); });
+	}, [threadId, attachmentId, running, sql, limit, connection, isCurrent]);
 	const cancel = useCallback(() => {
 		if (threadId && attachmentId && running) void cancelQuery(threadId, attachmentId, running).catch(() => {});
 	}, [threadId, attachmentId, running]);
+
+	// T10: grid edits are allowed when the attachment is writable and the
+	// result carries a proven single-table source with primary key columns.
+	const editTarget = useMemo(() => {
+		if (!attachment?.writable || !result) return { editable: false as const, reason: 'This attachment is read only.' };
+		const table = result.source?.table;
+		if (!table) return { editable: false as const, reason: 'Editing works on a single SELECT over one table.' };
+		const pk = table.primaryKey ?? [];
+		if (!pk.length) return { editable: false as const, reason: 'Editing needs a primary key' };
+		const pkIndex = pk.map(name => result.columns.findIndex(column => column.name === name));
+		if (pkIndex.some(index => index < 0)) return { editable: false as const, reason: 'Editing needs the primary key columns in the result.' };
+		return { editable: true as const, schemaName: table.schema ?? 'main', table: table.name, pk, pkIndex };
+	}, [attachment, result]);
+	const draft = editing && editTarget.editable ? { edits, onEdit: (rowIndex: number, columnIndex: number, value: string) => setEdits(current => ({ ...current, [`${rowIndex}:${columnIndex}`]: value })) } : undefined;
+	const readOnlyColumns = draft && editTarget.editable ? new Set(editTarget.pkIndex) : undefined;
+	const editCount = Object.keys(edits).length;
+	const reviewChanges = useCallback(() => {
+		if (!threadId || !attachmentId || !result || !editTarget.editable || !editCount) return;
+		setEditBusy(true); setEditNote('');
+		// R10: one parameterized UPDATE per edited row.
+		const byRow = new Map<number, { columnIndex: number; value: string }[]>();
+		for (const [key, value] of Object.entries(edits)) {
+			const [rowIndex, columnIndex] = key.split(':').map(Number);
+			byRow.set(rowIndex!, [...(byRow.get(rowIndex!) ?? []), { columnIndex: columnIndex!, value }]);
+		}
+		const statements = [...byRow.entries()].map(([rowIndex, cells]) => {
+			const pk = editTarget.pkIndex.map((_, position) => `"${editTarget.pk[position]}"=?`).join(' AND ');
+			const set = cells.map(({ columnIndex }) => `"${result.columns[columnIndex]!.name}"=?`).join(', ');
+			return { sql: `UPDATE "${editTarget.schemaName}"."${editTarget.table}" SET ${set} WHERE ${pk}`, params: [...cells.map(cell => cell.value), ...editTarget.pkIndex.map(index => result.rows[rowIndex]![index]!)], expectedChanges: 1 };
+		});
+		prepareEdits(threadId, attachmentId, statements)
+			.then(() => { if (isCurrent()) { setEdits({}); setEditing(false); setEditNote('Prepared for approval in the conversation.'); } })
+			.catch(cause => { if (isCurrent()) setQueryError(errorMessage(cause, 'The changes could not be prepared.')); })
+			.finally(() => { if (isCurrent()) setEditBusy(false); });
+	}, [threadId, attachmentId, result, editTarget, edits, editCount, isCurrent]);
 
 	const pickObject = useCallback((schemaName: string, name: string) => {
 		setSelectedObject(`${schemaName}.${name}`);
@@ -134,7 +189,7 @@ export function DatabasePanel({ binding }: { binding: PanelBinding }) {
 			<span className="toolbar-spacer"/>
 			<button type="button" className="icon-button" aria-label="Refresh schema" title="Refresh schema" disabled={!attachmentId || schemaLoading} onClick={() => refreshSchema(true)}><RefreshCw size={15}/></button>
 			<ActionMenu label="Database panel actions" iconOnly icon={<MoreHorizontal size={16}/>} open={menu} onOpenChange={setMenu} disabled={!attachment} items={attachment ? [
-				{ id: 'detach', label: 'Detach', onSelect: () => void (async () => { if (!threadId) return; try { await detachDatabase(threadId, attachment.id); setAttachmentId(''); load(); } catch (cause) { setQueryError(errorMessage(cause, 'The database could not be detached.')); } })() },
+				{ id: 'detach', label: 'Detach', onSelect: () => void (async () => { if (!threadId) return; try { await detachDatabase(threadId, attachment.id); setAttachmentId(current => current === attachment.id ? '' : current); load(); } catch (cause) { if (isCurrent()) setQueryError(errorMessage(cause, 'The database could not be detached.')); } })() },
 				{ id: 'copy', label: 'Copy connection label', onSelect: () => void navigator.clipboard?.writeText(connection?.label ?? '') },
 			] : []}/>
 		</div>
@@ -165,13 +220,18 @@ export function DatabasePanel({ binding }: { binding: PanelBinding }) {
 					<div className="database-results">
 						{running && <><div className="database-progress" aria-hidden="true"/><span className="database-running-static" role="status">Running…</span></>}
 						{result
-							? <QueryResultGrid result={result} density={density}/>
+							? <QueryResultGrid result={result} density={density} draft={draft} readOnlyColumns={readOnlyColumns}/>
 							: running && slowRun ? <QueryResultSkeleton/> : !running && <p className="database-empty muted">{sql.trim() ? 'Run the query to see results.' : 'Pick a table or write SQL to see results.'}</p>}
 					</div>
 					<div className="database-status">
-						<span className="muted">{result ? `${result.rowCount} rows · ${result.elapsedMs} ms · limit ${limit}${result.truncated ? ' · ' : ''}` : ''}{result?.truncated ? <span className="database-truncated">truncated</span> : ''}</span>
+						<span className="muted">{result ? `${result.rowCount} rows · ${result.elapsedMs} ms · limit ${limit}${result.truncated ? ' · ' : ''}` : ''}{result?.truncated ? <span className="database-truncated">truncated</span> : ''}{editNote && <span className="muted"> · {editNote}</span>}</span>
+						{result && attachment?.writable && <button type="button" className={editing ? 'secondary' : 'quiet'} disabled={!editTarget.editable && !editing} title={editTarget.editable ? 'Edit result cells' : editTarget.reason} aria-pressed={editing} onClick={() => { setEditing(value => !value); if (editing) setEdits({}); }}><PencilLine size={14}/> Edit</button>}
+						{editCount > 0 && <>
+							<button type="button" className="quiet" disabled={editBusy} onClick={() => setEdits({})}>Discard</button>
+							<button type="button" className="primary" disabled={editBusy} onClick={reviewChanges}>{editBusy ? 'Preparing…' : `Review changes (${editCount})`}</button>
+						</>}
 						<span className="toolbar-spacer"/>
-						{result && threadId && <button type="button" className="quiet" disabled={sentToChat} onClick={() => void sendResultToChat(threadId, result).then(() => setSentToChat(true)).catch(cause => setQueryError(errorMessage(cause, 'The result could not be quoted.')))}>{sentToChat ? 'Quoted in composer' : 'Send to chat'}</button>}
+						{result && threadId && <button type="button" className="quiet" disabled={sentToChat} onClick={() => void sendResultToChat(threadId, result).then(() => { if (isCurrent()) setSentToChat(true); }).catch(cause => { if (isCurrent()) setQueryError(errorMessage(cause, 'The result could not be quoted.')); })}>{sentToChat ? 'Quoted in composer' : 'Send to chat'}</button>}
 						{result && <button type="button" className="icon-button" aria-label="Copy rows as TSV" title="Copy rows as TSV" onClick={() => void navigator.clipboard?.writeText(rowsTsv(result))}><Copy size={14}/></button>}
 					</div>
 				</div>
