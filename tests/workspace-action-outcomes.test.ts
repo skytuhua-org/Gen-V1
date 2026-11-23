@@ -570,6 +570,6 @@ it('surfaces a fetch auth refusal with its real code after rolling the started m
  await expect(f.outcomes.execute(f.projectId,fetchOp.input)).rejects.toMatchObject({code:'GITHUB_AUTH_REQUIRED'});
  expect(f.store.get<{status:string}>('workspaceActionOutcome',fetchOp.input.id)?.status).toBe('not-applied');
  // A fresh intent for the same fetch proceeds normally after the refusal.
- vi.spyOn(f.github,'fetch').mockImplementation(async()=>({branch:'main',head:fetchOp.operation.action.head,revision:fetchOp.operation.action.revision,remote:null,upstream:null,ahead:null,behind:null,state:'no-remote',lastFetchedAt:null,blockers:['NO_REMOTE']}));
+ vi.spyOn(f.github,'fetch').mockImplementation(async(_p,_t,beforeWrite)=>{beforeWrite?.();return{branch:'main',head:fetchOp.operation.action.head,revision:fetchOp.operation.action.revision,remote:null,upstream:null,ahead:null,behind:null,state:'no-remote',lastFetchedAt:null,blockers:['NO_REMOTE']};});
  expect((await f.outcomes.execute(f.projectId,{...fetchOp.input,id:randomUUID()})).state).toBe('confirmed');
 },60000);
