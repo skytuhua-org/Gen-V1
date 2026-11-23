@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BookOpen, Plus, Trash2 } from 'lucide-react';
+import { BookOpen, Check, Plus, Trash2 } from 'lucide-react';
 import type { Snapshot, TaskMemory as Note } from '../../../packages/contracts';
 import { command } from './api';
 import { journalRead, journalWrite, journalCompareAndSwap, journalGeneration } from './journal';
 import './task-memory.css';
 
 type Draft = { key: string; content: string; baseRevision: number };
-function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpandedChange }: { note: Note; threadId: string; fresh?: boolean; expanded?: boolean; onExpandedChange?: (value: boolean) => void }) {
+export function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpandedChange }: { note: Note; threadId: string; fresh?: boolean; expanded?: boolean; onExpandedChange?: (value: boolean) => void }) {
   const [key, setKey] = useState(note.key), [content, setContent] = useState(note.content), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [recovery, setRecovery] = useState<'pending' | 'failed' | 'ready'>('pending'), [attempt, setAttempt] = useState(0);
   const generation = useRef(''), dirty = useRef(false), baseRevision = useRef(note.revision), draft = useRef<Draft | null>(null), inFlight = useRef<'save' | 'delete' | null>(null), alive = useRef(false), keyInput = useRef<HTMLInputElement>(null);
+  const [savedState, setSavedState] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (savedTimer.current) clearTimeout(savedTimer.current); }, []);
   const journalKey = `memory-draft:${threadId}:${fresh ? 'create' : 'saved:' + note.key}`;
   useEffect(() => {
     let current = true; alive.current = true; setRecovery('pending');
@@ -32,6 +35,7 @@ function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpanded
     if (blocked || inFlight.current === 'delete') return;
     if (fresh && nextKey !== key) baseRevision.current = 0;
     dirty.current = true; setKey(nextKey); setContent(nextContent);
+    if (nextContent !== content) setSavedState(false);
     draft.current = { key: nextKey, content: nextContent, baseRevision: baseRevision.current };
     const write = journalWrite(journalKey, draft.current);
     generation.current = journalGeneration(journalKey) ?? '';
@@ -54,6 +58,11 @@ function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpanded
           if (await journalCompareAndSwap(journalKey, edited, retained) && alive.current && generation.current === edited) generation.current = journalGeneration(journalKey) ?? '';
         }
       }
+      if (!remove && !fresh && alive.current) {
+        setSavedState(true);
+        if (savedTimer.current) clearTimeout(savedTimer.current);
+        savedTimer.current = setTimeout(() => { if (alive.current) setSavedState(false); }, 1600);
+      }
     } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'The note could not be saved. Your draft is retained.'); }
     finally { inFlight.current = null; if (alive.current) setBusy(false); }
   };
@@ -65,7 +74,7 @@ function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpanded
     {recoveryMessage}
     {error && <p role="status" className="error-text">{error}</p>}
     {!fresh && dirty.current && note.revision !== baseRevision.current && <details><summary>A newer saved note is available</summary><p>{note.content}</p><button type="button" className="secondary" disabled={blocked || busy} onClick={() => { const version = generation.current; dirty.current = false; baseRevision.current = note.revision; setContent(note.content); setError(''); if (version) void journalCompareAndSwap(journalKey, version, null).catch(() => { if (alive.current) setError('Draft recovery could not be cleared.'); }); }}>Use saved note</button></details>}
-    <footer>{!fresh && <button type="button" className="icon-button" aria-label={`Forget ${note.key}`} disabled={blocked || busy} onClick={() => void act(true)}><Trash2 size={14} /></button>}{fresh && <button type="button" className="secondary" onClick={() => onExpandedChange?.(false)}>Cancel</button>}<button className="secondary" disabled={blocked || busy || !content.trim() || !key.trim()}>{busy ? 'Saving…' : fresh ? 'Add note' : 'Save note'}</button></footer>
+    <footer>{!fresh && <button type="button" className="icon-button" aria-label={`Forget ${note.key}`} disabled={blocked || busy} onClick={() => void act(true)}><Trash2 size={14} /></button>}{!fresh && <span role="status" aria-live="polite" className="sr-only">{savedState ? `Note “${note.key}” saved` : ''}</span>}{fresh && <button type="button" className="secondary" onClick={() => onExpandedChange?.(false)}>Cancel</button>}<button className={savedState ? 'secondary memory-saved' : 'secondary'} disabled={blocked || busy || savedState || !content.trim() || !key.trim() || (!fresh && content === note.content)}>{busy ? 'Saving…' : savedState ? <><Check size={14} aria-hidden="true" /> Saved</> : fresh ? 'Add note' : 'Save note'}</button></footer>
   </form>;
 }
 export function TaskMemory({ snapshot, threadId }: { snapshot: Snapshot; threadId?: string }) {
