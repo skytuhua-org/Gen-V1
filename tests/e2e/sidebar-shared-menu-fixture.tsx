@@ -23,7 +23,7 @@ const threads: ThreadNavigationRow[] = ['Selected conversation', 'Other conversa
   kind: index === 3 ? 'side' : index === 4 ? 'delegate' : 'main', parentThreadId: index === 4 ? 'thread-0' : undefined,
   status: index === 1 || index === 2 ? 'working' : 'ready', runId: index === 1 ? 'run-other' : null,
   sessionPath: null, epoch: 0, createdAt: '2026-11-06T12:00:00Z', updatedAt: '2026-11-06T12:00:00Z',
-  presentation: {pinned: query.has('flags'), unread: query.has('flags'), settled: query.has('flags')||query.has('settled'), order: index - 4},
+  presentation: {pinned: query.has('flags'), unread: query.has('flags'), settled: query.has('flags')||query.has('settled'), order: index - 4, completionAlertsMuted: query.has('flags')},
 } as ThreadNavigationRow));
 
 function Fixture() {

@@ -23,7 +23,7 @@ export class AttentionRepository {
   }
   const add=(thread:Thread,id:string,kind:AttentionItem['kind'],state:AttentionItem['state'],summary:string,destination:AttentionItem['destination'],occurredAt?:string,epoch=thread.epoch)=>{
    const previous=existing.get(id),notificationKey=id+':'+state,newFailure=Boolean(previous&&previous.item.state!==state&&state==='failed');
-   if(previous&&(previous.item.threadId!==thread.id||previous.item.projectId!==thread.projectId))return;
+   if(previous&&(previous.item.threadId!==thread.id||(previous.item.projectId??null)!==(thread.projectId??null)))return;
    const item:AttentionItem={id,kind,threadId:thread.id,...(thread.projectId?{projectId:thread.projectId}:{}),title:word(thread.title,200),summary:word(summary,2000),state,createdAt:previous?.item.createdAt??occurredAt??(seeded?stamp:thread.updatedAt),updatedAt:previous?.item.updatedAt??stamp,read:newFailure?false:previous?.item.read??false,popupDismissed:newFailure?false:previous?.item.popupDismissed??false,actionable:state==='needs-input'||state==='needs-review',notificationKey,destination};
    const comparable=(value:AttentionItem)=>JSON.stringify({...value,updatedAt:''});
    if(previous&&comparable(previous.item)!==comparable(item))item.updatedAt=stamp;
@@ -50,7 +50,7 @@ export class AttentionRepository {
   }
   // Completed observations remain useful history while a later run is active.
   const projectedIds=new Set(projected.map(value=>value.item.id));
-  for(const saved of existing.values())if((saved.item.kind==='thread-completed'||saved.item.kind==='thread-failed')&&!projectedIds.has(saved.item.id)){const owner=threads.get(saved.item.threadId);if(owner&&owner.projectId===saved.item.projectId)projected.push(saved);}
+  for(const saved of existing.values())if((saved.item.kind==='thread-completed'||saved.item.kind==='thread-failed')&&!projectedIds.has(saved.item.id)){const owner=threads.get(saved.item.threadId);if(owner&&(owner.projectId??null)===(saved.item.projectId??null))projected.push(saved);}
   // A muted thread's pending completions are consumed silently: history stays, delivery never sees them.
   const mutedOwners=new Set(snapshot.threads.filter(thread=>thread.presentation?.completionAlertsMuted===true).map(thread=>thread.id));
   if(mutedOwners.size)for(const value of projected)if(value.item.kind==='thread-completed'&&value.pending&&mutedOwners.has(value.item.threadId)){value.pending=false;value.claimedKey=value.item.notificationKey;}

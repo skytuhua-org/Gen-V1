@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject, type ReactNode, type Mouse
 import {
   Archive,
   BarChart3,
+  BellOff,
   Check,
   ChevronDown,
   ChevronRight,
@@ -212,6 +213,9 @@ export function ShellSidebar({
           {id: 'rename', label: 'Rename thread', onSelect: () => rename(item)},
           {id: 'pin', label: item.presentation?.pinned ? 'Unpin thread' : 'Pin thread', icon: <Pin size={13} />,
             onSelect: () => presentation(item, {pinned: !item.presentation?.pinned})},
+          {id: 'mute-completions', label: 'Mute completion alerts', icon: <BellOff size={13} />, checked: item.presentation?.completionAlertsMuted === true,
+            title: 'Silence future completion banners and sounds. Failures and requests still follow notification settings.',
+            onSelect: async () => { const next = !(item.presentation?.completionAlertsMuted === true); try { if (await presentation(item, {completionAlertsMuted: next})) toast(next ? `Future completion alerts muted for \u201c${item.title}\u201d. Failures and requests still follow notification settings.` : `Completion alerts unmuted for \u201c${item.title}\u201d. Earlier completions will not replay.`, {durationMs: 6000}); } catch { toast('Could not save completion alert preference. Try again.', {tone: 'error'}); } }},
           {id: 'unread', label: item.presentation?.unread ? 'Mark as read' : 'Mark as unread', icon: <Circle size={12} />,
             onSelect: () => presentation(item, {unread: !item.presentation?.unread})},
           {id: 'settle', label: item.presentation?.settled ? 'Return to inbox' : 'Settle thread', icon: <Check size={13} />,
@@ -273,6 +277,7 @@ export function ShellSidebar({
               <span className="thread-item-title">
                 {item.presentation?.unread && <span className="unread-dot" />}
                 {item.title}
+                {item.presentation?.completionAlertsMuted === true && <span className="thread-completion-muted-icon" title="Completion alerts muted"><BellOff size={12} aria-hidden="true" /><span className="sr-only">Completion alerts muted</span></span>}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
                 <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
@@ -305,6 +310,7 @@ export function ShellSidebar({
               <span className="thread-item-title">
                 {item.presentation?.unread && <span className="unread-dot" />}
                 {item.title}
+                {item.presentation?.completionAlertsMuted === true && <span className="thread-completion-muted-icon" title="Completion alerts muted"><BellOff size={12} aria-hidden="true" /><span className="sr-only">Completion alerts muted</span></span>}
               </span>
               {(branch || item.kind === 'delegate') && (
                 <span className="thread-item-submeta">

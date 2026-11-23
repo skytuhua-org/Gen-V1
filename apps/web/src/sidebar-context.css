@@ -257,6 +257,15 @@
   color: var(--muted);
 }
 
+.sidebar .thread-completion-muted-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: 6px;
+  vertical-align: middle;
+  color: var(--muted);
+}
+
 .sidebar .thread-project-label {
   font-size: 11.5px;
   line-height: 16px;
