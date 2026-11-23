@@ -47,6 +47,9 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <deque>
+#include <exception>
+#include <future>
 #include <optional>
 #include <unordered_map>
 #include <cstdint>
@@ -55,6 +58,8 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
+#include <limits>
 
 // The addon is linked /DELAYLOAD:node.exe so its node imports bind to the
 // host executable at load time: inside Electron there is no node.exe to
@@ -85,7 +90,6 @@ struct WindowDesc {
   std::wstring title;
   RECT rect{};
   UINT dpi = 96;
-  uintptr_t token = 0;
   std::string bindingId;
 };
 
@@ -125,81 +129,95 @@ bool enumerableAppWindow(HWND hwnd) {
 
 // ---- Bound-window registry -------------------------------------------------
 //
-// Identity model (D02/D04): an HWND value is a table index, not a creation
-// identity — Windows recycles handles, including within one process. The only
-// object that can prove "the window the user selected is the window being
-// captured" is a capture item that was bound while the selection was minted
-// and is held for the whole selection lifetime. listWindows therefore does
-// binding at enumeration time and hands out opaque bindingIds; no later op
-// ever derives an object from an HWND.
-//
-// Same-object atomicity across the bind uses a window PROP: properties are
-// destroyed with the window object, so GetProp==token proves the object that
-// was marked is the object that got bound (and remains so at revalidation).
-// SetProp on a window the OS won't let us mark (e.g. elevated targets) makes
-// the row unbindable — it is excluded rather than bound unproven.
+// Each binding holds the item created for the enumerated window. The marker
+// links metadata and CreateForWindow to the same window object, including when
+// Windows recycles an HWND. Several bindings for that object can share its
+// marker. Only the last owner can clear it.
 
-const wchar_t* kBindProp = L"GenV1M16Bind";
+uintptr_t nextBindingSerial() {
+  static uintptr_t serial = 0; // STA only
+  require(serial != UINTPTR_MAX, "The control bridge has exhausted its binding identifiers.");
+  return ++serial;
+}
 
-struct HeldBinding {
-  HWND hwnd = nullptr;
-  DWORD pid = 0;
-  DWORD threadId = 0;
-  uintptr_t token = 0;
-  std::wstring title;
-  RECT rect{};
-  UINT dpi = 96;
-  wgc::GraphicsCaptureItem item{nullptr};
-  wgc::IGraphicsCaptureItem::Closed_revoker closedRevoker;
-  bool closed = false;
-};
+const wchar_t* bindingPropertyName() {
+  // One property name per bridge instance bounds the number of property names
+  // used by re-listing and keeps cleanup isolated from other processes.
+  static auto* name = [] {
+    GUID guid{};
+    wchar_t text[39]{};
+    hr(CoCreateGuid(&guid), "The control bridge cannot create a window marker.");
+    require(StringFromGUID2(guid, text, 39) == 39, "The control bridge cannot format a window marker.");
+    return new std::wstring(std::wstring(L"GenV1M16Bind-") + text);
+  }();
+  return name->c_str();
+}
 
-// Every binding op runs on the single STA thread, so the map needs no lock;
-// the Closed event also marshals onto that apartment.
-//
-// The registry is intentionally heap-allocated and leaked: its destructor
-// would release GraphicsCaptureItems during CRT teardown, which can run
-// after the WinRT apartment is already gone (observed 0xC0000005). Items
-// are released during runtime through dropBinding/dropAllOnSta; at process
-// exit the map is abandoned rather than destructed, so no item release can
-// ever happen outside a live apartment.
-std::unordered_map<std::string, HeldBinding>& bindings() {
-  static auto* map = new std::unordered_map<std::string, HeldBinding>();
+struct WindowMarker;
+std::unordered_map<HANDLE, std::weak_ptr<WindowMarker>>& windowMarkers() {
+  static auto* map = new std::unordered_map<HANDLE, std::weak_ptr<WindowMarker>>();
   return *map;
 }
 
-std::atomic<uint64_t>& bindingSerial() {
-  static std::atomic<uint64_t> serial{0};
-  return serial;
+struct WindowMarker {
+  WindowMarker(HWND hwnd, HANDLE token, const wchar_t* property)
+      : hwnd(hwnd), token(token), property(property) {}
+  WindowMarker(const WindowMarker&) = delete;
+  WindowMarker& operator=(const WindowMarker&) = delete;
+
+  ~WindowMarker() {
+    // All bridge property writes run on the STA. The token check keeps an
+    // old owner from clearing the marker on a replacement window.
+    if (!installed) return;
+    if (matches()) RemovePropW(hwnd, property);
+    windowMarkers().erase(token);
+  }
+
+  bool matches() const { return installed && GetPropW(hwnd, property) == token; }
+
+  const HWND hwnd;
+  const HANDLE token;
+  const wchar_t* const property;
+  bool installed = false;
+};
+
+std::shared_ptr<WindowMarker> markWindow(HWND hwnd) {
+  const wchar_t* property = bindingPropertyName();
+  auto& markers = windowMarkers();
+  if (HANDLE token = GetPropW(hwnd, property)) {
+    auto found = markers.find(token);
+    if (found == markers.end()) return nullptr;
+    auto marker = found->second.lock();
+    if (!marker || marker->hwnd != hwnd || !marker->matches()) return nullptr;
+    return marker;
+  }
+
+  HANDLE token = reinterpret_cast<HANDLE>(nextBindingSerial());
+  auto marker = std::make_shared<WindowMarker>(hwnd, token, property);
+  if (!SetPropW(hwnd, property, token)) return nullptr;
+  marker->installed = true;
+  markers.emplace(token, marker);
+  return marker;
 }
 
-// Enumerate eligible windows, marking each with a per-enumeration prop token.
-// If a window object is destroyed and recreated mid-enumeration, the prop
-// dies with the old object and the recycled handle will fail the post-bind
-// GetProp check — the binding either refers to one consistent window object
-// or does not exist at all.
-struct EnumContext { std::vector<WindowDesc> windows; uint64_t epoch; };
-BOOL CALLBACK enumWindow(HWND hwnd, LPARAM param) {
-  auto* context = reinterpret_cast<EnumContext*>(param);
-  if (!enumerableAppWindow(hwnd)) return TRUE;
-  uintptr_t token = ((context->epoch & 0xffffffffull) << 32) | (uint32_t)context->windows.size();
-  if (!SetPropW(hwnd, kBindProp, reinterpret_cast<HANDLE>(token))) return TRUE;
-  WindowDesc desc{};
-  desc.hwnd = hwnd;
-  desc.token = token;
-  desc.threadId = GetWindowThreadProcessId(hwnd, &desc.pid);
-  desc.title = windowText(hwnd);
-  GetWindowRect(hwnd, &desc.rect);
-  desc.dpi = GetDpiForWindow(hwnd);
-  context->windows.push_back(std::move(desc));
-  return TRUE;
-}
+struct HeldBinding {
+  std::shared_ptr<WindowMarker> marker;
+  wgc::GraphicsCaptureItem item{nullptr};
+  std::shared_ptr<std::atomic_bool> closed = std::make_shared<std::atomic_bool>(false);
+  wgc::IGraphicsCaptureItem::Closed_revoker closedRevoker;
+};
 
-std::vector<WindowDesc> appWindows(uint64_t epoch) {
-  EnumContext context{};
-  context.epoch = epoch;
-  EnumWindows(enumWindow, reinterpret_cast<LPARAM>(&context));
-  return std::move(context.windows);
+// All registry access stays on the STA. The Closed callback owns only its
+// binding's flag, so a late callback can neither access the registry nor
+// mark a different binding closed.
+//
+// Leak the map at process exit: its destructor could otherwise release
+// GraphicsCaptureItems after the WinRT apartment is gone. Drop paths release
+// resources during runtime. Waiting for an STA drain from env teardown can
+// deadlock while ExitProcess serializes the threads.
+std::unordered_map<std::string, HeldBinding>& bindings() {
+  static auto* map = new std::unordered_map<std::string, HeldBinding>();
+  return *map;
 }
 
 std::optional<WindowDesc> describe(HWND hwnd) {
@@ -207,33 +225,19 @@ std::optional<WindowDesc> describe(HWND hwnd) {
   WindowDesc desc{};
   desc.hwnd = hwnd;
   desc.threadId = GetWindowThreadProcessId(hwnd, &desc.pid);
+  if (!desc.threadId || !desc.pid) return std::nullopt;
   desc.title = windowText(hwnd);
   if (!GetWindowRect(hwnd, &desc.rect)) return std::nullopt;
   desc.dpi = GetDpiForWindow(hwnd);
   return desc;
 }
 
-// Live proof that the bound window object still exists: the item has not
-// reported Closed, our creation marker is still on the window, and it is
-// still a capturable application window.
-bool bindingAlive(const HeldBinding& binding) {
-  if (binding.closed) return false;
-  HANDLE prop = GetPropW(binding.hwnd, kBindProp);
-  if (prop != reinterpret_cast<HANDLE>(binding.token)) return false;
-  return describe(binding.hwnd).has_value();
+std::optional<WindowDesc> describeBinding(const HeldBinding& binding) {
+  if (binding.closed->load() || !binding.marker->matches()) return std::nullopt;
+  auto desc = describe(binding.marker->hwnd);
+  if (binding.closed->load() || !binding.marker->matches()) return std::nullopt;
+  return desc;
 }
-
-void dropBinding(HeldBinding& binding) {
-  if (IsWindow(binding.hwnd)) RemovePropW(binding.hwnd, kBindProp);
-  try { binding.closedRevoker.revoke(); } catch (...) {}
-  binding.item = nullptr;
-  binding.closed = true;
-}
-
-// No drain hook: env-teardown callbacks run while ExitProcess serializes
-// threads, and waiting on the STA thread there deadlocks whenever a capture
-// is in flight (verified on-box). The leaked registry already guarantees
-// nothing destructs at teardown; drop paths release bindings during runtime.
 
 // ---- JS marshalling -------------------------------------------------------
 
@@ -270,8 +274,6 @@ napi_value windowObject(napi_env env, const WindowDesc& desc) {
 // ---- Async worker ---------------------------------------------------------
 
 struct Work {
-  napi_async_work work = nullptr;
-  napi_deferred deferred = nullptr;
   HWND hwnd = nullptr;
   std::string bindingId;
   enum class Kind { Pick, Identity, Capture, List, Drop } kind = Kind::Pick;
@@ -284,101 +286,161 @@ struct Work {
   std::string error;
 };
 
-void complete(napi_env env, Work* work, bool isNull) {
+void complete(napi_env env, napi_deferred deferred, const Work& work, bool isNull) {
   napi_value result = nullptr;
-  if (work->kind == Work::Kind::List) {
-    napi_create_array_with_length(env, work->windows.size(), &result);
-    for (size_t i = 0; i < work->windows.size(); ++i) {
-      napi_set_element(env, result, (uint32_t)i, windowObject(env, work->windows[i]));
+  if (work.kind == Work::Kind::List) {
+    napi_create_array_with_length(env, work.windows.size(), &result);
+    for (size_t i = 0; i < work.windows.size(); ++i) {
+      napi_set_element(env, result, (uint32_t)i, windowObject(env, work.windows[i]));
     }
   } else if (isNull) {
     napi_get_null(env, &result);
-  } else if (work->kind == Work::Kind::Capture) {
+  } else if (work.kind == Work::Kind::Capture) {
     napi_create_object(env, &result);
     napi_value data;
     void* bytes = nullptr;
-    napi_create_buffer_copy(env, work->png.size(), work->png.data(), &bytes, &data);
-    memcpy(bytes, work->png.data(), work->png.size());
+    napi_create_buffer_copy(env, work.png.size(), work.png.data(), &bytes, &data);
+    memcpy(bytes, work.png.data(), work.png.size());
     napi_set_named_property(env, result, "data", data);
     napi_value w, h;
-    napi_create_uint32(env, work->width, &w);
-    napi_create_uint32(env, work->height, &h);
+    napi_create_uint32(env, work.width, &w);
+    napi_create_uint32(env, work.height, &h);
     napi_set_named_property(env, result, "width", w);
     napi_set_named_property(env, result, "height", h);
   } else {
-    result = windowObject(env, work->window);
+    result = windowObject(env, work.window);
   }
-  napi_resolve_deferred(env, work->deferred, result);
+  napi_resolve_deferred(env, deferred, result);
 }
 
-void finish(napi_env env, napi_status, void* data) {
-  std::unique_ptr<Work> work(static_cast<Work*>(data));
-  if (work->error.empty()) {
-    complete(env, work.get(), (work->kind == Work::Kind::Pick || work->kind == Work::Kind::Identity || work->kind == Work::Kind::Drop) && !work->hasWindow);
-  } else {
-    napi_value error;
-    napi_create_error(env, nullptr, ([&] { napi_value v; napi_create_string_utf8(env, work->error.c_str(), NAPI_AUTO_LENGTH, &v); return v; })(), &error);
-    napi_reject_deferred(env, work->deferred, error);
+void reject(napi_env env, napi_deferred deferred, const char* message) {
+  napi_value text, error;
+  napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &text);
+  napi_create_error(env, nullptr, text, &error);
+  napi_reject_deferred(env, deferred, error);
+}
+
+struct PendingWork {
+  napi_async_work handle = nullptr;
+  napi_deferred deferred = nullptr;
+  std::shared_ptr<Work> operation;
+  std::future<void> done;
+};
+
+void waitForWork(napi_env, void* data) {
+  auto& pending = *static_cast<PendingWork*>(data);
+  try {
+    pending.done.get();
+  } catch (const std::future_error&) {
+    pending.operation->error = "The control bridge STA thread is unavailable.";
+  } catch (const std::exception& error) {
+    pending.operation->error = error.what();
+  } catch (...) {
+    pending.operation->error = "The control bridge operation failed.";
   }
-  napi_delete_async_work(env, work->work);
+}
+
+void finish(napi_env env, napi_status status, void* data) {
+  std::unique_ptr<PendingWork> pending(static_cast<PendingWork*>(data));
+  if (status != napi_ok) {
+    // A cancelled waiter can complete before the STA. The STA retains its
+    // own reference and uses no Node-API objects.
+    reject(env, pending->deferred, "The control bridge operation was cancelled.");
+  } else {
+    const auto& work = *pending->operation;
+    if (work.error.empty()) {
+      const bool isNull = !work.hasWindow &&
+          (work.kind == Work::Kind::Pick || work.kind == Work::Kind::Identity || work.kind == Work::Kind::Drop);
+      complete(env, pending->deferred, work, isNull);
+    } else {
+      reject(env, pending->deferred, work.error.c_str());
+    }
+  }
+  napi_delete_async_work(env, pending->handle);
 }
 
 // ---- WinRT execution context ----------------------------------------------
 
-// One STA thread owns the WinRT apartment for pick + capture calls. WGC frame
-// pools must be created and awaited on a consistent thread; the picker's
-// consent UI also requires a proper apartment. All real work funnels here.
+// One STA owns the WinRT apartment and drains a FIFO of Node-API requests.
+// Each future belongs to one caller and receives only that job's outcome.
 struct StaThread {
-  HANDLE ready = nullptr;
-  HANDLE thread = nullptr;
-  DWORD id = 0;
-  struct Job { void (*run)(void*); void* data; HANDLE done; }* job = nullptr;
-  CRITICAL_SECTION lock{};
   HANDLE pending = nullptr;
-  std::atomic<bool> stop{false};
+  std::mutex lock;
+  std::deque<std::packaged_task<void()>> jobs;
+  bool failed = false;
 };
 
 StaThread& sta() {
-  static StaThread instance;
+  // The dispatcher and its event live as long as the process.
+  static auto* instance = new StaThread();
   static std::once_flag once;
   std::call_once(once, [] {
-    instance.ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    instance.pending = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-    InitializeCriticalSection(&instance.lock);
-    instance.thread = CreateThread(nullptr, 0, [](void* raw) -> DWORD {
+    // The STA is process-owned, including if a Node environment closes.
+    HMODULE module = nullptr;
+    require(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+        reinterpret_cast<LPCWSTR>(&sta), &module), "The control bridge could not pin its STA module.");
+    instance->pending = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    require(instance->pending != nullptr, "The control bridge could not create its STA wake event.");
+    HANDLE thread = CreateThread(nullptr, 0, [](void* raw) -> DWORD {
       auto* self = static_cast<StaThread*>(raw);
-      winrt::init_apartment(winrt::apartment_type::single_threaded);
-      SetEvent(self->ready);
-      MSG message{};
+      try {
+        winrt::init_apartment(winrt::apartment_type::single_threaded);
+      } catch (...) {
+        std::lock_guard guard(self->lock);
+        self->failed = true;
+        self->jobs.clear();
+        return 0;
+      }
+
       for (;;) {
-        WaitForSingleObject(self->pending, INFINITE);
-        EnterCriticalSection(&self->lock);
-        auto* job = self->job;
-        self->job = nullptr;
-        LeaveCriticalSection(&self->lock);
-        if (self->stop) break;
-        if (job) { job->run(job->data); SetEvent(job->done); }
-        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+          TranslateMessage(&message);
+          DispatchMessageW(&message);
+        }
+
+        std::packaged_task<void()> job;
+        {
+          std::lock_guard guard(self->lock);
+          if (!self->jobs.empty()) {
+            job = std::move(self->jobs.front());
+            self->jobs.pop_front();
+          }
+        }
+        if (job.valid()) {
+          job();
+          continue; // Drain the queue before waiting on a coalesced wake.
+        }
+        DWORD wake = MsgWaitForMultipleObjectsEx(1, &self->pending, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        if (wake != WAIT_OBJECT_0 && wake != WAIT_OBJECT_0 + 1) break;
+      }
+      {
+        std::lock_guard guard(self->lock);
+        self->failed = true;
+        self->jobs.clear(); // Give waiting callers a broken promise.
       }
       winrt::uninit_apartment();
       return 0;
-    }, &instance, 0, &instance.id);
+    }, instance, 0, nullptr);
+    if (!thread) {
+      CloseHandle(instance->pending);
+      instance->pending = nullptr;
+      throw std::runtime_error("The control bridge could not start its STA thread.");
+    }
+    CloseHandle(thread);
   });
-  return instance;
+  return *instance;
 }
 
-// Run `fn` on the STA thread and wait for it.
-void onSta(void (*run)(void*), void* data) {
+void enqueueOnSta(std::packaged_task<void()> job) {
   auto& context = sta();
-  WaitForSingleObject(context.ready, INFINITE);
-  HANDLE done = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-  StaThread::Job job{run, data, done};
-  EnterCriticalSection(&context.lock);
-  context.job = &job;
-  LeaveCriticalSection(&context.lock);
-  SetEvent(context.pending);
-  WaitForSingleObject(done, INFINITE);
-  CloseHandle(done);
+  std::lock_guard guard(context.lock);
+  require(!context.failed, "The control bridge STA thread is unavailable.");
+  context.jobs.push_back(std::move(job));
+  if (!SetEvent(context.pending)) {
+    context.jobs.pop_back();
+    throw std::runtime_error("The control bridge could not wake its STA thread.");
+  }
 }
 
 // ---- Picker ---------------------------------------------------------------
@@ -433,24 +495,41 @@ class WgcSession {
 
   // Copy one fresh frame into CPU-readable PNG bytes.
   bool grab(std::vector<BYTE>& png, uint32_t& width, uint32_t& height) {
-    std::mutex mutex;
-    std::condition_variable cv;
     wgc::Direct3D11CaptureFrame frame{nullptr};
-    auto token = framePool_.FrameArrived([&](auto& pool, auto&) {
-      std::lock_guard<std::mutex> guard(mutex);
-      if (!frame) frame = pool.TryGetNextFrame();
-      cv.notify_all();
-    });
-    session_.StartCapture();
     {
-      std::unique_lock<std::mutex> lock(mutex);
-      if (!cv.wait_for(lock, std::chrono::seconds(10), [&] { return bool(frame); })) { framePool_.FrameArrived(token); return false; }
+      struct FrameArrival {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool ready = false;
+      };
+      auto arrival = std::make_shared<FrameArrival>();
+      // An in-flight callback may outlive revocation. It only signals arrival
+      // through shared state. The STA alone reads the pool and frame.
+      struct FrameSubscription {
+        wgc::Direct3D11CaptureFramePool& pool;
+        winrt::event_token token;
+        ~FrameSubscription() { pool.FrameArrived(token); }
+      } subscription{framePool_, framePool_.FrameArrived([arrival](auto&&, auto&&) {
+        std::lock_guard lock(arrival->mutex);
+        arrival->ready = true;
+        arrival->changed.notify_one();
+      })};
+
+      session_.StartCapture();
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+      // This lock unwinds before the subscription revokes the callback.
+      std::unique_lock lock(arrival->mutex);
+      while (arrival->changed.wait_until(lock, deadline, [&] { return arrival->ready; })) {
+        arrival->ready = false;
+        lock.unlock();
+        frame = framePool_.TryGetNextFrame();
+        if (frame || std::chrono::steady_clock::now() >= deadline) break;
+        lock.lock();
+      }
     }
-    framePool_.FrameArrived(token);
-    auto size = frame.ContentSize();
-    width = (uint32_t)size.Width;
-    height = (uint32_t)size.Height;
-    if (!width || !height) return false;
+    if (!frame) return false;
+    const auto size = frame.ContentSize();
+    if (size.Width <= 0 || size.Height <= 0) return false;
 
     ComPtr<ID3D11Texture2D> source;
     ComPtr<IDirect3DDxgiInterfaceAccess> access;
@@ -459,6 +538,13 @@ class WgcSession {
 
     D3D11_TEXTURE2D_DESC desc{};
     source->GetDesc(&desc);
+    // ContentSize may change while the pool still owns its original texture.
+    // Reject clipped content and undefined padding before staging or mapping.
+    if (static_cast<UINT>(size.Width) != desc.Width || static_cast<UINT>(size.Height) != desc.Height) return false;
+    if (desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM ||
+        desc.Width > std::numeric_limits<UINT>::max() / 4 / desc.Height) return false;
+    const UINT stride = desc.Width * 4;
+    std::vector<BYTE> pixels(static_cast<size_t>(stride) * desc.Height);
     desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     desc.Usage = D3D11_USAGE_STAGING;
     desc.BindFlags = 0;
@@ -468,9 +554,13 @@ class WgcSession {
     context_->CopyResource(staging.Get(), source.Get());
     D3D11_MAPPED_SUBRESOURCE mapped{};
     hr(context_->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped), "The captured frame is unreadable.");
-    std::vector<BYTE> pixels((size_t)height * desc.Width * 4);
-    for (uint32_t row = 0; row < height; ++row) {
-      memcpy(pixels.data() + (size_t)row * desc.Width * 4, (const BYTE*)mapped.pData + (size_t)row * mapped.RowPitch, desc.Width * 4);
+    if (!mapped.pData || mapped.RowPitch < stride) {
+      context_->Unmap(staging.Get(), 0);
+      return false;
+    }
+    for (uint32_t row = 0; row < desc.Height; ++row) {
+      memcpy(pixels.data() + static_cast<size_t>(row) * stride,
+          static_cast<const BYTE*>(mapped.pData) + static_cast<size_t>(row) * mapped.RowPitch, stride);
     }
     context_->Unmap(staging.Get(), 0);
 
@@ -478,7 +568,7 @@ class WgcSession {
     ComPtr<IWICImagingFactory> wic;
     hr(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic)), "The PNG encoder is unavailable.");
     ComPtr<IWICBitmap> bitmap;
-    hr(wic->CreateBitmapFromMemory(desc.Width, height, GUID_WICPixelFormat32bppBGRA, desc.Width * 4, (UINT)pixels.size(), pixels.data(), &bitmap), "The captured frame is unreadable.");
+    hr(wic->CreateBitmapFromMemory(desc.Width, desc.Height, GUID_WICPixelFormat32bppBGRA, stride, (UINT)pixels.size(), pixels.data(), &bitmap), "The captured frame is unreadable.");
     ComPtr<IWICStream> stream;
     hr(wic->CreateStream(&stream), "The PNG encoder is unavailable.");
     ComPtr<IStream> memory;
@@ -490,7 +580,7 @@ class WgcSession {
     ComPtr<IWICBitmapFrameEncode> frameEncode;
     hr(encoder->CreateNewFrame(&frameEncode, nullptr), "The PNG encoder is unavailable.");
     hr(frameEncode->Initialize(nullptr), "The PNG encoder is unavailable.");
-    hr(frameEncode->SetSize(desc.Width, height), "The PNG encoder is unavailable.");
+    hr(frameEncode->SetSize(desc.Width, desc.Height), "The PNG encoder is unavailable.");
     WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
     hr(frameEncode->SetPixelFormat(&format), "The PNG encoder is unavailable.");
     require(format == GUID_WICPixelFormat32bppBGRA, "The PNG encoder is unavailable.");
@@ -505,6 +595,8 @@ class WgcSession {
     ULONG read = 0;
     hr(memory->Read(png.data(), (ULONG)png.size(), &read), "The PNG encoder is unavailable.");
     require(read == png.size(), "The PNG encoder is unavailable.");
+    width = desc.Width;
+    height = desc.Height;
     return true;
   }
 
@@ -525,29 +617,34 @@ class WgcSession {
 // Capture uses the held binding's already-created item — the HWND is only
 // consulted for liveness revalidation, never to construct a capture object,
 // so HWND recycling cannot redirect capture to a different window.
-struct CaptureResult { std::vector<BYTE> png; uint32_t width = 0, height = 0; std::string error; std::string bindingId; WindowDesc window{}; };
+struct CaptureResult { std::vector<BYTE> png; uint32_t width = 0, height = 0; std::string error; std::string bindingId; };
 
 void captureOnSta(void* raw) {
   auto* result = static_cast<CaptureResult*>(raw);
   try {
     auto found = bindings().find(result->bindingId);
-    if (found == bindings().end() || !bindingAlive(found->second)) {
-      if (found != bindings().end()) dropBinding(found->second);
+    if (found == bindings().end()) {
       result->error = "The selected window binding is closed; the target no longer exists or cannot be re-proven.";
       return;
     }
     auto& binding = found->second;
-    auto desc = describe(binding.hwnd);
-    if (!desc) { binding.closed = true; result->error = "The selected window no longer exists or is not a capturable application window."; return; }
-    WgcSession session(binding.item);
-    if (!session.grab(result->png, result->width, result->height)) {
-      // A closed/minimized bound window starves the frame pool — treat it as
-      // binding loss rather than a retryable capture failure.
-      if (binding.closed) result->error = "The selected window binding closed during capture.";
-      else result->error = "The selected window produced no capturable frame.";
+    if (!describeBinding(binding)) {
+      bindings().erase(found);
+      result->error = "The selected window binding is closed; the target no longer exists or cannot be re-proven.";
       return;
     }
-    result->window = *desc;
+    bool hasFrame;
+    {
+      WgcSession session(binding.item);
+      hasFrame = session.grab(result->png, result->width, result->height);
+    }
+    const bool bindingLost = binding.closed->load() || !binding.marker->matches();
+    if (bindingLost || !hasFrame) {
+      // An unusable frame ends the binding after the session releases it.
+      bindings().erase(found);
+      result->error = bindingLost ? "The selected window binding closed during capture."
+                                  : "The selected window produced no capturable frame.";
+    }
   } catch (const winrt::hresult_error& error) {
     result->error = "Window capture failed: " + utf8(std::wstring(error.message().c_str(), error.message().size()));
   } catch (const std::exception& error) {
@@ -557,164 +654,155 @@ void captureOnSta(void* raw) {
   }
 }
 
-// Live re-proof of a held binding: binding registered, not Closed, the prop
-// token still on the same window object, still a capturable app window.
 void identityOnSta(void* raw) {
   auto* result = static_cast<PickResult*>(raw);
   auto found = bindings().find(result->bindingId);
-  if (found == bindings().end() || !bindingAlive(found->second)) { result->cancelled = true; return; }
-  auto& binding = found->second;
-  auto desc = describe(binding.hwnd);
-  if (!desc) { binding.closed = true; result->cancelled = true; return; }
-  result->window = *desc;
-  result->window.bindingId = result->bindingId;
-  result->cancelled = false;
+  if (found == bindings().end()) { result->cancelled = true; return; }
+  auto desc = describeBinding(found->second);
+  if (!desc) { result->cancelled = true; return; }
+  desc->bindingId = result->bindingId;
+  result->window = std::move(*desc);
 }
 
 struct ListResult { std::vector<WindowDesc> windows; std::string error; };
 
-// The chooser feed: enumerate eligible windows and bind a capture item for
-// each inside the same pass. Prop tokens prove the bound object is the
-// enumerated object; any row that cannot be proven is dropped, never listed.
+BOOL CALLBACK bindEnumeratedWindow(HWND hwnd, LPARAM param) {
+  auto& rows = *reinterpret_cast<std::vector<WindowDesc>*>(param);
+  try {
+    if (!enumerableAppWindow(hwnd)) return TRUE;
+    auto marker = markWindow(hwnd);
+    if (!marker || !marker->matches()) return TRUE;
+
+    auto desc = describe(hwnd);
+    if (!desc || !marker->matches()) return TRUE;
+
+    HeldBinding binding{};
+    binding.marker = std::move(marker);
+    binding.item = createItemForWindow(hwnd);
+    binding.closedRevoker = binding.item.Closed(winrt::auto_revoke, [closed = binding.closed](auto&&, auto&&) {
+      closed->store(true);
+    });
+    if (binding.closed->load() || !binding.marker->matches()) return TRUE;
+
+    char id[32];
+    snprintf(id, sizeof(id), "wgc-%llx", static_cast<unsigned long long>(nextBindingSerial()));
+    desc->bindingId = id;
+    auto [entry, inserted] = bindings().try_emplace(desc->bindingId, std::move(binding));
+    if (!inserted) return TRUE;
+    try {
+      rows.push_back(std::move(*desc));
+    } catch (...) {
+      bindings().erase(entry);
+      throw;
+    }
+  } catch (...) {
+    // Windows that cannot be proven are excluded from the chooser.
+  }
+  return TRUE;
+}
+
 void listOnSta(void* raw) {
   auto* result = static_cast<ListResult*>(raw);
-  try {
-    // A fresh enumeration epoch makes stale props on recycled/foreign windows
-    // unforgeable for this pass; old bindings stay valid until they close.
-    uint64_t epoch = ++bindingSerial();
-    auto windows = appWindows(epoch);
-    for (auto& desc : windows) {
-      const uintptr_t token = desc.token;
-      try {
-        // Re-proof the exact object before binding: still enumerable, same
-        // thread, then bind and confirm the marker survived CreateForWindow.
-        auto live = describe(desc.hwnd);
-        if (!live || live->threadId != desc.threadId || live->pid != desc.pid) {
-          if (IsWindow(desc.hwnd)) RemovePropW(desc.hwnd, kBindProp);
-          continue;
-        }
-        HeldBinding binding{};
-        binding.hwnd = desc.hwnd;
-        binding.pid = desc.pid;
-        binding.threadId = desc.threadId;
-        binding.token = token;
-        binding.title = desc.title;
-        binding.rect = desc.rect;
-        binding.dpi = desc.dpi;
-        binding.item = createItemForWindow(desc.hwnd);
-        if (GetPropW(desc.hwnd, kBindProp) != reinterpret_cast<HANDLE>(token)) {
-          // The window object changed while the item was being created — the
-          // old object died (taking the prop); the handle now names another
-          // window. Refuse rather than bind an unproven object.
-          binding.item = nullptr;
-          if (IsWindow(desc.hwnd)) RemovePropW(desc.hwnd, kBindProp);
-          continue;
-        }
-        std::string bindingId;
-        {
-          char id[32];
-          snprintf(id, sizeof(id), "wgc-%llx", (unsigned long long)token);
-          bindingId = id;
-          bindings().emplace(bindingId, std::move(binding));
-          auto& placed = bindings().at(bindingId);
-          // The handler marks via map lookup — never a raw node pointer, so a
-          // queued Closed event after erase cannot write freed memory.
-          placed.closedRevoker = placed.item.Closed(winrt::auto_revoke, [id = bindingId](auto&&, auto&&) {
-            auto it = bindings().find(id);
-            if (it != bindings().end()) it->second.closed = true;
-          });
-        }
-        desc.bindingId = bindingId;
-        result->windows.push_back(std::move(desc));
-      } catch (...) {
-        // Unbindable rows are excluded — the chooser only ever offers proven
-        // bindings (fail closed at listing time, not at capture time).
-        if (IsWindow(desc.hwnd)) RemovePropW(desc.hwnd, kBindProp);
-        continue;
-      }
-    }
-  } catch (const std::exception& error) {
-    result->error = error.what();
-  } catch (...) {
+  if (!EnumWindows(bindEnumeratedWindow, reinterpret_cast<LPARAM>(&result->windows))) {
+    for (const auto& row : result->windows) bindings().erase(row.bindingId);
+    result->windows.clear();
     result->error = "Window enumeration failed.";
   }
 }
 
 void dropOnSta(void* raw) {
   auto* result = static_cast<PickResult*>(raw);
-  auto found = bindings().find(result->bindingId);
-  if (found != bindings().end()) { dropBinding(found->second); bindings().erase(found); }
-  result->cancelled = false; // always resolves — cancel must not fail
+  bindings().erase(result->bindingId);
 }
 
 // ---- napi entry points ----------------------------------------------------
 
-template <typename Result>
-Work* makeWork(napi_env env, napi_callback_info info, size_t& argc, napi_value* argv, Work::Kind kind, napi_value* promise) {
-  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
-  auto* work = new Work();
-  work->kind = kind;
-  napi_create_promise(env, &work->deferred, promise);
-  napi_value name;
-  napi_create_string_utf8(env, "gen-v1-control-bridge", NAPI_AUTO_LENGTH, &name);
-  napi_create_async_work(env, nullptr, name,
-      [](napi_env, void* data) {
-        auto* work = static_cast<Work*>(data);
-        try {
-          if (work->kind == Work::Kind::Pick) {
-            PickResult result{};
-            result.owner = work->hwnd; // owner HWND resolved at queue time
-            onSta(pickOnSta, &result);
-            if (!result.error.empty()) work->error = result.error;
-            else if (!result.cancelled) { work->hasWindow = true; work->window = result.window; }
-          } else if (work->kind == Work::Kind::Identity) {
-            PickResult result{};
-            result.bindingId = work->bindingId;
-            onSta(identityOnSta, &result);
-            if (!result.error.empty()) work->error = result.error;
-            else if (!result.cancelled) { work->hasWindow = true; work->window = result.window; }
-          } else if (work->kind == Work::Kind::List) {
-            ListResult result{};
-            onSta(listOnSta, &result);
-            if (!result.error.empty()) work->error = result.error;
-            else work->windows = std::move(result.windows);
-          } else if (work->kind == Work::Kind::Drop) {
-            PickResult result{};
-            result.bindingId = work->bindingId;
-            onSta(dropOnSta, &result);
-          } else {
-            CaptureResult result{};
-            result.bindingId = work->bindingId;
-            onSta(captureOnSta, &result);
-            if (!result.error.empty()) work->error = result.error;
-            else { work->hasWindow = true; work->window = result.window; work->png = std::move(result.png); work->width = result.width; work->height = result.height; }
-          }
-        } catch (const std::exception& error) {
-          work->error = error.what();
-        } catch (...) {
-          work->error = "The control bridge operation failed.";
-        }
-      },
-      finish, work, &work->work);
-  return work;
+void runOnSta(Work& work) {
+  switch (work.kind) {
+    case Work::Kind::Pick:
+    case Work::Kind::Identity: {
+      PickResult result{};
+      result.owner = work.hwnd;
+      result.bindingId = work.bindingId;
+      if (work.kind == Work::Kind::Pick) pickOnSta(&result);
+      else identityOnSta(&result);
+      work.error = std::move(result.error);
+      work.hasWindow = work.error.empty() && !result.cancelled;
+      if (work.hasWindow) work.window = std::move(result.window);
+      break;
+    }
+    case Work::Kind::List: {
+      ListResult result{};
+      listOnSta(&result);
+      work.error = std::move(result.error);
+      work.windows = std::move(result.windows);
+      break;
+    }
+    case Work::Kind::Drop: {
+      PickResult result{};
+      result.bindingId = work.bindingId;
+      dropOnSta(&result);
+      break;
+    }
+    case Work::Kind::Capture: {
+      CaptureResult result{};
+      result.bindingId = work.bindingId;
+      captureOnSta(&result);
+      work.error = std::move(result.error);
+      work.png = std::move(result.png);
+      work.width = result.width;
+      work.height = result.height;
+      break;
+    }
+  }
+}
+
+napi_value queueWork(napi_env env, Work operation) {
+  auto pending = std::make_unique<PendingWork>();
+  pending->operation = std::make_shared<Work>(std::move(operation));
+  std::packaged_task<void()> job([work = pending->operation] { runOnSta(*work); });
+  pending->done = job.get_future();
+
+  napi_value promise, name;
+  if (napi_create_promise(env, &pending->deferred, &promise) != napi_ok) {
+    napi_throw_error(env, nullptr, "The control bridge could not create a promise.");
+    return nullptr;
+  }
+  if (napi_create_string_utf8(env, "gen-v1-control-bridge", NAPI_AUTO_LENGTH, &name) != napi_ok ||
+      napi_create_async_work(env, nullptr, name, waitForWork, finish, pending.get(), &pending->handle) != napi_ok ||
+      napi_queue_async_work(env, pending->handle) != napi_ok) {
+    if (pending->handle) napi_delete_async_work(env, pending->handle);
+    reject(env, pending->deferred, "The control bridge could not queue an operation.");
+    return promise;
+  }
+  pending.release(); // The complete callback now owns the waiter.
+
+  // Publish from the Node-API entry point. A libuv worker only waits for
+  // its own result, so worker startup order cannot reorder the STA queue.
+  try {
+    enqueueOnSta(std::move(job));
+  } catch (...) {
+    // The abandoned packaged task wakes the waiter with a broken promise.
+  }
+  return promise;
 }
 
 napi_value pickWindow(napi_env env, napi_callback_info info) {
   napi_value argv[1] = {nullptr};
   size_t argc = 1;
-  napi_value promise;
-  Work* work = makeWork<PickResult>(env, info, argc, argv, Work::Kind::Pick, &promise);
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  Work work{};
+  work.kind = Work::Kind::Pick;
   napi_valuetype type = napi_undefined;
   if (argc > 0) napi_typeof(env, argv[0], &type);
   if (type == napi_object) { // Buffer with the owner HWND bytes
     void* data = nullptr;
     size_t length = 0;
     if (napi_get_buffer_info(env, argv[0], &data, &length) == napi_ok && data && length >= sizeof(intptr_t)) {
-      work->hwnd = (HWND)(intptr_t)*(uint64_t*)data;
+      work.hwnd = (HWND)(intptr_t)*(uint64_t*)data;
     }
   }
-  napi_queue_async_work(env, work->work);
-  return promise;
+  return queueWork(env, std::move(work));
 }
 
 std::string bindingArg(napi_env env, napi_callback_info info) {
@@ -728,45 +816,34 @@ std::string bindingArg(napi_env env, napi_callback_info info) {
 }
 
 napi_value windowIdentity(napi_env env, napi_callback_info info) {
-  napi_value argv[1] = {nullptr};
-  size_t argc = 1;
-  napi_value promise;
-  Work* work = makeWork<PickResult>(env, info, argc, argv, Work::Kind::Identity, &promise);
-  work->bindingId = bindingArg(env, info);
-  napi_queue_async_work(env, work->work);
-  return promise;
+  Work work{};
+  work.kind = Work::Kind::Identity;
+  work.bindingId = bindingArg(env, info);
+  return queueWork(env, std::move(work));
 }
 
 napi_value captureWindow(napi_env env, napi_callback_info info) {
-  napi_value argv[1] = {nullptr};
-  size_t argc = 1;
-  napi_value promise;
-  Work* work = makeWork<CaptureResult>(env, info, argc, argv, Work::Kind::Capture, &promise);
-  work->bindingId = bindingArg(env, info);
-  napi_queue_async_work(env, work->work);
-  return promise;
+  Work work{};
+  work.kind = Work::Kind::Capture;
+  work.bindingId = bindingArg(env, info);
+  return queueWork(env, std::move(work));
 }
 
 napi_value dropBindingOp(napi_env env, napi_callback_info info) {
-  napi_value argv[1] = {nullptr};
-  size_t argc = 1;
-  napi_value promise;
-  Work* work = makeWork<PickResult>(env, info, argc, argv, Work::Kind::Drop, &promise);
-  work->bindingId = bindingArg(env, info);
-  napi_queue_async_work(env, work->work);
-  return promise;
+  Work work{};
+  work.kind = Work::Kind::Drop;
+  work.bindingId = bindingArg(env, info);
+  return queueWork(env, std::move(work));
 }
 
 // App-owned consent chooser feed: rows of live enumerable application windows
 // — each carrying an opaque bindingId naming the capture item bound for that
 // exact window object inside this call (identity is the held item, never a
 // derived hwnd/pid match).
-napi_value listWindows(napi_env env, napi_callback_info info) {
-  size_t argc = 0;
-  napi_value promise;
-  Work* work = makeWork<ListResult>(env, info, argc, nullptr, Work::Kind::List, &promise);
-  napi_queue_async_work(env, work->work);
-  return promise;
+napi_value listWindows(napi_env env, napi_callback_info) {
+  Work work{};
+  work.kind = Work::Kind::List;
+  return queueWork(env, std::move(work));
 }
 
 napi_value init(napi_env env, napi_value exports) {
