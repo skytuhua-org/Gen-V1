@@ -148,7 +148,7 @@
 .workspace-right-header [role=tablist][data-overflow-end=true] { mask-image:linear-gradient(to left,transparent,black 24px); -webkit-mask-image:linear-gradient(to left,transparent,black 24px); }
 .workspace-right-header [role=tablist][data-overflow-start=true][data-overflow-end=true] { mask-image:linear-gradient(to right,transparent,black 24px,black calc(100% - 24px),transparent); -webkit-mask-image:linear-gradient(to right,transparent,black 24px,black calc(100% - 24px),transparent); }
 .workspace-right-header [role=tab] { flex-shrink:0; white-space:nowrap; color:var(--muted); font-size:12px; padding:17px 8px 15px; border-bottom:2px solid transparent; transition:color var(--ui-motion-tab) var(--ui-ease-move),border-bottom-color var(--ui-motion-tab) var(--ui-ease-move); }
-.workspace-right-header [role=tab][aria-selected=true] { color:var(--text); border-bottom-color:var(--text); }
+.workspace-right-header [role=tab][aria-selected=true] { color:var(--text); border-bottom-color:var(--muted); }
 .workspace-panel-content { flex:1; min-height:0; overflow:auto; }
 .panel-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 13px; }
 .panel-toolbar label { min-width:0; flex:1; }
