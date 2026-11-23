@@ -74,7 +74,7 @@ import type {SharedAgentComposers, ComposerState, ConversationComposerTarget} fr
 import {ComposerCommands,ComposerSkillBindings,type ComposerCommandsHandle} from './ComposerCommands';
 import type {ModelPickerHandle} from './ModelPicker';
 import {useComposerSkills,skillDraftKey,readSkillBindings,clearAcceptedSkills} from './composer-skill-drafts';
-import {useWorkspaceState} from './workspace-api';
+import {getWorkspace,useWorkspaceState} from './workspace-api';
 import {liveThreadPanels,delegatedThread,threadParent,threadProject,findCanvasPanelBounds} from './workspace-canvas-layout';
 import {panelDesktopSurface,panelsForDesktopSurface,panelNativeWindow} from './workspace-native';
 import type {PanelBinding,PanelPlacement,WorkspacePanelKind,SurfaceRef} from '../../../packages/contracts/workspace.ts';
@@ -687,6 +687,9 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   // The project default can only resolve once the workspace envelope has the
   // project; reloading on this flip keeps a just-loaded composer on it.
   const projectModelReady = modelThread?.projectId ? Boolean(workspaceEnvelope?.projects.some(item => item.id === modelThread.projectId)) : true;
+  // Saved project defaults live in preferences: re-resolve when they change so an
+  // open, unsent composer follows the latest default (unless an explicit pick).
+  const projectDefaultsStamp = modelThread?.projectId ? JSON.stringify(getPreferences(snapshot.settings).projectModelDefaults) : '';
   const loadedModelOwner = useRef('');
   const modelRequest = useRef(0);
   const modelRead = useRef<AbortController|null>(null);
@@ -703,8 +706,14 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
       setModels(current=>mergeAccountModels(current,result.models,target)); setModelError(result.error ?? '');
       const bound=hasPinnedAccount(owner,snapshotRef.current);
       let resolution:ComposerModelResolution={source:bound?'bound':undefined},resolved:ReturnType<typeof resolveNewThreadModel>|undefined;
-      if(!target&&!bound){
-        const ownerKey=owner?.id??'new',preferences=getPreferences(snapshotRef.current.settings),project=owner?.projectId?workspaceEnvelopeRef.current?.projects.find(item=>item.id===owner.projectId):undefined;
+      // Also resolve on catalog refreshes (target set): a sign-in can make the
+      // saved project model available, and the unavailable notice must re-resolve.
+      if(!bound){
+        const ownerKey=owner?.id??'new',preferences=getPreferences(snapshotRef.current.settings);
+        // Detached windows never load the workspace envelope; fetch it once for
+        // the project's authority when the live envelope does not carry it.
+        let project=owner?.projectId?workspaceEnvelopeRef.current?.projects.find(item=>item.id===owner.projectId):undefined;
+        if(owner?.projectId&&!project){try{project=(await getWorkspace()).projects.find(item=>item.id===owner.projectId);}catch{}}
         const projectDefault=project?projectModelDefaultFor(preferences,project.authority,project.id):null;
         const [choice,thinking,explicitFlag]=await Promise.all([journalRead<string>(modelChoiceKey(ownerKey)),journalRead<string>('thinking:'+ownerKey),journalRead<string>(thinkingExplicitKey(ownerKey))]);
         if(request!==modelRequest.current||modelContextRef.current!==context)return;
@@ -713,11 +722,13 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
       }
       modelResolutionRef.current=resolution;setModelResolution(resolution);
       setModelId(previous => {
-        if(target)return previous;
         if(resolved){
+          // A catalog refresh never moves an explicit pick.
+          if(target&&resolved.source==='explicit')return previous;
           const keep=previous&&result.models.some(item=>item.id===previous)?previous:undefined;
           return resolved.modelId||(resolved.source==='project-unavailable'?'':keep??result.models[0]?.id??'');
         }
+        if(target)return previous;
         if (previous && result.models.some(item => item.id === previous)) return previous;
         // Bound tasks never silently move to another account or model when its
         // pinned connection is unavailable. Setup and model changes are explicit.
@@ -760,7 +771,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     loadedModelOwner.current = modelOwner;
     void loadModels();
     return () => { modelRequest.current++;modelRead.current?.abort();modelRead.current=null; };
-  }, [loaded, modelOwner, modelContext, projectModelReady, loadModels]);
+  }, [loaded, modelOwner, modelContext, projectModelReady, projectDefaultsStamp, loadModels]);
   useEffect(() => { if (!loaded) return; return subscribe(snapshotRef.current.seq, event => {if(event.type.startsWith('workspace.')||event.type.startsWith('project.')||event.type.startsWith('split-workspace.'))window.dispatchEvent(new Event('harness:workspace-changed'));const patched=applyRuntimeEvent(snapshotRef.current,event);if(patched)apply(patched);else void refresh().catch(error => setError(messageOf(error))); }, setOnline, refresh); }, [loaded, refresh, apply]);
   useEffect(() => { const query = matchMedia('(prefers-color-scheme: dark)'); const change = () => setSystemDark(query.matches); query.addEventListener('change', change); return () => query.removeEventListener('change', change); }, []);
   const theme = snapshot.settings.theme === 'system' ? systemDark ? 'dark' : 'light' : snapshot.settings.theme;
