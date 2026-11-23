@@ -4,7 +4,7 @@ import type {Terminal} from '@xterm/xterm';
 export interface TerminalOutputSnapshot {text:string;bytes:number;capturedAt:string;rows:number;lines:number;filename:string}
 export const TERMINAL_OUTPUT_MAX_BYTES=8*1024*1024;
 export class TerminalOutputTooLarge extends Error{constructor(){super('The retained terminal output exceeds the 8 MiB limit.');}}
-export class TerminalOutputBufferUnavailable extends Error{constructor(){super('The terminal is not showing its primary output.');}}
+export class TerminalOutputBufferUnavailable extends Error{constructor(){super('Leave the full-screen terminal application to save primary-buffer output.');}}
 
 const pad=(value:number)=>String(value).padStart(2,'0');
 export function terminalOutputFilename(date:Date):string{
