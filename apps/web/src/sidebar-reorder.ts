@@ -256,7 +256,7 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
         const swallow = (click: Event) => { click.preventDefault(); click.stopPropagation(); };
         document.addEventListener('click', swallow, { capture: true, once: true });
         window.setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 400);
-        drop(was.item, point);
+        if (Math.abs(event.clientY - was.startY) > 9) drop(was.item, point);
       }
     };
     const cancelled = (event: PointerEvent) => { if (held && event.pointerId === held.pointerId) cancel(); };
