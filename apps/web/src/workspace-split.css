@@ -9,6 +9,7 @@
 .split-pane[data-inline-chrome=true]{position:relative}
 .split-pane[data-inline-chrome=true]>.split-pane-header{position:absolute;top:9px;right:12px;width:max-content;height:34px;min-height:34px;padding:0 3px;border:0;background:transparent}
 .split-pane[data-inline-chrome=true] .split-tab-strip{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.split-workspace[data-inline-chrome=true]{height:100%}
 .split-workspace[data-inline-chrome=true] .split-surface-plane{z-index:2}
 .split-workspace[data-inline-chrome=true] .split-surface .workspace-header{padding-right:var(--inline-chrome-right-padding,20px)}
 .split-pane-header button{background:transparent;color:inherit;border:0;border-radius:4px;font:inherit}.split-pane-header button:hover{background:var(--hover,#242424)}.split-pane-header button:focus-visible,.split-area-controls button:focus-visible{outline:2px solid var(--ui-focus-ring,#808080);outline-offset:-2px}
