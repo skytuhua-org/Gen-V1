@@ -787,13 +787,9 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const newThreadRef = useRef<() => Promise<void>>(async()=>{}); newThreadRef.current = async()=>{if(composerPending.current||creationPending.current)return;await prepareWorkspace();openProjectSelection();};
   useEffect(() => { if(embeddedThreadId)return;const key = (event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
-    if (matchesShortcut(event, chordFor('show-shortcuts'))) {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest?.('input,textarea,select,[contenteditable="true"]')) return;
-      event.preventDefault();
-      if (settingsOpen) { setSettingsOpen(false); return; }
-      if (document.querySelector('dialog[open]')) return;
-      setSettingsSection('keybindings'); setSettingsOpen(true); return;
+    const editableTarget = (event.target as HTMLElement | null)?.closest?.('input,textarea,select,[contenteditable="true"]');
+    if (!editableTarget && settingsOpen && matchesShortcut(event, chordFor('show-shortcuts'))) {
+      event.preventDefault(); setSettingsOpen(false); return;
     }
     if (document.querySelector('dialog[open]')) return;
     if (matchesShortcut(event, preferences.keybindings.search)) { event.preventDefault(); setSidebarOpen(true); setLayout(value => ({ ...value, sidebarCollapsed: false })); requestAnimationFrame(() => searchRef.current?.focus()); }
@@ -802,6 +798,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     else if (matchesShortcut(event, preferences.keybindings.toggleRightPanel)) { event.preventDefault(); setLayout(value => ({ ...value, rightPanelOpen: !value.rightPanelOpen })); }
     else if (matchesShortcut(event, preferences.keybindings.openSettings)) { event.preventDefault(); setSettingsSection('general'); setSettingsOpen(true); }
     else if (matchesShortcut(event, preferences.keybindings.stop)) { const focused = snapshotRef.current.threads.find(item => item.id === placedThread.current); const owner = focused?.runId ? focused : modelThreadRef.current; if (owner?.runId) { event.preventDefault(); void stopConversation(owner, host?.composers ?? sharedComposers).then(() => refresh()).catch(error => setError(messageOf(error))); } }
+    else if (!editableTarget && matchesShortcut(event, chordFor('show-shortcuts'))) { event.preventDefault(); setSettingsSection('keybindings'); setSettingsOpen(true); }
     if (event.key === 'Escape') { setSidebarOpen(false);  }
   }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [preferences.keybindings.search, preferences.keybindings.newThread, preferences.keybindings.toggleSidebar, preferences.keybindings.toggleRightPanel, preferences.keybindings.openSettings, preferences.keybindings.stop, selectedId, mobile, refresh, host?.composers, settingsOpen]);
   const conversationMotion=useRef<ReturnType<typeof createConversationScroll>|null>(null),conversationElement=useRef<HTMLElement|null>(null);

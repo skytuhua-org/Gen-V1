@@ -230,14 +230,13 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   const openSettings = (target?: string) => fail(async () => {setSettingsTarget(target); await prepare(); setSettingsOpen(true);});
   const toggleShortcuts = () => {if (settingsOpen) {void closeSettings(); return;} if (!document.querySelector('dialog[open]')) void openSettings('keybindings');};
   const stopFocused = () => {const card=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('[data-agent-id]');const agent=card?controller.getSnapshot().agents.find(item=>item.agentId===card.dataset.agentId):undefined;if(agent&&agent.status==='working')void composers.stop(agent);};
-  const shortcuts = useRef({action, openSettings, stopFocused, toggleShortcuts}); shortcuts.current = {action, openSettings, stopFocused, toggleShortcuts};
+  const shortcuts = useRef({action, openSettings, stopFocused, toggleShortcuts, settingsOpen}); shortcuts.current = {action, openSettings, stopFocused, toggleShortcuts, settingsOpen};
   const keybindings = JSON.stringify(preferences.keybindings);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (matchesShortcut(event, chordFor('show-shortcuts'))) {
-        const target = event.target as HTMLElement | null;
-        if (target?.closest?.('input,textarea,select,[contenteditable="true"]')) return;
+      const editableTarget = (event.target as HTMLElement | null)?.closest?.('input,textarea,select,[contenteditable="true"]');
+      if (!editableTarget && matchesShortcut(event, chordFor('show-shortcuts')) && shortcuts.current.settingsOpen) {
         event.preventDefault(); shortcuts.current.toggleShortcuts(); return;
       }
       if (document.querySelector('dialog[open]')) return;
@@ -246,6 +245,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
       else if (matchesShortcut(event, preferences.keybindings.search)) {event.preventDefault(); setOpen(true); setLayout(value => ({...value, sidebarCollapsed: false})); requestAnimationFrame(() => searchRef.current?.focus());}
       else if (matchesShortcut(event, preferences.keybindings.toggleSidebar)) {event.preventDefault(); if (mobile) setOpen(value => !value); else setLayout(value => ({...value, sidebarCollapsed: !value.sidebarCollapsed}));}
       else if (matchesShortcut(event, preferences.keybindings.stop)) {event.preventDefault(); shortcuts.current.stopFocused();}
+      else if (!editableTarget && matchesShortcut(event, chordFor('show-shortcuts'))) {event.preventDefault(); shortcuts.current.openSettings('keybindings');}
     };
     window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key);
   }, [keybindings, mobile]);
