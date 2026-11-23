@@ -19,9 +19,8 @@ jobs:
     # A fixed concurrency group discards older pending jobs even with
     # cancel-in-progress:false; low-frequency sweeps can safely queue intact.
     if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -63,8 +62,8 @@ jobs:
               if (pr.draft === false && associated.head.sha === run.head_sha && pr.head.sha !== run.head_sha) return 'superseded';
               return null;
             }
-            if (context.eventName === 'push' && context.ref !== 'refs/heads/' + context.payload.repository.default_branch) return finish();
-            if (!['push', 'schedule', 'workflow_dispatch'].includes(context.eventName)) return finish();
+            if (!['push', 'schedule', 'workflow_dispatch'].includes(context.eventName) ||
+                context.ref !== 'refs/heads/' + context.payload.repository.default_branch) return finish();
             // Sweep current GitHub metadata, not the triggering event's PR payload.
             // Discover both pages before cancelling; cap each sweep at 100 candidates.
             const pages = [];
