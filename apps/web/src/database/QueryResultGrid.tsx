@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Lock } from 'lucide-react';
 import type { DatabaseQueryResultV1 } from '../../../../packages/contracts/database.ts';
 
@@ -29,65 +29,154 @@ export function QueryResultGrid({ result, density = 'comfortable', draft, readOn
 	const scroll = useRef<HTMLDivElement>(null);
 	const [top, setTop] = useState(0), [left, setLeft] = useState(0), [viewH, setViewH] = useState(320), [viewW, setViewW] = useState(640);
 	const [widths, setWidths] = useState<Record<number, number>>({});
-	const measured = useRef(false);
+	useLayoutEffect(() => {
+		const node = scroll.current;
+		if (!node) return;
+		const measure = () => { setViewH(node.clientHeight); setViewW(node.clientWidth); };
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(node);
+		return () => observer.disconnect();
+	}, []);
 
 	const rowHeight = ROW_HEIGHTS[density];
-	const colWidth = (index: number) => widths[index] ?? contentWidth(result, index);
+	const naturalWidths = useMemo(() => result.columns.map((_, index) => contentWidth(result, index)), [result]);
+	const columns = useMemo(() => {
+		let left = GUTTER;
+		return naturalWidths.map((naturalWidth, index) => {
+			const width = widths[index] ?? naturalWidth;
+			const style = { left, width };
+			left += width;
+			return style;
+		});
+	}, [naturalWidths, widths]);
+	const tracks = useMemo(() => [GUTTER, ...columns.map(column => column.width)].map(width => width + 'px').join(' '), [columns]);
 	const rows = result.rows;
 	const totalH = rows.length * rowHeight;
-	const start = Math.max(0, Math.floor(top / rowHeight) - OVERSCAN);
+	const start = Math.min(rows.length, Math.max(0, Math.floor(top / rowHeight) - OVERSCAN));
 	const end = Math.min(rows.length, Math.ceil((top + viewH) / rowHeight) + OVERSCAN);
+	const readOnlyPool = useRef<HTMLDivElement[]>([]);
 	const virtualCols = result.columns.length > COLUMN_VIRTUALIZE_AT;
-	const offsets = useCallback((until: number) => { let sum = 0; for (let index = 0; index < until; index++) sum += colWidth(index); return sum; }, [widths, result]); // eslint-disable-line react-hooks/exhaustive-deps
-	const totalW = offsets(result.columns.length);
-	const colStart = virtualCols ? Math.max(0, result.columns.findIndex((_, index) => offsets(index + 1) > left) - 4) : 0;
-	const firstPast = virtualCols ? result.columns.findIndex((_, index) => offsets(index) > left + viewW) : -1;
+	const lastColumn = columns.at(-1);
+	const totalW = lastColumn ? lastColumn.left + lastColumn.width - GUTTER : 0;
+	const colStart = virtualCols ? Math.max(0, columns.findIndex(column => column.left - GUTTER + column.width > left) - 4) : 0;
+	const firstPast = virtualCols ? columns.findIndex(column => column.left - GUTTER > left + viewW) : -1;
 	const colEnd = virtualCols ? (firstPast < 0 ? result.columns.length : Math.min(result.columns.length, firstPast + 4)) : result.columns.length;
 
-	const resize = (index: number) => (event: React.PointerEvent) => {
+	const resize = useCallback((index: number) => (event: React.PointerEvent) => {
 		event.preventDefault(); event.stopPropagation();
-		const startX = event.clientX, startWidth = colWidth(index);
+		const startX = event.clientX, startWidth = columns[index]!.width;
 		const move = (moveEvent: PointerEvent) => setWidths(current => ({ ...current, [index]: Math.max(MIN_COL_WIDTH, startWidth + moveEvent.clientX - startX) }));
 		const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
 		window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
-	};
+	}, [columns]);
 
-	return <div className="query-result-grid" style={height ? { height } : undefined}>
+	return <div className="query-result-grid" style={{ height, '--query-grid-tracks': tracks } as React.CSSProperties}>
 		<div className="query-result-scroll" role="grid" aria-labelledby={labelledBy} aria-rowcount={rows.length + 1} aria-colcount={result.columns.length + 1}
-			onScroll={event => { const element = event.currentTarget; setTop(element.scrollTop); setLeft(element.scrollLeft); setViewH(element.clientHeight); setViewW(element.clientWidth); }}
-			ref={node => { scroll.current = node; if (node && !measured.current) { measured.current = true; setViewH(node.clientHeight || 320); setViewW(node.clientWidth || 640); } }}>
+			onScroll={event => { const element = event.currentTarget; setTop(element.scrollTop); setLeft(element.scrollLeft); }}
+			ref={scroll}>
 			<div style={{ height: totalH + HEADER_HEIGHT, width: GUTTER + totalW, position: 'relative' }}>
-				<div className="query-result-header" role="row" aria-rowindex={1} style={{ width: GUTTER + totalW }}>
-					{result.columns.map((column, index) => index >= colStart && index < colEnd
-						? <span key={index} role="columnheader" aria-colindex={index + 2} className="query-result-th" style={{ width: colWidth(index), left: GUTTER + offsets(index) }}>
-							<span className="query-result-th-label" title={`${column.name} · ${column.type}`}>{column.name} <span className="schema-type">{column.type}</span></span>
-							{readOnlyColumns?.has(index) && <Lock size={12} aria-label="Read only"/>}
-							<span className="query-result-col-resize" role="separator" aria-orientation="vertical" aria-label={`Resize ${column.name}`} onPointerDown={resize(index)}/>
-						</span>
-						: null)}
-					<span className="row-number" role="columnheader" aria-colindex={1} style={{ width: GUTTER }}>#</span>
-				</div>
-				{rows.slice(start, end).map((row, offset) => {
-					const rowIndex = start + offset;
-					return <div key={rowIndex} role="row" aria-rowindex={rowIndex + 2} className="query-result-tr" style={{ top: HEADER_HEIGHT + rowIndex * rowHeight, height: rowHeight, width: GUTTER + totalW }}>
-						{row.map((cell, columnIndex) => columnIndex >= colStart && columnIndex < colEnd
-							? <ResultCellView key={columnIndex} cell={cell} rowIndex={rowIndex} columnIndex={columnIndex} draft={draft} style={{ width: colWidth(columnIndex), left: GUTTER + offsets(columnIndex) }}/>
-							: null)}
-						<span className="row-number" role="rowheader" aria-colindex={1} style={{ width: GUTTER }}>{rowIndex + 1}</span>
-					</div>;
-				})}
+				<ResultHeader labels={result.columns} columns={columns} readOnlyColumns={readOnlyColumns}
+					width={GUTTER + totalW} colStart={colStart} colEnd={colEnd} resize={resize}/>
+				{rows.slice(start, end).map((row, offset) => !draft && !virtualCols
+					? <ReadOnlyRow key={start + offset} pool={readOnlyPool} row={row} rowIndex={start + offset} rowHeight={rowHeight} columnCount={columns.length}/>
+					: <ResultRow key={start + offset} row={row} rowIndex={start + offset} rowHeight={rowHeight} totalW={totalW}
+						colStart={colStart} colEnd={colEnd} readOnlyColumns={readOnlyColumns} draft={draft}/>)}
 			</div>
 		</div>
 		{rows.length === 0 && <p className="database-empty muted">No rows</p>}
 	</div>;
 }
 
-function ResultCellView({ cell, rowIndex, columnIndex, draft, style }: { cell: ResultCell; rowIndex: number; columnIndex: number; draft?: ResultDraft; style: React.CSSProperties }) {
+const ResultHeader = memo(function ResultHeader({ labels, columns, readOnlyColumns, width, colStart, colEnd, resize }: {
+	labels: DatabaseQueryResultV1['columns']; columns: { left: number; width: number }[]; readOnlyColumns?: ReadonlySet<number>;
+	width: number; colStart: number; colEnd: number; resize: (index: number) => (event: React.PointerEvent) => void;
+}) {
+	return <div className="query-result-header" role="row" aria-rowindex={1} style={{ width }}>
+		{labels.map((column, index) => index >= colStart && index < colEnd
+			? <span key={index} role="columnheader" aria-colindex={index + 2} className="query-result-th" style={columns[index]}>
+				<span className="query-result-th-label" title={`${column.name} · ${column.type}`}>{column.name} <span className="schema-type">{column.type}</span></span>
+				{readOnlyColumns?.has(index) && <Lock size={12} aria-label="Read only"/>}
+				<span className="query-result-col-resize" role="separator" aria-orientation="vertical" aria-label={`Resize ${column.name}`} onPointerDown={resize(index)}/>
+			</span>
+			: null)}
+		<span className="row-number" role="columnheader" aria-colindex={1} style={{ width: GUTTER }}>#</span>
+	</div>;
+});
+
+// Recycle detached read-only cell groups as rows leave the viewport. Logical row
+// keys stay stable, so scrolling in either direction preserves visible focus.
+const ReadOnlyRow = memo(function ReadOnlyRow({ row, rowIndex, rowHeight, columnCount, pool }: {
+	row: DatabaseQueryResultV1['rows'][number]; rowIndex: number; rowHeight: number; columnCount: number; pool: React.RefObject<HTMLDivElement[]>;
+}) {
+	const host = useRef<HTMLDivElement>(null);
+	const cells = useRef<HTMLDivElement>(null);
+	useLayoutEffect(() => {
+		const container = host.current;
+		if (!container) return;
+		const group = pool.current.pop() ?? document.createElement('div');
+		group.className = 'query-result-cells';
+		group.setAttribute('role', 'presentation');
+		cells.current = group;
+		container.appendChild(group);
+		return () => {
+			group.remove();
+			cells.current = null;
+			if (pool.current.length < OVERSCAN * 2) pool.current.push(group);
+		};
+	}, [pool]);
+	useLayoutEffect(() => {
+		const node = cells.current;
+		if (!node) return;
+		const length = Math.min(columnCount, row.length);
+		const fragment = document.createDocumentFragment();
+		for (let index = 0; index < length; index++) {
+			const cell = row[index]!;
+			let span = node.children[index] as HTMLSpanElement | undefined;
+			if (!span) {
+				span = document.createElement('span');
+				span.setAttribute('role', 'gridcell');
+				span.setAttribute('aria-colindex', String(index + 2));
+				span.tabIndex = 0;
+				fragment.appendChild(span);
+			}
+			const text = cellText(cell);
+			span.className = cellClass(cell);
+			if (text.length > 60) span.title = text;
+			else span.removeAttribute('title');
+			if (cell === null) {
+				const italic = document.createElement('em');
+				italic.textContent = text;
+				span.replaceChildren(italic);
+			} else span.textContent = text;
+		}
+		while (node.childElementCount > length) node.lastElementChild!.remove();
+		node.appendChild(fragment);
+	}, [row, columnCount]);
+	return <div role="row" aria-rowindex={rowIndex + 2} className="query-result-tr" style={{ top: HEADER_HEIGHT + rowIndex * rowHeight, height: rowHeight, width: '100%' }}>
+		<span className="row-number" role="rowheader" aria-colindex={1}>{rowIndex + 1}</span>
+		<div ref={host} role="presentation" className="query-result-cell-host"/>
+	</div>;
+});
+
+const cellClass = (cell: ResultCell) => 'query-result-td' + (typeof cell === 'number' ? ' numeric' : cell === null ? ' null-cell' : '');
+
+const ResultRow = memo(function ResultRow({ row, rowIndex, rowHeight, totalW, colStart, colEnd, readOnlyColumns, draft }: {
+	row: DatabaseQueryResultV1['rows'][number]; rowIndex: number; rowHeight: number; totalW: number;
+	colStart: number; colEnd: number; readOnlyColumns?: ReadonlySet<number>; draft?: ResultDraft;
+}) {
+	return <div role="row" aria-rowindex={rowIndex + 2} className="query-result-tr" style={{ top: HEADER_HEIGHT + rowIndex * rowHeight, height: rowHeight, width: GUTTER + totalW }}>
+		<span className="row-number" role="rowheader" aria-colindex={1}>{rowIndex + 1}</span>
+		{row.slice(colStart, colEnd).map((cell, offset) => renderCell(cell, rowIndex, colStart + offset, draft, readOnlyColumns?.has(colStart + offset) === true, offset === 0 && colStart > 0 ? { gridColumnStart: colStart + 2 } : undefined))}
+	</div>;
+});
+
+function renderCell(cell: ResultCell, rowIndex: number, columnIndex: number, draft: ResultDraft | undefined, readOnly: boolean, style: React.CSSProperties | undefined) {
 	const text = cellText(cell), key = `${rowIndex}:${columnIndex}`, edited = draft !== undefined && Object.hasOwn(draft.edits, key);
-	if (draft && edited)
-		return <span role="gridcell" aria-colindex={columnIndex + 2} className="query-result-td editing draft" aria-description="Changed, not saved" style={style}><input aria-label={`Edit row ${rowIndex + 1} column ${columnIndex + 1}`} value={draft.edits[key]} onChange={event => draft.onEdit(rowIndex, columnIndex, event.target.value)}/></span>;
-	return <span role="gridcell" aria-colindex={columnIndex + 2} tabIndex={0} className={`query-result-td ${typeof cell === 'number' ? 'numeric' : ''} ${cell === null ? 'null-cell' : ''}`} style={style} title={text.length > 60 ? text : undefined}>
-		{draft && cell !== null ? <button type="button" className="query-result-cell-button" onClick={() => draft.onEdit(rowIndex, columnIndex, text)}>{text}</button> : (cell === null ? <em>NULL</em> : text)}
+	if (draft && !readOnly && edited)
+		return <span key={columnIndex} role="gridcell" aria-colindex={columnIndex + 2} className="query-result-td editing draft" aria-description="Changed, not saved" style={style}><input aria-label={`Edit row ${rowIndex + 1} column ${columnIndex + 1}`} value={draft.edits[key]} onChange={event => draft.onEdit(rowIndex, columnIndex, event.target.value)}/></span>;
+	return <span key={columnIndex} role="gridcell" aria-colindex={columnIndex + 2} tabIndex={0} aria-readonly={readOnly || undefined} className={cellClass(cell)} style={style} title={text.length > 60 ? text : undefined}>
+		{draft && !readOnly && cell !== null ? <button type="button" className="query-result-cell-button" onClick={() => draft.onEdit(rowIndex, columnIndex, text)}>{text}</button> : (cell === null ? <em>NULL</em> : text)}
 	</span>;
 }
 
