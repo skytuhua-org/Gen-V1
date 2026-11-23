@@ -183,3 +183,32 @@ test('recorded comparison preferences have real renderer effects with explicit s
  const altTint=await page.locator('.workspace-diff-pair section').first().evaluate(node=>getComputedStyle(node).backgroundColor);
  expect(altTint).not.toBe(defaultTint);
 });
+test('intraline marks emphasize changed runs in Recorded and History without changing text (#1582)',async({page},testInfo)=>{
+ await page.goto('/file-checkpoints?ws=1&prefs=ws');await flushFrames(page);
+ // Recorded tab: paired lines mark only the changed digits.
+ await page.getByRole('tab',{name:'Recorded',exact:true}).click();
+ const pair=page.locator('.workspace-diff').first();
+ await expect(pair.locator('.intraline-mark-removed')).toHaveText('36');
+ await expect(pair.locator('.intraline-mark-added')).toHaveText('42');
+ // Whitespace-only rows stay hidden; the changed row keeps its marks.
+ const ws=page.locator('.workspace-diff').nth(1);
+ await expect(ws.locator('section').first().locator('pre')).toHaveText('beta');
+ await expect(ws.locator('section').last().locator('pre')).toContainText('beta changed');
+ // Marks are plain spans: not focusable, no tooltip.
+ expect(await page.locator('.intraline-mark[tabindex],.intraline-mark[title]').count()).toBe(0);
+ // History tab: unified rows keep identical textContent with marks inside.
+ await page.getByRole('tab',{name:'History',exact:true}).click();
+ await page.getByRole('button',{name:'Review Before updating workspace layout',exact:true}).click();
+ const diff=page.locator('.file-checkpoints-review .unified-diff').first();
+ await expect(diff).toContainText('const panelWidth = 360;');
+ await expect(diff.locator('.intraline-mark-removed').first()).toHaveText('36');
+ await expect(diff.locator('.intraline-mark-added').first()).toHaveText('42');
+ const text=await diff.evaluate(el=>el.textContent);
+ expect(text).toContain('-const panelWidth = 360;');expect(text).toContain('+const panelWidth = 420;');
+ await page.screenshot({path:testInfo.outputPath('intraline-marks.png'),fullPage:true});
+});
+test('intraline marks leave a truncated or malformed comparison untouched',async({page})=>{
+ await page.goto('/file-checkpoints?state=truncated');await page.getByRole('button',{name:'Review Before updating workspace layout',exact:true}).click();
+ await expect(page.locator('.file-checkpoints-review .unified-diff').first()).toContainText('const panelWidth = 360;');
+ expect(await page.locator('.file-checkpoints-review .intraline-mark').count()).toBe(0);
+});
