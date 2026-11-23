@@ -39,6 +39,8 @@
   --ui-motion-spring: 200ms;
   --ui-motion-receipt: 600ms;
   --ui-tooltip-dwell: 350ms;
+  --ui-layer-right-panel: 28;
+  --ui-layer-floating: calc(var(--ui-layer-right-panel) + 10);
   --ui-layer-scrim: 59;
   --ui-layer-drawer: 60;
   --ui-popup-layer: 80;

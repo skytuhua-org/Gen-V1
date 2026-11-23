@@ -83,7 +83,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('shell', ['frontend.spec.ts']),
   suite('short-tool-overflow'),
   suite('side-chat'),
-  suite('chat-view-modes', ['chat-view-modes.spec.ts','chat-view-escape.spec.ts']),
+  suite('chat-view-modes', ['chat-view-modes.spec.ts','chat-view-escape.spec.ts','chat-view-layer.spec.ts']),
   suite('smooth-operational', ['operational-smoothness.spec.ts']),
   suite('smooth-pdf', ['image-compare.spec.ts']),
   suite('snapshot-performance'),

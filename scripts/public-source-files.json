@@ -2947,6 +2947,8 @@
     "tests/e2e/chart-coordinates.spec.ts",
     "tests/e2e/chat-view-escape-fixture.tsx",
     "tests/e2e/chat-view-escape.spec.ts",
+    "tests/e2e/chat-view-layer-fixture.tsx",
+    "tests/e2e/chat-view-layer.spec.ts",
     "tests/e2e/chat-view-modes-fixture.ts",
     "tests/e2e/chat-view-modes.playwright.config.ts",
     "tests/e2e/chat-view-modes.spec.ts",

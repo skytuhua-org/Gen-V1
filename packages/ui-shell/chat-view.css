@@ -1,4 +1,6 @@
 .chat-view-slot{position:relative;min-width:0;min-height:0;isolation:isolate}
+/* The slot's isolation:isolate traps the child's z-index, so the layer win must happen on the wrapper — only while a floating (non-full) surface lives inside it. */
+.chat-view-slot:has(> .chat-view-surface:not([data-chat-mode=full])){z-index:var(--ui-layer-floating)}
 .chat-view-surface{margin:0;min-width:0;min-height:0;transform-origin:top left;background:var(--canvas);overflow:hidden}
 .chat-view-surface[data-chat-mode=full]{--narrative-width:760px}
 .app-shell[data-chat-width=comfortable] .chat-view-surface{--narrative-width:680px}

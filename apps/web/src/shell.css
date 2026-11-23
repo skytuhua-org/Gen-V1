@@ -136,7 +136,7 @@
 .panel-resizer::before { content:''; position:absolute; top:0; bottom:0; left:-4px; right:-4px; }
 .panel-resizer:hover,.panel-resizer:focus-visible { background:var(--ui-focus-ring,#808080); opacity:.55; }
 .resizing-panel,.resizing-panel * { cursor:col-resize!important; user-select:none!important; }
-.workspace-right { width:var(--right-panel-width); flex:0 0 var(--right-panel-width); border-left:1px solid var(--border); background:var(--surface); display:flex; flex-direction:column; position:relative; min-width:0; z-index:28; animation:panel-enter var(--panel-motion,var(--ui-motion-panel-enter)) var(--ui-ease-enter); }
+.workspace-right { width:var(--right-panel-width); flex:0 0 var(--right-panel-width); border-left:1px solid var(--border); background:var(--surface); display:flex; flex-direction:column; position:relative; min-width:0; z-index:var(--ui-layer-right-panel); animation:panel-enter var(--panel-motion,var(--ui-motion-panel-enter)) var(--ui-ease-enter); }
 .workspace-right>.panel-resizer { position:absolute; top:0; bottom:0; left:-4px; margin:0; width:9px; }
 .right-panel-overlay .workspace-right { position:fixed; top:0; right:0; bottom:0; box-shadow:var(--elevation); }
 .workspace-right.workspace-right-maximized { position:fixed; right:12px; top:12px; bottom:12px; border:1px solid var(--border); border-radius:12px; box-shadow:var(--elevation); overflow:hidden; }
