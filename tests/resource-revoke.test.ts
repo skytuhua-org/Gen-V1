@@ -24,8 +24,13 @@ it('revokes an existing grant owned by the command thread', async () => {
   const x = await setup(), thread = await x.thread(), path = join(x.dir, 'docs');
   mkdirSync(path);
   const grant = (await x.send('resource.grant', {path, kind: 'file'}, thread.id)).result as {id: string};
-  const receipt = (await x.send('resource.revoke', {grantId: grant.id}, thread.id)).result as {revoked: boolean};
-  expect(receipt.revoked).toBe(true);
+  const otherPath = join(x.dir, 'images');
+  mkdirSync(otherPath);
+  const retained = (await x.send('resource.grant', {path: otherPath, kind: 'file'}, thread.id)).result as {id: string};
+  const foreign = await x.thread();
+  await x.send('resource.grant', {path, kind: 'file'}, foreign.id);
+  const remaining = (await x.send('resource.revoke', {grantId: grant.id}, thread.id)).result as {id: string}[];
+  expect(remaining.map(item => item.id)).toEqual([retained.id]);
   expect(x.store.get('resource', grant.id)).toBeNull();
 });
 

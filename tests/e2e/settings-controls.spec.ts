@@ -468,7 +468,7 @@ test('Granted resources dedupes per-thread grants and revokes a resource',async(
     host.commands.push(command);
     const i=snapshot.resources.findIndex(g=>g.id===command.payload.grantId&&g.threadId===command.threadId);
     if(i>=0)snapshot.resources.splice(i,1);snapshot.seq++;
-    await route.fulfill({json:{commandId:command.id,seq:snapshot.seq,result:{revoked:true}}});
+    await route.fulfill({json:{commandId:command.id,seq:snapshot.seq,result:snapshot.resources.filter(grant=>grant.threadId===command.threadId)}});
   });
   await page.route('**/api/workspace',route=>route.fulfill({json:{projects:[],state:{version:1,revision:0,activeCanvasId:'workspace-default',canvases:[{version:1,id:'workspace-default',name:'Workspace',preset:'workspace',viewport:{x:0,y:0,zoom:1},panels:[],filter:'active',projectIds:[]}],profiles:[],disabledKinds:[],integrations:{}}}}));
   await page.route('**/api/environment',route=>route.fulfill({json:{revision:0,entries:[],secretStorageAvailable:false}}));
@@ -491,12 +491,18 @@ test('Granted resources dedupes per-thread grants and revokes a resource',async(
 
 test('a failed revoke restores the row with an inline error',async({page})=>{
   const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Grants fixture'}}}});
-  snapshot.resources=[{id:'g1',threadId:'task-thread',kind:'file',writable:false,createdAt:'2026-11-22',path:'C:/docs/agreement.pdf',label:'agreement.pdf'}];
+  const file={threadId:'task-thread',kind:'file' as const,writable:false,createdAt:'2026-11-22',path:'C:/docs/agreement.pdf',label:'agreement.pdf'};
+  snapshot.resources=[{...file,id:'g1'},{...file,id:'g2'}];
+  const attempts: string[]=[];
   await serveTaskFixture(page,snapshot);
   await page.route('**/api/commands',async route=>{
     const command=route.request().postDataJSON() as HostCommand;
     if(command.type!=='resource.revoke')return route.fallback();
-    await route.fulfill({status:500,json:{error:{code:'UNAVAILABLE',message:'Simulated revoke failure'}}});
+    const id=String(command.payload.grantId);
+    attempts.push(id);
+    if(id==='g2'&&attempts.length===2) return route.fulfill({status:500,json:{error:{code:'UNAVAILABLE',message:'Simulated revoke failure'}}});
+    snapshot.resources=snapshot.resources.filter(grant=>grant.id!==id);
+    await route.fulfill({json:{commandId:command.id,seq:++snapshot.seq,result:snapshot.resources}});
   });
   await page.route('**/api/workspace',route=>route.fulfill({json:{projects:[],state:{version:1,revision:0,activeCanvasId:'workspace-default',canvases:[{version:1,id:'workspace-default',name:'Workspace',preset:'workspace',viewport:{x:0,y:0,zoom:1},panels:[],filter:'active',projectIds:[]}],profiles:[],disabledKinds:[],integrations:{}}}}));
   await page.route('**/api/environment',route=>route.fulfill({json:{revision:0,entries:[],secretStorageAvailable:false}}));
@@ -508,4 +514,7 @@ test('a failed revoke restores the row with an inline error',async({page})=>{
   await dialog.getByRole('button',{name:'Revoke agreement.pdf',exact:true}).click();
   await expect(dialog.locator('.settings-grant-row')).toHaveCount(1);
   await expect(dialog.getByText('Could not revoke — try again.',{exact:true})).toBeVisible();
+  await dialog.getByRole('button',{name:'Revoke agreement.pdf',exact:true}).click();
+  await expect(dialog.getByText('No granted resources.',{exact:true})).toBeVisible();
+  expect(attempts).toEqual(['g1','g2','g2']);
 });

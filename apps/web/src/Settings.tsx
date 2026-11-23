@@ -223,25 +223,30 @@ function GrantedResources({resources, titles, refresh}: {resources: SettingsData
   const [failed, setFailed] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState('');
   const list = useRef<HTMLDivElement>(null);
-  const rows = groupGrants(resources).filter(group => !removed[group.key]);
+  const rows = groupGrants(resources.filter(grant => !removed[grant.id]));
   const revoke = async (group: GrantedResourceGroup) => {
     if (revoking) return;
     setFailed(current => ({...current, [group.key]: false}));
     setRevoking(group.key);
+    const completed: Record<string, boolean> = {};
     try {
-      for (const grant of group.grants) await command('resource.revoke', {grantId: grant.id}, grant.threadId);
+      for (const grant of group.grants) {
+        await command('resource.revoke', {grantId: grant.id}, grant.threadId);
+        completed[grant.id] = true;
+      }
     } catch {
+      setRemoved(current => ({...current, ...completed}));
       setRevoking(null);
       setFailed(current => ({...current, [group.key]: true}));
       return;
     }
-    setRevoking(null);
     const index = rows.findIndex(row => row.key === group.key);
     setRemoving(current => ({...current, [group.key]: true}));
     window.setTimeout(() => {
       flushSync(() => {
         setRemoving(current => ({...current, [group.key]: false}));
-        setRemoved(current => ({...current, [group.key]: true}));
+        setRemoved(current => ({...current, ...completed}));
+        setRevoking(null);
       });
       setNotice(`Revoked ${group.name}.`);
       const next = list.current?.querySelectorAll<HTMLButtonElement>('.settings-grant-revoke:not(:disabled)') ?? [];

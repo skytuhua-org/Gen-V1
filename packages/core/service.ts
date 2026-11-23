@@ -1238,7 +1238,7 @@ export class Service {
         const grant = this.store.get<ResourceGrant>("resource", grantId);
         if (!grant || grant.threadId !== thread.id) throw new HarnessError("NOT_FOUND", "Resource grant unavailable");
         this.store.remove("resource", grantId);
-        return { revoked: true, grantId };
+        return this.store.all<ResourceGrant>("resource", thread.id);
       });
     }
     const receipt = this.store.command(command, () => this.applyCommand(command, this.thread(thread.id)));
