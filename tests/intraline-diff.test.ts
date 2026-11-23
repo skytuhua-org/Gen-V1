@@ -156,3 +156,32 @@ describe('DiffText rendering', () => {
     expect(html).not.toMatch(/tabindex|aria-|title=|<a|<button/);
   });
 });
+describe('unified edge cases (review round)',()=>{
+  it('annotates a hunk when the patch ends with a newline',()=>{
+    const out=annotateUnified('--- a/f\n+++ b/f\n@@ -1 +1 @@\n-const width = 360;\n+const width = 420;\n',{hideWhitespace:false});
+    expect(out!.get(4)).toEqual([{start:14,end:16}]);
+    expect(out!.get(3)).toEqual([{start:14,end:16}]);
+  });
+  it('keeps removed lines starting with -- inside the hunk',()=>{
+    const patch='--- a/q.sql\n+++ b/q.sql\n@@ -1,2 +1,2 @@\n--- drop table\n-- select 1\n+-- select 2\n+select name from t';
+    const out=annotateUnified(patch,{hideWhitespace:false});
+    expect(out).not.toBeNull();
+    expect(out!.get(4)).toBeDefined(); // removed '-- drop'-style rows stay in the hunk
+    expect(out!.get(5)).toBeDefined();
+  });
+  it('pairs rows across a no-newline meta line',()=>{
+    const patch='--- a/f\n+++ b/f\n@@ -1 +1 @@\n-return value = 360;\n\\ No newline at end of file\n+return value = 420;\n\\ No newline at end of file';
+    const out=annotateUnified(patch,{hideWhitespace:false});
+    expect(out!.has(3)).toBe(true);
+    expect(out!.has(5)).toBe(true);
+  });
+});
+describe('pairing after filtered rows',()=>{
+  it('marks the real changed lines when blank or long rows precede them',()=>{
+    const before='line one\n\nconst panelWidth = 360;';
+    const after='line one\nconst panelWidth = 420;';
+    const out=annotateSnapshot(before,after,{hideWhitespace:false})!;
+    expect(out.before).toEqual([{index:2,ranges:[{start:19,end:21}]}]);
+    expect(out.after).toEqual([{index:1,ranges:[{start:19,end:21}]}]);
+  });
+});

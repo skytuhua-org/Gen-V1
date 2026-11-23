@@ -116,7 +116,9 @@ function pairRegion(oldLines:{index:number;text:string}[],newLines:{index:number
     if(!tied)for(let j=0;j<newCandidates.length;j++){if(j!==best.newIndex&&!takenNew.has(j)&&matrix[best.oldIndex]![j]!>=best.score){tied=true;break;}}
     if(!tied)for(let i=0;i<oldCandidates.length;i++){if(i!==best.oldIndex&&!takenOld.has(i)&&matrix[i]![best.newIndex]!>=best.score){tied=true;break;}}
     if(tied){takenOld.add(best.oldIndex);takenNew.add(best.newIndex);continue;}
-    takenOld.add(best.oldIndex);takenNew.add(best.newIndex);picked.push(best);
+    takenOld.add(best.oldIndex);takenNew.add(best.newIndex);
+    // Report the caller-supplied row indexes, not candidate positions.
+    picked.push({oldIndex:oldCandidates[best.oldIndex]!.index,newIndex:newCandidates[best.newIndex]!.index,score:best.score});
   }
   // Discard crossings: a pair that inverts source order against another pair.
   return picked.filter((pair,_,all)=>!all.some(other=>other!==pair&&((other.oldIndex<pair.oldIndex&&other.newIndex>pair.newIndex)||(other.oldIndex>pair.oldIndex&&other.newIndex<pair.newIndex))));
@@ -181,7 +183,7 @@ export function annotateSnapshot(before:string,after:string,options:AnnotateOpti
     const regionOld=rangeIndexes(oldLines,oi,ao),regionNew=rangeIndexes(newLines,ni,an);
     const pairs=pairRegion(regionOld.map(index=>({index,text:oldLines[index]!})),regionNew.map(index=>({index,text:newLines[index]!})),wordSegmenter());
     for(const pair of pairs){
-      const oi2=regionOld[pair.oldIndex]!,ni2=regionNew[pair.newIndex]!;
+      const oi2=pair.oldIndex,ni2=pair.newIndex;
       if(normalize(oldLines[oi2]!)===normalize(newLines[ni2]!)){
         // Whitespace-equal: reserved (cannot attach elsewhere) and hidden
         // under Hide whitespace, never marked.
@@ -215,7 +217,10 @@ function parseUnified(patch:string):UnifiedHunk[]{
     const hunk=/^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(text);
     if(hunk){flush();current={header:i,oldCount:hunk[1]===undefined?1:Number(hunk[1]),newCount:hunk[2]===undefined?1:Number(hunk[2]),rows:[],valid:false};continue;}
     if(!current)continue;
-    if(/^(?:diff |index |--- |\+\+\+ )/.test(text)){flush();continue;}
+    // Inside a hunk every '-'/'+' row is content: only a new 'diff ' header or
+    // a stray empty line (e.g. the patch's terminating newline) ends it. This
+    // keeps removed '-- ' SQL comments and added '++ ' lines in the hunk.
+    if(text===''||text.startsWith('diff ')){flush();continue;}
     if(text.startsWith('\\')){current.rows.push({index:i,kind:'meta',content:text});continue;}
     if(text.startsWith('-')){current.rows.push({index:i,kind:'removed',content:text.slice(1)});continue;}
     if(text.startsWith('+')){current.rows.push({index:i,kind:'added',content:text.slice(1)});continue;}
@@ -256,6 +261,7 @@ export function annotateUnified(patch:string,options:AnnotateOptions&{maxRows?:n
       }
     };
     for(const row of hunk.rows){
+      if(row.kind==='meta')continue;
       if(row.kind==='removed'||row.kind==='added'){region.push({index:row.index,kind:row.kind,content:row.content});continue;}
       close();
     }
