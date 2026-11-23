@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import {afterEach,expect,it,vi} from 'vitest';
 import {execFileSync} from 'node:child_process';
-import {mkdtemp,mkdir,rm,writeFile,symlink} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,rm,writeFile,symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -20,9 +20,9 @@ import {registerWorkspaceRoutes} from '../apps/server/workspace-routes.ts';
 const cleanup:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const sha256=(data:Buffer|string)=>createHash('sha256').update(data).digest('hex');
-async function fixture(origin='https://github.com/acme/widgets.git'){
+async function fixture(origin='https://github.com/acme/widgets.git',gitExe?:string){
  const root=await mkdtemp(join(tmpdir(),'gen-github-link-')),path=join(root,'source');await mkdir(path);
- const store=new Store(join(root,'data')),tools=new RealProjectTools(store,{git:process.platform==='win32'?'C:/Program Files/Git/cmd/git.exe':'git'});
+ const store=new Store(join(root,'data')),tools=new RealProjectTools(store,{git:gitExe??(process.platform==='win32'?'C:/Program Files/Git/cmd/git.exe':'git')});
  cleanup.push(async()=>{await tools.dispose();store.close();await rm(root,{recursive:true,force:true,maxRetries:5});});
  const git=(...args:string[])=>execFileSync('git',['-C',path,...args],{windowsHide:true,encoding:'utf8'}).trim();
  git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');
@@ -144,3 +144,58 @@ it('rejects malformed sha256 digests at the route layer and scopes denials by th
  expect(ready.statusCode).toBe(200);expect(ready.headers['cache-control']).toBe('no-store');expect(ready.json().url).toContain('https://github.com/acme/widgets/blob/');
  expect(githubFileLink).toHaveBeenLastCalledWith('project','worker','one.txt',digest);
 });
+
+const spyScript=(log:string,mutateOnLsTree?:string)=>[
+ '#!/bin/sh',
+ 'echo "$@" >> "'+log+'"',
+ ...(mutateOnLsTree?['case "$*" in *ls-tree*) wt=""; for a in "$@"; do case "$a" in --work-tree=*) wt="${a#--work-tree=}";; esac; done; [ -n "$wt" ] && git -C "$wt" -c user.name=R -c user.email=r@x commit -qm race --allow-empty 2>/dev/null; ;; esac']:[]),
+ 'exec git "$@"',
+].join('\n');
+it('runs only read-only git verbs with literal, fixed arguments',async()=>{
+ const f=await fixture(),log=join(f.root,'spy.log'),spy=join(f.root,'git-spy.sh');
+ await writeFile(spy,spyScript(log),{mode:0o755});
+ const tools2=new RealProjectTools(f.store,{git:spy});cleanup.push(async()=>{await tools2.dispose();});
+ const head=f.git('rev-parse','HEAD'),branch=f.git('rev-parse','--abbrev-ref','HEAD');
+ f.git('update-ref','refs/remotes/origin/'+branch,head);
+ await tools2.githubFileLink(f.projectId,undefined,'one.txt',sha256('base\n'));
+ const calls=await readFile(log,'utf8');
+ for(const banned of ['fetch','ls-remote','push','hash-object','update-ref','remote','clone','checkout','config --global'])expect(calls).not.toMatch(new RegExp('\\b'+banned.replace(' ','\\s')+'\\b'));
+ const allowed=new Set(['rev-parse','config','for-each-ref','rev-list','ls-tree']);
+ for(const line of calls.trim().split('\n')){
+  const t=line.split(' ');let verb:string|undefined,vi=0;
+  for(let i=0;i<t.length;i++){
+   if(t[i]==='-c'){i++;continue;}
+   if(t[i]!.startsWith('-'))continue;
+   verb=t[i];vi=i;break;
+  }
+  expect(verb&&allowed.has(verb),line).toBe(true);
+  for(const arg of t.slice(vi+1)){
+   if(arg==='--'||arg.startsWith('-'))continue;
+   expect(arg.startsWith(':')||arg.includes('..'),line).toBe(false);
+  }
+ }
+},60000);
+it('reports changed-during-check when HEAD moves mid-verification',async()=>{
+ const f=await fixture(),log=join(f.root,'spy2.log'),spy=join(f.root,'git-spy2.sh');
+ await writeFile(spy,spyScript(log,'yes'),{mode:0o755});
+ const tools2=new RealProjectTools(f.store,{git:spy});cleanup.push(async()=>{await tools2.dispose();});
+ const head=f.git('rev-parse','HEAD'),branch=f.git('rev-parse','--abbrev-ref','HEAD');
+ f.git('update-ref','refs/remotes/origin/'+branch,head);
+ expect(await tools2.githubFileLink(f.projectId,undefined,'one.txt',sha256('base\n'))).toEqual({state:'unavailable',reason:'changed-during-check'});
+},60000);
+it('rejects pathspec-magic and colon paths before any git call',async()=>{
+ const f=await fixture();
+ for(const bad of [':(glob)*','one:txt','C:/abs','../x','/abs'])
+  await expect(f.tools.githubFileLink(f.projectId,undefined,bad,sha256('x'))).rejects.toThrow();
+});
+it('checks eligibility in under 150ms median on a 10k-commit repository',async()=>{
+ const f=await fixture();
+ for(let i=0;i<10000;i++)execFileSync('git',['-C',f.path,'commit','-q','--allow-empty','-m','c'+i],{windowsHide:true});
+ const head=f.git('rev-parse','HEAD'),branch=f.git('rev-parse','--abbrev-ref','HEAD');
+ f.git('update-ref','refs/remotes/origin/'+branch,head);
+ const times:number[]=[];
+ for(let i=0;i<7;i++){const t0=performance.now();await f.tools.githubFileLink(f.projectId,undefined,'one.txt',sha256('base\n'));times.push(performance.now()-t0);}
+ times.sort((a,b)=>a-b);const median=times[3]!;
+ console.log('githubFileLink median on 10k commits:',median.toFixed(1),'ms',times.map(t=>t.toFixed(0)).join(','));
+ expect(median).toBeLessThan(150);
+},300000);
