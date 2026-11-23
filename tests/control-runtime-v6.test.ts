@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -12,6 +13,11 @@ import { HarnessError } from '../packages/contracts/index.ts';
 import type { ControlDriverOperations } from '../packages/core/desktop-control.ts';
 import type { ControlDriverRegistrationV1, ControlTargetIdentityV1 } from '../packages/contracts/interactive-control.ts';
 import type { ToolOwner } from '../packages/contracts/tool-effects.ts';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...fs, mkdir: vi.fn(fs.mkdir) };
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -132,6 +138,98 @@ describe('M16 ControlRuntime host ownership', () => {
       expect(result.outcome).toBe('DISPATCHED');
       const records = store.all<unknown>('controlAction', owner.threadId);
       expect(records).toHaveLength(1);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('discards a capture that settles after Stop revokes its grant', async () => {
+    const { dir, store, registry, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      type Frame = Awaited<ReturnType<ControlDriverOperations['capture']>>;
+      let finishCapture!: (frame: Frame) => void;
+      const frame = new Promise<Frame>(resolve => { finishCapture = resolve; });
+      runtime.attachDriver(driver({ capture: () => frame }));
+      runtime.grant(request.consentId, owner, target);
+
+      const capturing = runtime.capture(owner.threadId);
+      await runtime.stop(owner.threadId);
+      finishCapture({ data: PNG, width: 400, height: 300, mimeType: 'image/png' });
+
+      await expect(capturing).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+      expect(store.all('controlCapture', owner.threadId)).toHaveLength(0);
+      expect(existsSync(join(dir, 'control-captures'))).toBe(false);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps capture bytes off disk when Stop lands during directory preparation', async () => {
+    const { dir, store, registry, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      runtime.attachDriver(driver());
+      runtime.grant(request.consentId, owner, target);
+      let finishPreparing!: () => void;
+      const preparation = new Promise<void>(resolve => { finishPreparing = resolve; });
+      let notifyPreparing!: () => void;
+      const preparing = new Promise<void>(resolve => { notifyPreparing = resolve; });
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      const captureDir = join(dir, 'control-captures', owner.threadId);
+      vi.mocked(mkdir).mockImplementationOnce(async () => {
+        notifyPreparing();
+        await preparation;
+        await fs.mkdir(captureDir, { recursive: true });
+        return undefined;
+      });
+
+      const capturing = runtime.capture(owner.threadId);
+      await preparing;
+      await runtime.stop(owner.threadId);
+      finishPreparing();
+
+      await expect(capturing).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+      expect(store.all('controlCapture', owner.threadId)).toHaveLength(0);
+      expect(readdirSync(captureDir)).toEqual([]);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { scenario: 'an observe-only grant', dispatchFirst: false },
+    { scenario: 'a settled input action', dispatchFirst: true },
+  ])('Stop cancels the exact target with $scenario', async ({ dispatchFirst }) => {
+    const { dir, store, registry, consent, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      const cancelInput = vi.fn<ControlDriverOperations['cancelInput']>().mockResolvedValue(undefined);
+      const controlDriver = driver({ cancelInput });
+      runtime.attachDriver(controlDriver);
+      const consentRequest = dispatchFirst ? request : consent.requestConsent(owner, {
+        mode: 'CONSENTED_EXISTING_TAB', observe: true, operations: [], allowedOrigins: ['https://public.example'],
+      });
+      runtime.grant(consentRequest.consentId, owner, target);
+
+      if (dispatchFirst) {
+        const observation = await controlDriver.observe(target);
+        const result = await runtime.action(owner.threadId, owner, { action: 'CLICK', observation });
+        expect(result.outcome).toBe('DISPATCHED');
+      }
+
+      await runtime.stop(owner.threadId);
+      await runtime.stop(owner.threadId);
+      expect(cancelInput).toHaveBeenCalledExactlyOnceWith(target);
     } finally {
       __setCapabilityFlagForTests('control.consentedBrowserV1', false);
       store.close();

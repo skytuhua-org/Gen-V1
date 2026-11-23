@@ -232,7 +232,7 @@ export class ControlDispatcher {
    * — then cancels pending input via the driver's cancellation operation and
    * marks it CANCELLED. In-flight items already handed to the driver become
    * UNCERTAIN; no old-generation input reaches a replacement target. */
-  async stop(): Promise<void> {
+  async stop(grantTarget?: ControlTargetIdentityV1): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
     this.generation += 1;
@@ -247,7 +247,8 @@ export class ControlDispatcher {
     // Only an action already handed to the driver is uncertain; one still
     // waiting for rate spacing was never dispatched and stays a clean cancel.
     if (this.inFlight && this.inFlight.outcome === 'QUEUED' && this.inFlight.reachedDispatch) { this.inFlight.outcome = 'UNCERTAIN'; this.inFlight.reason = 'stopped_in_flight'; }
-    try { await this.options.driver?.cancelInput((this.inFlight ?? pending[0])?.grant.target ?? { kind: 'APPLICATION', creationIdentity: 'none', sessionIdentity: 'none', origin: null }); }
+    const target = (this.inFlight ?? pending[0])?.grant.target ?? grantTarget;
+    try { if (target) await this.options.driver?.cancelInput(target); }
     catch { /* Stop must still finish: cancellation is best-effort after generation revocation. */ }
     // Deliberately not awaiting this.draining: a hung driver dispatch must
     // never block Stop (D05). The drain records outcomes as it unwinds.

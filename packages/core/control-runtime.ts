@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { rmSync, writeFileSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { HarnessError } from '../contracts/index.ts';
 import type { ToolOwner } from '../contracts/tool-effects.ts';
@@ -106,7 +107,13 @@ export class ControlRuntime {
     const grant = this.activeGrant(threadId);
     this.consent.authorizeAction(grant, 'CAPTURE');
     const registration = this.deps.registry.resolve(grant.mode);
-    const frame = await this.requireDriver().capture(grant.target);
+    const driver = this.requireDriver();
+    const assertCaptureAuthorized = () => {
+      this.consent.authorizeAction(grant, 'CAPTURE');
+      if (this.driver !== driver) throw new HarnessError('DRIVER_UNAVAILABLE', 'The capture driver is no longer attached.');
+    };
+    const frame = await driver.capture(grant.target);
+    assertCaptureAuthorized();
     if (frame.width > registration.captureBounds.maxWidth || frame.height > registration.captureBounds.maxHeight || frame.data.byteLength > registration.captureBounds.maxBytes) {
       throw new HarnessError('CAPTURE_BOUNDS_EXCEEDED', 'The capture exceeded the approved driver bounds.');
     }
@@ -114,8 +121,6 @@ export class ControlRuntime {
     const sha = createHash('sha256').update(frame.data).digest('hex');
     const relative = join('control-captures', threadId, `${artifactId}.png`);
     const absolute = join(this.deps.artifactRoot, relative);
-    await mkdir(join(absolute, '..'), { recursive: true });
-    await writeFile(absolute, frame.data, { mode: 0o600 });
     const capture = storedCaptureV1Schema.parse({
       artifactId,
       target: grant.target,
@@ -127,7 +132,18 @@ export class ControlRuntime {
       sha256: sha,
       mimeType: 'image/png',
     });
-    this.store.internal('control.capture', threadId, () => { this.store.put('controlCapture', capture.artifactId, threadId, capture); });
+    await mkdir(join(absolute, '..'), { recursive: true });
+    assertCaptureAuthorized();
+    try {
+      // Keep bytes in memory until publication. There is no asynchronous gap
+      // between the final grant check, writing this bounded frame and its receipt.
+      writeFileSync(absolute, frame.data, { mode: 0o600 });
+      this.store.internal('control.capture', threadId, () => { this.store.put('controlCapture', capture.artifactId, threadId, capture); });
+    } catch (error) {
+      try { rmSync(absolute, { force: true }); }
+      catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Could not publish or discard the private capture.'); }
+      throw error;
+    }
     return { capture, artifactRef: capture.artifactRef };
   }
 
@@ -170,10 +186,15 @@ export class ControlRuntime {
   /** G03 rollback for dispatch: the dispatcher's generation is revoked before
    * queued actions are cancelled. Unconditional for this thread. */
   async stopDispatch(threadId: string): Promise<void> {
+    const target = this.consent.activeGrant(threadId)?.target;
     const dispatcher = this.dispatchers.get(threadId);
-    if (!dispatcher) return;
-    this.dispatchers.delete(threadId);
-    await dispatcher.stop();
+    if (dispatcher) {
+      this.dispatchers.delete(threadId);
+      await dispatcher.stop(target);
+    } else if (target) {
+      try { await this.driver?.cancelInput(target); }
+      catch { /* Driver cancellation is best-effort after a Stop request. */ }
+    }
   }
 
   /** Rollback: revoke grants via the consent host and stop input. Only this
