@@ -8,11 +8,26 @@ const now='2026-10-30T05:00:00.000Z';
 const plan:PlanRecord={version:1,title:'Repair checkout failures',steps:[{id:'investigate',title:'Find the failing boundary',status:'working',requirements:[{id:'reproduce',label:'Reproduce the failing test',completed:true},{id:'locate',label:'Locate the failing assertion',completed:false}],agentIds:['agent-tests']},{id:'verify',title:'Run checkout tests',status:'pending',requirements:[{id:'suite',label:'Focused tests pass',completed:false}],agentIds:[]}],agents:[{id:'agent-tests',commandId:'batch-1',taskId:'tests',name:'Test investigator',task:'Trace the checkout assertion',stepId:'investigate',status:'working',requirements:[{id:'reproduce',label:'Reproduce the failing test'},{id:'locate',label:'Locate the failing assertion'}],completedRequirementIds:['reproduce'],reportedPercent:null,createdAt:now,updatedAt:now},{id:'agent-review',commandId:'batch-1',taskId:'review',name:'Code reviewer',task:'Inspect the proposed correction',status:'queued',requirements:[],completedRequirementIds:[],reportedPercent:null,createdAt:now,updatedAt:now}]};
 function fixture(){const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Checking the checkout boundary.'}}}});snapshot.data.push({id:planDataId('task-thread'),threadId:'task-thread',revision:1,provenance:PLANNING_PROVENANCE,value:structuredClone(plan),createdAt:now});return snapshot;}
 function question(snapshot:Snapshot){snapshot.requests=[{id:'decision-route',threadId:'task-thread',artifactId:null,revision:1,title:'Which repair should we explore?',prompt:'Choose a scope for the checkout repair.',responseSchema:{type:'string'},basis:[],status:'pending',presentation:{options:[{id:'focused',label:'Focused repair',description:'Keep the public API stable.'},{id:'broader',label:'Broader cleanup',description:'Include the nearby validation path.',explanation:'This includes the validation path and its shared tests.',examples:[{text:'Update the input validation and exercise both callers.'}]}],allowCustom:true}}];}
-async function openPlan(page:Page){await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeEnabled();const panel=page.getByRole('complementary',{name:'Workspace panel',exact:true});if(!await panel.isVisible())await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();await panel.getByRole('tab',{name:'Plan',exact:true}).click();await expect(page.getByRole('region',{name:/^Task plan(?::|$)/})).toBeVisible();}
+async function openPlan(page:Page) {
+  const overview = page.getByRole('region', {name:'Project overview window', exact:true});
+  await expect(overview).toBeVisible();
+  if (await overview.getAttribute('data-collapsed') === 'true') {
+    await overview.getByRole('button', {name:'Expand Project overview', exact:true}).click();
+  }
+  const rail = page.getByRole('region', {name:`Task plan: ${plan.title}`, exact:true});
+  if (!await rail.isVisible()) await overview.getByRole('button', {name:'Open full plan', exact:true}).click();
+  await expect(rail).toBeVisible();
+  return rail;
+}
+async function showLiveUsage(page:Page) {
+  await page.getByRole('button', {name:'Show live usage', exact:true}).click();
+  const footer = page.getByRole('region', {name:'Live usage', exact:true});
+  await expect(footer).toBeVisible();
+  return footer;
+}
 
 test('the plan rail uses real checklist progress and keeps unknown agent progress unknown',async({page})=>{
-  const snapshot=fixture(),host=await serveTaskFixture(page,snapshot);await page.goto('/');await openPlan(page);
-  const rail=page.getByRole('region',{name:/^Task plan(?::|$)/});await expect(rail).toHaveAttribute('aria-label','Task plan: Repair checkout failures');
+  const snapshot=fixture(),host=await serveTaskFixture(page,snapshot);await page.goto('/');const rail=await openPlan(page);
   await expect(rail.locator('[data-agent-id="agent-tests"] .plan-agent-summary')).toContainText('50%');
   const unknown=rail.locator('[data-agent-id="agent-review"]');await expect(unknown.locator('.plan-agent-summary')).not.toContainText('%');await expect(unknown.getByText(/progress/i)).toHaveCount(0);
   const agent=await rail.locator('[data-agent-id="agent-tests"]').elementHandle();
@@ -20,12 +35,16 @@ test('the plan rail uses real checklist progress and keeps unknown agent progres
   await expect(rail.locator('[data-agent-id="agent-tests"] .plan-agent-summary')).toContainText('100%');
   await expect(rail.locator('[data-agent-id="agent-tests"] .plan-agent-summary')).toContainText('Needs review');expect(await rail.locator('[data-agent-id="agent-tests"]').evaluate((node,old)=>node===old,agent)).toBe(true);
   const disclosure=rail.locator('[data-agent-id="agent-tests"] .plan-agent-summary');await disclosure.click();await expect(disclosure).toHaveAttribute('aria-expanded','false');await disclosure.click();await expect(disclosure).toHaveAttribute('aria-expanded','true');await expect(rail.locator('[data-agent-id="agent-tests"] .plan-agent-details').getByText('Locate the failing assertion',{exact:true})).toBeVisible();
-  await page.reload();await openPlan(page);await expect(page.locator('[data-agent-id="agent-tests"] .plan-agent-summary')).toContainText('100%');
+  await page.reload();const restored=await openPlan(page);await expect(restored.locator('[data-agent-id="agent-tests"] .plan-agent-summary')).toContainText('100%');
 });
 
 test('a plan from another thread is not presented as the current task',async({page})=>{
-  const snapshot=fixture();snapshot.data[0].threadId='another-thread';await serveTaskFixture(page,snapshot);await page.goto('/');await openPlan(page);
-  await expect(page.getByRole('region',{name:/^Task plan(?::|$)/})).toContainText('No plan yet');await expect(page.getByText('Repair checkout failures',{exact:true})).toHaveCount(0);
+  const snapshot=fixture();snapshot.data[0].threadId='another-thread';await serveTaskFixture(page,snapshot);await page.goto('/');
+  await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();
+  const panel=page.getByRole('complementary',{name:'Workspace panel',exact:true});
+  await panel.getByRole('button',{name:'Add surface',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Plan',exact:true}).click();
+  await expect(panel.getByRole('region',{name:'Task plan',exact:true})).toContainText('No plan yet');await expect(page.getByText('Repair checkout failures',{exact:true})).toHaveCount(0);
 });
 
 test('planning option explanations request Pi once and retain selection through the updated question',async({page})=>{
@@ -79,9 +98,30 @@ test('custom planning responses survive reload and composition does not submit o
 
 test('live usage reflects reported values and can be disabled without inventing subscription cost',async({page})=>{
   const snapshot=fixture();snapshot.usage['task-thread']={...EMPTY_USAGE,contextTokens:5000,contextWindow:100000,inputTokens:12000,outputTokens:400,activity:'running'};const host=await serveTaskFixture(page,snapshot);await page.goto('/');
-  const footer=page.getByRole('region',{name:'Live usage',exact:true});await expect(footer).toContainText('12,000');await footer.getByRole('button',{name:'Inspect live usage',exact:true}).click();await expect(footer.getByText('Not reported',{exact:true})).toHaveCount(3);
-  snapshot.usage['task-thread']={...snapshot.usage['task-thread'],outputTokens:900,cost:0.0125};await host.publish();await expect(footer).toContainText('900');await expect(footer).toContainText('0.0125 (currency not reported)');await expect(footer).not.toContainText('$');
-  snapshot.settings.preferences={...snapshot.settings.preferences,showUsageFooter:false};await host.publish();await expect(footer).toHaveCount(0);
+  const footer=await showLiveUsage(page);
+  await expect(footer).toContainText('12,000 input tokens');
+  await footer.getByRole('button',{name:'Inspect live usage',exact:true}).click();
+  await footer.getByRole('button',{name:'Open Usage',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Usage',exact:true});
+  const metric=(label:string)=>dialog.getByRole('term').filter({hasText:label}).locator('+ dd');
+  await dialog.getByRole('tab',{name:'Cost',exact:true}).click();
+  await expect(metric('Reported cost')).toHaveText('Not reported');
+  await dialog.getByRole('tab',{name:'Limits',exact:true}).click();
+  await expect(metric('Session limit')).toHaveText('Not reported');
+  await expect(metric('Weekly limit')).toHaveText('Not reported');
+  await dialog.getByRole('tab',{name:'Tokens',exact:true}).click();
+  await expect(metric('Input tokens')).toHaveText('12,000');
+  await expect(metric('Output tokens')).toHaveText('400');
+  snapshot.usage['task-thread']={...snapshot.usage['task-thread'],outputTokens:900,cost:0.0125};
+  await host.publish();
+  await expect(metric('Output tokens')).toHaveText('900');
+  await dialog.getByRole('tab',{name:'Cost',exact:true}).click();
+  await expect(metric('Reported cost')).toHaveText('0.0125 (currency not reported)');
+  await page.keyboard.press('Escape');
+  snapshot.settings.preferences={...snapshot.settings.preferences,showUsageFooter:false};
+  await host.publish();
+  await expect(footer).toHaveCount(0);
+  await expect(page.getByRole('button',{name:/^(Show|Hide) live usage$/})).toHaveCount(0);
 });
 
 test('planning views remain keyboard usable and within the narrow viewport with reduced motion',async({page})=>{
@@ -91,9 +131,9 @@ test('planning views remain keyboard usable and within the narrow viewport with 
   expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
   if(process.env.HARNESS_PLANNING_CAPTURE){
     const folder=process.env.HARNESS_PLANNING_CAPTURE;snapshot.usage['task-thread']={...EMPTY_USAGE,inputTokens:12640,outputTokens:820,contextTokens:35000,contextWindow:200000,activity:'running'};await host.publish();
-    await openPlan(page);await expect.poll(()=>page.getByRole('region',{name:/^Task plan(?::|$)/}).evaluate(node=>node.getAnimations().filter(animation=>animation.playState==='running').length)).toBe(0);
+    const rail=await openPlan(page);await expect.poll(()=>rail.evaluate(node=>node.getAnimations().filter(animation=>animation.playState==='running').length)).toBe(0);
     await page.screenshot({path:`${folder}/narrow.png`});
-    await page.setViewportSize({width:1920,height:1080});snapshot.settings.theme='light';await host.publish();await openPlan(page);const details=page.locator('[data-agent-id="agent-tests"] .plan-agent-details');await expect(details.getByText('Reported passed',{exact:true})).toHaveCount(1);await expect(details.getByText('Pending',{exact:true})).toHaveCount(1);await expect(details).toHaveAttribute('data-motion-phase','open');await page.getByRole('button',{name:'Hide workspace panel',exact:true}).click();await page.getByRole('button',{name:'Inspect live usage',exact:true}).click();await expect.poll(()=>page.getByRole('region',{name:'Live usage',exact:true}).evaluate(node=>node.getAnimations().filter(animation=>animation.playState==='running').length)).toBe(0);await page.screenshot({path:`${folder}/desktop-light.png`});
+    await page.setViewportSize({width:1920,height:1080});snapshot.settings.theme='light';await host.publish();await openPlan(page);const details=page.locator('[data-agent-id="agent-tests"] .plan-agent-details');await expect(details.getByText('Reported passed',{exact:true})).toHaveCount(1);await expect(details.getByText('Pending',{exact:true})).toHaveCount(1);await expect(details).toHaveAttribute('data-motion-phase','open');const footer=await showLiveUsage(page);await footer.getByRole('button',{name:'Inspect live usage',exact:true}).click();await expect.poll(()=>page.getByRole('region',{name:'Live usage',exact:true}).evaluate(node=>node.getAnimations().filter(animation=>animation.playState==='running').length)).toBe(0);await page.screenshot({path:`${folder}/desktop-light.png`});
     snapshot.settings.theme='dark';await host.publish();await expect(page.locator('html')).toHaveAttribute('data-theme','dark');await page.screenshot({path:`${folder}/desktop-dark.png`});
   }
 });
@@ -114,12 +154,15 @@ test('failed planning detail requests show a recoverable error without losing th
 });
 
 test('live usage details dismiss with Escape and restore their trigger focus',async({page})=>{
-  await serveTaskFixture(page,fixture());await page.goto('/');const footer=page.getByRole('region',{name:'Live usage',exact:true}),trigger=footer.getByRole('button',{name:'Inspect live usage',exact:true});await trigger.click();await expect(footer.getByRole('region',{name:'Runtime usage details',exact:true})).toBeVisible();await footer.getByRole('button',{name:'Open Usage',exact:true}).focus();await page.keyboard.press('Escape');await expect(footer.getByRole('region',{name:'Runtime usage details',exact:true})).toBeHidden();await expect(trigger).toBeFocused();
+  await serveTaskFixture(page,fixture());await page.goto('/');const footer=await showLiveUsage(page),trigger=footer.getByRole('button',{name:'Inspect live usage',exact:true});await trigger.click();await expect(footer.getByRole('region',{name:'Runtime usage details',exact:true})).toBeVisible();await footer.getByRole('button',{name:'Open Usage',exact:true}).focus();await page.keyboard.press('Escape');await expect(footer.getByRole('region',{name:'Runtime usage details',exact:true})).toBeHidden();await expect(trigger).toBeFocused();
 });
 
 test('live usage yields to the workspace panel and returns visible and clickable',async({page})=>{
-  const snapshot=fixture();snapshot.usage['task-thread']={...EMPTY_USAGE,inputTokens:12000,outputTokens:400};await serveTaskFixture(page,snapshot);await page.goto('/');await openPlan(page);
-  await expect(page.getByRole('region',{name:'Live usage',exact:true})).toBeHidden();await page.getByRole('button',{name:'Hide workspace panel',exact:true}).click();const trigger=page.getByRole('button',{name:'Inspect live usage',exact:true});await expect(trigger).toBeVisible();
+  const snapshot=fixture();snapshot.usage['task-thread']={...EMPTY_USAGE,inputTokens:12000,outputTokens:400};await serveTaskFixture(page,snapshot);await page.goto('/');
+  const footer=await showLiveUsage(page);
+  await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();
+  await expect(page.getByRole('complementary',{name:'Workspace panel',exact:true})).toBeVisible();
+  await expect(footer).toBeHidden();await page.getByRole('button',{name:'Hide workspace panel',exact:true}).click();const trigger=page.getByRole('button',{name:'Inspect live usage',exact:true});await expect(trigger).toBeVisible();
   expect(await trigger.evaluate(button=>{const box=button.getBoundingClientRect();return button.contains(document.elementFromPoint(box.left+box.width/2,box.top+box.height/2));})).toBe(true);
   await trigger.click();await expect(page.getByRole('region',{name:'Runtime usage details',exact:true})).toBeVisible();
 });

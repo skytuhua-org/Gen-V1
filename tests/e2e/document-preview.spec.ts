@@ -514,9 +514,47 @@ test('mismatched fields, invalid options and placement fail meaningfully; unsafe
   expect(DOCUMENT_SCHEMAS.DocumentPreview.safeParse({ resourceId: 'grant', signatureStateKey: 'signature' }).success).toBe(false);
 });
 
-test('denied, non-PDF, oversized and excessive-page sources show recoverable errors', async ({ page }) => {
+for (const status of [401, 403, 404]) {
+  test(`PDF recovery explains HTTP ${status} and reloads the document when it becomes available`, async ({ page }) => {
+    const response = { status };
+    const host = await fixtureHost(page, await createSigningPdfFixture(), response);
+    let respond!: () => void;
+    const pending = new Promise<void>(resolve => { respond = resolve; });
+    await page.route('**/api/resources/granted-pdf/content*', async route => {
+      await pending;
+      await route.fallback();
+    });
+    await page.goto('/');
+    const region = preview(page);
+    const outside = page.getByRole('textbox', { name: 'Full name', exact: true });
+    const focus = status === 403 ? outside : region.getByRole('link', { name: 'Open source PDF' });
+    await focus.focus();
+    respond();
+    const alert = region.getByRole('alert');
+    const expected = status === 404
+      ? 'This PDF is no longer available to this thread.'
+      : 'This PDF is no longer available to this thread. Reattach it or renew its grant.';
+    await expect(alert.locator('p')).toHaveText(expected);
+    await expect(alert.getByRole('link', { name: 'Open source PDF' })).toBeVisible();
+    const reload = alert.getByRole('button', { name: 'Reload PDF', exact: true });
+    const expectedFocus = status === 403 ? outside : reload;
+    await expect(expectedFocus).toBeFocused();
+    const toolbar = region.locator('.document-preview-toolbar');
+    await toolbar.locator('a[download]').evaluate(link => (link as HTMLAnchorElement).focus());
+    await expect(expectedFocus).toBeFocused();
+
+    const priorRequests = host.resourceUrls.length;
+    response.status = 200;
+    await reload.click();
+    await expect(region.getByRole('status')).toContainText('Page 1 of 2', { timeout: 20_000 });
+    await expect(alert).toHaveCount(0);
+    expect(host.resourceUrls).toHaveLength(priorRequests + 1);
+    await expect(region.getByRole('link', { name: 'Download source PDF' })).toBeVisible();
+  });
+}
+
+test('non-PDF, oversized and excessive-page sources show recoverable errors', async ({ page }) => {
   for (const fixture of [
-    { bytes: await createSigningPdfFixture(), status: 403, expected: 'no longer available to this thread' },
     { bytes: new TextEncoder().encode('not a PDF'), expected: 'not a PDF' },
     { bytes: await createSigningPdfFixture(), oversized: true, expected: 'up to 20 MiB' },
     { bytes: await createSigningPdfFixture({ pages: 201 }), expected: '1 to 200 pages' },
@@ -524,7 +562,7 @@ test('denied, non-PDF, oversized and excessive-page sources show recoverable err
   ]) {
     await page.unroute('**/api/**'); await fixtureHost(page, fixture.bytes, fixture); await page.goto('/');
     await expect(preview(page).getByRole('alert')).toContainText(fixture.expected);
-    await expect(preview(page).getByRole('button', { name: 'Retry preview' })).toBeVisible();
+    await expect(preview(page).getByRole('button', { name: 'Reload PDF', exact: true })).toBeVisible();
     await expect(preview(page).getByRole('link', { name: 'Open source PDF' }).last()).toBeVisible();
   }
 });
@@ -654,7 +692,7 @@ test('changing source identity clears the old pixels and highlight while retry r
   expect(await preview(page).locator('canvas').evaluate(canvas => (canvas as HTMLCanvasElement).width)).toBe(0);
   await expect(preview(page).locator('.document-active-field')).toHaveCount(0);
   release(); await expect(preview(page).getByRole('alert')).toContainText('no longer available');
-  await preview(page).getByRole('button', { name: 'Retry preview' }).click(); await expect.poll(() => reads).toBe(2); await expect(preview(page).getByRole('status')).toContainText('Page 1 of 2');
+  await preview(page).getByRole('button', { name: 'Reload PDF', exact: true }).click(); await expect.poll(() => reads).toBe(2); await expect(preview(page).getByRole('status')).toContainText('Page 1 of 2');
   await page.unroute('**/api/resources/replacement-pdf/content*');
 });
 

@@ -97,10 +97,20 @@ test('the shared row stays put when details expand and only new route pairs reve
   const meta = page.locator('.task-map-meta');
   await expect(meta).toContainText('Cafe'); await expect(meta).toContainText('1 / 4');
   const navBox = async () => (await page.getByRole('button', { name: 'Next place', exact: true }).boundingBox())!;
+  const disclosure = page.getByRole('region', { name: 'Selected place', exact: true }).getByText('Place details', { exact: true });
+  await disclosure.hover();
   const before = await navBox();
-  await page.getByRole('region', { name: 'Selected place', exact: true }).getByText('Place details', { exact: true }).click();
-  const after = await navBox();
-  expect(Math.abs(after.x - before.x)).toBeLessThanOrEqual(1); expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(1);
+  await disclosure.click();
+  const movement = await page.getByRole('button', { name: 'Next place', exact: true }).evaluate(async (button, origin) => {
+    let distance = 0;
+    for (let frame = 0; frame < 8; frame++) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      const box = button.getBoundingClientRect();
+      distance = Math.max(distance, Math.abs(box.x - origin.x), Math.abs(box.y - origin.y));
+    }
+    return distance;
+  }, before);
+  expect(movement).toBeLessThanOrEqual(1);
   const accents = () => page.locator('.task-map-route-accent').count();
   // Identical republishes and a theme change draw no route accents.
   for (let i = 0; i < 3; i += 1) { await host.publish(); }

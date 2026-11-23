@@ -350,7 +350,7 @@ export function DocumentPreview(props: DocumentPreviewProps) {
     return () => { alive = false; };
   }, [frame?.page, frame?.width, frame?.height, JSON.stringify(field ?? null), activeName, focusField, factor, boxJson, awaitingPage, sourceUrl, waitingForExport, navigationIntent, navTick]);
   // Move focus to the retry control only when focus was inside the preview.
-  useEffect(() => { if (error && root.current?.contains(document.activeElement)) retryButton.current?.focus(); }, [error]);
+  useLayoutEffect(() => { if (error && root.current?.contains(document.activeElement)) retryButton.current?.focus(); }, [error]);
   const title = props.title || 'PDF document', busy = Boolean(activity), changedSignature = Boolean(frame && props.signatureBox?.page === frame.page && (pendingSignature || signatureValid && frame.signatureJson !== signatureJson));
   const changePage = (next: number) => { setFocusField(false); setPointerFocus(false); setCurrentPage(next); };
   // Native button clicks with detail>0 are pointer; keyboard and assistive
@@ -359,7 +359,7 @@ export function DocumentPreview(props: DocumentPreviewProps) {
   const focusCommand = (event: { detail: number }) => navActivate(event, () => { setPointerFocus(event.detail > 0); if (focusField) setNavTick(tick => tick + 1); setFocusField(true); });
   const overlay = (rect: Rectangle) => ({ left: `${rect.left / Math.max(1, (frame?.width ?? 1) * factor) * 100}%`, top: `${rect.top / Math.max(1, (frame?.height ?? 1) * factor) * 100}%`, width: `${rect.width / Math.max(1, (frame?.width ?? 1) * factor) * 100}%`, height: `${rect.height / Math.max(1, (frame?.height ?? 1) * factor) * 100}%` });
   return <section ref={root} className="document-preview" aria-label={title} aria-busy={busy} data-fit={displayedFit} data-export-handoff={handoffState ?? undefined} data-focus-entry={pointerFocus && focusField ? 'pointer' : undefined} data-preview-state={activity.includes('paused') ? 'suspended' : busy ? 'updating' : error ? 'error' : 'ready'}>
-    <div className="document-preview-toolbar"><div className="document-preview-paging" role="group" aria-label="PDF pages">
+    <div className="document-preview-toolbar" inert={Boolean(error)}><div className="document-preview-paging" role="group" aria-label="PDF pages">
       <button type="button" aria-label="Previous PDF page" disabled={!frame || frame.page <= 1} onClick={event => navActivate(event, () => changePage((frame?.page ?? 1) - 1))}><ChevronLeft size={14} /></button><button type="button" aria-label="Next PDF page" disabled={!frame || frame.page >= frame.pages} onClick={event => navActivate(event, () => changePage((frame?.page ?? 1) + 1))}><ChevronRight size={14} /></button>
       {frame && <span className="document-preview-fraction" aria-label={`Page ${frame.page} of ${frame.pages}`}>{frame.page} / {frame.pages}</span>}
     </div><span className="document-preview-title" title={title}>{title}</span><div className="document-preview-tools">
