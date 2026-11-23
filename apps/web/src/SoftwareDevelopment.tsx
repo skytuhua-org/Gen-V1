@@ -83,19 +83,21 @@ export function Diagnostics({element:{props}}:ComponentRenderProps){
 
 type PatchLine={text:string;kind:'hunk'|'added'|'removed'|'context'|'metadata';oldLine?:number;newLine?:number};
 function patchLines(patch:string):PatchLine[]{
-  let oldLine:number|undefined,newLine:number|undefined,inHunk=false;
+  let oldLine:number|undefined,newLine:number|undefined,oldRem=0,newRem=0,inHunk=false;
   return patch.split('\n').map(text=>{
-    const hunk=/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
-    if(hunk){oldLine=Number(hunk[1]);newLine=Number(hunk[2]);inHunk=true;return {text,kind:'hunk'};}
+    const hunk=/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(text);
+    if(hunk){oldLine=Number(hunk[1]);newLine=Number(hunk[3]);oldRem=hunk[2]===undefined?1:Number(hunk[2]);newRem=hunk[4]===undefined?1:Number(hunk[4]);inHunk=true;return {text,kind:'hunk'};}
     // Outside a hunk, header/meta rows keep the full text. Inside one, '-'
     // and '+' always mark content ('-- ' or '++ ' payloads included).
     if(!inHunk&&/^(?:diff |index |--- |\+\+\+ |\\)/.test(text))return {text,kind:'metadata'};
     if(text.startsWith('diff ')){inHunk=false;return {text,kind:'metadata'};}
-    // parseUnified ends a hunk on an empty row (e.g. trailing newline)
-    if(inHunk&&(text===''||text.startsWith('\\'))){if(text==='')inHunk=false;return {text,kind:'metadata'};}
-    if(text.startsWith('-'))return {text:text.slice(1),kind:'removed',oldLine:oldLine===undefined?undefined:oldLine++};
-    if(text.startsWith('+'))return {text:text.slice(1),kind:'added',newLine:newLine===undefined?undefined:newLine++};
-    if(text.startsWith(' ')||inHunk)return {text:text.startsWith(' ')?text.slice(1):text,kind:'context',oldLine:oldLine===undefined?undefined:oldLine++,newLine:newLine===undefined?undefined:newLine++};
+    // Like parseUnified, an empty row ends the hunk once its declared counts
+    // are satisfied (trailing newline); earlier it is a blank context row.
+    if(inHunk&&text===''&&(oldRem<=0||newRem<=0)){inHunk=false;return {text,kind:'metadata'};}
+    if(inHunk&&text.startsWith('\\'))return {text,kind:'metadata'};
+    if(text.startsWith('-')){if(inHunk)oldRem--;return {text:text.slice(1),kind:'removed',oldLine:oldLine===undefined?undefined:oldLine++};}
+    if(text.startsWith('+')){if(inHunk)newRem--;return {text:text.slice(1),kind:'added',newLine:newLine===undefined?undefined:newLine++};}
+    if(text.startsWith(' ')||inHunk){if(inHunk){oldRem--;newRem--;}return {text:text.startsWith(' ')?text.slice(1):text,kind:'context',oldLine:oldLine===undefined?undefined:oldLine++,newLine:newLine===undefined?undefined:newLine++};}
     return {text,kind:'metadata'};
   });
 }

@@ -212,19 +212,23 @@ function parseUnified(patch:string):UnifiedHunk[]{
     for(const row of current.rows){if(row.kind==='meta')continue;if(row.kind!=='added')o++;if(row.kind!=='removed')n++;}
     current.valid=o===current.oldCount&&n===current.newCount;
     hunks.push(current);current=null;};
+  let o=0,n=0;
   for(let i=0;i<lines.length;i++){
     const text=lines[i]!;
     const hunk=/^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(text);
-    if(hunk){flush();current={header:i,oldCount:hunk[1]===undefined?1:Number(hunk[1]),newCount:hunk[2]===undefined?1:Number(hunk[2]),rows:[],valid:false};continue;}
+    if(hunk){flush();o=0;n=0;current={header:i,oldCount:hunk[1]===undefined?1:Number(hunk[1]),newCount:hunk[2]===undefined?1:Number(hunk[2]),rows:[],valid:false};continue;}
     if(!current)continue;
-    // Inside a hunk every '-'/'+' row is content: only a new 'diff ' header or
-    // a stray empty line (e.g. the patch's terminating newline) ends it. This
-    // keeps removed '-- ' SQL comments and added '++ ' lines in the hunk.
-    if(text===''||text.startsWith('diff ')){flush();continue;}
+    // Inside a hunk every '-'/'+' row is content: only a new 'diff ' header
+    // ends it. A stray empty line ends it only once the hunk's declared counts
+    // are satisfied (e.g. the patch's terminating newline); earlier it is a
+    // blank context row missing its space. This keeps removed '-- ' SQL
+    // comments and added '++ ' lines in the hunk.
+    if(text.startsWith('diff ')||(text===''&&o>=current.oldCount&&n>=current.newCount)){flush();continue;}
+    if(text===''){current.rows.push({index:i,kind:'context',content:''});o++;n++;continue;}
     if(text.startsWith('\\')){current.rows.push({index:i,kind:'meta',content:text});continue;}
-    if(text.startsWith('-')){current.rows.push({index:i,kind:'removed',content:text.slice(1)});continue;}
-    if(text.startsWith('+')){current.rows.push({index:i,kind:'added',content:text.slice(1)});continue;}
-    current.rows.push({index:i,kind:'context',content:text.startsWith(' ')?text.slice(1):text});
+    if(text.startsWith('-')){current.rows.push({index:i,kind:'removed',content:text.slice(1)});o++;continue;}
+    if(text.startsWith('+')){current.rows.push({index:i,kind:'added',content:text.slice(1)});n++;continue;}
+    current.rows.push({index:i,kind:'context',content:text.startsWith(' ')?text.slice(1):text});o++;n++;
   }
   flush();
   return hunks;

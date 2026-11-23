@@ -184,4 +184,11 @@ describe('pairing after filtered rows',()=>{
     expect(out.before).toEqual([{index:2,ranges:[{start:19,end:21}]}]);
     expect(out.after).toEqual([{index:1,ranges:[{start:19,end:21}]}]);
   });
+
+  it('treats a bare empty line inside a hunk as blank context (#1582 review)',()=>{
+    const a=annotateUnified('@@ -1,3 +1,3 @@\n a\n\n-old value\n+new value',{hideWhitespace:false});
+    expect(a).not.toBeNull();
+    expect(a!.get(3)).toBeDefined();
+    expect(a!.get(4)).toBeDefined();
+  });
 });
