@@ -9,11 +9,12 @@ import {createDesktopUpdater,type DesktopUpdater,type DesktopUpdateDriver,type U
 import {checkInstalledCompatibility} from '../../packages/plugins/installation.ts';
 import {resolve,join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {DESKTOP_CHANNELS as channels,desktopId,desktopSurfaceKey,parseDesktopSurface,parseDesktopLayout,parseDesktopWindowControl,type DesktopLayout,type DesktopLayoutEntry,type DesktopSurface,type DesktopWindowInfo,type DesktopContext,type DesktopState,type DesktopBrowserState} from '../../packages/desktop-contract/index.ts';
+import {DESKTOP_CHANNELS as channels,desktopId,desktopSurfaceKey,parseDesktopSurface,parseDesktopLayout,parseDesktopWindowControl,type DesktopLayout,type DesktopLayoutEntry,type DesktopSurface,type DesktopWindowInfo,type DesktopContext,type DesktopState,type DesktopBrowserState,type DesktopBrowserBookmark} from '../../packages/desktop-contract/index.ts';
 import {allowRemoteBrowserUrl,clampDesktopBounds,pluginDesktopChannelAllowed,pluginDesktopRequiresGrant,nativeTitlebarOptions,nativeTitlebarTheme,needsEditorHandoff,desktopSurfaceAllowed,isTrustedDesktopSender,parseBrowserCommand,remoteBrowserUrl,surfaceSize,trustedDesktopUrl,trustedDesktopSubframe,type DesktopBounds} from './window-policy.ts';
 import {createBrowserProxy,type BrowserProxy} from './browser-proxy.ts';
 import {createStartupOutputCapture,finishBackendStartup,nodeSidecarArguments,requestBackendShutdown,startupErrorDiagnostic,waitForBackendReady,writeStartupDiagnostic,type StartupDiagnostic,type StartupObservation} from './backend-policy.ts';
 import {releaseOwnedBrowsers,detachOwnedBrowser} from './browser-lifecycle.ts';
+import {addBookmark,BOOKMARK_LIMIT,normalizeBookmarkUrl,parseBookmarkStore,removeBookmark,restoreBookmark,serializeBookmarkStore,updateBookmark} from './browser-bookmarks.ts';
 import {ensureMainDockedBrowser} from './docked-browser.ts';
 import {nativeBrowserBounds} from './browser-bounds.ts';
 import {launchDesktopSignIn,parseDesktopSignInTarget} from './auth-launcher.ts';
@@ -29,7 +30,7 @@ import {attentionDeliverySchema} from '../../packages/contracts/attention.ts';
 const persistence=createPersistenceQueue();
 
 interface BrowserRecord {id:string;view:WebContentsView;state:DesktopBrowserState;owner?:WindowRecord;generation:number;networkReady:Promise<void>}
-interface WindowRecord extends NativeCloseOwner {id:string;surface:DesktopSurface;window:BrowserWindow;url:string;ready:boolean;settled:boolean;visible:boolean;normalBounds:ReturnType<typeof createNormalBounds>;placement?:DesktopPlacement;appliedBounds?:DesktopBounds;monitorRescued?:boolean;recoveries?:number;resolveReady:(value:DesktopWindowInfo)=>void;rejectReady:(error:Error)=>void;readyPromise:Promise<DesktopWindowInfo>;readyTimer:ReturnType<typeof setTimeout>;browser?:BrowserRecord;dockedBrowser?:BrowserRecord}
+interface WindowRecord extends NativeCloseOwner {id:string;surface:DesktopSurface;window:BrowserWindow;url:string;ready:boolean;settled:boolean;visible:boolean;normalBounds:ReturnType<typeof createNormalBounds>;placement?:DesktopPlacement;appliedBounds?:DesktopBounds;monitorRescued?:boolean;recoveries?:number;browserOverlay?:boolean;resolveReady:(value:DesktopWindowInfo)=>void;rejectReady:(error:Error)=>void;readyPromise:Promise<DesktopWindowInfo>;readyTimer:ReturnType<typeof setTimeout>;browser?:BrowserRecord;dockedBrowser?:BrowserRecord}
 interface SavedWindow {surface:DesktopSurface;bounds:DesktopBounds;placement?:DesktopPlacement;open:boolean;visible?:boolean;alwaysOnTop?:boolean;dockedBrowserId?:string}
 const windows=new Map<string,WindowRecord>(),browsers=new Map<string,BrowserRecord>();
 const testData=process.env.HARNESS_DESKTOP_TEST_DATA_DIR;
@@ -43,6 +44,8 @@ app.setName('Gen V1');
 const profileRoot=testData?resolve(testData,'desktop-profile'):join(app.getPath('appData'),'GenerativeHarnessDesktop');mkdirSync(profileRoot,{recursive:true});mkdirSync(join(profileRoot,'session'),{recursive:true});app.setPath('userData',profileRoot);app.setPath('sessionData',join(profileRoot,'session'));
 app.commandLine.appendSwitch('disable-quic');app.commandLine.appendSwitch('disable-features','WebTransport,DirectSockets');
 const stateFile=join(app.getPath('userData'),'desktop-windows.json');
+const bookmarkFile=join(app.getPath('userData'),'browser-bookmarks.json');
+let bookmarks:DesktopBrowserBookmark[]=[],bookmarkRevision=0,bookmarkNotice:string|undefined;
 let saved:SavedWindow[]=[],saveTimer:ReturnType<typeof setTimeout>|undefined,backend:ChildProcess|undefined,backendOrigin='',backendError:string|undefined,launchToken='',quitting=false,quitPending=false,closing=false,restarting=false;
 let updater:DesktopUpdater|undefined,osSessionEnding=false,restartForUpdate=false;
 let updateStatus:UpdateStatus={state:'unavailable',message:'Install Gen to receive automatic updates.'};
@@ -67,7 +70,7 @@ function workAreas(){return screen.getAllDisplays().map(display=>display.workAre
 function displays():DesktopDisplay[]{const primary=screen.getPrimaryDisplay(),all=screen.getAllDisplays();return (all.length?all:[primary]).map(display=>({id:String(display.id),workArea:display.workArea,label:display.label,scaleFactor:display.scaleFactor,primary:display.id===primary.id}));}
 function info(record:WindowRecord):DesktopWindowInfo{return {id:record.id,surface:record.surface,ready:record.ready,minimized:record.window.isMinimized(),visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),bounds:record.window.getNormalBounds(),displayId:record.placement?.displayId};}
 function captureLayout():DesktopLayout{return {version:1,windows:[...windows.values()].filter(record=>!record.window.isDestroyed()).map(record=>({surface:record.surface,bounds:record.normalBounds.read(),visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),...(record.dockedBrowser?{dockedBrowserId:record.dockedBrowser.id}:{}),...(record.placement?{displayId:record.placement.displayId,placement:record.placement}:{})}))};}
-function snapshot(record:WindowRecord):DesktopState{return {windows:[...windows.values()].map(info),...(record.browser?{browser:record.browser.state}:{}),...(record.dockedBrowser?{dockedBrowser:{browserId:record.dockedBrowser.id,state:record.dockedBrowser.state}}:{}),...(backendError?{backendError}:{}),...(layoutError?{layoutError}:{}),update:updateStatus,nativeTitleBar:process.platform==='win32'};}
+function snapshot(record:WindowRecord):DesktopState{return {windows:[...windows.values()].map(info),...(record.browser?{browser:record.browser.state}:{}),...(record.dockedBrowser?{dockedBrowser:{browserId:record.dockedBrowser.id,state:record.dockedBrowser.state}}:{}),browserBookmarks:{revision:bookmarkRevision,items:bookmarks,limit:BOOKMARK_LIMIT,...(bookmarkNotice?{notice:bookmarkNotice}:{})},...(backendError?{backendError}:{}),...(layoutError?{layoutError}:{}),update:updateStatus,nativeTitleBar:process.platform==='win32'};}
 function broadcast(focusSurface?:DesktopSurface){
  for(const record of windows.values()){
   if(record.window.isDestroyed())continue;
@@ -99,6 +102,8 @@ function remember(record:WindowRecord,open=true){if(record.window.isDestroyed())
  if(!awaitingRescue)record.placement=retainDesktopPlacement(bounds,record.placement,record.appliedBounds,all);
  if(record.placement&&all.some(display=>display.id===record.placement!.displayId))record.monitorRescued=false;
  const value={surface:record.surface,bounds,placement:record.placement,open,visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),...(record.dockedBrowser?{dockedBrowserId:record.dockedBrowser.id}:{})};saved=[...saved.filter(entry=>desktopSurfaceKey(entry.surface)!==key),value];if(saved.length>24){const live=new Set([...windows.values()].map(item=>desktopSurfaceKey(item.surface)));saved=[...saved.filter(entry=>live.has(desktopSurfaceKey(entry.surface))),...saved.filter(entry=>!live.has(desktopSurfaceKey(entry.surface)))].slice(0,24);}persist();}
+function writeBookmarks(){const body=serializeBookmarkStore(bookmarks);void persistence.enqueue(async()=>{await mkdir(dirname(bookmarkFile),{recursive:true});await writeFile(bookmarkFile,body,{encoding:'utf8',mode:0o600});}).catch(()=>{bookmarkNotice='Bookmarks could not be saved to this device.';broadcast();});}
+async function loadBookmarks(){try{const text=await readFile(bookmarkFile,'utf8');if(text.length>512*1024){bookmarkNotice='The saved bookmark file is too large and was reset.';return;}const parsed=parseBookmarkStore(text);if('invalid' in parsed)bookmarkNotice='Saved bookmarks could not be read and were reset.';else{bookmarks=parsed.items;if(parsed.dropped)bookmarkNotice=(parsed.dropped===1?'1 saved bookmark':String(parsed.dropped)+' saved bookmarks')+' could not be read and were removed.';}}catch{}}
 async function loadSaved(){try{const bytes=await readFile(stateFile,'utf8');if(bytes.length>128*1024)return;const raw=JSON.parse(bytes);if(raw.version!==1||!Array.isArray(raw.windows)||raw.windows.length>24)return;for(const entry of raw.windows){try{const surface=parseDesktopSurface(entry.surface);if(!desktopSurfaceAllowed(surface))continue;if(entry.bounds&&typeof entry.bounds==='object')saved.push({surface,bounds:clampDesktopBounds(entry.bounds,workAreas(),surfaceSize(surface)),placement:parseDesktopPlacement(entry.placement),open:entry.open===true,visible:entry.visible!==false,alwaysOnTop:entry.alwaysOnTop===true,...(surface.kind==='main'&&desktopId(entry.dockedBrowserId)?{dockedBrowserId:entry.dockedBrowserId}:{})});}catch{}}}catch{}}
 function applyPlacement(record:WindowRecord,bounds:DesktopBounds,preferred=record.placement){if(record.window.isDestroyed())return;record.placement=preferred;record.appliedBounds=bounds;record.normalBounds.apply(bounds);record.window.setBounds(bounds);remember(record);}
 function resetWindowPosition(record:WindowRecord){const all=displays(),current=captureDesktopPlacement(record.window.getBounds(),all),target=all.find(display=>display.id===current.displayId)!;const bounds=placeOnDesktopDisplay(surfaceSize(record.surface),target);applyPlacement(record,bounds,captureDesktopPlacement(bounds,all));}
@@ -170,7 +175,7 @@ async function openSurface(raw:unknown,sourceBounds?:DesktopBounds):Promise<Desk
  native.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));native.webContents.session.setPermissionCheckHandler(()=>false);secureSessionDownloads(native.webContents.session);
  native.on('close',event=>{if(!quitting){event.preventDefault();void requestClose(record).then(allow=>{if(allow)destroyWindow(record);else cancelClose(record);}).catch(()=>cancelClose(record));}});
  native.on('closed',()=>{clearTimeout(record.readyTimer);if(!record.settled){record.settled=true;record.rejectReady(Error('The detached window closed before it was ready'));}windows.delete(id);if(record.closeRequest){clearTimeout(record.closeRequest.timer);record.closeRequest.resolve(false);}broadcast();});
- const resized=()=>{remember(record);if(record.browser){const [width,height]=native.getContentSize();record.browser.view.setBounds({x:0,y:96,width,height:Math.max(0,height-96)});}};
+ const resized=()=>{remember(record);if(record.browser&&!record.browserOverlay){const [width,height]=native.getContentSize();record.browser.view.setBounds({x:0,y:96,width,height:Math.max(0,height-96)});}};
  const manuallyPlaced=(_event:unknown,next:DesktopBounds)=>{
   if(!record.ready||native.isMaximized()||native.isMinimized()||native.isFullScreen())return;
   record.normalBounds.observe(next,{manual:true,normal:true});record.placement=captureDesktopPlacement(record.normalBounds.read(),displays());record.appliedBounds=record.normalBounds.read();record.monitorRescued=false;remember(record);
@@ -278,6 +283,28 @@ function registerIpc(){
  handle(channels.closeAnswer,(record,value)=>{if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Invalid close acknowledgment');const answer=value as Record<string,unknown>,request=record.closeRequest;if(Object.keys(answer).length!==2||typeof answer.allow!=='boolean'||!request||answer.requestId!==request.id)throw Error('Stale close acknowledgment');clearTimeout(request.timer);request.resolve(answer.allow);});
  handle(channels.browser,async(record,raw)=>{
   const command=parseBrowserCommand(raw);
+  if(command.type==='bookmark-notice-dismiss'){if(bookmarkNotice){bookmarkNotice=undefined;broadcast();}return;}
+  if(command.type==='overlay'){
+   record.browserOverlay=command.open;const attached=record.browser;
+   if(attached&&!attached.view.webContents.isDestroyed()){const [width,height]=record.window.getContentSize();attached.view.setBounds(command.open?{x:0,y:0,width:0,height:0}:{x:0,y:96,width,height:Math.max(0,height-96)});}
+   broadcast();return;
+  }
+  if(command.type==='bookmark-add'){
+   const browser=record.browser??record.dockedBrowser;if(!browser)throw Error('No browser is attached to this window');
+   const url=normalizeBookmarkUrl(browser.view.webContents.isDestroyed()?'':browser.view.webContents.getURL()||browser.state.url,command.keepQuery===true);
+   if(!url||url==='about:blank')throw Error('Only open pages can be bookmarked.');
+   const next=addBookmark(bookmarks,{url,title:(browser.state.title||'Untitled').trim()||'Untitled',now:new Date().toISOString(),id:randomUUID()});
+   if(typeof next==='string')throw Error(next==='limit'?'The bookmark limit is reached. Remove a saved page first.':next==='duplicate'?'This page is already bookmarked.':'This page cannot be bookmarked.');
+   bookmarks=next;bookmarkRevision++;writeBookmarks();broadcast();return;
+  }
+  if(command.type==='bookmark-update'||command.type==='bookmark-remove'||command.type==='bookmark-restore'){
+   const change={now:new Date().toISOString()} as {title?:string;url?:string;now:string};
+   if(command.type==='bookmark-update'&&command.title!==undefined)change.title=command.title;
+   if(command.type==='bookmark-update'&&command.keepQuery===false){const current=bookmarks.find(item=>item.id===command.id);if(current)change.url=normalizeBookmarkUrl(current.url,false)??current.url;}
+   const next=command.type==='bookmark-update'?updateBookmark(bookmarks,command.id,change):command.type==='bookmark-remove'?removeBookmark(bookmarks,command.id):restoreBookmark(bookmarks,command.bookmark);
+   if(typeof next==='string')throw Error(next==='limit'?'The bookmark limit is reached. Remove a saved page first.':next==='duplicate'?'Another bookmark already opens this page.':next==='missing'?'The bookmark is no longer saved.':'This bookmark cannot be stored.');
+   bookmarks=next;bookmarkRevision++;writeBookmarks();broadcast();return;
+  }
   if(command.type==='open')return handoff(async()=>{
    if(quitting||quitPending||record.window.isDestroyed()||windows.get(record.id)!==record)throw Error('The workspace is closing.');
    const browser=ensureMainDockedBrowser(record,()=>browserRecord(randomUUID()),browser=>{moveBrowser(browser,record,true);browser.view.setBounds({x:0,y:0,width:0,height:0});},browser=>{
@@ -298,7 +325,10 @@ function registerIpc(){
   const browser=record.browser??record.dockedBrowser;if(!browser)throw Error('No browser is attached to this window');const contents=browser.view.webContents;
   if(command.type==='bounds'){if(!record.dockedBrowser)throw Error('Only the docked browser can set content bounds');browser.view.setBounds(nativeBrowserBounds(command.bounds,record.window.getContentSize(),record.window.webContents.getZoomFactor()));return;}
   await browser.networkReady;const generation=++browser.generation;
-  if(command.type==='navigate'){if(!await allowRemoteBrowserUrl(command.url))throw Error('Only public HTTP and HTTPS pages are allowed. Local and private-network requests are blocked.');if(generation!==browser.generation)return;browser.state.error=undefined;await contents.loadURL(remoteBrowserUrl(command.url).href).catch(error=>{if(generation===browser.generation){browser.state.error=error instanceof Error?error.message:'The page could not be loaded';browserState(browser);}});}
+  if(command.type==='navigate'||command.type==='bookmark-open'){
+   const url=command.type==='navigate'?command.url:bookmarks.find(item=>item.id===command.id)?.url;
+   if(!url)throw Error('The bookmark is no longer saved.');
+   if(!await allowRemoteBrowserUrl(url))throw Error('Only public HTTP and HTTPS pages are allowed. Local and private-network requests are blocked.');if(generation!==browser.generation)return;browser.state.error=undefined;await contents.loadURL(remoteBrowserUrl(url).href).catch(error=>{if(generation===browser.generation){browser.state.error=error instanceof Error?error.message:'The page could not be loaded';browserState(browser);}});}
   else if(command.type==='back'&&contents.navigationHistory.canGoBack())contents.navigationHistory.goBack();
   else if(command.type==='forward'&&contents.navigationHistory.canGoForward())contents.navigationHistory.goForward();
   else if(command.type==='reload'){browser.state.error=undefined;contents.reload();}
@@ -380,7 +410,7 @@ if(!app.requestSingleInstanceLock()){app.exit(0);}else{
  void app.whenReady().then(async()=>{
   startupDiagnostic('app-ready');
   if(!Number.isInteger(backendPort)||backendPort<1024||backendPort>65535||(!Number.isInteger(widgetPort)||widgetPort<1024||widgetPort>65535||backendPort===widgetPort))throw Error('Desktop backend ports are invalid');
-  await loadSaved();startupDiagnostic('layout-ready');registerIpc();
+  await loadSaved();await loadBookmarks();startupDiagnostic('layout-ready');registerIpc();
   powerMonitor.on('shutdown',()=>{osSessionEnding=true;});
   installApplicationMenu();installTray();startupDiagnostic('shell-ready');
   startupTimer=setTimeout(()=>{if(quitting||quitPending)return;startup=new BrowserWindow({width:420,height:190,...nativeTitlebarOptions(process.platform),resizable:false,maximizable:false,minimizable:false,title:'Opening Gen V1',autoHideMenuBar:true,backgroundColor:'#0f0f0f',webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});startup.webContents.setWindowOpenHandler(()=>({action:'deny'}));startup.webContents.on('will-navigate',event=>event.preventDefault());void startup.loadFile(join(dirname(fileURLToPath(import.meta.url)),'startup.html')).catch(()=>{});},1200);
