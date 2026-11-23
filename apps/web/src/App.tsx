@@ -705,8 +705,11 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
       const result = await getModels(refresh, ownerId, controller.signal,target);
       if (request !== modelRequest.current || modelContextRef.current !== context) return;
       // Resolve against the merged catalog the picker shows, not only the
-      // provider subset a sign-in refresh returns.
+      // provider subset a sign-in refresh returns. A refresh appends the
+      // refreshed provider's models, so the fallback keeps the previously
+      // first-listed model instead of drifting providers.
       const catalog=mergeAccountModels(modelsRef.current,result.models,target);
+      const first=target?(catalog.find(item=>modelsRef.current.some(old=>old.id===item.id))??catalog[0]):catalog[0];
       setModels(current=>mergeAccountModels(current,result.models,target)); setModelError(result.error ?? '');
       const bound=hasPinnedAccount(owner,snapshotRef.current);
       let resolution:ComposerModelResolution={source:bound?'bound':undefined},resolved:ReturnType<typeof resolveNewThreadModel>|undefined;
@@ -730,7 +733,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
           // A catalog refresh never moves an explicit pick.
           if(target&&resolved.source==='explicit')return previous;
           const keep=previous&&catalog.some(item=>item.id===previous)?previous:undefined;
-          return resolved.modelId||(resolved.source==='project-unavailable'?'':keep??catalog[0]?.id??'');
+          return resolved.modelId||(resolved.source==='project-unavailable'?'':keep??first?.id??'');
         }
         if(target)return previous;
         if (previous && catalog.some(item => item.id === previous)) return previous;
@@ -738,9 +741,9 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
         // pinned connection is unavailable. Setup and model changes are explicit.
         // A binding whose model has not propagated yet keeps the current
         // selection or the first advertised model instead of an empty one.
-        if (hasPinnedAccount(owner, snapshotRef.current)) return owner?.modelId ?? (previous || catalog[0]?.id || '');
+        if (hasPinnedAccount(owner, snapshotRef.current)) return owner?.modelId ?? (previous || first?.id || '');
         const preferred = owner?.modelId ?? snapshotRef.current.settings.modelId;
-        return catalog.some(item => item.id === preferred) ? preferred! : catalog[0]?.id ?? preferred ?? '';
+        return catalog.some(item => item.id === preferred) ? preferred! : first?.id ?? preferred ?? '';
       });
     } catch (error) { if (!controller.signal.aborted && request === modelRequest.current && modelContextRef.current === context) { setModels(current=>mergeAccountModels(current,[],target)); setModelError(messageOf(error)); } }
     finally { if(modelRead.current===controller)modelRead.current=null; }
