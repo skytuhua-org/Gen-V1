@@ -380,6 +380,45 @@ describe('live-steer semantics, revocation revalidation and dispatch race', () =
     expect(next.disposed).toBe(false);
   });
 
+  it.each(['stop', 'revoke'] as const)('does not acknowledge %s before a late child is closed', async action => {
+    let resolveFactory!: (child: AgentWorkChild) => void;
+    const factory = vi.fn(() => new Promise<AgentWorkChild>(resolve => { resolveFactory = resolve; }));
+    const f = fixture({runtimeFactory: factory}), spec = f.admission();
+    const admission = f.coordinator.admit(f.ctx, spec, new AbortController().signal);
+    await vi.waitFor(() => expect(factory).toHaveBeenCalledOnce());
+    const child = new FakeChild(false), disposeError = Error('synthetic late adapter disposal failure');
+    vi.spyOn(child, 'dispose').mockRejectedValueOnce(disposeError);
+    const stopping = action === 'stop' ? f.coordinator.stop(f.ctx, spec.workId) : f.coordinator.revokeForParent(f.ctx.threadId);
+    const outcome = stopping.catch(error => error);
+    resolveFactory(child);
+    await admission;
+    expect(child.sent).toHaveLength(0);
+    expect(await outcome).toMatchObject({errors: [disposeError]});
+    await f.coordinator.dispose();
+    expect(child.disposed).toBe(true);
+  });
+
+  it('does not dispatch queued ordinary input to the retired child after resume', async () => {
+    let acknowledge!: () => void;
+    const wait = new Promise<void>(resolve => { acknowledge = resolve; });
+    const first = new FakeChild(true, input => input.inputId === 'queued-one' ? wait : undefined);
+    const next = new FakeChild(true);
+    const f = fixture({runtimeFactory: vi.fn(() => next).mockReturnValueOnce(first)});
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    const send = (inputId: string) => f.coordinator.sendInput(f.ctx, {inputId, workId: work.workId, kind: 'FOLLOW_UP', text: 'continue', dedupeKey: inputId});
+    try {
+      send('queued-one');
+      send('queued-two');
+      await vi.waitFor(() => expect(first.sent.map(input => input.inputId)).toContain('queued-one'));
+      await f.coordinator.stop(f.ctx, work.workId);
+      await f.coordinator.resume(f.ctx, work.workId);
+    } finally { acknowledge(); }
+    await vi.waitFor(() => expect(f.coordinator.inbox.inspect('queued-two')?.delivery).not.toBe('ACCEPTED'));
+    expect(f.coordinator.inbox.inspect('queued-two')).toMatchObject({delivery: 'UNKNOWN'});
+    expect(first.sent.map(input => input.inputId)).not.toContain('queued-two');
+    expect(next.sent.map(input => input.inputId)).not.toContain('queued-two');
+  });
+
   it('drains a child that arrives after coordinator shutdown without sending START', async () => {
     let resolveFactory!: (child: AgentWorkChild) => void;
     const factory = vi.fn(() => new Promise<AgentWorkChild>(resolve => { resolveFactory = resolve; }));
@@ -430,10 +469,11 @@ describe('live-steer semantics, revocation revalidation and dispatch race', () =
     const spec = f.admission();
     const pending = f.coordinator.admit(f.ctx, spec, new AbortController().signal);
     await vi.waitFor(() => expect(f.coordinator.inspect(spec.workId)).toBeTruthy());
-    await f.coordinator.revokeForParent(f.ctx.threadId);
+    const revoking = f.coordinator.revokeForParent(f.ctx.threadId);
     const child = new FakeChild(false);
     resolveFactory(child);
     const work = await pending;
+    await revoking;
     expect(work.state).toBe('CANCELLED');
     expect(child.disposed).toBe(true);
     expect(child.sent).toHaveLength(0);

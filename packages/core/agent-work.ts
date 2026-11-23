@@ -458,14 +458,27 @@ export class AgentWorkCoordinator {
     live.delivery = live.delivery.then(async () => {
       const current = this.inbox.inspect(record.inputId);
       if (!current || current.delivery !== 'ACCEPTED') return;
+      if (this.live.get(work.workId) !== live) {
+        this.inbox.markUnknown(record.inputId);
+        return;
+      }
       // Steering without a declared and demonstrated live-steer adapter stays
       // queued after current; it is never relabelled or forced through send().
       if (current.kind === 'STEER' && !live.child.supportsLiveSteer) return;
       const text = this.inbox.text(record.inputId) ?? '';
-      try { await live.child.send({inputId: record.inputId, kind: record.kind, text}); this.inbox.markEntered(record.inputId); }
-      catch { this.inbox.markUnknown(record.inputId); }
+      try {
+        await live.child.send({inputId: record.inputId, kind: record.kind, text});
+        if (this.live.get(work.workId) === live) this.inbox.markEntered(record.inputId);
+        else this.inbox.markUnknown(record.inputId);
+      } catch { this.inbox.markUnknown(record.inputId); }
     }).catch(() => {});
     return record;
+  }
+
+  private async awaitChildCleanup(workId: string): Promise<void> {
+    const opening = this.starting.get(workId);
+    if (opening) await opening.catch(() => {});
+    await this.closing.get(workId)?.result;
   }
 
   /** Parent stop/archive: revoke dispatch first, then cancel the child and
@@ -477,14 +490,14 @@ export class AgentWorkCoordinator {
       this.releaseLive(work.workId, true);
       this.finish(work.workId, 'CANCELLED', {failureReason: 'PERMISSION_REVOKED'});
     }
-    await Promise.all(works.map(work => this.closing.get(work.workId)?.result));
+    await Promise.all(works.map(work => this.awaitChildCleanup(work.workId)));
   }
 
   async stop(ctx: RunContext, workId: string): Promise<AgentWorkV1> {
     const work = this.stored(workId);
     if (!work || work.parentOwner.threadId !== ctx.threadId) throw new HarnessError('INVALID_AGENT_WORK', `Unknown work ${workId}`);
     if (!AGENT_WORK_TERMINAL_STATES.has(work.state)) { this.releaseLive(workId, true); this.finish(workId, 'CANCELLED', {}); }
-    await this.closing.get(workId)?.result;
+    await this.awaitChildCleanup(workId);
     return this.stored(workId)!;
   }
 
