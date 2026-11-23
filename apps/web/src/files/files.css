@@ -387,6 +387,118 @@
 	outline:2px solid var(--ui-focus-ring,#808080);
 	outline-offset: 2px;
 }
+.project-search-filters {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 var(--files-inset);
+}
+.project-search-filters-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 32px;
+	padding: 0 8px;
+	border: 1px solid var(--control-border);
+	border-radius: 6px;
+	background: var(--surface);
+	color: var(--text);
+	font-size: 12px;
+}
+.project-search-filters-toggle > svg {
+	transition: transform var(--ui-motion-status) var(--ui-ease-enter);
+}
+.project-search-filters-toggle > svg[data-open="true"] {
+	transform: rotate(90deg);
+}
+.project-search-filters-toggle > span + span::before {
+	content: "· ";
+}
+.project-search-filters-count,
+.project-search-filters-unapplied {
+	font-size: 12px;
+}
+.project-search-filters-unapplied {
+	color: var(--muted);
+}
+.project-search-filters-panel {
+	padding: 8px var(--files-inset) 0;
+}
+.project-search-filters-body {
+	display: grid;
+	gap: 8px;
+	animation: project-search-filters-in var(--ui-motion-status) var(--ui-ease-enter)
+		both;
+}
+@keyframes project-search-filters-in {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+.project-search-filter-fields {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+.project-search-filter-fields > label {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+	font-size: 12px;
+	color: var(--muted);
+}
+.project-search-filter-fields input {
+	min-width: 0;
+	width: 100%;
+	border: 1px solid var(--control-border);
+	border-radius: 6px;
+	padding: 7px 8px;
+	background: var(--surface);
+	color: var(--text);
+	font-size: 12px;
+}
+.project-search-filter-fields .files-error {
+	display: block;
+	overflow-wrap: anywhere;
+}
+.project-search-filter-help {
+	margin: 0;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.6;
+}
+.project-search-filter-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.project-search-filter-actions > button {
+	min-height: 32px;
+	padding: 0 8px;
+	border: 1px solid var(--control-border);
+	border-radius: 6px;
+	background: var(--surface);
+	color: var(--text);
+	font-size: 12px;
+}
+@container files (max-width: 560px) {
+	.project-search-filter-fields {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.project-search-filters-body {
+		animation: none;
+	}
+	.project-search-filters-toggle > svg {
+		transition: none;
+	}
+}
 .files-matching-line {
 	background: var(--selection-bg);
 	color: var(--selection-ink);

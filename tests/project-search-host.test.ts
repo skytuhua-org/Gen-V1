@@ -368,3 +368,59 @@ it('sizes multibyte search pages without repeatedly serializing the growing resp
   expect(rest.matches.map(value => value.line)).toEqual(Array.from({ length: 40 }, (_, i) => i + 101));
   expect(rest.nextCursor).toBeNull();
 });
+
+describe('include/exclude path filters', () => {
+  it('restricts path and text hits to matching files, and exclude wins over include', async () => {
+    const f = await fixture();
+    await f.write('src/needle.ts', 'needle');
+    await f.write('src/lib/needle.ts', 'needle');
+    await f.write('src/lib/needle.test.ts', 'needle');
+    await f.write('needle.md', 'needle');
+    await f.write('docs/needle.md', 'needle');
+    const included = await f.search.search(f.projectId, { q: 'needle', include: 'src/**' });
+    expect([...new Set(included.matches.map(match => match.path))].sort()).toEqual(['src/lib/needle.test.ts', 'src/lib/needle.ts', 'src/needle.ts']);
+    const excluded = await f.search.search(f.projectId, { q: 'needle', include: 'src/**', exclude: '**/*.test.ts' });
+    expect([...new Set(excluded.matches.map(match => match.path))].sort()).toEqual(['src/lib/needle.ts', 'src/needle.ts']);
+    const blank = await f.search.search(f.projectId, { q: 'needle', include: '  ', exclude: '' });
+    expect(blank.matches.length).toBeGreaterThan(included.matches.length);
+  });
+
+  it('never opens or issues leaf checks for rejected files while keeping hard exclusions', async () => {
+    const f = await fixture();
+    await f.write('src/needle.ts', 'needle');
+    await f.write('docs/needle.md', 'needle');
+    const open = vi.mocked(fs.open), guard = vi.mocked(withPathGuard);
+    open.mockClear(); guard.mockClear();
+    await f.search.search(f.projectId, { q: 'needle', include: 'src/**' });
+    const paths = () => guard.mock.calls.flatMap(call => call[0].map(entry => entry.path));
+    expect(paths().some(path => path.endsWith('docs/needle.md'))).toBe(false);
+    expect(open.mock.calls.some(call => String(call[0]).endsWith('docs/needle.md'))).toBe(false);
+  });
+
+  it('pages matching pairs and rejects a changed pair or restored blank against the cursor', async () => {
+    const f = await fixture();
+    for (let index = 0; index < 3; index++) await f.write(`src/n${index}.ts`, 'needle');
+    const first = await f.search.search(f.projectId, { q: 'needle', limit: 2, include: 'src/**' });
+    expect(first.nextCursor).not.toBeNull();
+    const cursor = first.nextCursor!;
+    const rest = await f.search.search(f.projectId, { q: 'needle', limit: 2, include: 'src/**', cursor });
+    expect(rest.matches.length).toBeGreaterThan(0);
+    for (const input of [
+      { q: 'needle', limit: 2, include: 'docs/**', cursor },
+      { q: 'needle', limit: 2, cursor },
+      { q: 'needle', limit: 2, include: 'src/**', exclude: '**/*.ts', cursor },
+    ]) await expect(f.search.search(f.projectId, input)).rejects.toMatchObject({ code: 'INVALID_CURSOR' });
+  });
+
+  it('keeps rejected files inside the ordinary cap while skipping their size and bytes', async () => {
+    const f = await fixture();
+    const big = 'z'.repeat(PROJECT_SEARCH_LIMITS.fileBytes + 1);
+    await f.write('docs/big.md', 'needle ' + big);
+    await f.write('src/needle.ts', 'needle');
+    const result = await f.search.search(f.projectId, { q: 'needle', include: 'src/**' });
+    expect(result.issues).toEqual([]);
+    expect(result.matches.every(match => match.path === 'src/needle.ts')).toBe(true);
+    const unfiltered = await f.search.search(f.projectId, { q: 'needle' });
+    expect(unfiltered.issues.some(issue => issue.path === 'docs/big.md' && issue.reason === 'too_large')).toBe(true);
+  });
+});

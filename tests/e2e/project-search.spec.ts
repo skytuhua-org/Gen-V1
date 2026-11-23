@@ -932,3 +932,201 @@ for (const { name, text, line } of [
 			fullPage: true,
 		});
 	});
+
+const filtersToggle = (page: Page) =>
+	page.locator(".project-search-filters-toggle");
+const includeInput = (page: Page) => page.getByLabel("Include paths");
+const excludeInput = (page: Page) => page.getByLabel("Exclude paths");
+const requests = (page: Page) =>
+	page.evaluate(() => window.projectSearchFixture.requests);
+
+test("path filters apply canonically, stay collapsed-aware and send the pair only when applied", async ({
+	page,
+}) => {
+	await fixture(page);
+	await projectScope(page);
+	const toggle = filtersToggle(page);
+	await expect(toggle).toHaveAttribute("aria-expanded", "false");
+	await expect(includeInput(page)).toHaveCount(0);
+	await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-expanded", "true");
+	await includeInput(page).fill(" src/** ");
+	await excludeInput(page).fill("**/*.test.ts");
+	await expect(toggle).toContainText("Unapplied changes");
+	await page.getByRole("button", { name: "Apply filters" }).click();
+	await expect(toggle).toContainText("2 active");
+	await expect(toggle).not.toContainText("Unapplied");
+	const sent = (await requests(page)).at(-1)!;
+	expect(sent).toMatchObject({
+		include: "src/**",
+		exclude: "**/*.test.ts",
+	});
+	// Whitespace-equivalent reapply commits the same pair: no restart.
+	await includeInput(page).fill("src/**   ");
+	await page.getByRole("button", { name: "Apply filters" }).click();
+	expect(await requests(page)).toHaveLength(2);
+	// Collapsing preserves drafts and applied state.
+	await toggle.click();
+	await expect(includeInput(page)).toHaveCount(0);
+	await toggle.click();
+	await expect(includeInput(page)).toHaveValue("src/**   ");
+	await expect(toggle).toContainText("2 active");
+	// Clear resets drafts, errors and the applied pair, then focuses Include.
+	await page.getByRole("button", { name: "Clear filters" }).click();
+	await expect(includeInput(page)).toBeFocused();
+	await expect(includeInput(page)).toHaveValue("");
+	await expect(toggle).not.toContainText("active");
+	const cleared = (await requests(page)).at(-1)!;
+	expect(cleared.include).toBeUndefined();
+	expect(cleared.exclude).toBeUndefined();
+});
+
+test("invalid filter apply sends nothing, retains criteria and focuses the first invalid field", async ({
+	page,
+}) => {
+	await fixture(page);
+	await projectScope(page);
+	await filtersToggle(page).click();
+	await includeInput(page).fill("a//b");
+	await excludeInput(page).fill("**/*.test.ts");
+	await page.getByRole("button", { name: "Apply filters" }).click();
+	await expect(page.getByText("Use one path glob")).toBeVisible();
+	await expect(includeInput(page)).toBeFocused();
+	await expect(includeInput(page)).toHaveAttribute("aria-invalid", "true");
+	expect(await requests(page)).toHaveLength(1);
+	await includeInput(page).fill("src/**");
+	await excludeInput(page).press("Enter");
+	await expect(filtersToggle(page)).toContainText("2 active");
+	expect((await requests(page)).at(-1)!).toMatchObject({
+		include: "src/**",
+		exclude: "**/*.test.ts",
+	});
+});
+
+test("Escape in the filter region collapses the panel and returns focus", async ({
+	page,
+}) => {
+	await fixture(page);
+	await projectScope(page);
+	const toggle = filtersToggle(page);
+	await toggle.click();
+	await excludeInput(page).fill("**/*.test.ts");
+	await excludeInput(page).focus();
+	await page.keyboard.press("Escape");
+	await expect(toggle).toBeFocused();
+	await expect(includeInput(page)).toHaveCount(0);
+	// Drafts survive the collapse for a later apply.
+	await toggle.click();
+	await expect(excludeInput(page)).toHaveValue("**/*.test.ts");
+});
+
+test("a changed filter pair fences a held earlier response", async ({ page }) => {
+	await fixture(page, "?state=loading");
+	await projectScope(page);
+	await waitForSearchRequest(page);
+	await filtersToggle(page).click();
+	await includeInput(page).fill("src/**");
+	await page.getByRole("button", { name: "Apply filters" }).click();
+	await expect
+		.poll(() =>
+			page.evaluate(() => window.projectSearchFixture.pending.length),
+		)
+		.toBe(2);
+	await page.evaluate(() => window.projectSearchFixture.release(1));
+	await expect(hits(page)).toHaveCount(3);
+	await page.evaluate(() => window.projectSearchFixture.release(0));
+	await settled(page);
+	await expect(hits(page)).toHaveCount(3);
+	await expect(page.locator(".files-error[role=status]")).toHaveCount(0);
+	expect(
+		await page.evaluate(
+			() => window.projectSearchFixture.pending[0].signal.aborted,
+		),
+	).toBe(true);
+});
+
+test("filtered complete emptiness uses filter copy; owner switch resets the controls", async ({
+	page,
+}) => {
+	await fixture(page, "?state=empty");
+	await projectScope(page);
+	await filtersToggle(page).click();
+	await includeInput(page).fill("src/**");
+	await page.getByRole("button", { name: "Apply filters" }).click();
+	await expect(
+		page.getByText("No results match these path filters."),
+	).toBeVisible();
+	await expect(
+		page.getByText("Try a different search or clear the filters."),
+	).toBeVisible();
+	await page.getByRole("button", { name: "Switch project" }).click();
+	await projectScope(page);
+	const toggle = filtersToggle(page);
+	await expect(toggle).toHaveAttribute("aria-expanded", "false");
+	await expect(toggle).not.toContainText("active");
+	await toggle.click();
+	await expect(includeInput(page)).toHaveValue("");
+});
+
+test("filter disclosure is immediate under reduced motion and stays narrow-safe", async ({
+	page,
+}, testInfo) => {
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	await page.setViewportSize({ width: 420, height: 760 });
+	await fixture(page, "?width=375");
+	await projectScope(page);
+	const toggle = filtersToggle(page);
+	await toggle.click();
+	await includeInput(page).fill("src/**");
+	await page.getByRole("button", { name: "Apply filters" }).click();
+	await expect(toggle).toContainText("1 active");
+	expect(
+		await page
+			.locator(".project-search-filters")
+			.evaluate((element) => element.getAnimations({ subtree: true }).length),
+	).toBe(0);
+	expect(
+		await page
+			.locator(".files-surface")
+			.evaluate((element) => element.scrollWidth <= element.clientWidth),
+	).toBe(true);
+	await page.screenshot({
+		path: testInfo.outputPath("filters-expanded-narrow-dark.png"),
+		fullPage: true,
+	});
+});
+
+for (const theme of ["dark", "light"])
+	for (const width of [920, 375])
+		test(`filters disclosure at ${width}px ${theme}: applied, unapplied and invalid states`, async ({
+			page,
+		}, testInfo) => {
+			await page.setViewportSize({ width: Math.max(width, 520), height: 760 });
+			await fixture(page, `?width=${width}&theme=${theme}`);
+			await projectScope(page);
+			const toggle = filtersToggle(page);
+			await toggle.click();
+			await includeInput(page).fill("src/**");
+			await excludeInput(page).fill("a//b");
+			await page.getByRole("button", { name: "Apply filters" }).click();
+			await expect(page.getByText("Use one path glob")).toBeVisible();
+			await expect(toggle).toContainText("Unapplied changes");
+			await page.screenshot({
+				path: testInfo.outputPath(`filters-invalid-${width}-${theme}.png`),
+				fullPage: true,
+			});
+			await excludeInput(page).fill("**/*.test.ts");
+			await page.getByRole("button", { name: "Apply filters" }).click();
+			await expect(toggle).toContainText("2 active");
+			await page.screenshot({
+				path: testInfo.outputPath(`filters-applied-${width}-${theme}.png`),
+				fullPage: true,
+			});
+			expect(
+				await page
+					.locator(".files-surface")
+					.evaluate(
+						(element) => element.scrollWidth <= element.clientWidth,
+					),
+			).toBe(true);
+		});
