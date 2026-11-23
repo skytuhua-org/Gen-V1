@@ -640,7 +640,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const refresh = useCallback(async (value?: Snapshot): Promise<void> => {
     if (value) { apply(value); return; }
     if (refreshPending.current) { refreshAgain.current = true; return refreshPending.current; }
-    refreshPending.current = (async () => { do { refreshAgain.current = false; apply(await getSnapshot()); setSidebarSections((await getShellNavigation({limit: 1})).sections); } while (refreshAgain.current); })();
+    refreshPending.current = (async () => { do { refreshAgain.current = false; apply(await getSnapshot()); try { setSidebarSections((await getShellNavigation({limit: 1})).sections); } catch { setSidebarSections(undefined); } } while (refreshAgain.current); })();
     try { await refreshPending.current; } finally { refreshPending.current = null; }
   }, [apply]);
   const localWorkspaceState=useWorkspaceState(loaded&&!host&&!navigationOnly&&(!pinnedThreadId||Boolean(embeddedThreadId))),workspaceState=host?.workspace??localWorkspaceState,workspaceEnvelope=workspaceState.envelope,activeCanvas=workspaceEnvelope?.state.canvases.find(canvas=>canvas.id===workspaceEnvelope.state.activeCanvasId),customDock=Boolean(activeCanvas?.preset==='custom'&&!retainedWorkspace&&!pinnedThreadId&&!navigationOnly),canvasActive=Boolean(activeCanvas&&!customDock&&(activeCanvas.preset!=='workspace'||retainedWorkspace)&&!pinnedThreadId&&!navigationOnly),canvasPanels=useMemo(()=>activeCanvas?(activeCanvas.preset==='all-agents'?liveThreadPanels(snapshot.threads,activeCanvas):activeCanvas.panels):[],[activeCanvas,snapshot.threads]);
