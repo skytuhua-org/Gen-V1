@@ -186,7 +186,16 @@ export class ProjectTools{
    // Ignored untracked files are absent from status files but a fast-forward still overwrites them.
    for(const ignored of (await git(['ls-files','-z','--others','--ignored','--exclude-standard','--',...changed]).catch(()=>'')).split('\0').filter(Boolean))dirty.add(fold(ignored));
    // Prefix match in both directions: upstream file vs local directory (and the reverse) still collides.
-   if([...remoteChanged].some(remotePath=>[...dirty].some(dirtyPath=>dirtyPath===remotePath||dirtyPath.startsWith(remotePath+'/')||remotePath.startsWith(dirtyPath+'/'))))blockers.push('DIRTY_OVERLAP');
+   // Sorted prefix lookup keeps the overlap scan O((m+n) log n) instead of O(m*n), which would block the server event loop on large upstream diffs.
+   const dirtySorted=[...dirty].sort(),overlaps=(remotePath:string)=>{
+    if(dirty.has(remotePath))return true;
+    // Upstream path below a dirty file: any proper ancestor of remotePath that is itself dirty blocks the fast-forward.
+    for(let i=remotePath.indexOf('/');i>0;i=remotePath.indexOf('/',i+1))if(dirty.has(remotePath.slice(0,i)))return true;
+    // Dirty path below the upstream path: binary-search the first dirty entry after remotePath.
+    let lo=0,hi=dirtySorted.length;while(lo<hi){const mid=(lo+hi)>>1;if(dirtySorted[mid]<=remotePath)lo=mid+1;else hi=mid;}
+    const next=dirtySorted[lo];return next!==undefined&&next.startsWith(remotePath+'/');
+   };
+   if([...remoteChanged].some(overlaps))blockers.push('DIRTY_OVERLAP');
   }
   return{branch:current.branch||null,head:current.head,revision:current.revision,remote,upstream,ahead,behind,state,lastFetchedAt:this.lastFetched.get(bound.workspace?.id??projectId)??null,blockers};
  }
