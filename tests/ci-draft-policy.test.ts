@@ -10,7 +10,7 @@ const jobs=starts.map((match,index)=>{
   const shards=/^        shard:\s*(\[[^\]\n]+\])/m.exec(block)?.[1];
   return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',shards:shards?JSON.parse(shards) as number[]:null};
 });
-const requiredJobs=['checks','test/1','test/2','test/3','test/4','browser','installed-memory'];
+const reviewableJobs=['linux-path-guard-cleanup','checks','test/1','test/2','test/3','test/4','browser','installed-memory'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
 type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string};
 function context(event:CiEvent){return {workflow:'CI',ref:event.ref??'refs/pull/42/merge',event_name:event.name,event:event.name==='pull_request'?{action:event.action,pull_request:{number:42,draft:event.draft}}:{}};}
@@ -33,17 +33,17 @@ function scheduledJobs(event:CiEvent):string[]|null {
 it.each(['opened','synchronize','reopened'])('keeps draft %s events out of every runner job',action=>{
   expect(scheduledJobs({name:'pull_request',action,draft:true})).toEqual([]);
 });
-it.each(['opened','synchronize','reopened'])('runs every required job for reviewable %s events',action=>{
-  expect(scheduledJobs({name:'pull_request',action,draft:false})).toEqual(requiredJobs);
+it.each(['opened','synchronize','reopened'])('runs every CI job for reviewable %s events',action=>{
+  expect(scheduledJobs({name:'pull_request',action,draft:false})).toEqual(reviewableJobs);
 });
-it('starts all seven jobs when a draft becomes ready without another commit',()=>{
+it('starts all CI jobs when a draft becomes ready without another commit',()=>{
   expect(scheduledJobs({name:'pull_request',action:'opened',draft:true})).toEqual([]);
-  expect(scheduledJobs({name:'pull_request',action:'ready_for_review',draft:false})).toEqual(requiredJobs);
+  expect(scheduledJobs({name:'pull_request',action:'ready_for_review',draft:false})).toEqual(reviewableJobs);
 });
 it('cancels the same PR run when reviewable work becomes draft and admits no replacement jobs',()=>{
   const ready:CiEvent={name:'pull_request',action:'ready_for_review',draft:false};
   const draft:CiEvent={...ready,action:'converted_to_draft',draft:true};
-  expect(scheduledJobs(ready)).toEqual(requiredJobs);
+  expect(scheduledJobs(ready)).toEqual(reviewableJobs);
   expect(scheduledJobs(draft)).toEqual([]);
   const concurrency=/^concurrency:\n((?: {2}.*\n)+)/m.exec(workflow)?.[1]??'';
   const group=/^  group:\s*(.+)$/m.exec(concurrency)?.[1];
@@ -55,13 +55,13 @@ it('cancels the same PR run when reviewable work becomes draft and admits no rep
   expect(evaluate(cancel!,draft)).toBe(true);
 });
 it.each(['main','agent/m05-v3'])('preserves every job for pushes to %s without a pull request payload',branch=>{
-  expect(scheduledJobs({name:'push',ref:'refs/heads/'+branch})).toEqual(requiredJobs);
+  expect(scheduledJobs({name:'push',ref:'refs/heads/'+branch})).toEqual(reviewableJobs);
 });
 it('preserves every job for a manual dispatch without a pull request payload',()=>{
-  expect(scheduledJobs({name:'workflow_dispatch',ref:'refs/heads/main'})).toEqual(requiredJobs);
+  expect(scheduledJobs({name:'workflow_dispatch',ref:'refs/heads/main'})).toEqual(reviewableJobs);
 });
 it('runs every job for a merge queue entry before it reaches main',()=>{
-  expect(scheduledJobs({name:'merge_group',ref:'refs/heads/gh-readonly-queue/main/pr-42-'+'a'.repeat(40)})).toEqual(requiredJobs);
+  expect(scheduledJobs({name:'merge_group',ref:'refs/heads/gh-readonly-queue/main/pr-42-'+'a'.repeat(40)})).toEqual(reviewableJobs);
 });
 it('reports every failing check in the folded job instead of stopping at the first',()=>{
   const checks=jobSource.split(/^  checks:\n/m)[1]?.split(/^  test:\n/m)[0]??'';
