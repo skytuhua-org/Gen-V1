@@ -24,6 +24,10 @@
 .settings-row-control .ui-select { width:200px;max-width:100%; }
 .settings-row-control .ui-select-trigger { width:100%;font-size:13px; }
 .settings-row-control input { width:180px;max-width:100%;font-size:14px;padding:9px; }
+.settings-row-control input.invalid, .settings-inline-controls input.invalid { border-color:var(--danger);box-shadow:0 0 0 1px var(--danger); }
+.settings-field-error { margin:4px 0 0;min-height:18px;font-size:12px;line-height:1.4;color:var(--danger); }
+.settings-field-error:empty { visibility:hidden; }
+
 .settings-row-control a { display:inline-flex;align-items:center;gap:4px;font-size:12px; }
 .settings-result-section { font-size:12px; }.settings-value { font-size:13px;color:var(--text);background:var(--hover);padding:4px 8px;border-radius:6px; }
 .settings-result-section { display:block;margin-top:4px; }
