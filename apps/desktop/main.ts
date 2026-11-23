@@ -1,7 +1,7 @@
 import {app,BrowserWindow,WebContentsView,ipcMain,session,screen,dialog,Menu,Tray,nativeImage,powerMonitor,shell,type IpcMainInvokeEvent,type Session} from 'electron';
 import {spawn,type ChildProcess} from 'node:child_process';
 import {randomBytes,randomUUID} from 'node:crypto';
-import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {readFile,writeFile,mkdir,rename} from 'node:fs/promises';
 import {mkdirSync,existsSync,writeSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {GITHUB_DEVICE_URL,githubDevicePopup} from './github-device-policy.ts';
@@ -70,7 +70,7 @@ function workAreas(){return screen.getAllDisplays().map(display=>display.workAre
 function displays():DesktopDisplay[]{const primary=screen.getPrimaryDisplay(),all=screen.getAllDisplays();return (all.length?all:[primary]).map(display=>({id:String(display.id),workArea:display.workArea,label:display.label,scaleFactor:display.scaleFactor,primary:display.id===primary.id}));}
 function info(record:WindowRecord):DesktopWindowInfo{return {id:record.id,surface:record.surface,ready:record.ready,minimized:record.window.isMinimized(),visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),bounds:record.window.getNormalBounds(),displayId:record.placement?.displayId};}
 function captureLayout():DesktopLayout{return {version:1,windows:[...windows.values()].filter(record=>!record.window.isDestroyed()).map(record=>({surface:record.surface,bounds:record.normalBounds.read(),visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),...(record.dockedBrowser?{dockedBrowserId:record.dockedBrowser.id}:{}),...(record.placement?{displayId:record.placement.displayId,placement:record.placement}:{})}))};}
-function snapshot(record:WindowRecord):DesktopState{return {windows:[...windows.values()].map(info),...(record.browser?{browser:record.browser.state}:{}),...(record.dockedBrowser?{dockedBrowser:{browserId:record.dockedBrowser.id,state:record.dockedBrowser.state}}:{}),browserBookmarks:{revision:bookmarkRevision,items:bookmarks,limit:BOOKMARK_LIMIT,...(bookmarkNotice?{notice:bookmarkNotice}:{})},...(backendError?{backendError}:{}),...(layoutError?{layoutError}:{}),update:updateStatus,nativeTitleBar:process.platform==='win32'};}
+function snapshot(record:WindowRecord):DesktopState{return {windows:[...windows.values()].map(info),...(record.browser?{browser:record.browser.state}:{}),...(record.dockedBrowser?{dockedBrowser:{browserId:record.dockedBrowser.id,state:record.dockedBrowser.state}}:{}),...(record.surface.kind==='main'||record.surface.kind==='browser'?{browserBookmarks:{revision:bookmarkRevision,items:bookmarks,limit:BOOKMARK_LIMIT,...(bookmarkNotice?{notice:bookmarkNotice}:{})}}:{}),...(backendError?{backendError}:{}),...(layoutError?{layoutError}:{}),update:updateStatus,nativeTitleBar:process.platform==='win32'};}
 function broadcast(focusSurface?:DesktopSurface){
  for(const record of windows.values()){
   if(record.window.isDestroyed())continue;
@@ -103,7 +103,19 @@ function remember(record:WindowRecord,open=true){if(record.window.isDestroyed())
  if(record.placement&&all.some(display=>display.id===record.placement!.displayId))record.monitorRescued=false;
  const value={surface:record.surface,bounds,placement:record.placement,open,visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),...(record.dockedBrowser?{dockedBrowserId:record.dockedBrowser.id}:{})};saved=[...saved.filter(entry=>desktopSurfaceKey(entry.surface)!==key),value];if(saved.length>24){const live=new Set([...windows.values()].map(item=>desktopSurfaceKey(item.surface)));saved=[...saved.filter(entry=>live.has(desktopSurfaceKey(entry.surface))),...saved.filter(entry=>!live.has(desktopSurfaceKey(entry.surface)))].slice(0,24);}persist();}
 function writeBookmarks(){const body=serializeBookmarkStore(bookmarks);void persistence.enqueue(async()=>{await mkdir(dirname(bookmarkFile),{recursive:true});await writeFile(bookmarkFile,body,{encoding:'utf8',mode:0o600});}).catch(()=>{bookmarkNotice='Bookmarks could not be saved to this device.';broadcast();});}
-async function loadBookmarks(){try{const text=await readFile(bookmarkFile,'utf8');if(text.length>512*1024){bookmarkNotice='The saved bookmark file is too large and was reset.';return;}const parsed=parseBookmarkStore(text);if('invalid' in parsed)bookmarkNotice='Saved bookmarks could not be read and were reset.';else{bookmarks=parsed.items;if(parsed.dropped)bookmarkNotice=(parsed.dropped===1?'1 saved bookmark':String(parsed.dropped)+' saved bookmarks')+' could not be read and were removed.';}}catch{}}
+async function loadBookmarks(){
+ if(!existsSync(bookmarkFile))return;
+ try{
+  const text=await readFile(bookmarkFile,'utf8');if(text.length>256*1024)throw Error('oversize');
+  const parsed=parseBookmarkStore(text);
+  if('invalid' in parsed)throw Error('invalid');
+  bookmarks=parsed.items;
+  if(parsed.dropped)bookmarkNotice=(parsed.dropped===1?'1 saved bookmark':String(parsed.dropped)+' saved bookmarks')+' could not be read and were removed.';
+ }catch{
+  try{await rename(bookmarkFile,bookmarkFile.replace(/\.json$/,'.invalid-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json'));}catch{}
+  bookmarkNotice='Saved bookmarks could not be read. The old file was kept as a backup.';
+ }
+}
 async function loadSaved(){try{const bytes=await readFile(stateFile,'utf8');if(bytes.length>128*1024)return;const raw=JSON.parse(bytes);if(raw.version!==1||!Array.isArray(raw.windows)||raw.windows.length>24)return;for(const entry of raw.windows){try{const surface=parseDesktopSurface(entry.surface);if(!desktopSurfaceAllowed(surface))continue;if(entry.bounds&&typeof entry.bounds==='object')saved.push({surface,bounds:clampDesktopBounds(entry.bounds,workAreas(),surfaceSize(surface)),placement:parseDesktopPlacement(entry.placement),open:entry.open===true,visible:entry.visible!==false,alwaysOnTop:entry.alwaysOnTop===true,...(surface.kind==='main'&&desktopId(entry.dockedBrowserId)?{dockedBrowserId:entry.dockedBrowserId}:{})});}catch{}}}catch{}}
 function applyPlacement(record:WindowRecord,bounds:DesktopBounds,preferred=record.placement){if(record.window.isDestroyed())return;record.placement=preferred;record.appliedBounds=bounds;record.normalBounds.apply(bounds);record.window.setBounds(bounds);remember(record);}
 function resetWindowPosition(record:WindowRecord){const all=displays(),current=captureDesktopPlacement(record.window.getBounds(),all),target=all.find(display=>display.id===current.displayId)!;const bounds=placeOnDesktopDisplay(surfaceSize(record.surface),target);applyPlacement(record,bounds,captureDesktopPlacement(bounds,all));}
@@ -300,7 +312,7 @@ function registerIpc(){
   if(command.type==='bookmark-update'||command.type==='bookmark-remove'||command.type==='bookmark-restore'){
    const change={now:new Date().toISOString()} as {title?:string;url?:string;now:string};
    if(command.type==='bookmark-update'&&command.title!==undefined)change.title=command.title;
-   if(command.type==='bookmark-update'&&command.keepQuery===false){const current=bookmarks.find(item=>item.id===command.id);if(current)change.url=normalizeBookmarkUrl(current.url,false)??current.url;}
+   if(command.type==='bookmark-update'&&command.keepQuery!==undefined){const current=bookmarks.find(item=>item.id===command.id);if(current){const browser=record.browser??record.dockedBrowser,base=browser&&!browser.view.webContents.isDestroyed()?browser.view.webContents.getURL()||current.url:current.url,next=normalizeBookmarkUrl(base,command.keepQuery);if(next&&next!==current.url)change.url=next;}}
    const next=command.type==='bookmark-update'?updateBookmark(bookmarks,command.id,change):command.type==='bookmark-remove'?removeBookmark(bookmarks,command.id):restoreBookmark(bookmarks,command.bookmark);
    if(typeof next==='string')throw Error(next==='limit'?'The bookmark limit is reached. Remove a saved page first.':next==='duplicate'?'Another bookmark already opens this page.':next==='missing'?'The bookmark is no longer saved.':'This bookmark cannot be stored.');
    bookmarks=next;bookmarkRevision++;writeBookmarks();broadcast();return;
