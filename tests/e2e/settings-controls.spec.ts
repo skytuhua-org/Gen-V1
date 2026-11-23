@@ -449,3 +449,65 @@ test.describe('touch Settings targets',()=>{
     await expect(host.dialog.getByText('No variables configured.',{exact:true})).toBeVisible();
   });
 });
+
+test('Granted resources dedupes grants; Revoke removes optimistically, announces, restores on failure', async ({ page }) => {
+  const host = await openSettings(page);
+  const now = '2026-11-01T00:00:00.000Z';
+  host.snapshot.threads.push({ id: 'thread-b', title: 'Sign the service agreement', projectName: 'Fixture project', status: 'ready', epoch: 0, runId: null, modelId: 'test/model', sessionPath: 'fixture', createdAt: now, updatedAt: now } as never);
+  host.snapshot.resources = [
+    { id: 'g1', threadId: 'task-thread', kind: 'file', path: 'C:/docs/agreement.pdf', label: 'agreement.pdf', writable: false, createdAt: now },
+    { id: 'g2', threadId: 'thread-b', kind: 'file', path: 'C:/docs/agreement.pdf', label: 'agreement.pdf', writable: false, createdAt: now },
+    { id: 'g3', threadId: 'thread-b', kind: 'file', path: 'C:/docs/budget.xlsx', label: 'budget.xlsx', writable: true, createdAt: now },
+  ];
+  let failNextRevoke = true;
+  await page.route('**/api/commands', async route => {
+    const command = route.request().postDataJSON() as HostCommand;
+    if (command.type !== 'resource.revoke') return route.fallback();
+    host.commands.push(command);
+    if (failNextRevoke) { failNextRevoke = false; return route.fulfill({ status: 500, json: { error: 'fixture failure' } }); }
+    const payload = command.payload as { grantId?: string };
+    host.snapshot.resources = host.snapshot.resources.filter(grant => grant.id !== payload.grantId);
+    host.snapshot.seq++;
+    return route.fulfill({ json: { commandId: command.id, seq: host.snapshot.seq, result: {} } });
+  });
+  await host.publish();
+  await host.nav.getByRole('button', { name: 'Projects & Working Copies', exact: true }).click();
+  const dialog = host.dialog;
+  await expect(dialog.locator('.settings-grant-row')).toHaveCount(2);
+  const agreement = dialog.locator('.settings-grant-row', { hasText: 'agreement.pdf' });
+  const budget = dialog.locator('.settings-grant-row', { hasText: 'budget.xlsx' });
+  await expect(agreement).toContainText('Granted to 2 threads');
+  await expect(budget).toContainText('Granted to Sign the service agreement');
+  await budget.getByRole('button', { name: 'Revoke budget.xlsx' }).click();
+  await expect(budget).toContainText('Could not revoke — try again.');
+  await expect(budget).not.toHaveAttribute('data-removing', 'true');
+  await agreement.getByRole('button', { name: 'Revoke agreement.pdf' }).click();
+  await expect(agreement).toHaveAttribute('data-removing', 'true');
+  await expect(dialog.locator('.settings-grant-row:not([data-removing])')).toHaveCount(1);
+  await budget.getByRole('button', { name: 'Revoke budget.xlsx' }).click();
+  await expect(dialog.getByText('No granted resources.', { exact: true })).toBeVisible();
+});
+
+test.describe('grants under reduced motion', () => {
+  test.use({ reducedMotion: 'reduce' });
+  test('Revoke removes the row instantly', async ({ page }) => {
+    const host = await openSettings(page);
+    const now = '2026-11-01T00:00:00.000Z';
+    host.snapshot.resources = [{ id: 'g1', threadId: 'task-thread', kind: 'file', path: 'C:/docs/agreement.pdf', label: 'agreement.pdf', writable: false, createdAt: now }];
+    await page.route('**/api/commands', async route => {
+      const command = route.request().postDataJSON() as HostCommand;
+      if (command.type !== 'resource.revoke') return route.fallback();
+      host.snapshot.resources = [];
+      host.snapshot.seq++;
+      return route.fulfill({ json: { commandId: command.id, seq: host.snapshot.seq, result: {} } });
+    });
+    await host.publish();
+    await host.nav.getByRole('button', { name: 'Projects & Working Copies', exact: true }).click();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const row = host.dialog.locator('.settings-grant-row');
+    await expect(row).toHaveCount(1);
+    await expect(row).not.toHaveCSS('transition-duration', '0.16s, 0.16s');
+    await row.getByRole('button', { name: 'Revoke agreement.pdf' }).click();
+    await expect(host.dialog.getByText('No granted resources.', { exact: true })).toBeVisible();
+  });
+});
