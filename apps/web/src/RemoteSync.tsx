@@ -98,10 +98,10 @@ export function RemoteSync({base,query,active,tick=0,onChanged,timeFormat='syste
    {chipContent(sync)}
    {!sync.lastFetchedAt&&<span className="remote-sync-dot" aria-hidden="true"/>}
   </span>
-  {sync.remote&&<button type="button" className="remote-sync-btn" disabled={busy!==null} aria-busy={busy==='fetch'} onClick={()=>void action('fetch')}>
+  {sync.remote&&<button type="button" className="remote-sync-btn" disabled={busy!==null} aria-busy={busy==='fetch'} aria-label={busy==='fetch'?'Fetching':'Fetch'} onClick={()=>void action('fetch')}>
    <RefreshCw size={14} aria-hidden="true" className={busy==='fetch'?'remote-sync-spin':undefined}/><span className="remote-sync-label">{busy==='fetch'?'Fetching…':'Fetch'}</span>
   </button>}
-  {sync.remote&&<button type="button" className="remote-sync-btn" disabled={busy!==null||!pullable} aria-busy={busy==='pull'} title={pullable?undefined:pullReason} aria-describedby={pullable?undefined:'remote-sync-pull-reason'} onClick={()=>void action('pull')}>
+  {sync.remote&&<button type="button" className="remote-sync-btn" disabled={busy!==null||!pullable} aria-busy={busy==='pull'} aria-label={busy==='pull'?'Pulling':'Pull'} title={pullable?undefined:pullReason} aria-describedby={pullable?undefined:'remote-sync-pull-reason'} onClick={()=>void action('pull')}>
    <ArrowDownToLine size={14} aria-hidden="true" className={busy==='pull'?'remote-sync-nudge':undefined}/><span className="remote-sync-label">{busy==='pull'?'Pulling…':sync.state==='behind'&&sync.behind?`Pull ${sync.behind}`:'Pull'}</span>
    {!pullable&&<span id="remote-sync-pull-reason" className="sr-only">{pullReason}</span>}
   </button>}

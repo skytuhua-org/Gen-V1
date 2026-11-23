@@ -131,6 +131,8 @@
     "apps/web/src/ProjectMemoryReview.tsx",
     "apps/web/src/ProjectPicker.tsx",
     "apps/web/src/RelationshipGraph.tsx",
+    "apps/web/src/RemoteSync.tsx",
+    "apps/web/src/remote-sync.css",
     "apps/web/src/SavedDrafts.tsx",
     "apps/web/src/SavedLayoutChooser.tsx",
     "apps/web/src/ScopedConversationComposer.tsx",
