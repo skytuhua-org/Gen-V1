@@ -283,7 +283,9 @@ export class WorkspaceActionOutcomes {
       return this.current(fence) ? result : { state: 'revoked' };
     } catch (error) {
       if (started) {
-        if (!(error instanceof HarnessError) || !preWriteRefusals.has(error.code)) return { state: 'uncertain' };
+        // Only the stash tools guarantee these codes mean nothing was written;
+        // create-pr can raise REVISION_CHANGED after its push already landed.
+        if (!(error instanceof HarnessError) || !command.type.startsWith('project.stash-') || !preWriteRefusals.has(error.code)) return { state: 'uncertain' };
         // The write tool refused before mutating; fold the started intent back
         // to not-applied with the refusal's own code for the route to relay.
         try {
