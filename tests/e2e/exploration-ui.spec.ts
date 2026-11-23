@@ -27,7 +27,7 @@ test('image feedback supports immediate pins, keyboard movement and durable edit
  const pin=page.getByRole('button',{name:'Pin 1',exact:true});await expect(pin).toBeFocused();await pin.press('ArrowRight');await pin.press('Shift+ArrowDown');await page.getByRole('textbox',{name:'Pin feedback',exact:true}).fill('Make the selected action clearer.');
  await expect.poll(()=>{const view=host.snapshot.userStates[0].values.view as AnnotatorView | undefined;return view?.annotations[0]?.text;}).toBe('Make the selected action clearer.');
  const saved=(host.snapshot.userStates[0].values.view as AnnotatorView).annotations[0];expect(saved.x).toBeCloseTo(.51);expect(saved.y).toBeCloseTo(.55);
- await page.reload();await expect(page.getByRole('textbox',{name:'Pin feedback',exact:true})).toHaveValue('Make the selected action clearer.');await page.getByRole('button',{name:'Send feedback',exact:true}).click();
+ await page.reload();await expect(page.getByRole('textbox',{name:'Pin feedback',exact:true})).toHaveValue('Make the selected action clearer.');await page.getByRole('button',{name:/Send feedback/,exact:true}).click();
  await expect.poll(()=>host.commands.filter(command=>command.type==='action.submit').length).toBe(1);const payload=host.commands.find(command=>command.type==='action.submit')!.payload.payload as { resourceId?: string; annotations: { text?: string }[] };expect(payload.resourceId).toBe('image-one');expect(payload.annotations[0].text).toBe('Make the selected action clearer.');expect(host.commands.some(command=>command.type.startsWith('operation.'))).toBe(false);
  await page.getByRole('button',{name:'Delete selected pin',exact:true}).click();await expect(pin).toHaveCount(0);
 });
@@ -47,13 +47,13 @@ test('image source revocation clears its pixels and replacement cannot inherit o
  snapshot.resources=[{id:'image-two',threadId:'task-thread',kind:'attachment',path:'C:/fixture/other.svg',label:'Other screen',writable:false,createdAt:'2026-11-03T15:00:00Z'}];snapshot.artifacts[0].spec!.elements.view.props.resourceId='image-two';snapshot.artifacts[0].revision++;await page.route('**/api/resources/image-two/content',route=>route.fulfill({contentType:'image/svg+xml',body:image}));await host.publish();await expect(page.getByRole('button',{name:'Add pin',exact:true})).toBeEnabled();await expect(page.getByRole('button',{name:'Pin 1',exact:true})).toHaveCount(0);
 });
 test('schedule selection uses supplied timezone and retains exact windows across reload without booking',async({page})=>{
- const {host}=await explorationFixture(page,'SchedulePicker',suppliedSlots);await page.goto('/');await expect(page.getByRole('button',{name:'Propose this time',exact:true})).toBeDisabled();await expect(page.getByRole('option',{name:'Already occupied',exact:true})).toBeDisabled();
- await page.getByRole('option',{name:'Design review',exact:true}).click();await expect(page.getByRole('option',{name:'Design review',exact:true})).toContainText('10:00');await page.reload();await expect(page.getByRole('option',{name:'Design review',exact:true})).toHaveAttribute('aria-selected','true');await page.getByRole('button',{name:'Propose this time',exact:true}).click();
+ const {host}=await explorationFixture(page,'SchedulePicker',suppliedSlots);await page.goto('/');await expect(page.getByRole('button',{name:'Send this time',exact:true})).toBeDisabled();await expect(page.getByRole('option',{name:'Already occupied',exact:true})).toBeDisabled();
+ await page.getByRole('option',{name:'Design review',exact:true}).click();await expect(page.getByRole('option',{name:'Design review',exact:true})).toContainText('10:00');await page.reload();await expect(page.getByRole('option',{name:'Design review',exact:true})).toHaveAttribute('aria-selected','true');await page.getByRole('button',{name:'Send this time',exact:true}).click();
  await expect.poll(()=>host.commands.filter(command=>command.type==='action.submit').length).toBe(1);expect(host.commands.find(command=>command.type==='action.submit')!.payload.payload).toEqual({slotId:'a',start:'2026-11-03T10:00:00-05:00',end:'2026-11-03T10:30:00-05:00',timeZone:'America/New_York'});
 });
 test('a selected schedule slot becoming unavailable or disappearing cannot be submitted',async({page})=>{
- const {host}=await explorationFixture(page,'SchedulePicker',suppliedSlots);await page.goto('/');await page.getByRole('option',{name:'Design review',exact:true}).click();host.setInput('data',{...suppliedSlots,slots:suppliedSlots.slots.map(slot=>({...slot,availability:'unavailable'}))});await host.publish();await expect(page.getByRole('button',{name:'Propose this time',exact:true})).toBeDisabled();await expect(page.locator('.schedule-change-notice')).toContainText('no longer available');
- host.setInput('data',{...suppliedSlots,slots:[]});await host.publish();await expect(page.getByRole('button',{name:'Propose this time',exact:true})).toBeDisabled();expect(host.commands.filter(command=>command.type==='action.submit')).toHaveLength(0);
+ const {host}=await explorationFixture(page,'SchedulePicker',suppliedSlots);await page.goto('/');await page.getByRole('option',{name:'Design review',exact:true}).click();host.setInput('data',{...suppliedSlots,slots:suppliedSlots.slots.map(slot=>({...slot,availability:'unavailable'}))});await host.publish();await expect(page.getByRole('button',{name:'Send this time',exact:true})).toBeDisabled();await expect(page.locator('.schedule-change-notice')).toContainText('no longer available');
+ host.setInput('data',{...suppliedSlots,slots:[]});await host.publish();await expect(page.getByRole('button',{name:'Send this time',exact:true})).toBeDisabled();expect(host.commands.filter(command=>command.type==='action.submit')).toHaveLength(0);
 });
 test('log filters, exact event details and selection survive source appends and reload',async({page})=>{
  const {host}=await explorationFixture(page,'LogExplorer',suppliedLogs);await page.goto('/');await page.getByRole('option',{name:'error: The payment worker exited',exact:true}).click();await expect(page.locator('.log-selection')).toContainText('Unavailable');await page.getByText('Event details',{exact:true}).click();await expect(page.locator('.log-selection pre')).toContainText('checkout.mjs:42');
@@ -64,10 +64,10 @@ test('explicitly expanded logs follow locally until manual scrolling and retain 
  const events=Array.from({length:70},(_,index)=>({id:'event_'+index,level:'info',message:'Observed local event '+index,timestamp:'2026-11-03T15:00:00Z'}));const fixture=await explorationFixture(page,'LogExplorer',{events});fixture.snapshot.artifacts[0].placement='expanded';await page.goto('/');await page.getByRole('button',{name:'Follow latest',exact:true}).click();const list=page.getByRole('listbox',{name:'Log events',exact:true});await expect.poll(()=>list.evaluate(node=>node.scrollTop>100)).toBe(true);await list.hover();await page.mouse.wheel(0,-200);await expect(page.getByRole('button',{name:'Follow latest',exact:true})).toHaveAttribute('aria-pressed','false');const first=page.getByRole('option',{name:'info: Observed local event 0',exact:true});await first.focus();await first.press('ArrowDown');await expect(page.getByRole('option',{name:'info: Observed local event 1',exact:true})).toBeFocused();
 });
 test('pending actions suppress duplicate submissions while local edits remain usable',async({page})=>{
- let release!:()=>void;const pending=new Promise<void>(accept=>{release=accept;});const {host}=await explorationFixture(page,'SchedulePicker',suppliedSlots,{},async()=>{await pending;return {};});try{await page.goto('/');await page.getByRole('option',{name:'Design review',exact:true}).click();await page.getByRole('button',{name:'Propose this time',exact:true}).click();await expect(page.getByRole('button',{name:'Sending…',exact:true})).toBeDisabled();await page.getByRole('option',{name:'Alternate review',exact:true}).click();expect(host.commands.filter(command=>command.type==='action.submit')).toHaveLength(1);}finally{release();}
+ let release!:()=>void;const pending=new Promise<void>(accept=>{release=accept;});const {host}=await explorationFixture(page,'SchedulePicker',suppliedSlots,{},async()=>{await pending;return {};});try{await page.goto('/');await page.getByRole('option',{name:'Design review',exact:true}).click();await page.getByRole('button',{name:'Send this time',exact:true}).click();await expect(page.getByRole('button',{name:'Sending…',exact:true})).toBeDisabled();await page.getByRole('option',{name:'Alternate review',exact:true}).click();expect(host.commands.filter(command=>command.type==='action.submit')).toHaveLength(1);}finally{release();}
 });
 test('narrow reduced-motion interfaces keep controls in reach and do not overflow the page',async({page})=>{
- await page.setViewportSize({width:390,height:844});await page.emulateMedia({reducedMotion:'reduce'});await explorationFixture(page,'SchedulePicker',suppliedSlots);await page.goto('/');await page.getByRole('option',{name:'Design review',exact:true}).click();await expect(page.getByRole('button',{name:'Propose this time',exact:true})).toBeEnabled();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await expect(page.getByRole('option',{name:'Design review',exact:true})).toHaveAttribute('aria-selected','true');
+ await page.setViewportSize({width:390,height:844});await page.emulateMedia({reducedMotion:'reduce'});await explorationFixture(page,'SchedulePicker',suppliedSlots);await page.goto('/');await page.getByRole('option',{name:'Design review',exact:true}).click();await expect(page.getByRole('button',{name:'Send this time',exact:true})).toBeEnabled();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await expect(page.getByRole('option',{name:'Design review',exact:true})).toHaveAttribute('aria-selected','true');
 });
 test('image pointer coordinates describe the rendered image and feedback stays attached through resize',async({page})=>{
  const {host}=await explorationFixture(page,'ImageAnnotator');await page.goto('/');await expect(page.getByRole('button',{name:'Add pin',exact:true})).toBeEnabled();const stage=page.locator('.annotation-image'),source=page.getByRole('img',{name:'Supplied screen for review',exact:true}),bounds=await stage.boundingBox(),imageBounds=await source.boundingBox();expect(bounds).not.toBeNull();expect(imageBounds).not.toBeNull();expect(Math.abs(bounds!.width-imageBounds!.width)).toBeLessThan(1);expect(Math.abs(bounds!.height-imageBounds!.height)).toBeLessThan(1);await source.click({position:{x:imageBounds!.width*.25,y:imageBounds!.height*.4}});await page.getByRole('textbox',{name:'Pin feedback',exact:true}).fill('Align this heading with the content.');await expect.poll(()=>{const view=host.snapshot.userStates[0].values.view as AnnotatorView | undefined;return view?.annotations[0]?.text;}).toBe('Align this heading with the content.');const saved=(host.snapshot.userStates[0].values.view as AnnotatorView).annotations[0];expect(saved.x).toBeCloseTo(.25,1);expect(saved.y).toBeCloseTo(.4,1);await page.setViewportSize({width:390,height:844});await expect(page.getByRole('button',{name:'Pin 1',exact:true})).toBeVisible();await expect(page.getByRole('textbox',{name:'Pin feedback',exact:true})).toHaveValue('Align this heading with the content.');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
@@ -81,13 +81,47 @@ test('renewed image identities cannot reuse old pins and retain feedback for the
  await page.goto('/');await page.getByRole('button',{name:'Add pin',exact:true}).click();await page.getByRole('textbox',{name:'Pin feedback',exact:true}).fill('Move the original heading.');
  await expect.poll(()=>(host.snapshot.userStates[0].values.view as AnnotatorView | undefined)?.annotations[0]?.text).toBe('Move the original heading.');
  snapshot.resources[0]={...original,path:'C:/fixture/replacement.svg',identity:{dev:'one',ino:'second'}};await host.publish();
- await expect(page.getByRole('button',{name:'Add pin',exact:true})).toBeEnabled();await expect(page.getByRole('button',{name:'Pin 1',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'Send feedback',exact:true})).toBeDisabled();
+ await expect(page.getByRole('button',{name:'Add pin',exact:true})).toBeEnabled();await expect(page.getByRole('button',{name:'Pin 1',exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:/Send feedback/,exact:true})).toBeDisabled();
  await page.getByRole('button',{name:'Add pin',exact:true}).click();await page.getByRole('textbox',{name:'Pin feedback',exact:true}).fill('Feedback for the replacement.');
  await expect.poll(()=>(host.snapshot.userStates[0].values.view as AnnotatorView | undefined)?.previous?.annotations[0]?.text).toBe('Move the original heading.');
  snapshot.resources[0]=original;await host.publish();await expect(page.getByRole('textbox',{name:'Pin feedback',exact:true})).toHaveValue('Move the original heading.');
- await page.getByRole('button',{name:'Send feedback',exact:true}).click();await expect.poll(()=>host.commands.filter(command=>command.type==='action.submit').length).toBe(1);
+ await page.getByRole('button',{name:/Send feedback/,exact:true}).click();await expect.poll(()=>host.commands.filter(command=>command.type==='action.submit').length).toBe(1);
  expect((host.commands.find(command=>command.type==='action.submit')!.payload.payload as { resourceId?: string; annotations: { text?: string }[] }).annotations[0].text).toBe('Move the original heading.');
 });
 test('invalid replacement data reports unavailable instead of inventing slots or crashing',async({page})=>{
- const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));const {host}=await explorationFixture(page,'SchedulePicker',suppliedSlots);await page.goto('/');await page.getByRole('option',{name:'Design review',exact:true}).click();host.setInput('data',{...suppliedSlots,timeZone:'Invented/Nowhere'});await host.publish();await expect(page.getByText('Time slots are unavailable from the connected source.',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Propose this time',exact:true})).toHaveCount(0);expect(errors).toEqual([]);
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));const {host}=await explorationFixture(page,'SchedulePicker',suppliedSlots);await page.goto('/');await page.getByRole('option',{name:'Design review',exact:true}).click();host.setInput('data',{...suppliedSlots,timeZone:'Invented/Nowhere'});await host.publish();await expect(page.getByText('Time slots are unavailable from the connected source.',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Send this time',exact:true})).toHaveCount(0);expect(errors).toEqual([]);
+});
+test('pin faces claim once, pointer accents and delete restores an honest focus target',async({page})=>{
+ await explorationFixture(page,'ImageAnnotator');await page.goto('/');
+ const stage=page.locator('.annotation-image');
+ await stage.click({position:{x:80,y:80}});
+ const one=page.getByRole('button',{name:'Pin 1',exact:true});
+ expect(await one.locator('.annotation-pin-face').evaluate(el=>el.getAnimations().length)).toBeGreaterThan(0);
+ await stage.click({position:{x:160,y:160}});
+ await page.getByRole('button',{name:'Delete selected pin',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Pin 2',exact:true})).toHaveCount(0);await expect(one).toBeFocused();
+ await one.click();await page.getByRole('button',{name:'Delete selected pin',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Add pin',exact:true})).toBeFocused();
+});
+test('schedule intervals keep measured geometry and pointer choice accents once',async({page})=>{
+ await explorationFixture(page,'SchedulePicker',suppliedSlots);await page.goto('/');
+ expect(await page.locator('.schedule-interval-ruler').first().evaluate(el=>el.getBoundingClientRect().height)).toBe(16);
+ expect((await page.locator('.schedule-interval-band').first().boundingBox())!.height).toBe(16);
+ const option=page.getByRole('option',{name:'Design review',exact:true});await option.click();
+ expect(await option.evaluate(el=>el.getAnimations().length)).toBeGreaterThan(0);
+ await expect(option.locator('.schedule-choice svg')).toBeVisible();
+ await option.press('ArrowDown');const alternate=page.getByRole('option',{name:'Alternate review',exact:true});
+ await expect(alternate).toHaveAttribute('aria-selected','true');await expect(alternate).toBeFocused();
+ expect(await alternate.evaluate(el=>el.getAnimations().filter(animation=>!(animation instanceof CSSTransition)).length)).toBe(0);
+ expect(await alternate.locator('.schedule-choice').evaluate(el=>el.getAnimations({subtree:true}).length)).toBe(0);
+});
+test('correlation control filters the list and filtered-out selections report status',async({page})=>{
+ await explorationFixture(page,'LogExplorer',suppliedLogs);await page.goto('/');
+ await page.getByRole('option',{name:'info: Request accepted',exact:true}).click();
+ await page.getByRole('button',{name:'Filter by correlation request-17',exact:true}).click();
+ await expect(page.getByRole('searchbox',{name:'Search logs',exact:true})).toHaveValue('request-17');
+ await expect(page.getByRole('listbox',{name:'Log events',exact:true}).getByRole('option')).toHaveCount(3);
+ await page.getByRole('option',{name:'warning: Retry budget is nearly exhausted',exact:true}).click();
+ await page.getByRole('searchbox',{name:'Search logs',exact:true}).fill('no matching event');
+ await expect(page.getByText('Selected event is hidden by the current filters.',{exact:true})).toBeVisible();
 });
