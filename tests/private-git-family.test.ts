@@ -157,14 +157,16 @@ it('mints stable per-file review identities that change only with their own endp
 
 it('distinguishes same-size binary edits and gives owners that differ per worktree',async()=>{
  const f=await fixture(),one=await f.add('bin-one'),two=await f.add('bin-two');
- for(const binding of [one,two]){await writeFile(join(binding.path,'blob.bin'),Buffer.from([1,2,3]));f.git('-C',binding.path,'add','blob.bin');f.git('-C',binding.path,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','seed blob');await writeFile(join(binding.path,'blob.bin'),Buffer.from([9,9,9]));}
+ for(const binding of [one,two]){await writeFile(join(binding.path,'blob.bin'),Buffer.from([1,2,3]));f.git('-C',binding.path,'add','blob.bin');f.git('-C',binding.path,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','seed blob');}
+ // Identical edits share a fingerprint (it hashes the change, not the worktree); distinct edits differ.
+ await writeFile(join(one.path,'blob.bin'),Buffer.from([9,9,9]));await writeFile(join(two.path,'blob.bin'),Buffer.from([9,8,9]));
  const a=await f.tools.gitStatus(f.projectId,'bin-one'),b=await f.tools.gitStatus(f.projectId,'bin-two');
  expect(a.review?.owner).not.toBe(b.review?.owner);
  const first=(a.files[0]!.review!.unstaged as {fingerprint:string}).fingerprint;
+ expect((b.files[0]!.review!.unstaged as {fingerprint:string}).fingerprint).not.toBe(first);
  await writeFile(join(one.path,'blob.bin'),Buffer.from([1,9,3]));
  const edited=await f.tools.gitStatus(f.projectId,'bin-one');
  expect((edited.files[0]!.review!.unstaged as {fingerprint:string}).fingerprint).not.toBe(first);
- expect((b.files[0]!.review!.unstaged as {fingerprint:string}).fingerprint).not.toBe(first);
 },60000);
 
 it('leaves untracked and deleted-side rows without fingerprints and keeps legacy owners stable',async()=>{
