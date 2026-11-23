@@ -58,6 +58,8 @@
 .settings-records>div { display:flex;flex-direction:column;gap:4px;padding:12px 0;border-bottom:1px solid var(--border);font-size:12px; }
 .settings-records :is(span,code) { color:var(--muted);overflow-wrap:anywhere; }
 .settings-grant-row { transition:opacity 160ms ease-out,max-height 160ms ease-out;max-height:240px; }
+.settings-grant-row>strong { font-size:14px;font-weight:500;color:var(--text); }
+.settings-grant-row>span:not(.settings-grant-error) { font-size:13px;color:var(--muted); }
 .settings-grant-row[data-removing] { opacity:0;max-height:0;padding-top:0;padding-bottom:0;border-bottom:0;overflow:hidden; }
 .settings-grant-revoke { align-self:flex-start;min-height:32px;padding:4px 10px;font-size:12px; }
 .settings-grant-error { color:var(--danger);font-size:12px; }

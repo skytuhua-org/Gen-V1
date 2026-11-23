@@ -212,18 +212,18 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
         const rows=groupGrantRows(data.resources);
         const revokeGroup=async(group:typeof rows[number])=>{
           if(revokingGrant)return;setRevokingGrant(group.key);setGrantErrors(current=>({...current,[group.key]:''}));
+          setRemovedGrants(current=>new Set(current).add(group.key));
           try{for(const grant of group.grants)await command('resource.revoke',{grantId:grant.id},grant.threadId);
-            setRemovedGrants(current=>new Set(current).add(group.key));setGrantNote(`${group.name} revoked`);void refresh().catch(()=>{});
-            const next=rows.find(row=>row.key!==group.key&&!removedGrants.has(row.key));
+            setGrantNote(`${group.name} revoked`);void refresh().catch(()=>{});
+            const next=rows.find(row=>!removedGrants.has(row.key)&&row.key!==group.key);
             (next?grantButtons.current.get(next.key):content.current?.querySelector<HTMLElement>('[data-setting-id="project-overview"]'))?.focus();
-          }catch{setGrantErrors(current=>({...current,[group.key]:'Could not revoke — try again.'}));}finally{setRevokingGrant(null);}
+          }catch{setRemovedGrants(current=>{const next=new Set(current);next.delete(group.key);return next;});setGrantErrors(current=>({...current,[group.key]:'Could not revoke — try again.'}));}finally{setRevokingGrant(null);}
         };
         return <>{grantNote&&<p role="status" className="sr-only">{grantNote}</p>}{rows.length===0&&<p className="settings-empty">No granted resources.</p>}{rows.map(group=>
           <div key={group.key} className="settings-grant-row" aria-busy={revokingGrant===group.key||undefined} data-removing={removedGrants.has(group.key)||undefined}>
             <strong>{group.name}</strong>
-            <span>{group.grants.length>1?`Granted to ${group.grants.length} threads`:`Granted to ${truncateTitle(group.title)}`} · {group.kind} · {group.writable?'Approved changes allowed':'Read only'}</span>
+            {grantErrors[group.key]?<span className="settings-grant-error">{grantErrors[group.key]}</span>:<span>{group.grants.length>1?`Granted to ${group.grants.length} threads`:`Granted to ${truncateTitle(group.title)}`} · {group.kind} · {group.writable?'Approved changes allowed':'Read only'}</span>}
             <code>{group.path}</code>
-            {grantErrors[group.key]?<span className="settings-grant-error">{grantErrors[group.key]}</span>:null}
             <button type="button" className="secondary settings-grant-revoke" ref={node=>{if(node)grantButtons.current.set(group.key,node);else grantButtons.current.delete(group.key);}} aria-label={`Revoke ${group.name}`} disabled={busy||revokingGrant!==null} onClick={()=>void revokeGroup(group)}>Revoke</button>
           </div>)}</>;
       })()}</div>}
