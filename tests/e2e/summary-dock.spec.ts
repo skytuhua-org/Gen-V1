@@ -43,6 +43,21 @@ test('restoring an open overview does not steal focus from the composer', async 
   await expect(main).toBeFocused();
 });
 
+test('controlled hide and re-show does not reuse the opening focus request', async ({ page }) => {
+  await page.goto('/summary-dock?external=1');
+  const toggle = page.getByRole('button', { name: 'Expand Project overview', exact: true });
+  const region = page.getByRole('region', { name: 'Project overview window', exact: true });
+  await toggle.focus();
+  await toggle.press('Enter');
+  await expect(region).toBeFocused();
+  await page.getByRole('button', { name: 'Hide overview', exact: true }).evaluate(button => (button as HTMLButtonElement).click());
+  await expect(region).toBeHidden();
+  const show = page.getByRole('button', { name: 'Show overview', exact: true });
+  await show.click();
+  await expect(region).toBeVisible();
+  await expect(show).toBeFocused();
+});
+
 test('the disclosure target covers the full header, including its blank area', async ({ page }) => {
   const panel = page.getByRole('region', { name: 'Project overview window', exact: true });
   const button = panel.getByRole('button', { name: /(?:Collapse|Minimize) Project overview/ });

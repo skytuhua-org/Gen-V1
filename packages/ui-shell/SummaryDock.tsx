@@ -71,6 +71,9 @@ export function DockedSummary({ id, title, children, open = true, defaultCollaps
   const previousOpen = useRef<boolean | undefined>(undefined), bodyId = useId();
   const appliedExpansion = useRef<number | undefined>(undefined);
   const externalPresentation = Boolean(external), presentationOpen = open && !(externalPresentation && collapsed);
+  useEffect(() => {
+    if (presentationOpen && external) external.focusPanelOnOpen.current = false;
+  }, [presentationOpen, external]);
   useLayoutEffect(() => {
     const previous = previousOpen.current; previousOpen.current = presentationOpen;
     const content = externalPresentation ? popoverPanel.current : panel.current;

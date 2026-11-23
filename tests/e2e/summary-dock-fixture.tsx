@@ -46,16 +46,21 @@ function Fixture() {
 function ExternalFixture() {
   const disclosure = useSummaryDisclosure('plan');
   const focusMain = new URLSearchParams(location.search).has('focus-main');
+  const [shown, setShown] = useState(true);
   return <div className="app-shell" style={{ height: '100dvh', minHeight: 0 }}>
     <section className="shell-workarea">
       <SummaryLayout active={false} summaries={<SummaryDock>
-        <DockedSummary id="plan" title="Project overview" disclosure={disclosure}>
+        <DockedSummary id="plan" title="Project overview" disclosure={disclosure} open={shown}>
           <button type="button">Open full plan</button>
           <button type="button">Connect project</button>
         </DockedSummary>
       </SummaryDock>}>
         <main className="workspace">
-          <header className="workspace-header"><SummaryToggle title="Project overview" disclosure={disclosure}><span aria-hidden="true">i</span></SummaryToggle></header>
+          <header className="workspace-header">
+            <SummaryToggle title="Project overview" disclosure={disclosure}><span aria-hidden="true">i</span></SummaryToggle>
+            <button type="button" onClick={() => setShown(false)}>Hide overview</button>
+            <button type="button" onClick={() => setShown(true)}>Show overview</button>
+          </header>
           <div className="conversation-scroll"><div className="conversation"><p>Workspace content remains in place.</p></div></div>
           <div className="composer-dock"><div className="composer"><input aria-label="Main draft" autoFocus={focusMain}/></div></div>
         </main>
