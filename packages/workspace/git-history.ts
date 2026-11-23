@@ -409,6 +409,38 @@ const commitPatch = (
   reason?: ComparisonPatch["reason"],
 ): GitCommitPatch => ({ identity, file, state, text: value, ...(reason ? { reason } : {}) });
 
+/** Strip a leading a/ or b/ prefix and any C-style quoting off a diff --git name. */
+const diffName = (token: string) => (token.startsWith('"') ? token.slice(1, -1) : token).replace(/^[ab]\//, "");
+
+/** Keep only the diff blocks whose endpoints are the file itself (or its rename
+ * pair): a literal pathspec also matches descendants below a directory path. */
+const scopePatchToFile = (text: string, names: ReadonlySet<string>) =>
+  text
+    .split(/(?=^diff --git )/m)
+    .filter((block) => {
+      const header = /^diff --git ("(?:[^"\\]|\\.)*"|\S+) ("(?:[^"\\]|\\.)*"|\S+)\n/.exec(block);
+      return !!header && names.has(diffName(header[1]!)) && names.has(diffName(header[2]!));
+    })
+    .join("");
+
+/** Keep only numstat records for the file itself; rename records carry two path
+ * tokens after a header that ends at the NUL. Returns "added\tdeleted" rows. */
+const scopeStatsToFile = (raw: string, names: ReadonlySet<string>) => {
+  const tokens = raw.split(/[\0\n]/).filter((token) => token !== "");
+  const kept: string[] = [];
+  for (let index = 0; index < tokens.length; ) {
+    const match = /^(-|\d+)\t(-|\d+)\t(.*)$/.exec(tokens[index++]!);
+    if (!match) return raw;
+    if (match[3] === "") {
+      const oldName = tokens[index], newName = tokens[index + 1];
+      index += 2;
+      if (oldName !== undefined && newName !== undefined && names.has(oldName) && names.has(newName))
+        kept.push(match[1]! + "\t" + match[2]);
+    } else if (names.has(match[3])) kept.push(match[1]! + "\t" + match[2]);
+  }
+  return kept.join("\n");
+};
+
 /** Read one file's committed patch inside a served committed comparison. */
 export async function readGitCommitFile(
   context: LocalReviewContext,
@@ -431,6 +463,7 @@ export async function readGitCommitFile(
   if (!localPath(name) || (file.oldPath && !localPath(file.oldPath)))
     return commitPatch(identity, file, "unavailable", null, "unsupported-path");
   const paths = [name, ...(file.oldPath ? [file.oldPath] : [])].map(lit);
+  const scopeNames = new Set([name, ...(file.oldPath ? [file.oldPath] : [])]);
   const args = comparison.parentOid
     ? [
         "diff",
@@ -459,13 +492,19 @@ export async function readGitCommitFile(
         ...paths,
       ];
   try {
-    const output = await context.git(args);
-    const stats = await context.git(
-      comparison.parentOid
-        ? ["diff", "--numstat", "-z", "--find-renames", comparison.parentOid, comparison.oid, "--", ...paths]
-        : ["diff-tree", "--root", "--no-commit-id", "-r", "--numstat", "-z", comparison.oid, "--", ...paths],
+    // A literal pathspec also matches contents below a directory of the same
+    // name; keep only the blocks and numstat records for this file itself.
+    const output = scopePatchToFile(await context.git(args), scopeNames);
+    const stats = scopeStatsToFile(
+      await context.git(
+        comparison.parentOid
+          ? ["diff", "--numstat", "-z", "--find-renames", comparison.parentOid, comparison.oid, "--", ...paths]
+          : ["diff-tree", "--root", "--no-commit-id", "-r", "--numstat", "-z", comparison.oid, "--", ...paths],
+      ),
+      scopeNames,
     );
-    if (stats.startsWith("-\t-\t")) return commitPatch(identity, file, "binary");
+    if (stats.split("\n").some((record) => record.startsWith("-\t-")))
+      return commitPatch(identity, file, "binary");
     if (Buffer.byteLength(output) > CODE_REVIEW_LIMITS.patchBytes)
       return commitPatch(identity, file, "truncated", null, "resource-limit");
     return commitPatch(identity, file, output ? "text" : "empty", output);
