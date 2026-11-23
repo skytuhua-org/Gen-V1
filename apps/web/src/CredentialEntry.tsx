@@ -29,11 +29,13 @@ export function CredentialEntry(props:CredentialEntryProps){
   useLayoutEffect(()=>{if(active.current!==identity||current.current?.active!==scope?.active||current.current?.revision!==scope?.revision){sequence.current++;setError('');setAck(0);}current.current=scope;active.current=identity;});
   useLayoutEffect(()=>{const input=field.current;if(input)input.value='';setHasInput(false);setRevealed(false);return()=>{if(input)input.value='';};},[identity,scope?.active]);
   const statusRef=useRef<HTMLDivElement>(null);
+  const emptyShown=!pending&&metadata?.present===false,markSeen=useRef(false);
   useLayoutEffect(()=>{
-    const mark=statusRef.current?.querySelector<HTMLElement>('.credential-empty-dot');
+    const mark=emptyShown&&!markSeen.current?statusRef.current?.querySelector<HTMLElement>('.credential-empty-dot'):null;
     if(!mark)return;
+    markSeen.current=true;
     queueMicrotask(()=>{if(!mark.isConnected||readMotionPolicy()!=='full'||!mark.closest('[data-entry-phase="entering"]'))return;animateTask(mark,[{opacity:.65},{opacity:1}],100);});
-  },[]);
+  },[emptyShown]);
   const refresh=async()=>{
     if(!scope||scope.active===false)return;const generation=++sequence.current;setPending('checking');
     try{const next=await getCredentialSlot(scope,declaration.slotKey);if(sequence.current===generation){setMetadata(next);setError('');}}

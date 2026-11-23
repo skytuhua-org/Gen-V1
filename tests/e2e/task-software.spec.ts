@@ -155,38 +155,54 @@ for(const name of ['Diagnostics','ChangeSet','ApiExplorer','Pipeline'] as const)
   await host.publish();expect(await page.locator('.software-detail').evaluate(node=>node.getAnimations().length)).toBe(0);
 });
 
+async function consumeBaseline(page:Page,host:Awaited<ReturnType<typeof serveTaskFixture>>){
+ await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeVisible({timeout:30_000});
+ await expect(page.getByText('Synthetic local source data for the reusable renderer.')).toBeVisible();
+ await expect(page.locator('.artifact')).toHaveCount(0);
+ host.snapshot.messages.push({id:'probe',threadId:'task-thread',role:'assistant',content:'Subscription probe marker',runId:null,createdAt:'2026-10-29T23:00:00.000Z'});
+ await host.publish();await expect(page.getByText('Subscription probe marker')).toBeVisible();
+}
+// A family's first lazy mount reveals after the host entrance has settled, so an
+// earlier record of the same family is published first; the measured record is
+// still classified by the host's own live-entry lifecycle.
+async function warmFamily(page:Page,host:Awaited<ReturnType<typeof serveTaskFixture>>,warm:unknown,surface:string){
+ host.snapshot.artifacts.push(warm as never);await host.publish();
+ await expect(page.locator(surface)).toBeVisible();await expect(page.locator('.artifact').first()).toHaveAttribute('data-entry-phase','settled');
+}
 async function delayedOpen(page:Page,name:SoftwareFixtureName,input:unknown=structuredClone(SOFTWARE_FIXTURE_DATA[name])){
  const snapshot=taskFixture(softwareDevelopmentSpec(name,'inspect'),{software:input});
  const artifact=snapshot.artifacts[0];snapshot.artifacts=[];snapshot.settings.theme='dark';
  const host=await serveTaskFixture(page,snapshot);await page.goto('/');
- await page.evaluate(`(()=>{window.__starts=[];const raw=Element.prototype.animate;Element.prototype.animate=function(k,d){const cls=(this.className&&this.className.toString&&this.className.toString())||'';if(cls.includes('-entry-'))window.__starts.push(cls);return raw.call(this,k,d);};})()`);
+ await consumeBaseline(page,host);
+ await warmFamily(page,host,{...artifact,id:artifact.id+'-warm'},'.software-surface');
+ await page.evaluate(`(()=>{window.__starts=[];const raw=Element.prototype.animate;Element.prototype.animate=function(k,d){const cls=(typeof this.className==='string'?this.className:this.getAttribute('class'))||'',id=(d&&typeof d==='object'&&d.id)||'';if(cls.includes('-entry-')||id.includes('-entry-'))window.__starts.push(cls||id);return raw.call(this,k,d);};})()`);
  return {artifact,host,starts:()=>page.evaluate('window.__starts.length')};
 }
 for(const name of ['Diagnostics','ChangeSet','ApiExplorer','Pipeline'] as const){
  test(`${name} marks only its first publication with a single local ornament`,async({page})=>{
-  test.fail(true,'fixture publication does not mark embedded-conversation artifacts as live entries; the positive entrance start cannot be exercised here');
   const {artifact,host,starts}=await delayedOpen(page,name);
-  // Bootstrap with the record absent mounts nothing and starts zero effects.
-  await expect(page.locator('.software-surface')).toHaveCount(0);expect(await starts()).toBe(0);
+  // With the measured record absent, nothing has started.
+  await expect(page.locator('.software-surface')).toHaveCount(1);expect(await starts()).toBe(0);
   // Positive: the delayed publication runs exactly one local ornament.
   host.snapshot.artifacts.push(artifact);await host.publish();
-  await expect(page.locator('.software-surface')).toBeVisible();await expect.poll(starts).toBe(1);
-  await expect(page.locator('[data-entry-phase="settled"]')).toHaveCount(1);
+  await expect(page.locator('.software-surface')).toHaveCount(2);await expect.poll(starts).toBe(1);
+  await expect(page.locator('[data-entry-phase="settled"]')).toHaveCount(2);
   // An identical republish replays nothing.
   await host.publish();await page.waitForTimeout(150);expect(await starts()).toBe(1);
   // Reduced motion admits the artifact but starts no ornament.
   await page.emulateMedia({reducedMotion:'reduce'});
   host.snapshot.artifacts.push({...artifact,id:artifact.id+'-reduced'});await host.publish();
-  await expect(page.locator('.software-surface')).toHaveCount(2);await page.waitForTimeout(150);expect(await starts()).toBe(1);
+  await expect(page.locator('.software-surface')).toHaveCount(3);await page.waitForTimeout(150);expect(await starts()).toBe(1);
   // An absent ornament target keeps zero starts and leaves the usable fallback.
   await page.emulateMedia({reducedMotion:'no-preference'});
-  const invalid=taskFixture(softwareDevelopmentSpec(name,'inspect'),{software:{unexpected:true}}).artifacts[0];
-  invalid.id=artifact.id+'-invalid';host.snapshot.artifacts.push(invalid);await host.publish();
+  const invalidSpec=softwareDevelopmentSpec(name,'inspect');(invalidSpec.elements.work.props as Record<string,unknown>).dataBinding='softwareInvalid';
+  const invalidSource=taskFixture(invalidSpec,{softwareInvalid:{unexpected:true}}),invalid=invalidSource.artifacts[0];
+  invalid.id=artifact.id+'-invalid';host.snapshot.data.push(...invalidSource.data);host.snapshot.artifacts.push(invalid);await host.publish();
   await expect(page.locator('.task-unavailable').last()).toBeVisible();await page.waitForTimeout(150);expect(await starts()).toBe(1);
  });
 }
 test('records already present at bootstrap start no entrance ornament',async({page})=>{
- await page.addInitScript(`(()=>{window.__starts=[];const raw=Element.prototype.animate;Element.prototype.animate=function(k,d){const cls=(this.className&&this.className.toString&&this.className.toString())||'';if(cls.includes('-entry-'))window.__starts.push(cls);return raw.call(this,k,d);};})()`);
+ await page.addInitScript(`(()=>{window.__starts=[];const raw=Element.prototype.animate;Element.prototype.animate=function(k,d){const cls=(typeof this.className==='string'?this.className:this.getAttribute('class'))||'',id=(d&&typeof d==='object'&&d.id)||'';if(cls.includes('-entry-')||id.includes('-entry-'))window.__starts.push(cls||id);return raw.call(this,k,d);};})()`);
  await open(page,'Diagnostics');await page.waitForTimeout(200);expect(await page.evaluate('window.__starts.length')).toBe(0);
 });
 test('pipeline keeps connector geometry exact while topology changes mid-flight',async({page})=>{
@@ -255,4 +271,33 @@ test('ApiExplorer at 390 stacks both examples and ArrowLeft returns to the previ
  await tabs.nth(1).focus();await page.keyboard.press('ArrowLeft');
  await expect(tabs.nth(0)).toHaveAttribute('aria-selected','true');await expect(tabs.nth(0)).toBeFocused();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+});
+test('pipeline output stays readable beside the jump-to-latest control and only jumps on request',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ const snapshot=taskFixture(softwareDevelopmentSpec('Pipeline','inspect'),{software:structuredClone(SOFTWARE_FIXTURE_DATA.Pipeline)});
+ snapshot.settings.theme='dark';
+ for(let i=0;i<12;i++)snapshot.messages.push({id:`later-${i}`,threadId:'task-thread',role:'assistant',content:`Later synthetic note ${i}. `.repeat(12),runId:null,createdAt:'2026-10-29T23:00:00.000Z'});
+ const host=await serveTaskFixture(page,snapshot);await page.goto('/');
+ const scroller=page.locator('.conversation-scroll');await expect(page.locator('.software-surface')).toBeVisible();
+ await page.getByRole('tab',{name:/Typecheck/}).first().click();
+ const line=page.getByText('src/orders.ts:42: Type number is not assignable to type string.',{exact:true});
+ await line.scrollIntoViewIfNeeded();await scroller.evaluate(node=>node.dispatchEvent(new Event('scroll')));
+ const jump=page.getByRole('button',{name:'Jump to latest',exact:true});await expect(jump).toBeVisible();
+ // The error line remains visible and is not covered by the control, which sits 12px above the scroller's lower edge.
+ await line.evaluate(node=>node.scrollIntoView({block:'center'}));
+ const [lineBox,jumpBox]=await Promise.all([line.boundingBox(),jump.boundingBox()]);
+ expect(lineBox!.y+lineBox!.height<=jumpBox!.y||lineBox!.y>=jumpBox!.y+jumpBox!.height).toBe(true);
+ const edge=await scroller.evaluate(node=>{const r=node.getBoundingClientRect();return {bottom:r.top+node.clientTop+node.clientHeight,pad:parseFloat(getComputedStyle(node).paddingBottom)};});
+ // Sticky insets resolve against the scroller's padding box.
+ expect(Math.abs(edge.bottom-edge.pad-12-(jumpBox!.y+jumpBox!.height))).toBeLessThanOrEqual(1);
+ const hit=await line.evaluate(node=>{const r=node.getBoundingClientRect();const top=document.elementFromPoint(r.left+Math.min(20,r.width/2),r.top+r.height/2);return !!top&&(node===top||node.contains(top)||top.contains(node));});
+ expect(hit).toBe(true);
+ // Reading mode holds the position when new content arrives.
+ const reading=await scroller.evaluate(node=>node.scrollTop);
+ snapshot.messages.push({id:'newer',threadId:'task-thread',role:'assistant',content:'A newer synthetic update.',runId:null,createdAt:'2026-10-29T23:01:00.000Z'});await host.publish();
+ await expect(page.getByText('A newer synthetic update.')).toBeAttached();await page.waitForTimeout(200);
+ expect(Math.abs(await scroller.evaluate(node=>node.scrollTop)-reading)).toBeLessThanOrEqual(2);await expect(jump).toBeVisible();
+ // The control returns to the latest content and resumes following.
+ await jump.click();await expect(jump).toHaveCount(0);
+ await expect.poll(()=>scroller.evaluate(node=>node.scrollHeight-node.clientHeight-node.scrollTop)).toBeLessThanOrEqual(2);
 });

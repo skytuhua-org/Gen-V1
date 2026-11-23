@@ -1,4 +1,4 @@
-import {useContext,useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type CSSProperties,type ReactNode,type RefObject} from 'react';
+import {useCallback,useContext,useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type CSSProperties,type ReactNode,type RefObject} from 'react';
 import {useStateStore,type ComponentRenderProps,type ComponentRegistry} from '@json-render/react';
 import {ArrowRight,ArrowUpRight,Braces,FileCode2,GitBranch,Terminal} from 'lucide-react';
 import {SOFTWARE_DATA_SCHEMAS,SOFTWARE_SCHEMAS,type PipelineData,type SoftwareProps} from '../../../packages/ui-catalog/software-development';
@@ -87,15 +87,25 @@ export function usePublicationEntrance(run:(node:HTMLElement)=>Animation[]){
     let handles:Animation[]=[],artifact:Element|null=null,stopObserving:()=>void=()=>{},disposed=false;
     const dispose=()=>{if(disposed)return;disposed=true;stopObserving();stopObserving=()=>{};artifact?.removeEventListener('pointerdown',stop,true);artifact?.removeEventListener('focusin',stop);artifact=null;handles.forEach(handle=>handle.cancel());handles=[];};
     const stop=()=>dispose();
-    queueMicrotask(()=>{
+    const begin=()=>{
       if(disposed||!node.isConnected||readMotionPolicy()!=='full'||!node.closest('[data-entry-phase="entering"]'))return;
       handles=run(node);
-      if(!handles.length)return;
+      // Measured targets (connectors, patch rails) can land a frame later; retry only while the host still enters.
+      if(!handles.length){const frame=requestAnimationFrame(begin);stopObserving=()=>cancelAnimationFrame(frame);return;}
       artifact=node.closest('[data-entry-phase]');
       artifact?.addEventListener('pointerdown',stop,{capture:true});
       artifact?.addEventListener('focusin',stop);
       stopObserving=observeMotionPolicy(stop);
       handles[0]?.addEventListener('finish',stop,{once:true});
+    };
+    queueMicrotask(()=>{
+      if(disposed)return;
+      // The host classifies its entrance only once the artifact is ready; wait for that decision.
+      const host=node.closest('[data-artifact-id]');
+      if(!host?.hasAttribute('data-artifact-pending')||host.hasAttribute('data-entry-phase')){begin();return;}
+      const watch=new MutationObserver(()=>{if(host.hasAttribute('data-artifact-pending')&&!host.hasAttribute('data-entry-phase'))return;watch.disconnect();stopObserving=()=>{};begin();});
+      watch.observe(host,{attributes:true,attributeFilter:['data-entry-phase','data-artifact-pending']});
+      stopObserving=()=>watch.disconnect();
     });
     return()=>dispose();
   },[]);
@@ -179,7 +189,7 @@ export function ChangeSet({element:{props}}:ComponentRenderProps){
   const entrance=usePublicationEntrance(node=>{
     const rail=node.querySelector<HTMLElement>('.software-patch [data-line-kind="added"],.software-patch [data-line-kind="removed"]');
     if(!rail)return[];
-    return [rail.animate([{opacity:.55},{opacity:1}],{duration:120,easing:'cubic-bezier(.16,1,.3,1)'})];
+    return [rail.animate([{opacity:.55},{opacity:1}],{id:'software-entry-rail',duration:120,easing:'cubic-bezier(.16,1,.3,1)'})];
   });
   useLayoutEffect(()=>{
     const next=new Set(revised);
@@ -311,7 +321,7 @@ function StageGraph({stages,selected,select,panelId,cause}:{stages:PipelineData[
     for(const position of positions.values())position.row+=(offsetsMap.get(position.band)??0);
     return {positions,columns,rows:Math.max(1,height)};
   },[stages]);
-  const stop=()=>{if(clock.current!==undefined){cancelAnimationFrame(clock.current);clock.current=undefined;}};
+  const stop=useCallback(()=>{if(clock.current!==undefined){cancelAnimationFrame(clock.current);clock.current=undefined;}},[]);
   useLayoutEffect(()=>{
     const node=graph.current;
     const settle=()=>{stop();const map=new Map<string,{x:number;y:number}>();node?.querySelectorAll<HTMLElement>('[data-stage-id]').forEach(element=>map.set(element.dataset.stageId!,{x:element.offsetLeft+element.offsetWidth/2,y:element.offsetTop+element.offsetHeight/2}));displayed.current=map;setFinals(map);setOffsets(new Map());};
@@ -319,8 +329,7 @@ function StageGraph({stages,selected,select,panelId,cause}:{stages:PipelineData[
     const stopObserving=observeMotionPolicy(policy=>{if(policy!=='full')settle();});
     document.addEventListener('visibilitychange',hidden);
     return()=>{stopObserving();document.removeEventListener('visibilitychange',hidden);stop();};
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[]);
+  },[stop]);
   useLayoutEffect(()=>{
     const node=graph.current;if(!node)return;
     const observer=new ResizeObserver(entries=>{const rect=entries[0].contentRect;setBox({w:rect.width,h:rect.height});});
@@ -353,8 +362,7 @@ function StageGraph({stages,selected,select,panelId,cause}:{stages:PipelineData[
       if(p<1)clock.current=requestAnimationFrame(step);else clock.current=undefined;
     };
     clock.current=requestAnimationFrame(step);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[mode,topologyKey,order,box]);
+  },[mode,topologyKey,order,box,stop]);
   const previousSelected=useRef(selected);
   useLayoutEffect(()=>{
     const previous=previousSelected.current;previousSelected.current=selected;
@@ -373,7 +381,7 @@ function StageGraph({stages,selected,select,panelId,cause}:{stages:PipelineData[
     const path=node.querySelector<SVGPathElement>(`.software-stage-connections path[data-to="${CSS.escape(first.id)}"]`);
     if(!path)return[];
     path.setAttribute('pathLength','1');
-    return [path.animate([{strokeDasharray:'1',strokeDashoffset:'1'},{strokeDasharray:'1',strokeDashoffset:'0'}],{duration:150,easing:'cubic-bezier(.16,1,.3,1)'})];
+    return [path.animate([{strokeDasharray:'1',strokeDashoffset:'1'},{strokeDasharray:'1',strokeDashoffset:'0'}],{id:'software-entry-connector',duration:150,easing:'cubic-bezier(.16,1,.3,1)'})];
   });
   const point=(id:string)=>{const f=finals.get(id),o=offsets.get(id);return f?{x:f.x+(o?.x??0),y:f.y+(o?.y??0)}:undefined;};
   const orientation=mode==='row'?'horizontal':'vertical';

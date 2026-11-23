@@ -153,40 +153,55 @@ test('credential removal labels the dedicated operation without changing its geo
  expect(writes.at(-1)?.method).toBe('DELETE');
 });
 
+async function consumeBaseline(page:Page,host:Awaited<ReturnType<typeof serveTaskFixture>>){
+ await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeVisible({timeout:30_000});
+ await expect(page.getByText('Synthetic local source data for the reusable renderer.')).toBeVisible();
+ await expect(page.locator('.artifact')).toHaveCount(0);
+ host.snapshot.messages.push({id:'probe',threadId:'task-thread',role:'assistant',content:'Subscription probe marker',runId:null,createdAt:'2026-10-29T23:00:00.000Z'});
+ await host.publish();await expect(page.getByText('Subscription probe marker')).toBeVisible();
+}
+// A family's first lazy mount reveals after the host entrance has settled, so an
+// earlier record of the same family is published first; the measured record is
+// still classified by the host's own live-entry lifecycle.
+async function warmFamily(page:Page,host:Awaited<ReturnType<typeof serveTaskFixture>>,warm:unknown,surface:string){
+ host.snapshot.artifacts.push(warm as never);await host.publish();
+ await expect(page.locator(surface)).toBeVisible();await expect(page.locator('.artifact').first()).toHaveAttribute('data-entry-phase','settled');
+}
 const ENTRANCE_CLAUSE=`window.__starts=[];const raw=Element.prototype.animate;Element.prototype.animate=function(k,d){const cls=(this.className&&this.className.toString&&this.className.toString())||'';if(cls.includes('-entry-')||cls.includes('credential-empty-dot'))window.__starts.push(cls);return raw.call(this,k,d);};`;
 for(const name of ['Stats','Comparison'] as const){
  test(`${name} marks only its first publication with a single local ornament`,async({page})=>{
-  test.fail(true,'fixture publication does not mark embedded-conversation artifacts as live entries; the positive entrance start cannot be exercised here');
   const snapshot=taskFixture({root:'view',elements:{view:{type:name,props:{dataBinding:'data',stateKey:'selected',...(name==='Comparison'?{actionId:'ask',actionLabel:'Review selected plan'}:{})}}}},{data:name==='Stats'?metrics:choices});
   const artifact=snapshot.artifacts[0];snapshot.artifacts=[];
-  const host=await serveTaskFixture(page,snapshot);await page.goto('/');
-  await page.evaluate(`(()=>{${ENTRANCE_CLAUSE}})()`);const starts=()=>page.evaluate('window.__starts.length');
   const surface=name==='Stats'?'.everyday-stats':'.everyday-comparison';
-  await expect(page.locator(surface)).toHaveCount(0);expect(await starts()).toBe(0);
+  const host=await serveTaskFixture(page,snapshot);await page.goto('/');await consumeBaseline(page,host);
+  await warmFamily(page,host,{...artifact,id:artifact.id+'-warm'},surface);
+  await page.evaluate(`(()=>{${ENTRANCE_CLAUSE}})()`);const starts=()=>page.evaluate('window.__starts.length');
+  await expect(page.locator(surface)).toHaveCount(1);expect(await starts()).toBe(0);
   host.snapshot.artifacts.push(artifact);await host.publish();
-  await expect(page.locator(surface)).toBeVisible();await expect.poll(starts).toBe(1);
-  await expect(page.locator('[data-entry-phase="settled"]')).toHaveCount(1);
+  await expect(page.locator(surface)).toHaveCount(2);await expect.poll(starts).toBe(1);
+  await expect(page.locator('[data-entry-phase="settled"]')).toHaveCount(2);
   await host.publish();await page.waitForTimeout(150);expect(await starts()).toBe(1);
   await page.emulateMedia({reducedMotion:'reduce'});
   host.snapshot.artifacts.push({...artifact,id:artifact.id+'-reduced'});await host.publish();
-  await expect(page.locator(surface)).toHaveCount(2);await page.waitForTimeout(150);expect(await starts()).toBe(1);
+  await expect(page.locator(surface)).toHaveCount(3);await page.waitForTimeout(150);expect(await starts()).toBe(1);
  });
 }
 test('a private credential publication starts exactly one local mark',async({page})=>{
-  test.fail(true,'fixture publication does not mark embedded-conversation artifacts as live entries; the positive entrance start cannot be exercised here');
  const snapshot=taskFixture({root:'credential',elements:{credential:{type:'CredentialEntry',props:{slotKey:'apiToken',label:'Project API token',service:'Example project API'}}}});
  const artifact=snapshot.artifacts[0];snapshot.artifacts=[];
  const host=await serveTaskFixture(page,snapshot);
- await page.route('**/api/artifacts/task-surface/credentials/apiToken*',route=>route.fulfill({json:{present:false,version:0,expiresAt:null}}));
- await page.goto('/');
+ await page.route('**/api/artifacts/*/credentials/apiToken*',route=>route.fulfill({json:{present:false,version:0,expiresAt:null}}));
+ await page.goto('/');await consumeBaseline(page,host);
+ await warmFamily(page,host,{...artifact,id:artifact.id+'-warm'},'.credential-entry');
+ await expect(page.locator('.credential-entry').first()).toContainText('No token saved');
  await page.evaluate(`(()=>{${ENTRANCE_CLAUSE}})()`);const starts=()=>page.evaluate('window.__starts.length');
- await expect(page.locator('.credential-entry')).toHaveCount(0);expect(await starts()).toBe(0);
+ await expect(page.locator('.credential-entry')).toHaveCount(1);expect(await starts()).toBe(0);
  host.snapshot.artifacts.push(artifact);await host.publish();
- await expect(page.locator('.credential-entry')).toBeVisible();await expect.poll(starts).toBe(1);
+ await expect(page.locator('.credential-entry')).toHaveCount(2);await expect.poll(starts).toBe(1);
  await host.publish();await page.waitForTimeout(150);expect(await starts()).toBe(1);
  await page.emulateMedia({reducedMotion:'reduce'});
  host.snapshot.artifacts.push({...artifact,id:artifact.id+'-reduced'});await host.publish();
- await expect(page.locator('.credential-entry')).toHaveCount(2);await page.waitForTimeout(150);expect(await starts()).toBe(1);
+ await expect(page.locator('.credential-entry')).toHaveCount(3);await page.waitForTimeout(150);expect(await starts()).toBe(1);
 });
 test('a metric with only gaps renders its unavailable trend, then recovers exactly on republish',async({page})=>{
  const empty={...metrics,metrics:[{id:'latency',label:'Response time',value:null,series:[{label:'Mon',value:null},{label:'Tue',value:null},{label:'Wed',value:null},{label:'Thu',value:null},{label:'Fri',value:null}]}]};
