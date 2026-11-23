@@ -4,6 +4,7 @@ import type {ModelInfo} from '../../../packages/contracts';
 import type {ConversationContext} from '../../../packages/contracts/conversation-read-models';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import {SavedDrafts} from './SavedDrafts';
+import {usePromptSnippets,PromptSnippetsTrigger,PromptSnippetsOverlay,PromptSnippetsReceipt} from './PromptSnippets';
 import type {SavedDraftOwner} from './saved-drafts';
 import {ComposerAttachments} from './ComposerAttachments';
 import {ComposerView} from './ComposerView';
@@ -35,6 +36,9 @@ export function ScopedConversationComposer({context,composers,openConversation,r
  },[context.scopeKey,context.owner.threadId]);
  const skillsBlocked=Boolean(state.skills?.length)&&!state.retry;
  const send=()=>{if(!held&&!skillsBlocked&&models.some(model=>model.id===modelId))void composers.submit(target);};
+ // Draft writes funnel through the async owner-acceptance channel; a working
+ // conversation still accepts edits, so editable does not gate on `working`.
+ const snippets=usePromptSnippets({input, signature, editable:()=>!held&&state.ready&&!state.busy&&!state.stopping&&!state.retry, onEdit:text=>{void composers.edit(target,text);}});
  async function mode(value:'plan'|'build'){
   if(working||held)throw Error('Wait for this conversation to become available.');
   const version=fence.current.version, ownership=desktop?desktop.ownership(surface):0;
@@ -46,14 +50,17 @@ export function ScopedConversationComposer({context,composers,openConversation,r
    <textarea ref={input} aria-label="Message" placeholder={placeholder} rows={2} value={state.draft} disabled={held||!state.ready} onChange={event=>{void composers.edit(target,event.target.value);}} onKeyDown={event=>{if(commands.current?.keyDown(event)||isComposing(event)||event.shiftKey||event.altKey||event.ctrlKey||event.metaKey)return;if(event.key==='Enter'){event.preventDefault();send();}}}/>
    <ComposerAttachments resources={[]} excerpts={state.excerpts} disabled={held||!state.ready} onEditExcerpt={(id,text)=>composers.editExcerpt(target,id,text)} onRemoveExcerpt={id=>composers.removeExcerpt(target,id)}/>
    <ComposerSkillBindings bindings={state.skills??[]} retry={state.retry} disabled={held} onRemove={id=>{void composers.removeSkill(target,id).catch(()=>{});}}/>
-   <ComposerCommands ref={commands} input={input} draft={state.draft} threadId={context.owner.threadId} projectId={context.owner.projectId??undefined} disabled={held||!state.ready||state.busy||state.stopping} onDraft={text=>{void composers.edit(target,text);}} onModel={()=>picker.current?.open()} onMode={mode}/>
+   <ComposerCommands ref={commands} input={input} draft={state.draft} threadId={context.owner.threadId} projectId={context.owner.projectId??undefined} disabled={held||!state.ready||state.busy||state.stopping} onDraft={text=>{void composers.edit(target,text);}} onModel={()=>picker.current?.open()} onMode={mode} onSnippets={token=>snippets.openForToken(token)}/>
    <div className="scoped-owner-composer-actions">
     {savedDraftOwner&&savedDraftOwner.threadId===context.owner.threadId&&<SavedDrafts owner={savedDraftOwner} input={input} disabled={held||!state.ready||state.busy||state.retry}/>}
+    <PromptSnippetsTrigger snippets={snippets} disabled={held||!state.ready||state.busy||state.retry}/>
     <button type="button" className="quiet" aria-label="Open conversation" disabled={held||state.busy||state.stopping} onClick={()=>{void openConversation(context.owner.threadId).catch(()=>setError('The conversation could not open. Keep this draft and retry.'));}}><MessageSquare size={14}/></button>
     <ModelPicker ref={picker} models={models} modelId={modelId} thinkingLevel={state.thinkingLevel??''} onChange={id=>{setModelId(id);if(state.thinkingLevel&&!models.find(model=>model.id===id)?.thinkingLevels?.includes(state.thinkingLevel))void journalWrite('thinking:'+context.owner.threadId,'').catch(()=>setError('The reasoning choice could not be saved.'));}} onThinkingChange={level=>{void journalWrite('thinking:'+context.owner.threadId,level).catch(()=>setError('The reasoning choice could not be saved.'));}} disabled={held||state.busy||state.stopping||working}/>
     {working?<button type="button" className="send-button stop-button" aria-label="Stop agent" disabled={held||state.stopping} onClick={()=>{if(!held)void composers.stop(target);}}><CircleStop size={18}/></button>:<button className="send-button" aria-label={state.retry?'Retry send':'Send message'} disabled={held||skillsBlocked||!models.some(model=>model.id===modelId)||!composers.canSend(target)||!state.retry&&!state.draft.trim()&&!state.excerpts?.length}><ArrowUp size={18}/></button>}
    </div>
    {(error||state.error)&&<p role="alert" className="error-text">{error||state.error}</p>}
+   <PromptSnippetsReceipt snippets={snippets}/>
+   <PromptSnippetsOverlay snippets={snippets}/>
   </ComposerView></div>
   {detached&&<button className="quiet" onClick={()=>{void desktop?.bridge.focus(detached.id).catch(()=>setError('The owning window could not be focused.'));}}>Focus existing window</button>}
  </div>;
