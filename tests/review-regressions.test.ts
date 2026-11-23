@@ -101,6 +101,63 @@ it("enforces client lease ownership on widget checkpoints", async () => {
   await expect(x.send("widget.checkpoint", { artifactId: a.artifactId, revision: 1, stateSchemaVersion: 1, baseStateRevision: 0, values: { draft: "saved" }, clientId: "owner" })).resolves.toMatchObject({ result: { values: { draft: "saved" } } });
 });
 
+const widgetArgs = { html: "<p>Draft</p>", inputSchema: {}, eventSchema: {}, stateSchema: { type: "object" } };
+
+function widgetProjections(store: Store, threadId: string) {
+  return ["artifact", "artifactVersion", "userState", "message"].map(kind => store.all(kind, threadId));
+}
+
+it.each([
+  { label: "nonnumeric text", stateSchemaVersion: "abc" },
+  { label: "numeric text", stateSchemaVersion: "1" },
+  { label: "null", stateSchemaVersion: null },
+  { label: "boolean", stateSchemaVersion: true },
+  { label: "object", stateSchemaVersion: {} },
+  { label: "fraction", stateSchemaVersion: 2.5 },
+  { label: "zero", stateSchemaVersion: 0 },
+  { label: "negative integer", stateSchemaVersion: -1 },
+  { label: "unsafe integer", stateSchemaVersion: Number.MAX_SAFE_INTEGER + 1 },
+])("rejects $label as a widget state schema version before creating artifact state", async ({ stateSchemaVersion }) => {
+  const x = await setup(), input = await x.run();
+  const before = widgetProjections(x.store, x.thread.id);
+  await expect.soft(x.service.tool({
+    name: "ui_create_widget",
+    args: { ...widgetArgs, stateSchemaVersion },
+  }, input)).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  expect(widgetProjections(x.store, x.thread.id)).toEqual(before);
+});
+
+it("rejects an invalid widget state schema version on update without changing saved artifact state", async () => {
+  const x = await setup(), input = await x.run();
+  const { artifactId, revision } = await x.service.tool({ name: "ui_create_widget", args: widgetArgs }, input) as { artifactId: string; revision: number };
+  await x.send("widget.checkpoint", { artifactId, revision, stateSchemaVersion: 1, baseStateRevision: 0, values: { draft: "saved" }, clientId: "owner" });
+
+  const before = widgetProjections(x.store, x.thread.id);
+  await expect.soft(x.service.tool({
+    name: "ui_create_widget",
+    args: { ...widgetArgs, artifactId, baseRevision: revision, html: "<p>Changed</p>", stateSchemaVersion: "1", commandId: crypto.randomUUID() },
+  }, input)).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  expect(widgetProjections(x.store, x.thread.id)).toEqual(before);
+});
+
+it.each([
+  { label: "the default", versionArgs: {}, expectedVersion: 1 },
+  { label: "an explicit version", versionArgs: { stateSchemaVersion: 3 }, expectedVersion: 3 },
+  { label: "the largest safe integer", versionArgs: { stateSchemaVersion: Number.MAX_SAFE_INTEGER }, expectedVersion: Number.MAX_SAFE_INTEGER },
+])("preserves a saved widget using $label across update and checkpoint", async ({ versionArgs, expectedVersion }) => {
+  const x = await setup(), input = await x.run();
+  const args = { ...widgetArgs, ...versionArgs };
+  const { artifactId } = await x.service.tool({ name: "ui_create_widget", args }, input) as { artifactId: string };
+  await expect(x.service.tool({
+    name: "ui_create_widget",
+    args: { ...args, artifactId, baseRevision: 1, html: "<p>Updated</p>" },
+  }, input)).resolves.toMatchObject({ artifactId, revision: 2 });
+  expect(x.store.get("artifact", artifactId)).toMatchObject({ widget: { stateSchemaVersion: expectedVersion } });
+  await expect(x.send("widget.checkpoint", {
+    artifactId, revision: 2, stateSchemaVersion: expectedVersion, baseStateRevision: 0, values: { draft: "saved" }, clientId: "owner",
+  })).resolves.toMatchObject({ result: { values: { draft: "saved" } } });
+});
+
 it("does not overwrite a Stop that races with model discovery during resume", async () => {
   const x = await setup(); await x.run(); await x.send("run.stop");
   const pending = deferred(), original = x.runtime.models;
