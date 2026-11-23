@@ -191,9 +191,9 @@ export class ProjectTools{
     if(dirty.has(remotePath))return true;
     // Upstream path below a dirty file: any proper ancestor of remotePath that is itself dirty blocks the fast-forward.
     for(let i=remotePath.indexOf('/');i>0;i=remotePath.indexOf('/',i+1))if(dirty.has(remotePath.slice(0,i)))return true;
-    // Dirty path below the upstream path: binary-search the first dirty entry after remotePath.
-    let lo=0,hi=dirtySorted.length;while(lo<hi){const mid=(lo+hi)>>1;if(dirtySorted[mid]<=remotePath)lo=mid+1;else hi=mid;}
-    const next=dirtySorted[lo];return next!==undefined&&next.startsWith(remotePath+'/');
+    // Dirty path below the upstream path: binary-search the first dirty entry at or after remotePath+'/'; siblings like 'a-b' sort before it and must not mask a hit.
+    const bound=remotePath+'/';let lo=0,hi=dirtySorted.length;while(lo<hi){const mid=(lo+hi)>>1;if(dirtySorted[mid]<bound)lo=mid+1;else hi=mid;}
+    const next=dirtySorted[lo];return next!==undefined&&next.startsWith(bound);
    };
    if([...remoteChanged].some(overlaps))blockers.push('DIRTY_OVERLAP');
   }
