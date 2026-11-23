@@ -2,7 +2,7 @@ import {useContext,useId,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import {useStateStore,type ComponentRegistry,type ComponentRenderProps} from '@json-render/react';
 import {ArrowRight,Check,ChevronLeft,ChevronRight,Circle,MessageSquare,Pause,RotateCcw} from 'lucide-react';
 import {INTERACTION_SCHEMAS,INTERACTION_DATA_SCHEMAS,boundedInteractionData,typedInteractionValue,type InteractionField,type InteractionScalar,type ReviewQueueData,type ParameterControlsData} from '../../../packages/ui-catalog/interactions';
-import {artifactSourceContent} from './artifact-source';
+import {artifactSourceContent,openArtifactSourceLink} from './artifact-source';
 import {ArtifactTitle,inputPath,statePath,useTaskAction} from './task-context';
 import {animateTask,MotionRegion,reducedMotion} from './task-motion';
 import {Select} from '../../../packages/ui-shell/Select';
@@ -12,7 +12,7 @@ const object=(value:unknown):Record<string,unknown>=>value&&typeof value==='obje
 const own=(value:Record<string,unknown>,key:string,fallback:unknown)=>Object.hasOwn(value,key)?value[key]:fallback;
 const show=(value:unknown)=>value===null||value===undefined||value===''?'Not set':typeof value==='boolean'?value?'Yes':'No':String(value);
 const showField=(field:InteractionField,value:unknown)=>field.type==='choice'?field.options.find(option=>option.value===value)?.label??show(value):show(value);
-function Source({text}:{text?:string}){const source=artifactSourceContent(text);return source?<details className="interaction-source"><summary>Source</summary>{source.kind==='link'?<a href={source.text} target="_blank" rel="noopener">{source.text}</a>:<p>{source.text}</p>}</details>:null;}
+function Source({text}:{text?:string}){const source=artifactSourceContent(text);return source?<details className="interaction-source"><summary>Source</summary>{source.kind==='link'?<a href={source.text} target="_blank" rel="noopener" onClick={event=>openArtifactSourceLink(event,source.text)}>{source.text}</a>:<p>{source.text}</p>}</details>:null;}
 function Heading({title,detail}:{title?:string;detail?:string}){const outer=useContext(ArtifactTitle);return title&&title!==outer||detail?<header className="interaction-heading">{title&&title!==outer?<h3>{title}</h3>:<span/>}{detail&&<span>{detail}</span>}</header>:null;}
 type ReviewDecision='approve'|'revise'|'defer'|null;
 type Review={decision:ReviewDecision;comment:string};
