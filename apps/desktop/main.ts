@@ -102,11 +102,11 @@ function remember(record:WindowRecord,open=true){if(record.window.isDestroyed())
  if(!awaitingRescue)record.placement=retainDesktopPlacement(bounds,record.placement,record.appliedBounds,all);
  if(record.placement&&all.some(display=>display.id===record.placement!.displayId))record.monitorRescued=false;
  const value={surface:record.surface,bounds,placement:record.placement,open,visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),...(record.dockedBrowser?{dockedBrowserId:record.dockedBrowser.id}:{})};saved=[...saved.filter(entry=>desktopSurfaceKey(entry.surface)!==key),value];if(saved.length>24){const live=new Set([...windows.values()].map(item=>desktopSurfaceKey(item.surface)));saved=[...saved.filter(entry=>live.has(desktopSurfaceKey(entry.surface))),...saved.filter(entry=>!live.has(desktopSurfaceKey(entry.surface)))].slice(0,24);}persist();}
-function writeBookmarks(){const body=serializeBookmarkStore(bookmarks);void persistence.enqueue(async()=>{await mkdir(dirname(bookmarkFile),{recursive:true});await writeFile(bookmarkFile,body,{encoding:'utf8',mode:0o600});}).catch(()=>{bookmarkNotice='Bookmarks could not be saved to this device.';broadcast();});}
+function writeBookmarks(){const body=serializeBookmarkStore(bookmarks);void persistence.enqueue(async()=>{await mkdir(dirname(bookmarkFile),{recursive:true});const tmp=bookmarkFile+'.tmp';await writeFile(tmp,body,{encoding:'utf8',mode:0o600});await rename(tmp,bookmarkFile);}).catch(()=>{bookmarkNotice='Bookmarks could not be saved to this device.';broadcast();});}
 async function loadBookmarks(){
  if(!existsSync(bookmarkFile))return;
  try{
-  const text=await readFile(bookmarkFile,'utf8');if(text.length>256*1024)throw Error('oversize');
+  const text=await readFile(bookmarkFile,'utf8');if(text.length>1024*1024)throw Error('oversize');
   const parsed=parseBookmarkStore(text);
   if('invalid' in parsed)throw Error('invalid');
   bookmarks=parsed.items;
