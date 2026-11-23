@@ -295,7 +295,7 @@ test('Panels fits a short window with a visible scrollbar and reachable last act
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(292);
   expect(await menu.evaluate(node => getComputedStyle(node).scrollbarWidth)).not.toBe('none');
   await page.keyboard.press('End');
-  const last = page.getByRole('menuitem', { name: 'Add Linked pull requests panel' });
+  const last = page.getByRole('menuitem', { name: 'Add Project panel' });
   await expect(last).toBeFocused();
   expect(await last.evaluate(node => {
     const row = node.getBoundingClientRect(), list = node.closest('[role="menu"]')!.getBoundingClientRect();
