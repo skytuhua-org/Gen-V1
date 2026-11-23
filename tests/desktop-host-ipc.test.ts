@@ -76,11 +76,13 @@ class TestSidecar extends EventEmitter {
  exitCode:number|null=null;
  signalCode=null;
  connected=true;
+ readonly saveLayout=vi.fn();
  constructor(readonly pid:number,readonly token:string){super();}
  send(message:{type:string;token:string;requestId?:string}){
   if(message.type==='harness.shutdown'){
    queueMicrotask(()=>{this.emit('message',{type:'harness.stopped',token:this.token});this.stop(0);});
   }else{
+   if(message.type==='harness.layout.save')this.saveLayout();
    const type=message.type==='harness.layout.save'?'harness.layout.saved':message.type+'.result';
    queueMicrotask(()=>this.emit('message',{...message,type,idle:true}));
   }
@@ -163,6 +165,8 @@ describe('desktop main window lifecycle with a synthetic sidecar and shell',()=>
   const launchIdentity=new URLSearchParams(new URL(originalUrl).hash.slice(1)).get('launch');
   expect(launchIdentity).toMatch(/^[a-f0-9]{64}$/);
   expect(children[0]!.token===launchIdentity).toBe(true);
+  // Confirm the startup layout write completed before advancing the restart clock.
+  await vi.waitFor(()=>expect(children[0]!.saveLayout).toHaveBeenCalledOnce());
   children[0]!.stop(1);
   await vi.advanceTimersByTimeAsync(700);
   expect(children).toHaveLength(2);
