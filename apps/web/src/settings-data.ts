@@ -5,6 +5,8 @@ import {threadNavigationRevision, type ShellSettingsReadModel, type ThreadNaviga
 export type SettingsData = Omit<ShellSettingsReadModel, 'resourcePage' | 'learning'> & {
   learning?: ShellSettingsReadModel['learning'];
   archivedThreads: ThreadNavigationRow[];
+  /** Grant-list display titles; presentation only. */
+  threadTitles: Record<string, string>;
 };
 const navigationRow = (thread: Thread): ThreadNavigationRow => {const {id,title,projectId,projectName,createdAt,updatedAt,status,runId,kind,parentThreadId,presentation,workspaceId,modelId,thinkingLevel}=thread;return {id,title,projectId,projectName,createdAt,updatedAt,status,runId,kind,parentThreadId,presentation,workspaceId,modelId,thinkingLevel,threadRevision:threadNavigationRevision(thread)};};
 
@@ -17,6 +19,7 @@ export function settingsDataFromSnapshot(snapshot: Snapshot): SettingsData {
     projects: [...new Map([...snapshot.threads, ...(snapshot.archivedThreads ?? [])].filter(thread => thread.projectId).map(thread => [thread.projectId!, {id: thread.projectId!, name: thread.projectName ?? 'Project'}])).values()],
     resources: snapshot.resources.map(({id, threadId, kind, label, writable, path}) => ({id, threadId, kind, label, writable, path})),
     archivedThreads: (snapshot.archivedThreads ?? []).map(navigationRow),
+    threadTitles: Object.fromEntries([...snapshot.threads, ...(snapshot.archivedThreads ?? [])].map(thread => [thread.id, thread.title])),
     counts: {threads: snapshot.threads.length, archivedThreads: snapshot.archivedThreads?.length ?? 0, artifacts: snapshot.artifacts.length, resources: snapshot.resources.length, uncertainOperations: snapshot.operations.filter(item => item.status === 'unknown').length},
   };
 }

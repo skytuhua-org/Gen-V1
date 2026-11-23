@@ -449,3 +449,63 @@ test.describe('touch Settings targets',()=>{
     await expect(host.dialog.getByText('No variables configured.',{exact:true})).toBeVisible();
   });
 });
+
+test('Granted resources dedupes per-thread grants and revokes a resource',async({page})=>{
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Grants fixture'}}}});
+  const thread=(id:string,title:string)=>({...snapshot.threads[0],id,title});
+  snapshot.threads=[thread('signing','Sign the service agreement'),thread('catalog','Catalog'),thread('shell','Shell'),thread('other','Other thread')];
+  const file={kind:'file' as const,writable:false,createdAt:'2026-11-22'};
+  snapshot.resources=[
+    {id:'g1',threadId:'signing',...file,path:'C:/docs/agreement.pdf',label:'agreement.pdf'},
+    {id:'g2',threadId:'catalog',...file,path:'C:/docs/agreement.pdf',label:'agreement.pdf'},
+    {id:'g3',threadId:'shell',...file,path:'C:/docs/agreement.pdf',label:'agreement.pdf'},
+    {id:'g4',threadId:'other',...file,path:'C:/work/budget',label:'Budget'},
+  ];
+  const host=await serveTaskFixture(page,snapshot);
+  await page.route('**/api/commands',async route=>{
+    const command=route.request().postDataJSON() as HostCommand;
+    if(command.type!=='resource.revoke')return route.fallback();
+    host.commands.push(command);
+    const i=snapshot.resources.findIndex(g=>g.id===command.payload.grantId&&g.threadId===command.threadId);
+    if(i>=0)snapshot.resources.splice(i,1);snapshot.seq++;
+    await route.fulfill({json:{commandId:command.id,seq:snapshot.seq,result:{revoked:true}}});
+  });
+  await page.route('**/api/workspace',route=>route.fulfill({json:{projects:[],state:{version:1,revision:0,activeCanvasId:'workspace-default',canvases:[{version:1,id:'workspace-default',name:'Workspace',preset:'workspace',viewport:{x:0,y:0,zoom:1},panels:[],filter:'active',projectIds:[]}],profiles:[],disabledKinds:[],integrations:{}}}}));
+  await page.route('**/api/environment',route=>route.fulfill({json:{revision:0,entries:[],secretStorageAvailable:false}}));
+  await page.goto('/');
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Settings',exact:true});
+  await dialog.getByRole('navigation',{name:'Settings sections'}).getByRole('button',{name:'Projects & Working Copies',exact:true}).click();
+  const rows=dialog.locator('.settings-grant-row');
+  await expect(rows).toHaveCount(2);
+  await expect(dialog.getByText('Granted to 3 threads',{exact:true})).toBeVisible();
+  await expect(dialog.getByText('Granted to Other thread',{exact:true})).toBeVisible();
+  await dialog.getByRole('button',{name:'Revoke agreement.pdf',exact:true}).click();
+  await expect(rows).toHaveCount(1);
+  expect(host.commands.filter(item=>item.type==='resource.revoke').map(item=>item.payload.grantId).sort()).toEqual(['g1','g2','g3']);
+  await expect(dialog.getByText('Granted to Other thread',{exact:true})).toBeVisible();
+  await dialog.getByRole('button',{name:'Revoke Budget',exact:true}).click();
+  await expect(rows).toHaveCount(0);
+  await expect(dialog.getByText('No granted resources.',{exact:true})).toBeVisible();
+});
+
+test('a failed revoke restores the row with an inline error',async({page})=>{
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Grants fixture'}}}});
+  snapshot.resources=[{id:'g1',threadId:'task-thread',kind:'file',writable:false,createdAt:'2026-11-22',path:'C:/docs/agreement.pdf',label:'agreement.pdf'}];
+  const host=await serveTaskFixture(page,snapshot);
+  await page.route('**/api/commands',async route=>{
+    const command=route.request().postDataJSON() as HostCommand;
+    if(command.type!=='resource.revoke')return route.fallback();
+    await route.fulfill({status:500,json:{error:{code:'UNAVAILABLE',message:'Simulated revoke failure'}}});
+  });
+  await page.route('**/api/workspace',route=>route.fulfill({json:{projects:[],state:{version:1,revision:0,activeCanvasId:'workspace-default',canvases:[{version:1,id:'workspace-default',name:'Workspace',preset:'workspace',viewport:{x:0,y:0,zoom:1},panels:[],filter:'active',projectIds:[]}],profiles:[],disabledKinds:[],integrations:{}}}}));
+  await page.route('**/api/environment',route=>route.fulfill({json:{revision:0,entries:[],secretStorageAvailable:false}}));
+  await page.goto('/');
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Settings',exact:true});
+  await dialog.getByRole('navigation',{name:'Settings sections'}).getByRole('button',{name:'Projects & Working Copies',exact:true}).click();
+  await expect(dialog.getByText('Granted to Source-bound task fixture',{exact:true})).toBeVisible();
+  await dialog.getByRole('button',{name:'Revoke agreement.pdf',exact:true}).click();
+  await expect(dialog.locator('.settings-grant-row')).toHaveCount(1);
+  await expect(dialog.getByText('Could not revoke — try again.',{exact:true})).toBeVisible();
+});
