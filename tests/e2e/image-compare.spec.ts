@@ -90,10 +90,28 @@ test('revoking either grant or moving it to another thread clears both images wi
 
 for(const policy of ['off','reduced'] as const){
  test(`app ${policy} settles active image geometry without replay`,async({page})=>{
+  const start = new Date('2026-10-30T12:00:00Z');
+  await page.clock.install({time:start});
   await page.emulateMedia({reducedMotion:'no-preference'});await fixture(page);await page.goto('/');await ready(page);
+  await page.clock.pauseAt(new Date(start.getTime() + 60_000));
+  const stage = page.locator('.image-compare-stage');
+  const width = () => stage.evaluate(node => (node as HTMLElement).style.getPropertyValue('--image-compare-width'));
   await page.getByRole('button',{name:'Side by side',exact:true}).click();
-  const values=await page.locator('.image-compare-stage').evaluate(async(node,policy)=>{const stage=node as HTMLElement,before=stage.style.getPropertyValue('--image-compare-width');document.documentElement.dataset.motion=policy;await Promise.resolve();const after=stage.style.getPropertyValue('--image-compare-width');document.documentElement.dataset.motion='system';await Promise.resolve();return {before,after,restored:stage.style.getPropertyValue('--image-compare-width')};},policy);
-  expect(values.before).not.toBe('50%');expect(values.after).toBe('50%');expect(values.restored).toBe('50%');
+  await expect(stage).toHaveAttribute('data-mode', 'split');
+  // The first animation frame sets the transfer's start time. Advance into the move.
+  await page.clock.runFor(48);
+  const inFlight = parseFloat(await width());
+  expect(inFlight).toBeGreaterThan(50);
+  expect(inFlight).toBeLessThan(100);
+
+  await page.evaluate(value => { document.documentElement.dataset.motion = value; }, policy);
+  expect(await width()).toBe('50%');
+  await page.evaluate(() => { document.documentElement.dataset.motion = 'system'; });
+  expect(await width()).toBe('50%');
+  await page.clock.runFor(48);
+  expect(await width()).toBe('50%');
+  await page.clock.runFor(250);
+  expect(await width()).toBe('50%');
  });
  test(`saved ${policy} reload reaches image geometry immediately`,async({page})=>{
   await page.emulateMedia({reducedMotion:'no-preference'});const host=await fixture(page);await page.goto('/');await ready(page);
