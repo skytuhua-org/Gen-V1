@@ -360,7 +360,6 @@ test('a completed old project action cannot refresh over a retargeted context wh
 test('error text inside the workspace panel carries panel padding', async ({ page }) => {
   await fixture(page, [], undefined, 'workspace');
   await page.getByRole('button', { name: 'Open workspace panel', exact: true }).click();
-  const panel = page.getByRole('complementary', { name: 'Workspace panel', exact: true });
   const padding = (selector: string, host: string) => page.evaluate(([selector, host]) => {
     const container = document.querySelector(host);
     const note = document.createElement('p');
