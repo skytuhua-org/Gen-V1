@@ -100,7 +100,7 @@ export function Comparison({element:{props}}:ComponentRenderProps){
   const [receipt,setReceipt]=useState<{optionId:string;generation:number}|undefined>(undefined),intent=useRef(0),selectedRef=useRef(selected?.id);
   const labelRef=useRef<HTMLSpanElement>(null);
   const entrance=usePublicationEntrance(node=>{
-    const th=node.querySelector<HTMLElement>('.everyday-comparison-table thead th.is-selected');if(!th)return[];
+    const th=node.querySelector<HTMLElement>('.everyday-diff-row.is-head [role=columnheader].is-selected');if(!th)return[];
     return [ornament(th,'everyday-entry-column-edge',[{transform:'scaleX(0)'},{transform:'scaleX(1)'}],150)];
   });
   useLayoutEffect(()=>{
@@ -115,7 +115,7 @@ export function Comparison({element:{props}}:ComponentRenderProps){
     if(!changed.length)return;
     const probe=document.createElement('span');probe.style.backgroundColor='color-mix(in srgb,var(--accent-fg) 18%,transparent)';root.appendChild(probe);const strong=getComputedStyle(probe).backgroundColor;probe.remove();
     for(const target of changed){
-      const cell=root.querySelector<HTMLElement>(`td[data-column="${CSS.escape(target.optionId)}"][data-criterion="${CSS.escape(target.criterionId)}"]`);
+      const cell=root.querySelector<HTMLElement>(`[role=cell][data-column="${CSS.escape(target.optionId)}"][data-criterion="${CSS.escape(target.criterionId)}"]`);
       if(!cell)continue;
       cell.style.setProperty('--everyday-cell-duration','120ms');
       const animation=animateTask(cell,[{backgroundColor:getComputedStyle(cell).backgroundColor},{backgroundColor:strong,offset:.5},{backgroundColor:getComputedStyle(cell).backgroundColor}],120,{duration:'--everyday-cell-duration',easing:'--ui-ease-enter'});
@@ -128,13 +128,13 @@ export function Comparison({element:{props}}:ComponentRenderProps){
     const cause=selectCause.current;selectCause.current=undefined;
     intent.current++;selectedRef.current=next;setReceipt(undefined);
     const root=section.current;if(!root)return;
-    const newCells=Array.from(root.querySelectorAll<HTMLElement>(`.everyday-comparison-table [data-column].is-selected`)),selectedBg=newCells.length?getComputedStyle(newCells[0]).backgroundColor:undefined;
+    const newCells=Array.from(root.querySelectorAll<HTMLElement>(`.everyday-diff [data-column].is-selected`)),selectedBg=newCells.length?getComputedStyle(newCells[0]).backgroundColor:undefined;
     if(selectedBg&&selectedBg!=='rgba(0, 0, 0, 0)'&&selectedBg!=='transparent')accent.current=selectedBg;
-    if(previous===next||cause!=='pointer'||!next)return;
+    if(!previous||previous===next||cause!=='pointer'||!next)return;
     const oldCells=Array.from(root.querySelectorAll<HTMLElement>(`[data-column="${CSS.escape(previous)}"]`));
     for(const cell of oldCells){cell.style.setProperty('--everyday-cell-duration','120ms');animateTask(cell,[{backgroundColor:accent.current??'rgba(0, 0, 0, 0)'},{backgroundColor:getComputedStyle(cell).backgroundColor}],120,{duration:'--everyday-cell-duration',easing:'--ui-ease-enter'});}
     for(const cell of newCells){cell.style.setProperty('--everyday-cell-duration','120ms');animateTask(cell,[{backgroundColor:'rgba(0, 0, 0, 0)'},{backgroundColor:selectedBg}],120,{duration:'--everyday-cell-duration',easing:'--ui-ease-enter'});}
-    const check=root.querySelector<SVGGeometryElement>(`.everyday-comparison-table th.is-selected .everyday-option-selector svg polyline`);
+    const check=root.querySelector<SVGGeometryElement>(`.everyday-option-card[aria-checked=true] .everyday-option-selector svg :is(path,polyline)`);
     if(check&&readMotionPolicy()==='full'){check.setAttribute('pathLength','1');check.style.strokeDasharray='1';check.animate([{strokeDashoffset:'1'},{strokeDashoffset:'0'}],{duration:90,easing:'cubic-bezier(.16,1,.3,1)'});}
   },[selected?.id]);
   useLayoutEffect(()=>{const node=labelRef.current;if(node&&receipt)animateTask(node,[{opacity:.8},{opacity:1}],120);},[receipt]);
@@ -149,10 +149,11 @@ export function Comparison({element:{props}}:ComponentRenderProps){
     if(ok&&intent.current===generation&&selectedRef.current===optionId)setReceipt({optionId,generation});
   };
   const busyLabel=action.busy?'Submitting…':receipt?'Preference submitted':p.actionLabel??`Continue with ${selected.label}`;
-  return <section ref={node=>{(section as React.MutableRefObject<HTMLElement|null>).current=node;(entrance as React.RefObject<HTMLElement|null>).current=node;}} className="everyday-comparison" aria-label={parsed.data.title??'Comparison'}>
-    {parsed.data.title&&parsed.data.title!==outer&&<header className="everyday-heading"><h3>{parsed.data.title}</h3></header>}
-    <div className="everyday-comparison-controls"><div className="everyday-comparison-current"><strong>{selected.label}</strong>{selected.summary&&<p className="everyday-selected-summary">{selected.summary}</p>}</div><label className="everyday-difference-toggle"><input type="checkbox" checked={differencesOnly} onChange={event=>save({differencesOnly:event.target.checked})}/>Differences only</label></div>
-    <TableScroll label="Compare options"><table className="everyday-comparison-table"><caption className="sr-only">Compare options</caption><thead><tr><th scope="col"><span className="sr-only">Criteria</span></th>{options.map(option=><th key={option.id} scope="col" data-column={option.id} className={option.id===selected.id?'is-selected':''}><button type="button" aria-label={`Select ${option.label}`} aria-pressed={option.id===selected.id} onClick={event=>choose(option.id,clickCause(event))}><span className="everyday-option-selector" aria-hidden="true">{option.id===selected.id&&<Check size={12}/>}</span><strong>{option.label}</strong></button>{option.summary&&<details className="everyday-column-details"><summary aria-label={`Details for ${option.label}`}>Details</summary><p>{option.summary}</p></details>}</th>)}</tr></thead><tbody>{criteria.map(criterion=><tr key={criterion.id}><th scope="row">{criterion.label}{criterion.unit&&<small>{criterion.unit}</small>}</th>{options.map(option=><td key={option.id} data-column={option.id} data-criterion={criterion.id} className={`${option.id===selected.id?'is-selected ':''}${option.values[criterion.id]==null?'is-unavailable':''} ${typeof option.values[criterion.id]==='number'?'number':''}`}>{comparisonValue(option.values[criterion.id])}</td>)}</tr>)}</tbody></table></TableScroll>
+  const keyboard=(event:KeyboardEvent<HTMLButtonElement>,index:number)=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?options.length-1:(index+(event.key==='ArrowRight'?1:-1)+options.length)%options.length;choose(options[next].id,'keyboard');(event.currentTarget.parentElement?.children[next] as HTMLButtonElement|undefined)?.focus({preventScroll:true});};
+  return <section ref={node=>{section.current=node;entrance.current=node;}} className="everyday-comparison" aria-label={parsed.data.title??'Comparison'}>
+    <header className="everyday-heading">{parsed.data.title&&parsed.data.title!==outer?<h3>{parsed.data.title}</h3>:<span/>}<label className="everyday-difference-toggle"><input type="checkbox" checked={differencesOnly} onChange={event=>save({differencesOnly:event.target.checked})}/>Differences only</label></header>
+    <div className="everyday-option-grid" role="radiogroup" aria-label="Options">{options.map((option,index)=><button key={option.id} type="button" role="radio" aria-checked={option.id===selected.id} tabIndex={option.id===selected.id?0:-1} className="everyday-option-card" data-selected={option.id===selected.id} onClick={event=>choose(option.id,clickCause(event))} onKeyDown={event=>keyboard(event,index)}><span className="everyday-option-selector" aria-hidden="true">{option.id===selected.id&&<Check size={10}/>}</span><span className="everyday-option-text"><strong>{option.label}</strong>{option.summary&&<small className={option.id===selected.id?'everyday-selected-summary':undefined}>{option.summary}</small>}</span></button>)}</div>
+    <div className="everyday-diff" role="table" aria-label="Compare options" style={{gridTemplateColumns:`minmax(110px,auto) repeat(${options.length},minmax(0,1fr))`}}><div className="everyday-diff-row is-head" role="row"><span role="columnheader"/><>{options.map(option=><span key={option.id} role="columnheader" data-column={option.id} className={option.id===selected.id?'is-selected':''}>{option.label}{option.summary&&<details className="everyday-column-details"><summary aria-label={`Details for ${option.label}`}>Details</summary><p>{option.summary}</p></details>}</span>)}</></div>{criteria.map(criterion=><div className="everyday-diff-row" role="row" key={criterion.id}><span role="rowheader" className="everyday-diff-label">{criterion.label}{criterion.unit&&<small>{criterion.unit}</small>}</span>{options.map(option=><span key={option.id} role="cell" data-column={option.id} data-criterion={criterion.id} className={`${option.id===selected.id?'is-selected ':''}${option.values[criterion.id]==null?'is-unavailable':''} ${typeof option.values[criterion.id]==='number'?'number':''}`}>{comparisonValue(option.values[criterion.id])}</span>)}</div>)}</div>
     {!criteria.length&&<p className="everyday-empty"><Minus size={13}/>The supplied values are the same for every option.</p>}
     {p.actionId&&<footer className="everyday-comparison-footer"><button type="button" className="primary" disabled={action.busy} onClick={()=>void submit()}><span className="everyday-action-labels"><span aria-hidden="true">{p.actionLabel??`Continue with ${selected.label}`}</span><span aria-hidden="true">Submitting…</span><span aria-hidden="true">Preference submitted</span><span ref={labelRef} className="everyday-action-current">{busyLabel}</span></span><ArrowUpRight size={13}/></button>{receipt&&<span role="status" className="sr-only">Preference submitted</span>}</footer>}
     {action.error&&<p className="error-text" role="status">{action.error}</p>}<Source text={parsed.data.source}/></section>;
