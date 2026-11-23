@@ -178,7 +178,7 @@
 .app-shell .sidebar .sidebar-thread-row.active,
 .sidebar .sidebar-thread-row.active {
   background: var(--selection-bg);
-  border-color: var(--text);
+  box-shadow: inset 2px 0 0 var(--text);
 }
 
 .app-shell .sidebar .sidebar-thread-row .thread-item,
@@ -275,11 +275,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.app-shell .sidebar .sidebar-thread-row.active .thread-item-title,
-.sidebar .sidebar-thread-row.active .thread-item-title {
-  font-weight: 600;
 }
 
 .app-shell .sidebar .thread-item-meta,
@@ -486,7 +481,6 @@
   flex: 0 0 auto;
   margin-top: 6px;
   padding: 7px 2px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
 
 .sidebar .sidebar-footer > button {

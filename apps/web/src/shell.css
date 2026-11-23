@@ -97,7 +97,7 @@
 @media(prefers-reduced-motion:reduce) { .app-shell .sidebar { transition:none; } }
 .app-shell .sidebar-close { display:flex; }
 .sidebar-thread-row { position:relative; border:1px solid transparent; border-radius:8px; margin-bottom:3px; }
-.sidebar-thread-row.active { background:var(--selection-bg); border-color:var(--text); }
+.sidebar-thread-row.active { background:var(--selection-bg); box-shadow:inset 2px 0 0 var(--text); }
 .sidebar-thread-row .thread-item { padding-right:29px; margin:0; }
 .sidebar-thread-menu-button { position:absolute; right:4px; top:6px; width:23px; height:23px; opacity:0; }
 .sidebar-thread-row:hover .sidebar-thread-menu-button,.sidebar-thread-row:focus-within .sidebar-thread-menu-button,.sidebar-thread-menu-button[aria-expanded=true] { opacity:1; }
@@ -140,7 +140,7 @@
 .workspace-right>.panel-resizer { position:absolute; top:0; bottom:0; left:-4px; margin:0; width:9px; }
 .right-panel-overlay .workspace-right { position:fixed; top:0; right:0; bottom:0; box-shadow:var(--elevation); }
 .workspace-right.workspace-right-maximized { position:fixed; right:12px; top:12px; bottom:12px; border:1px solid var(--border); border-radius:12px; box-shadow:var(--elevation); overflow:hidden; }
-.workspace-right-header { height:53px; flex:0 0 53px; display:flex; align-items:center; padding:0 9px; gap:2px; border-bottom:1px solid var(--border); }
+.workspace-right-header { height:53px; flex:0 0 53px; display:flex; align-items:center; padding:0 9px; gap:2px; }
 .workspace-right-header [role=tablist] { display:flex; flex:1; min-width:0; gap:1px; overflow:auto; scrollbar-width:thin; }
 .workspace-right-header [role=tablist][data-overflow-start=true] { mask-image:linear-gradient(to right,transparent,black 24px); -webkit-mask-image:linear-gradient(to right,transparent,black 24px); }
 .workspace-right-header [role=tablist][data-overflow-end=true] { mask-image:linear-gradient(to left,transparent,black 24px); -webkit-mask-image:linear-gradient(to left,transparent,black 24px); }
@@ -148,7 +148,7 @@
 .workspace-right-header [role=tab] { flex-shrink:0; white-space:nowrap; color:var(--muted); font-size:12px; padding:17px 8px 15px; border-bottom:2px solid transparent; transition:color var(--ui-motion-tab) var(--ui-ease-move),border-bottom-color var(--ui-motion-tab) var(--ui-ease-move); }
 .workspace-right-header [role=tab][aria-selected=true] { color:var(--text); border-bottom-color:var(--text); }
 .workspace-panel-content { flex:1; min-height:0; overflow:auto; }
-.panel-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 13px; border-bottom:1px solid var(--border); }
+.panel-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 13px; }
 .panel-toolbar label { min-width:0; flex:1; }
 .panel-toolbar select { font-size:12px; padding:6px 8px; width:100%; }
 .panel-empty { padding:35px 24px; display:flex; flex-direction:column; align-items:center; text-align:center; gap:10px; color:var(--muted); font-size:12px; }
@@ -222,7 +222,6 @@
 /* Shell motion follows a user opening a surface, not ordinary snapshots. */
 .app-shell .thread-item {gap:4px;padding:9px 10px;}
 .app-shell .thread-item-title {font-size:13px;font-weight:500;line-height:1.45;}
-.sidebar-thread-row.active .thread-item-title {font-weight:600;}
 .app-shell .thread-item-meta {justify-content:flex-start;gap:7px;font-size:11px;line-height:1.3;min-height:14px;}
 .thread-item-meta time {font-size:10px;font-variant-numeric:tabular-nums;}
 .thread-item-meta[data-thread-state=awaiting_input] .thread-item-state {color:var(--pending);}
@@ -253,7 +252,7 @@
 
 /* Docked tools share the chat owner; they never cover its title bar or composer. */
 .shell-workarea[data-tool-layout] { --ui-tool-body-min:128px; container:conversation-tools / size; flex-direction:row; }
-.shell-workarea[data-tool-layout]:has(>.workspace-tools) { gap:6px; }
+.shell-workarea[data-tool-layout=stacked]:has(>.workspace-tools) { gap:6px; }
 .shell-workarea[data-tool-layout]>.workspace-tools { display:flex; flex-direction:column; gap:6px; width:var(--right-panel-width); flex:0 0 var(--right-panel-width); max-width:min(720px,calc(100% - 426px)); min-height:0; }
 .shell-workarea[data-tool-layout=stacked] { flex-direction:column; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; }
 .shell-workarea[data-tool-layout=stacked]>.summary-layout-owner { flex:1 0 240px; min-height:240px; }
