@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type MutableRefObject, type ReactNode, type RefObject } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Popover } from './Popover';
+import type { OverlayAnchor } from './overlay-position';
 import './summary-dock.css';
 
 interface SummaryStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
@@ -62,9 +63,10 @@ export interface DockedSummaryProps {
   id: string; title: string; children: ReactNode; open?: boolean; defaultCollapsed?: boolean;
   summary?: ReactNode; collapsedLabel?: string; minimizeLabel?: string; ariaLabel?: string;
   className?: string; focusOnOpen?: boolean; expandRequest?: number; disclosure?: SummaryDisclosure;
+  popoverAnchorRect?: () => OverlayAnchor;
 }
 export function DockedSummary({ id, title, children, open = true, defaultCollapsed = true, summary, collapsedLabel,
-  minimizeLabel, ariaLabel, className = '', focusOnOpen = false, expandRequest, disclosure: external }: DockedSummaryProps) {
+  minimizeLabel, ariaLabel, className = '', focusOnOpen = false, expandRequest, disclosure: external, popoverAnchorRect }: DockedSummaryProps) {
   const own = useSummaryDisclosure(id, defaultCollapsed, !external), state = external ?? own;
   const { collapsed, updatePending: expansionPending, setUpdatePending: setExpansionPending, change, toggle: disclosure } = state;
   const panel = useRef<HTMLElement>(null), popoverPanel = useRef<HTMLDivElement>(null), opener = useRef<HTMLElement | null>(null);
@@ -99,7 +101,7 @@ export function DockedSummary({ id, title, children, open = true, defaultCollaps
   }, [expandRequest, open, focusOnOpen, collapsed, externalPresentation]);
   if (external) {
     const viewportHeight = typeof window === 'undefined' ? 536 : (window.visualViewport?.height ?? window.innerHeight);
-    return <Popover anchor={disclosure} contentRef={popoverPanel} initialFocus={state.focusPanelOnOpen.current ? popoverPanel : undefined}
+    return <Popover anchor={disclosure} getAnchorRect={popoverAnchorRect} contentRef={popoverPanel} initialFocus={state.focusPanelOnOpen.current ? popoverPanel : undefined}
       open={presentationOpen} present width={320} tabIndex={-1}
       height={Math.max(1, Math.min(520, viewportHeight - 16))} preferredSide="below" align="end"
       onDismiss={() => {
@@ -107,7 +109,6 @@ export function DockedSummary({ id, title, children, open = true, defaultCollaps
         change(true);
       }} className={`summary-overview ${className}`} role="region"
       aria-label={ariaLabel ?? `${title} window`} data-presentation="popover" data-summary-id={id} data-collapsed={collapsed}>
-      <strong className="docked-summary-title">{title}</strong>
       <div id={bodyId} className="docked-summary-content">{children}</div>
     </Popover>;
   }

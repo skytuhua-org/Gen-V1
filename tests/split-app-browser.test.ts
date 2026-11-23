@@ -722,15 +722,25 @@ describe.runIf(enabled)('actual App split workspace',()=>{
    await pw(title).toBeVisible();const centerX=async(selector:string)=>{const box=await page.locator(selector).boundingBox();if(!box)throw Error(`Missing bounds for ${selector}`);return box.x+box.width/2;};
    const titleBefore=await centerX('.empty-state h1'),composerBefore=await centerX('.composer-dock'),layoutBefore=await page.locator('.summary-layout[data-summaries="true"]').boundingBox();
    await toggle.click();
-   const overview=page.getByRole('region',{name:'Project overview window',exact:true}),popover=page.locator('.ui-popover[data-summary-id="plan"][data-presentation="popover"][data-state="open"]');
+   const overview=page.getByRole('region',{name:'Project overview window',exact:true}),popover=page.locator('.ui-popover.summary-overview');
    await pw(overview).toBeVisible();await pw(overview).toHaveAttribute('data-collapsed','false');await pw(overview).toHaveAttribute('data-presentation','popover');
    await pw(popover).toHaveCount(1);expect(await page.locator('.summary-dock [data-summary-id="plan"]').count()).toBe(0);
+   const workarea=page.locator('.app-shell:not(.embedded-thread-app) > .workspace-layout-workarea'),header=workarea.locator('.workspace-header:visible').first();
+   const assertPlacement=async()=>{
+    const overviewBounds=await popover.boundingBox(),workareaBounds=await workarea.boundingBox(),headerBounds=await header.boundingBox();
+    expect(overviewBounds).not.toBeNull();expect(workareaBounds).not.toBeNull();expect(headerBounds).not.toBeNull();
+    expect(Math.abs((overviewBounds!.x+overviewBounds!.width)-(workareaBounds!.x+workareaBounds!.width))).toBeLessThanOrEqual(20);
+    expect(overviewBounds!.y).toBeGreaterThanOrEqual(headerBounds!.y+headerBounds!.height);
+   };
+   await assertPlacement();
    expect(Math.abs(await centerX('.empty-state h1')-titleBefore)).toBeLessThanOrEqual(1);
    expect(Math.abs(await centerX('.composer-dock')-composerBefore)).toBeLessThanOrEqual(1);
    const layoutOpen=await page.locator('.summary-layout[data-summaries="true"]').boundingBox();expect(Math.abs(layoutOpen!.x-layoutBefore!.x)).toBeLessThanOrEqual(1);expect(Math.abs(layoutOpen!.width-layoutBefore!.width)).toBeLessThanOrEqual(1);
+   await page.setViewportSize({width:1400,height:900});await pw(popover).toHaveAttribute('data-state','open');await pw(popover).toBeVisible();await assertPlacement();
+   await page.getByRole('button',{name:'Collapse sidebar',exact:true}).click();await assertPlacement();
    await title.click();
    await pw(toggle).toHaveAttribute('aria-expanded','false');await pw(page.getByRole('region',{name:'Project overview window',exact:true})).toHaveCount(0);
-   await pw(popover).toHaveCount(0);expect(host.errors).toEqual([]);
+   await pw(popover).toHaveAttribute('data-state','closed');expect(host.errors).toEqual([]);
   }finally{await page.close();}
  },30000);
  it('uses inline chrome only for a lone thread pane and reserves measured header space',async()=>{
