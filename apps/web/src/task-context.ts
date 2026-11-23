@@ -2,6 +2,8 @@ import { createContext, useContext, useRef, useState } from 'react';
 
 export const ArtifactTitle = createContext('');
 export const ArtifactInline = createContext(false);
+// Display-only preferences from the trusted snapshot for generated views.
+export const ArtifactDiffPrefs = createContext<{hideWhitespace:boolean;diffColors:'red-green'|'blue-orange'}>({hideWhitespace:false,diffColors:'red-green'});
 export const ArtifactActions = createContext<(actionId: string, payload?: unknown) => Promise<void>>(async () => {});
 const escapeKey = (key: string) => key.replace(/~/g, '~0').replace(/\//g, '~1');
 export const statePath = (key: unknown) => `/values/${escapeKey(String(key))}`;

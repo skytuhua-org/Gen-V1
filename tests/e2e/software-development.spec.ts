@@ -124,3 +124,16 @@ test('invalid and oversized source records fail closed without executable markup
   host.setInput('software',{items:new Array(101)});await host.publish();
   await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeEnabled();
 });
+test('change set emphasizes added runs inside patch rows using snapshot display preferences (#1582)',async({page})=>{
+  const snapshot=taskFixture(softwareDevelopmentSpec('ChangeSet','review'),{software:structuredClone(SOFTWARE_FIXTURE_DATA.ChangeSet)});
+  snapshot.settings.preferences={hideWhitespace:false,diffColors:'blue-orange'};
+  await serveTaskFixture(page,snapshot);await page.goto('/');
+  const patch=page.locator('.software-patch');
+  await expect(patch).toHaveClass(/diff-colors-blue-orange/);
+  const addedMarks=await patch.locator('.intraline-mark-added').allTextContents();
+  expect(addedMarks.join('')).toContain('item.quantity');expect(addedMarks.join('')).toContain('*');
+  // Patch text, gutters and line numbers stay exactly as before.
+  const text=await patch.evaluate(el=>el.textContent);
+  expect(text).toContain('return items.reduce((sum, item) => sum + item.price * item.quantity, 0);');
+  expect(await patch.locator('.intraline-mark[tabindex],.intraline-mark[title]').count()).toBe(0);
+});
