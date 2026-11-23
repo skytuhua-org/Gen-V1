@@ -524,7 +524,7 @@ test('denied, non-PDF, oversized and excessive-page sources show recoverable err
   ]) {
     await page.unroute('**/api/**'); await fixtureHost(page, fixture.bytes, fixture); await page.goto('/');
     await expect(preview(page).getByRole('alert')).toContainText(fixture.expected);
-    await expect(preview(page).getByRole('button', { name: 'Retry preview' })).toBeVisible();
+    await expect(preview(page).getByRole('button', { name: 'Reload PDF' })).toBeVisible();
     await expect(preview(page).getByRole('link', { name: 'Open source PDF' }).last()).toBeVisible();
   }
 });
@@ -654,7 +654,7 @@ test('changing source identity clears the old pixels and highlight while retry r
   expect(await preview(page).locator('canvas').evaluate(canvas => (canvas as HTMLCanvasElement).width)).toBe(0);
   await expect(preview(page).locator('.document-active-field')).toHaveCount(0);
   release(); await expect(preview(page).getByRole('alert')).toContainText('no longer available');
-  await preview(page).getByRole('button', { name: 'Retry preview' }).click(); await expect.poll(() => reads).toBe(2); await expect(preview(page).getByRole('status')).toContainText('Page 1 of 2');
+  await preview(page).getByRole('button', { name: 'Reload PDF' }).click(); await expect.poll(() => reads).toBe(2); await expect(preview(page).getByRole('status')).toContainText('Page 1 of 2');
   await page.unroute('**/api/resources/replacement-pdf/content*');
 });
 
