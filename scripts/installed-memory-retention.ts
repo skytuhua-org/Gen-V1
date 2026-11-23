@@ -128,6 +128,8 @@ export async function verifyInstalledMemoryUI(page: Page, seed: InstalledMemoryS
   page.on('request', observeCommand);
   try {
     await page.getByRole('button', {name: fixture.threadTitle + ' Completed', exact: true}).click({timeout: 30000});
+    const overviewToggle = page.getByRole('button', {name: /^(?:Expand|Collapse) Project overview$/});
+    if (await overviewToggle.getAttribute('aria-expanded') !== 'true') await overviewToggle.click({timeout: 30000});
     const overview = page.getByRole('region', {name: 'Project overview window', exact: true});
     await expect(overview).toBeVisible({timeout: 30000});
     await expect(overview).toHaveAttribute('data-collapsed', /^(true|false)$/);
