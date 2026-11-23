@@ -3,7 +3,7 @@ import {resolve,join,relative,dirname,isAbsolute} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {build,type Configuration} from 'electron-builder';
-import {runtimeSourceAllowed,validateNodeArchive,desktopBuilderConfig,packageManagerInvocation,runtimeInstallArguments,stageRuntimeInstall,stageRepositoryMapParser,readDesktopOutputRoot,reserveDesktopRelease,reserveDesktopStage,REQUIRED_RUNTIME_FILES,NODE_ARCHIVE_EXTRACT_COMMAND,NODE_VERSION,NODE_ARCHIVE_SHA256} from './desktop-assets.ts';
+import {runtimeSourceAllowed,validateNodeArchive,desktopBuilderConfig,packageManagerInvocation,runtimeInstallArguments,stageRuntimeInstall,stageRepositoryMapParser,readDesktopOutputRoot,reserveDesktopRelease,reserveDesktopStage,writeControlDriverPackageTrust,REQUIRED_RUNTIME_FILES,NODE_ARCHIVE_EXTRACT_COMMAND,NODE_VERSION,NODE_ARCHIVE_SHA256} from './desktop-assets.ts';
 import {collectHermesPayload,discoverHermesPython,stageHermesPayload,verifyHermesPayload,verifyRelocatedHermesPython} from './hermes-assets.ts';
 import {collectIntegrationPayload,stageIntegrationPayload,verifyIntegrationPayload,verifyRelocatedIntegrations} from './integration-assets.ts';
 import {collectGitTools,stageGitTools} from './git-assets.ts';
@@ -22,7 +22,8 @@ const run=(file:string,args:string[],cwd:string,extraEnv:Record<string,string>={
 async function copySources(directory:string){for(const entry of await readdir(directory,{withFileTypes:true})){const path=join(directory,entry.name),part=relative(root,path).replaceAll('\\','/');if(entry.isSymbolicLink())throw Error('Runtime source link is not allowed: '+part);if(entry.isDirectory()){if(!entry.name.startsWith('.')&&!['node_modules','tests','fixtures'].includes(entry.name))await copySources(path);}else if(runtimeSourceAllowed(part)){const info=await lstat(path);if(!info.isFile()||info.size>2*1024*1024)throw Error('Invalid runtime source: '+part);const output=resolve(host,part);await mkdir(dirname(output),{recursive:true});await copyFile(path,output);}}}
 await copySources(resolve('packages'));await copySources(resolve('apps/server'));
 await buildWindowsCredentialLease(resolve(host,'packages/core'));
-await buildWindowsControlBridge(resolve(host,'packages/core'));
+const controlAddon=await buildWindowsControlBridge(resolve(host,'packages/core'));
+const controlAddonSha256=createHash('sha256').update(await readFile(controlAddon)).digest('hex');
 async function copyTree(source:string,target:string){await mkdir(target,{recursive:true});for(const entry of await readdir(source,{withFileTypes:true})){if(entry.isSymbolicLink())throw Error('Asset links are unsupported');const input=join(source,entry.name),output=join(target,entry.name);if(entry.isDirectory())await copyTree(input,output);else await copyFile(input,output);}}
 await copyTree(resolve('dist/plugin-runtime'),resolve(host,'dist/plugin-runtime'));
 await copyTree(resolve('dist/web'),resolve(host,'dist/web'));await copyTree(resolve('dist/widget-runtime'),resolve(host,'dist/widget-runtime'));
@@ -42,7 +43,12 @@ await run('C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',['-NoLogo'
 // Extract the verified ZIP via the inbox framework; paths remain literal environment data.
 const nodeTarget=resolve(stage,'desktop-node');await mkdir(nodeTarget,{recursive:true});await copyFile(resolve(extracted,'node.exe'),resolve(nodeTarget,'node.exe'));await copyFile(resolve(extracted,'LICENSE'),resolve(nodeTarget,'LICENSE'));
 const config=desktopBuilderConfig(stage);config.directories.output=release;
-const options={publish:'never' as const,projectDir:resolve(stage,'desktop-app'),config:{...config,afterPack:async(context:import('electron-builder').AfterPackContext)=>{for(const file of REQUIRED_RUNTIME_FILES){const path=resolve(context.appOutDir,'resources',file);if(!(await lstat(path)).isFile())throw Error('Packaged runtime is incomplete: '+file);}const packagedHost=resolve(context.appOutDir,'resources/host');await verifyHermesPayload(packagedHost,hermes);await verifyRelocatedHermesPython(packagedHost);await verifyIntegrationPayload(packagedHost,integrations);await verifyRelocatedIntegrations(packagedHost);await collectGitTools(packagedHost);}} as Configuration};
+const options={publish:'never' as const,projectDir:resolve(stage,'desktop-app'),config:{...config,afterPack:async(context:import('electron-builder').AfterPackContext)=>{
+ const resources=resolve(context.appOutDir,'resources');
+ await writeControlDriverPackageTrust(resources,controlAddonSha256);
+ for(const file of REQUIRED_RUNTIME_FILES){if(!(await lstat(resolve(resources,file))).isFile())throw Error('Packaged runtime is incomplete: '+file);}
+ const packagedHost=resolve(resources,'host');await verifyHermesPayload(packagedHost,hermes);await verifyRelocatedHermesPython(packagedHost);await verifyIntegrationPayload(packagedHost,integrations);await verifyRelocatedIntegrations(packagedHost);await collectGitTools(packagedHost);
+}} as Configuration};
 const result=await build(options);
 const integrationPython=integrations.pythonProjection?{mode:integrations.pythonProjection.mode,sourceLockSha256:integrations.pythonProjection.sourceLockSha256,wheels:integrations.pythonProjection.wheels,projectionSha256:integrations.files.find(file=>file.path==='third-party/integrations/PYTHON_INSTALLATION_V2.json')!.sha256}:{mode:'exact-v1',sourceLockSha256:integrations.files.find(file=>file.path==='third-party/integrations/PYTHON_LOCK.json')!.sha256};
 await writeFile(resolve(release,'build-manifest.json'),JSON.stringify({createdAt:new Date().toISOString(),nodeVersion:NODE_VERSION,nodeArchiveSha256:NODE_ARCHIVE_SHA256,electronVersion:'45.2.0',integrationPython,hermes:{pythonVersion:hermes.python.version,files:hermes.files.length,bytes:hermes.bytes,sourceCommit:'c627ec84664d43e0b18b95d9d86d8963747d56c7'},files:await Promise.all(result.map(async file=>({file:relative(root,file),bytes:(await lstat(file)).size,sha256:createHash('sha256').update(await readFile(file)).digest('hex')})))},null,2),{flag:'wx'});

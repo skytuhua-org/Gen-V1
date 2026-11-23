@@ -2870,6 +2870,7 @@
     "tests/context-result-host.test.ts",
     "tests/context-results-v3.test.ts",
     "tests/control-bridge-v6.test.ts",
+    "tests/control-driver-package-trust.test.ts",
     "tests/control-runtime-v6.test.ts",
     "tests/conversation-find.test.ts",
     "tests/conversation-placement.test.ts",

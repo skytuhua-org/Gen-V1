@@ -1,6 +1,8 @@
 import {createHash,randomUUID} from 'node:crypto';
+import {lstatSync,readFileSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
+import {basename,isAbsolute} from 'node:path';
 
 /** M16 C3/C4 first-party Windows control bridge — the desktop-main half of the
  * single approved driver. The backend attaches a sidecar proxy; every driver
@@ -97,9 +99,11 @@ export interface ControlBridgeDeps {
   /** Sends one IPC frame to the backend (child.send equivalent). */
   send(value: Record<string, unknown>): void | Promise<unknown>;
   token: string;
-  /** Absolute paths of the built artifacts that qualify this driver (D02). */
+  /** Absolute paths of the built artifacts claimed to the host (D02). */
   artifactPath: string;
   adapterModulePath: string | null;
+  /** Digest already computed by Electron against the physical app.asar. */
+  adapterModuleSha256?: string;
   apiVersion: string;
   /** Public-URL guard reused for NAVIGATE; same policy as the browser UI. */
   allowNavigateUrl(url: string): Promise<boolean>;
@@ -351,7 +355,9 @@ export function createControlBridge(deps: ControlBridgeDeps): ControlBridge {
     },
     async register() {
       const artifactSha256 = createHash('sha256').update(await readFile(deps.artifactPath)).digest('hex');
-      const adapterModuleSha256 = deps.adapterModulePath ? createHash('sha256').update(await readFile(deps.adapterModulePath)).digest('hex') : null;
+      const adapterModuleSha256 = deps.adapterModulePath
+        ? deps.adapterModuleSha256 ?? createHash('sha256').update(await readFile(deps.adapterModulePath)).digest('hex')
+        : null;
       const manifest = {
         driverId: 'gen-v1-windows-control-bridge',
         artifact: deps.artifactPath,
@@ -402,12 +408,13 @@ export function handleRegisterReply(value: Record<string, unknown>): boolean {
   return true;
 }
 
-/** Loads the optional native half. Absent build ⇒ window slice unregistered —
- * never a substitute implementation (D01/D02). */
-export function loadWindowsWindowBridge(searchRoot: string): WindowsWindowBridge | null {
+/** Loads only the native addon at the package path, after checking its build digest. */
+export function loadWindowsWindowBridge(artifactPath: string, expectedSha256: string): WindowsWindowBridge | null {
   try {
-    const require = createRequire(searchRoot);
-    const addon = require('./windows-control-bridge.node') as Partial<WindowsWindowBridge>;
+    if (!isAbsolute(artifactPath) || basename(artifactPath) !== 'windows-control-bridge.node' || !lstatSync(artifactPath).isFile()) return null;
+    if (createHash('sha256').update(readFileSync(artifactPath)).digest('hex') !== expectedSha256) return null;
+    const require = createRequire(import.meta.url);
+    const addon = require(artifactPath) as Partial<WindowsWindowBridge>;
     if (typeof addon.pickWindow !== 'function' || typeof addon.listWindows !== 'function' || typeof addon.windowIdentity !== 'function' || typeof addon.captureWindow !== 'function' || typeof addon.dropBinding !== 'function') return null;
     return addon as WindowsWindowBridge;
   } catch {

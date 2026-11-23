@@ -128,13 +128,16 @@ production flag change.
   (`CONTROL_OP_UNSUPPORTED`) — no proven selected-target delivery. Windows
   where `SetProp` is denied (e.g. elevated targets) are excluded from the
   chooser rather than offered unbound.
-- **Registration** (`apps/server/host.ts` + `desktop-controls.ts`): the desktop
-  pushes `harness.control.register` + manifest; the host recomputes SHA-256 of
-  `artifact` (and `adapterModule` when present) before registering — an edited
-  or stale manifest cannot qualify a different binary (D02). One manifest
-  projects to per-protocol registry entries (`<driverId>:browser-tab`,
-  `<driverId>:native-window` when the addon loads) so `resolve(mode)` still
-  requires uniqueness — fixture-qualified, flags stay off.
+- **Registration** (`apps/server/host.ts` + `desktop-controls.ts`): the
+  packager records the digests of the native addon and physical `app.asar`.
+  The desktop verifies them before loading the addon. The host derives paths
+  and expected digests from its installed resources and verifies the IPC claim
+  against those values. Both protocols require the packaged addon.
+  The installed app files and build-generated digest resource are the trust
+  root. This assumes those files are protected from modification during
+  verification and loading. Operator approval and installed qualification
+  remain separate gates. Protocol registration still resolves uniquely and
+  the capability flags remain off by default.
 - **Surface** (`apps/web/src/ControlConsentPanel.tsx`): pending consent now
   lists/selects driver-named targets and approves via `control.grant`; the
   active state offers consented capture + the same Stop. New routes:

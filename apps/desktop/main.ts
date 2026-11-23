@@ -1,7 +1,7 @@
 import {app,BrowserWindow,WebContentsView,ipcMain,session,screen,dialog,Menu,Tray,nativeImage,powerMonitor,shell,type IpcMainInvokeEvent,type Session} from 'electron';
 import {spawn,type ChildProcess} from 'node:child_process';
-import {randomBytes,randomUUID} from 'node:crypto';
-import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
+import {readFile,writeFile,mkdir,lstat} from 'node:fs/promises';
 import {mkdirSync,existsSync,writeSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {GITHUB_DEVICE_URL,githubDevicePopup} from './github-device-policy.ts';
@@ -324,7 +324,9 @@ async function startBackend():Promise<void>{
   if(value.nativeLayout!==undefined)try{hostLayout=parseDesktopLayout(value.nativeLayout);}catch{layoutError='The saved host workspace layout is invalid. The local backup is retained.';}
   workspaceRelay=workspaceEvents(backendOrigin,change=>{for(const record of windows.values())if(!record.window.isDestroyed())record.window.webContents.send(channels.workspaceChanged,change);},token);
   child.once('exit',()=>{if(closing||backend!==child)return;backendError='The local backend stopped. Reconnecting…';broadcast();if(restarting)return;restarting=true;setTimeout(()=>{void startBackend().catch(error=>{backendError='Backend restart failed: '+String(error instanceof Error?error.message:error).slice(0,500);broadcast();}).finally(()=>{restarting=false;});},700);});
-  attachControlBridge(child,token);
+  void attachControlBridge(child,token).catch(error=>{
+   console.warn('Control driver registration failed:',String(error instanceof Error?error.message:error).slice(0,300));
+  });
   backendError=undefined;broadcast();
  },observeStartup);
  }finally{try{if(output)startupDiagnostic('backend-output',null,output.read().streams);}catch{}}
@@ -333,10 +335,26 @@ async function startBackend():Promise<void>{
 // M16 C3/C4: the approved first-party bridge registers with the backend over
 // the launch-token channel each time a backend comes up. A failed registration
 // leaves the control surface unavailable — never a fallback driver (D01/D02).
-function attachControlBridge(child:ChildProcess,token:string){
- const adapterModulePath=fileURLToPath(import.meta.url);
+async function attachControlBridge(child:ChildProcess,token:string){
+ if(!app.isPackaged||root!==join(process.resourcesPath,'host'))return;
+ const adapterModulePath=join(process.resourcesPath,'app.asar');
+ if(app.getAppPath()!==adapterModulePath)return;
+ const trustPath=join(root,'control-driver-trust.json');
+ const trustFile=await lstat(trustPath);
+ if(!trustFile.isFile()||trustFile.size>1024)throw Error('Invalid packaged control driver trust resource.');
+ const trust=JSON.parse(await readFile(trustPath,'utf8')) as {version?:unknown;artifactSha256?:unknown;adapterModuleSha256?:unknown}|null;
+ if(trust?.version!==1||typeof trust.artifactSha256!=='string'||!/^[a-f0-9]{64}$/.test(trust.artifactSha256)||
+    typeof trust.adapterModuleSha256!=='string'||!/^[a-f0-9]{64}$/.test(trust.adapterModuleSha256)||Object.keys(trust).length!==3){
+  throw Error('Invalid packaged control driver trust resource.');
+ }
+ const originalFs=createRequire(import.meta.url)('original-fs') as typeof import('original-fs');
+ if(!(await originalFs.promises.lstat(adapterModulePath)).isFile())throw Error('Invalid packaged app archive.');
+ const adapterModuleSha256=createHash('sha256').update(await originalFs.promises.readFile(adapterModulePath)).digest('hex');
+ if(adapterModuleSha256!==trust.adapterModuleSha256)throw Error('The packaged app archive differs from the build digest.');
+ if(backend!==child||!child.connected)return;
  const nativePath=join(root,'packages/core/windows-control-bridge.node');
- const native=loadWindowsWindowBridge(join(root,'packages/core/package.json'));
+ const native=loadWindowsWindowBridge(nativePath,trust.artifactSha256);
+ if(!native)throw Error('The packaged control addon did not verify and load.');
  const bridgeBrowser=(record:BrowserRecord):BridgeBrowser=>{
   const contents=record.view.webContents;
   return {
@@ -374,9 +392,10 @@ function attachControlBridge(child:ChildProcess,token:string){
   },
   send:value=>new Promise<void>(resolve=>{if(!child.connected){resolve();return;}child.send(value,error=>{if(error)console.warn('Control bridge IPC send failed:',String(error instanceof Error?error.message:error).slice(0,200));resolve();});}),
   token,
-  artifactPath:existsSync(nativePath)?nativePath:adapterModulePath,
+  artifactPath:nativePath,
   adapterModulePath,
-  apiVersion:app.isPackaged?app.getVersion():`dev-${process.versions.electron??'unknown'}`,
+  adapterModuleSha256,
+  apiVersion:app.getVersion(),
   allowNavigateUrl:url=>allowRemoteBrowserUrl(url),
   now:()=>Date.now(),
  });
@@ -386,11 +405,7 @@ function attachControlBridge(child:ChildProcess,token:string){
   if(handleRegisterReply(input))return;
   void bridge.handleCall(input).catch(()=>{});
  });
- void bridge.register().catch(error=>{
-  // Registration failure is not a startup failure: the surface stays
-  // DRIVER_UNAVAILABLE and the console keeps the concrete reason.
-  console.warn('Control driver registration failed:',String(error instanceof Error?error.message:error).slice(0,300));
- });
+ await bridge.register();
 }
 async function stopBackend():Promise<boolean>{
  let clean=true;
