@@ -32,8 +32,9 @@ export function BrowserBookmarkControls({state,detached=false}:{state?:DesktopBr
  const removeItem=(item:DesktopBrowserBookmark)=>{void send({type:'bookmark-remove',id:item.id}).then(()=>{announce('Bookmark removed. Undo available.');toast('Bookmark removed.',{durationMs:5000,action:{label:'Undo',onClick:()=>{void send({type:'bookmark-restore',bookmark:item}).catch(cause=>toast(cause instanceof Error?cause.message:'Bookmark could not be restored.',{tone:'error'}));}}});}).catch(cause=>toast(cause instanceof Error?cause.message:'Bookmark could not be removed.',{tone:'error'}));};
  const commitName=(item:DesktopBrowserBookmark,value:string)=>{editingRef.current=null;setEditing(null);listContent.current?.focus();const title=value.trim();if(!title||title===item.title)return;void send({type:'bookmark-update',id:item.id,title}).then(()=>announce('Bookmark renamed')).catch(cause=>toast(cause instanceof Error?cause.message:'Bookmark could not be renamed.',{tone:'error'}));};
  const overlay=saveOpen||listOpen;
- useEffect(()=>{if(!detached||!desktop||!overlay)return;void desktop.bridge.browser({type:'overlay',open:true}).catch(()=>{});
-  return()=>{void desktop.bridge.browser({type:'overlay',open:false}).catch(()=>{});};},[detached,desktop,overlay]);
+ const overlayBridge=desktop?.bridge;
+ useEffect(()=>{if(!detached||!overlayBridge||!overlay)return;void overlayBridge.browser({type:'overlay',open:true}).catch(()=>{});
+  return()=>{void overlayBridge.browser({type:'overlay',open:false}).catch(()=>{});};},[detached,overlayBridge,overlay]);
  const starActionRef=useRef(starAction);starActionRef.current=starAction;
  useEffect(()=>{if(!desktop)return;const onKey=(event:KeyboardEvent)=>{
   if(event.key.toLowerCase()!=='d'||!(event.metaKey||event.ctrlKey)||event.repeat)return;
