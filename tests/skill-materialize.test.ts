@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SkillReference } from '../packages/contracts/skill-catalog.ts';
-import { SKILL_INVOCATION_LIMITS, checkFiles, materialize, packagePath, verifyCaptured, type CapturedFile } from '../packages/skill-invocation/materialize.ts';
+import { SKILL_INVOCATION_LIMITS, materialize, packagePath, verifyCaptured, type CapturedFile } from '../packages/skill-invocation/materialize.ts';
 import { catalogHash, type CatalogCustody } from '../packages/skill-catalog/repository.ts';
 
 const dirs: string[] = [];
@@ -18,7 +18,12 @@ const reference = (sourceId: string, custody: CatalogCustody): SkillReference =>
   digest: catalogHash(inventory(custody.files)), sourceBinding: catalogHash(custody),
 });
 
-const capturedFile = (path: string, data: Buffer): CapturedFile => ({ path, bytes: data.length, digest: catalogHash(data), data: data.toString('base64') });
+const capturedFile = (path = 'SKILL.md', data = Buffer.from('x')): CapturedFile => ({ path, bytes: data.length, digest: catalogHash(data), data: data.toString('base64') });
+
+const capture = (files: CapturedFile[]) => ({
+  reference: reference('harness:library', { kind: 'harness', record: { name: 'skill', revision: 1 }, binding: 'b', files: inventory(files) }),
+  files,
+});
 
 describe('packagePath', () => {
   it.each(['SKILL.md', 'a/b/c.txt', 'dir name/file-1_2.txt', 'a.b/c'])('accepts %j', path => {
@@ -36,51 +41,42 @@ describe('packagePath', () => {
   });
 });
 
-describe('checkFiles', () => {
+describe('captured package inventory', () => {
   it('accepts a minimal package', () => {
-    expect(() => checkFiles([file()])).not.toThrow();
+    expect(() => verifyCaptured(capture([capturedFile()]))).not.toThrow();
+  });
+  it.each<{ name: string; files: CapturedFile[] }>([
+    { name: 'empty inventory', files: [] },
+    { name: 'no SKILL.md', files: [capturedFile('other.txt')] },
+    { name: 'duplicate path ignoring case', files: [capturedFile(), capturedFile('skill.md')] },
+    { name: 'over the file count', files: [capturedFile(), ...Array.from({ length: SKILL_INVOCATION_LIMITS.files }, (_, index) => capturedFile(`f${index}`))] },
+  ])('rejects $name', ({ files }) => {
+    expect(() => verifyCaptured(capture(files))).toThrow('Unsupported package');
   });
   it.each([
-    ['empty inventory', []],
-    ['no SKILL.md', [file('other.txt')]],
-    ['duplicate path ignoring case', [file(), { ...file('other.txt'), path: 'skill.md' }]],
-    ['over the file count', Array.from({ length: SKILL_INVOCATION_LIMITS.files + 1 }, (_, index) => file(`f${index}`))],
-  ])('rejects %s', (_name, files) => {
-    expect(() => checkFiles(files)).toThrow('Unsupported package');
-  });
-  it.each([
-    ['bad path', { ...file(), path: '../x' }],
-    ['fractional bytes', { ...file(), bytes: 1.5 }],
-    ['negative bytes', { ...file(), bytes: -1 }],
-    ['SKILL.md over entry bound', { ...file(), bytes: SKILL_INVOCATION_LIMITS.entryBytes + 1 }],
-    ['other file over bound', { ...file('big.bin'), bytes: SKILL_INVOCATION_LIMITS.fileBytes + 1 }],
-    ['malformed digest', { ...file(), digest: 'zz' }],
-  ])('rejects %s', (_name, bad) => {
-    expect(() => checkFiles([bad])).toThrow(/Unsupported (file|package)/);
+    ['bad path', { ...capturedFile(), path: '../x' }],
+    ['fractional bytes', { ...capturedFile(), bytes: 1.5 }],
+    ['negative bytes', { ...capturedFile(), bytes: -1 }],
+    ['SKILL.md over entry bound', { ...capturedFile(), bytes: SKILL_INVOCATION_LIMITS.entryBytes + 1 }],
+    ['other file over bound', { ...capturedFile('big.bin'), bytes: SKILL_INVOCATION_LIMITS.fileBytes + 1 }],
+    ['malformed digest', { ...capturedFile(), digest: 'zz' }],
+  ] as const)('rejects %s', (_name, bad) => {
+    const files = bad.path === 'SKILL.md' ? [bad] : [capturedFile(), bad];
+    expect(() => verifyCaptured(capture(files))).toThrow('Unsupported file');
   });
   it('rejects a package over the total byte limit', () => {
-    const files = Array.from({ length: 5 }, (_, index) => ({ ...file(`f${index}`), bytes: SKILL_INVOCATION_LIMITS.fileBytes }));
-    files.push({ ...file(), bytes: SKILL_INVOCATION_LIMITS.entryBytes });
-    expect(() => checkFiles(files)).toThrow('Package limit');
+    const files = Array.from({ length: 4 }, (_, index) => capturedFile(`f${index}`, Buffer.alloc(SKILL_INVOCATION_LIMITS.fileBytes)));
+    files.push(capturedFile());
+    expect(() => verifyCaptured(capture(files))).toThrow('Package limit');
   });
   it('accepts files at their byte bounds', () => {
-    expect(() => checkFiles([
-      { path: 'SKILL.md', bytes: SKILL_INVOCATION_LIMITS.entryBytes, digest: hash },
-      { path: 'a.bin', bytes: SKILL_INVOCATION_LIMITS.fileBytes, digest: hash },
-    ])).not.toThrow();
+    const files = [capturedFile('SKILL.md', Buffer.alloc(SKILL_INVOCATION_LIMITS.entryBytes)), capturedFile('a.bin', Buffer.alloc(SKILL_INVOCATION_LIMITS.fileBytes))];
+    expect(() => verifyCaptured(capture(files))).not.toThrow();
   });
 });
 
 describe('verifyCaptured', () => {
-  const capture = () => ({
-    reference: { version: 1 as const, scope: { kind: 'personal' as const }, sourceId: 'x', skillId: 's', locator: hash, revision: hash, digest: '', sourceBinding: hash },
-    files: [capturedFile('SKILL.md', Buffer.from('# skill')), capturedFile('notes.md', Buffer.from('notes'))],
-  });
-  const valid = () => {
-    const value = capture();
-    value.reference.digest = catalogHash(inventory(value.files));
-    return value;
-  };
+  const valid = () => capture([capturedFile('SKILL.md', Buffer.from('# skill')), capturedFile('notes.md', Buffer.from('notes'))]);
   it('accepts a faithful capture', () => {
     expect(() => verifyCaptured(valid())).not.toThrow();
   });
