@@ -398,8 +398,8 @@
     },
     {
       "file": "gen-banner.svg",
-      "bytes": 3889,
-      "sha256": "ff51d85fabc59ebb0aff11c1a243b17558c72ca69a90b249abf8afc06aafbd7b",
+      "bytes": 57262,
+      "sha256": "380c7c684d9bfa7c515c7cd3458206ea496fd1b34f26ba3f7c39fee765e95bb8",
       "kind": "Authored README branding; not an application screenshot."
     }
   ],
