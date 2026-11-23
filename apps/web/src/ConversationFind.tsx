@@ -10,6 +10,8 @@ export interface ConversationFindProps {
  /** Includes the owner's composer so Ctrl+F never changes another conversation. */
  scope:RefObject<HTMLElement|null>;
  active?:boolean;
+ /** True when the transcript has no messages; disables the trigger and shortcut. */
+ empty?:boolean;
  onNavigate?:()=>void;
  onLoadEarlier?:()=>void;
  historyPending?:boolean;
@@ -17,7 +19,7 @@ export interface ConversationFindProps {
  historyError?:string|null;
 }
 /** Reusable by ordinary, canvas and scoped transcript owners. No command/draft authority. */
-export function ConversationFind({ownerKey,transcript,scope,active=true,onNavigate,onLoadEarlier,historyPending,historyLimited,historyError}:ConversationFindProps){
+export function ConversationFind({ownerKey,transcript,scope,active=true,empty=false,onNavigate,onLoadEarlier,historyPending,historyLimited,historyError}:ConversationFindProps){
  const id=useId(),input=useRef<HTMLInputElement>(null),trigger=useRef<HTMLButtonElement>(null),restoreFocus=useRef(false),opener=useRef<HTMLElement|null>(null);
  const [open,setOpen]=useState(false),[query,setQuery]=useState(''),[count,setCount]=useState(0),[index,setIndex]=useState(-1);
  const matches=useRef<ConversationMatch[]>([]),selected=useRef<string|null>(null),lastQuery=useRef('');
@@ -29,17 +31,19 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,onNaviga
   selected.current=match.key;setIndex(value);highlightConversation(root.ownerDocument,id,matches.current,value);navigateRef.current?.();
  },[transcript,id]);
  const close=useCallback(()=>{restoreFocus.current=true;setOpen(false);},[]);
+ useLayoutEffect(()=>{if(open&&empty)close();},[open,empty,close]);
  useLayoutEffect(()=>{setOpen(false);setQuery('');selected.current=null;matches.current=[];setCount(0);setIndex(-1);},[ownerKey]);
  useLayoutEffect(()=>{
   const root=scope.current;if(!root||!active)return;
   const key=(event:KeyboardEvent)=>{
    if(event.isComposing||event.keyCode===229)return;
+   if(empty)return;
    if(matchesShortcut(event,chordFor('find-in-conversation'))&&root.contains(root.ownerDocument.activeElement)){
     event.preventDefault();if(!open)opener.current=root.ownerDocument.activeElement as HTMLElement;setOpen(true);input.current?.focus();input.current?.select();
    }
   };
   root.ownerDocument.addEventListener('keydown',key);return()=>root.ownerDocument.removeEventListener('keydown',key);
- },[active,open,scope]);
+ },[active,empty,open,scope]);
  useLayoutEffect(()=>{if(open)input.current?.focus();else if(restoreFocus.current){restoreFocus.current=false;(opener.current?.isConnected?opener.current:trigger.current)?.focus({preventScroll:true});}},[open]);
  useLayoutEffect(()=>{
   const root=transcript.current;if(!root)return;
@@ -56,7 +60,7 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,onNaviga
  },[open,active,query,ownerKey,transcript,id,jump]);
  if(!active)return null;
  return <div className="conversation-find-owner">
-  {!open?<button ref={trigger} type="button" className="quiet conversation-find-trigger" aria-label="Find in conversation" title="Find in conversation (Ctrl+F)" onClick={event=>{opener.current=event.currentTarget;setOpen(true);}}><Search size={14}/></button>:
+  {!open?<button ref={trigger} type="button" className="quiet conversation-find-trigger" aria-label="Find in conversation" disabled={empty} title={empty?'No messages to search':'Find in conversation (Ctrl+F)'} onClick={event=>{opener.current=event.currentTarget;setOpen(true);}}><Search size={14}/></button>:
    <div className="conversation-find" role="search" aria-label="Find in conversation" onKeyDown={event=>{
     if(event.nativeEvent.isComposing||event.keyCode===229)return;
     if(matchesShortcut(event,chordFor('close-find'))){event.preventDefault();event.stopPropagation();close();}
