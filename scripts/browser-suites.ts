@@ -91,6 +91,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('t3-centered'),
   suite('tabs-identity'),
   suite('table-controls'),
+  suite('test-results', ['test-results.spec.ts', 'test-results-shots.spec.ts']),
   suite('task-design'),
   suite('task-interface'),
   suite('ui-shell-controls'),
