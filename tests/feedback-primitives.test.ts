@@ -127,6 +127,44 @@ describe('feedback primitives', () => {
     await page.close();
   });
 
+  it('evicts the oldest toast through the leaving animation instead of instantly (#1705)', async () => {
+    const page = await open();
+    for (const m of ['one', 'two', 'three']) await page.evaluate(`window.toast('${m}', {durationMs: 60000})`);
+    expect(await page.locator('.ui-toast').count()).toBe(3);
+    await page.evaluate(`window.toast('four', {durationMs: 60000})`);
+    const evicted = page.locator('.ui-toast', {hasText: 'one'});
+    // The evicted item stays mounted in the closing state while the 4th mounts below it.
+    await expect.poll(() => page.locator('.ui-toast[data-state="closed"]').count()).toBe(1);
+    expect(await evicted.getAttribute('data-state')).toBe('closed');
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(3);
+    expect(await evicted.count()).toBe(0);
+    expect(await page.locator('.ui-toast', {hasText: 'four'}).count()).toBe(1);
+    await page.close();
+  });
+
+  it('plays every exit when evictions outpace the animation', async () => {
+    const page = await open();
+    for (const m of ['a', 'b', 'c']) await page.evaluate(`window.toast('${m}', {durationMs: 60000})`);
+    for (const m of ['d', 'e', 'f']) await page.evaluate(`window.toast('${m}', {durationMs: 60000})`);
+    await expect.poll(() => page.locator('.ui-toast[data-state="closed"]').count()).toBe(3);
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(3);
+    expect(await page.locator('.ui-toast[data-state="open"]').count()).toBe(3);
+    await page.close();
+  });
+
+  it('evicts with the opacity-only fade under reduced motion', async () => {
+    const page = await open();
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    for (const m of ['r1', 'r2', 'r3']) await page.evaluate(`window.toast('${m}', {durationMs: 60000})`);
+    await page.evaluate(`window.toast('r4', {durationMs: 60000})`);
+    const evicted = page.locator('.ui-toast[data-state="closed"]', {hasText: 'r1'});
+    await evicted.waitFor();
+    expect(await evicted.evaluate(el => getComputedStyle(el).animationDuration)).toBe('0.08s');
+    expect(await evicted.evaluate(el => getComputedStyle(el).transform)).toBe('none');
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(3);
+    await page.close();
+  });
+
   it('uses brief opacity-only fades under reduced motion', async () => {
     const page = await open();
     await page.emulateMedia({reducedMotion: 'reduce'});

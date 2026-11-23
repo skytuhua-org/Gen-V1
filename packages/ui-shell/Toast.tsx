@@ -18,7 +18,10 @@ export function toast(message: string, options: ToastOptions = {}) {
   const text = message.trim();
   if (!text) return 0;
   const id = nextId++;
-  publish([...entries.filter(entry => entry.message !== text).slice(-(MAX_VISIBLE - 1)), { ...options, id, message: text, leaving: false }]);
+  const live = entries.filter(entry => entry.message !== text);
+  const visible = live.filter(entry => !entry.leaving);
+  const evict = new Set(visible.slice(0, Math.max(0, visible.length - (MAX_VISIBLE - 1))).map(entry => entry.id));
+  publish([...live.map(entry => evict.has(entry.id) ? { ...entry, leaving: true } : entry), { ...options, id, message: text, leaving: false }]);
   return id;
 }
 export function dismissToast(id: number) { publish(entries.map(entry => entry.id === id ? { ...entry, leaving: true } : entry)); }
