@@ -25,6 +25,20 @@ env:
   GIT_CONFIG_VALUE_0: true
 
 jobs:
+  linux-path-guard-cleanup:
+    name: Linux path guard cleanup
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Run unprivileged broker cleanup regressions
+        run: python3 -I -S -B tests/linux_path_guard_cleanup.py
+
   # A draft pull request is not reviewable, so its matrix runs when it becomes
   # ready for review instead of on every draft push. Four definitions expand
   # to seven jobs, including installer packaging; draft pushes otherwise starve the
