@@ -159,7 +159,7 @@ export class ProjectTools{
  /** Local-only remote sync read (plan #1626 R1/R2/R5): never runs fetch or touches the network. */
  private async sync(projectId:string,metadata:string,path:string,signal:AbortSignal,managed:boolean,bound:{workspace?:WorkspaceBinding},threadId?:string):Promise<GitSyncResult>{
   const current=await this.status(metadata,path,signal,managed),git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
-  const family=bound.workspace?privateFamilyForBinding(this.store,bound.workspace)?.privateFamily:this.store.get<PrivateGitFamily>('workspaceGitFamily',projectId),origin=family?.origin?.replace(/^(?:https:\/\/github\.com\/|git@github\.com:)/,'');
+  const family=bound.workspace?privateFamilyForBinding(this.store,bound.workspace)?.privateFamily:this.store.get<PrivateGitFamily>('workspaceGitFamily',projectId),origin=/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(family?.origin??'')?.[1];
   const remote=origin?{name:'origin' as const,repo:origin}:null;
   let upstream:GitSyncResult['upstream']=null;
   if(current.branch){
@@ -167,7 +167,7 @@ export class ProjectTools{
    const candidates:string[]=[];
    if(remoteName==='origin'&&merge.startsWith('refs/heads/'))candidates.push('refs/remotes/origin/'+merge.slice('refs/heads/'.length));
    candidates.push('refs/remotes/origin/'+current.branch);
-   for(const ref of candidates){const oid=(await git(['for-each-ref','--format=%(objectname)','--',ref])).trim();if(/^[a-f0-9]{40}$/.test(oid)){upstream={ref,short:ref.slice('refs/remotes/'.length),oid};break;}}
+   for(const ref of candidates){const oid=(await git(['rev-parse','--verify','--quiet',ref]).catch(()=>'')).trim();if(/^[a-f0-9]{40}$/.test(oid)){upstream={ref,short:ref.slice('refs/remotes/'.length),oid};break;}}
   }
   let ahead:number|null=null,behind:number|null=null;
   if(upstream){const[left,right]=(await git(['rev-list','--left-right','--count',upstream.oid+'...'+current.head])).trim().split(/\s+/);behind=Number(left);ahead=Number(right);}
@@ -182,7 +182,7 @@ export class ProjectTools{
   if(state==='ahead')blockers.push('AHEAD_ONLY');
   if(state==='diverged')blockers.push('DIVERGED');
   if(state==='behind'&&upstream){
-   const changed=(await git(['diff','--name-only','-z',current.head,upstream.oid])).split('\0').filter(Boolean),fold=(p:string)=>process.platform==='win32'?p.toLowerCase():p,remoteChanged=new Set(changed.map(fold)),dirty=new Set(current.files.flatMap(file=>[file.path,...(file.oldPath?[file.oldPath]:[])].map(fold)));
+   const changed=(await git(['-c','diff.renames=false','diff','--name-only','-z',current.head,upstream.oid])).split('\0').filter(Boolean),fold=(p:string)=>process.platform==='win32'?p.toLowerCase():p,remoteChanged=new Set(changed.map(fold)),dirty=new Set(current.files.flatMap(file=>[file.path,...(file.oldPath?[file.oldPath]:[])].map(fold)));
    if([...dirty].some(dirtyPath=>remoteChanged.has(dirtyPath)))blockers.push('DIRTY_OVERLAP');
   }
   return{branch:current.branch||null,head:current.head,revision:current.revision,remote,upstream,ahead,behind,state,lastFetchedAt:this.lastFetched.get(bound.workspace?.id??projectId)??null,blockers};
