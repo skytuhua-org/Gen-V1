@@ -17,8 +17,9 @@ import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison
 
 interface Identity{dev:string;ino:string}
 export interface WorkspaceBinding {id:string;threadId:string;projectId:string;familyId?:string;path:string;branch:string;gitDirectory:string;commonDirectory:string;identity:Identity;gitDirectoryIdentity:Identity;commonDirectoryIdentity:Identity}
-export interface GitFile{path:string;oldPath?:string;index:string;worktree:string;staged:boolean;untracked:boolean;binary:boolean;added:number|null;removed:number|null}
-export interface GitStatus{head:string;branch:string;revision:string;files:GitFile[];diff:string;stagedDiff:string;truncated:boolean;mode?:'managed'|'legacy';gitWrite?:boolean;untrackedIncluded?:boolean}
+export type FileReviewIdentity={fingerprint:string}|{unavailable:string};
+export interface GitFile{path:string;oldPath?:string;index:string;worktree:string;staged:boolean;untracked:boolean;binary:boolean;added:number|null;removed:number|null;review?:{staged?:FileReviewIdentity;unstaged?:FileReviewIdentity}}
+export interface GitStatus{head:string;branch:string;revision:string;files:GitFile[];diff:string;stagedDiff:string;truncated:boolean;mode?:'managed'|'legacy';gitWrite?:boolean;untrackedIncluded?:boolean;review?:{version:1;owner:string}}
 export interface ProjectToolOptions{git?:string;gh?:string}
 const id=z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/),label=z.string().trim().min(1).max(100),hash=(data:string|Buffer)=>createHash('sha256').update(data).digest('hex');
 const identity=async(path:string):Promise<Identity>=>{const info=await lstat(path,{bigint:true});if(info.isSymbolicLink()||!info.isDirectory())throw new HarnessError('CAPABILITY_DENIED','Project directories must be ordinary directories.');return{dev:String(info.dev),ino:String(info.ino)};};
@@ -35,6 +36,18 @@ async function untrackedDigest(path:string,signal:AbortSignal){
   }finally{await file.close();}
  });
 }
+/** Mode + content digest for a working-tree endpoint; symlinks and special files get no identity. */
+async function worktreeDigest(root:string,name:string,signal:AbortSignal):Promise<[string,string]>{
+ const info=await lstat(join(root,name));
+ if(info.isSymbolicLink())throw new HarnessError('UNSUPPORTED_PATH','Symlinked entries cannot be marked viewed.');
+ if(!info.isFile())throw new HarnessError('UNSUPPORTED_PATH','This entry type cannot be marked viewed.');
+ const{hash:digest}=await untrackedDigest(join(root,name),signal);
+ return[info.mode&0o111?'100755':'100644',digest];
+}
+const reviewFingerprint=(kind:'staged'|'unstaged',path:string,oldPath:string|undefined,base:[string,string]|undefined,result:[string,string]|undefined)=> 'v1:'+hash(JSON.stringify(['gen-file-review:v1',kind,path,oldPath??'',base??'absent',result??'absent']));
+const lsEntries=(raw:string,shaIndex:number,stageIndex=-1)=>{const map=new Map<string,{mode:string;sha:string;stage:number}>();for(const row of raw.split('\0')){if(!row)continue;const cut=row.indexOf('\t');if(cut<0)continue;const meta=row.slice(0,cut).split(' ');map.set(row.slice(cut+1),{mode:meta[0]!,sha:meta[shaIndex]!,stage:stageIndex<0?0:Number(meta[stageIndex]??0)});}return map;};
+const unmerged=(file:GitFile)=>file.index==='U'||file.worktree==='U'||(file.index==='A'&&file.worktree==='A')||(file.index==='D'&&file.worktree==='D');
+const reviewReason=(error:unknown)=>error instanceof HarnessError?error.message:'Review identity is unavailable.';
 
 /** Remove a working copy that preparation did not bind. The branch is deleted only when this call created it. */
 export async function discardUnboundWorktree(executable:string,commonDirectory:string,path:string,branch?:string){
@@ -130,16 +143,44 @@ export class ProjectTools{
    }
   });
  }
- private async withGitOperation<T>(projectId:string,threadId:string|undefined,write:boolean,action:(metadata:string,path:string,signal:AbortSignal,managed:boolean)=>Promise<T>):Promise<T>{
+ private async withGitOperation<T>(projectId:string,threadId:string|undefined,write:boolean,action:(metadata:string,path:string,signal:AbortSignal,managed:boolean,owner?:string)=>Promise<T>):Promise<T>{
   const binding=await this.binding(projectId,threadId),family=binding.workspace?privateFamilyForBinding(this.store,binding.workspace):undefined,signal=new AbortController().signal;
-  if(family)return withPrivateGitFamily(family,signal,(metadata,path,active)=>action(metadata,path,active,true));
+  if(family){const workspace=binding.workspace!;const owner=hash('gen-viewed-owner:v1\0'+JSON.stringify(['managed',projectId,workspace.id,workspace.familyId??'',workspace.identity.dev,workspace.identity.ino]));return withPrivateGitFamily(family,signal,(metadata,path,active)=>action(metadata,path,active,true,owner));}
   if(write)throw new HarnessError('CAPABILITY_DENIED','This project is a plain local folder — Git changes need a managed working copy. Choose "Prepare workspace" or reconnect the project as a managed copy.');
   const imported=await importGitFamily(this.store,projectId,binding.path,binding.workspace,this.gitExecutable(),signal);
   const expected=binding.workspace?.identity??this.store.get<{identity:Identity}>('workspaceProjectRoot',projectId)?.identity;
   if(!expected)throw new HarnessError('CAPABILITY_DENIED','Project identity is unavailable.');
-  return withLegacyGitView(imported,binding.path,binding.workspace,this.gitExecutable(),signal,(metadata,path,active)=>action(metadata,path,active,false),expected);
+  const owner=hash('gen-viewed-owner:v1\0'+JSON.stringify(['legacy',projectId,expected.dev,expected.ino]));
+  return withLegacyGitView(imported,binding.path,binding.workspace,this.gitExecutable(),signal,(metadata,path,active)=>action(metadata,path,active,false,owner),expected);
  }
- private async status(metadata:string,path:string,signal:AbortSignal,managed:boolean):Promise<GitStatus>{
+ private async fileReview(file:GitFile,index:Map<string,{mode:string;sha:string;stage:number}>,headIndex:Map<string,{mode:string;sha:string;stage:number}>,root:string,signal:AbortSignal):Promise<{staged?:FileReviewIdentity;unstaged?:FileReviewIdentity}>{
+  const review:{staged?:FileReviewIdentity;unstaged?:FileReviewIdentity}={};
+  const conflict=unmerged(file);
+  const blob=(entry:{mode:string;sha:string;stage:number}|undefined):[string,string]|undefined=>entry&&entry.stage===0&&entry.mode!=='160000'?[entry.mode,entry.sha]:undefined;
+  if(file.index!==' '&&file.index!=='?'){
+   if(conflict)review.staged={unavailable:'Unmerged changes cannot be marked viewed.'};
+   else{
+    const head=headIndex.get(file.oldPath??file.path),indexed=index.get(file.path);
+    if(head?.mode==='160000'||indexed?.mode==='160000')review.staged={unavailable:'Submodule entries cannot be marked viewed.'};
+    else review.staged={fingerprint:reviewFingerprint('staged',file.path,file.oldPath,blob(head),indexed&&indexed.stage===0?blob(indexed):undefined)};
+   }
+  }
+  if(file.worktree!==' '&&file.worktree!=='?'){
+   if(conflict)review.unstaged={unavailable:'Unmerged changes cannot be marked viewed.'};
+   else{
+    const indexed=index.get(file.path);
+    if(!indexed||indexed.stage!==0)review.unstaged={unavailable:'Index entry is unavailable.'};
+    else if(indexed.mode==='160000')review.unstaged={unavailable:'Submodule entries cannot be marked viewed.'};
+    else{
+     let result:[string,string]|undefined;
+     if(file.worktree!=='D'){try{result=await worktreeDigest(root,file.path,signal);}catch(error){review.unstaged={unavailable:reviewReason(error)};}}
+     if(!review.unstaged)review.unstaged={fingerprint:reviewFingerprint('unstaged',file.path,undefined,blob(indexed),result)};
+    }
+   }
+  }
+  return review;
+ }
+ private async status(metadata:string,path:string,signal:AbortSignal,managed:boolean,owner?:string):Promise<GitStatus>{
   const git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
   const head=(await git(['rev-parse','HEAD'])).trim(),branch=(await git(['branch','--show-current'])).trim(),raw=await git(['status','--porcelain=v1','-z',managed?'--untracked-files=all':'--untracked-files=no']),diff=await git(['diff','--full-index','--no-ext-diff','--no-textconv']),stagedDiff=await git(['diff','--cached','--full-index','--no-ext-diff','--no-textconv']),files:GitFile[]=[],untracked:string[]=[];
   const entries=raw.split('\0');for(let i=0;i<entries.length;i++){
@@ -151,9 +192,20 @@ export class ProjectTools{
   }
   const stats=(await git(['diff','--numstat','-z','--no-ext-diff','--no-textconv','HEAD'])).split('\0');
   for(let i=0;i<stats.length;i++){const row=stats[i];if(!row)continue;const[added,removed,...parts]=row.split('\t');let name=parts.join('\t');if(!name){i++;name=stats[++i]??'';}const item=files.find(item=>item.path===name);if(item){item.binary=added==='-';item.added=item.binary?null:Number(added);item.removed=item.binary?null:Number(removed);}}
-  return{head,branch,revision:hash(JSON.stringify([head,branch,raw,diff,stagedDiff,untracked])),files,diff,stagedDiff,truncated:false,mode:managed?'managed':'legacy',gitWrite:managed,untrackedIncluded:managed};
+  let review:GitStatus['review'];
+  if(owner)try{
+   review={version:1,owner};
+   const tracked=files.filter(file=>!file.untracked);
+   if(tracked.length){
+    const lsFiles=await git(['ls-files','-s','-z']),index=lsEntries(lsFiles,1,2),headIndex=lsEntries(await git(['ls-tree','-r','-z','--full-tree','HEAD']),2);
+    for(const file of tracked)file.review=await this.fileReview(file,index,headIndex,path,signal);
+    const[rawAgain,lsAgain]=await Promise.all([git(['status','--porcelain=v1','-z',managed?'--untracked-files=all':'--untracked-files=no']),git(['ls-files','-s','-z'])]);
+    if(rawAgain!==raw||lsAgain!==lsFiles)for(const file of tracked)file.review={staged:{unavailable:'Changed while reading. Refresh and try again.'},unstaged:{unavailable:'Changed while reading. Refresh and try again.'}};
+   }
+  }catch{review=undefined;}
+  return{head,branch,revision:hash(JSON.stringify([head,branch,raw,diff,stagedDiff,untracked])),files,diff,stagedDiff,truncated:false,mode:managed?'managed':'legacy',gitWrite:managed,untrackedIncluded:managed,...(review?{review}:{})};
  }
- async gitStatus(projectId:string,threadId?:string):Promise<GitStatus>{return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed)=>this.status(metadata,path,signal,managed)));}
+ async gitStatus(projectId:string,threadId?:string):Promise<GitStatus>{return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed,owner)=>this.status(metadata,path,signal,managed,owner)));}
  /** Read-only origin through the same attested managed/legacy Git boundary. */
  async gitReviewOrigin(projectId:string,threadId?:string){return this.exclusive(projectId,async()=>{
   const binding=await this.binding(projectId,threadId),signal=new AbortController().signal;

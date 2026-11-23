@@ -17,3 +17,18 @@
 .pr-checks-stale{max-width:64ch;margin:0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--warning-bg);color:var(--text);font-size:12px;line-height:1.5}
 .pr-checks .pr-check-list{max-width:480px;margin:0;gap:0;border:1px solid var(--border);border-radius:8px}.pr-checks .pr-check-list li{padding:6px 10px;font-size:13px}.pr-checks .pr-check-list li+li{border-top:1px solid var(--border)}
 .pr-check-list li[data-state=pass]::before{background:var(--success-fg)}.pr-check-list li[data-state=fail]::before{background:var(--danger-fg)}.pr-check-list li[data-state=pending]::before{background:var(--warning-fg)}.pr-check-list li[data-state=pass] small{color:var(--success-fg)}.pr-check-list li[data-state=fail] small{color:var(--danger-fg)}.pr-check-list li[data-state=pending] small{color:var(--warning-fg)}
+
+/* Viewed checklist (Changes surface) */
+.canvas-panel .panel-toolbar>button[aria-pressed="true"]{background:var(--selection-bg);color:var(--text);border-color:var(--accent-fg);}
+.viewed-progress{display:block;padding:0 12px 4px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;transition:opacity var(--ui-motion-status) var(--ui-ease-move);}
+.viewed-announce{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;margin:0;}
+.live-change-list li>.viewed-check{display:flex;align-items:center;gap:6px;min-height:28px;flex:none;font-size:11px;color:var(--muted);transition:color var(--ui-motion-hover) var(--ui-ease-move),background var(--ui-motion-hover) var(--ui-ease-move);}
+.live-change-list .viewed-check input{width:14px;height:14px;margin:0;accent-color:var(--accent-fg);}
+.live-change-list .viewed-check input:focus-visible{outline:2px solid var(--ui-focus-ring,#808080);outline-offset:2px;}
+.viewed-path{min-width:0;}
+.viewed-reason,.viewed-saving,.viewed-reopen{font-size:11px;color:var(--muted);}
+.viewed-reopen{transition:opacity var(--ui-motion-status) var(--ui-ease-move);}
+.viewed-reopened{animation:viewed-reopen-in var(--ui-motion-insert) var(--ui-ease-enter);}
+@keyframes viewed-reopen-in{from{opacity:0;}to{opacity:1;}}
+@media (prefers-reduced-motion: reduce){.viewed-progress,.viewed-reopen,.live-change-list li>.viewed-check{transition:none;}.viewed-reopened{animation:none;}}
+@media (max-width:360px){.viewed-progress{display:block;width:100%;}}
