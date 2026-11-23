@@ -111,10 +111,10 @@ describe('desktop main window lifecycle with a synthetic sidecar and shell',()=>
   await import('../apps/desktop/main.ts');
   await vi.waitFor(()=>expect(runtime.loaded).toHaveBeenCalledOnce());
   const window=runtime.loaded.mock.calls[0]![0] as TestWindow, sender=window.webContents;
-  const invoke=(channel:string,value?:unknown)=>{
+  const invoke=(channel:string,value?:unknown,senderFrame=sender.mainFrame)=>{
    const handle=runtime.handle.mock.calls.find(([name])=>name===channel)?.[1];
    if(!handle)throw Error('Fixture could not find the desktop IPC handler.');
-   return handle({sender,senderFrame:sender.mainFrame},value) as Promise<unknown>;
+   return handle({sender,senderFrame},value) as Promise<unknown>;
   };
   await invoke(channels.ready);
   return {window,invoke,children};
@@ -144,5 +144,18 @@ describe('desktop main window lifecycle with a synthetic sidecar and shell',()=>
   expect(children[1]!.token===launchIdentity).toBe(true);
   expect(window.webContents.getURL()===originalUrl).toBe(true);
   await expect(invoke(channels.context)).resolves.toMatchObject({surface:{kind:'main'}});
+ });
+
+ it('opens the fixed GitHub device page only for the originating live main frame with no argument',async()=>{
+  const {window,invoke}=await launch(), contents=window.webContents;
+  const deviceUrl='https://github.com/login/device',channel='harness-desktop:open-github-device';
+  const popup=contents.setWindowOpenHandler.mock.calls[0]![0];
+  expect(popup({url:deviceUrl,referrer:{url:''}})).toEqual({action:'deny'});
+  expect(runtime.openExternal).not.toHaveBeenCalled();
+  await expect(invoke(channel,undefined,{url:contents.getURL()})).rejects.toThrow('Desktop request denied');
+  await expect(invoke(channel,{url:'https://example.org/'})).rejects.toThrow('GitHub device action denied');
+  expect(runtime.openExternal).not.toHaveBeenCalled();
+  await expect(invoke(channel)).resolves.toBeUndefined();
+  expect(runtime.openExternal).toHaveBeenCalledExactlyOnceWith(deviceUrl,{activate:true});
  });
 });
