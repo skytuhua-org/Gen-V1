@@ -118,7 +118,9 @@ async function fixture() {
           ? { number: 12, event: 'COMMENT' as const, body: 'private review text', head: status.head, revision: status.revision }
           : type === 'commit'
             ? { message: 'private commit message', expectedHead: status.head, revision: status.revision }
-            : { paths: ['one.txt'], expectedHead: status.head, revision: status.revision };
+            : type === 'fetch' || type === 'pull'
+              ? { expectedHead: status.head, revision: status.revision }
+              : { paths: ['one.txt'], expectedHead: status.head, revision: status.revision };
       const operation: WorkspaceActionOperation = {
         operationId: randomUUID(),
         operation: type,
@@ -534,3 +536,30 @@ it('supports local unstage and commit through the original revision and replays 
   expect(await f.outcomes.execute(f.projectId, commit.input)).toEqual(result);
   expect((await f.projects.gitStatus(f.projectId, f.thread.id)).head).toBe(after.head);
 }, 60000);
+
+it('fetch skips the head preflight, receipts a bounded summary and replays duplicates',async()=>{
+ const f=await fixture(),{input,operation}=await f.operation('fetch');
+ const sync:Awaited<ReturnType<typeof f.github.fetch>>={branch:'main',head:operation.action.head,revision:operation.action.revision,remote:null,upstream:null,ahead:null,behind:null,state:'no-remote',lastFetchedAt:null,blockers:['NO_REMOTE']};
+ const call=vi.spyOn(f.github,'fetch').mockImplementation(async(_p,_t,beforeWrite)=>{beforeWrite?.();return sync;});
+ const input2={...input,payload:{...input.payload,expectedHead:'0'.repeat(40)}},operation2={...operation,payload:input2.payload};
+ const first=await f.outcomes.execute(f.projectId,input2);
+ expect(call).toHaveBeenCalledTimes(1);
+ expect(first.state).toBe('confirmed');
+ expect((await f.outcomes.execute(f.projectId,input2))).toEqual(first);
+ const replay=await f.outcomes.execute(f.projectId,input2);expect(replay.state).toBe('confirmed');
+ expect(JSON.stringify(await f.outcomes.inspect(operation2))).toContain('confirmed');
+ const confirmed=await f.outcomes.execute(f.projectId,input2);
+ expect(confirmed.state).toBe('confirmed');
+ if('receipt' in confirmed)expect(JSON.stringify(confirmed.receipt)).not.toContain('blockers'); // bounded summary only
+},60000);
+it('fetch failure before the write edge is not-applied; pull failure after beginWrite stays uncertain',async()=>{
+ const f=await fixture(),fetchOp=await f.operation('fetch'),pullOp=await f.operation('pull');
+ const {HarnessError}=await import('../packages/contracts/index.ts');
+ vi.spyOn(f.github,'fetch').mockRejectedValue(new HarnessError('FETCH_FAILED','Fetch failed: no route.'));
+ expect((await f.outcomes.execute(f.projectId,fetchOp.input)).state).toBe('not-applied');
+ vi.spyOn(f.github,'pull').mockImplementation(async(_p,_t,_payload,beforeWrite)=>{beforeWrite?.();throw new HarnessError('PULL_BLOCKED','Pull is not available.',{blockers:['DIVERGED']});});
+ expect((await f.outcomes.execute(f.projectId,pullOp.input)).state).toBe('uncertain');
+ expect((await f.outcomes.execute(f.projectId,pullOp.input)).state).toBe('uncertain'); // replayed, not re-pulled
+ await f.restart();
+ expect((await f.outcomes.execute(f.projectId,pullOp.input)).state).toBe('uncertain');
+},60000);
