@@ -83,7 +83,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   };
   useImperativeHandle(ref, () => ({keyDown(event) {
     if (!open || isComposing(event)) return false;
-    if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); close(); return true;}
+    if (event.key === 'Escape' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {event.preventDefault(); event.stopPropagation(); close(); return true;}
     if (['ArrowUp', 'ArrowDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault(); const selectable = options.filter(available), index = selectable.findIndex(option => option.id === selected?.id);
       if (selectable.length) setActive(selectable[(index + (event.key === 'ArrowDown' ? 1 : -1) + selectable.length) % selectable.length].id);

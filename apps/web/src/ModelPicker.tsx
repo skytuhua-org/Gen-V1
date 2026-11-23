@@ -58,7 +58,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
  function navigate(event:KeyboardEvent<HTMLInputElement>){
   if(isComposing(event)){if(event.key==='Escape')event.preventDefault();return;}
   if(event.altKey||event.ctrlKey||event.metaKey)return;
-  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close(true);return;}
+  if(event.key==='Escape'&&!event.shiftKey){event.preventDefault();event.stopPropagation();close(true);return;}
   if(event.key==='Tab'&&!combined){close(true);return;}
   if(event.key==='Enter'){event.preventDefault();if(active)choose(active);return;}
   if(!['ArrowDown','ArrowUp'].includes(event.key))return;

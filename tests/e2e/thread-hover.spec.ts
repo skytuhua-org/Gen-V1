@@ -78,6 +78,21 @@ test('Escape that dismisses the card is consumed for global stop/sidebar handler
   expect(await page.evaluate(() => (window as unknown as {globalEscapes: number}).globalEscapes)).toBe(1);
 });
 
+test('modified Escape chords pass through a pointer-opened card to rebound shortcuts', async ({page}) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    (window as unknown as {globalEscapes: number}).globalEscapes = 0;
+    window.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !event.defaultPrevented) (window as unknown as {globalEscapes: number}).globalEscapes++;
+    });
+  });
+  await open(page);
+  // A rebound stop chord (e.g. Shift+Escape) must reach global handlers; the card ignores it.
+  await page.keyboard.press('Shift+Escape');
+  expect(await page.evaluate(() => (window as unknown as {globalEscapes: number}).globalEscapes)).toBe(1);
+  await expect(card(page)).toBeVisible();
+});
+
 test('pointer exit dismisses after transfer grace and outside focus dismisses immediately', async ({page}) => {
   await fixture(page); await page.clock.install(); await page.clock.pauseAt(new Date()); await trigger(page).hover();
   await page.clock.runFor(350); await expect(card(page)).toBeVisible();

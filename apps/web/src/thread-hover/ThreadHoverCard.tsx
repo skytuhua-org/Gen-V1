@@ -53,7 +53,7 @@ export function ThreadHoverCard<Target>({facts, loadFacts, cache: suppliedCache,
     // Pointer hover can open the card while focus stays elsewhere. Let the
     // focused control handle Escape first, and never move its focus.
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); event.stopPropagation(); interaction.dismiss(); }
+      if (event.key === 'Escape' && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229 && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) { event.preventDefault(); event.stopPropagation(); interaction.dismiss(); }
     };
     ownerDocument.addEventListener('keydown', escape);
     return () => ownerDocument.removeEventListener('keydown', escape);
@@ -110,7 +110,7 @@ export function ThreadHoverCard<Target>({facts, loadFacts, cache: suppliedCache,
       onBlur: blur,
       onKeyDown: event => {
         if (!visible || event.nativeEvent.isComposing || event.keyCode === 229) return;
-        if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); dismiss();}
+        if (event.key === 'Escape' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {event.preventDefault(); event.stopPropagation(); dismiss();}
         else if ((event.key === 'Tab' && !event.shiftKey) || event.key === 'ArrowDown') {event.preventDefault(); enterCard();}
       },
     })}
