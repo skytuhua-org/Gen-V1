@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { Store } from '../packages/storage/store.ts';
 import { ProjectTools, type WorkspaceBinding } from '../packages/workspace/tools.ts';
 import { GitHubTools } from '../packages/workspace/github.ts';
+import type { Thread } from '../packages/contracts/index.ts';
 import type { TerminalHost } from '../packages/workspace/terminal.ts';
 import { WorkspaceActionOutcomes } from '../packages/workspace/action-outcomes.ts';
 import {
@@ -572,13 +573,11 @@ it('confirms a clean branch switch durably and replays the stored result', async
   const f = await fixture(),
     wgit = (...args: string[]) => execFileSync('git', ['-C', f.binding.path, ...args], { windowsHide: true, encoding: 'utf8' }).trim();
   wgit('branch', 'feature/x');
-  const { input } = await f.operation('switch-branch'),
+  const { input, operation } = await f.operation('switch-branch'),
     result = await f.outcomes.execute(f.projectId, input);
   expect(result.state).toBe('confirmed');
   expect(wgit('branch', '--show-current')).toBe('feature/x');
   expect(await f.outcomes.execute(f.projectId, input)).toEqual(result);
-  const { operation } = await f.operation('switch-branch');
-  operation.operationId = input.id;
   expect((await f.outcomes.inspect(operation)).state).toBe('confirmed');
 }, 60000);
 
@@ -600,10 +599,10 @@ it('returns not-applied with the refusal code for guarded branch actions and nev
   expect((await f.outcomes.execute(f.projectId, badName.input)).state).toBe('not-applied');
   expect((await f.outcomes.execute(f.projectId, badName.input)).state).toBe('not-applied');
 
-  f.store.internal('fixture', null, () => f.store.put('thread', f.thread.id, f.thread.id, { ...f.thread, runId: 'run-1' }));
+  f.store.internal('fixture', null, () => { const live = f.store.get<Thread>('thread', f.thread.id)!; f.store.put('thread', live.id, live.id, { ...live, runId: 'run-1' }); });
   const busy = await f.operation('create-branch');
   expect((await f.outcomes.execute(f.projectId, busy.input)).state).toBe('not-applied');
-  f.store.internal('fixture', null, () => f.store.put('thread', f.thread.id, f.thread.id, f.thread));
+  f.store.internal('fixture', null, () => { const live = f.store.get<Thread>('thread', f.thread.id)!; f.store.put('thread', live.id, live.id, { ...live, runId: null }); });
 
   const exists = await f.operation('create-branch');
   exists.input.payload = { ...exists.input.payload, name: 'held' };

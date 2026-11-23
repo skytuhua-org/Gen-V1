@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {Store} from '../packages/storage/store.ts';
+import type{Thread} from '../packages/contracts/index.ts';
 import {ProjectTools,discardUnboundWorktree} from '../packages/workspace/tools.ts';
 
 const cleanup:(()=>Promise<void>)[]=[];
@@ -75,7 +76,7 @@ it('lists local and remote branches with occupancy, dirty counts and caps',async
  const dirty=await f.tools.branches(f.projectId,f.thread.id);
  expect(dirty.dirty.tracked).toBe(0);expect(dirty.dirty.untracked).toBe(1);
  const cap=await managedFixture();
- execFileSync('git',['-C',cap.binding.path,'update-ref','--stdin'],{windowsHide:true,input:Array.from({length:505},(_,i)=>`create refs/heads/b${i} HEAD`).join('\n')});
+ execFileSync('git',['-C',cap.binding.path,'update-ref','--stdin'],{windowsHide:true,input:Array.from({length:505},(_,i)=>`create refs/heads/b${i} HEAD`).join('\n')+'\n'});
  const capped=await cap.tools.branches(cap.projectId,cap.thread.id);
  expect(capped.local.length).toBeLessThanOrEqual(500);expect(capped.truncated).toBe(true);
 },120000);
@@ -108,10 +109,10 @@ it('refuses occupied branches, active runs, bad names, existing names and legacy
  f.wgit('branch','held');f.wgit('worktree','add',join(f.root,'second'),'held');
  const s0=await f.tools.gitStatus(f.projectId,f.thread.id);
  expect((await branchError(f.tools.gitAction(f.projectId,f.thread.id,{type:'switch-branch',revision:s0.revision,branch:'held',source:'local',bringChanges:false}))).code).toBe('BRANCH_IN_USE');
- f.store.internal('fixture',null,()=>f.store.put('thread',f.thread.id,f.thread.id,{...f.thread,runId:'run-1'}));
+ f.store.internal('fixture',null,()=>{const live=f.store.get<Thread>('thread',f.thread.id)!;f.store.put('thread',live.id,live.id,{...live,runId:'run-1'});});
  const s1=await f.tools.gitStatus(f.projectId,f.thread.id);
  expect((await branchError(f.tools.gitAction(f.projectId,f.thread.id,{type:'switch-branch',revision:s1.revision,branch:'held',source:'local',bringChanges:false}))).code).toBe('RUN_ACTIVE');
- f.store.internal('fixture',null,()=>f.store.put('thread',f.thread.id,f.thread.id,f.thread));
+ f.store.internal('fixture',null,()=>{const live=f.store.get<Thread>('thread',f.thread.id)!;f.store.put('thread',live.id,live.id,{...live,runId:null});});
  for(const name of ['-x','a..b','x.lock','a b','foo/','@{x','@'])
   expect((await branchError(f.tools.gitAction(f.projectId,f.thread.id,{type:'create-branch',revision:s0.revision,name}))).code).toBe('INVALID_BRANCH_NAME');
  expect((await branchError(f.tools.gitAction(f.projectId,f.thread.id,{type:'create-branch',revision:s0.revision,name:'held'}))).code).toBe('BRANCH_EXISTS');

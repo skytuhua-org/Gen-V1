@@ -5,7 +5,7 @@ import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Store} from '../packages/storage/store.ts';
-import {HarnessError} from '../packages/contracts/index.ts';
+import {HarnessError,type Thread} from '../packages/contracts/index.ts';
 import {ProjectTools} from '../packages/workspace/tools.ts';
 import {GitHubTools} from '../packages/workspace/github.ts';
 import type {TerminalHost} from '../packages/workspace/terminal.ts';
@@ -170,7 +170,7 @@ it('maps branch-action refusal codes to 409 bodies',async()=>{
  expect(bad.statusCode).toBe(409);expect(bad.json().error.code).toBe('INVALID_BRANCH_NAME');
  const stale=await post({branch:'held',revision:'0'.repeat(64)});
  expect(stale.statusCode).toBe(409);expect(stale.json().error.code).toBe('REVISION_CHANGED');
- f.store.internal('fixture',null,()=>f.store.put('thread',f.thread.id,f.thread.id,{...f.thread,runId:'run-1'}));
+ f.store.internal('fixture',null,()=>{const live=f.store.get<Thread>('thread',f.thread.id)!;f.store.put('thread',live.id,live.id,{...live,runId:'run-1'});});
  const busy=await post({branch:'held'});
  expect(busy.statusCode).toBe(409);expect(busy.json().error.code).toBe('RUN_ACTIVE');
 },60000);
