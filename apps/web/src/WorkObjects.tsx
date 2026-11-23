@@ -2,6 +2,7 @@ import {useContext,useId,useLayoutEffect,useMemo,useRef,useState,type CSSPropert
 import {useStateStore,type ComponentRegistry,type ComponentRenderProps} from '@json-render/react';
 import {ArrowRight,Check,ChevronDown,ChevronRight,Database,Focus,GripVertical,Layers,Monitor,Search,Server,Workflow} from 'lucide-react';
 import {WORK_OBJECT_SCHEMAS,WORK_OBJECT_DATA_SCHEMAS,boundedWorkObjectData,readBoardDraft,boardDraftMatchesSource,boardProposal,type WorkflowData,type ArchitectureData,type TraceData} from '../../../packages/ui-catalog/work-objects';
+import {artifactSourceContent} from './artifact-source';
 import {ArtifactInline,ArtifactTitle,inputPath,statePath,useTaskAction} from './task-context';
 import {MotionRegion,reducedMotion} from './task-motion';
 import {createSpringValue} from './motion-spring';
@@ -14,7 +15,7 @@ function Heading({title,caption}:{title?:string;caption:string}){
  const outer=useContext(ArtifactTitle);
  return <header className="work-object-heading">{title&&title!==outer?<h3>{title}</h3>:<span/>}<span>{caption}</span></header>;
 }
-function Source({text}:{text?:string}){return text?<details className="work-object-source"><summary>Source</summary><p>{text}</p></details>:null;}
+function Source({text}:{text?:string}){const source=artifactSourceContent(text);return source?<details className="work-object-source"><summary>Source</summary>{source.kind==='link'?<a href={source.text} target="_blank" rel="noopener">{source.text}</a>:<p>{source.text}</p>}</details>:null;}
 function ActionError({error}:{error:string}){return error?<p className="error-text" role="status">{error}</p>:null;}
 
 /** Only a deliberate local move animates; restored artifacts start settled. */

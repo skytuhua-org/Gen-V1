@@ -2,6 +2,7 @@ import {useContext,useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type 
 import {useStateStore,type ComponentRenderProps,type ComponentRegistry} from '@json-render/react';
 import {ArrowRight,ArrowUpRight,Braces,FileCode2,GitBranch,Terminal} from 'lucide-react';
 import {SOFTWARE_DATA_SCHEMAS,SOFTWARE_SCHEMAS,type PipelineData,type SoftwareProps} from '../../../packages/ui-catalog/software-development';
+import {artifactSourceContent} from './artifact-source';
 import {ArtifactTitle,inputPath,statePath,useTaskAction} from './task-context';
 import {StatusIcon,type StatusKind} from './task-status';
 import {animateTask} from './task-motion';
@@ -39,7 +40,7 @@ function useDetailMotion<T extends HTMLElement=HTMLDivElement>(selected:string|u
   },[]);return ref;
 }
 function Title({title,children}:{title?:string;children?:ReactNode}){const outer=useContext(ArtifactTitle);return <header className="software-heading">{title&&title!==outer&&<h4>{title}</h4>}{children}</header>;}
-function Source({text}:{text?:string}){return text?<details className="software-source"><summary>Source</summary><p>{text}</p></details>:null;}
+function Source({text}:{text?:string}){const source=artifactSourceContent(text);return source?<details className="software-source"><summary>Source</summary>{source.kind==='link'?<a href={source.text} target="_blank" rel="noopener">{source.text}</a>:<p>{source.text}</p>}</details>:null;}
 function Unavailable({name}:{name:string}){return <p className="task-unavailable">{name} data is unavailable. Ask the agent to refresh its source.</p>;}
 type ListItem={id:string;label:string;ariaLabel?:string;meta?:ReactNode;icon?:ReactNode};
 function SelectList({items,selected,select,label,panelId,className=''}:{items:ListItem[];selected?:string;select:(id:string)=>void;label:string;panelId:string;className?:string}){
