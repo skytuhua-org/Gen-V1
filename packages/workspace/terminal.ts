@@ -112,12 +112,24 @@ export class TerminalHost{
  private async owned(id:string,projectId:string,threadId?:string,stopping=false){const session=this.sessions.get(identifier.parse(id));if(!session){const old=this.projects.store.get<{projectId:string;threadId?:string}>('terminalSession',id);if(old&&old.projectId===projectId&&old.threadId===threadId)throw new HarnessError('TERMINAL_ENDED','The host restarted or this terminal ended. Open a new terminal.');throw new HarnessError('NOT_FOUND','Terminal is unavailable.');}if(session.projectId!==projectId||session.threadId!==threadId)throw new HarnessError('CAPABILITY_DENIED','Terminal belongs to another working copy.');if(!stopping){const binding=await this.projects.binding(projectId,threadId);if(session.path!==binding.path)throw new HarnessError('CAPABILITY_DENIED','Terminal belongs to another working copy.');this.assertStartupAvailable(session);}return session;}
  async read(id:string,projectId:string,threadId?:string,cursor=0){return this.result(await this.owned(id,projectId,threadId),z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(cursor));}
  private async stop(session:Session){
-  if(session.exited){if(session.startupFailed)this.discardFailedStartup(session);return;}
+  if(session.exited)return;
   session.pty.kill();
   let timer:ReturnType<typeof setTimeout>|undefined;
   try{await Promise.race([session.done,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new HarnessError('TERMINAL_CANCEL_UNCONFIRMED','Terminal termination was not confirmed.')),5000);})]);}
   finally{clearTimeout(timer);}
  }
- async command(id:string,projectId:string,threadId:string|undefined,input:Record<string,unknown>){const session=await this.owned(id,projectId,threadId,input.type==='stop');if(input.type==='stop')await this.stop(session);else{if(session.exited)throw new HarnessError('TERMINAL_ENDED','The terminal has exited.');if(input.type==='input')session.pty.write(z.string().max(64*1024).parse(input.data));else if(input.type==='resize')session.pty.resize(dimension.parse(input.cols),dimension.parse(input.rows));else throw new HarnessError('INVALID_INPUT','Unknown terminal action.');}return this.result(session,0);}
+ async command(id:string,projectId:string,threadId:string|undefined,input:Record<string,unknown>){
+  const session=await this.owned(id,projectId,threadId,input.type==='stop');
+  if(input.type==='stop'){
+   await this.stop(session);
+   if(session.startupFailed)this.discardFailedStartup(session);
+  }else{
+   if(session.exited)throw new HarnessError('TERMINAL_ENDED','The terminal has exited.');
+   if(input.type==='input')session.pty.write(z.string().max(64*1024).parse(input.data));
+   else if(input.type==='resize')session.pty.resize(dimension.parse(input.cols),dimension.parse(input.rows));
+   else throw new HarnessError('INVALID_INPUT','Unknown terminal action.');
+  }
+  return this.result(session,0);
+ }
  async dispose(){const outcomes=await Promise.allSettled([...this.sessions.values()].filter(item=>!item.exited||item.startupFailed).map(item=>this.command(item.id,item.projectId,item.threadId,{type:'stop'})));const errors=outcomes.flatMap(item=>item.status==='rejected'?[item.reason]:[]);if(errors.length)throw new AggregateError(errors,'Terminal shutdown could not be confirmed.');}
 }

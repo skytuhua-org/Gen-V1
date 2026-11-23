@@ -90,6 +90,23 @@ it.each(['reopen','dispose'] as const)('retries failed terminal registration cle
  }
 });
 
+it('retries durable rollback when shutdown was waiting for the failed startup to exit',async()=>{
+ const {host,projects}=fixture(),{pty,exit}=startupPty();
+ const input={projectId:'project-a',terminalId:'shutdown-cleanup'};
+ const failure=Error('Fixture initial write failed');
+ pty.write.mockImplementationOnce(()=>{throw failure;});
+ pty.kill.mockImplementation(()=>{});
+ vi.spyOn(projects.store,'remove').mockImplementationOnce(()=>{throw Error('Fixture temporary store failure');});
+ const opening=host.open({...input,command:'echo ready'}).catch(error=>error);
+ await vi.waitFor(()=>expect(pty.kill).toHaveBeenCalledOnce());
+ const shutdown=host.dispose();
+ await vi.waitFor(()=>expect(pty.kill).toHaveBeenCalledTimes(2));
+ exit();
+ await expect(opening).resolves.toBe(failure);
+ await shutdown;
+ expect(projects.store.get('terminalSession',input.terminalId)).toBeUndefined();
+});
+
 it('holds a failed terminal in custody until native exit even when termination times out',async()=>{
  vi.useFakeTimers();
  const {host,projects}=fixture(),{pty,exit}=startupPty();
