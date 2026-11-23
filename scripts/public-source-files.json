@@ -2930,6 +2930,7 @@
     "tests/desktop-output.test.ts",
     "tests/desktop-packaging.test.ts",
     "tests/desktop-preload-accounts.test.ts",
+    "tests/desktop-restart-quit.test.ts",
     "tests/desktop-update-close.test.ts",
     "tests/desktop-updater.test.ts",
     "tests/device-pairing-v3.test.ts",
