@@ -3327,6 +3327,7 @@
     "tests/history-import-decisions-v6.test.ts",
     "tests/history-import-v3.test.ts",
     "tests/host-capability-flags.test.ts",
+    "tests/host-close-connections.test.ts",
     "tests/host-fixture-cleanup.test.ts",
     "tests/host-fixture.ts",
     "tests/human-handoff-v3.test.ts",
