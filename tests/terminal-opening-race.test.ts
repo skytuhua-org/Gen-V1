@@ -72,6 +72,24 @@ it.each(['registration','initial write','data listener','exit listener'] as cons
  expect(mocks.spawn).toHaveBeenCalledTimes(2);
 });
 
+it.each(['reopen','dispose'] as const)('retries failed terminal registration cleanup during %s',async (next)=>{
+ const {host,projects}=fixture(),{pty}=startupPty();
+ const input={projectId:'project-a',terminalId:'retry-cleanup'};
+ const failure=Error('Fixture initial write failed');
+ pty.write.mockImplementationOnce(()=>{throw failure;});
+ vi.spyOn(projects.store,'remove').mockImplementationOnce(()=>{throw Error('Fixture temporary store failure');});
+ await expect(host.open({...input,command:'echo ready'})).rejects.toBe(failure);
+ expect(pty.kill).toHaveBeenCalledOnce();
+ expect(projects.store.get('terminalSession',input.terminalId)).toMatchObject({exited:false});
+ if(next==='dispose'){
+  await host.dispose();
+  expect(projects.store.get('terminalSession',input.terminalId)).toBeUndefined();
+ }else{
+  await expect(host.open(input)).resolves.toMatchObject({id:input.terminalId,exited:false});
+  expect(mocks.spawn).toHaveBeenCalledTimes(2);
+ }
+});
+
 it('holds a failed terminal in custody until native exit even when termination times out',async()=>{
  vi.useFakeTimers();
  const {host,projects}=fixture(),{pty,exit}=startupPty();
