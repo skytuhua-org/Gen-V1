@@ -18,7 +18,7 @@
 
 /* Header row: compact two-option segmented control + destination label. */
 .quick-ask-head { display:flex; align-items:center; gap:6px; height:32px; }
-.quick-ask-head [role="radio"] { height:28px; padding:0 10px; border:1px solid var(--border); background:transparent; color:var(--muted); font:inherit; font-size:12px; cursor:pointer; border-radius:0; }
+.quick-ask-head [role="radio"] { height:28px; padding:0 10px; border:1px solid var(--control-border); background:transparent; color:var(--muted); font:inherit; font-size:12px; cursor:pointer; border-radius:0; }
 .quick-ask-head [role="radio"]:first-child { border-radius:var(--control-radius,6px) 0 0 var(--control-radius,6px); }
 .quick-ask-head [role="radio"]:nth-child(2) { margin-left:-1px; border-radius:0 var(--control-radius,6px) var(--control-radius,6px) 0; }
 .quick-ask-head [role="radio"].selected { color:var(--accent); background:var(--subtle); border-color:var(--accent); position:relative; }
