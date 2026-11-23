@@ -12,7 +12,6 @@ import {
   GitPullRequest,
   ListFilter,
   LoaderCircle,
-  MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
   Pin,
@@ -31,6 +30,7 @@ import './sidebar-context.css';
 import {ThreadHoverCard} from './thread-hover/ThreadHoverCard';
 import {createThreadHoverCache} from './thread-hover/data';
 import type {ThreadHoverScope} from './thread-hover/facts';
+import {GenMark} from './GenMark';
 import {loadPersonalThreadHover,type ThreadHoverPRTarget} from './thread-hover/host';
 import { projectColor, threadDragPayload } from './project-colors';
 import { ActionMenu } from '../../../packages/ui-shell/ActionMenu';
@@ -371,7 +371,7 @@ export function ShellSidebar({
     >
       <div className="brand-row">
         <span className="brand-mark">
-          <MessageSquare size={16} />
+          <GenMark />
         </span>
         <strong>Gen V1</strong>
         <button
