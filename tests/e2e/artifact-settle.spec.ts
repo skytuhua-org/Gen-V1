@@ -146,7 +146,7 @@ for (const recovered of [false, true]) test(`${recovered ? 'recovered' : 'genera
   });
   await page.getByRole('button', { name: 'Publish artifact', exact: true }).click();
   await expect(page.locator('.artifact-restoring').getByRole('status', { includeHidden: true })).toHaveText('Restoring Task surface…');
-  await expect(page.locator('.signature-well-tools button').first()).toBeEnabled();
+  await expect(page.locator('.signature-modes button').first()).toBeEnabled();
   expect(uploads).toBe(0);
   if (!recovered) expect(await page.evaluate(() => localStorage.getItem('harness:signature-assets:v1:task-thread:task-state'))).toBeNull();
   await releaseArtifactJournal(page);
