@@ -74,7 +74,7 @@ try {
         if (bytes + size > budget) { truncated = true; truncatedReason = "bytes"; break; }
         bytes += size; rows.push(row);
       }
-      parentPort.postMessage({ result: { columns, rows, truncated, truncatedReason } });
+      parentPort.postMessage({ result: { columns, rows, truncated, truncatedReason, resourceVersion: before } });
     } finally { db.setAuthorizer(null); }
   } else if (mode === "execute") {
     db.exec("BEGIN IMMEDIATE"); transaction = true;
