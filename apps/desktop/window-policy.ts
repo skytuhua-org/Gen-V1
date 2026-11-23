@@ -1,6 +1,6 @@
 import {isIP} from 'node:net';
 import {lookup} from 'node:dns/promises';
-import {DESKTOP_CHANNELS,desktopSurfaceKey,parseDesktopSurface,type DesktopSurface,type DesktopBrowserCommand} from '../../packages/desktop-contract/index.ts';
+import {DESKTOP_CHANNELS,desktopSurfaceKey,parseDesktopSurface,type DesktopSurface,type DesktopBrowserBookmark,type DesktopBrowserCommand} from '../../packages/desktop-contract/index.ts';
 import {pluginFrameSource} from '../../packages/plugins/frame-protocol.ts';
 import {pluginSurfaceSchema} from '../../packages/plugins/contracts.ts';
 export interface DesktopBounds {x:number;y:number;width:number;height:number}
@@ -49,6 +49,13 @@ export function parseBrowserCommand(raw:unknown):DesktopBrowserCommand {
  if(value.type==='navigate'&&Object.keys(value).length===2&&typeof value.url==='string'&&value.url.length<=4096)return {type:'navigate',url:value.url};
  if(value.type==='bounds'&&Object.keys(value).length===2&&value.bounds&&typeof value.bounds==='object'&&!Array.isArray(value.bounds)){const bounds=value.bounds as Record<string,unknown>;if(Object.keys(bounds).length===4&&['x','y','width','height'].every(key=>typeof bounds[key]==='number'&&Number.isFinite(bounds[key])&&Math.abs(bounds[key] as number)<=20000))return {type:'bounds',bounds:bounds as unknown as DesktopBounds};}
  if(['back','forward','reload','stop','close'].includes(String(value.type))&&Object.keys(value).length===1)return {type:value.type as 'back'|'forward'|'reload'|'stop'|'close'};
+ const keys=Object.keys(value),uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value.id)),title=value.title===undefined||typeof value.title==='string'&&value.title.trim().length>=1&&value.title.trim().length<=120,query=value.keepQuery===undefined||typeof value.keepQuery==='boolean';
+ if(value.type==='bookmark-add'&&keys.every(key=>['type','keepQuery'].includes(key))&&query)return value.keepQuery===undefined?{type:'bookmark-add'}:{type:'bookmark-add',keepQuery:value.keepQuery as boolean};
+ if(value.type==='bookmark-update'&&keys.every(key=>['type','id','title','keepQuery'].includes(key))&&uuid&&title&&query){const command:DesktopBrowserCommand={type:'bookmark-update',id:value.id as string};if(value.title!==undefined)command.title=(value.title as string).trim();if(value.keepQuery!==undefined)command.keepQuery=value.keepQuery as boolean;return command;}
+ if((value.type==='bookmark-remove'||value.type==='bookmark-open')&&keys.length===2&&uuid)return {type:value.type,id:value.id as string};
+ if(value.type==='bookmark-restore'&&keys.length===2&&value.bookmark&&typeof value.bookmark==='object'&&!Array.isArray(value.bookmark)){const bookmark=value.bookmark as Record<string,unknown>;if(Object.keys(bookmark).length===5&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(bookmark.id))&&typeof bookmark.url==='string'&&typeof bookmark.title==='string'&&bookmark.title.trim().length>=1&&bookmark.title.trim().length<=120&&typeof bookmark.createdAt==='string'&&!Number.isNaN(Date.parse(bookmark.createdAt))&&typeof bookmark.updatedAt==='string'&&!Number.isNaN(Date.parse(bookmark.updatedAt)))try{remoteBrowserUrl(bookmark.url);return {type:'bookmark-restore',bookmark:bookmark as unknown as DesktopBrowserBookmark};}catch{}}
+ if(value.type==='bookmark-notice-dismiss'&&keys.length===1)return {type:'bookmark-notice-dismiss'};
+ if(value.type==='overlay'&&keys.length===2&&typeof value.open==='boolean')return {type:'overlay',open:value.open};
  throw Error('Invalid browser command');
 }
 export function publicAddress(address:string):boolean {
