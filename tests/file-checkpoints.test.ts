@@ -1,9 +1,13 @@
 import {describe,expect,it} from 'vitest';
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
 import {ZodError} from 'zod';
 import {globSync,readFileSync} from 'node:fs';
 import {isAbsolute,relative,resolve} from 'node:path';
 import browserConfig from './e2e/file-checkpoints.playwright.config';
 import viteConfig from './e2e/file-checkpoints.vite.config';
+import {DEFAULT_PREFERENCES} from '../packages/contracts/preferences';
+import {FileCheckpoints} from '../apps/web/src/FileCheckpoints';
 import {checkpointOwnerKey,checkpointReviewPaths,disabledCheckpointAdapter,readCheckpointDetail,readCheckpointList,readCheckpointReview,type CheckpointOwner,type FileCheckpoint} from '../apps/web/src/file-checkpoint-api';
 
 const hash='a'.repeat(64),otherHash='b'.repeat(64);
@@ -20,6 +24,16 @@ function expectValidation(action:()=>unknown,path:(string|number)[],code?:string
  expect(error).toBeInstanceOf(ZodError);
  expect((error as ZodError).issues).toEqual(expect.arrayContaining([expect.objectContaining({path,...(code?{code}:{})})]));
 }
+
+describe('History empty state',()=>{
+ it('shows the no-owner empty state with distinct copy',()=>{
+  const html=renderToStaticMarkup(createElement(FileCheckpoints,{preferences:DEFAULT_PREFERENCES,current:null,recorded:null,initialSource:'History'}));
+  expect(html).toContain('file-checkpoints-empty-state');
+  expect(html).toContain('No checkpoint history');
+  expect(html).toContain('Snapshots of this file will appear here once a checkpoint is recorded.');
+  expect(html).not.toContain('Checkpoint history unavailable');
+ });
+});
 
 describe('QA r1 regressions',()=>{
  it('#1 accepts a frozen root-owner list without invented paths or retention',()=>{expect(readCheckpointList(list(),owner)).toEqual(list());});

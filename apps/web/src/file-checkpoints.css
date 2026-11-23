@@ -12,6 +12,9 @@
 .file-checkpoints h3 { margin:0; font-size:14px; font-weight:600; line-height:1.4; }
 .file-checkpoints-caption { max-width:64ch; margin:6px 0 0; color:var(--muted); font-size:12px; line-height:1.5; }
 .file-checkpoints-note { margin:0; color:var(--muted); font-size:12px; line-height:1.5; }
+.file-checkpoints-empty-state { display:grid; justify-items:center; gap:8px; padding:32px 16px; text-align:center; color:var(--muted); }
+.file-checkpoints-empty-state strong { color:var(--text); font-size:14px; font-weight:600; }
+.file-checkpoints-empty-state p { margin:0; max-width:40ch; font-size:13px; line-height:1.5; }
 .file-checkpoints-history>div>[role="status"],.file-checkpoints-review>[role="status"] { margin-top:16px; }
 .file-checkpoints-empty { margin:16px 0 0; padding:16px; border:1px dashed var(--border); border-radius:8px; color:var(--muted); font-size:12px; line-height:1.5; }
 .file-checkpoints button.file-checkpoints-quiet { min-height:28px; padding:4px 8px; background:transparent; border-color:transparent; color:var(--muted); font-size:12px; }
