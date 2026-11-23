@@ -17,7 +17,7 @@ export const isSupportedWorkspacePreset=(preset:WorkspacePreset):preset is Suppo
 export const workspacePanelKindSchema=z.enum(WORKSPACE_PANEL_KINDS);
 const workspaceAuthoritySchema=z.discriminatedUnion('kind',[z.strictObject({kind:z.literal('local')}),z.strictObject({kind:z.literal('plugin'),pluginId:pluginIdSchema,scopeId:pluginSurfaceSchema.shape.scopeId})]);
 export type WorkspaceAuthority=z.infer<typeof workspaceAuthoritySchema>;
-export const panelBindingSchema=z.strictObject({authority:workspaceAuthoritySchema,projectId:workspaceIdSchema.optional(),threadId:workspaceIdSchema.optional(),agentId:workspaceIdSchema.optional(),artifactId:workspaceIdSchema.optional(),resourceId:workspaceIdSchema.optional(),terminalId:workspaceIdSchema.optional(),browserId:workspaceIdSchema.optional(),liveProject:z.boolean().optional()});
+export const panelBindingSchema=z.strictObject({authority:workspaceAuthoritySchema,projectId:workspaceIdSchema.optional(),threadId:workspaceIdSchema.optional(),agentId:workspaceIdSchema.optional(),artifactId:workspaceIdSchema.optional(),resourceId:workspaceIdSchema.optional(),terminalId:workspaceIdSchema.optional(),browserId:workspaceIdSchema.optional(),liveProject:z.boolean().optional(),terminalAttachOnly:z.boolean().optional()});
 export type PanelBinding=z.infer<typeof panelBindingSchema>;
 const surfaceFields={id:workspaceIdSchema,kind:workspacePanelKindSchema,binding:panelBindingSchema};
 function validateBinding(value:{kind:WorkspacePanelKind;binding:PanelBinding},context:z.RefinementCtx){

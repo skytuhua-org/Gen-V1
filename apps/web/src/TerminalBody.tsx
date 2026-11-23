@@ -13,7 +13,7 @@ const post=<T,>(url:string,body:unknown,isCurrent:()=>boolean)=>authenticated(()
  return fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','x-harness-csrf':csrfToken},body:JSON.stringify(body)});
 }).then(read<T>);
 
-export function TerminalBody({projectId,threadId,terminalId,active,openAnother,isCurrent,excerptComposer}:{projectId:string;threadId?:string;terminalId?:string;active:boolean;openAnother?:()=>void|Promise<void>;isCurrent?:()=>boolean;excerptComposer?:TerminalExcerptComposer}){
+export function TerminalBody({projectId,threadId,terminalId,active,openAnother,isCurrent,excerptComposer,attachOnly}:{projectId:string;threadId?:string;terminalId?:string;active:boolean;openAnother?:()=>void|Promise<void>;isCurrent?:()=>boolean;excerptComposer?:TerminalExcerptComposer;attachOnly?:boolean}){
  const [selection,setSelection]=useState<TerminalExcerpt|null>(null),[adding,setAdding]=useState(false);
  const element=useRef<HTMLDivElement>(null);
  const [phase,setPhase]=useState<Phase>('starting'),[error,setError]=useState(''),[acknowledged,setAcknowledged]=useState(false),[retrying,setRetrying]=useState(false),[stopping,setStopping]=useState(false),[generation,setGeneration]=useState(0);
@@ -89,8 +89,13 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
    const requestedId=terminalId??saved??pending??(pendingId.current?.key===key?pendingId.current.id:crypto.randomUUID());
    pendingId.current={key,id:requestedId};
    // The host deduplicates caller IDs; retain an unconfirmed attempt on remount.
-   if(!terminalId&&!saved)try{localStorage.setItem(key+':pending',requestedId);}catch{throw new Error('Could not retain the terminal start ID. Open a terminal from the workspace.');}
-   const first=await post<TerminalRead>('/api/terminals',{projectId,...(threadId?{threadId}:{}),terminalId:requestedId,cols:instance.cols,rows:instance.rows},ownerCurrent);
+   if(!attachOnly&&!terminalId&&!saved)try{localStorage.setItem(key+':pending',requestedId);}catch{throw new Error('Could not retain the terminal start ID. Open a terminal from the workspace.');}
+   const first=attachOnly
+    ? await authenticated(()=>{
+       if(!ownerCurrent())throw new ApiError('CAPABILITY_DENIED','The owning workspace changed.');
+       return fetch(`/api/terminals/${encodeURIComponent(requestedId)}?`+new URLSearchParams({projectId,cursor:'0',...(threadId?{threadId}:{})}),{credentials:'same-origin',cache:'no-store',signal:controller.signal});
+      }).then(read<TerminalRead>)
+    : await post<TerminalRead>('/api/terminals',{projectId,...(threadId?{threadId}:{}),terminalId:requestedId,cols:instance.cols,rows:instance.rows},ownerCurrent);
    if(!ownerCurrent())return;
    matches(first,requestedId);confirmedId=first.id;setAcknowledged(true);
    try{localStorage.setItem(key,first.id);localStorage.removeItem(key+':pending');}catch{}

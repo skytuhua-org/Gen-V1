@@ -27,6 +27,7 @@ interface ProjectFilesProps {
 	active: boolean;
 	fallback: ReactNode;
 	searchAdapter?: ProjectSearchAdapter;
+	onOpenTerminalIn?: (dir: { path: string; proof: string }) => Promise<void>;
 }
 export function ProjectFiles(props: ProjectFilesProps) {
 	return <ProjectFilesReader key={props.base + "?" + props.query} {...props} />;
@@ -36,10 +37,17 @@ function ProjectFilesReader({
 	query,
 	active,
 	fallback,
+	onOpenTerminalIn,
 	searchAdapter = unavailableProjectSearch,
 }: ProjectFilesProps) {
 	const [path, setPath] = useState(""),
 		[selected, setSelected] = useState<FilesEntry | null>(null),
+		[launching, setLaunching] = useState(false),
+		[launchError, setLaunchError] = useState<string | null>(null),
+		[lastAttempt, setLastAttempt] = useState<{
+			path: string;
+			proof: string;
+		} | null>(null),
 		[selectedMatch, setSelectedMatch] = useState<ProjectSearchMatch | null>(
 			null,
 		),
@@ -53,15 +61,21 @@ function ProjectFilesReader({
 		(signal: AbortSignal) => {
 			const params = new URLSearchParams(query);
 			if (path) params.set("path", path);
+			if (onOpenTerminalIn) params.set("terminalLaunch", "1");
 			return authenticated(() =>
 				fetch(base + "/files?" + params, {
 					credentials: "same-origin",
 					cache: "no-store",
 					signal,
 				}),
-			).then(read<{ entries: FilesEntry[] }>);
+			).then(
+				read<{
+					entries: FilesEntry[];
+					terminalDirectoryProof?: string;
+				}>,
+			);
 		},
-		[base, query, path],
+		[base, query, path, onOpenTerminalIn],
 	);
 	const readFile = useCallback(
 		(signal: AbortSignal) => {
@@ -77,6 +91,32 @@ function ProjectFilesReader({
 		},
 		[base, query, selected?.path],
 	);
+	const launchTerminal = (dirPath: string, proof: string) => {
+		if (launching || !onOpenTerminalIn) return;
+		setLaunching(true);
+		setLaunchError(null);
+		setLastAttempt({ path: dirPath, proof });
+		onOpenTerminalIn({ path: dirPath, proof })
+			.catch((error: unknown) =>
+				setLaunchError(
+					error instanceof Error
+						? error.message
+						: "The terminal could not be opened in this folder.",
+				),
+			)
+			.finally(() => setLaunching(false));
+	};
+	const openTerminalIn = onOpenTerminalIn
+		? {
+				pending: launching,
+				error: launchError,
+				onRetry: () => {
+					if (lastAttempt)
+						launchTerminal(lastAttempt.path, lastAttempt.proof);
+				},
+				open: launchTerminal,
+			}
+		: undefined;
 	const folder = useFilesRead(path, active, readFolder),
 		preview = useFilesRead(
 			selected?.path ?? "",
@@ -144,6 +184,7 @@ function ProjectFilesReader({
 					/>
 				),
 			}}
+			terminalLaunch={openTerminalIn}
 			preview={{
 				...preview,
 				body: file ? (
