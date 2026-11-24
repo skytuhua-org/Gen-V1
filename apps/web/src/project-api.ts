@@ -1,6 +1,11 @@
 import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {authenticated,csrfToken,read} from './api.ts';
-import type {ProjectContext} from '../../../packages/contracts/workspace.ts';
+import type {ProjectContext,ProjectScriptSuggestions} from '../../../packages/contracts/workspace.ts';
+
+/** Reads package.json script suggestions for the scripts picker; server never throws for content problems. */
+export async function loadScriptSuggestions(projectId:string,threadId?:string,signal?:AbortSignal):Promise<ProjectScriptSuggestions>{
+ return authenticated(()=>fetch(`/api/projects/${encodeURIComponent(projectId)}/script-suggestions${threadId?'?threadId='+encodeURIComponent(threadId):''}`,{credentials:'same-origin',cache:'no-store',signal})).then(read<ProjectScriptSuggestions>);
+}
 
 export function useProjectContext(projectId?:string,threadId?:string,workspaceId?:string){
  const owner=projectId?JSON.stringify([projectId,threadId,workspaceId]):'';

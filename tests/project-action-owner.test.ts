@@ -10,6 +10,7 @@ function Fixture(){const [projectId,setProject]=useState('a');window.selectProje
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 const projectApi = `
+export function loadScriptSuggestions(){return Promise.resolve({status:'ok',runner:'npm',runnerSource:'default',multipleLockfiles:false,suggestions:[],skipped:0});}
 export function useProjectContext(projectId,threadId){return {loading:false,error:'',context:{project:{id:projectId,name:projectId,rootPath:'C:/fixture',authority:{kind:'local'}},threadId,machineName:'machine',editor:{available:false,label:''},branch:'main',head:'abc',revision:'one',changes:{added:0,removed:0,files:0},lineage:[],scripts:[],capabilities:{git:true,terminal:false}},action:()=>new Promise((resolve,reject)=>{window.accept=resolve;window.reject=()=>reject(Error('old project failed'));})};}
 `;
 describe('project action owner',()=>{

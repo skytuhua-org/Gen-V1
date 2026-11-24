@@ -33,3 +33,19 @@
 .project-context-plan-summary p {font-size:11px;line-height:1.5;color:var(--muted);margin-top:6px;}
 .project-context-plan-summary .project-context-summary-blocked {color:var(--pending);}
 .project-context-plan-summary .quiet {font-size:11px;min-height:28px;padding:5px 0;margin-top:4px;}
+.pkg-suggestions {display:flex;flex-direction:column;gap:4px;padding:4px 2px 8px;}
+.pkg-suggestions-caption {display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--muted);margin:4px 0 2px;}
+.pkg-runner {font-size:10px;padding:1px 6px;border-radius:999px;border:1px solid var(--border);color:var(--muted);font-weight:500;}
+.pkg-suggestion-list {display:flex;flex-direction:column;max-height:300px;overflow-y:auto;}
+.pkg-suggestion {display:grid;grid-template-rows:1fr;opacity:1;transition:grid-template-rows var(--ui-motion-remove) var(--ui-ease-enter),opacity var(--ui-motion-remove) var(--ui-ease-enter);animation:pkg-suggestion-in var(--ui-motion-insert) var(--ui-ease-enter) both;animation-delay:calc(var(--i,0)*var(--ui-motion-stagger));}
+.pkg-suggestion[data-leaving] {grid-template-rows:0fr;opacity:0;}
+.pkg-suggestion-row {display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;padding:5px 0;font-size:12px;}
+.pkg-suggestion-row>svg {flex:none;color:var(--accent);}
+.pkg-suggestion-name {font-weight:550;white-space:nowrap;}
+.pkg-suggestion-command {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px;}
+.pkg-add {flex:none;display:inline-flex;align-items:center;gap:4px;font-size:11px;min-height:26px;padding:2px 10px;}
+.pkg-added-note {font-size:11px;color:var(--success);}
+@keyframes pkg-suggestion-in {from {opacity:0;transform:translateY(-4px);}to {opacity:1;transform:none;}}
+@keyframes pkg-suggestion-added {from {background:color-mix(in srgb,var(--success) 18%,transparent);}to {background:transparent;}}
+.pkg-suggestion[data-added] .pkg-suggestion-row {animation:pkg-suggestion-added var(--ui-motion-success) var(--ui-ease-enter);}
+@media (prefers-reduced-motion:reduce) {.pkg-suggestion {animation:none;transition:none;}.pkg-suggestion[data-added] .pkg-suggestion-row {animation:none;}}

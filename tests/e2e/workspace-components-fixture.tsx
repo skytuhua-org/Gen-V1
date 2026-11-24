@@ -11,10 +11,15 @@ import {PlanStatus} from '../../apps/web/src/PlanStatus';
 import {timelinePlan,timelineSnapshot} from './plan-timeline-fixture';
 import '../../apps/web/src/styles.css';
 
+import type {ProjectContext,ProjectScriptSuggestions} from '../../packages/contracts/workspace';
 const fixtureWindow=window as typeof window&{
  __workspaceCalls:[string,unknown][];__failApply?:boolean;__failPrepare?:boolean;__planOpen:()=>void;
+ __suggestions:ProjectScriptSuggestions|Error;
 };
 fixtureWindow.__workspaceCalls=[];
+const fixtureContext:ProjectContext={project:{id:'project',name:'Fixture project',authority:{kind:'local'},rootPath:'/fixture',createdAt:'2026-11-02T00:00:00Z'},machineName:'fixture host',editor:{available:false,label:'Editor'},branch:'main',head:'abc123',changes:{added:0,removed:0,files:0},lineage:[],scripts:[{id:'s1',name:'dev',command:'pnpm run dev'}],capabilities:{git:true,gitWrite:true,terminal:true,pullRequests:true}};
+fixtureWindow.__suggestions={status:'ok',runner:'pnpm',runnerSource:'packageManager',multipleLockfiles:false,skipped:2,suggestions:[{name:'build',body:'vite build',command:'pnpm run build'},{name:'test',body:'vitest',command:'pnpm run test'},{name:'lint',body:'tsc --noEmit',command:'pnpm run lint'}]};
+const loadFixtureSuggestions:()=>Promise<ProjectScriptSuggestions>=async()=>{const value=fixtureWindow.__suggestions;if(value instanceof Error)throw value;return structuredClone(value);};
 const record=(type:string,payload:unknown)=>fixtureWindow.__workspaceCalls.push([type,structuredClone(payload)]);
 const nativeLayout:DesktopLayout={version:1,windows:[{surface:{kind:'main'},bounds:{x:0,y:0,width:1200,height:800},visible:true,alwaysOnTop:false}]};
 const desktopContext:DesktopContext={windowId:'main',surface:{kind:'main'},windows:[{id:'main',surface:{kind:'main'},ready:true,minimized:false,visible:true}]};
@@ -56,7 +61,7 @@ function Fixture(){
   <WorkspaceControls envelope={envelope} send={send} prepare={prepare} panels={active.panels} title={()=>'Granted files'} addPanel={unsupported} updatePanel={updatePanel} workspaceMode="retained-canvas"/>
   <div style={{display:'grid',gridTemplateColumns:'minmax(600px,1fr) 420px',flex:1,minHeight:0}}>
    <WorkspaceCanvas canvas={active} panels={active.panels} projects={[]} disabledKinds={[]} title={()=>'Granted files'} updatePanel={updatePanel} updateViewport={async viewport=>{const next=structuredClone(latest.current);next.state.canvases[0].viewport=viewport;publish(next);}} setFilter={unsupported} renderBody={()=><p>Granted file contents</p>}/>
-   <ProjectContextCard threadTitle="Fixture project" plan={<PlanStatus snapshot={snapshot} threadId="fixture-task"/>} planOpen={planOpen} onTogglePlan={()=>setPlanOpen(value=>!value)}/>
+   <ProjectContextCard threadTitle="Fixture project" plan={<PlanStatus snapshot={snapshot} threadId="fixture-task"/>} planOpen={planOpen} onTogglePlan={()=>setPlanOpen(value=>!value)} context={fixtureContext} threadId="fixture-task" onAction={async(type,payload)=>{record('project.'+type,payload);}} loadSuggestions={loadFixtureSuggestions}/>
   </div>
  </main></DesktopProvider>;
 }

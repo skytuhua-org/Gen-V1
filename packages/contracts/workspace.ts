@@ -56,4 +56,15 @@ export type ProjectSummary=z.infer<typeof projectSummarySchema>;
 export const workspaceEnvelopeSchema=z.object({state:workspaceStateSchema,projects:z.array(projectSummarySchema)});
 export interface WorkspaceEnvelope {state:WorkspaceState;projects:ProjectSummary[]}
 export interface ProjectContext {project:ProjectSummary;workingCopy?:{id:string;path:string};threadRevision?:string;threadId?:string;machineName:string;editor:{available:boolean;label:string};branch:string|null;head:string|null;revision?:string;changes:{added:number|null;removed:number|null;files:number|null};lineage:{id:string;title:string;status:string;parentThreadId?:string;kind?:string}[];scripts:{id:string;name:string;command:string}[];capabilities:{git:boolean;gitWrite?:boolean;untrackedIncluded?:boolean;terminal:boolean;pullRequests:boolean};error?:string}
+export type ProjectScriptRunner='pnpm'|'npm'|'yarn';
+export interface ProjectScriptSuggestion {name:string;body:string;command:string}
+export interface ProjectScriptSuggestions {
+ status:'ok'|'missing'|'unreadable';
+ reason?:'too-large'|'invalid-json'|'outside-working-copy'|'not-a-file';
+ runner:ProjectScriptRunner;
+ runnerSource:'packageManager'|'lockfile'|'default';
+ multipleLockfiles:boolean;
+ suggestions:ProjectScriptSuggestion[]; // <= 50, package.json order, already-added removed
+ skipped:number;                        // invalid names, lifecycle/hooks, non-string values, over the cap
+}
 
