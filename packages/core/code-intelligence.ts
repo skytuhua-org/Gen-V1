@@ -811,6 +811,11 @@ export class CodeIntelligence {
       // The journal may have been resolved while this call waited on the
       // lock; reconcile the durable record, not a stale snapshot.
       const live = JSON.parse(await readFile(join(journalDir, "journal.json"), "utf8")) as typeof journal;
+      // The durable record read under the lock is what recovery acts on; its
+      // targets must re-pass the granted-roots check the unlocked read ran.
+      for (const record of live.entries)
+        if (!input.grantedRoots.some(root => inside(root, record.path)))
+          throw new HarnessError("CAPABILITY_DENIED", "The recovery journal targets a file outside the granted roots.");
       if (live.resolved)
         return renameRecoveryResultSchema.parse({
           planId: live.planId,
