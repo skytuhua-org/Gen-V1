@@ -131,6 +131,13 @@ it.each(['opened','synchronize','reopened'])('keeps the Windows audit out of dra
 it.each(['opened','synchronize','reopened'])('runs the Windows audit for reviewable %s events',action=>{
   expect(scheduledAudit({name:'pull_request',action,draft:false})).toEqual(['integration']);
 });
+it('restarts ordinary CI and matching audit work when a closed PR reopens ready for review',()=>{
+  const reopened:CiEvent={name:'pull_request',action:'reopened',draft:false};
+  expect(scheduledJobs(reopened)).toEqual(pullRequestJobs);
+  expect(scheduledAudit(reopened)).toEqual(['integration']);
+  expect(scheduledJobs({...reopened,draft:true})).toEqual([]);
+  expect(scheduledAudit({...reopened,draft:true})).toEqual([]);
+});
 it('starts the audit when ready and cancels its same-PR run when converted back to draft',()=>{
   const ready:CiEvent={name:'pull_request',action:'ready_for_review',draft:false};
   const draft:CiEvent={...ready,action:'converted_to_draft',draft:true};
