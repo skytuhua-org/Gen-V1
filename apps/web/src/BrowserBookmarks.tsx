@@ -60,7 +60,7 @@ export function BrowserBookmarkControls({state,detached=false}:{state?:DesktopBr
    <p className="bookmark-popover-title">Bookmarks <span className="bookmark-count">{items.length} of {limit}</span></p>
    {notice&&<p className="bookmark-notice">{notice}<button type="button" className="icon-button" aria-label="Dismiss bookmark notice" onClick={()=>void send({type:'bookmark-notice-dismiss'}).catch(()=>{})}><X size={12}/></button></p>}
    {items.length===0?<p className="bookmark-empty">No bookmarks yet. Use the star to save this page.</p>:
-   <div role="listbox" aria-label="Saved bookmarks" aria-activedescendant={items[active]?`bookmark-row-${items[active]!.id}`:undefined} onKeyDown={event=>{
+   <div role="listbox" aria-label="Saved bookmarks" onKeyDown={event=>{
     if(!items.length)return;const current=items[Math.min(active,items.length-1)]!;
     if(event.key==='ArrowDown'||event.key==='ArrowUp'||event.key==='Home'||event.key==='End'){event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?items.length-1:Math.min(items.length-1,Math.max(0,active+(event.key==='ArrowDown'?1:-1)));setActive(next);rows.current.get(items[next]!.id)?.focus();}
     else if(event.key==='Enter'){event.preventDefault();void send({type:'bookmark-open',id:current.id}).then(()=>setListOpen(false)).catch(cause=>toast(cause instanceof Error?cause.message:'Bookmark could not be opened.',{tone:'error'}));}
