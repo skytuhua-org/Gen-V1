@@ -3,6 +3,7 @@ import {AlertTriangle,CheckCircle2,ChevronLeft,ChevronRight,Clock3,Info,RotateCw
 import type {UiPreferences} from '../../../packages/contracts/preferences';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import {displayFilePath} from './files/FilesView';
+import {ApiError} from './api';
 import {checkpointOwnerKey,checkpointReviewPaths,disabledCheckpointAdapter,readCheckpointDetail,readCheckpointList,readCheckpointReview,readRestorePlan,readRestoreResult,type CheckpointOwner,type CheckpointRestorePlan,type CheckpointReview,type FileCheckpoint,type FileCheckpointAdapter} from './file-checkpoint-api';
 import './file-checkpoints.css';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
@@ -51,7 +52,13 @@ function CheckpointHistory({owner,adapter,preferences}:{owner:CheckpointOwner;pr
       if(controller.signal.aborted)return;
       const page=readCheckpointList(value,owner);
       setItems(previous=>cursor?[...previous,...page.items]:page.items);setNextCursor(page.nextCursor??undefined);
-    }).catch(cause=>{if(!controller.signal.aborted)setError(errorMessage(cause));}).finally(()=>{if(!controller.signal.aborted)setLoading(false);});
+    }).catch(cause=>{
+      if(controller.signal.aborted)return;
+      // The list cursor is bound to the exact snapshot head; once it is
+      // rejected the only safe continuation is a fresh first page.
+      if(cursor&&cause instanceof ApiError&&cause.code==='REVISION_CHANGED'){setCursor(undefined);return;}
+      setError(errorMessage(cause));
+    }).finally(()=>{if(!controller.signal.aborted)setLoading(false);});
     return()=>controller.abort();
   },[owner,adapter,attempt,cursor]);
   return <div className="file-checkpoints-history">
