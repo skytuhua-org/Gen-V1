@@ -115,6 +115,18 @@ it('supports keyboard divider movement and cancels pointer previews without a co
   expect(await divider.getAttribute('aria-valuenow')).toBe('51');
  }finally{await tab.close();}
 });
+it('opens the area menu from the corner button and marks the focused pane',async()=>{
+ const tab=await page();try{
+  const main=tab.locator('[data-split-pane="pane-main"]'),right=tab.locator('[data-split-pane="right"]');
+  expect(await right.getAttribute('class')).toContain('is-focused');
+  const mainBorder=await main.evaluate(el=>getComputedStyle(el).borderColor),rightBorder=await right.evaluate(el=>getComputedStyle(el).borderColor);
+  expect(rightBorder).not.toBe(mainBorder);
+  const corner=main.getByRole('button',{name:'Split or open area menu'});await corner.press('Enter');
+  await tab.getByRole('menu').waitFor({state:'visible'});
+  await tab.keyboard.press('Escape');await tab.getByRole('menu').waitFor({state:'detached'});
+  await tab.waitForFunction(()=>document.activeElement?.classList.contains('split-corner'));
+ }finally{await tab.close();}
+});
 it('retains layout when draft flush fails and restores desktop geometry after narrow mode',async()=>{
  const tab=await page();try{
   await tab.evaluate(()=>(window as unknown as {flushRejected:boolean}).flushRejected=true);
