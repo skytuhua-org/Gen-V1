@@ -194,7 +194,7 @@ export class CheckpointService {
         return bytes;
       } catch (error) {
         // Custody violations (for example a hardlinked blob) are untrusted too.
-        if ((error as HarnessError).code === "CAPABILITY_DENIED") return null;
+        if (error instanceof HarnessError && error.code === "CAPABILITY_DENIED") return null;
         throw error;
       }
     });
@@ -680,6 +680,12 @@ export class CheckpointService {
         const staged = /^\.[a-f0-9]{64}\..+\.tmp$/.test(name);
         const unreferenced = /^[a-f0-9]{64}$/.test(name) && !referenced.has(name);
         if (!staged && !unreferenced) continue;
+        // A fresh staging file may belong to a write still in flight; only
+        // abandon-and-sweep files left behind by a dead writer.
+        if (staged) {
+          const stats = await lstat(join(this.blobRoot, name)).catch(() => null);
+          if (!stats || Date.now() - stats.mtimeMs < 60_000) continue;
+        }
         await rm(join(this.blobRoot, name), { force: true });
         removed++;
       }

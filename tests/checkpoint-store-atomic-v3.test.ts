@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { link, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../packages/storage/store.ts";
@@ -107,11 +107,18 @@ it("leaves no staging file after publication and concurrent captures share one b
   const names = await readdir(blobDir(store));
   expect(names.every((name) => /^[a-f0-9]{64}$/.test(name))).toBe(true);
 
-  // A staging file orphaned by a crash is swept by garbage collection.
-  await writeFile(join(blobDir(store), `.${"b".repeat(64)}.crash-orphan.tmp`), "torn");
+  // A staging file orphaned by a crash is swept once old enough, while a
+  // fresh one may belong to a writer still in flight and is left alone.
+  const orphan = join(blobDir(store), `.${"b".repeat(64)}.crash-orphan.tmp`);
+  await writeFile(orphan, "torn");
+  const past = new Date(Date.now() - 120_000);
+  await utimes(orphan, past, past);
+  const fresh = join(blobDir(store), `.${"c".repeat(64)}.live-writer.tmp`);
+  await writeFile(fresh, "in-flight");
   const swept = await service.collectGarbage();
   expect(swept.removed).toBe(1);
-  expect(await readdir(blobDir(store))).toEqual([first.files[0]!.blobRef]);
+  await rm(fresh);
+  expect((await readdir(blobDir(store))).sort()).toEqual([first.files[0]!.blobRef]);
 });
 
 it("keeps prior-format digest blobs readable and publishes atomically over them", async () => {
