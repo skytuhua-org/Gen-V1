@@ -54,10 +54,17 @@ export function streamEvents(response: ServerResponse, store: Pick<Store, 'event
   let cursor = after, pumping = false, closed = false, comment = ': connected\n\n';
   // subscribe() already delivers each parsed commit once, in order, to every
   // listener. Buffer live pushes and reuse them once the backlog is drained so
-  // a caught-up reader costs no store read or re-parse per event.
+  // a caught-up reader costs no store read or re-parse per event. The ledger
+  // stays the durable queue: a stalled reader drops the buffer past the cap
+  // and serves everything from the store instead of retaining every commit.
   const pending: WorkspaceEvent[] = [];
-  const unsubscribe = store.subscribe((event) => { pending.push(event); void pump(); });
-  const liveCut = store.sequence;
+  let liveCut = 0, dropped = false;
+  const unsubscribe = store.subscribe((event) => {
+    if (dropped) void pump(); // ledger-only mode: pushes are not buffered
+    else if (pending.length >= 1024) { pending.length = 0; dropped = true; liveCut = Number.MAX_SAFE_INTEGER; }
+    else { pending.push(event); void pump(); }
+  });
+  liveCut = store.sequence;
   async function pump() {
     if (pumping || closed) return;
     pumping = true;

@@ -64,6 +64,24 @@ it("replays backlog before live events and skips overlapped duplicates", async (
   await expect.poll(() => f.writes).toEqual([1, 2, 3, 4]);
 });
 
+it("drops the live buffer past its cap and replays from the store in order", async () => {
+  const f = fixture();
+  let stalls = 1;
+  const response = Object.assign(new EventEmitter(), {
+    write(chunk: string) { if (stalls-- > 0) return false; const id = /^id: (\d+)/.exec(chunk); if (id) f.writes.push(Number(id[1])); return true; },
+    destroy() {},
+  });
+  streamEvents(response as unknown as ServerResponse, f.store, 0, () => {});
+  f.reset();
+  // The first write stalls on backpressure; pushes keep landing while the
+  // reader is blocked, overflowing the bounded live buffer. Every event must
+  // still arrive in seq order, replayed from the ledger.
+  for (const seq of Array.from({ length: 1100 }, (_, i) => i + 1)) f.store.commit(f.event(seq));
+  response.emit("drain");
+  await expect.poll(() => f.writes).toEqual(Array.from({ length: 1100 }, (_, i) => i + 1));
+  expect(f.counts().queries).toBeGreaterThan(0);
+});
+
 it("keeps writing in seq order when live pushes overlap a backlog drain", async () => {
   const f = fixture(Array.from({ length: 40 }, (_, i) => f0(i + 1)));
   f.stream(0);
