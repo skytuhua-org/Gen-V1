@@ -3,8 +3,11 @@
  * Measures rows, bytes, runtime and query plans after equal event volumes so a
  * retention cutoff can be sized against the oldest consumer cursor.
  *
- * Usage: pnpm exec tsx scripts/measure-event-growth.ts [size ...]
+ * Usage: pnpm exec tsx scripts/measure-event-growth.ts [size ...] [--sweep=<keep>]
  * Default sizes: 1000 10000 50000 100000
+ * With --sweep=<keep>, retentionSweep({keepEvents: keep}) runs after seeding
+ * and the same measurements repeat on the swept store for a before/after
+ * comparison at equal retained cardinality.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
@@ -13,7 +16,10 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { Store } from '../packages/storage/store.ts';
 
-const sizes = process.argv.slice(2).map(Number).filter(n => Number.isSafeInteger(n) && n > 0);
+const args = process.argv.slice(2);
+const sweepKeep = (() => { const flag = args.find(arg => arg.startsWith('--sweep=')); return flag ? Number(flag.slice(8)) : null; })();
+if (sweepKeep !== null && (!Number.isSafeInteger(sweepKeep) || sweepKeep < 1)) throw new Error('--sweep must be a positive integer');
+const sizes = args.filter(arg => !arg.startsWith('--')).map(Number).filter(n => Number.isSafeInteger(n) && n > 0);
 const targets = sizes.length ? sizes : [1000, 10000, 50000, 100000];
 const THREADS = 20;
 
@@ -75,7 +81,27 @@ for (const events of targets) {
       entitiesKind: plan(store.db, 'SELECT body FROM entities WHERE kind=? ORDER BY rowid', 'message'),
       receiptLookup: plan(store.db, 'SELECT hash,body FROM receipts WHERE id=?', 'x'),
     };
-    console.log(JSON.stringify({ events, seededInMs: seededIn, counts, bytes: dirSize(dir), timingsMs: timings, plans }));
+    const measure = () => ({
+      counts: {
+        entities: (store.db.prepare('SELECT COUNT(*) c FROM entities').get() as { c: number }).c,
+        events: (store.db.prepare('SELECT COUNT(*) c FROM events').get() as { c: number }).c,
+        receipts: (store.db.prepare('SELECT COUNT(*) c FROM receipts').get() as { c: number }).c,
+      },
+      bytes: dirSize(dir),
+      timingsMs: {
+        'eventsAfter(0,500)': ms(() => store.eventsAfter(0, 500)),
+        'read-sync full scan': ms(() => { let scanned = 0; for (;;) { const batch = store.eventsAfter(scanned, 500); if (!batch.length) break; scanned = batch.at(-1)!.seq; } }),
+        'retentionFloor (MIN seq)': ms(() => store.retentionFloor()),
+        'snapshot()': ms(() => store.snapshot()),
+      },
+    });
+    const bytes = dirSize(dir);
+    const swept = sweepKeep === null ? null : (() => {
+      const result = ms(() => store.retentionSweep({ keepEvents: sweepKeep }));
+      store.db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM;');
+      return { sweepMs: result, ...measure() };
+    })();
+    console.log(JSON.stringify({ events, seededInMs: seededIn, counts, bytes, timingsMs: timings, plans, swept }));
     store.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
