@@ -374,7 +374,7 @@ export class CheckpointService {
       const match = /^(\d+):(.+)$/.exec(options.cursor);
       const position = match ? Number(match[1]) : NaN;
       const head = match?.[2];
-      if (!match || !Number.isSafeInteger(position) || entries[0]?.id !== head || position > entries.length)
+      if (!match || !Number.isSafeInteger(position) || entries[0]?.id !== head || position >= entries.length)
         throw new HarnessError("REVISION_CHANGED", "Checkpoint listing changed; restart pagination from the first page.");
       start = position;
     }
