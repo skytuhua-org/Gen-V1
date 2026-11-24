@@ -58,14 +58,35 @@ jobs:
                   pr.head?.repo?.id !== run.head_repository.id || pr.head?.ref !== run.head_branch) return null;
               return pr;
             }
+            const commitProofs = new Map();
+            async function cachePullCommits(pr) {
+              // GitHub refreshes an old run's associated head to the current PR
+              // head. Prove source membership separately; a merge SHA mismatch
+              // alone must never cancel current work. The API caps PR commits
+              // at 250, so missing/truncated proof conservatively preserves it.
+              const key = pr.number + ':' + pr.head.sha;
+              if (!commitProofs.has(key)) {
+                const commits = new Set();
+                for (let page = 1; page <= 3; page++) {
+                  const data = await read(github.rest.pulls.listCommits, {pull_number: pr.number, per_page: 100, page});
+                  if (!Array.isArray(data)) break;
+                  for (const commit of data) if (validSha(commit.sha)) commits.add(commit.sha);
+                  if (data.length < 100) break;
+                }
+                commitProofs.set(key, commits);
+              }
+            }
+            function matchesPull(run, associated, pr) {
+              return pr && pr.number === associated.number && pr.base?.repo?.id === repositoryId &&
+                pr.head?.repo?.id === run.head_repository.id && pr.head?.ref === run.head_branch && validSha(pr.head?.sha);
+            }
             function reason(run, associated, pr) {
-              if (!pr || pr.number !== associated.number || pr.base?.repo?.id !== repositoryId ||
-                  pr.head?.repo?.id !== run.head_repository.id || pr.head?.ref !== run.head_branch || !validSha(pr.head?.sha)) return null;
+              if (!matchesPull(run, associated, pr)) return null;
               if (pr.state === 'closed') return 'closed';
               if (pr.state !== 'open') return null;
               if (pr.draft === true) return 'draft';
-              // Only a recorded PR head proves supersession; merge SHAs do not.
-              if (pr.draft === false && associated.head.sha === run.head_sha && pr.head.sha !== run.head_sha) return 'superseded';
+              if (pr.draft === false && pr.head.sha !== run.head_sha &&
+                  (associated.head.sha === run.head_sha || commitProofs.get(pr.number + ':' + pr.head.sha)?.has(run.head_sha))) return 'superseded';
               return null;
             }
             if (context.eventName === 'workflow_run') {
@@ -75,19 +96,32 @@ jobs:
                   source.path !== '.github/workflows/ci.yml' || source.repository?.id !== repositoryId) return finish();
             } else if (context.eventName !== 'push' || context.ref !== 'refs/heads/' + context.payload.repository.default_branch) return finish();
             // Pending events coalesce, so every admitted event sweeps the backlog.
-            // Discover both pages before cancelling; cap each sweep at 100 candidates.
+            // Discover up to ten pages per queue before cancelling. Prioritize
+            // potential old revisions even when they are beyond the first page;
+            // their metadata affects order only, never cancellation authority.
+            // Retain the existing 100-candidate execution budget.
             const pages = [];
             for (const status of ['queued', 'in_progress']) {
-              const {data} = await github.rest.actions.listWorkflowRuns({...api, workflow_id: 'ci.yml', event: 'pull_request', status, per_page: 100, page: 1});
-              pages.push(data.workflow_runs.map(run => run.id));
-              summary.limited ||= data.total_count > data.workflow_runs.length;
+              const runs = [];
+              let total = 0;
+              for (let page = 1; page <= 10; page++) {
+                const {data} = await github.rest.actions.listWorkflowRuns({...api, workflow_id: 'ci.yml', event: 'pull_request', status, per_page: 100, page});
+                runs.push(...data.workflow_runs);
+                total = data.total_count;
+                if (data.workflow_runs.length < 100 || runs.length >= total) break;
+              }
+              pages.push(runs);
+              summary.limited ||= total > runs.length;
             }
             // Interleave both queues: a full queued page must not starve in-progress runs.
-            const ids = [];
+            const discovered = [];
             for (let index = 0; index < Math.max(pages[0].length, pages[1].length); index++) {
-              for (const page of pages) if (index < page.length) ids.push(page[index]);
+              for (const page of pages) if (index < page.length) discovered.push(page[index]);
             }
-            const candidates = [...new Set(ids.filter(validId))];
+            const priority = run => run.pull_requests?.length === 1 && validSha(run.pull_requests[0].head?.sha) &&
+              run.pull_requests[0].head.sha !== run.head_sha ? 0 : run.id === context.payload.workflow_run?.id ? 1 : 2;
+            const candidates = [...new Map(discovered.filter(run => validId(run.id)).map(run => [run.id, run])).values()]
+              .sort((left, right) => priority(left) - priority(right)).map(run => run.id);
             summary.limited ||= candidates.length > 100;
             for (const id of candidates.slice(0, 100)) {
               summary.checked++;
@@ -95,7 +129,12 @@ jobs:
               const associated = association(run, id);
               if (!associated) {summary.preserved++; continue;}
               const pr = await read(github.rest.pulls.get, {pull_number: associated.number});
+              if (matchesPull(run, associated, pr) && pr.state === 'open' && pr.draft === false &&
+                  pr.head.sha !== run.head_sha && associated.head.sha !== run.head_sha) await cachePullCommits(pr);
               if (!reason(run, associated, pr)) {summary.preserved++; continue;}
+              // Finish all proof requests before the final authority reads. A
+              // changed head without cached proof is preserved for a later sweep;
+              // deciding below must never add another network proof window.
               const currentRun = await read(github.rest.actions.getWorkflowRun, {run_id: id});
               const currentAssociation = association(currentRun, id);
               if (!currentAssociation || currentAssociation.number !== associated.number) {summary.raced++; continue;}
