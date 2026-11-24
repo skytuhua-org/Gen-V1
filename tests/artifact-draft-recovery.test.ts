@@ -85,6 +85,11 @@ describe('artifact draft recovery (#1964)', () => {
     expect(snapshot.userStates[0]!.values.note).toBe('Newer saved content');
     // The recovered draft stays in the journal for user resolution.
     expect(await page.evaluate(() => (window as any).readDraft('state:task-state'))).toEqual({ baseRevision: 0, values: { note: 'Stale recovered draft' } });
+    // Editing on top of the newer revision still saves normally.
+    await page.getByLabel('Artifact note', { exact: true }).fill('Newest user edit');
+    await pw(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 15000 });
+    expect(snapshot.userStates[0]!.values.note).toBe('Newest user edit');
+    expect(snapshot.userStates[0]!.revision).toBe(2);
   });
 
   it('applies a recovered draft whose base still matches the host revision', async () => {
