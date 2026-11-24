@@ -2844,6 +2844,7 @@
     "tests/account-readiness-cancellation.test.ts",
     "tests/account-storage-boundary.test.ts",
     "tests/accounts.test.ts",
+    "tests/action-menu-tab.test.ts",
     "tests/activity-output-v3.test.ts",
     "tests/agent-input-v3.test.ts",
     "tests/agent-work-v3.test.ts",
