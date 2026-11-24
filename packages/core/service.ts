@@ -93,6 +93,8 @@ const object = (value: unknown): Record<string, unknown> => {
 };
 const now = () => new Date().toISOString();
 interface SourceIntegration {runtime:Pick<HermesRuntime,'sourceBusy'|'reviewBusy'|'cancelBackground'|'sourceRequest'>;library:Pick<HermesSourceLibrary,'initialize'|'command'|'view'|'proposal'|'refresh'>}
+type RunTeardown={ctx:RunContext;side:boolean;control:AbortController|undefined;promise:Promise<void>;failed:boolean;stop?:{epoch:number;childWork:Promise<void>}};
+const teardownKey=(ctx:RunContext)=>JSON.stringify([ctx.threadId,ctx.runId,ctx.epoch]);
 export interface HostToolContext {
   readonly authenticatedApprovals:boolean;
   prepareOperation(kind:string,args:Record<string,unknown>,resourceIds:string[],preconditions:Record<string,string>,description:string):Operation;
@@ -167,7 +169,9 @@ export class Service {
   private readonly deliveries=new Map<string,Promise<void>>();
   private readonly messageAdmissions=new Map<string,{commitment:string;work:Promise<CommandReceipt>}>();
   private readonly mainAdmissions=new Set<string>();
-  private readonly teardowns=new Map<string,{ctx:RunContext;side:boolean;promise:Promise<void>}>();
+  private readonly teardowns=new Map<string,RunTeardown>();
+  private readonly backgroundSourceOwners=new Map<string,{ctx:RunContext;threadEpoch:number}>();
+  private readonly publishingStops=new Set<string>();
   private readonly authority:ToolAuthority;
   private readonly hostToolRegistryDigest:string;
   private readonly effects:ToolEffectLedger;
@@ -389,18 +393,38 @@ export class Service {
     if(!control||this.aborts.get(threadId)!==control||this.controllerWork.has(control)||this.store.get<Thread>('thread',threadId)?.runId||[...this.teardowns.values()].some(owner=>owner.ctx.threadId===threadId))return;
     this.aborts.delete(threadId);
   }
-  private cancelRun(input:RunContext,side:boolean):Promise<void>{
+  private cancelRun(input:RunContext,side:boolean,retryFailed=false):Promise<void>{
     const ctx:RunContext={threadId:input.threadId,runId:input.runId,epoch:input.epoch};
+    const key=teardownKey(ctx),previous=this.teardowns.get(key);
+    if(previous&&(!retryFailed||!previous.failed||this.closed))return previous.promise;
     this.requestContext.releaseOwner(ctx.threadId,ctx);
-    const key=JSON.stringify([ctx.threadId,ctx.runId,ctx.epoch]),previous=this.teardowns.get(key);if(previous)return previous.promise;
-    const control=this.aborts.get(ctx.threadId);
+    const control=previous?previous.control:this.aborts.get(ctx.threadId);
     const cancel=(runtime:Pick<RuntimeAdapter,'cancel'>):Promise<void>=>{try{return runtime.cancel(ctx);}catch(error){return Promise.reject(error);}};
-    const promise=Promise.allSettled([cancel(this.planning),cancel(side?this.sideRuntime:this.runtime)]).then(outcomes=>{
+    let settle!:(attempt:Promise<void>)=>void;
+    const promise=new Promise<void>(resolve=>{settle=resolve;});
+    const owner:RunTeardown={ctx,side,control,promise,failed:false,stop:previous?.stop};
+    this.teardowns.set(key,owner);
+    void promise.then(()=>{
+      if(this.teardowns.get(key)===owner)this.teardowns.delete(key);
+      this.retireController(ctx.threadId,control);
+    },()=>{owner.failed=true;}); // Unconfirmed native teardown retains its admission hold and error.
+    settle(Promise.allSettled([cancel(this.planning),cancel(side?this.sideRuntime:this.runtime)]).then(async outcomes=>{
+      await owner.stop?.childWork;
       const failures=outcomes.flatMap(outcome=>outcome.status==='rejected'?[outcome.reason]:[]);
       if(failures.length===1)throw failures[0];
       if(failures.length)throw new AggregateError(failures,failures.map(error=>error instanceof Error?error.message:String(error)).join('; '));
-    }),owner={ctx:{...ctx},side,promise};this.teardowns.set(key,owner);
-    void promise.then(()=>{if(this.teardowns.get(key)===owner)this.teardowns.delete(key);this.retireController(ctx.threadId,control);},()=>{/* Unconfirmed native teardown retains its admission hold. */});return promise;
+    }));
+    return promise;
+  }
+  private async replayStop(receipt:CommandReceipt):Promise<CommandReceipt>{
+    const ctx=(receipt.result as {nativeOwner?:RunContext})?.nativeOwner;
+    if(ctx){
+      // A store subscriber can replay the receipt before the original command registers its teardown.
+      await Promise.resolve();
+      const owner=this.teardowns.get(teardownKey(ctx));
+      if(owner)await this.cancelRun(owner.ctx,owner.side,true).finally(()=>owner.stop?.childWork);
+    }
+    return receipt;
   }
   async stopAll():Promise<{stopped:number;errors?:string[]}>{
     const targets=this.store.all<Thread>('thread').filter(thread=>thread.kind!=='delegate'&&(thread.runId||this.mainAdmissions.has(thread.id)));
@@ -999,12 +1023,12 @@ export class Service {
     if(command.type==='agent.followUp'){if(this.closed)throw new HarnessError('CANCELLED_RUN','The workspace has closed.');this.lastActivity=Date.now();return this.planning.followUp(command);}
     // Retired commands must not replay old write receipts.
     if(command.type.startsWith('research.'))throw new HarnessError('UNKNOWN_COMMAND', 'Unknown command: '+command.type);
-    const duplicate = this.store.receipt(command); if (duplicate) {
-      if(command.type==='run.stop'){
-        const owner=(duplicate.result as {nativeOwner?:RunContext})?.nativeOwner;
-        if(owner)await this.teardowns.get(JSON.stringify([owner.threadId,owner.runId,owner.epoch]))?.promise;
-      }
-      return duplicate;
+    const duplicate = this.store.receipt(command);
+    if(duplicate)return command.type==='run.stop'?this.replayStop(duplicate):duplicate;
+    if(command.type==='run.stop'&&command.threadId&&this.publishingStops.has(command.threadId)){
+      // A fresh Stop from a receipt subscriber must read the owner after registration.
+      await Promise.resolve();
+      return this.commandAdmitted(command);
     }
     const target=command.threadId?this.store.get<Thread>('thread',command.threadId):null;
     if(target?.kind==='delegate'&&!['thread.rename','thread.presentation','thread.archive','thread.restore'].includes(command.type))throw new HarnessError('DELEGATE_READ_ONLY','Delegated transcripts are read-only. Control their work from the parent task.');
@@ -1021,7 +1045,7 @@ export class Service {
     if(this.closed)throw new HarnessError('CANCELLED_RUN','The workspace has closed.');
     if(this.source?.runtime.sourceBusy&&command.type==='settings.update'&&p.preferences&&typeof p.preferences==='object'&&['learningEnabled','learningApproval','learningInterval','skillCurator'].some(key=>Object.hasOwn(p.preferences as object,key)))throw new HarnessError('HERMES_POLICY_BUSY','Stop the current response before changing learning controls.');
     this.lastActivity=Date.now();
-    if(this.reviewing&&(['run.stop','run.compact','thread.archive','learning.cancel'].includes(command.type)||command.type.startsWith('account.')||command.type==='settings.update'||command.type.startsWith('skill.')))await this.cancelReview();
+    if(this.reviewing&&(['run.compact','thread.archive','learning.cancel'].includes(command.type)||command.type==='run.stop'&&!this.source||command.type.startsWith('account.')||command.type==='settings.update'||command.type.startsWith('skill.')))await this.cancelReview();
     if(this.source&&(command.type.startsWith('skill.')||command.type==='learning.curate'))return this.source.library.command(command);
     if(command.type.startsWith('skill.'))return this.store.command(command,()=>{
       if(command.type==='skill.manage')return applySkillOperations(this.store,p.operations,this.skillActor('user'));
@@ -1107,15 +1131,33 @@ export class Service {
     if (command.type === 'memory.save' || command.type === 'memory.delete') return this.store.command(command, () => changeTaskMemory(this.store, thread.id, command.type === 'memory.save' ? 'save' : 'delete', p, 'user'));
     if (command.type === "message.send") return this.sendMessage(command, thread);
     if (command.type === "run.stop") {
-      const pending=[...this.teardowns.values()].find(owner=>owner.ctx.threadId===thread.id);
-      const ctx = !thread.runId&&pending?pending.ctx:{ threadId: thread.id, runId: thread.runId ?? "", epoch: thread.epoch };
-      const receipt = this.store.command(command, () => { this.planning.endRun(ctx,'cancelled'); this.failUnansweredDetails(ctx,"The explanation was stopped. Resume the task to retry."); this.store.put("thread", thread.id, thread.id, { ...thread, epoch: thread.epoch + 1, runId: null, status: "stopped", updatedAt: now() }); return { stopped: true,nativeOwner:ctx }; });
-      this.aborts.get(thread.id)?.abort();
-      // Register the native teardown first — a racing resume must still see
-      // RUN_BUSY — then revoke child work whether teardown succeeded or
-      // failed, so no stopped parent leaves live dispatch behind.
-      await this.cancelRun(ctx,!!thread.sideParentId)
-        .finally(() => this.agentWork.revokeForParent(thread.id).catch(() => {}));
+      const duplicate=this.store.receipt(command);
+      if(duplicate)return this.replayStop(duplicate);
+      const pending=!thread.runId?[...this.teardowns.values()].find(owner=>
+        owner.ctx.threadId===thread.id&&(owner.stop?.epoch??owner.ctx.epoch)===thread.epoch
+      ):undefined;
+      if(pending&&thread.status==='stopped'){
+        return this.replayStop(this.store.command(command,()=>({stopped:true,nativeOwner:pending.ctx})));
+      }
+      const background=this.backgroundSourceOwners.get(thread.id);
+      const ctx=pending?.ctx??(!thread.runId&&background?.threadEpoch===thread.epoch?background.ctx:{
+        threadId:thread.id,runId:thread.runId??'',epoch:thread.epoch
+      });
+      let receipt:CommandReceipt,teardown:Promise<void>,childWork:Promise<void>;
+      this.publishingStops.add(thread.id);
+      try{
+        receipt=this.store.command(command,()=>{
+          this.planning.endRun(ctx,'cancelled');
+          this.failUnansweredDetails(ctx,"The explanation was stopped. Resume the task to retry.");
+          this.store.put("thread",thread.id,thread.id,{...thread,epoch:thread.epoch+1,runId:null,status:"stopped",updatedAt:now()});
+          return {stopped:true,nativeOwner:ctx};
+        });
+        this.aborts.get(thread.id)?.abort();
+        teardown=this.cancelRun(ctx,!!thread.sideParentId,true);
+        childWork=this.agentWork.revokeForParent(thread.id).catch(()=>{});
+        this.teardowns.get(teardownKey(ctx))!.stop={epoch:thread.epoch+1,childWork};
+      }finally{this.publishingStops.delete(thread.id);}
+      await teardown.finally(()=>childWork);
       return receipt;
     }
     if (command.type === "run.resume") return this.resume(command, thread);
@@ -1713,6 +1755,29 @@ export class Service {
   }
   private onRuntimeEvent(event: RuntimeEvent): void {
     if (this.closed) return;
+    if(event.type==='hermes.curation.started'){
+      const thread=this.store.get<Thread>('thread',event.threadId);
+      if(this.source&&thread&&!thread.runId){
+        const ctx={threadId:event.threadId,runId:event.runId,epoch:event.epoch};
+        this.backgroundSourceOwners.set(thread.id,{ctx,threadEpoch:thread.epoch});
+      }
+      return;
+    }
+    if(event.type==='hermes.cleanup.confirmed'){
+      const owner=this.backgroundSourceOwners.get(event.threadId)?.ctx;
+      if(owner?.runId!==event.runId||owner.epoch!==event.epoch)return;
+      this.backgroundSourceOwners.delete(event.threadId);
+      const learning=this.store.get<Snapshot['learning']>('learningStatus','global'),review=learning?.lastReview;
+      if(review?.status==='reviewing'&&review.sourceThreadId===owner.threadId&&review.sourceRunId===owner.runId){
+        // An exact Stop advances the thread epoch before the source can finish its review.
+        this.store.internal('learning.source.cleanup_confirmed',owner.threadId,()=>{
+          this.store.put('learningStatus','global',null,{...learning,status:'idle',lastReview:{
+            ...review,status:event.aborted?'cancelled':'settled',finishedAt:now(),cleanupConfirmed:true
+          }});
+        });
+      }
+      return;
+    }
     const thread = this.store.get<Thread>("thread", event.threadId);
     if (!thread || event.epoch !== thread.epoch || event.runId !== thread.runId) return;
     if (['context.request','context.budget'].includes(event.type) && !capabilityEnabled('context.compilerV1')) return;
@@ -1721,6 +1786,10 @@ export class Service {
     // Preserve event order: buffered deltas precede every other commit here.
     this.flushDeltas(thread.id);
     const control=this.aborts.get(thread.id);
+    if(this.source&&!thread.sideParentId&&event.type==='settled'&&event.sourceCleanupPending===true){
+      const ctx={threadId:thread.id,runId:event.runId,epoch:event.epoch};
+      this.backgroundSourceOwners.set(thread.id,{ctx,threadEpoch:thread.epoch});
+    }
     this.commitRuntimeProjection(thread, event);
     if(event.type==='input.processing')try{this.memoryHostInstance?.acceptedInput(event);}catch{/* Runtime acceptance remains authoritative; revoked memory cannot be re-read for a usage projection. */}
     if (event.type === "settled") {
