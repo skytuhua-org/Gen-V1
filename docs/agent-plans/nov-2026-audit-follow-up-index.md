@@ -3,7 +3,7 @@ Second swarm audit, building on #1848 (round 1) and #1886 (remediation). READ-ON
 # November audit follow-up plan
 
 ## META
-- Repository `skytuhua-org/Gen-V1`. Follow-up plan revision `audit-index-r1`, 2026-11-23 Pacific time.
+- Repository `skytuhua-org/Gen-V1`. Follow-up plan revision `audit-index-r2`, 2026-11-23 Pacific time.
 - GitHub main at triage: `a64e9e2d03ce09c843bff0480d81311f2012c812`. Original audit coordination #1848 records its planned pinned main baseline. The round-one executive summary describes a separate historical working tree at `fix/audit-r08-chatview@6b9d1b0ba`. Round two used `chore/deletion-sweep@152cb5e1bdd652fd7dadf240b167e9ee5d37a578`. Compare these baselines before claiming current reachability.
 - Sources: reports 00–15. Worker attribution and verification quality are recorded in the reports. Use this issue's workstream links as the public follow-up ledger.
 
@@ -49,8 +49,31 @@ The implementing agent must independently reproduce the reported bug on a pinned
 Each issue maps its scope to a specific baseline case and completion criteria. Preserve historical verification bounds. For an in-flight PR re-read its latest base, head, review and check state before starting changes.
 
 ## STATE
-Publication and scope reconciliation are complete for the linked public workstreams. Individual defects still require current reproduction and acceptance as specified. Private reporting remains pending for sensitive findings without a verified private receipt. The next implementer action is T01 on their matching issue.
+All 16 reports have workstream tracking. Individual finding coverage is partial and still needs reconciliation. Defects require current reproduction and acceptance as specified. Private reporting remains pending for sensitive findings without a verified private receipt. The next implementer action is T01 on their matching issue.
 
 ## REFERENCES
 #1848, #1860, #1886. [Repository instructions](https://github.com/skytuhua-org/Gen-V1/blob/main/AGENTS.md).
+
+## Finding-level coverage check
+GitHub main rechecked at `50b35412812123f882ec12895585b2612c4d2352`. The original index mapped reports to workstreams. This pass cross-checked individual findings that the workstream plans did not include explicitly. The confirmed items below are source observations and reproduction leads.
+
+| Report and finding | Disposition | Evidence or remaining check |
+| --- | --- | --- |
+| 02 B11 and 15 install staging | #1979 | Current installer promotes the verified version before publishing its active index. Exact retry behavior needs a failing fixture. |
+| 07 §§6.1, 6.4 | #1980 | Checkpoint assembly still reads the latest revision after lease acquisition. Adjacent owner retention and schema-admission PRs address separate cases. |
+| 07 §6.2 | #1981 | Current close guard still calls flush before a bridge exists. Verify failed startup separately from connected unsaved work. |
+| 02 B10 Git snapshot cleanup | #1982 | The cleanup loop still stops on the first thrown removal. Verify the operation result and owned cleanup separately. |
+| 02 B9 model discovery | #1983 | Current main settles each adapter separately. The remaining case is a signing-in provider suppressing healthy providers sharing its adapter. |
+| 02 B5 worktree preparation | Source changed. Behavioral check pending. | Current main has a cleanup path for an unbound worktree. A duplicate ticket needs evidence of a remaining failure. |
+| 07 §10.1 Project Search | #1974 owner decision, related #1635 and #1779 | The path-filter plan explicitly leaves production activation out of scope. Verify current registration and decide availability, retirement or authorized wiring. |
+| 04 D13 retained tools and examples | Disposition outstanding | Check current vendor pins, selected files and actual entry points. Preserve vendor provenance and decide keep or remove for each candidate. |
+| 05 PR findings with truncated verdicts and 09 historical graph | #1973 and #1126 track reconciliation | A batch tracker does not establish that every individual PR finding has been read back and accepted on its current head. |
+| 01 and 10 sensitive security findings | Private reporting pending | Follow SECURITY.md. Public issues retain only eligible non-sensitive coordination and defensive validation. |
+
+### T05 — Reconcile remaining findings
+Depends on T01. For each report keep the stable finding ID or heading, source baseline and current disposition in the ledger. For an existing issue or PR verify its scope and acceptance covers the named behavior, then record that link. For a candidate already fixed, identify the repair and verify its scope. For a stale, refuted, owner-decision, or intentionally deferred item record the exact reason and supporting evidence. Recover missing or truncated verdicts from original reports or current PRs where possible and record any remaining gap. File a scoped issue only for an uncovered actionable outcome. Route sensitive reports privately.
+
+**Completion check:** Each unique finding has a verified disposition, with duplicate report entries tied to the canonical finding. A report link alone does not satisfy this check.
+
+[Prior index revision](https://github.com/skytuhua-org/Gen-V1/blob/4d97f729057d4777d5cc756ec68fb653dc7b6cb3/docs/agent-plans/nov-2026-audit-follow-up-index.md).
 
