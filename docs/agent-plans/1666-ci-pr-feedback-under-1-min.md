@@ -2,9 +2,9 @@
 
 ## META
 - Repo: skytuhua-org/Gen-V1 · Issue: https://github.com/skytuhua-org/Gen-V1/issues/1666
-- PLAN_REV: 4 (2026-11-24). History: rev1 2026-11-22 (initial), rev2 2026-11-22 (maintainer: $0 budget, Blacksmith rejected, comment 7071834333), rev3 2026-11-23 (adds missing META/REQUIREMENTS/REPO_MAP/DESIGN/VALIDATION sections, records bun-test rejection; file pinned at 56458042e9183c0d68e197e628229918fc5beb2b on closed, unmerged #1899, whose copy is consolidated in open #1994), rev4 2026-11-24 (this: state after all PRs merged, T14/T15 results, T09a hook fix, new baseline; no requirement change).
+- PLAN_REV: 5 (2026-11-24). History: rev1 2026-11-22 (initial), rev2 2026-11-22 (maintainer: $0 budget, Blacksmith rejected, comment 7071834333), rev3 2026-11-23 (adds missing META/REQUIREMENTS/REPO_MAP/DESIGN/VALIDATION sections, records bun-test rejection; file pinned at 56458042e9183c0d68e197e628229918fc5beb2b on closed, unmerged #1899, whose copy is consolidated in open #1994), rev4 2026-11-24 (state after all PRs merged, T14/T15 results, T09a hook fix, new baseline; no requirement change; file at 71c80cefe4739004be6ea51c5a128a862230aacf on #2114), rev5 2026-11-24 (this: maintainer approved T10 caching and queueing #2113/#2114 on 2026-11-24 11:56 UTC, "approve, but review them on your own again"; T10 narrowed to the measured node-gyp header download, #2117; earlier "~1–2 min per Windows job" estimate corrected to up to ~40 s measured from one log).
 - Baseline: main@9ddd536cc84c0f327ddf6133d485f8ab8baf294b (verified 2026-11-24T11:14Z).
-- Linked PRs: merged via merge queue #1667, #1669, #1670, #1671, #1672, #1673; #1227 fixes #1228 and #1898 merged; open #2113 (T09a).
+- Linked PRs: merged via merge queue #1667, #1669, #1670, #1671, #1672, #1673; #1227 fixes #1228 and #1898 merged; open #2113 (T09a), #2114 (this plan file), #2117 (T10 header cache).
 - Status: implemented except T04, T10 caching, T12; speed target NOT met (see VALIDATION).
 - Provenance: original task brief from the maintainer (session chat; the rules are restated verbatim in REQUIREMENTS), audit in this issue, checkpoints in this issue's comments.
 
@@ -53,7 +53,7 @@ Out of scope: changing test semantics, removing tests, paid infrastructure, self
 | T08 | PR test selection + hidden-change red check | T02 | DONE | #1671 merged via queue 2026-11-24T02:37Z, merge group 7/7 |
 | T09 | hk hooks | T03 | DONE | #1672 merged via queue |
 | T09a | Pre-push `tests` step builds widgets/lease first (`pnpm test --changed <merge-base>`) | T09 | IMPLEMENTED | #2113 open; done when merged via queue |
-| T10 | ~~Blacksmith~~ REJECTED; free alternatives (Linux selection job, caches, blobless checkout) | T08 | IN_PROGRESS | Linux selection job DONE (#1671); caching of the ~3 min `node-pty` toolchain install NOT_STARTED, proposed to the maintainer in comment 7122117459, awaiting decision |
+| T10 | ~~Blacksmith~~ REJECTED; free alternatives (Linux selection job, caches, blobless checkout) | T08 | IN_PROGRESS | Linux selection job DONE (#1671). Caching APPROVED by the maintainer 2026-11-24. Measured in job 138222769095: `Install toolchain` 205 s = setup-node with pnpm-store cache restore 33 s + `pnpm install` 151 s (linking 18 s, node-gyp header download/unpack 40 s, node.lib + Visual Studio discovery 14 s, node-pty compile ~78 s). #2117 caches `~\AppData\Local\node-gyp\Cache` on Windows keyed on OS, arch and exact `node --version`; install and compile still run in every job. Done when #2117 merges via the queue and a Windows run shows a cache hit with lower `Install toolchain` time. Follow-up (not started, needs its own decision): check why pnpm's side-effects cache does not skip the node-pty compile on CI |
 | T11 | Merge-queue ruleset on `main` | T02 | DONE | ruleset 27819131 active |
 | T12 | Two-week failure log; remove change-detector tests | T08 | NOT_STARTED | log window starts 2026-11-24 |
 | T13 | Unblock T08: root-cause #1227 remaining host.close socket | — | DONE | #1898 merged via queue 2026-11-24T02:37Z; #1227 closed `completed` by the maintainer 2026-11-24T05:12Z |
@@ -70,9 +70,9 @@ Out of scope: changing test semantics, removing tests, paid infrastructure, self
 - Release gate: met for T08 and T02b (merged via queue, T15 posted). Target p50<1 min / p95<2 min is NOT met and not reachable on free Windows runners while `Windows checks` runs ≈9 min and the 20-job cap is saturated; recorded as a finding, not claimed.
 
 ## STATE
-- Owner: devin-cloud-37c167 until its RELEASE checkpoint on this issue. DONE: T01, T02, T02b, T03, T05, T08, T09, T11, T13, T14, T15. IMPLEMENTED: T09a (#2113). IN_PROGRESS: T10 (caching awaiting maintainer decision). REJECTED: T06. NOT_STARTED: T04, T12. BLOCKED: T07.
+- Owner: devin-cloud-37c167 until its RELEASE checkpoint on this issue. DONE: T01, T02, T02b, T03, T05, T08, T09, T11, T13, T14, T15. IMPLEMENTED: T09a (#2113). IN_PROGRESS: T10 (header cache #2117 open, CI queued). REJECTED: T06. NOT_STARTED: T04, T12. BLOCKED: T07.
 - Risks: free-runner queue saturation (20 concurrent jobs shared by ~200 open PRs) dominates wall time; selection can miss a test that reads source files directly (merge queue still runs it).
-- Next: merge #2113 via the queue; maintainer decides on T10 caching (~1–2 min per Windows job, no checks dropped) and on T04; T12 log after two weeks.
+- Next: queue #2113, #2114 and #2117 once their PR checks pass (maintainer-approved; no self-merge bypass); measure the T10 saving on a Windows cache hit; maintainer decides on T04; T12 log after two weeks.
 
 ## Audit (T01) — last 150 completed `CI` runs (2026-11-21T05:21Z → 2026-11-22T00:21Z)
 Run conclusions: 60 success, 57 cancelled, 33 failure. All jobs on GitHub-hosted `windows-2022`; org is on the **Free** plan (20 concurrent hosted jobs, shared across every workflow).
