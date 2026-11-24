@@ -93,9 +93,11 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
   for(const current of affected){releaseOwner(current);if(!disposed)callbacks?.onEvent({...current.ctx,type:'error',message:'The subscription runtime closed after discovery failed. Resume the task to continue.'});}
  }
  async function probe<T>(adapter:RuntimeAdapter,providerIds:readonly ConnectionProviderId[],accountId:string|null,action:()=>Promise<T>):Promise<T> {
-  const leases:AccountUseLease[]=[];
+  const leases:AccountUseLease[]=[],scoped=accountId!==null||providerIds.length===1;
   const release=()=>{for(const lease of leases){options.accounts?.releaseUse?.(lease);probes.delete(lease.id);}};
-  try{for(const providerId of providerIds){available(providerId,accountId);const lease=options.accounts?.claimUse?.(providerId,accountId);if(lease){leases.push(lease);probes.set(lease.id,{adapter,lease});}}}catch(error){release();throw error;}
+  // A scoped query must still fail on a signing-in provider; a broad probe
+  // skips it instead, so one sign-in never blocks a healthy sibling's models.
+  try{for(const providerId of providerIds){if(!scoped&&isConnectionProviderId(providerId)&&options.accounts?.isSigningIn?.(providerId,null))continue;available(providerId,accountId);const lease=options.accounts?.claimUse?.(providerId,accountId);if(lease){leases.push(lease);probes.set(lease.id,{adapter,lease});}}}catch(error){release();throw error;}
   try{const result=await action();release();return result;}
   catch(error){await retire(adapter);release();throw error;}
  }

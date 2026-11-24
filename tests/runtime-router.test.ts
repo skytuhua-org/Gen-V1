@@ -212,3 +212,13 @@ it('denies a descendant Pi junction before actual session validation can resolve
  expect(await validateSessionPath(aRoot,aSession)).toBe(join(bSessions,'saved.jsonl'));
  await expect(runtime.history(aSession,account.id)).rejects.toMatchObject({code:'CAPABILITY_DENIED'});expect(pi.runtime.history).not.toHaveBeenCalled();await runtime.dispose();
 });
+
+it('keeps healthy provider models while a sibling provider signs in',async()=>{
+ const root=profileFixture();let signingIn:string|null=null;
+ const pi=adapter(),official=adapter(),runtime=createRuntime({dataDir:root,accounts:{get:()=>null,isSigningIn:(id:string)=>id===signingIn}},{pi:()=>pi.runtime,official:()=>official.runtime});
+ vi.mocked(pi.runtime.models).mockResolvedValue([{id:'openai/model',provider:'openai',name:'A'},{id:'github-copilot/model',provider:'github-copilot',name:'B'}]);
+ vi.mocked(official.runtime.models).mockResolvedValue([{id:'gemini-cli/pro',provider:'gemini-cli',name:'C'}]);
+ signingIn='github-copilot';
+ expect(await runtime.models()).toEqual([{id:'openai/model',provider:'openai',name:'A'},{id:'gemini-cli/pro',provider:'gemini-cli',name:'C'}]);
+ await runtime.dispose();
+});
