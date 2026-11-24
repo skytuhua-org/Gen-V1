@@ -115,6 +115,9 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
    const results=await withAccountProfile(root,account,async()=>{active();if(account)available(account.providerId,account.id);return Promise.allSettled(targets.map(adapter=>probe(adapter,providerId?[providerId]:probeProviders(account,adapter===selected.official),account?.id??null,async effective=>{
     try{
      if(providerId||refresh===undefined)return await adapter.models(providerId?{refresh,providerId}:undefined);
+     // No provider skipped: keep the ordinary whole-adapter refresh so its
+     // catalog cache warms and failures keep their all-or-nothing semantics.
+     if(effective.length===providerIds.length)return await adapter.models({refresh});
      // A forced refresh must not reach a profile that is still signing in:
      // refresh each probeable provider on its own. Pi reports a disconnected
      // provider per refresh; keep the others instead of retiring the adapter.
