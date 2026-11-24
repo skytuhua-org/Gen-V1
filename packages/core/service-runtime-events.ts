@@ -6,6 +6,7 @@ import {
   type Message,
   type Operation,
   type RunContext,
+  type Snapshot,
   type RuntimeEvent,
   type RuntimeUsage,
   type Thread,
@@ -59,7 +60,9 @@ export interface ServiceRuntimeEventsHost {
   /** Shared maps — the same instances other domains read. */
   inferenceOwners: Map<string, { ctx: RunContext; basis: string; sequence: number }>;
   aborts: Map<string, AbortController>;
+  backgroundSourceOwners: Map<string, { ctx: RunContext; threadEpoch: number }>;
   isClosed(): boolean;
+  hasSource(): boolean;
   thread(id: string): Thread;
   hasGate(id: string): boolean;
   binding(thread: Thread, providerId: string): { accountId: string | null; bound: boolean };
@@ -162,6 +165,29 @@ export class ServiceRuntimeEvents {
   onRuntimeEvent(event: RuntimeEvent): void {
     const { host } = this;
     if (host.isClosed()) return;
+    if(event.type==='hermes.curation.started'){
+      const thread=host.store.get<Thread>('thread',event.threadId);
+      if(host.hasSource()&&thread&&!thread.runId){
+        const ctx={threadId:event.threadId,runId:event.runId,epoch:event.epoch};
+        host.backgroundSourceOwners.set(thread.id,{ctx,threadEpoch:thread.epoch});
+      }
+      return;
+    }
+    if(event.type==='hermes.cleanup.confirmed'){
+      const owner=host.backgroundSourceOwners.get(event.threadId)?.ctx;
+      if(owner?.runId!==event.runId||owner.epoch!==event.epoch)return;
+      host.backgroundSourceOwners.delete(event.threadId);
+      const learning=host.store.get<Snapshot['learning']>('learningStatus','global'),review=learning?.lastReview;
+      if(review?.status==='reviewing'&&review.sourceThreadId===owner.threadId&&review.sourceRunId===owner.runId){
+        // An exact Stop advances the thread epoch before the source can finish its review.
+        host.store.internal('learning.source.cleanup_confirmed',owner.threadId,()=>{
+          host.store.put('learningStatus','global',null,{...learning,status:'idle',lastReview:{
+            ...review,status:event.aborted?'cancelled':'settled',finishedAt:now(),cleanupConfirmed:true
+          }});
+        });
+      }
+      return;
+    }
     const thread = host.store.get<Thread>("thread", event.threadId);
     if (!thread || event.epoch !== thread.epoch || event.runId !== thread.runId) return;
     if (["context.request", "context.budget"].includes(event.type) && !capabilityEnabled("context.compilerV1")) return;
@@ -177,6 +203,10 @@ export class ServiceRuntimeEvents {
     // Preserve event order: buffered deltas precede every other commit here.
     this.flushDeltas(thread.id);
     const control = host.aborts.get(thread.id);
+    if(host.hasSource()&&!thread.sideParentId&&event.type==='settled'&&event.sourceCleanupPending===true){
+      const ctx={threadId:thread.id,runId:event.runId,epoch:event.epoch};
+      host.backgroundSourceOwners.set(thread.id,{ctx,threadEpoch:thread.epoch});
+    }
     this.commitRuntimeProjection(thread, event);
     if (event.type === "input.processing")
       try {
