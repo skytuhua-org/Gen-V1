@@ -808,9 +808,18 @@ export class CodeIntelligence {
     // a live rename must never interleave on the same paths. Journals written
     // before workspaceIdentity was recorded lock on the plan id instead.
     return this.underLock(journal.workspaceIdentity ?? planId.data, async () => {
+      // The journal may have been resolved while this call waited on the
+      // lock; reconcile the durable record, not a stale snapshot.
+      const live = JSON.parse(await readFile(join(journalDir, "journal.json"), "utf8")) as typeof journal;
+      if (live.resolved)
+        return renameRecoveryResultSchema.parse({
+          planId: live.planId,
+          state: live.entries.some(record => record.disposition === "Conflict") ? "PARTIAL_RECOVERY_REQUIRED" : "APPLIED",
+          entries: live.entries.map(record => ({ path: record.path, disposition: record.disposition })),
+        });
       const entries: RenameRecoveryEntry[] = [];
       let conflict = false;
-      for (const [index, record] of journal.entries.entries()) {
+      for (const [index, record] of live.entries.entries()) {
         const current = await readBoundFile(record.path, 32 * 1024 * 1024).catch(() => null);
         const currentDigest = current ? sha(current) : null;
         if (record.postimage !== null && currentDigest === record.postimage) {
@@ -818,7 +827,7 @@ export class CodeIntelligence {
           const backup = await readBoundFile(record.backup, 32 * 1024 * 1024).catch(() => null);
           if (!backup || sha(backup) !== record.preimage) {
             conflict = true;
-            journal.entries[index]!.disposition = "Conflict";
+            live.entries[index]!.disposition = "Conflict";
             entries.push({ path: record.path, disposition: "Conflict", detail: "The backup is unavailable." });
             continue;
           }
@@ -830,32 +839,32 @@ export class CodeIntelligence {
           const restored = await readBoundFile(record.path, 32 * 1024 * 1024).catch(() => null);
           if (!restored || sha(restored) !== record.preimage) {
             conflict = true;
-            journal.entries[index]!.disposition = "Conflict";
+            live.entries[index]!.disposition = "Conflict";
             entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed while its recovery was being written." });
             continue;
           }
-          journal.entries[index]!.disposition = "Restored";
+          live.entries[index]!.disposition = "Restored";
           entries.push({ path: record.path, disposition: "Restored" });
         } else if (currentDigest === record.preimage) {
-          journal.entries[index]!.disposition = "Unchanged";
+          live.entries[index]!.disposition = "Unchanged";
           entries.push({ path: record.path, disposition: "Unchanged" });
         } else if (currentDigest === null) {
           conflict = true;
-          journal.entries[index]!.disposition = "Conflict";
+          live.entries[index]!.disposition = "Conflict";
           entries.push({ path: record.path, disposition: "Conflict", detail: "The file is missing." });
         } else {
           // An external editor changed it — stop, do not overwrite that edit.
           conflict = true;
-          journal.entries[index]!.disposition = "Conflict";
+          live.entries[index]!.disposition = "Conflict";
           entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed outside the rename; manual recovery is required." });
         }
       }
       // Recovery dispositions are durable: a second recovery pass reconciles
       // the recorded outcome instead of re-processing the same entries.
-      journal.resolved = true;
-      await writeDurable(join(journalDir, "journal.json"), JSON.stringify(journal));
+      live.resolved = true;
+      await writeDurable(join(journalDir, "journal.json"), JSON.stringify(live));
       return renameRecoveryResultSchema.parse({
-        planId: journal.planId,
+        planId: live.planId,
         state: conflict ? "PARTIAL_RECOVERY_REQUIRED" : entries.some(e => e.disposition === "Restored") ? "RECOVERED" : "APPLIED",
         entries,
       });
