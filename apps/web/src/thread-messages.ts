@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Message, Snapshot } from '../../../packages/contracts';
 import { getThreadMessages } from './api';
+import {errorMessage} from '../../../packages/ui-shell/format-utils';
 
 // Snapshot messages are windowed per thread (see store.snapshot). Views that
 // render full history merge the window with older pages fetched on demand.
@@ -49,7 +50,7 @@ export function useThreadMessages(snapshot: Pick<Snapshot, 'messages' | 'message
           return [...previous, ...fresh].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
         });
       })
-      .catch(cause => { if (request.current === id) setError(cause instanceof Error ? cause.message : String(cause)); })
+      .catch(cause => { if (request.current === id) setError(errorMessage(cause, String(cause))); })
       .finally(() => { if (request.current === id) setLoading(false); });
   }, [threadId, windowHead, exhausted, older]);
   useEffect(() => { if (eager && remaining > 0 && !loading && !error && !exhausted) void loadMore(); }, [eager, remaining, loading, error, exhausted, loadMore]);

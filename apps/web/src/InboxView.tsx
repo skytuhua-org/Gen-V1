@@ -7,6 +7,7 @@ import {InboxList,InboxItemRow,InboxPane} from '../../../third-party/vespin/inbo
 import {projectColor} from './project-colors';
 import {formatLocalDateTime,type TimeFormat} from './time-format';
 import './agent-inbox.css';
+import {errorMessage} from '../../../packages/ui-shell/format-utils';
 
 type Filter='all'|'needs-you'|'unread'|'completed';
 const filters=[{value:'all',label:'All'},{value:'needs-you',label:'Needs you'},{value:'unread',label:'Unread'},{value:'completed',label:'Completed'}];
@@ -25,7 +26,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
  const activeReads=useRef(new Map<string,Promise<void>>());
  const act=(work:()=>void|Promise<void>,version=++actionVersion.current)=>{
   const request=Promise.resolve().then(work);
-  void request.then(()=>{if(version===actionVersion.current)setActionError('');},cause=>{if(version===actionVersion.current)setActionError(cause instanceof Error?cause.message:String(cause));});
+  void request.then(()=>{if(version===actionVersion.current)setActionError('');},cause=>{if(version===actionVersion.current)setActionError(errorMessage(cause,String(cause)));});
   return request;
  };
  const recordRead=(id:string,version:number)=>{

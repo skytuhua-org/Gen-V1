@@ -1,4 +1,5 @@
 import type {PanelPlacement,WorkspacePanelKind} from '../../../packages/contracts/workspace.ts';
+import {errorMessage} from '../../../packages/ui-shell/format-utils';
 import {desktopSurfaceKey,type DesktopSurface,type DesktopWindowInfo,type DesktopBridge} from '../../../packages/desktop-contract/index.ts';
 export function panelDesktopSurface(panel:PanelPlacement):DesktopSurface {
  const b=panel.binding;if(b.authority.kind==='plugin')return {kind:'plugin',pluginId:b.authority.pluginId,scopeId:b.authority.scopeId,surfaceId:panel.kind,resourceId:b.resourceId??panel.id};
@@ -33,5 +34,5 @@ export async function setPanelVisibility(panel:PanelPlacement,visible:boolean,up
  if(!native||!control)throw Error('The owning native window is unavailable. Restore or dock it before changing this panel.');
  const before=native.visible!==false;
  try{await control({type:'visibility',windowId:native.id,visible});await update(panel,{visible});}
- catch(cause){try{await control({type:'visibility',windowId:native.id,visible:before});}catch(rollback){throw Error(`${cause instanceof Error?cause.message:String(cause)} Native visibility rollback also failed: ${rollback instanceof Error?rollback.message:String(rollback)}`);}throw cause;}
+ catch(cause){try{await control({type:'visibility',windowId:native.id,visible:before});}catch(rollback){throw Error(`${errorMessage(cause,String(cause))} Native visibility rollback also failed: ${errorMessage(rollback,String(rollback))}`);}throw cause;}
 }
