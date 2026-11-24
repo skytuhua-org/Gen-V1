@@ -2,7 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {execFileSync} from 'node:child_process';
 import {lstat,mkdir,mkdtemp,readFile,rm,stat,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,relative} from 'node:path';
+import {join} from 'node:path';
 import {opendir} from 'node:fs/promises';
 
 // The native path guard is unavailable on this platform (CAPABILITY_DENIED),
