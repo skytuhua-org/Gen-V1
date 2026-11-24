@@ -107,10 +107,20 @@ test('main and side composers keep independent drafts across reload and rejected
  await main.fill('Main draft stays');await side.fill('Side draft stays');
  await page.reload();await expect(main).toHaveValue('Main draft stays');await expect(side).toHaveValue('Side draft stays');
  const child=page.locator('[data-panel-id="child-panel"]');await expect(child.getByRole('textbox')).toHaveCount(0);await expect(child).toContainText('Read-only transcript.');
- await page.route('**/api/commands',async route=>{const command=route.request().postDataJSON();if(command.type==='message.send')return route.fulfill({status:409,json:{error:{code:'RUN_BUSY',message:'Synthetic side send refused'}}});await route.fallback();});
+ let sendAttempts=0;
+ await page.route('**/api/commands',async route=>{const command=route.request().postDataJSON();if(command.type==='message.send'){sendAttempts++;if(sendAttempts<=2)return route.fulfill({status:409,json:{error:{code:'RUN_BUSY',message:'Synthetic side send refused'}}});}await route.fallback();});
  await page.locator('[data-panel-id="side-panel"]').getByRole('button',{name:'Send',exact:true}).click();
- await expect(page.getByRole('alert')).toContainText('Synthetic side send refused');
+ const sendErrorRow=page.locator('.send-error-row');
+ await expect(sendErrorRow).toContainText('This message could not be sent.');
+ await expect(sendErrorRow).not.toContainText('Synthetic side send refused');
+ await expect(page.getByText('Synthetic side send refused',{exact:true})).toHaveCount(0);
  await expect(side).toHaveValue('Side draft stays');await expect(main).toHaveValue('Main draft stays');
+ await sendErrorRow.getByRole('button',{name:'Try again.',exact:true}).click();
+ await expect(sendErrorRow).toContainText('Still can’t send this message.');expect(sendAttempts).toBe(2);
+ await expect(side).toHaveValue('Side draft stays');
+ await sendErrorRow.getByRole('button',{name:'Try again.',exact:true}).click();
+ await expect(sendErrorRow).toHaveCount(0);expect(sendAttempts).toBe(3);
+ await expect(side).toHaveValue('');await expect(main).toHaveValue('Main draft stays');
  expect(host.commands.some(command=>command.type==='run.stop')).toBe(false);
 });
 
