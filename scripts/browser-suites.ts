@@ -64,6 +64,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('composer-commands'),
   suite('composer-prediction'),
   suite('composer-press', ['composer-press.spec.ts']),
+  suite('connect-project'),
   suite('context-connections'),
   suite('desktop-surfaces'),
   suite('everyday', ['everyday-ui.spec.ts']),
