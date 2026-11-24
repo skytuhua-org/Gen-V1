@@ -14,6 +14,7 @@ import {
   type LocalComparisonIdentity,
 } from "../contracts/code-review.ts";
 import { withPathGuard } from "../core/file-access.ts";
+import { statusBranch } from "./git-storage.ts";
 
 type Git = (args: string[]) => Promise<string>;
 export interface LocalReviewContext {
@@ -110,17 +111,19 @@ async function fileBytes(
   });
 }
 async function localSnapshot(context: LocalReviewContext) {
-  const head = (await context.git(["rev-parse", "HEAD"])).trim(),
-    branch = (await context.git(["branch", "--show-current"])).trim();
+  const head = (await context.git(["rev-parse", "HEAD"])).trim();
   const index = await context.git(["ls-files", "--stage", "-z"]);
   const raw = await context.git([
     "status",
     "--porcelain=v1",
+    "-b",
     "-z",
     context.managed ? "--untracked-files=all" : "--untracked-files=no",
   ]);
   const entries = raw.split("\0"),
-    files: ComparisonFile[] = [],
+    branch = statusBranch(entries[0] ?? "");
+  entries.shift();
+  const files: ComparisonFile[] = [],
     digests: unknown[] = [],
     budget = { remaining: CODE_REVIEW_LIMITS.hashBytes as number };
   for (let i = 0; i < entries.length; i++) {
@@ -259,10 +262,16 @@ export async function readLocalComparisonFile(
       ...[name, ...(file.oldPath ? [file.oldPath] : [])].map((path) => ":(literal)" + path),
     ];
     try {
-      const read = async () => ({
-        text: await context.git(args),
-        stats: await context.git(["diff", "--numstat", "-z", ...args.slice(1)]),
-      });
+      // One subprocess: `--numstat -z` output precedes the patch, which starts
+      // at the first `diff --git ` line (or is absent for an empty patch).
+      const read = async () => {
+        const combined = await context.git(["diff", "--numstat", "-z", "--patch", ...args.slice(1)]);
+        // NUL before `a/` preimage prefix pins the split to the real patch
+        // header; a path named `diff --git …` inside numstat can't match.
+        const plain = combined.indexOf('\0diff --git a/'), quoted = combined.indexOf('\0diff --git "a/'),
+          cut = plain === -1 ? quoted : quoted === -1 ? plain : Math.min(plain, quoted);
+        return { text: cut === -1 ? "" : combined.slice(cut + 1), stats: combined.slice(0, cut === -1 ? combined.length : cut) };
+      };
       // Pin existing worktree input through both Git reads. Cached/deleted reads use index objects.
       const { text, stats } =
         identity.scope === "worktree" && file.worktree !== "D"

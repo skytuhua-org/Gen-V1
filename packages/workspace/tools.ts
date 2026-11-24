@@ -11,7 +11,7 @@ import {WorkspaceRepository} from '../core/workspace-layout.ts';
 import {assertNotStorage,canonical,inside} from '../core/security.ts';
 import {gitExecutable} from '../capabilities/process.ts';
 import {readBoundFile,withPathGuard} from '../core/file-access.ts';
-import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
+import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,statusBranch,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead} from '../contracts/code-review.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
 
@@ -26,14 +26,25 @@ const equal=(a:Identity,b:Identity)=>a.dev===b.dev&&a.ino===b.ino;
 const pathName=z.string().min(1).max(1024).refine(path=>!path.includes('\0')&&!path.includes(':')&&!/^[\\/]|(?:^|[\\/])\.\.(?:[\\/]|$)/.test(path),'Choose a file inside the project.');
 // Git metadata is never project content, whatever its case or nesting depth.
 const gitSegment=(value:string)=>value.split(/[\\/]/).some(part=>part.toLowerCase()==='.git');
-async function untrackedDigest(path:string,signal:AbortSignal){
- return withPathGuard([{path,leaf:true,readOnly:true}],signal,async()=>{
-  const file=await open(path,'r');try{const info=await file.stat({bigint:true});if(!info.isFile()||info.nlink!==1n)throw new HarnessError('CAPABILITY_DENIED','Changed paths must be ordinary files.');
-   const digest=createHash('sha256'),buffer=Buffer.alloc(1024*1024);let offset=0,binary=false;
-   while(offset<Number(info.size)){if(signal.aborted)throw new HarnessError('CANCELLED','Git review cancelled.');const part=await file.read(buffer,0,Math.min(buffer.length,Number(info.size)-offset),offset);if(!part.bytesRead)throw new HarnessError('CAPABILITY_DENIED','Changed file changed during review.');const bytes=buffer.subarray(0,part.bytesRead);digest.update(bytes);binary ||= bytes.includes(0);offset+=part.bytesRead;}
-   return{hash:digest.digest('hex'),binary};
-  }finally{await file.close();}
- });
+async function untrackedDigestBytes(path:string,signal:AbortSignal){
+ const file=await open(path,'r');try{const info=await file.stat({bigint:true});if(!info.isFile()||info.nlink!==1n)throw new HarnessError('CAPABILITY_DENIED','Changed paths must be ordinary files.');
+  const digest=createHash('sha256'),buffer=Buffer.alloc(1024*1024);let offset=0,binary=false;
+  while(offset<Number(info.size)){if(signal.aborted)throw new HarnessError('CANCELLED','Git review cancelled.');const part=await file.read(buffer,0,Math.min(buffer.length,Number(info.size)-offset),offset);if(!part.bytesRead)throw new HarnessError('CAPABILITY_DENIED','Changed file changed during review.');const bytes=buffer.subarray(0,part.bytesRead);digest.update(bytes);binary ||= bytes.includes(0);offset+=part.bytesRead;}
+  return{hash:digest.digest('hex'),binary};
+ }finally{await file.close();}
+}
+// Digest each untracked path under as few guard acquisitions as the broker's
+// 256-path cap allows instead of one guarded round-trip per file. Order and
+// error propagation match the previous per-file loop.
+async function untrackedDigests(paths:string[],signal:AbortSignal){
+ const results:{hash:string,binary:boolean}[]=[];
+ for(let i=0;i<paths.length;i+=256){
+  const batch=paths.slice(i,i+256);
+  await withPathGuard(batch.map(path=>({path,leaf:true,readOnly:true})),signal,async()=>{
+   for(const path of batch)results.push(await untrackedDigestBytes(path,signal));
+  });
+ }
+ return results;
 }
 
 /** Remove a working copy that preparation did not bind. The branch is deleted only when this call created it. */
@@ -141,14 +152,18 @@ export class ProjectTools{
  }
  private async status(metadata:string,path:string,signal:AbortSignal,managed:boolean):Promise<GitStatus>{
   const git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
-  const head=(await git(['rev-parse','HEAD'])).trim(),branch=(await git(['branch','--show-current'])).trim(),raw=await git(['status','--porcelain=v1','-z',managed?'--untracked-files=all':'--untracked-files=no']),diff=await git(['diff','--full-index','--no-ext-diff','--no-textconv']),stagedDiff=await git(['diff','--cached','--full-index','--no-ext-diff','--no-textconv']),files:GitFile[]=[],untracked:string[]=[];
-  const entries=raw.split('\0');for(let i=0;i<entries.length;i++){
-   const entry=entries[i];if(!entry)continue;const index=entry[0]!,worktree=entry[1]!,name=entry.slice(3),oldPath=/[RC]/.test(index+worktree)?entries[++i]:undefined;
+  const head=(await git(['rev-parse','HEAD'])).trim(),raw=await git(['status','--porcelain=v1','-b','-z',managed?'--untracked-files=all':'--untracked-files=no']),diff=await git(['diff','--full-index','--no-ext-diff','--no-textconv']),stagedDiff=await git(['diff','--cached','--full-index','--no-ext-diff','--no-textconv']),files:GitFile[]=[],untracked:string[]=[];
+  const entries=raw.split('\0'),header=entries[0]??'';entries.shift();
+  const branch=statusBranch(header);
+  const pending:{name:string,item:GitFile}[]=[];for(let i=0;i<entries.length;i++){
+   const entry=entries[i]!;if(!entry)continue;const index=entry[0]!,worktree=entry[1]!,name=entry.slice(3),oldPath=/[RC]/.test(index+worktree)?entries[++i]:undefined;
    if(!pathName.safeParse(name).success)throw new HarnessError('UNSUPPORTED_PATH',`The Git entry ${JSON.stringify(name.slice(0,80))} is not a supported project path.`);
    if(name.split('/').at(-1)==='.harness-directory-guard')continue;
    const item:GitFile={path:name,...(oldPath?{oldPath}:{}),index,worktree,staged:index!==' '&&index!=='?',untracked:index==='?',binary:false,added:null,removed:null};files.push(item);
-   if(item.untracked){const data=await untrackedDigest(join(path,name),signal);item.binary=data.binary;untracked.push(name+':'+data.hash);}
+   if(item.untracked)pending.push({name,item});
   }
+  const digests=await untrackedDigests(pending.map(({name})=>join(path,name)),signal);
+  pending.forEach(({name,item},i)=>{const data=digests[i]!;item.binary=data.binary;untracked.push(name+':'+data.hash);});
   const stats=(await git(['diff','--numstat','-z','--no-ext-diff','--no-textconv','HEAD'])).split('\0');
   for(let i=0;i<stats.length;i++){const row=stats[i];if(!row)continue;const[added,removed,...parts]=row.split('\t');let name=parts.join('\t');if(!name){i++;name=stats[++i]??'';}const item=files.find(item=>item.path===name);if(item){item.binary=added==='-';item.added=item.binary?null:Number(added);item.removed=item.binary?null:Number(removed);}}
   return{head,branch,revision:hash(JSON.stringify([head,branch,raw,diff,stagedDiff,untracked])),files,diff,stagedDiff,truncated:false,mode:managed?'managed':'legacy',gitWrite:managed,untrackedIncluded:managed};
