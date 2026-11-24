@@ -203,7 +203,9 @@ describe('output schema, repair and verification', () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
     const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
-    await f.coordinator.submitResult(work.workId, childRun, validOutput);
+    // Trusted host verification record proving requirement r1.
+    f.store.internal('fixture.evidence', f.parentThread.id, () => f.store.put('data', 'ev-ok', f.parentThread.id, {id: 'ev-ok', threadId: f.parentThread.id, revision: 1, value: {checkId: 'check-1', outcome: 'PASS', requirementId: 'r1'}, provenance: 'harness:verification', createdAt: new Date().toISOString()}));
+    await f.coordinator.submitResult(work.workId, childRun, {...validOutput, evidenceRefs: [{id: 'ev-ok', revision: 1}]});
     expect(f.coordinator.inspect(work.workId)).toMatchObject({state: 'COMPLETED_REPORTED'});
     expect(f.coordinator.inspect(work.workId)!.outputRef).toMatchObject({revision: 1});
     await f.coordinator.verify(f.ctx, work.workId);
@@ -217,11 +219,11 @@ describe('output schema, repair and verification', () => {
     await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
     expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
   });
-  it('verifies real evidence records belonging to the parent task', async () => {
+  it('verifies trusted evidence records belonging to the parent task', async () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
     const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
-    f.store.internal('fixture.evidence', f.parentThread.id, () => f.store.put('data', 'ev-1', f.parentThread.id, {id: 'ev-1', threadId: f.parentThread.id, revision: 1, value: {note: 'real'}, provenance: 'test', createdAt: new Date().toISOString()}));
+    f.store.internal('fixture.evidence', f.parentThread.id, () => f.store.put('data', 'ev-1', f.parentThread.id, {id: 'ev-1', threadId: f.parentThread.id, revision: 1, value: {checkId: 'check-1', outcome: 'PASS', requirementId: 'r1'}, provenance: 'harness:verification', createdAt: new Date().toISOString()}));
     await f.coordinator.submitResult(work.workId, childRun, {...validOutput, evidenceRefs: [{id: 'ev-1', revision: 1}]});
     await f.coordinator.verify(f.ctx, work.workId);
     expect(f.coordinator.inspect(work.workId)!.state).toBe('VERIFIED');
@@ -233,7 +235,7 @@ describe('output schema, repair and verification', () => {
   // typed evidence-verifier repair lands.
   const evidencePut = (f: ReturnType<typeof fixture>, id: string, value: unknown, provenance: string) =>
     f.store.internal('fixture.evidence', f.parentThread.id, () => f.store.put('data', id, f.parentThread.id, {id, threadId: f.parentThread.id, revision: 1, value, provenance, createdAt: new Date().toISOString()}));
-  it.fails('refuses to verify when required evidence is empty', async () => {
+  it('refuses to verify when required evidence is empty', async () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
     const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
@@ -241,7 +243,7 @@ describe('output schema, repair and verification', () => {
     await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
     expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
   });
-  it.fails('refuses to verify on a model-authored evidence record', async () => {
+  it('refuses to verify on a model-authored evidence record', async () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
     const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
@@ -250,7 +252,7 @@ describe('output schema, repair and verification', () => {
     await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
     expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
   });
-  it.fails('refuses to verify on a failed or stale check result', async () => {
+  it('refuses to verify on a failed or stale check result', async () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
     const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
@@ -259,7 +261,7 @@ describe('output schema, repair and verification', () => {
     await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
     expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
   });
-  it.fails('refuses to verify a reported BLOCKED or INCOMPLETE outcome', async () => {
+  it('refuses to verify a reported BLOCKED or INCOMPLETE outcome', async () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
     const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
@@ -268,7 +270,7 @@ describe('output schema, repair and verification', () => {
     await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
     expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
   });
-  it.fails('refuses to verify evidence bound to a different requirement', async () => {
+  it('refuses to verify evidence bound to a different requirement', async () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
     const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
