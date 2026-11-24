@@ -419,8 +419,15 @@ export function ShellSidebar({
           <SquarePen size={15} />
         </button>
       </div>
+      {/* Persistent live region: announcements must update an existing
+          element — mounting a status region is missed by some screen readers. */}
+      <div className="sr-only" role="status" aria-atomic="true">
+        {loaded && !visibleMatching.length
+          ? (search ? 'No matching threads.' : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.')
+          : filter === 'all' ? 'Showing all threads' : `Showing ${filter} threads`}
+      </div>
       {filter !== 'all' && (
-        <div className="sidebar-filter-chip" role="status" aria-atomic="true">
+        <div className="sidebar-filter-chip">
           <span>Showing {filter} threads</span>
           <button type="button" className="icon-button" aria-label="Clear thread filter" title="Show all threads" onClick={() => setFilter('all')}><X size={12} /></button>
         </div>
@@ -480,7 +487,7 @@ export function ShellSidebar({
           </section>
         )}
         {loaded && !visibleMatching.length && (
-          <div className="sidebar-empty" role="status" aria-atomic="true">{search ? 'No matching threads.' : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.'}</div>
+          <div className="sidebar-empty">{search ? 'No matching threads.' : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.'}</div>
         )}
         {pageControls}
       </nav>

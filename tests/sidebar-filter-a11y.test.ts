@@ -39,16 +39,18 @@ it('exposes the tri-state filter as a labeled cycle and announces changes',async
   await expect.poll(()=>filter.getAttribute('aria-label')).toBe('Thread filter: all');
   await filter.click();
   await expect.poll(()=>filter.getAttribute('aria-label')).toBe('Thread filter: working');
-  const chip=page.locator('.sidebar-filter-chip');
-  await expect.poll(()=>chip.count()).toBe(1);
-  expect(await chip.getAttribute('role')).toBe('status');
-  expect(await chip.getAttribute('aria-atomic')).toBe('true');
+  const status=page.locator('.sr-only[role="status"]');
+  await expect.poll(()=>status.count()).toBe(1); // persistent region, mounted before any change
+  expect(await status.getAttribute('aria-atomic')).toBe('true');
+  expect(await status.innerText()).toBe('Showing working threads');
+  await expect.poll(()=>page.locator('.sidebar-filter-chip').count()).toBe(1);
   await filter.click();
   await expect.poll(()=>filter.getAttribute('aria-label')).toBe('Thread filter: waiting');
-  const empty=page.locator('.sidebar-empty');
-  await expect.poll(()=>empty.count()).toBe(1);
-  expect(await empty.getAttribute('role')).toBe('status');
-  expect(await empty.getAttribute('aria-atomic')).toBe('true');
+  expect(await status.innerText()).toBe('No threads waiting for your input.');
+  await expect.poll(()=>page.locator('.sidebar-empty').count()).toBe(1);
+  await filter.click(); // clear back to 'all': the return is announced too
+  await expect.poll(()=>filter.getAttribute('aria-label')).toBe('Thread filter: all');
+  expect(await status.innerText()).toBe('Showing all threads');
  }finally{await page.close();}
 });
 
@@ -59,5 +61,6 @@ it('wires the collapse control to the thread nav and announces the empty state',
   expect(await close.getAttribute('aria-expanded')).toBe('true');
   expect(await close.getAttribute('aria-controls')).toBe('threads-nav');
   await expect.poll(()=>page.locator('nav#threads-nav').count()).toBe(1);
+  expect(await page.locator('.sr-only[role="status"]').innerText()).toBe('Showing all threads');
  }finally{await page.close();}
 });
