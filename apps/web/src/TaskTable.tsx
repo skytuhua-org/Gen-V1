@@ -4,11 +4,12 @@ import { tableChangesData } from '../../../packages/ui-catalog/workflow';
 import { ArtifactInline, ArtifactTitle, inputPath, statePath } from './task-context';
 import { animateTask, reducedMotion } from './task-motion';
 import { useTableControls } from './TaskTableControls';
-import { tableCellText as cellText, tableIdentity, tableObject as object, tableText as text } from './task-table-model';
+import { tableCellText as cellText, tableIdentity, tableObject as object, tableRowWindow, tableText as text } from './task-table-model';
 import './task-table.css';
 import {useTableOverflow} from './use-table-overflow';
 
 const array = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
+const TABLE_ROW_PAGE = 200;
 
 function visibleBounds(container: HTMLElement, inline: boolean) {
   const bounds = container.getBoundingClientRect(), chat = inline ? container.closest('.conversation-scroll')?.getBoundingClientRect() : null;
@@ -32,9 +33,11 @@ export function Table({ element: { props }, bindings }: ComponentRenderProps) {
   const controls = useTableControls(sourceColumns, rows, scroll, takeOver, Boolean(props.stateKey));
   const columns = controls.columns;
   const identity = useMemo(() => tableIdentity(rows, String(props.rowKey ?? 'id')), [rows, props.rowKey]);
-  // Selection and scroll-following state do not change source cell content.
-  // Reuse those nodes while retaining live checkbox and active-row controls.
-  const renderedRows = useMemo(() => controls.view.map(({ item, index }) => {
+  // A large bound table must never mount every matched row: render a paged
+  // window and reveal the remainder on demand.
+  const [shown, setShown] = useState(TABLE_ROW_PAGE);
+  const window = useMemo(() => tableRowWindow(controls.view, shown), [controls.view, shown]);
+  const renderedRows = useMemo(() => window.rows.map(({ item, index }) => {
     const id = identity.ids[index]!, change = rowChanges.get(id);
     const cells = columns.map(column => {
       const key = String(column.key), cell = change?.cells?.find(cell => cell.key === key), status = cell?.status ?? change?.status;
@@ -47,7 +50,7 @@ export function Table({ element: { props }, bindings }: ComponentRenderProps) {
       </td>;
     });
     return { id, change, cells, index };
-  }), [controls.view, columns, rowChanges, identity]);
+  }), [window.rows, columns, rowChanges, identity]);
   const selectionPath = bindings?.value ?? statePath(props.stateKey);
   const selected = array(store.get(selectionPath));
   const previousIdentity = useRef(identity);
@@ -63,7 +66,7 @@ export function Table({ element: { props }, bindings }: ComponentRenderProps) {
   const columnAnimations = useRef<Animation[]>([]), sweepAnimation = useRef<Animation | undefined>(undefined);
   const columnKey = JSON.stringify(columns.map(column => column.key));
   const rowOrderKey = identity.rowOrderKey;
-  const viewOrderKey = JSON.stringify(controls.view.map(row => identity.ids[row.index]));
+  const viewOrderKey = JSON.stringify(window.rows.map(row => identity.ids[row.index]));
   const changeCounts = useMemo(() => {
     const counts = { added: 0, updated: 0, removed: 0 };
     for (const [id, change] of rowChanges) {
@@ -202,7 +205,9 @@ export function Table({ element: { props }, bindings }: ComponentRenderProps) {
             {Boolean(props.stateKey) && <td className="task-table-select"><input aria-label={`Select row ${index + 1}`} type="checkbox" checked={selected.includes(id)} onChange={event => store.set(selectionPath, event.target.checked ? [...selected, id] : selected.filter(key => key !== id))} /></td>}
             {cells}
           </tr>;
-        })}</tbody>
+        })}
+          {window.remaining > 0 && <tr className="task-table-more-row"><td colSpan={columns.length + (props.stateKey ? 1 : 0)}><button type="button" className="task-table-more" onClick={() => setShown(value => value + TABLE_ROW_PAGE)}>Show {Math.min(TABLE_ROW_PAGE, window.remaining)} more of {window.remaining} rows</button></td></tr>}
+        </tbody>
       </table>
       {controls.decorations}
       <i ref={sweep} className="task-table-sweep" aria-hidden="true" hidden={!activeRow} />
