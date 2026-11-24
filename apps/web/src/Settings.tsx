@@ -23,6 +23,7 @@ import { IntegrationSettings } from './IntegrationSettings';
 import { UpdateControl } from './UpdateControl';
 import { AppearanceSettings, NotificationSettings, APPEARANCE_FIELDS } from './AppearanceSettings';
 import { PairedDevicesPanel } from './PairedDevicesPanel';
+import { StartupSettings } from './StartupSettings';
 import { version } from '../../../package.json';
 import {settingsDataFromSnapshot, type SettingsData} from './settings-data';
 import {snapshotDraftReferences, type DraftReferenceSource} from './draft-transfer';
@@ -59,6 +60,7 @@ const preferenceRows: Record<string, { key: keyof UiPreferences; options?: reado
 };
 const row = (id: string, title: string, section: string, terms = ''): SettingsInventoryRow => ({ id, title, section, terms });
 export const SETTINGS_ROWS: SettingsInventoryRow[] = [
+  row('start-at-sign-in', 'Start at sign-in', 'general', 'windows startup tray login boot launch automatic hidden signin'),
   row('time-format', 'Time format', 'general'), row('archive-confirmation', 'Archive confirmation', 'general'), row('unpin-confirmation', 'Unpin confirmation', 'general'),
   row('harness-personalization', 'Appearance', 'appearance', 'theme dark light system accent custom contrast density compact comfortable touch fonts interface prompt code size radius motion speed reduced preview reset'),
   row('chat-width', 'Chat width', 'appearance', '680 760 full comfortable wide message composer'), row('word-wrap', 'Code line wrap', 'appearance'), row('harness-project-colors', 'Project colors', 'appearance', 'palette custom hex'),
@@ -155,7 +157,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const heading = searching ? `Search results (${rows.length})` : SETTINGS_SECTIONS.find(([id]) => id === section)?.[1];
   const HeadingIcon = searching ? Search : SECTION_ICONS[section] ?? Settings2;
   const showAppearance = !searching && section === 'appearance';
-  const customRows = new Set(['harness-personalization', 'chat-width', 'word-wrap', 'harness-project-colors', 'harness-notification-controls', 'harness-accounts', 'harness-skills', 'harness-integrations', 'harness-keyboard-reference', 'harness-paired-devices', 'browser-start-page', 'app-version', ...APPEARANCE_FIELDS.map(field => field.id), ...SUBSCRIPTION_CONNECTIONS.map(connection => `provider-${connection.id}`)]);
+  const customRows = new Set(['harness-personalization', 'chat-width', 'word-wrap', 'harness-project-colors', 'harness-notification-controls', 'harness-accounts', 'harness-skills', 'harness-integrations', 'harness-keyboard-reference', 'harness-paired-devices', 'browser-start-page', 'app-version', 'start-at-sign-in', ...APPEARANCE_FIELDS.map(field => field.id), ...SUBSCRIPTION_CONNECTIONS.map(connection => `provider-${connection.id}`)]);
   const chooseSection = (id: string) => { if(id==='providers')setConnectionsOpened(true);setQuery(''); setSection(id); };
   const revealTarget = (item: SupportedSettingRow) => { if(item.targetId.startsWith('provider-'))setConnectionProvider(item.targetId.slice('provider-'.length));chooseSection(item.section); setPendingTarget(item.targetId); };
   const details = (item: SettingsInventoryRow): { description: string; control: ReactNode } => {
@@ -197,6 +199,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
         {rows.length === 0 && <p className="settings-empty">No matching settings.</p>}
       </> : <>
       {showAppearance && <div data-setting-id="harness-personalization"><AppearanceSettings preferences={preferences} theme={data.settings.theme} projects={data.projects} busy={busy} save={(patch, theme) => persist({ preferences: patch, ...(theme ? { theme } : {}) })}/></div>}
+      {matches('start-at-sign-in') && <StartupSettings/>}
       {rows.filter(item => !customRows.has(item.id)).map(item => { const { description, control } = details(item); return <section key={item.id} className="settings-row" data-setting-id={item.id==='harness-runtime'?'harness-runtime-summary':item.id}><div className="settings-row-copy"><h2>{item.title}</h2>{description&&<p>{description}</p>}</div><div className="settings-row-control">{control}</div></section>; })}
       {matches('harness-keyboard-reference') && <div data-setting-id="harness-keyboard-reference"><KeyboardReference keybindings={preferences.keybindings}/></div>}
       {matches('harness-notification-controls') && <div data-setting-id="harness-notification-controls"><NotificationSettings preferences={preferences} busy={busy} update={update} desktop={Boolean(desktop)}/></div>}

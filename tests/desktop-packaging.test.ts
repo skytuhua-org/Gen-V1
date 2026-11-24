@@ -157,3 +157,12 @@ it.skipIf(process.platform==='win32')('runs JavaScript build tasks with the same
   rmSync(root,{recursive:true,force:true});
  }
 });
+
+it('wires the NSIS uninstall include that deletes the sign-in Run entry',()=>{
+ expect(desktopBuilderConfig('C:/build').nsis.include).toBe('build/nsis-login-cleanup.nsh');
+ const source=readFileSync('build/nsis-login-cleanup.nsh','utf8');
+ expect(source).toContain('customUnInstall');
+ expect(source).toContain('HKCU');
+ expect(source).toContain('Software\\Microsoft\\Windows\\CurrentVersion\\Run');
+ expect(source).toContain('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run');
+});
