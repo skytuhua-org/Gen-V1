@@ -80,7 +80,7 @@ describe('widget checkpoint revision binding (#1980)',()=>{
  }finally{await page.close();}});
  it('does not publish prop updates whose saved state fails the schema',async()=>{const page=await initPage(browser,script);try{
    await page.evaluate(()=>window.pushState({unexpected:true},2));
-   await page.waitForTimeout(300);
+   await expect.poll(()=>page.locator('.widget-mount-error').textContent()).toContain('schema');
    const inits=await page.evaluate(()=>window.posts?.filter((item)=>item.type==='init').map((item)=>item.state));
    // The last state published to the mounted widget must remain the valid one.
    expect(inits?.at(-1)).toEqual({count:0});
