@@ -23,6 +23,7 @@ export interface AgentWorkChild {
   /** Resolves with the adapter's dispatch acknowledgement (entry), rejects on ambiguity or failure. */
   send(input: {inputId: string; kind: string; text: string}): Promise<void>;
   cancel(): Promise<void>;
+  /** Resolves once the adapter has released its native resources. */
   dispose(): Promise<void>;
 }
 
@@ -51,6 +52,7 @@ export interface AgentWorkHooks {
 }
 
 interface LiveWork { child: AgentWorkChild; runId: string; delivery: Promise<void> }
+interface ClosingWork { child: AgentWorkChild; cancel: boolean; result: Promise<void>; failed: boolean }
 interface BudgetLedger { reservedTokens: number; reservedMs: number; spentTokens: number; spentMs: number; admitted: number; completed: number; failed: number; cancelled: number; interrupted: number }
 interface AdmissionRecord { workId: string; commandId: string; admission: AgentWorkAdmissionV1; bindingDigest: string; grants: ResourceGrant[]; proofMeta: Record<string, unknown>; createdAt: string }
 interface WorkArtifact { id: string; workId: string; kind: 'raw-output' | 'late-output'; value: string; createdAt: string }
@@ -87,11 +89,15 @@ const EMPTY_LEDGER: BudgetLedger = {reservedTokens: 0, reservedMs: 0, spentToken
 export class AgentWorkCoordinator {
   readonly inbox: AgentInbox;
   private readonly live = new Map<string, LiveWork>();
+  private readonly starting = new Map<string, Promise<AgentWorkChild>>();
+  private readonly closing = new Map<string, ClosingWork>();
+  private closed = false;
   constructor(private readonly hooks: AgentWorkHooks) {
     this.inbox = new AgentInbox({store: hooks.store});
   }
 
   private enabled(): boolean { return this.hooks.isEnabled('agents.workV1'); }
+  private assertOpen(): void { if (this.closed) throw new HarnessError('RUNTIME_DISPOSED', 'The agent work coordinator has closed.'); }
 
   private parent(ctx: RunContext): Thread {
     const thread = this.hooks.store.get<Thread>('thread', ctx.threadId);
@@ -120,7 +126,8 @@ export class AgentWorkCoordinator {
   private stored(workId: string): AgentWorkV1 | null { return this.hooks.store.get<AgentWorkV1>(WORK_KIND, workId); }
 
   private worksLive(threadId: string): AgentWorkV1[] {
-    return this.hooks.store.all<AgentWorkV1>(WORK_KIND).filter(work => work.parentOwner.threadId === threadId && !AGENT_WORK_TERMINAL_STATES.has(work.state));
+    return this.hooks.store.all<AgentWorkV1>(WORK_KIND).filter(work => work.parentOwner.threadId === threadId &&
+      (!AGENT_WORK_TERMINAL_STATES.has(work.state) || this.starting.has(work.workId) || this.closing.has(work.workId)));
   }
 
   /** Grants the child may actually hold right now: named parent resources
@@ -144,6 +151,7 @@ export class AgentWorkCoordinator {
   }
 
   async admit(ctx: RunContext, raw: unknown, signal: AbortSignal): Promise<AgentWorkV1> {
+    this.assertOpen();
     if (!this.enabled()) throw new HarnessError('CAPABILITY_DENIED', 'agents.workV1 is disabled');
     this.hooks.assertRun(ctx);
     const parent = this.parent(ctx);
@@ -164,6 +172,7 @@ export class AgentWorkCoordinator {
     // computed against the current parent so revoked or re-scoped rights
     // never reach the child. Role proofs are bound into the admission.
     const {grants: effectiveGrants, proofMeta} = await this.admittedAuthority(ctx, spec, 'CAPABILITY_DENIED');
+    this.assertOpen();
     this.hooks.assertRun(ctx);
 
     // Global budget reservation; completed, failed and cancelled work all
@@ -219,27 +228,46 @@ export class AgentWorkCoordinator {
   }
 
   private async dispatch(work: AgentWorkV1, spec: AgentWorkAdmissionV1, grants: ResourceGrant[]): Promise<AgentWorkV1> {
+    const {workId} = work;
+    const existing = this.starting.get(workId);
+    if (existing) { await existing; return this.stored(workId) ?? work; }
+    let child: AgentWorkChild | undefined;
+    let live: LiveWork | undefined;
     try {
-      const child = await (this.hooks.runtimeFactory?.(work, {prompt: spec.prompt, grants, allowSpawn: false})
-        ?? Promise.resolve<AgentWorkChild>({supportsLiveSteer: false, send: async () => {}, cancel: async () => {}, dispose: async () => {}}));
+      const opening = Promise.resolve().then(() => {
+        this.assertOpen();
+        return this.hooks.runtimeFactory?.(work, {prompt: spec.prompt, grants, allowSpawn: false})
+          ?? {supportsLiveSteer: false, send: async () => {}, cancel: async () => {}, dispose: async () => {}};
+      });
+      this.starting.set(workId, opening);
+      try { child = await opening; } finally { this.starting.delete(workId); }
       // A stop/revocation landing while the runtime started cancels the work;
       // a late startup must never overwrite that terminal state or send START.
-      const current = this.stored(work.workId);
-      if (!current || current.state !== 'QUEUED') { void child.dispose(); return current ?? work; }
+      const current = this.stored(workId);
+      if (this.closed || !current || current.state !== 'QUEUED' || current.childOwner.epoch !== work.childOwner.epoch) {
+        this.closeChild(workId, child, false);
+        return current ?? work;
+      }
       const runId = randomUUID();
-      this.live.set(work.workId, {child, runId, delivery: Promise.resolve()});
+      live = {child, runId, delivery: Promise.resolve()};
+      this.live.set(workId, live);
       const running: AgentWorkV1 = {...current, state: 'RUNNING', childOwner: {...current.childOwner, runId}, updatedAt: new Date().toISOString(), revision: current.revision + 1};
       this.hooks.store.internal('agentWork.running', current.parentOwner.threadId, () => {
         this.hooks.store.put(WORK_KIND, work.workId, current.parentOwner.threadId, running);
         const thread = this.hooks.store.get<Thread>('thread', current.childOwner.threadId);
         if (thread) this.hooks.store.put('thread', thread.id, thread.id, {...thread, runId, status: 'working'});
       });
+      if (this.live.get(workId) !== live) return this.stored(workId) ?? running;
       try { await child.send({inputId: `start:${work.workId}`, kind: 'START', text: spec.prompt}); }
-      catch (error) { this.finish(work.workId, 'FAILED', {failureReason: 'RUNTIME_FAILURE'}); throw new HarnessError('RUNTIME_FAILURE', 'Child dispatch failed', error); }
+      catch (error) { throw new HarnessError('RUNTIME_FAILURE', 'Child dispatch failed', error); }
       return this.stored(work.workId)!;
     } catch (error) {
-      if (error instanceof HarnessError) throw error;
-      this.finish(work.workId, 'FAILED', {failureReason: 'RUNTIME_FAILURE'});
+      const ownsLive = live !== undefined && this.live.get(workId) === live;
+      if (ownsLive) this.releaseLive(workId, true);
+      else if (child && !live) this.closeChild(workId, child, false);
+      const current = this.stored(workId);
+      if (current?.childOwner.epoch === work.childOwner.epoch && (ownsLive || (!live && current.state === 'QUEUED')))
+        this.finish(workId, 'FAILED', {failureReason: 'RUNTIME_FAILURE'});
       throw error;
     }
   }
@@ -264,7 +292,22 @@ export class AgentWorkCoordinator {
     const live = this.live.get(workId);
     if (!live) return;
     this.live.delete(workId);
-    void (cancel ? live.child.cancel() : Promise.resolve()).finally(() => void live.child.dispose());
+    this.closeChild(workId, live.child, cancel);
+  }
+
+  private closeChild(workId: string, child: AgentWorkChild, cancel: boolean): void {
+    // Claim cleanup before calling into the adapter. Only successful disposal
+    // releases its capacity slot, even if the durable work is already terminal.
+    const result = Promise.resolve().then(async () => {
+      const errors: unknown[] = [];
+      try { if (cancel) await child.cancel(); } catch (error) { errors.push(error); }
+      try { await child.dispose(); } catch (error) {
+        throw new AggregateError([...errors, error], 'Agent work adapter cleanup could not be confirmed.');
+      }
+    });
+    const closing: ClosingWork = {child, cancel, result, failed: false};
+    this.closing.set(workId, closing);
+    void result.then(() => { this.closing.delete(workId); }, () => { closing.failed = true; });
   }
 
   private artifact(workId: string, kind: WorkArtifact['kind'], value: unknown): WorkArtifact {
@@ -411,34 +454,53 @@ export class AgentWorkCoordinator {
       kind: args.kind, text: args.text, dedupeKey: args.dedupeKey, sourceRefs: args.sourceRefs,
     }, {liveSteer: live?.child.supportsLiveSteer === true && work.state === 'RUNNING'});
     if (record.delivery !== 'ACCEPTED') return record;
-    if (!live || AGENT_WORK_TERMINAL_STATES.has(work.state)) return this.inbox.markUnknown(record.inputId);
+    const target = record.targetOwner;
+    if (!live || AGENT_WORK_TERMINAL_STATES.has(work.state) || target.runId !== live.runId ||
+        target.epoch !== work.childOwner.epoch || target.threadId !== work.childOwner.threadId)
+      return this.inbox.markUnknown(record.inputId);
     live.delivery = live.delivery.then(async () => {
       const current = this.inbox.inspect(record.inputId);
       if (!current || current.delivery !== 'ACCEPTED') return;
+      if (this.live.get(work.workId) !== live) {
+        this.inbox.markUnknown(record.inputId);
+        return;
+      }
       // Steering without a declared and demonstrated live-steer adapter stays
       // queued after current; it is never relabelled or forced through send().
       if (current.kind === 'STEER' && !live.child.supportsLiveSteer) return;
       const text = this.inbox.text(record.inputId) ?? '';
-      try { await live.child.send({inputId: record.inputId, kind: record.kind, text}); this.inbox.markEntered(record.inputId); }
-      catch { this.inbox.markUnknown(record.inputId); }
+      try {
+        await live.child.send({inputId: record.inputId, kind: record.kind, text});
+        if (this.live.get(work.workId) === live) this.inbox.markEntered(record.inputId);
+        else this.inbox.markUnknown(record.inputId);
+      } catch { this.inbox.markUnknown(record.inputId); }
     }).catch(() => {});
     return record;
+  }
+
+  private async awaitChildCleanup(workId: string): Promise<void> {
+    const opening = this.starting.get(workId);
+    if (opening) await opening.catch(() => {});
+    await this.closing.get(workId)?.result;
   }
 
   /** Parent stop/archive: revoke dispatch first, then cancel the child and
    * confirm teardown. Late results become historical artifacts only. */
   async revokeForParent(parentThreadId: string): Promise<void> {
-    for (const work of this.hooks.store.all<AgentWorkV1>(WORK_KIND).filter(item => item.parentOwner.threadId === parentThreadId)) {
+    const works = this.hooks.store.all<AgentWorkV1>(WORK_KIND).filter(item => item.parentOwner.threadId === parentThreadId);
+    for (const work of works) {
       if (AGENT_WORK_TERMINAL_STATES.has(work.state)) continue;
       this.releaseLive(work.workId, true);
       this.finish(work.workId, 'CANCELLED', {failureReason: 'PERMISSION_REVOKED'});
     }
+    await Promise.all(works.map(work => this.awaitChildCleanup(work.workId)));
   }
 
   async stop(ctx: RunContext, workId: string): Promise<AgentWorkV1> {
     const work = this.stored(workId);
     if (!work || work.parentOwner.threadId !== ctx.threadId) throw new HarnessError('INVALID_AGENT_WORK', `Unknown work ${workId}`);
     if (!AGENT_WORK_TERMINAL_STATES.has(work.state)) { this.releaseLive(workId, true); this.finish(workId, 'CANCELLED', {}); }
+    await this.awaitChildCleanup(workId);
     return this.stored(workId)!;
   }
 
@@ -446,12 +508,16 @@ export class AgentWorkCoordinator {
    * after the durable admission's account, project, schema and grant bindings
    * all re-verify against the current parent. */
   async resume(ctx: RunContext, workId: string): Promise<AgentWorkV1> {
+    this.assertOpen();
     if (!this.enabled()) throw new HarnessError('CAPABILITY_DENIED', 'agents.workV1 is disabled');
     this.hooks.assertRun(ctx);
     const work = this.stored(workId);
     if (!work || work.parentOwner.threadId !== ctx.threadId) throw new HarnessError('INVALID_AGENT_WORK', `Unknown work ${workId}`);
     if (work.state === 'COMPLETED_REPORTED' || work.state === 'VERIFIED') throw new HarnessError('INVALID_AGENT_WORK', `Work ${workId} already reported`);
     if (!AGENT_WORK_TERMINAL_STATES.has(work.state)) throw new HarnessError('INVALID_AGENT_WORK', `Work ${workId} is still ${work.state}`);
+    if (this.starting.has(workId)) throw new HarnessError('INVALID_AGENT_WORK', `Work ${workId} still has an adapter starting.`);
+    await this.closing.get(workId)?.result;
+    this.assertOpen();
     const parent = this.parent(ctx);
     const admission = this.hooks.store.get<AdmissionRecord>(ADMISSION_KIND, workId);
     if (!admission) throw new HarnessError('STALE_AGENT_AUTHORITY', `No durable admission for ${workId}`);
@@ -467,6 +533,7 @@ export class AgentWorkCoordinator {
     const {grants: effectiveGrants, proofMeta} = await this.admittedAuthority(ctx, {role: work.role, grantSubset: work.grantSubset}, 'STALE_AGENT_AUTHORITY');
     // A parent stop during the awaited authority check must not let this
     // pending resume start a child on the revoked run.
+    this.assertOpen();
     this.hooks.assertRun(ctx);
 
     const ledger = this.ledger();
@@ -482,7 +549,7 @@ export class AgentWorkCoordinator {
       // Concurrent resumes cannot both reserve: the state re-check and the
       // reservation commit inside one transaction.
       const current = this.stored(workId);
-      if (!current || !AGENT_WORK_TERMINAL_STATES.has(current.state))
+      if (!current || current.revision !== work.revision || !AGENT_WORK_TERMINAL_STATES.has(current.state))
         throw new HarnessError('INVALID_AGENT_WORK', `Work ${workId} is already ${current?.state ?? 'missing'}`);
       this.hooks.store.put(WORK_KIND, workId, ctx.threadId, resumed);
       this.hooks.store.put(ADMISSION_KIND, workId, ctx.threadId, {...admission, grants: effectiveGrants, proofMeta});
@@ -534,6 +601,12 @@ export class AgentWorkCoordinator {
   async cancel(ctx: RunContext): Promise<void> { await this.revokeForParent(ctx.threadId); }
 
   async dispose(): Promise<void> {
+    this.closed = true;
     for (const workId of [...this.live.keys()]) this.releaseLive(workId, false);
+    for (const [workId, closing] of this.closing) if (closing.failed) this.closeChild(workId, closing.child, closing.cancel);
+    await Promise.allSettled([...this.starting.values()]);
+    const results = await Promise.allSettled([...this.closing.values()].map(closing => closing.result));
+    const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (failures.length) throw new AggregateError(failures, 'Could not confirm cleanup of every agent work adapter.');
   }
 }

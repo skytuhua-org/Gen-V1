@@ -327,6 +327,118 @@ describe('stop, revocation, resume and restart', () => {
 });
 
 describe('live-steer semantics, revocation revalidation and dispatch race', () => {
+  it('fences and tears down the live child when initial dispatch rejects', async () => {
+    const child = new FakeChild(true, () => { throw new Error('synthetic START failure'); });
+    const f = fixture({runtimeFactory: () => child});
+    const spec = f.admission();
+    await expect(f.coordinator.admit(f.ctx, spec, new AbortController().signal)).rejects.toMatchObject({code: 'RUNTIME_FAILURE'});
+    expect(f.coordinator.inspect(spec.workId)).toMatchObject({state: 'FAILED', failureReason: 'RUNTIME_FAILURE'});
+    expect(f.coordinator.supportsLiveSteer(spec.workId)).toBe(false);
+    await f.coordinator.stop(f.ctx, spec.workId);
+    expect(child.cancelled).toBe(true);
+    expect(child.disposed).toBe(true);
+  });
+
+  it('surfaces unconfirmed adapter cleanup and retains the child for shutdown retry', async () => {
+    const child = new FakeChild(true);
+    const cancelError = new Error('synthetic cancel failure');
+    const disposeError = new Error('synthetic dispose failure');
+    const cancel = vi.spyOn(child, 'cancel').mockRejectedValueOnce(cancelError);
+    const dispose = vi.spyOn(child, 'dispose').mockRejectedValueOnce(disposeError);
+    const f = fixture({runtimeFactory: vi.fn(() => new FakeChild(false)).mockReturnValueOnce(child)});
+    const signal = new AbortController().signal;
+    const work = await f.coordinator.admit(f.ctx, f.admission(), signal);
+    await expect(f.coordinator.stop(f.ctx, work.workId)).rejects.toMatchObject({errors: [cancelError, disposeError]});
+    expect(f.coordinator.inspect(work.workId)).toMatchObject({state: 'CANCELLED'});
+    expect(f.coordinator.supportsLiveSteer(work.workId)).toBe(false);
+    await expect(f.coordinator.resume(f.ctx, work.workId)).rejects.toMatchObject({errors: [cancelError, disposeError]});
+    await f.coordinator.admit(f.ctx, f.admission(), signal);
+    await f.coordinator.admit(f.ctx, f.admission(), signal);
+    await expect(f.coordinator.admit(f.ctx, f.admission(), signal)).rejects.toMatchObject({code: 'AGENT_LIMIT'});
+    await f.coordinator.dispose();
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(child.disposed).toBe(true);
+  });
+
+  it('keeps a resumed epoch live when the previous START acknowledgement rejects late', async () => {
+    let rejectStart!: (error: Error) => void;
+    const initialStart = new Promise<void>((_resolve, reject) => { rejectStart = reject; });
+    const first = new FakeChild(true, () => initialStart);
+    const next = new FakeChild(true);
+    const f = fixture({runtimeFactory: vi.fn(() => next).mockReturnValueOnce(first)});
+    const spec = f.admission();
+    const pending = f.coordinator.admit(f.ctx, spec, new AbortController().signal);
+    const rejected = expect(pending).rejects.toMatchObject({code: 'RUNTIME_FAILURE'});
+    await vi.waitFor(() => expect(first.sent).toHaveLength(1));
+    await f.coordinator.stop(f.ctx, spec.workId);
+    const resumed = await f.coordinator.resume(f.ctx, spec.workId);
+    rejectStart(new Error('synthetic late START failure'));
+    await rejected;
+    expect(f.coordinator.inspect(spec.workId)).toEqual(resumed);
+    expect(next.cancelled).toBe(false);
+    expect(next.disposed).toBe(false);
+  });
+
+  it.each(['stop', 'revoke'] as const)('does not acknowledge %s before a late child is closed', async action => {
+    let resolveFactory!: (child: AgentWorkChild) => void;
+    const factory = vi.fn(() => new Promise<AgentWorkChild>(resolve => { resolveFactory = resolve; }));
+    const f = fixture({runtimeFactory: factory}), spec = f.admission();
+    const admission = f.coordinator.admit(f.ctx, spec, new AbortController().signal);
+    await vi.waitFor(() => expect(factory).toHaveBeenCalledOnce());
+    const child = new FakeChild(false), disposeError = Error('synthetic late adapter disposal failure');
+    vi.spyOn(child, 'dispose').mockRejectedValueOnce(disposeError);
+    const stopping = action === 'stop' ? f.coordinator.stop(f.ctx, spec.workId) : f.coordinator.revokeForParent(f.ctx.threadId);
+    const outcome = stopping.catch(error => error);
+    resolveFactory(child);
+    await admission;
+    expect(child.sent).toHaveLength(0);
+    expect(await outcome).toMatchObject({errors: [disposeError]});
+    await f.coordinator.dispose();
+    expect(child.disposed).toBe(true);
+  });
+
+  it.each([false,true])('does not dispatch queued ordinary input after resume (resubmitted=%s)', async resubmit => {
+    let acknowledge!: () => void;
+    const wait = new Promise<void>(resolve => { acknowledge = resolve; });
+    const first = new FakeChild(true, input => input.inputId === 'queued-one' ? wait : undefined);
+    const next = new FakeChild(true);
+    const f = fixture({runtimeFactory: vi.fn(() => next).mockReturnValueOnce(first)});
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    const send = (inputId: string) => f.coordinator.sendInput(f.ctx, {inputId, workId: work.workId, kind: 'FOLLOW_UP', text: 'continue', dedupeKey: inputId});
+    try {
+      send('queued-one');
+      send('queued-two');
+      await vi.waitFor(() => expect(first.sent.map(input => input.inputId)).toContain('queued-one'));
+      await f.coordinator.stop(f.ctx, work.workId);
+      await f.coordinator.resume(f.ctx, work.workId);
+      if (resubmit) expect(send('queued-two').delivery).toBe('UNKNOWN');
+    } finally { acknowledge(); }
+    await vi.waitFor(() => expect(f.coordinator.inbox.inspect('queued-two')?.delivery).not.toBe('ACCEPTED'));
+    expect(f.coordinator.inbox.inspect('queued-two')).toMatchObject({delivery: 'UNKNOWN'});
+    expect(first.sent.map(input => input.inputId)).not.toContain('queued-two');
+    expect(next.sent.map(input => input.inputId)).not.toContain('queued-two');
+  });
+
+  it('drains a child that arrives after coordinator shutdown without sending START', async () => {
+    let resolveFactory!: (child: AgentWorkChild) => void;
+    const factory = vi.fn(() => new Promise<AgentWorkChild>(resolve => { resolveFactory = resolve; }));
+    const f = fixture({runtimeFactory: factory});
+    const admission = f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    await vi.waitFor(() => expect(factory).toHaveBeenCalledOnce());
+    const child = new FakeChild(false);
+    let closed = false;
+    const closing = f.coordinator.dispose().then(() => { closed = true; });
+    await Promise.resolve();
+    const waitedForOwner = !closed;
+    resolveFactory(child);
+    await admission;
+    await closing;
+    expect(waitedForOwner).toBe(true);
+    expect(child.sent).toHaveLength(0);
+    expect(child.disposed).toBe(true);
+  });
+
   it('keeps steering queued-after-current when the adapter cannot live-steer', async () => {
     const f = fixture({steer: false});
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
@@ -358,10 +470,11 @@ describe('live-steer semantics, revocation revalidation and dispatch race', () =
     const spec = f.admission();
     const pending = f.coordinator.admit(f.ctx, spec, new AbortController().signal);
     await vi.waitFor(() => expect(f.coordinator.inspect(spec.workId)).toBeTruthy());
-    await f.coordinator.revokeForParent(f.ctx.threadId);
+    const revoking = f.coordinator.revokeForParent(f.ctx.threadId);
     const child = new FakeChild(false);
     resolveFactory(child);
     const work = await pending;
+    await revoking;
     expect(work.state).toBe('CANCELLED');
     expect(child.disposed).toBe(true);
     expect(child.sent).toHaveLength(0);
