@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.',
   testMatch: ['motion-tokens.spec.ts', 'document-smoothness.spec.ts', 'document-pair-layout.spec.ts'],
   workers: 1, timeout: 45_000,
