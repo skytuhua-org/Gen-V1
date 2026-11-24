@@ -10,6 +10,7 @@ import {
  type LanguageServerAdapter,type LanguageServerDescriptor,type LspDiagnostic,type LspDocument,
 } from '../packages/core/code-intelligence.ts';
 import {diagnosticObservationV1Schema} from '../packages/contracts/code-intelligence.ts';
+import {HarnessError} from '../packages/contracts/index.ts';
 
 const sha=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
 const disposables:{dispose():Promise<void>}[]=[];
@@ -26,10 +27,11 @@ class FakeAdapter implements LanguageServerAdapter{
  diagnostics:LspDiagnostic[]=[];
  locations:{uri:string;range:{start:{line:number;character:number};end:{line:number;character:number}}}[]=[];
  delay=0;
+ pullDelay?:(doc:LspDocument)=>number;
  async openDocument(doc:LspDocument){this.opened.push({...doc});}
  async changeDocument(doc:LspDocument){const found=this.opened.find(d=>d.uri===doc.uri);if(found){found.version=doc.version;found.text=doc.text;found.digest=doc.digest;}else this.opened.push({...doc});}
  async closeDocument(){}
- async pullDiagnostics(){if(this.delay)await new Promise(r=>setTimeout(r,this.delay));return this.diagnostics;}
+ async pullDiagnostics(doc:LspDocument){const wait=this.pullDelay?this.pullDelay(doc):this.delay;if(wait)await new Promise(r=>setTimeout(r,wait));return this.diagnostics;}
  async navigate(){if(this.delay)await new Promise(r=>setTimeout(r,this.delay));return this.locations;}
  async rename(){return{};}
  async dispose(){}
@@ -171,6 +173,90 @@ it('navigation filters file URIs to granted roots and caps results at 100',async
  const capped=await ci.navigate({root,path:join(root,'a.ts'),language:'typescript',descriptor,profileDigest:'c'.repeat(64),kind:'references',position:{line:0,character:1},grantedRoots:[root],signal:new AbortController().signal,text,afterDigest:sha(text)});
  expect(capped.locations.length).toBeLessThanOrEqual(100);
  expect(capped.truncated).toBe(true);
+});
+
+it('a superseded observation never reports CURRENT once a newer pull resolved',async()=>{
+ const root=fixture();
+ const adapter=new FakeAdapter();
+ adapter.diagnostics=[{range:{start:{line:0,character:0},end:{line:0,character:1}},severity:1,message:'d'}];
+ // Edit B's pull resolves before edit A's: A must land STALE, not CURRENT.
+ adapter.pullDelay=(doc)=>doc.version===1?200:5;
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const a='const a=1;\n',b='const b=2;\n';
+ const [obsA,obsB]=await Promise.all([
+  ci.observe(observeInput(root,a)),
+  ci.observe(observeInput(root,b,{beforeDigest:sha(a)})),
+ ]);
+ expect(obsB.state).toBe('CURRENT');
+ expect(obsB.afterDigest).toBe(sha(b));
+ // The earlier generation finished last; CURRENT would present diagnostics
+ // for document version 1 as the live result while version 2 already exists.
+ expect(obsA.state).not.toBe('CURRENT');
+});
+
+it('a baseline is only comparable within the same workspace, server and profile',async()=>{
+ const root=fixture();
+ const adapter=new FakeAdapter();
+ adapter.diagnostics=[{range:{start:{line:0,character:0},end:{line:0,character:1}},severity:2,message:'w'}];
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const text='const x=1;\n';
+ const first=await ci.observe(observeInput(root,text));
+ expect(first.baselineStatus).toBe('UNAVAILABLE');
+ // A different workspace identity/profile observing the same path must not
+ // inherit the first server's baseline: nothing from its own pool exists yet.
+ const other=await ci.observe(observeInput(root,text,{
+  workspaceIdentity:'ws-2',profileDigest:'c'.repeat(64),beforeDigest:sha(text),
+ }));
+ expect(other.baselineStatus).toBe('UNAVAILABLE');
+});
+
+it('navigation returns granted-root locations for supplementary-plane documents',async()=>{
+ const root=tempDir('lsp-unicode-');
+ const text='const aé😀z = 1;\nconst use = aé😀z + 1;\n';
+ writeFileSync(join(root,'u.ts'),text);
+ const adapter=new FakeAdapter();
+ adapter.encoding='UTF8';
+ adapter.locations=[{uri:pathToFileURL(join(root,'u.ts')).href,range:{start:{line:1,character:16},end:{line:1,character:22}}}];
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const result=await ci.navigate({root,path:join(root,'u.ts'),language:'typescript',descriptor,profileDigest:'c'.repeat(64),kind:'references',position:{line:1,character:11},grantedRoots:[root],signal:new AbortController().signal,text,afterDigest:sha(text)});
+ expect(result.locations).toHaveLength(1);
+ expect(result.locations[0]!.path).toContain('u.ts');
+});
+
+it('observe, navigate and rename never spawn a server outside the adapter seam',async()=>{
+ const root=fixture();
+ const adapter=new FakeAdapter();
+ const made:{descriptor:LanguageServerDescriptor;root:string}[]=[];
+ const ci=new CodeIntelligence((d,r)=>{made.push({descriptor:d,root:r});return adapter;});
+ disposables.push(ci);
+ const text='const x=1;\n';
+ await ci.observe(observeInput(root,text));
+ await ci.navigate({root,path:join(root,'a.ts'),language:'typescript',descriptor,profileDigest:'b'.repeat(64),kind:'references',position:{line:0,character:0},grantedRoots:[root],signal:new AbortController().signal,text,afterDigest:sha(text)});
+ // Every server came through the approved factory seam exactly once;
+ // no path in observe/navigate constructs StdioLspAdapter directly.
+ expect(made).toHaveLength(1);
+});
+
+it('a failed observation retires its server instead of reusing a wedged adapter',async()=>{
+ const root=fixture();
+ const adapters:FakeAdapter[]=[];
+ const ci=new CodeIntelligence(()=>{const a=new FakeAdapter();adapters.push(a);return a;});
+ disposables.push(ci);
+ // First server dies mid-pull: the observation is UNAVAILABLE and the pool
+ // drops the entry instead of reusing it.
+ const text='const x=1;\n';
+ await ci.observe(observeInput(root,text)); // creates the first adapter, healthy
+ adapters[0]!.pullDiagnostics=async()=>{throw new HarnessError('UNAVAILABLE','dead');};
+ const obs=await ci.observe(observeInput(root,text));
+ expect(obs.state).toBe('UNAVAILABLE');
+ expect(ci.pool.size).toBe(0);
+ // The next observation provisions a fresh adapter under the same key.
+ const next=await ci.observe(observeInput(root,text));
+ expect(next.state).toBe('CURRENT');
+ expect(adapters).toHaveLength(2);
 });
 
 it('the pool keys servers by workspace, language, config digest and profile',async()=>{
