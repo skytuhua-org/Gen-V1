@@ -29,7 +29,10 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
  }
  function close(current:Owner):Promise<void> {
   current.closed=true;
-  return current.closing??=(async()=>{await current.adapter.cancel(current.ctx);releaseOwner(current);})();
+  return current.closing??=(async()=>{
+   await current.adapter.cancel(current.ctx);
+   releaseOwner(current);
+  })().catch(error=>{current.closing=undefined;throw error;});
  }
  function pair(account:ConnectionAccount|null):Pair {
   active();const id=account?.id??null,dataDir=account?accountProfileRoot(root,account):root,cached=pairs.get(id);
