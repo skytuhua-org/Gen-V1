@@ -38,16 +38,18 @@ describe('trusted separately installed plug-ins',()=>{
   // directory exists while active.json has no entry. A retry must recover,
   // not report "already exists".
   await writeFile(join(f.root,'active.json'),JSON.stringify({version:1,plugins:[]}));
-  await mkdir(join(f.root,'.install-leftover'));
-  await writeFile(join(f.root,'.install-leftover','partial.txt'),'interrupted staging');
+  const orphan=join(f.root,'.install-'+crypto.randomUUID());
+  await mkdir(orphan);await writeFile(join(orphan,'partial.txt'),'interrupted staging');
+  await writeFile(join(f.root,'.active-backup.json'),'{"version":1,"plugins":[]}');
   const recovered=await installPluginPackage(f.source,f.root,f.digest,'0.6.3');
   expect(recovered.directory).toBe(installed.directory);
   expect(await readFile(join(recovered.directory,'plugin.json'),'utf8')).toBe(JSON.stringify(manifest));
   const registry=await loadInstalledPlugins(f.root,'0.6.3');
   expect(registry.list()).toEqual([manifest]);
   await registry.close();
-  // An unpromoted staging directory is reclaimed, not trusted.
-  await expect(fs.access(join(f.root,'.install-leftover'))).rejects.toThrow();
+  // An unpromoted staging directory is reclaimed; unrelated files survive.
+  await expect(fs.access(orphan)).rejects.toThrow();
+  expect(await readFile(join(f.root,'.active-backup.json'),'utf8')).toBe('{"version":1,"plugins":[]}');
   const stale=await fixture();
   await mkdir(join(stale.root,manifest.id),{recursive:true});
   await mkdir(join(stale.root,manifest.id,manifest.version));

@@ -180,8 +180,9 @@ export async function installPluginPackage(source:string,root:string,expectedDig
   const index=await readPluginIndex(rootPath),parent=join(rootPath,verified.manifest.id),directory=join(parent,verified.manifest.version);await safeDirectory(parent,true);
   // An interrupted install can leave staging behind or promote the version
   // directory without publishing the index. The lock guarantees every
-  // `.install-*` or `.active-*.json` still present is abandoned.
-  for(const entry of await readdir(rootPath))if(entry.startsWith('.install-')||(entry.startsWith('.active-')&&entry.endsWith('.json')))await rm(join(rootPath,entry),{recursive:true,force:true});
+  // `.install-<uuid>` or `.active-<uuid>.json` still present is abandoned;
+  const uuid='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',abandoned=new RegExp(`^(\\.install-${uuid}|\\.active-${uuid}\\.json)$`);
+  for(const entry of await readdir(rootPath))if(abandoned.test(entry))await rm(join(rootPath,entry),{recursive:true,force:true});
   const existing=await lstat(directory).then(()=>true).catch((error:unknown)=>missing(error)?false:Promise.reject(error));
   if(existing){
     if(index.some(row=>row.id===verified.manifest.id&&row.version===verified.manifest.version))throw Error('This immutable plug-in version already exists.');
