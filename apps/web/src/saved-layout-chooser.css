@@ -18,6 +18,9 @@
 .saved-layout-row>.ui-action-trigger {flex:0 0 32px;width:32px;overflow:hidden;padding:6px 8px;gap:0;font-size:0;border:0;background:transparent;}
 .saved-layout-row>.ui-action-trigger>svg:last-child {display:none;}
 .saved-layout-popup .saved-layout-save {flex-shrink:0;min-height:32px;padding:6px 8px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;text-align:start;justify-content:flex-start;cursor:pointer;}
+.saved-layout-popup .saved-layout-separator {flex-shrink:0;height:1px;margin:4px 0;background:var(--border);}
+.saved-layout-popup .saved-layout-reset {font-size:13px;color:var(--text);transition:background-color var(--ui-motion-hover) var(--ui-ease-move);}
+.saved-layout-popup .saved-layout-reset:disabled {cursor:default;}
 .saved-layout-popup button:hover:not(:disabled) {background:var(--hover);}
 .saved-layout-popup button:focus-visible {outline:2px solid var(--ui-focus-ring,#808080);outline-offset:-2px;}
 .saved-layout-popup button:disabled {opacity:.45;cursor:not-allowed;}

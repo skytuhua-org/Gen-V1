@@ -13,6 +13,7 @@ export interface SavedLayoutChooserProps {
  rows:SavedLayoutRow[];arrangement:string|null;loading?:boolean;error?:string;disabled?:boolean;
  onRetry?:()=>Promise<unknown>;onOpen?:()=>void;onOpenChange?:(open:boolean)=>void;onBusyChange?:(busy:boolean)=>void;
  onSave?: (name:string)=>Promise<SavedLayoutSelection|void>;
+ onResetLayout?:()=>unknown;resetLayoutDisabled?:boolean;
  onApply:(row:SavedLayoutRow)=>Promise<SavedLayoutSelection|void>;
  onUpdate?: (row:SavedLayoutRow)=>Promise<SavedLayoutSelection|void>;
  onRename?: (row:SavedLayoutRow,name:string)=>Promise<void>;
@@ -21,7 +22,7 @@ export interface SavedLayoutChooserProps {
 const keyOf=(row:SavedLayoutRow)=>row.source+':'+row.id;
 type Entry={type:'save'}|{type:'rename'|'delete';row:SavedLayoutRow};
 
-export function SavedLayoutChooser({rows,arrangement,loading=false,error='',disabled,onRetry,onOpen,onOpenChange,onBusyChange,onSave,onApply,onUpdate,onRename,onDelete}:SavedLayoutChooserProps){
+export function SavedLayoutChooser({rows,arrangement,loading=false,error='',disabled,onRetry,onOpen,onOpenChange,onBusyChange,onSave,onResetLayout,resetLayoutDisabled,onApply,onUpdate,onRename,onDelete}:SavedLayoutChooserProps){
  const [open,setOpen]=useState(false),[overflow,setOverflow]=useState<string|null>(null),[entry,setEntry]=useState<Entry|null>(null),[name,setName]=useState(''),[busy,setBusy]=useState(false),[failure,setFailure]=useState(''),[selection,setSelection]=useState<SavedLayoutSelection|null>(null);
  const anchor=useRef<HTMLButtonElement>(null),content=useRef<HTMLDivElement>(null),input=useRef<HTMLInputElement>(null),pending=useRef(false),alive=useRef(true),id=useId();
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
@@ -37,9 +38,10 @@ export function SavedLayoutChooser({rows,arrangement,loading=false,error='',disa
  };
  const apply=(row:SavedLayoutRow)=>{if(current(row))return;void run(async()=>{const accepted=await onApply(row);if(alive.current)setSelection(accepted??null);},close);};
  const blocked=busy||loading||disabled;
- const items=[...rows.map(row=>({label:row.name,disabled:blocked})),{label:'Save current layout',disabled:blocked||!onSave}];
+ const items=[...rows.map(row=>({label:row.name,disabled:blocked})),{label:'Save current layout',disabled:blocked||!onSave},{label:'Reset layout',disabled:blocked||resetLayoutDisabled||!onResetLayout}];
  const showEntry=(value:Entry)=>{setFailure('');setOverflow(null);setName(value.type==='rename'?value.row.name:'');setEntry(value);};
- const navigation=useListNavigation(items,index=>index<rows.length?apply(rows[index]):showEntry({type:'save'}),close);
+ const reset=()=>{void run(async()=>{await onResetLayout?.();},close);};
+ const navigation=useListNavigation(items,index=>index<rows.length?apply(rows[index]):index===rows.length?showEntry({type:'save'}):reset(),close);
  const row=(item:SavedLayoutRow,index:number):ReactNode=><div key={keyOf(item)} className="saved-layout-row" data-layout-key={keyOf(item)} data-selected={selection?.key===keyOf(item)}>
   <button type="button" className="saved-layout-apply" ref={node=>{navigation.rows.current[index]=node;}} disabled={blocked} aria-label={`${item.source!=='split'?'Recover':'Apply'} ${item.name}`} aria-current={current(item)?'true':undefined} onFocus={()=>navigation.onFocus(index)} onClick={()=>apply(item)}>
    <span>{item.name}</span>{observed(item)&&arrangement!==null&&<small>{current(item)?'Current':'Modified'}</small>}
@@ -63,6 +65,8 @@ export function SavedLayoutChooser({rows,arrangement,loading=false,error='',disa
     {recovery.length>0&&<h3>Recovery layouts</h3>}{recovery.map(item=>row(item,rows.indexOf(item)))}
    </div>
    <button type="button" ref={node=>{navigation.rows.current[rows.length]=node;}} className="saved-layout-save" disabled={blocked||!onSave} onFocus={()=>navigation.onFocus(rows.length)} onClick={()=>showEntry({type:'save'})}>Save current layout…</button>
+   <div className="saved-layout-separator" role="separator"/>
+   <button type="button" ref={node=>{navigation.rows.current[rows.length+1]=node;}} className="saved-layout-save saved-layout-reset" disabled={blocked||resetLayoutDisabled||!onResetLayout} onFocus={()=>navigation.onFocus(rows.length+1)} onClick={reset}>Reset layout</button>
    {busy&&<p role="status" aria-label="Layout status">Updating layout…</p>}
   </Popover>
   <Modal open={entry!==null} title={entry?.type==='save'?'Save current layout':entry?.type==='rename'?'Rename layout':'Delete layout'} className="saved-layout-dialog" onClose={()=>{if(!pending.current){setEntry(null);setFailure('');}}}>

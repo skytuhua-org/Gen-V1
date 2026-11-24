@@ -1,6 +1,6 @@
 import {useEffect,useLayoutEffect,useRef,useState,type KeyboardEvent,type PointerEvent,type ReactNode} from 'react';
-import {GripVertical,Maximize2,PanelRight,Unplug} from 'lucide-react';
-import {CHAT_EDGES,CHAT_TRANSITION_MS,chatBounds,chatPanelRect,clampChatRect,isChatDockTarget,readChatLayout,resizeChatRect,writeChatLayout,type ChatEdge,type ChatLayout,type ChatRect,type ChatViewport} from './chat-layout';
+import {GripVertical,Maximize2,PanelLeft,PanelRight,Unplug} from 'lucide-react';
+import {CHAT_EDGES,CHAT_LAYOUT_RESET_EVENT,CHAT_TRANSITION_MS,chatBounds,chatPanelRect,clampChatRect,isChatDockTarget,readChatLayout,resizeChatRect,writeChatLayout,type ChatEdge,type ChatLayout,type ChatRect,type ChatViewport} from './chat-layout';
 import './chat-view.css';
 
 const edgeNames:Record<ChatEdge,string>={n:'top',e:'right',s:'bottom',w:'left',ne:'top right',nw:'top left',se:'bottom right',sw:'bottom left'};
@@ -42,6 +42,9 @@ export function ChatView({header,actions,children,enabled=true}:{header:ReactNod
   // The compact remembered pop-up is reachable from either docked layout.
   commit(next,immediate);setAnnouncement('Chat detached. Drag its header or use the arrow keys to move it.');
  };
+ const restore=(immediate=false)=>{
+  commit({...current.current,mode:'full',detached:false},immediate);setAnnouncement('Chat docked');
+ };
  useLayoutEffect(()=>{
   const element=panel.current,owner=slot.current;if(!element||!owner)return;
   const before=pending.current;pending.current=null;animation.current?.cancel();
@@ -68,7 +71,9 @@ export function ChatView({header,actions,children,enabled=true}:{header:ReactNod
   const media=matchMedia('(prefers-reduced-motion: reduce)');
   const reduce=()=>{if(!motionAllowed())animation.current?.cancel();};
   media.addEventListener('change',reduce);const policy=new MutationObserver(reduce);policy.observe(document.documentElement,{attributes:true,attributeFilter:['data-motion']});
-  return()=>{stop.current?.(true);animation.current?.cancel();observer.disconnect();policy.disconnect();window.removeEventListener('resize',resize);media.removeEventListener('change',reduce);};
+  const reset=()=>{if(current.current.mode!=='full')restore();};
+  window.addEventListener(CHAT_LAYOUT_RESET_EVENT,reset);
+  return()=>{stop.current?.(true);animation.current?.cancel();observer.disconnect();policy.disconnect();window.removeEventListener('resize',resize);window.removeEventListener(CHAT_LAYOUT_RESET_EVENT,reset);media.removeEventListener('change',reduce);};
  },[]);
  const saveRect=(rect:ChatRect,detached=current.current.detached)=>{
   const saved=current.current,mode=saved.mode==='full'?'popup':saved.mode;
@@ -121,6 +126,7 @@ export function ChatView({header,actions,children,enabled=true}:{header:ReactNod
    <header className="workspace-header chat-view-header" onPointerDown={event=>begin(event)}>
     {header}<div className="header-actions">{actions}{enabled&&<div className="chat-layout-actions">
      {floating&&<button type="button" className="icon-button chat-move-handle" aria-label="Move chat panel" title="Move chat panel (arrow keys; Shift for larger steps)" onPointerDown={event=>{event.stopPropagation();begin(event);}} onKeyDown={event=>adjust(event)}><GripVertical size={15}/></button>}
+     {floating&&<button type="button" className="icon-button" aria-label="Dock chat" title="Dock chat" onClick={event=>restore(event.detail===0)}><PanelLeft size={15}/></button>}
      {layout.mode==='full'||layout.mode==='drawer'&&!layout.detached?<button type="button" className="icon-button" aria-label="Detach chat" title="Detach chat" onClick={event=>detach(event.detail===0)}><Unplug size={15}/></button>:<button type="button" className="icon-button" aria-label="Dock chat to side drawer" title="Expand to side drawer" onClick={event=>dock(event.detail===0)}><Maximize2 size={15}/></button>}
     </div>}</div>
    </header>

@@ -48,3 +48,9 @@ export function readChatLayout(storage?:Pick<Storage,'getItem'>):ChatLayout{
 export function writeChatLayout(layout:ChatLayout,storage?:Pick<Storage,'setItem'>){
  try{storage?.setItem(CHAT_LAYOUT_KEY,JSON.stringify(layout));}catch{/* Local preferences are optional; the live conversation stays usable. */}
 }
+export const CHAT_LAYOUT_RESET_EVENT='gen:chat-layout-reset';
+/** Restores the centered chat layout and notifies any live ChatView in this document. */
+export function resetChatLayout(storage?:Pick<Storage,'setItem'>){
+ writeChatLayout({mode:'full',detached:false},storage);
+ try{globalThis.dispatchEvent?.(new CustomEvent(CHAT_LAYOUT_RESET_EVENT));}catch{/* Non-DOM hosts persist the record without a live view to wake. */}
+}
