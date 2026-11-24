@@ -158,11 +158,22 @@ export class Store {
   }
   command(command: HostCommand, apply: () => unknown): CommandReceipt {
     const existing = this.receipt(command); if (existing) return existing;
-    const {event,result}=this.commit(command.type,command.threadId??null,apply,command);
-    return {commandId:command.id,eventSeq:event.seq,result};
+    try {
+      const {event,result}=this.commit(command.type,command.threadId??null,apply,command);
+      return {commandId:command.id,eventSeq:event.seq,result};
+    } catch (error) {
+      // A second connection may have committed this same command between the
+      // receipt check above and our insert; its receipt is the dedup result.
+      const raced = this.receipt(command); if (raced) return raced;
+      throw error;
+    }
   }
   private commit(type: string, threadId: string | null, apply: () => unknown, command?: HostCommand): {event:WorkspaceEvent;result:unknown} {
     if (this.transactionOpen) throw new Error("Nested command transaction");
+    // A transaction still open here can only be residue of a commit whose
+    // rollback failed; clearing it keeps the connection usable instead of
+    // failing every later command on BEGIN.
+    if (this.db.isTransaction) { try { this.db.exec("ROLLBACK"); } catch { /* BEGIN below reports a wedged connection */ } }
     this.db.exec("BEGIN IMMEDIATE"); this.transactionOpen = true;
     let event: WorkspaceEvent;
     let result: unknown;
@@ -174,7 +185,12 @@ export class Store {
       event = { seq: Number(inserted.lastInsertRowid), id, type, threadId, payload: { result }, occurredAt };
       if(command){const receipt:CommandReceipt={commandId:command.id,eventSeq:event.seq,result};this.statements.insertReceipt.run(command.id,digest(command),JSON.stringify(receipt));}
       this.db.exec("COMMIT");
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    } catch (error) {
+      // Roll back only when a transaction is actually open, and never mask
+      // the original failure behind a secondary ROLLBACK error.
+      try { if (this.db.isTransaction) this.db.exec("ROLLBACK"); } catch { /* Orphan cleared on the next commit */ }
+      throw error;
+    }
     finally { this.transactionOpen = false; }
     this.committedEvents.push(event!);
     this.drainCommittedEvents();
@@ -204,6 +220,21 @@ export class Store {
    * a command write through the open transaction instead of opening a nested
    * one (Store rejects nested commits). */
   get inTransaction(): boolean { return this.transactionOpen; }
+  /** Multi-statement projections need one committed view: a second
+   * connection can commit between the archived-set read and the entity scan.
+   * Inside a command transaction the write txn already pins the view. */
+  private readConsistent<T>(read: () => T): T {
+    if (this.transactionOpen) return read();
+    this.db.exec("BEGIN DEFERRED");
+    try {
+      const value = read();
+      this.db.exec("COMMIT");
+      return value;
+    } catch (error) {
+      try { if (this.db.isTransaction) this.db.exec("ROLLBACK"); } catch { /* preserve the read failure */ }
+      throw error;
+    }
+  }
   private visibleEntities() {
     const archivedRows = this.db.prepare("SELECT id,body FROM entities WHERE kind=?").all("archivedThread") as { id: string; body: string }[];
     const archived = new Set(archivedRows.filter(row => JSON.parse(row.body)).map(row => row.id));
@@ -214,14 +245,19 @@ export class Store {
   }
   /** Inbox and desktop notification polling need no transcripts or artifact history. */
   attentionProjection(): Pick<Snapshot, "threads" | "requests" | "operations"> {
-    const {archived, visible} = this.visibleEntities();
-    return {
-      threads: this.all<Snapshot["threads"][number]>("thread").filter(thread => !archived.has(thread.id)),
-      requests: visible("request"),
-      operations: visible("operation"),
-    };
+    return this.readConsistent(() => {
+      const {archived, visible} = this.visibleEntities();
+      return {
+        threads: this.all<Snapshot["threads"][number]>("thread").filter(thread => !archived.has(thread.id)),
+        requests: visible("request"),
+        operations: visible("operation"),
+      };
+    });
   }
   snapshot(): Snapshot {
+    return this.readConsistent(() => this.buildSnapshot());
+  }
+  private buildSnapshot(): Snapshot {
     const allThreads = this.all<Snapshot["threads"][number]>("thread");
     const {archived, archivedIds, visible} = this.visibleEntities();
     const threads = allThreads.filter(thread => !archived.has(thread.id));
