@@ -157,10 +157,14 @@ it('selects pull-request tests from the merge commit diff and keeps the full sui
   const select=jobSource.split(/^  select:\n/m)[1]?.split(/^  selected:\n/m)[0]??'';
   const selected=jobSource.split(/^  selected:\n/m)[1]??'';
   for(const job of [select,selected])expect(job).toMatch(/^          fetch-depth: 2$/m);
-  expect(select).toContain('vitest list --changed HEAD^1 --filesOnly');
-  expect(selected).toContain('pnpm test --maxWorkers=1 --changed HEAD^1 --shard $env:SHARD');
+  // HEAD~1 names the same first parent as HEAD^1 but survives cmd.exe, which
+  // pnpm.cmd runs through on Windows and which drops a caret: the shards then
+  // compared against "HEAD1", found no changed file and passed with no test.
+  expect(select).toContain('vitest list --changed HEAD~1 --filesOnly');
+  expect(selected).toContain('pnpm test --maxWorkers=1 --changed HEAD~1 --passWithNoTests=false --shard $env:SHARD');
+  for(const job of [select,selected])expect(job).not.toContain('^');
   expect(selected).toContain('shard: ${{ fromJSON(needs.select.outputs.shards) }}');
-  for(const job of [select,selected])expect(job).not.toMatch(/continue-on-error|always\(\)|--passWithNoTests/);
+  for(const job of [select,selected])expect(job).not.toMatch(/continue-on-error|always\(\)|--passWithNoTests(?!=false\b)/);
   for(const id of ['test-1','test-2','test-3','test-4','browser','installed-memory'])expect(jobs.find(job=>job.id===id)?.condition).toBe("${{ !cancelled() && needs.proof.outputs.verified != 'true' && github.event_name != 'pull_request' }}");
 });
 it('books no Windows test runner when the diff reaches no test',()=>{
