@@ -259,3 +259,18 @@ for (const view of [
   await page.screenshot({ path: info.outputPath(`${view.number}-${view.name}.png`), fullPage: true });
   if (view.failed) { const retry = page.getByRole('button', { name: 'Retry', exact: true }); await retry.scrollIntoViewIfNeeded(); await retry.focus(); await retry.press('Enter'); await expect(editor(page)).toHaveValue(draft.content); }
 });
+
+test('a saved note header shows author, middle dot and relative age with the raw ISO title', async ({ page }) => {
+  await mount(page);
+  const header = page.locator('.memory-note header small').first();
+  await expect(header).toContainText('Your note · ');
+  await expect(header).toHaveAttribute('title', '2026-11-07T00:00:00Z');
+  await expect(header).toContainText(/\d+d ago|\d{4}-\d{2}-\d{2}/);
+  await page.evaluate(saved => window.memoryFixture.publish([saved]), { ...note('recent', 1), updatedAt: new Date().toISOString() });
+  const recentHeader = page.locator('.memory-note', { hasText: 'recent' }).locator('header small');
+  await expect(recentHeader).toContainText('Your note · just now');
+  await page.getByRole('button', { name: 'Add memory note', exact: true }).click();
+  const createForm = page.locator('.memory-note', { hasText: 'Note key' });
+  await expect(createForm).toBeVisible();
+  await expect(createForm.locator('small')).toHaveCount(0);
+});
