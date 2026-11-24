@@ -50,7 +50,7 @@ export function createHermesService(store:Store,native:RuntimeAdapter,effectOpti
     // Hermes rejects start() without configure(): route the child's tool calls
     // back through the coordinator's role-gated invokeTool — the same effect
     // gate the coordinator enforces for every dispatch surface.
-    adapter.configure({onEvent:()=>{},onTool:(call,supplied)=>service!.agentWork.invokeTool(work.workId,supplied,call)});
+    adapter.configure({onEvent:event=>service!.agentWork.onChildEvent(work.workId,event),onTool:(call,supplied)=>service!.agentWork.invokeTool(work.workId,supplied,call)});
     return {supportsLiveSteer:false,
       send:async input=>{const ctx=spec.ctx();const thread=store.get<Thread>('thread',ctx.threadId);
         if(!thread?.modelId)throw new HarnessError('MODEL_REQUIRED','The child thread has no bound model');

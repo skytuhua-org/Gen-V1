@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import Ajv from 'ajv';
 import {Store, digest} from '../storage/store.ts';
-import {HarnessError, type DataRecord, type ResourceGrant, type RunContext, type Thread, type ToolCall} from '../contracts/index.ts';
+import {HarnessError, type DataRecord, type ResourceGrant, type RunContext, type RuntimeEvent, type Thread, type ToolCall} from '../contracts/index.ts';
 import type {CapabilityFlagKey} from './capability-flags.ts';
 import {AgentInbox} from './agent-inbox.ts';
 import {
@@ -404,6 +404,34 @@ export class AgentWorkCoordinator {
     const next: AgentWorkV1 = {...work, state: 'WAITING_HUMAN', updatedAt: new Date().toISOString(), revision: work.revision + 1};
     this.hooks.store.internal('agentWork.waiting', work.parentOwner.threadId, () => this.hooks.store.put(WORK_KIND, workId, work.parentOwner.threadId, next));
     return next;
+  }
+
+  /** Runtime events from the live child adapter. An `error` or a `settled`
+   * run that never submitted a result fails the work instead of leaving it
+   * RUNNING with its slot and budget reservation held forever; `session`
+   * keeps the child thread's persisted session path current for resume. */
+  onChildEvent(workId: string, event: RuntimeEvent): void {
+    const work = this.stored(workId);
+    const live = this.live.get(workId);
+    if (!work || !live) return;
+    if (event.threadId !== work.childOwner.threadId || event.runId !== live.runId || event.epoch !== work.childOwner.epoch) return;
+    if (event.type === 'session' && typeof event.sessionPath === 'string') {
+      const sessionPath = event.sessionPath;
+      this.hooks.store.internal('agentWork.session', work.childOwner.threadId, () => {
+        const thread = this.hooks.store.get<Thread>('thread', work.childOwner.threadId);
+        if (thread) this.hooks.store.put('thread', thread.id, thread.id, {...thread, sessionPath});
+      });
+      return;
+    }
+    if (event.type === 'error') {
+      this.releaseLive(workId, true);
+      this.finish(workId, 'FAILED', {failureReason: 'RUNTIME_FAILURE'});
+      return;
+    }
+    if (event.type === 'settled' && !AGENT_WORK_TERMINAL_STATES.has(work.state) && work.state !== 'COMPLETED_REPORTED') {
+      this.releaseLive(workId, true);
+      this.finish(workId, 'FAILED', {failureReason: 'RUNTIME_FAILURE'});
+    }
   }
 
   /** Tool dispatch for a live child. Everything outside the role's allowlist
