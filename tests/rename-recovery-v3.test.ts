@@ -41,6 +41,22 @@ function planInput(root:string,path:string,text:string,overrides:Record<string,u
   workspaceIdentity:'ws-1',approvalId:'approval-1',signal:signal(),text,afterDigest:sha(text),...overrides};
 }
 
+it('rename plan identifiers must have the format issued by the host',()=>{
+ expect(renamePlanV1Schema.safeParse({
+  version:1,planId:'draft-plan',workspaceIdentity:'ws-1',serverVersion:'rename-server-1',
+  sourceVersions:[],textEdits:[],expectedBeforeDigests:[],exactApprovalId:'approval-1',
+ }).success).toBe(false);
+});
+
+it('rename recovery rejects an invalid plan identifier before journal lookup',async()=>{
+ const journal=tempDir('rename-journal-');
+ const ci=new CodeIntelligence(()=>new RenameAdapter());
+ disposables.push(ci);
+ await expect(ci.recoverRename({journalRoot:journal,planId:'draft-plan',grantedRoots:[],signal:signal()}))
+  .rejects.toMatchObject({code:'INVALID_INPUT'});
+ expect(readdirSync(journal)).toEqual([]);
+});
+
 it('rename plans reject resource operations and ungranted roots',async()=>{
  const root=tempDir('rename-root-');
  writeFileSync(file(root,'a.ts'),'const alpha = 1;\n');
