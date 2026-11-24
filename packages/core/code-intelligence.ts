@@ -493,7 +493,8 @@ export class CodeIntelligence {
         // A newer sync on this document makes the result superseded: report
         // it STALE instead of CURRENT and leave the newer baseline in place.
         const superseded = (entry.documents.get(document.uri)?.version ?? document.version) > document.version;
-        const diagnostics = raw.slice(0, CODE_INTELLIGENCE_LIMITS.diagnostics).map(item => this.normalize(item, input.path, input.text, entry.adapter.encoding));
+        const lines = splitLines(input.text);
+        const diagnostics = raw.slice(0, CODE_INTELLIGENCE_LIMITS.diagnostics).map(item => this.normalize(item, input.path, lines, entry.adapter.encoding));
         const baselineKey = `${entry.key}\0${input.path}`;
         const baseline = this.baselines.get(baselineKey);
         const baselineStatus = baseline && baseline.seq === entry.seq && input.beforeDigest !== null && baseline.digest === input.beforeDigest ? "AVAILABLE" : "UNAVAILABLE";
@@ -503,14 +504,15 @@ export class CodeIntelligence {
           version: 1, workspaceIdentity: input.workspaceIdentity, language: input.language,
           serverIdentity: entry.adapter.serverIdentity, editInvocationId: input.editInvocationId,
           documentVersion: document.version, beforeDigest: input.beforeDigest, afterDigest: input.afterDigest,
-          rangeEncoding: entry.adapter.encoding, baselineStatus, diagnostics,
+          rangeEncoding: "UTF16", baselineStatus, diagnostics,
           state: superseded ? "STALE" : "CURRENT", observedAt: new Date().toISOString(),
         });
       } catch (error) {
         if (error instanceof HarnessError && error.code === "UNAVAILABLE") {
-          // The server may be wedged; dispose it under pool custody so the
-          // next observation starts a fresh instance instead of reusing it.
-          await this.pool.release(entry.key);
+          // The server may be wedged; drop it from the pool now and let its
+          // shutdown run in the background — awaiting it could stall the
+          // UNAVAILABLE answer behind a hung server's shutdown timeout.
+          void this.pool.release(entry.key);
           return this.unavailable(input);
         }
         throw error;
@@ -523,8 +525,8 @@ export class CodeIntelligence {
 
   /** Server ranges arrive in the negotiated encoding; observations are
    * stored in canonical UTF-16 units against the synced text. */
-  private normalize(item: LspDiagnostic, path: string, text: string, encoding: RangeEncoding): CodeDiagnostic {
-    const line = (index: number) => stripEol(splitLines(text)[index] ?? "");
+  private normalize(item: LspDiagnostic, path: string, lines: readonly string[], encoding: RangeEncoding): CodeDiagnostic {
+    const line = (index: number) => stripEol(lines[index] ?? "");
     const convert = (position: CodePosition): CodePosition => ({
       line: position.line,
       character: toUtf16Offset(line(position.line), position.character, encoding),
