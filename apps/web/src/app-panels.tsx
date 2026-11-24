@@ -47,7 +47,6 @@ export const AssistantProse = memo(function AssistantProse({message,arrivals,act
   return <Markdown text={message.content} animate={active||initial.current} initialReveal={initial.current}/>;
 }, (previous, next) => previous.message === next.message && previous.arrivals === next.arrivals && previous.active === next.active);
 
-}
 /** M02 action details drawer: ledger view of one invocation. Uncertain states
  * surface as Inspect outcome / View evidence — never a generic Retry — and the
  * coverage note stays visible while native calls are not host-observed. */

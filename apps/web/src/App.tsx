@@ -1,7 +1,7 @@
-import { memo, useContext, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, useSyncExternalStore, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
+import { useContext, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, useSyncExternalStore, type CSSProperties } from 'react';
 import { Activity, ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleHelp, CircleStop, Folder, Laptop, LoaderCircle, Menu, MessageSquare, PanelLeftOpen, PanelRight, PenLine, Plus, SlidersHorizontal, WifiOff, X } from 'lucide-react';
 import type { InputRequest, ModelInfo, Operation, Snapshot, Thread,Message } from '../../../packages/contracts';
-import { ApiError, bootstrap, command, getModels, getSnapshot, getThreadMessages, getToolEffectObservation, searchThreadMessages, subscribe, type ToolEffectObservation } from './api';
+import { ApiError, bootstrap, command, getModels, getSnapshot, getThreadMessages, searchThreadMessages, subscribe } from './api';
 import {onAccountCatalogChanged,notifyAccountCatalogChanged,mergeAccountModels} from './account-api';
 import type {AccountAuthTarget} from '../../../packages/contracts/authentication';
 import {isConnectionProviderId} from '../../../packages/contracts/connections';
@@ -21,7 +21,6 @@ import { display, schemaDefaults, SchemaFields } from './registry';
 import { useModalRegion } from './focus';
 import { validateSchema } from './schema-validator';
 import { matchingThreads, type HistoricalThreadMatches } from './thread-search';
-import { hasPendingDocumentAssets } from './signature-assets';
 import { getPreferences, mergePreferences } from '../../../packages/contracts/preferences';
 import { ShellSidebar, threadStatus } from './ShellSidebar';
 import { ProjectPicker } from './ProjectPicker';
@@ -48,9 +47,8 @@ import {ComposerToolbar,ComposerTaskActions} from './ComposerToolbar';
 import {ComposerView} from './ComposerView';
 import {LoadingState} from './LoadingState';
 import {SurfaceBoundary} from './SurfaceBoundary';
-import {ComposerSkeleton, ConversationSkeleton, SettingsSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
+import {ComposerSkeleton, ConversationSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
 import {ComposerAttachments} from './ComposerAttachments';
-import {Modal} from '../../../packages/ui-shell/Modal';
 import {SessionBranchLineage, SessionBranchMenu, useSessionBranchOverview} from './SessionBranchMenu';
 import {toast,Toaster} from '../../../packages/ui-shell/Toast';
 import {TooltipLayer} from '../../../packages/ui-shell/Tooltip';
@@ -100,7 +98,6 @@ import type {TerminalExcerptComposer} from './TerminalBody';
 import {WorkspaceSurfaceBody, type ReviewRequest} from './WorkspaceSurfaceBody';
 import {ProjectContextSurface} from './ProjectContextSurface';
 import {DesktopBrowserSlot,DesktopBrowserToolbar} from './DesktopBrowser';
-import {ErrorState} from '../../../packages/ui-shell/Feedback';
 import {OperationProjectTrust, OperationProjectTrustStatus, type ProjectTrustReadiness} from './OperationProjectTrust';
 import { OperationExecutionReviewPanel } from './OperationExecutionReview';
 
@@ -147,6 +144,7 @@ function InputDecision({ request, refresh, snapshot }: { request: InputRequest; 
   const detail=async(kind:'explain'|'examples'|'more-options',optionId?:string)=>{setError('');try{await command('request.detail',{requestId:request.id,revision:request.revision,kind,...(optionId?{optionId}:{})},request.threadId);await refresh();}catch(cause){setError(messageOf(cause));throw cause;}};
   if(request.presentation)return <div className="decision"><PlanningQuestion id={request.id} revision={request.revision} title={request.title} prompt={request.prompt} {...request.presentation} value={typeof text==='string'?text:''} onChange={update} resources={snapshot.resources.filter(item=>item.threadId===request.threadId)} onExplain={(optionId,kind)=>detail(kind,optionId)} onMoreOptions={()=>detail('more-options')} onSubmit={()=>respond()} busy={busy||!ready} error={error||request.detailRequests?.find(detail=>detail.status==="failed")?.error} pending={request.detailRequests?.find(item=>item.status==='pending')} /><button className="quiet" disabled={busy||!ready} onClick={()=>void respond(true)}>Withdraw</button></div>;
   return <section className="decision" aria-label={request.title}><header><span className="pending-dot" />{request.title}<span className="badge">Your input</span></header><Markdown text={request.prompt} /><form onSubmit={event => { event.preventDefault(); void respond(); }}><fieldset disabled={busy || !ready}>{objectSchema ? <SchemaFields schema={request.responseSchema} value={values} onChange={update} /> : <SchemaFields schema={{ type: 'object', properties: { response: { ...request.responseSchema, title: 'Response' } }, required: ['response'] }} value={{ response: text }} onChange={value => update(value.response)} />}</fieldset>{error && <p role="status" className="error-text">{error}</p>}<div className="decision-actions"><button type="button" className="quiet" disabled={busy || !ready} onClick={() => void respond(true)}>Withdraw</button><button className="primary" disabled={busy || !ready}>{busy ? 'Submitting…' : 'Continue'}<ArrowUp size={14} /></button></div></form></section>;
+}
 export function OperationDecision({ operation, refresh, owner }: { operation: Operation; refresh: () => Promise<void>; owner?: Thread }) {
   const observationKey = JSON.stringify([operation.status, operation.approved, owner?.id, owner?.runId ?? null, owner?.epoch, owner?.status, owner?.accountId ?? null, owner?.modelId ?? null, owner?.projectId ?? null, owner?.workspaceId ?? null]);
   const [error, setError] = useState('');
