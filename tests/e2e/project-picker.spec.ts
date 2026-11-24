@@ -27,8 +27,8 @@ test('search matches exact supplied location and name, preserves caret keys and 
   await search.fill('Synthetic/Beta');
   await expect(page.getByRole('option', { name: 'Beta', exact: true })).toBeVisible();
   await expect(page.getByRole('option', { name: 'Alpha', exact: true })).toHaveCount(0);
-  await search.press('Home'); await search.press('ArrowRight');
-  expect(await search.evaluate(node => (node as HTMLInputElement).selectionStart)).toBe(1);
+  await search.press('ArrowLeft');
+  expect(await search.evaluate(node => (node as HTMLInputElement).selectionStart)).toBe('Synthetic/Beta'.length - 1);
   await search.dispatchEvent('keydown', { key: 'Enter', isComposing: true });
   await search.dispatchEvent('keydown', { key: 'Escape', keyCode: 229 });
   await expect(page.getByRole('dialog')).toBeVisible();
@@ -46,6 +46,27 @@ test('hover does not select; arrows announce an active row and explicit selectio
   await search.press('ArrowDown');
   await expect(search).toHaveAttribute('aria-activedescendant', await beta.getAttribute('id') ?? '');
   await search.press('Enter'); await search.press('Enter');
+  await expect(page.getByLabel('Created threads')).toHaveText('1');
+});
+
+test('Home, End and Page keys jump, clamp and scroll the active option', async ({ page }) => {
+  await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
+  const search = page.getByRole('combobox', { name: 'Search projects' }), options = page.getByRole('option'), count = await options.count();
+  await search.press('End');
+  await expect(options.nth(count - 1)).toHaveAttribute('data-active', 'true');
+  await expect(options.nth(count - 1)).toBeInViewport();
+  await search.press('PageUp');
+  await expect(options.nth(count - 1 - 10)).toHaveAttribute('data-active', 'true');
+  await search.press('Home');
+  await expect(options.first()).toHaveAttribute('data-active', 'true');
+  await search.press('PageUp');
+  await expect(options.first()).toHaveAttribute('data-active', 'true');
+  await search.press('PageDown');
+  await expect(options.nth(10)).toHaveAttribute('data-active', 'true');
+  await search.press('End'); await search.press('PageDown');
+  await expect(options.nth(count - 1)).toHaveAttribute('data-active', 'true');
+  await search.press('Enter');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByLabel('Created threads')).toHaveText('1');
 });
 

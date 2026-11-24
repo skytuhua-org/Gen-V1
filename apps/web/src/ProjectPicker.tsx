@@ -83,9 +83,19 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
       placeholder="Search projects" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => {
         if (isComposing(event)) { if (event.key === 'Escape') event.preventDefault(); return; }
         if (event.altKey || event.ctrlKey || event.metaKey || locked) return;
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        // Home/End stay caret keys mid-text; they navigate the list only when the caret is already at that edge.
+        if (event.key === 'Home' && event.currentTarget.selectionStart !== 0) return;
+        if (event.key === 'End' && event.currentTarget.selectionEnd !== event.currentTarget.value.length) return;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End' || event.key === 'PageUp' || event.key === 'PageDown') {
           event.preventDefault();
-          if (choices.length) setActiveKey(keyOf(choices[(activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length]));
+          if (choices.length) {
+            const count = choices.length, next = event.key === 'ArrowDown' ? (activeIndex + 1) % count
+              : event.key === 'ArrowUp' ? (activeIndex - 1 + count) % count
+              : event.key === 'Home' ? 0
+              : event.key === 'End' ? count - 1
+              : event.key === 'PageUp' ? Math.max(0, activeIndex - 10) : Math.min(count - 1, activeIndex + 10);
+            setActiveKey(keyOf(choices[next]));
+          }
         } else if (event.key === 'Enter') {
           event.preventDefault(); if (choices.length) void run(() => onSelect(active));
         }
