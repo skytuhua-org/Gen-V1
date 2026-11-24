@@ -53,15 +53,21 @@ function ToastItem({ entry, paused }: { entry: ToastEntry; paused: boolean }) {
 export function Toaster() {
   const list = useSyncExternalStore(subscribe, () => entries, () => entries);
   const [hovered, setHovered] = useState(false), [focused, setFocused] = useState(false);
-  const stack = useRef<HTMLDivElement>(null);
+  const stack = useRef<HTMLDivElement>(null), hadFocus = useRef(false);
   useEffect(() => { if (!list.length) setHovered(false); }, [list.length]);
   useLayoutEffect(() => {
-    // Removing or replacing a focused toast can happen without a blur event.
+    // Removing or replacing a focused toast can happen without a blur event:
+    // move focus to a remaining control instead of dropping it to the body.
     const root = stack.current;
-    if (root && !root.contains(root.ownerDocument.activeElement)) setFocused(false);
+    if (!root || root.contains(root.ownerDocument.activeElement)) return;
+    setFocused(false);
+    if (hadFocus.current) {
+      const next = root.querySelector<HTMLElement>('.ui-toast .ui-toast-close');
+      if (next) next.focus(); else hadFocus.current = false;
+    }
   }, [list]);
   return <div ref={stack} className="ui-toaster" role="region" aria-label="Notifications" onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
-    onFocus={() => setFocused(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
+    onFocus={() => { setFocused(true); hadFocus.current = true; }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) { setFocused(false); hadFocus.current = false; } }}>
     {list.map(entry => <ToastItem key={entry.id} entry={entry} paused={hovered || focused} />)}
   </div>;
 }

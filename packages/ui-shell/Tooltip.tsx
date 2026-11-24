@@ -8,6 +8,8 @@ const FOCUS_DWELL_MS = 100, GAP = 6, GUTTER = 8;
 
 /** Elements whose `title=""` mutation came from `adopt` itself, not a rerender. */
 const suppressing = new WeakSet<Element>();
+/** Elements whose aria-label / aria-description mutation came from `adopt` itself. */
+const naming = new WeakSet<Element>(), describing = new WeakSet<Element>();
 /** Reads the tooltip text and silences the native bubble so only one tooltip shows. */
 function adopt(target: Element) {
   const title = target.getAttribute('title');
@@ -20,11 +22,13 @@ function adopt(target: Element) {
     target.setAttribute('title', '');
     // A title was the control's only name; keep it reachable for assistive technology.
     if (title && !target.hasAttribute('aria-labelledby') && (!target.hasAttribute('aria-label') || target.hasAttribute('data-tooltip-named')) && !target.textContent?.trim()) {
+      naming.add(target);
       target.setAttribute('aria-label', title);
       target.setAttribute('data-tooltip-named', '');
       if (target.hasAttribute('data-tooltip-described')) { target.removeAttribute('aria-description'); target.removeAttribute('data-tooltip-described'); }
     } else if (title && !target.hasAttribute('aria-describedby') && (target.hasAttribute('data-tooltip-described') || !target.hasAttribute('aria-description'))) {
       // Named controls still get the title's help text via aria-description; keep it in sync when the title changes.
+      describing.add(target);
       target.setAttribute('aria-description', title);
       target.setAttribute('data-tooltip-described', '');
     }
@@ -76,6 +80,14 @@ export function TooltipLayer() {
     document.addEventListener('focusin', focus); document.addEventListener('focusout', hide); document.addEventListener('keydown', key, true);
     document.addEventListener('scroll', hide, true); window.addEventListener('blur', hide);
     const observer = new MutationObserver(records => {
+      // A caller that sets its own accessible name or description takes over the
+      // generated attribute: drop our marker so removal later keeps their value.
+      for (const record of records) {
+        const element = record.target;
+        if (!(element instanceof Element)) continue;
+        if (record.attributeName === 'aria-label' && !naming.delete(element)) element.removeAttribute('data-tooltip-named');
+        if (record.attributeName === 'aria-description' && !describing.delete(element)) element.removeAttribute('data-tooltip-described');
+      }
       const targets = new Set(records.map(record => record.target));
       for (const element of targets) {
         if (!(element instanceof Element) || !element.hasAttribute('data-tooltip-adopted')) continue;
@@ -95,7 +107,7 @@ export function TooltipLayer() {
         if (current.current === element) hide();
       }
     });
-    observer.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['title'] });
+    observer.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['title', 'aria-label', 'aria-description'] });
     return () => {
       observer.disconnect();
       clearTimeout(timer.current);
