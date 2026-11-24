@@ -82,6 +82,12 @@ interface Window {
 	__readyOwners: unknown[];
 	fixtureJournal: { reads: number; rejects: number; resolves: number };
 
+	// Shared UI lifecycle fixture probes.
+	setNamed(value: boolean): void;
+	sentCount: number;
+	toast(message: string, options?: unknown): number;
+	dismissToast(id: number): void;
+
 	// Personal-visuals harness.
 	__PV_READY: unknown;
 	__PV_PRESENTATION: unknown;
