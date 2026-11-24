@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/public/brand/gen-v1-logo.svg" width="360" alt="Gen V1">
+
 <p><strong>GEN V1 · WINDOWS PREVIEW</strong></p>
 
 # Agent runs you can inspect, review and recover
@@ -120,6 +122,7 @@ Read [release status](docs/public/release-notes.md), [security and local data](S
 | Understand the current preview | [Release notes and limitations](docs/public/release-notes.md) |
 | Understand the host and recovery model | [Architecture](docs/architecture.md) |
 | Build a workspace extension | [Plug-in API](docs/plugin-api.md) |
+| Use the Gen V1 logo | [Logo and brand assets](docs/public/brand/README.md) |
 | Report a bug or suggest a feature | [Issue forms](#report-an-issue) |
 | Report a security issue privately | [Security policy](SECURITY.md) |
 | Make a useful contribution | [Contributor guide](CONTRIBUTING.md) |

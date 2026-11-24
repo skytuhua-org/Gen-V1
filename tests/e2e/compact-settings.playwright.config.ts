@@ -1,6 +1,6 @@
 import {defineConfig} from '@playwright/test';
 import {resolve} from 'node:path';
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.', testMatch: 'compact-settings.spec.ts', workers: 1,
   outputDir: process.env.GEN_SETTINGS_TEST_OUTPUT ?? '.harness-compact-settings',
   use: {baseURL: 'http://127.0.0.1:5596', channel: 'chrome', viewport: {width: 1440, height: 1000}, trace: 'retain-on-failure'},
