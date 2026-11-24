@@ -37,7 +37,10 @@ function shared(): Worker {
   };
   created.onmessageerror = () => rejectAll(new Error('Invalid PDF draft worker response.'));
   created.onmessage = ({ data }: MessageEvent<unknown>) => {
-    if (!data || typeof data !== 'object' || !('id' in data) || typeof data.id !== 'string' || !pending.has(data.id)) { rejectAll(new Error('Invalid PDF draft worker response.')); teardown(); return; }
+    if (!data || typeof data !== 'object' || !('id' in data) || typeof data.id !== 'string') { rejectAll(new Error('Invalid PDF draft worker response.')); teardown(); return; }
+    // A reply for an aborted or timed-out request arrives after its entry is
+    // gone: ignore it instead of fencing the shared worker for the siblings.
+    if (!pending.has(data.id)) return;
     if ('error' in data && typeof data.error === 'string' && data.error.length > 0 && data.error.length <= 1000) finishRequest(data.id, new Error(data.error));
     else if ('draft' in data && isPdfDraft(data.draft)) finishRequest(data.id, undefined, data.draft);
     else finishRequest(data.id, new Error('Invalid PDF draft worker response.'));

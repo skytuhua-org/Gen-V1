@@ -46,11 +46,13 @@ it("keeps concurrent siblings alive when one request is aborted", async () => {
   const firstId = FakeWorker.instances[0].posted[0].message.id!;
   aborting.abort();
   await expect(first).rejects.toThrowError(/aborted/i);
+  // The worker still answers the aborted request; that late reply must not
+  // fence the shared worker or reject the live sibling.
+  FakeWorker.instances[0].respond(firstId, { draft });
   FakeWorker.instances[0].respond(FakeWorker.instances[0].posted[1].message.id!, { draft });
   await expect(second).resolves.toEqual(draft);
   expect(FakeWorker.instances).toHaveLength(1);
   expect(FakeWorker.instances[0].terminated).toBe(false);
-  void firstId;
 });
 
 it("rejects with the worker error but keeps the shared worker for the next request", async () => {
@@ -75,7 +77,7 @@ it("terminates the shared worker after it has been idle", async () => {
 
 it("rejects all pending and replaces the worker after an unidentifiable response", async () => {
   const failing = createPdfDraft(source, {});
-  FakeWorker.instances[0].onmessage?.({ data: { id: "stray" } });
+  FakeWorker.instances[0].onmessage?.({ data: { draft: "no-id" } });
   await expect(failing).rejects.toThrowError("Invalid PDF draft worker response.");
   expect(FakeWorker.instances[0].terminated).toBe(true);
   const next = createPdfDraft(source, {});
