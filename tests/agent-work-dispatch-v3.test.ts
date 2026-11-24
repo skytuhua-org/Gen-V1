@@ -70,11 +70,16 @@ function fixture(withRuntime: boolean) {
 
 describe('AgentWorkV1 dispatch requires a real runtime', () => {
   // Desired contract (issue #2041 OBJECTIVE): with no runtimeFactory there is
-  // nothing to receive START; the work must never be recorded RUNNING.
-  it.fails('an admission without a runtime factory cannot record RUNNING', async () => {
+  // nothing to receive START; the work must never be recorded RUNNING. T03:
+  // the coordinator refuses with RUNTIME_FAILURE and leaves a durable FAILED
+  // record — honest terminal state, budget reservation released.
+  it('an admission without a runtime factory cannot record RUNNING', async () => {
     const f = fixture(false);
-    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
-    expect(work.state).not.toBe('RUNNING');
+    const spec = f.admission();
+    await expect(f.coordinator.admit(f.ctx, spec, new AbortController().signal)).rejects.toMatchObject({code: 'RUNTIME_FAILURE'});
+    const work = f.store.get<{state: string; failureReason?: string}>('agentWork', spec.workId);
+    expect(work?.state).toBe('FAILED');
+    expect(work?.failureReason).toBe('RUNTIME_FAILURE');
   });
 
   // Positive control: an explicit runtime factory still reaches RUNNING.
