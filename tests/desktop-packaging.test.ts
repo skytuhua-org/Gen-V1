@@ -125,16 +125,18 @@ describe('desktop distribution custody',()=>{
   expect(config.asar).toBe(true);
   expect(config.compression).toBe('normal');
   expect(config.win.target).toEqual([{target:'nsis',arch:['x64']}]);
+  expect(config.win.icon).toBe('C:/build/desktop-app/icon.ico');
+  expect(config.files).toEqual(expect.arrayContaining(['icon.ico','icon.png']));
   expect(config.nsis).toMatchObject({perMachine:false,oneClick:true,allowElevation:false,useZip:false,differentialPackage:false,runAfterFinish:false,deleteAppDataOnUninstall:false});
   expect(config.npmRebuild).toBe(false);expect(config.files).toContain('!node_modules/**/*');
   expect(config.extraResources.map(row=>row.to)).toEqual(['host','host/node_modules','host/.harness-hermes-python-deps','host/.harness-integrations-python-deps','host/.harness-tool-bundles','node']);
   expect(config.directories.app).toBe('C:/build/desktop-app');
   expect(JSON.stringify(config)).not.toMatch(/userdata|auth\.json|\.codex/);
  });
- it('stays unsigned unless Azure signing is selected, keeping the exact legacy shape',()=>{
+ it('stays unsigned unless Azure signing is selected, keeping the current default shape and bundled icon',()=>{
   const config=desktopBuilderConfig('C:/build');
   expect(config.forceCodeSigning).toBe(false);
-  expect(config.win).toEqual({target:[{target:'nsis',arch:['x64']}],signAndEditExecutable:false});
+  expect(config.win).toEqual({target:[{target:'nsis',arch:['x64']}],icon:'C:/build/desktop-app/icon.ico',signAndEditExecutable:false});
  });
  it.each(['signtool','','Azure'])('rejects signing mode %j',signing=>{
   expect(()=>desktopBuilderConfig('C:/build',undefined,signing)).toThrow('HARNESS_WINDOWS_SIGNING must be azure or unset.');
