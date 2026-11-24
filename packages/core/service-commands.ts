@@ -41,7 +41,7 @@ import type { BrowserConsentHost } from "./browser-consent.ts";
 import type { OperationProjectTrustHost } from "./operation-project-trust.ts";
 import type { ProjectMemoryHost } from "./project-memory-host.ts";
 import type { WorkbenchQueuedInput } from "./source-workbench.ts";
-import type { SourceIntegration } from "./service.ts";
+import type { SourceIntegration, RunTeardown } from "./service.ts";
 
 type Outbox = WorkbenchQueuedInput & {messageId?:string;completedWrite?:CompletedWriteReceipt;hookClaimed?:boolean;hookDiagnostic?:WriteHookDiagnostic;sendMode?:SendModeV1};
 type Lease = { id: string; threadId: string; clientId: string; fields: string[]; expiresAt: number };
@@ -54,13 +54,16 @@ const object = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 const now = () => new Date().toISOString();
+const teardownKey=(ctx:RunContext)=>JSON.stringify([ctx.threadId,ctx.runId,ctx.epoch]);
 
 export interface ServiceCommandsHost {
   store: Store;
   effects: ToolEffectLedger;
   effectFlags: ReturnType<typeof createToolEffectFlags>;
   aborts: Map<string, AbortController>;
-  teardowns: Map<string, { ctx: RunContext; side: boolean; promise: Promise<void> }>;
+  teardowns: Map<string, RunTeardown>;
+  publishingStops: Set<string>;
+  backgroundSourceOwners: Map<string, { ctx: RunContext; threadEpoch: number }>;
   planning: PlanningCoordinator;
   agentWork: AgentWorkCoordinator;
   backgroundWork: BackgroundWorkCoordinator;
@@ -83,7 +86,8 @@ export interface ServiceCommandsHost {
   isAccountBound(thread: Thread): boolean;
   binding(thread: Thread, providerId: string): { accountId: string | null; bound: boolean };
   assertBinding(thread: Thread, providerId: string, captured: { accountId: string | null; bound: boolean }): void;
-  cancelRun(ctx: RunContext, side: boolean): Promise<void>;
+  cancelRun(ctx: RunContext, side: boolean, retryFailed?: boolean): Promise<void>;
+  replayStop(receipt: CommandReceipt): Promise<CommandReceipt>;
   cancelReview(): Promise<void>;
   failUnansweredDetails(ctx: RunContext, error: string): void;
   applyLossAwareCompaction(command: HostCommand, thread: Thread): Promise<CommandReceipt>;
@@ -139,12 +143,12 @@ export class ServiceCommands {
     if(command.type==='agent.followUp'){if(host.closed())throw new HarnessError('CANCELLED_RUN','The workspace has closed.');host.touch();return host.planning.followUp(command);}
     // Retired commands must not replay old write receipts.
     if(command.type.startsWith('research.'))throw new HarnessError('UNKNOWN_COMMAND', 'Unknown command: '+command.type);
-    const duplicate = host.store.receipt(command); if (duplicate) {
-      if(command.type==='run.stop'){
-        const owner=(duplicate.result as {nativeOwner?:RunContext})?.nativeOwner;
-        if(owner)await host.teardowns.get(JSON.stringify([owner.threadId,owner.runId,owner.epoch]))?.promise;
-      }
-      return duplicate;
+    const duplicate = host.store.receipt(command);
+    if(duplicate)return command.type==='run.stop'?host.replayStop(duplicate):duplicate;
+    if(command.type==='run.stop'&&command.threadId&&host.publishingStops.has(command.threadId)){
+      // A fresh Stop from a receipt subscriber must read the owner after registration.
+      await Promise.resolve();
+      return this.commandAdmitted(command);
     }
     const target=command.threadId?host.store.get<Thread>('thread',command.threadId):null;
     if(target?.kind==='delegate'&&!['thread.rename','thread.presentation','thread.archive','thread.restore'].includes(command.type))throw new HarnessError('DELEGATE_READ_ONLY','Delegated transcripts are read-only. Control their work from the parent task.');
@@ -162,7 +166,7 @@ export class ServiceCommands {
     if(host.closed())throw new HarnessError('CANCELLED_RUN','The workspace has closed.');
     if(host.source()?.runtime.sourceBusy&&command.type==='settings.update'&&p.preferences&&typeof p.preferences==='object'&&['learningEnabled','learningApproval','learningInterval','skillCurator'].some(key=>Object.hasOwn(p.preferences as object,key)))throw new HarnessError('HERMES_POLICY_BUSY','Stop the current response before changing learning controls.');
     host.touch();
-    if(host.reviewing()&&(['run.stop','run.compact','thread.archive','learning.cancel'].includes(command.type)||command.type.startsWith('account.')||command.type==='settings.update'||command.type.startsWith('skill.')))await host.cancelReview();
+    if(host.reviewing()&&(['run.compact','thread.archive','learning.cancel'].includes(command.type)||command.type==='run.stop'&&!host.source()||command.type.startsWith('account.')||command.type==='settings.update'||command.type.startsWith('skill.')))await host.cancelReview();
     if(host.source()&&(command.type.startsWith('skill.')||command.type==='learning.curate'))return host.source()!.library.command(command);
     if(command.type.startsWith('skill.'))return host.store.command(command,()=>{
       if(command.type==='skill.manage')return applySkillOperations(host.store,p.operations,host.skillActor('user'));
@@ -248,15 +252,33 @@ export class ServiceCommands {
     if (command.type === 'memory.save' || command.type === 'memory.delete') return host.store.command(command, () => changeTaskMemory(host.store, thread.id, command.type === 'memory.save' ? 'save' : 'delete', p, 'user'));
     if (command.type === "message.send") return host.sendMessage(command, thread);
     if (command.type === "run.stop") {
-      const pending=[...host.teardowns.values()].find(owner=>owner.ctx.threadId===thread.id);
-      const ctx = !thread.runId&&pending?pending.ctx:{ threadId: thread.id, runId: thread.runId ?? "", epoch: thread.epoch };
-      const receipt = host.store.command(command, () => { host.planning.endRun(ctx,'cancelled'); host.failUnansweredDetails(ctx,"The explanation was stopped. Resume the task to retry."); host.store.put("thread", thread.id, thread.id, { ...thread, epoch: thread.epoch + 1, runId: null, status: "stopped", updatedAt: now() }); return { stopped: true,nativeOwner:ctx }; });
-      host.aborts.get(thread.id)?.abort();
-      // Register the native teardown first — a racing resume must still see
-      // RUN_BUSY — then revoke child work whether teardown succeeded or
-      // failed, so no stopped parent leaves live dispatch behind.
-      await host.cancelRun(ctx,!!thread.sideParentId)
-        .finally(() => host.agentWork.revokeForParent(thread.id).catch(() => {}));
+      const duplicate=host.store.receipt(command);
+      if(duplicate)return host.replayStop(duplicate);
+      const pending=!thread.runId?[...host.teardowns.values()].find(owner=>
+        owner.ctx.threadId===thread.id&&(owner.stop?.epoch??owner.ctx.epoch)===thread.epoch
+      ):undefined;
+      if(pending&&thread.status==='stopped'){
+        return host.replayStop(host.store.command(command,()=>({stopped:true,nativeOwner:pending.ctx})));
+      }
+      const background=host.backgroundSourceOwners.get(thread.id);
+      const ctx=pending?.ctx??(!thread.runId&&background?.threadEpoch===thread.epoch?background.ctx:{
+        threadId:thread.id,runId:thread.runId??'',epoch:thread.epoch
+      });
+      let receipt:CommandReceipt,teardown:Promise<void>,childWork:Promise<void>;
+      host.publishingStops.add(thread.id);
+      try{
+        receipt=host.store.command(command,()=>{
+          host.planning.endRun(ctx,'cancelled');
+          host.failUnansweredDetails(ctx,"The explanation was stopped. Resume the task to retry.");
+          host.store.put("thread",thread.id,thread.id,{...thread,epoch:thread.epoch+1,runId:null,status:"stopped",updatedAt:now()});
+          return {stopped:true,nativeOwner:ctx};
+        });
+        host.aborts.get(thread.id)?.abort();
+        teardown=host.cancelRun(ctx,!!thread.sideParentId,true);
+        childWork=host.agentWork.revokeForParent(thread.id).catch(()=>{});
+        host.teardowns.get(teardownKey(ctx))!.stop={epoch:thread.epoch+1,childWork};
+      }finally{host.publishingStops.delete(thread.id);}
+      await teardown.finally(()=>childWork);
       return receipt;
     }
     if (command.type === "run.resume") return host.resume(command, thread);
