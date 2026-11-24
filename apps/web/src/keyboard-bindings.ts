@@ -38,6 +38,10 @@ export const KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
   {id: 'thread-reorder-up', label: 'Move a focused thread up', scope: 'Sidebar', chords: ['Alt+ArrowUp'], handlers: [module('sidebar-reorder.ts')]},
   {id: 'thread-reorder-down', label: 'Move a focused thread down', scope: 'Sidebar', chords: ['Alt+ArrowDown'], handlers: [module('sidebar-reorder.ts')]},
   {id: 'thread-drag-cancel', label: 'Cancel a sidebar drag', scope: 'Sidebar', chords: ['Escape'], handlers: [module('sidebar-reorder.ts')]},
+  {id: 'thread-cycle-forward', label: 'Next open thread', scope: 'Sidebar', preference: 'threadCycleForward', hint: 'Hold the modifier to preview threads, ↑/↓ or the chord again to move, release to open', handlers: [module('App.tsx')]},
+  {id: 'thread-cycle-backward', label: 'Previous open thread', scope: 'Sidebar', preference: 'threadCycleBackward', handlers: [module('App.tsx')]},
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((slot): KeyboardBinding => ({id: `thread-sidebar-${slot}`, label: `Sidebar thread ${slot}`, scope: 'Sidebar', preference: `threadSidebar${slot}` as keyof UiPreferences['keybindings'], handlers: [module('App.tsx')]})),
+  {id: 'thread-next-unread', label: 'Next unread thread', scope: 'Sidebar', preference: 'threadNextUnread', handlers: [module('App.tsx')]},
   {id: 'settings-next-section', label: 'Next settings section', scope: 'Settings', chords: ['ArrowDown'], handlers: [module('Settings.tsx')]},
   {id: 'settings-previous-section', label: 'Previous settings section', scope: 'Settings', chords: ['ArrowUp'], handlers: [module('Settings.tsx')]},
   {id: 'settings-first-section', label: 'First settings section', scope: 'Settings', chords: ['Home'], handlers: [module('Settings.tsx')]},
@@ -51,11 +55,38 @@ export const KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
 /** The rebindable subset, in registry order; Settings turns these into shortcut rows. */
 export const PREFERENCE_BINDINGS: readonly {preference: keyof UiPreferences['keybindings']; label: string}[] = KEYBOARD_BINDINGS.flatMap(binding => binding.preference ? [{preference: binding.preference, label: binding.label}] : []);
 
+/** Thread-switching preferences that must keep a primary modifier so plain typing is never intercepted. */
+export const MODIFIER_REQUIRED_BINDINGS: ReadonlySet<keyof UiPreferences['keybindings']> = new Set(['threadCycleForward', 'threadCycleBackward', 'threadNextUnread', 'threadSidebar1', 'threadSidebar2', 'threadSidebar3', 'threadSidebar4', 'threadSidebar5', 'threadSidebar6', 'threadSidebar7', 'threadSidebar8', 'threadSidebar9']);
+
 /** Splits a canonical chord with the same literal-plus rule matchesShortcut applies. */
 export function readChord(chord: string) {
   const binding = chord.toLowerCase().trim(), plus = binding === '+' || binding.endsWith('++');
   const parts = (plus ? binding.slice(0, -1) : binding).split('+').map(part => part.trim());
   return {modifiers: parts.slice(0, -1), key: plus ? '+' : parts.at(-1) ?? ''};
+}
+
+type ChordShape = {key: string; shift: boolean; alt: boolean; any: boolean; meta: boolean};
+const chordShape = (chord: string): ChordShape => {
+  const {modifiers, key} = readChord(chord);
+  return {key: key === 'comma' ? ',' : key === 'esc' ? 'escape' : key, shift: modifiers.includes('shift'), alt: modifiers.includes('alt'), any: modifiers.includes('ctrl') || modifiers.includes('mod'), meta: modifiers.includes('meta')};
+};
+const chordsOverlap = (a: ChordShape, b: ChordShape) => a.key === b.key && a.shift === b.shift && a.alt === b.alt && (a.any || a.meta) && (b.any || b.meta);
+
+/** True when a thread-switching chord has no primary modifier — those rows reject it so typing is never intercepted. */
+export function chordNeedsModifier(chord: string): boolean {
+  const shape = chordShape(chord);
+  return !(shape.any || shape.meta || shape.alt);
+}
+
+/** First registered binding whose chord overlaps under matcher's rules (Ctrl accepts Meta); null when free. */
+export function findChordConflict(chord: string, exclude: keyof UiPreferences['keybindings'], keybindings: UiPreferences['keybindings'] = DEFAULT_PREFERENCES.keybindings): string | null {
+  const target = chordShape(chord);
+  if (!target.key) return null;
+  for (const binding of KEYBOARD_BINDINGS) {
+    if (binding.preference === exclude) continue;
+    for (const candidate of bindingChords(binding, keybindings)) if (chordsOverlap(target, chordShape(candidate))) return binding.label;
+  }
+  return null;
 }
 
 const macModifiers: Record<string, string> = {ctrl: '⌘', meta: '⌘', alt: '⌥', shift: '⇧'};

@@ -2,8 +2,8 @@ import {describe,expect,it} from 'vitest';
 import {readdirSync, readFileSync} from 'node:fs';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {DEFAULT_PREFERENCES} from '../packages/contracts/preferences';
-import {KEYBOARD_BINDINGS, KEYBOARD_SCOPES, PREFERENCE_BINDINGS, ariaKeyShortcuts, ariaShortcut, bindingChords, readChord, shortcutKeys, shortcutPlatform, type KeyboardBinding} from '../apps/web/src/keyboard-bindings';
+import {DEFAULT_PREFERENCES, getPreferences} from '../packages/contracts/preferences';
+import {KEYBOARD_BINDINGS, KEYBOARD_SCOPES, PREFERENCE_BINDINGS, MODIFIER_REQUIRED_BINDINGS, ariaKeyShortcuts, ariaShortcut, bindingChords, chordFor, chordNeedsModifier, findChordConflict, readChord, shortcutKeys, shortcutPlatform, type KeyboardBinding} from '../apps/web/src/keyboard-bindings';
 import {KeyboardReference} from '../apps/web/src/KeyboardReference';
 import {SettingsView} from '../apps/web/src/Settings';
 import type {SettingsData} from '../apps/web/src/settings-data';
@@ -14,7 +14,7 @@ const chords = (binding: KeyboardBinding) => bindingChords(binding, DEFAULT_PREF
 const MODIFIERS = [['ctrlKey', 'ctrl'], ['metaKey', 'meta'], ['altKey', 'alt'], ['shiftKey', 'shift']] as const;
 /** A comparison and the modifiers guarding it share one statement in these handlers, so `;` bounds the evidence. */
 const statements = (text: string) => text.split(';');
-const KEY_COMPARISON = /\.key(?:\.toLowerCase\(\))?\s*[!=]==?\s*'([^']*)'/g, KEY_LIST = /\[([^\]]*)\]\.includes\(\s*event\.key\s*\)/g, PREFERENCE_READ = /keybindings\.([A-Za-z]+)/g;
+const KEY_COMPARISON = /\.key(?:\.toLowerCase\(\))?\s*[!=]==?\s*'([^']*)'/g, KEY_LIST = /\[([^\]]*)\]\.includes\(\s*event\.key\s*\)/g, PREFERENCE_READ = /keybindings\.([A-Za-z0-9]+)/g;
 
 /** The modifiers a statement requires and negates around a key comparison. */
 function guards(segment: string) {
@@ -46,7 +46,7 @@ function unregistered(binding: KeyboardBinding, text: string): string | null {
 
 /** Native control behavior rather than an app chord: these keys move focus or are recorded, never dispatched as a shortcut. */
 const NATIVE_KEYS: Record<string, readonly string[]> = {
-  'apps/web/src/App.tsx': ['enter', 'tab'],
+  'apps/web/src/App.tsx': ['enter', 'tab', 'arrowup', 'arrowdown'],
   'apps/web/src/TerminalBody.tsx': ['tab'],
   'apps/web/src/Settings.tsx': ['tab', ',', 'control', 'meta', 'alt', 'shift'],
 };
@@ -70,7 +70,7 @@ const MATCHER_ARGUMENT = /matchesShortcut\(\s*[A-Za-z_$][\w$]*\s*,\s*((?:[^()]|\
 function unregisteredMatchers(files: Record<string, string>): string[] {
   const preferences = new Set<string>(PREFERENCE_BINDINGS.map(binding => binding.preference)), literals = new Set(KEYBOARD_BINDINGS.flatMap(chords)), found: string[] = [];
   for (const [file, text] of Object.entries(files)) for (const match of text.matchAll(MATCHER_ARGUMENT)) {
-    const argument = match[1]!.trim(), preference = /^preferences\.keybindings\.([A-Za-z]+)$/.exec(argument), literal = /^'([^']+)'$/.exec(argument), registered = /^chordFor\('([^']+)'\)$/.exec(argument);
+    const argument = match[1]!.trim(), preference = /^preferences\.keybindings\.([A-Za-z0-9]+)$/.exec(argument), literal = /^'([^']+)'$/.exec(argument), registered = /^chordFor\('([^']+)'\)$/.exec(argument);
     if (registered ? !KEYBOARD_BINDINGS.some(binding => binding.id === registered[1]) : preference ? !preferences.has(preference[1]!) : literal ? !literals.has(literal[1]!) : true) found.push(`${file}: matchesShortcut(…, ${argument})`);
   }
   return found;
@@ -174,5 +174,48 @@ describe('keyboard binding registry', () => {
     expect(html).toContain('data-setting-id="harness-keyboard-reference"');
     expect(html.split('data-binding-id="').length - 1).toBe(KEYBOARD_BINDINGS.length);
     for (const binding of KEYBOARD_BINDINGS) expect(html, binding.id).toContain(`data-binding-id="${binding.id}"`);
+  });
+});
+
+describe('thread switching bindings (#1598 T01)', () => {
+  it('ships modifier-guarded defaults for every new preference', () => {
+    const keys = DEFAULT_PREFERENCES.keybindings;
+    expect(keys.threadCycleForward).toBe('Ctrl+Tab');
+    expect(keys.threadCycleBackward).toBe('Ctrl+Shift+Tab');
+    for (let slot = 1; slot <= 9; slot += 1) expect(keys[`threadSidebar${slot}` as keyof typeof keys]).toBe(`Ctrl+${slot}`);
+    expect(keys.threadNextUnread).toBe('Alt+Shift+U');
+  });
+  it('fills new defaults into legacy stored preferences without touching overrides', () => {
+    const merged = getPreferences({preferences: {keybindings: {search: 'Alt+K'} as never}});
+    expect(merged.keybindings.search).toBe('Alt+K');
+    expect(merged.keybindings.threadCycleForward).toBe('Ctrl+Tab');
+    expect(merged.keybindings.threadNextUnread).toBe('Alt+Shift+U');
+    const custom = getPreferences({preferences: {keybindings: {threadCycleForward: 'Ctrl+Alt+Tab'} as never}});
+    expect(custom.keybindings.threadCycleForward).toBe('Ctrl+Alt+Tab');
+  });
+  it('registers each new preference and resolves it through chordFor', () => {
+    for (const preference of MODIFIER_REQUIRED_BINDINGS) {
+      const binding = KEYBOARD_BINDINGS.find(entry => entry.preference === preference);
+      expect(binding, preference).toBeTruthy();
+      expect(chordFor(binding!.id)).toBe(bindingChords(binding!, DEFAULT_PREFERENCES.keybindings)[0]);
+    }
+  });
+  it('requires a primary modifier only on the new rows', () => {
+    expect(chordNeedsModifier('Ctrl+Tab')).toBe(false);
+    expect(chordNeedsModifier('Alt+Shift+U')).toBe(false);
+    expect(chordNeedsModifier('Meta+1')).toBe(false);
+    expect(chordNeedsModifier('Shift+U')).toBe(true);
+    expect(chordNeedsModifier('Tab')).toBe(true);
+    expect(MODIFIER_REQUIRED_BINDINGS.has('search' as never)).toBe(false);
+  });
+  it('detects matcher-equivalent chord conflicts and ignores the rebound action itself', () => {
+    expect(findChordConflict('Meta+Tab', 'threadSidebar3')).toBe('Next open thread');
+    expect(findChordConflict('Ctrl+Shift+Tab', 'threadSidebar3')).toBe('Previous open thread');
+    expect(findChordConflict('Meta+Tab', 'threadCycleForward')).toBeNull();
+    expect(findChordConflict('Ctrl+Shift+Tab', 'threadCycleBackward')).toBeNull();
+    expect(findChordConflict('Ctrl+Tab', 'threadCycleForward')).toBeNull();
+    expect(findChordConflict('Ctrl+7', 'threadSidebar3')).toBe('Sidebar thread 7');
+    expect(findChordConflict('Alt+7', 'threadSidebar3')).toBeNull();
+    expect(findChordConflict('Ctrl+K', 'threadSidebar3')).toBe('Search threads');
   });
 });

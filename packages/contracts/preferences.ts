@@ -31,6 +31,11 @@ const keybindings = z.strictObject({
   search: z.string().min(1).max(80), newThread: z.string().min(1).max(80),
   toggleSidebar: z.string().min(1).max(80), toggleRightPanel: z.string().min(1).max(80),
   openSettings: z.string().min(1).max(80), stop: z.string().min(1).max(80),
+  threadCycleForward: z.string().min(1).max(80), threadCycleBackward: z.string().min(1).max(80),
+  threadSidebar1: z.string().min(1).max(80), threadSidebar2: z.string().min(1).max(80), threadSidebar3: z.string().min(1).max(80),
+  threadSidebar4: z.string().min(1).max(80), threadSidebar5: z.string().min(1).max(80), threadSidebar6: z.string().min(1).max(80),
+  threadSidebar7: z.string().min(1).max(80), threadSidebar8: z.string().min(1).max(80), threadSidebar9: z.string().min(1).max(80),
+  threadNextUnread: z.string().min(1).max(80),
 });
 export const preferencesSchema = z.strictObject({
   density: z.enum(['compact', 'comfortable', 'touch']), uiFontSize: z.number().int().min(13).max(16),
@@ -68,7 +73,11 @@ export const DEFAULT_PREFERENCES: UiPreferences = {
   diffLayout: 'split', hideWhitespace: false, diffDefaultExpanded: true, diffColors: 'red-green',
   showThreadDetails: true, showComposerContext: true, showUsageFooter:true, wordWrap: true,
   learningEnabled:true,learningApproval:false,learningInterval:10,skillCurator:true,
-  keybindings: { search: 'Ctrl+K', newThread: 'Ctrl+Shift+O', toggleSidebar: 'Ctrl+B', toggleRightPanel: 'Ctrl+Shift+B', openSettings: 'Ctrl+Comma', stop: 'Escape' },
+  keybindings: { search: 'Ctrl+K', newThread: 'Ctrl+Shift+O', toggleSidebar: 'Ctrl+B', toggleRightPanel: 'Ctrl+Shift+B', openSettings: 'Ctrl+Comma', stop: 'Escape',
+    threadCycleForward: 'Ctrl+Tab', threadCycleBackward: 'Ctrl+Shift+Tab',
+    threadSidebar1: 'Ctrl+1', threadSidebar2: 'Ctrl+2', threadSidebar3: 'Ctrl+3', threadSidebar4: 'Ctrl+4', threadSidebar5: 'Ctrl+5',
+    threadSidebar6: 'Ctrl+6', threadSidebar7: 'Ctrl+7', threadSidebar8: 'Ctrl+8', threadSidebar9: 'Ctrl+9',
+    threadNextUnread: 'Alt+Shift+U' },
 };
 const patchSchema = preferencesSchema.partial().extend({ keybindings: keybindings.partial().optional() }).strict();
 export function mergePreferences(current: UiPreferences, patch: unknown): UiPreferences {
