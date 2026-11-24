@@ -1,0 +1,9 @@
+/* Intraline diff marks: a stronger tint over the existing row, a 2px
+   radius, and a 1px decoration that identifies the side without color.
+   No animation, padding or geometry changes; spans are plain text. */
+.intraline-mark { border-radius:2px; text-decoration-line:underline; text-underline-offset:2px; }
+.intraline-mark-removed { background:color-mix(in srgb,var(--intraline-removed,var(--danger-fg,#c92a3e)) 24%,transparent); text-decoration-style:dashed; text-decoration-color:var(--intraline-removed,var(--danger-fg,#c92a3e)); }
+.intraline-mark-added { background:color-mix(in srgb,var(--intraline-added,var(--success-fg,#06724f)) 24%,transparent); text-decoration-style:solid; text-decoration-color:var(--intraline-added,var(--success-fg,#06724f)); }
+.diff-colors-blue-orange { --intraline-removed:var(--warning-fg,#815400); --intraline-added:var(--accent-fg,#3b5bdb); }
+.app-shell[data-contrast=high] .intraline-mark { text-decoration-thickness:2px; }
+@media(forced-colors:active) { .intraline-mark { text-decoration-color:CanvasText; } }

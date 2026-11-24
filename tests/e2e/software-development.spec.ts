@@ -124,3 +124,28 @@ test('invalid and oversized source records fail closed without executable markup
   host.setInput('software',{items:new Array(101)});await host.publish();
   await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeEnabled();
 });
+test('change set emphasizes added runs inside patch rows using snapshot display preferences (#1582)',async({page})=>{
+  const snapshot=taskFixture(softwareDevelopmentSpec('ChangeSet','review'),{software:structuredClone(SOFTWARE_FIXTURE_DATA.ChangeSet)});
+  snapshot.settings.preferences={hideWhitespace:false,diffColors:'blue-orange'};
+  await serveTaskFixture(page,snapshot);await page.goto('/');
+  const patch=page.locator('.software-patch');
+  await expect(patch).toHaveClass(/diff-colors-blue-orange/);
+  const addedMarks=await patch.locator('.intraline-mark-added').allTextContents();
+  expect(addedMarks.join('')).toContain('item.quantity');expect(addedMarks.join('')).toContain('*');
+  // Patch text, gutters and line numbers stay exactly as before.
+  const text=await patch.evaluate(el=>el.textContent);
+  expect(text).toContain('return items.reduce((sum, item) => sum + item.price * item.quantity, 0);');
+  expect(await patch.locator('.intraline-mark[tabindex],.intraline-mark[title]').count()).toBe(0);
+});
+test('patch rows that look like headers inside a hunk keep their kind and aligned marks (#1582 review)',async({page})=>{
+  const data=structuredClone(SOFTWARE_FIXTURE_DATA.ChangeSet) as {files:{id:string;path:string;status:string;patch:string}[]};
+  data.files=[{id:'sql',path:'db/q.sql',status:'modified',patch:'@@ -1,2 +1,2 @@\n-- comment value 360\n-- keep intact\n+-- comment value 420\n+-- keep intact'}];
+  const snapshot=taskFixture(softwareDevelopmentSpec('ChangeSet','review'),{software:data});
+  await serveTaskFixture(page,snapshot);await page.goto('/');
+  const patch=page.locator('.software-patch');
+  // '-- comment value 360' is a removed row, not metadata; only the digits are marked.
+  const removed=patch.locator('.patch-removed').first(),added=patch.locator('.patch-added').first();
+  await expect(removed.locator('.intraline-mark-removed')).toHaveText('360');
+  await expect(added.locator('.intraline-mark-added').filter({hasText:'420'})).toHaveCount(1);
+  await expect(removed).toContainText('- comment value 360');
+});

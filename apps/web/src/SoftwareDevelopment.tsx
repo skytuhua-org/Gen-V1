@@ -2,7 +2,9 @@ import {useContext,useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type 
 import {useStateStore,type ComponentRenderProps,type ComponentRegistry} from '@json-render/react';
 import {ArrowRight,ArrowUpRight,Braces,FileCode2,GitBranch,Terminal} from 'lucide-react';
 import {SOFTWARE_DATA_SCHEMAS,SOFTWARE_SCHEMAS,type PipelineData,type SoftwareProps} from '../../../packages/ui-catalog/software-development';
-import {ArtifactTitle,inputPath,statePath,useTaskAction} from './task-context';
+import {ArtifactDiffPrefs,ArtifactTitle,inputPath,statePath,useTaskAction} from './task-context';
+import {annotateUnified} from './intraline-diff';
+import {DiffText} from './DiffText';
 import {StatusIcon,type StatusKind} from './task-status';
 import {animateTask} from './task-motion';
 import './software-development.css';
@@ -81,23 +83,31 @@ export function Diagnostics({element:{props}}:ComponentRenderProps){
 
 type PatchLine={text:string;kind:'hunk'|'added'|'removed'|'context'|'metadata';oldLine?:number;newLine?:number};
 function patchLines(patch:string):PatchLine[]{
-  let oldLine:number|undefined,newLine:number|undefined;
+  let oldLine:number|undefined,newLine:number|undefined,oldRem=0,newRem=0,inHunk=false;
   return patch.split('\n').map(text=>{
-    const hunk=/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
-    if(hunk){oldLine=Number(hunk[1]);newLine=Number(hunk[2]);return {text,kind:'hunk'};}
-    if(/^(?:diff |index |--- |\+\+\+ |\\)/.test(text))return {text,kind:'metadata'};
-    if(text.startsWith('-'))return {text:text.slice(1),kind:'removed',oldLine:oldLine===undefined?undefined:oldLine++};
-    if(text.startsWith('+'))return {text:text.slice(1),kind:'added',newLine:newLine===undefined?undefined:newLine++};
-    if(text.startsWith(' '))return {text:text.slice(1),kind:'context',oldLine:oldLine===undefined?undefined:oldLine++,newLine:newLine===undefined?undefined:newLine++};
+    const hunk=/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(text);
+    if(hunk){oldLine=Number(hunk[1]);newLine=Number(hunk[3]);oldRem=hunk[2]===undefined?1:Number(hunk[2]);newRem=hunk[4]===undefined?1:Number(hunk[4]);inHunk=true;return {text,kind:'hunk'};}
+    // Outside a hunk, header/meta rows keep the full text. Inside one, '-'
+    // and '+' always mark content ('-- ' or '++ ' payloads included).
+    if(!inHunk&&/^(?:diff |index |--- |\+\+\+ |\\)/.test(text))return {text,kind:'metadata'};
+    if(text.startsWith('diff ')){inHunk=false;return {text,kind:'metadata'};}
+    // Like parseUnified, an empty row ends the hunk once its declared counts
+    // are satisfied (trailing newline); earlier it is a blank context row.
+    if(inHunk&&text===''&&(oldRem<=0||newRem<=0)){inHunk=false;return {text,kind:'metadata'};}
+    if(inHunk&&text.startsWith('\\'))return {text,kind:'metadata'};
+    if(text.startsWith('-')){if(inHunk)oldRem--;return {text:text.slice(1),kind:'removed',oldLine:oldLine===undefined?undefined:oldLine++};}
+    if(text.startsWith('+')){if(inHunk)newRem--;return {text:text.slice(1),kind:'added',newLine:newLine===undefined?undefined:newLine++};}
+    if(text.startsWith(' ')||inHunk){if(inHunk){oldRem--;newRem--;}return {text:text.startsWith(' ')?text.slice(1):text,kind:'context',oldLine:oldLine===undefined?undefined:oldLine++,newLine:newLine===undefined?undefined:newLine++};}
     return {text,kind:'metadata'};
   });
 }
 export function ChangeSet({element:{props}}:ComponentRenderProps){
   const p=SOFTWARE_SCHEMAS.ChangeSet.parse(props),store=useStateStore(),raw=store.get(inputPath(p.dataBinding));
   const parsed=useMemo(()=>raw&&typeof raw==='object'&&Array.isArray((raw as {files?:unknown}).files)&&(raw as {files:unknown[]}).files.length<=100?SOFTWARE_DATA_SCHEMAS.ChangeSet.safeParse(raw):null,[raw]);
-  const files=parsed?.success?parsed.data.files:[],{selected,select}=useSelected(files,p.stateKey),detail=useDetailMotion(selected?.id),panelId=useId();
+  const files=parsed?.success?parsed.data.files:[],{selected,select}=useSelected(files,p.stateKey),detail=useDetailMotion(selected?.id),panelId=useId(),diffPrefs=useContext(ArtifactDiffPrefs);
+  const patch=selected?.patch??'';
+  const lines=useMemo(()=>patchLines(patch),[patch]),annotation=useMemo(()=>patch?annotateUnified(patch,{hideWhitespace:diffPrefs.hideWhitespace,maxRows:600}):null,[patch,diffPrefs.hideWhitespace]);
   if(!parsed?.success)return <Unavailable name="Change"/>;
-  const lines=patchLines(selected?.patch??'');
   return <section className="software-surface software-changes" aria-label={parsed.data.title??'Changes'}>
     <Title title={parsed.data.title}><span className="software-counts">{files.length} {files.length===1?'file':'files'}</span></Title>
     {selected?<div className="software-inspector software-file-review">
@@ -106,7 +116,7 @@ export function ChangeSet({element:{props}}:ComponentRenderProps){
         <div className="software-detail-heading"><h4><code>{selected.path}</code></h4><span className="software-file-status">{selected.status}</span></div>
         {selected.previousPath&&<p className="software-file-location">From <code>{selected.previousPath}</code></p>}{selected.note&&<p className="software-change-note">{selected.note}</p>}
         <div className="software-patch-heading"><span>Before</span><span>After</span><div className="software-patch-key" aria-label="Patch legend"><span><b aria-hidden="true">−</b>Removed</span><span><b aria-hidden="true">+</b>Added</span></div></div>
-        <pre className="software-patch" aria-label="Selected patch" tabIndex={0}><code>{lines.slice(0,600).map((line,index)=><span key={index} className={`patch-${line.kind}`} data-line-kind={line.kind} data-old-line={line.oldLine} data-new-line={line.newLine}><span className="patch-old-line" aria-hidden="true">{line.oldLine??''}</span><span className="patch-new-line" aria-hidden="true">{line.newLine??''}</span><span className="patch-gutter" aria-hidden="true">{line.kind==='added'?'+':line.kind==='removed'?'−':''}</span><span className="patch-code">{line.text||' '}</span></span>)}</code></pre>
+        <pre className={`software-patch diff-colors-${diffPrefs.diffColors}`} aria-label="Selected patch" tabIndex={0}><code>{lines.slice(0,600).map((line,index)=><span key={index} className={`patch-${line.kind}`} data-line-kind={line.kind} data-old-line={line.oldLine} data-new-line={line.newLine}><span className="patch-old-line" aria-hidden="true">{line.oldLine??''}</span><span className="patch-new-line" aria-hidden="true">{line.newLine??''}</span><span className="patch-gutter" aria-hidden="true">{line.kind==='added'?'+':line.kind==='removed'?'−':''}</span><span className="patch-code"><DiffText text={line.text||' '} ranges={annotation?.get(index)} tone={line.kind==='removed'?'removed':'added'}/></span></span>)}</code></pre>
         {lines.length>600&&<details><summary>Full patch ({lines.length} lines)</summary><CodeBlock text={selected.patch}/></details>}
         <Action props={p} payload={{fileId:selected.id,path:selected.path,status:selected.status}} fallback="Review change"/>
       </div>

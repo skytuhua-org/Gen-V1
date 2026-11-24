@@ -6,6 +6,8 @@ import {displayFilePath} from './files/FilesView';
 import {checkpointOwnerKey,checkpointReviewPaths,disabledCheckpointAdapter,readCheckpointDetail,readCheckpointList,readCheckpointReview,readRestorePlan,readRestoreResult,type CheckpointOwner,type CheckpointRestorePlan,type CheckpointReview,type FileCheckpoint,type FileCheckpointAdapter} from './file-checkpoint-api';
 import './file-checkpoints.css';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
+import {annotateUnified} from './intraline-diff';
+import {DiffText} from './DiffText';
 
 const sources=['Current','Recorded','History'] as const;
 type Source=typeof sources[number];
@@ -35,12 +37,17 @@ const formatTime=(value:string,preferences:UiPreferences)=>new Date(value).toLoc
 const provenance=(checkpoint:FileCheckpoint)=>checkpoint.provenance.kind==='restore_backup'?'Saved before a restore':'Saved before an edit';
 const statusNote=(status:string)=>status==='missing'?'Not in your files now':status==='binary'?'Binary file, no preview':status==='too_large'?'Too large to preview':status==='unreadable'?'Could not be read':'No preview available';
 const diffLineKind=(line:string)=>line.startsWith('@@')?'hunk':line.startsWith('+')?'add':line.startsWith('-')?'remove':'context';
-function CheckpointDiff({diff}:{diff:string}){
+function CheckpointDiff({diff,annotate,hideWhitespace}:{diff:string;annotate:boolean;hideWhitespace:boolean}){
   const all=diff.split('\n'),firstHunk=all.findIndex(line=>line.startsWith('@@'));
   const headerEnd=firstHunk===-1?Math.min(2,all.length):firstHunk;
   const lines=all.filter((line,index)=>index>=headerEnd||!(line.startsWith('--- ')||line.startsWith('+++ ')));
   if(!lines.some(line=>line.trim()))return <pre className="unified-diff"><span data-kind="context">No differences.</span></pre>;
-  return <pre className="unified-diff">{lines.map((line,index)=><span key={index} data-kind={diffLineKind(line)}>{line||' '}{'\n'}</span>)}</pre>;
+  const annotation=annotate?annotateUnified(lines.join('\n'),{hideWhitespace}):null;
+  return <pre className="unified-diff">{lines.map((line,index)=>{
+    const ranges=annotation?.get(index);
+    if(!ranges||!line.length)return <span key={index} data-kind={diffLineKind(line)}>{line||' '}{'\n'}</span>;
+    return <span key={index} data-kind={diffLineKind(line)}>{line.slice(0,1)}<DiffText text={line.slice(1)} ranges={ranges} tone={line.startsWith('-')?'removed':'added'}/>{'\n'}</span>;
+  })}</pre>;
 }
 function CheckpointHistory({owner,adapter,preferences}:{owner:CheckpointOwner;preferences:UiPreferences}&{adapter:FileCheckpointAdapter}){
   const [items,setItems]=useState<FileCheckpoint[]>([]),[nextCursor,setNextCursor]=useState<string>(),[error,setError]=useState(''),[loading,setLoading]=useState(true),[attempt,setAttempt]=useState(0),[cursor,setCursor]=useState<string>(),[checkpoint,setCheckpoint]=useState<FileCheckpoint>();
@@ -92,8 +99,10 @@ function RestoreResult({done,onBack,onReviewAgain}:{done:RestoreDone;onBack:()=>
     {!applied&&<div className="file-checkpoints-actions"><button type="button" className="file-checkpoints-primary" onClick={onReviewAgain}>Review again</button></div>}
   </section>;
 }
+const MAX_ANNOTATED_FILES=16;
 function CheckpointFiles({owner,adapter,checkpoint,preferences,onBack}:{owner:CheckpointOwner;preferences:UiPreferences}&{adapter:FileCheckpointAdapter;checkpoint:FileCheckpoint;onBack:()=>void}){
   const [reviews,setReviews]=useState<CheckpointReview[]>(),[error,setError]=useState(''),[attempt,setAttempt]=useState(0);
+  const [toggled,setToggled]=useState<Set<string>>(new Set());
   const [selected,setSelected]=useState<Set<string>>(new Set()),[confirming,setConfirming]=useState(false),[plan,setPlan]=useState<CheckpointRestorePlan>(),[approvalId,setApprovalId]=useState(''),[applying,setApplying]=useState(false),[done,setDone]=useState<RestoreDone>(),[restoreError,setRestoreError]=useState('');
   const back=useRef<HTMLButtonElement>(null),confirmButton=useRef<HTMLButtonElement>(null);
   const restorable=Boolean(adapter.restore.enabled&&adapter.restore.plan&&adapter.restore.apply);
@@ -143,7 +152,9 @@ function CheckpointFiles({owner,adapter,checkpoint,preferences,onBack}:{owner:Ch
   };
   if(done)return <RestoreResult done={done} onBack={onBack} onReviewAgain={()=>{setDone(undefined);cancel();setAttempt(value=>value+1);}}/>;
   const count=selected.size,locked=applying||confirming;
-  return <section aria-label="Checkpoint review" className="file-checkpoints-review">
+  const isOpen=(path:string)=>toggled.has(path)?!preferences.diffDefaultExpanded:preferences.diffDefaultExpanded;
+  let enriched=0;
+  return <section aria-label="Checkpoint review" className={`file-checkpoints-review diff-colors-${preferences.diffColors}`}>
     <button ref={back} type="button" className="file-checkpoints-back" onClick={onBack}><ChevronLeft size={14} aria-hidden="true"/>Back to History</button>
     <h3>{checkpoint.label}</h3>
     <p className="file-checkpoints-meta" title={`Operation ${checkpoint.provenance.operationId} · Revision ${checkpoint.revision}`}>{provenance(checkpoint)} · <time dateTime={checkpoint.createdAt}>{formatTime(checkpoint.createdAt,preferences)}</time> · {plural(checkpoint.fileCount,'file')}</p>
@@ -155,10 +166,10 @@ function CheckpointFiles({owner,adapter,checkpoint,preferences,onBack}:{owner:Ch
         {reviews.length>1&&<p className="file-checkpoints-note">Part {index+1} of {reviews.length} · {plural(review.files.length,'file')}</p>}
         {review.files.map(file=>{const canSelect=restorable&&selectable(file);return <div key={file.path} className="file-checkpoints-file" data-selected={selected.has(file.path)||undefined}>
           {canSelect&&<input type="checkbox" className="file-checkpoints-file-check" aria-label={`Restore ${displayFilePath(file.path)}`} checked={selected.has(file.path)} disabled={locked} onChange={event=>toggle(file.path,event.target.checked)}/>}
-          {file.diff===null?<div className="file-checkpoints-file-plain"><strong>{displayFilePath(file.path)}</strong><small>{statusNote(file.status)}</small></div>:<details className="workspace-diff" open={preferences.diffDefaultExpanded}><summary>{displayFilePath(file.path)}</summary>
+          {file.diff===null?<div className="file-checkpoints-file-plain"><strong>{displayFilePath(file.path)}</strong><small>{statusNote(file.status)}</small></div>:(()=>{const annotate=!file.diffTruncated&&isOpen(file.path)&&enriched<MAX_ANNOTATED_FILES;if(annotate)enriched++;return <details className="workspace-diff" open={preferences.diffDefaultExpanded} onToggle={event=>{const open=(event.currentTarget as HTMLDetailsElement).open;setToggled(previous=>{const next=new Set(previous);if(open!==preferences.diffDefaultExpanded)next.add(file.path);else next.delete(file.path);return next;});}}><summary>{displayFilePath(file.path)}</summary>
             {file.diffTruncated&&<p className="file-checkpoints-note">Diff truncated. Only part of this comparison is shown.</p>}
-            <CheckpointDiff diff={file.diff}/>
-          </details>}
+            <CheckpointDiff diff={file.diff} annotate={annotate} hideWhitespace={preferences.hideWhitespace}/>
+          </details>;})()}
         </div>;})}
       </section>)}
       {restoreError&&<ErrorState message={restoreError} onRetry={restorable?stage:undefined}/>}

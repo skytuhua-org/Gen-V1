@@ -7,6 +7,8 @@ import type {WorkspacePanelKind} from '../../../packages/contracts/workspace';
 import {useWorkspace,type WorkspaceTab} from './workspace-context';
 import {usageCost,usagePercent} from './usage-presentation';
 import {ContextMeter} from './ContextMeter';
+import {annotateSnapshot,annotateUnified,type IntralineRange,type SnapshotAnnotation} from './intraline-diff';
+import {DiffText} from './DiffText';
 
 const countFormat = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 const count = (value: number | null | undefined) => value == null ? 'Unavailable' : countFormat.format(value);
@@ -46,16 +48,49 @@ export function snapshotDiffs(snapshot: Snapshot, threadId?: string) {
   }
   return diffs;
 }
-export function RecordedDiffPanel({ snapshot, threadId, preferences }: { snapshot: Snapshot; threadId?: string; preferences: UiPreferences }) {
-  return <RecordedDiffs diffs={snapshotDiffs(snapshot,threadId)} preferences={preferences}/>;
+export function RecordedDiffPanel({ snapshot, threadId, preferences, active = true }: { snapshot: Snapshot; threadId?: string; preferences: UiPreferences; active?: boolean }) {
+  return <RecordedDiffs diffs={snapshotDiffs(snapshot,threadId)} preferences={preferences} active={active}/>;
 }
-export function RecordedDiffs({diffs,preferences}:{diffs:ReturnType<typeof snapshotDiffs>;preferences:UiPreferences}) {
+const MAX_ANNOTATED_FILES=16;
+// Render one side of a snapshot comparison: kept source lines in order,
+// changed runs marked, escaped text only.
+function SnapshotSide({text,keep,annotation,tone}:{text:string;keep:number[]|undefined;annotation:SnapshotAnnotation;tone:'removed'|'added'}){
+  const lines=text.split('\n'),marks=new Map<number,IntralineRange[]>((tone==='removed'?annotation.before:annotation.after).map(line=>[line.index,line.ranges]));
+  const indexes=keep??lines.map((_,i)=>i);
+  if(!indexes.length)return <pre>(empty)</pre>;
+  return <pre>{indexes.map((index,i)=><span key={index}>{i>0?'\n':''}<DiffText text={lines[index]!} ranges={marks.get(index)} tone={tone}/></span>)}</pre>;
+}
+function UnifiedDiffText({patch,annotation}:{patch:string;annotation:Map<number,IntralineRange[]>|null}){
+  if(!annotation||!patch)return <>{patch||'No changes reported.'}</>;
+  return <>{patch.split('\n').map((line,index)=>{
+    const ranges=annotation.get(index);
+    if(!ranges||!line.length)return <span key={index}>{index>0?'\n':''}{line}</span>;
+    const tone=line.startsWith('-')?'removed':'added';
+    return <span key={index}>{index>0?'\n':''}{line.slice(0,1)}<DiffText text={line.slice(1)} ranges={ranges} tone={tone}/></span>;
+  })}</>;
+}
+export function RecordedDiffs({diffs,preferences,active=true}:{diffs:ReturnType<typeof snapshotDiffs>;preferences:UiPreferences;active?:boolean}) {
+  const [toggled,setToggled]=useState<Set<string>>(new Set());
   const pair = (before: string, after: string) => {
     if (!preferences.hideWhitespace) return { before, after };
     const left = before.split('\n'), right = after.split('\n'); const changed = Math.max(left.length, right.length);
     return { before: Array.from({ length: changed }, (_, index) => (left[index] ?? '').replace(/\s/g, '') === (right[index] ?? '').replace(/\s/g, '') ? null : left[index] ?? '').filter(line => line !== null).join('\n'), after: Array.from({ length: changed }, (_, index) => (left[index] ?? '').replace(/\s/g, '') === (right[index] ?? '').replace(/\s/g, '') ? null : right[index] ?? '').filter(line => line !== null).join('\n') };
   };
-  return <div className={`workspace-diffs diff-colors-${preferences.diffColors}`}>{diffs.length ? <>{diffs.map(diff => { const value = pair(diff.before ?? '', diff.after ?? ''); return <details className="workspace-diff" key={diff.id} open={preferences.diffDefaultExpanded}><summary>{diff.title}</summary><p className="panel-note">{diff.provenance}</p>{diff.unified !== undefined ? <pre className="unified-diff">{diff.unified || 'No changes reported.'}</pre> : <div className={`workspace-diff-pair diff-${preferences.diffLayout}`}><section><h3>Before</h3><pre>{value.before || '(empty)'}</pre></section><section><h3>After</h3><pre>{value.after || '(empty)'}</pre></section></div>}</details>; })}</> : <div className="panel-empty"><strong>No recorded diffs</strong></div>}</div>;
+  const isOpen=(diff:ReturnType<typeof snapshotDiffs>[number])=>toggled.has(diff.id)?!preferences.diffDefaultExpanded:preferences.diffDefaultExpanded;
+  // Enrich the first expanded files in display order, up to the cap.
+  let enriched=0;
+  const annotations=diffs.map(diff=>{
+    if(!active||enriched>=MAX_ANNOTATED_FILES||!isOpen(diff))return null;
+    enriched++;
+    return diff.unified!==undefined?annotateUnified(diff.unified,{hideWhitespace:preferences.hideWhitespace}):annotateSnapshot(diff.before??'',diff.after??'',{hideWhitespace:preferences.hideWhitespace});
+  });
+  return <div className={`workspace-diffs diff-colors-${preferences.diffColors}`}>{diffs.length ? <>{diffs.map((diff,diffIndex) => { const annotation=annotations[diffIndex]; return <details className="workspace-diff" key={diff.id} open={preferences.diffDefaultExpanded} onToggle={event=>{const open=(event.currentTarget as HTMLDetailsElement).open;setToggled(previous=>{const next=new Set(previous);if(open!==preferences.diffDefaultExpanded)next.add(diff.id);else next.delete(diff.id);return next;});}}><summary>{diff.title}</summary><p className="panel-note">{diff.provenance}</p>{diff.unified !== undefined ? <pre className="unified-diff"><UnifiedDiffText patch={diff.unified} annotation={annotation instanceof Map?annotation:null}/></pre> : <SnapshotPair diff={diff} annotation={annotation as SnapshotAnnotation|null} preferences={preferences} pair={pair}/>}</details>; })}</> : <div className="panel-empty"><strong>No recorded diffs</strong></div>}</div>;
+}
+function SnapshotPair({diff,annotation,preferences,pair}:{diff:ReturnType<typeof snapshotDiffs>[number];annotation:SnapshotAnnotation|null;preferences:UiPreferences;pair:(before:string,after:string)=>{before:string;after:string}}){
+  const before=diff.before??'',after=diff.after??'';
+  if(annotation)return <div className={`workspace-diff-pair diff-${preferences.diffLayout}`}><section><h3>Before</h3><SnapshotSide text={before} keep={annotation.beforeKeep} annotation={annotation} tone="removed"/></section><section><h3>After</h3><SnapshotSide text={after} keep={annotation.afterKeep} annotation={annotation} tone="added"/></section></div>;
+  const value=pair(before,after);
+  return <div className={`workspace-diff-pair diff-${preferences.diffLayout}`}><section><h3>Before</h3><pre>{value.before || '(empty)'}</pre></section><section><h3>After</h3><pre>{value.after || '(empty)'}</pre></section></div>;
 }
 export function OutputPanel({ snapshot, threadId, preferences }: { snapshot: Snapshot; threadId?: string; preferences: UiPreferences }) {
   const operations = snapshot.operations.filter(item => item.threadId === threadId), data = snapshot.data.filter(item => item.threadId === threadId && !operations.some(operation => operation.id === item.id) && (typeof record(item.value).stdout === 'string' || typeof record(item.value).stderr === 'string'));
