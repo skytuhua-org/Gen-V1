@@ -43,10 +43,14 @@ export function createHermesService(store:Store,native:RuntimeAdapter,effectOpti
    const decision=await evaluateExecution({profile,request:{kind:'executable',executable:spec.executable,argv:spec.argv,cwd:spec.cwd},env:process.env,backends:[]});
    return decision.status==='ALLOW'?{allowed:true}:{allowed:false,reason:decision.status==='BLOCKED'?decision.code:'HOLD_EXECUTION_PROFILE'};
   },
-  intakeAuth:{token:()=>backgroundAuth.token()}},memoryExtractionAdmission:async(job,signal)=>{assertMemoryExtractionModel(job.modelId);const permit=await hermesRequestScheduler.acquire(job.modelId.split('/')[0],job.access.accountId,signal,{requestClass:'background'});return permit.release;},memoryExtractionRuntimeFactory:job=>{assertMemoryExtractionModel(job.modelId);return createRuntime({dataDir:store.dataDir,accounts,modelOnly:true,purpose:'memory-extraction'});},source:{runtime,library},planningRuntimeFactory:()=>runtime.createTaskRuntime(),agentWorkRuntimeFactory:(_work,spec)=>{const adapter=runtime.createTaskRuntime();
+  intakeAuth:{token:()=>backgroundAuth.token()}},memoryExtractionAdmission:async(job,signal)=>{assertMemoryExtractionModel(job.modelId);const permit=await hermesRequestScheduler.acquire(job.modelId.split('/')[0],job.access.accountId,signal,{requestClass:'background'});return permit.release;},memoryExtractionRuntimeFactory:job=>{assertMemoryExtractionModel(job.modelId);return createRuntime({dataDir:store.dataDir,accounts,modelOnly:true,purpose:'memory-extraction'});},source:{runtime,library},planningRuntimeFactory:()=>runtime.createTaskRuntime(),agentWorkRuntimeFactory:(work,spec)=>{const adapter=runtime.createTaskRuntime();
     // Typed child over the task runtime: START opens the run, STEER/FOLLOW_UP
     // continue it; no demonstrated live-steer channel is claimed. ctx() is
     // read lazily so the minted child runId/epoch bind the native run.
+    // Hermes rejects start() without configure(): route the child's tool calls
+    // back through the coordinator's role-gated invokeTool — the same effect
+    // gate the coordinator enforces for every dispatch surface.
+    adapter.configure({onEvent:()=>{},onTool:(call,supplied)=>service!.agentWork.invokeTool(work.workId,supplied,call)});
     return {supportsLiveSteer:false,
       send:async input=>{const ctx=spec.ctx();const thread=store.get<Thread>('thread',ctx.threadId);
         if(!thread?.modelId)throw new HarnessError('MODEL_REQUIRED','The child thread has no bound model');
