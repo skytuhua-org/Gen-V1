@@ -3529,6 +3529,7 @@
     "tests/task-design-recording.test.ts",
     "tests/task-interface-fixture.test.ts",
     "tests/task-interface.test.ts",
+    "tests/task-memory-note-age.test.ts",
     "tests/task-memory-recovery.test.ts",
     "tests/task-memory.test.ts",
     "tests/task-status.test.ts",
