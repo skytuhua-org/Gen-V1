@@ -412,3 +412,31 @@ describe('result contract and lifetime budget', () => {
       .rejects.toMatchObject({code: 'AGENT_BUDGET_EXHAUSTED'});
   });
 });
+
+describe('M09-04 atomic admission and resume budgets', () => {
+  it('rechecks the three-slot cap after awaited proof validation, so concurrent admits cannot exceed it', async () => {
+    __setCapabilityFlagForTests('agents.workV1', true);
+    __setCapabilityFlagForTests('workspace.writeDelegateV1', true);
+    let release!: () => void, calls = 0;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const proof = {worktreeId: 'wt-1', path: 'C:/work', profileDigest: 'a'.repeat(64)};
+    const f = fixture({flags: {}, roleProofs: {codeWorktree: async () => { if (++calls === 4) release(); await barrier; return proof; }}});
+    const admits = await Promise.allSettled(
+      Array.from({length: 4}, (_, i) => f.coordinator.admit(f.ctx, f.admission({role: 'CODE_WORKTREE'}, i), new AbortController().signal)),
+    );
+    const dispatched = admits.filter(result => result.status === 'fulfilled');
+    expect(dispatched).toHaveLength(3);
+    expect(f.children).toHaveLength(3);
+    expect(admits.filter(result => result.status === 'rejected').map(result => (result as PromiseRejectedResult).reason?.code)).toEqual(['AGENT_LIMIT']);
+  });
+  it('reserves the wall-time budget again on resume, refusing an exhausted-ms ledger', async () => {
+    const f = fixture({globalBudget: {tokens: 1000, ms: 15}});
+    const work = await f.coordinator.admit(f.ctx, f.admission({budget: {tokens: 10, ms: 10}}), new AbortController().signal);
+    await f.coordinator.stop(f.ctx, work.workId);
+    expect(f.coordinator.budgetLedger()).toMatchObject({spentTokens: 10, spentMs: 10, reservedMs: 0});
+    // Tokens still fit (10+10 <= 1000) but wall-time is exhausted (10+10 > 15):
+    // the resume reservation must reject instead of silently exceeding the cap.
+    await expect(f.coordinator.resume(f.ctx, work.workId)).rejects.toMatchObject({code: 'AGENT_BUDGET_EXHAUSTED'});
+    expect(f.coordinator.inspect(work.workId)!.state).toBe('CANCELLED');
+  });
+});

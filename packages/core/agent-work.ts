@@ -202,6 +202,11 @@ export class AgentWorkCoordinator {
       projectId: parent.projectId, workspaceId: parent.workspaceId,
     };
     const receipt = this.hooks.store.command({id: spec.commandId, type: 'agentWork.admit', threadId: ctx.threadId, payload: spec as unknown as Record<string, unknown>}, () => {
+      // The capacity checks above ran before the awaited authority proof, so
+      // a racing admit could have committed in between; the durable decision
+      // has to re-verify both caps inside this transaction.
+      if (this.worksLive(ctx.threadId).length >= AGENT_WORK_LIMITS.concurrent) throw new HarnessError('AGENT_LIMIT', `At most ${AGENT_WORK_LIMITS.concurrent} active work items run in parallel`);
+      if (this.hooks.store.all<AgentWorkV1>(WORK_KIND).filter(item => item.parentOwner.threadId === ctx.threadId).length >= AGENT_WORK_LIMITS.worksPerTask) throw new HarnessError('AGENT_LIMIT', `Task ${ctx.threadId} has reached ${AGENT_WORK_LIMITS.worksPerTask} work items`);
       this.hooks.store.put(WORK_KIND, work.workId, ctx.threadId, work);
       this.hooks.store.put('thread', childThread.id, childThread.id, childThread);
       const admission: AdmissionRecord = {workId: work.workId, commandId: spec.commandId, admission: spec, bindingDigest, grants: effectiveGrants, proofMeta, createdAt: now};
@@ -472,6 +477,8 @@ export class AgentWorkCoordinator {
     const ledger = this.ledger();
     if (work.budget.tokens !== null && this.hooks.globalBudget?.tokens != null && ledger.reservedTokens + ledger.spentTokens + work.budget.tokens > this.hooks.globalBudget.tokens)
       throw new HarnessError('AGENT_BUDGET_EXHAUSTED', 'Resumed work exceeds the remaining agent budget');
+    if (work.budget.ms !== null && this.hooks.globalBudget?.ms != null && ledger.reservedMs + ledger.spentMs + work.budget.ms > this.hooks.globalBudget.ms)
+      throw new HarnessError('AGENT_BUDGET_EXHAUSTED', 'Resumed work exceeds the remaining agent wall-time budget');
 
     const epoch = work.childOwner.epoch + 1;
     const resumed: AgentWorkV1 = AgentWorkV1Schema.parse({...work,
@@ -484,6 +491,9 @@ export class AgentWorkCoordinator {
       const current = this.stored(workId);
       if (!current || !AGENT_WORK_TERMINAL_STATES.has(current.state))
         throw new HarnessError('INVALID_AGENT_WORK', `Work ${workId} is already ${current?.state ?? 'missing'}`);
+      // The live-cap check above also ran before the awaited authority proof;
+      // re-verify it inside the reservation transaction.
+      if (this.worksLive(ctx.threadId).length >= AGENT_WORK_LIMITS.concurrent) throw new HarnessError('AGENT_LIMIT', `At most ${AGENT_WORK_LIMITS.concurrent} active work items run in parallel`);
       this.hooks.store.put(WORK_KIND, workId, ctx.threadId, resumed);
       this.hooks.store.put(ADMISSION_KIND, workId, ctx.threadId, {...admission, grants: effectiveGrants, proofMeta});
       const next = this.ledger();
