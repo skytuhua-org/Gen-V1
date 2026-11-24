@@ -383,7 +383,7 @@ export class BackgroundWorkCoordinator {
     const identity: ProcessIdentityV1 = { pid: child.pid, creationToken: captureCreationToken(child.pid), platform: process.platform, capturedAt: iso(this.now()) };
     const session: CommandSession = {
       workId, child, identity, output: "", start: 0, persistedBytes: 0, lastPersistAt: 0, exited: false, exitReceipt: null,
-      decoders: [new TextDecoder(), new TextDecoder()],
+      decoders: [new TextDecoder("utf-8", { ignoreBOM: true }), new TextDecoder("utf-8", { ignoreBOM: true })],
       done: new Promise<void>(resolve => {
         const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
           if (session.exited) return;
@@ -556,13 +556,16 @@ export class BackgroundWorkCoordinator {
       const outcome: BackgroundOutcome = receipt.exitCode === 0 ? "SUCCEEDED" : "FAILED";
       return this.transition(work, "SETTLED", { outcome, settledAtMs: this.now() });
     }) as BackgroundWorkRecord;
-    void this.publishFinalOutput(workId);
+    // No canonical handle here: the exit receipt proves termination, not
+    // stream close — the retained snapshot may predate the final tail, so a
+    // minted digest could not cover it. The drawer still reads the retained
+    // evidence via readOutput's owner-continuity path.
     return next;
   }
 
   /** T03 (#2014): publishes the finalized retained window into canonical M04
-   * custody exactly once, after stream close or exit reconciliation. The
-   * minted handle lands on the work record's outputRef; legacy bw-result:
+   * custody exactly once, after stream close. The minted handle lands on the
+   * work record's outputRef; legacy bw-result:
    * rows are no longer minted and never become canonical records. */
   private async publishFinalOutput(workId: string): Promise<void> {
     if (!this.publishOutput || this.outputPublished.has(workId)) return;
