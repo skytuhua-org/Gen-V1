@@ -1056,3 +1056,83 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     expect(await publish.call(service, { workId: "work-1", owner: { threadId: f.thread.id, runId: "run-1", epoch: 3, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-2" }, effectId: null, bytes, startByte: 0, omittedBytes: 0 })).toBeNull();
   });
 });
+
+describe("M10-T04 composed verification (#2014)", () => {
+  const HANDLE = CANONICAL_HANDLE;
+  const runtimeStub: RuntimeAdapter = {
+    configure: () => {}, models: async () => [{ id: "test/model", provider: "test", name: "Test" }],
+    start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {},
+    history: async () => [], dispose: async () => {},
+  };
+  function serviceFixture() {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-t04-"));
+    const store = new Store(join(root, "state"));
+    const service = new Service(store, runtimeStub, { background: { executionGate: async () => ({ allowed: true }) } });
+    cleanups.push(async () => { await service.dispose().catch(() => {}); store.close(); rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); });
+    return { store, service, root };
+  }
+  const spec = (root: string, argv: string[]) => ({ executable: process.execPath, argv, cwd: root, profileId: "p" });
+  const liveThread = async (service: Service, store: Store, title: string) => {
+    const thread = (await service.command(command("thread.create", { title }))).result as Thread;
+    store.internal("t04.live-owner", thread.id, () => store.put("thread", thread.id, thread.id, { ...thread, runId: "run-1", epoch: 2, status: "working", accountId: "acct-1", workspaceId: "ws-1", projectId: "p1" } as Thread));
+    return store.get<Thread>("thread", thread.id)!;
+  };
+  const vaultOf = (service: Service) => (service as unknown as { contextResultVault: () => { read: (i: { owner: { threadId: string; workspaceId: string; accountId: string | null }; handle: string; offset: number; length: number }) => Promise<{ status: string; bytes?: Uint8Array }> } }).contextResultVault();
+
+  it("approved process → bounded byte drawer window → canonical handle → context_result_read range", async () => {
+    enable("jobs.backgroundV1");
+    __setCapabilityFlagForTests("context.compilerV1", true); __setCapabilityFlagForTests("tools.deferredV1", true);
+    const { store, service, root } = serviceFixture();
+    await service.recover();
+    const thread = await liveThread(service, store, "M10 owner");
+    // 200_000 '€' = 600_000 bytes > 512 KiB window; real multibyte stream.
+    const work = (await service.command(command("background.work.admit", { kind: "COMMAND", title: "window", command: spec(root, ["-e", `require("fs").writeSync(1,"€".repeat(200000)+"DONE")`]) }, thread.id))).result as BackgroundWorkRecord;
+    await service.backgroundWork.startCommand(work.workId);
+    await waitFor(() => service.backgroundWork.work(work.workId).state === "SETTLED");
+    // Historical UI read: byte-bounded window, scalar-intact tail, byte cursor.
+    const first = service.backgroundWork.readOutput(work.workId, thread.id, 0);
+    expect(Buffer.byteLength(first.output, "utf8")).toBeLessThanOrEqual(BACKGROUND_SCHEDULER_LIMITS.outputWindowBytes);
+    expect(first.truncated).toBe(true);
+    expect(first.output.endsWith("DONE")).toBe(true);
+    expect(service.backgroundWork.readOutput(work.workId, thread.id, first.cursor).output).toBe("");
+    // Canonical handle minted by the real Service seam, not a test fake —
+    // published once at stream close, after the SETTLED transition.
+    await waitFor(() => !!service.backgroundWork.work(work.workId).outputRef);
+    const handle = service.backgroundWork.work(work.workId).outputRef;
+    expect(handle).toMatch(HANDLE);
+    const custody = await openContextResultCustody(store.dataDir);
+    await expect(custody.getRecord!(handle!)).resolves.toMatchObject({ handle });
+    // Model read through the same canonical reader context_result_read uses.
+    const owner = { threadId: thread.id, workspaceId: JSON.stringify(["ws-1", "p1"]), accountId: "acct-1" };
+    const vault = vaultOf(service);
+    // Ranges are byte-accurate: 15 bytes = five complete '€' scalars.
+    const slice = await vault.read({ owner, handle: handle!, offset: 0, length: 15 });
+    expect(slice).toMatchObject({ status: "OK" });
+    expect(Buffer.from(slice.bytes!)).toEqual(Buffer.from("€".repeat(5), "utf8"));
+    await expect(vault.read({ owner, handle: handle!, offset: 0, length: 2 * 1024 * 1024 })).resolves.toMatchObject({ status: "INVALID_RANGE" });
+  });
+
+  it("run drift keeps the authorized historical drawer read but revokes the model handle; account drift denies both", async () => {
+    enable("jobs.backgroundV1");
+    __setCapabilityFlagForTests("context.compilerV1", true); __setCapabilityFlagForTests("tools.deferredV1", true);
+    const { store, service, root } = serviceFixture();
+    await service.recover();
+    const thread = await liveThread(service, store, "M10 drift");
+    const work = (await service.command(command("background.work.admit", { kind: "COMMAND", title: "drift", command: spec(root, ["-e", "console.log('settled bytes')"]) }, thread.id))).result as BackgroundWorkRecord;
+    await service.backgroundWork.startCommand(work.workId);
+    await waitFor(() => service.backgroundWork.work(work.workId).state === "SETTLED");
+    await waitFor(() => !!service.backgroundWork.work(work.workId).outputRef);
+    const handle = service.backgroundWork.work(work.workId).outputRef!;
+    const owner = { threadId: thread.id, workspaceId: JSON.stringify(["ws-1", "p1"]), accountId: "acct-1" };
+    const vault = vaultOf(service);
+    await expect(vault.read({ owner, handle, offset: 0, length: 4 })).resolves.toMatchObject({ status: "OK" });
+    // A new run under the same account/scope: the model handle is bound to
+    // the mint-time invocation, but the owner's drawer still reads history.
+    store.internal("t04.new-run", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, runId: "run-2", epoch: 3 } as Thread));
+    await expect(vault.read({ owner, handle, offset: 0, length: 4 })).resolves.toMatchObject({ status: "UNAVAILABLE" });
+    expect(service.backgroundWork.readOutput(work.workId, thread.id, 0).output).toContain("settled bytes");
+    // Account drift: both readers deny.
+    store.internal("t04.new-account", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, accountId: "acct-2" } as Thread));
+    expect(() => service.backgroundWork.readOutput(work.workId, thread.id, 0)).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED" }));
+  });
+});
