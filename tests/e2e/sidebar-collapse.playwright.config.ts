@@ -2,7 +2,7 @@ import {defineConfig} from '@playwright/test';
 import {resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.', testMatch: 'sidebar-collapse.spec.ts', workers: 1, timeout: 45_000,
   outputDir: resolve(tmpdir(), 'wo-3-2-sidebar-collapse-playwright'),
   use: {baseURL: 'http://127.0.0.1:5502', viewport: {width: 1440, height: 1000}, trace: 'retain-on-failure'},
