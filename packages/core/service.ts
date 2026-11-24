@@ -263,6 +263,11 @@ export class Service {
     } });
     try {
       const custody = this.contextStorage ??= openContextResultCustody(this.store.dataDir).catch(cause => { this.contextStorage = undefined; throw cause; });
+      // Same disk hygiene as context-results spill: prune expired files and
+      // refuse when the persisted set is already at the tracked cap, so
+      // background publication cannot grow custody unboundedly.
+      const persisted = await (await custody).pruneExpired?.(now);
+      if (persisted !== undefined && persisted >= MAX_TRACKED_RESULTS) { this.contextResultAuthorities.delete(invocationId); return null; }
       await (await custody).put(record.handle, input.bytes, record);
     } catch { this.contextResultAuthorities.delete(invocationId); return null; }
     return record;
