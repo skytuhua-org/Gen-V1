@@ -110,3 +110,18 @@ test('model selection fits both themes on a phone and removes spatial motion whe
     await page.getByRole('searchbox', { name: 'Search models', exact: true }).press('Escape');
   }
 });
+
+test('the popover stays mounted through the exit animation and rapid cycles do not stick it', async ({ page }) => {
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true }), popover = page.locator('.model-picker-popover');
+  await trigger.click();
+  await page.getByRole('searchbox', { name: 'Search models', exact: true }).press('Escape');
+  await page.waitForTimeout(80);
+  await expect(popover).toHaveCount(1);
+  await expect(popover).toHaveCount(0, { timeout: 1000 });
+  await trigger.click();
+  const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
+  await search.press('Escape'); await page.waitForTimeout(60); await trigger.click();
+  await expect(search).toBeVisible();
+});
+
