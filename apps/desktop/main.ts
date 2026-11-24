@@ -45,7 +45,7 @@ app.setName('Gen V1');
 const profileRoot=testData?resolve(testData,'desktop-profile'):join(app.getPath('appData'),'GenerativeHarnessDesktop');mkdirSync(profileRoot,{recursive:true});mkdirSync(join(profileRoot,'session'),{recursive:true});app.setPath('userData',profileRoot);app.setPath('sessionData',join(profileRoot,'session'));
 app.commandLine.appendSwitch('disable-quic');app.commandLine.appendSwitch('disable-features','WebTransport,DirectSockets');
 const stateFile=join(app.getPath('userData'),'desktop-windows.json');
-let saved:SavedWindow[]=[],saveTimer:ReturnType<typeof setTimeout>|undefined,backend:ChildProcess|undefined,backendOrigin='',backendError:string|undefined,launchToken='',quitting=false,quitPending=false,closing=false,restarting=false;
+let saved:SavedWindow[]=[],saveTimer:ReturnType<typeof setTimeout>|undefined,backend:ChildProcess|undefined,backendOrigin='',backendError:string|undefined,launchToken='',quitting=false,quitPending=false,restarting=false;
 let updater:DesktopUpdater|undefined,osSessionEnding=false,restartForUpdate=false;
 let updateStatus:UpdateStatus={state:'unavailable',message:'Install Gen to receive automatic updates.'};
 let startup:BrowserWindow|undefined,startupTimer:ReturnType<typeof setTimeout>|undefined;
@@ -307,7 +307,21 @@ function registerIpc(){
   else if(command.type==='stop')contents.stop();
  });
 }
+function scheduleBackendRestart(child:ChildProcess){
+ if(quitting||backend!==child)return;
+ backendError='The local backend stopped. Reconnecting…';broadcast();
+ if(restarting)return;
+ restarting=true;
+ setTimeout(()=>{
+  void startBackend().catch(error=>{
+   if(quitting)return;
+   backendError='Backend restart failed: '+String(error instanceof Error?error.message:error).slice(0,500);broadcast();
+  }).finally(()=>{restarting=false;});
+ },700);
+}
 async function startBackend():Promise<void>{
+ // An accepted quit owns backend shutdown even if a restart timer was already queued.
+ if(quitting)return;
  if(!launchToken)launchToken=randomBytes(32).toString('hex');const token=launchToken;
  const env:NodeJS.ProcessEnv={...process.env,HARNESS_DATA_DIR:backendDataDir,HARNESS_PORT:String(backendPort),HARNESS_WIDGET_PORT:String(widgetPort),HARNESS_DESKTOP_LAUNCH_TOKEN:token,HARNESS_DEV:'0'};delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
  env.HARNESS_PACKAGED=app.isPackaged?'1':'0';env.HARNESS_BUNDLED_GIT=join(root,'.harness-tool-bundles/git/cmd/git.exe');
@@ -319,21 +333,23 @@ async function startBackend():Promise<void>{
  let stderr='';child.stderr?.on('data',bytes=>{stderr=(stderr+String(bytes)).slice(-8000);output?.write('stderr',bytes);});child.stdout?.on('data',(bytes:Buffer)=>output?.write('stdout',bytes));
  try{
  const value=await waitForBackendReady(child,token,backendPort,()=>stderr,observeStartup);
+ if(quitting||backend!==child)return;
  const oldRelay=workspaceRelay;workspaceRelay=undefined;
  await finishBackendStartup(child,oldRelay?.close(),()=>stderr,()=>{
+  if(quitting||backend!==child)return;
   backendOrigin=value.origin as string;
   if(value.nativeLayout!==undefined)try{hostLayout=parseDesktopLayout(value.nativeLayout);}catch{layoutError='The saved host workspace layout is invalid. The local backup is retained.';}
   workspaceRelay=workspaceEvents(backendOrigin,change=>{for(const record of windows.values())if(!record.window.isDestroyed())record.window.webContents.send(channels.workspaceChanged,change);},token);
-  child.once('exit',()=>{if(closing||backend!==child)return;backendError='The local backend stopped. Reconnecting…';broadcast();if(restarting)return;restarting=true;setTimeout(()=>{void startBackend().catch(error=>{backendError='Backend restart failed: '+String(error instanceof Error?error.message:error).slice(0,500);broadcast();}).finally(()=>{restarting=false;});},700);});
+  child.once('exit',()=>scheduleBackendRestart(child));
   backendError=undefined;broadcast();
- },observeStartup);
+ },observation=>{if(!quitting)observeStartup(observation);});
  }finally{try{if(output)startupDiagnostic('backend-output',null,output.read().streams);}catch{}}
 }
 async function stopBackend():Promise<boolean>{
  let clean=true;
  try{await workspaceRelay?.close();}catch{clean=false;}workspaceRelay=undefined;
  try{await signInFlows.close();}catch{clean=false;}
- closing=true;const child=backend;if(!child||child.exitCode!==null||child.signalCode)return false;
+ const child=backend;if(!child||child.exitCode!==null||child.signalCode)return false;
  let acknowledged=false;const token=launchToken;
  const message=(value:unknown)=>{if(value&&typeof value==='object'&&(value as Record<string,unknown>).type==='harness.stopped'&&(value as Record<string,unknown>).token===token)acknowledged=true;};
  child.on('message',message);
@@ -386,10 +402,10 @@ if(!app.requestSingleInstanceLock()){app.exit(0);}else{
   powerMonitor.on('shutdown',()=>{osSessionEnding=true;});
   installApplicationMenu();installTray();startupDiagnostic('shell-ready');
   startupTimer=setTimeout(()=>{if(quitting||quitPending)return;startup=new BrowserWindow({width:420,height:190,...nativeTitlebarOptions(process.platform),resizable:false,maximizable:false,minimizable:false,title:'Opening Gen V1',autoHideMenuBar:true,backgroundColor:'#0f0f0f',icon:join(dirname(fileURLToPath(import.meta.url)),'icon.png'),webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});startup.webContents.setWindowOpenHandler(()=>({action:'deny'}));startup.webContents.on('will-navigate',event=>event.preventDefault());void startup.loadFile(join(dirname(fileURLToPath(import.meta.url)),'startup.html')).catch(()=>{});},1200);
-  await startBackend();if(hostLayout)saved=reconcileSavedWindows(saved,hostLayout.windows.map(entry=>({...entry,open:true})));const initial=structuredClone(saved.filter(entry=>entry.open&&entry.surface.kind!=='main')),savedDocked=saved.find(entry=>entry.surface.kind==='main')?.dockedBrowserId;startupDiagnostic('main-opening');const main=await mainWindow();startupDiagnostic('main-ready');clearTimeout(startupTimer);startup?.destroy();startup=undefined;if(savedDocked)moveBrowser(browserRecord(savedDocked),main,true);
+  await startBackend();if(quitting)return;if(hostLayout)saved=reconcileSavedWindows(saved,hostLayout.windows.map(entry=>({...entry,open:true})));const initial=structuredClone(saved.filter(entry=>entry.open&&entry.surface.kind!=='main')),savedDocked=saved.find(entry=>entry.surface.kind==='main')?.dockedBrowserId;startupDiagnostic('main-opening');const main=await mainWindow();startupDiagnostic('main-ready');clearTimeout(startupTimer);startup?.destroy();startup=undefined;if(savedDocked)moveBrowser(browserRecord(savedDocked),main,true);
   const failures:string[]=[];for(const entry of initial)try{await openSurface(entry.surface);}catch(error){failures.push(displayTitle(entry.surface)+': '+String(error instanceof Error?error.message:error));}
   restoringLayout=false;if(failures.length){layoutError='Some saved windows could not restore. Their layout is retained: '+failures.join('; ').slice(0,800);broadcast();}else if(!layoutError)persist();
   startUpdater();startAttention();
   const displaysChanged=()=>{attentionPopups?.displayChanged();const all=displays();for(const record of windows.values()){record.monitorRescued=!!record.placement&&!all.some(display=>display.id===record.placement!.displayId);applyPlacement(record,restoreDesktopPlacement(record.placement,all,surfaceSize(record.surface)));}installApplicationMenu();};screen.on('display-removed',displaysChanged);screen.on('display-added',displaysChanged);screen.on('display-metrics-changed',displaysChanged);startupSettled=true;
- }).catch(async error=>{startupDiagnostic('startup-failed',startupErrorDiagnostic(error));startupSettled=true;clearTimeout(startupTimer);startup?.destroy();startup=undefined;const message=String(error instanceof Error?error.message:error).slice(0,1200);process.stderr.write('Gen V1 startup failed: '+message+'\n');quitting=true;await stopBackend();if(!testData)await dialog.showMessageBox({type:'error',title:'Gen V1 could not start',message,buttons:['Close']});app.exit(1);});
+ }).catch(async error=>{if(quitting)return;startupDiagnostic('startup-failed',startupErrorDiagnostic(error));startupSettled=true;clearTimeout(startupTimer);startup?.destroy();startup=undefined;const message=String(error instanceof Error?error.message:error).slice(0,1200);process.stderr.write('Gen V1 startup failed: '+message+'\n');quitting=true;await stopBackend();if(!testData)await dialog.showMessageBox({type:'error',title:'Gen V1 could not start',message,buttons:['Close']});app.exit(1);});
 }
