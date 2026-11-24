@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createControlBridge, handleRegisterReply, type BridgeBrowser, type BridgeWebContents, type WindowsWindowBridge } from '../apps/desktop/control-bridge.ts';
+import { bindBrowserNavigationFence, createControlBridge, handleRegisterReply, type BridgeBrowser, type BridgeWebContents, type WindowsWindowBridge } from '../apps/desktop/control-bridge.ts';
 import { createControlSidecarChannel, createSidecarControlDriver } from '../packages/core/control-sidecar-driver.ts';
 import type { ControlTargetIdentityV1 } from '../packages/contracts/interactive-control.ts';
 
@@ -10,9 +11,15 @@ afterEach(() => vi.restoreAllMocks());
 
 const TOKEN = 'a'.repeat(64);
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>(settle => { resolve = settle; });
+  return { promise, resolve };
+}
+
 /** Wires the real backend-side channel straight into the real desktop-side
  * bridge — every driver op traverses the production IPC protocol shapes. */
-function harness(options: { native?: WindowsWindowBridge | null; browsers?: BridgeBrowser[] } = {}) {
+function harness(options: { native?: WindowsWindowBridge | null; browsers?: BridgeBrowser[]; allowNavigateUrl?: (url: string) => Promise<boolean> } = {}) {
   const sent: Record<string, unknown>[] = [];
   const bridge = createControlBridge({
     browsers: () => options.browsers ?? [],
@@ -23,7 +30,7 @@ function harness(options: { native?: WindowsWindowBridge | null; browsers?: Brid
     artifactPath: join(tmpdir(), 'nonexistent-artifact.node'),
     adapterModulePath: null,
     apiVersion: 'test',
-    allowNavigateUrl: async url => /^https:\/\/public\.example\//.test(url),
+    allowNavigateUrl: options.allowNavigateUrl ?? (async url => /^https:\/\/public\.example\//.test(url)),
     now: () => 1_000_000,
   });
   const channel = createControlSidecarChannel({
@@ -59,6 +66,7 @@ function fakeContents(over: Partial<BridgeWebContents> = {}): BridgeWebContents 
     id: 42,
     isDestroyed: () => false,
     isFocused: () => true,
+    isLoadingMainFrame: () => false,
     getURL: () => 'https://public.example/page',
     capturePage: async () => ({ toPNG: () => png, getSize: () => ({ width: 400, height: 300 }) }),
     sendInputEvent: event => { inputs.push(event); },
@@ -118,6 +126,42 @@ describe('M16 C3 browser adapter via sidecar driver', () => {
     await expect(call(driver.observe(target))).rejects.toMatchObject({ code: 'TARGET_MISMATCH' });
   });
 
+  it('advances the grant identity for primary-frame navigation only', async () => {
+    const contents = new EventEmitter();
+    let generation = 0;
+    bindBrowserNavigationFence(contents, () => { generation++; });
+    const { driver, call } = harness({ browsers: [fakeBrowser({ generation: () => generation })] });
+    const target = targetOf((await call(driver.candidates('CONSENTED_EXISTING_TAB')))[0]!);
+
+    contents.emit('did-start-navigation', { isMainFrame: false });
+    contents.emit('did-navigate-in-page', {}, 'https://public.example/frame', false);
+    await expect(call(driver.observe(target))).resolves.toMatchObject({ target });
+
+    contents.emit('did-navigate-in-page', {}, 'https://public.example/route', true);
+    const current = targetOf((await call(driver.candidates('CONSENTED_EXISTING_TAB')))[0]!);
+    expect(current).toMatchObject({ creationIdentity: target.creationIdentity, origin: target.origin });
+    expect(current.sessionIdentity).not.toBe(target.sessionIdentity);
+    await expect(call(driver.observe(target))).rejects.toMatchObject({ code: 'TARGET_MISMATCH' });
+  });
+
+  it('discards an in-memory browser frame when the target changes during capture', async () => {
+    const navigation = new EventEmitter();
+    let generation = 0;
+    bindBrowserNavigationFence(navigation, () => { generation++; });
+    const entered = deferred<void>();
+    const frame = deferred<Awaited<ReturnType<BridgeWebContents['capturePage']>>>();
+    const toPNG = vi.fn(() => Buffer.from([1, 2, 3]));
+    const contents = fakeContents({ capturePage: async () => { entered.resolve(); return frame.promise; } });
+    const { driver, call } = harness({ browsers: [fakeBrowser({ contents, generation: () => generation })] });
+    const target = targetOf((await call(driver.candidates('CONSENTED_EXISTING_TAB')))[0]!);
+    const pending = expect(call(driver.capture(target))).rejects.toMatchObject({ code: 'TARGET_MISMATCH' });
+    await entered.promise;
+    navigation.emit('did-start-navigation', { isMainFrame: true });
+    frame.resolve({ toPNG, getSize: () => ({ width: 400, height: 300 }) });
+    await pending;
+    expect(toPNG).not.toHaveBeenCalled();
+  });
+
   it('refuses a moved or DPI-changed target', async () => {
     const geo = { x: 10, y: 20, width: 400, height: 300, dpiScale: 1 };
     const browser = fakeBrowser();
@@ -160,6 +204,25 @@ describe('M16 C3 browser adapter via sidecar driver', () => {
     const target = targetOf((await call(driver.candidates('CONSENTED_EXISTING_TAB')))[0]!);
     const action = { actionId: 'a3', grantId: 'g1', target, action: 'UPLOAD' as const, redactedParameters: { path: '/tmp/x' }, preObservationRef: null, postObservationRef: null, effectReceipt: null };
     await expect(call(driver.dispatch(action))).rejects.toMatchObject({ code: 'CONTROL_OP_UNSUPPORTED' });
+  });
+
+  it('does not start a navigation after its backend disconnects during the URL check', async () => {
+    const entered = deferred<void>();
+    const allowed = deferred<boolean>();
+    const loadURL = vi.fn<BridgeWebContents['loadURL']>();
+    const contents = fakeContents({ loadURL });
+    const { bridge, driver, call } = harness({
+      browsers: [fakeBrowser({ contents })],
+      allowNavigateUrl: async () => { entered.resolve(); return allowed.promise; },
+    });
+    const target = targetOf((await call(driver.candidates('CONSENTED_EXISTING_TAB')))[0]!);
+    const action = { actionId: 'deferred-nav', grantId: 'g1', target, action: 'NAVIGATE' as const, redactedParameters: { url: 'https://public.example/next' }, preObservationRef: null, postObservationRef: null, effectReceipt: null };
+    const pending = expect(call(driver.dispatch(action))).rejects.toMatchObject({ code: 'DRIVER_UNAVAILABLE' });
+    await entered.promise;
+    await bridge.close();
+    allowed.resolve(true);
+    await pending;
+    expect(loadURL).not.toHaveBeenCalled();
   });
 
   it('navigates only through the same public-URL guard as the browser UI', async () => {
@@ -212,6 +275,17 @@ describe('M16 C4 window adapter via sidecar driver (app-owned chooser, bound-ite
     expect(frame.width).toBe(640);
     expect(frame.data).toEqual(Buffer.from([1, 2, 3]));
     expect(captured).toEqual([windowId.bindingId]);
+  });
+
+  it('rechecks a native window binding before returning a captured frame', async () => {
+    const nativeBridge = native();
+    const { driver, call } = harness({ native: nativeBridge });
+    const target = await pick(call, driver);
+    nativeBridge.captureWindow = async () => {
+      nativeBridge.windowIdentity = async () => null;
+      return { data: Buffer.from([1, 2, 3]), width: 640, height: 480 };
+    };
+    await expect(call(driver.capture(target))).rejects.toMatchObject({ code: 'TARGET_MISMATCH' });
   });
 
   it('refuses when the binding is dead (window destroyed/Closed)', async () => {
@@ -273,7 +347,38 @@ describe('M16 C4 window adapter via sidecar driver (app-owned chooser, bound-ite
     expect(dropped).toEqual([windowId.bindingId]);
     nativeBridge.windowIdentity = async () => null;
     await expect(call(driver.cancelInput(target))).resolves.toBeUndefined();
-    expect(dropped).toEqual([windowId.bindingId, windowId.bindingId]);
+    expect(dropped).toEqual([windowId.bindingId]);
+  });
+
+  it('releases bindings from an enumeration that settles after disconnection', async () => {
+    const entered = deferred<void>();
+    const list = deferred<Awaited<ReturnType<WindowsWindowBridge['listWindows']>>>();
+    const dropBinding = vi.fn<WindowsWindowBridge['dropBinding']>().mockResolvedValue(null);
+    const { bridge, driver, call } = harness({ native: native({
+      listWindows: async () => { entered.resolve(); return list.promise; },
+      dropBinding,
+    }) });
+    const pending = expect(call(driver.candidates('SELECTED_DESKTOP_APPLICATION'))).rejects.toMatchObject({ code: 'DRIVER_UNAVAILABLE' });
+    await entered.promise;
+    await bridge.close();
+    list.resolve([windowId]);
+    await pending;
+    expect(dropBinding).toHaveBeenCalledExactlyOnceWith(windowId.bindingId);
+  });
+
+  it('retries native binding cleanup when the initial drop fails on disconnection', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const dropBinding = vi.fn<WindowsWindowBridge['dropBinding']>()
+        .mockRejectedValueOnce(new Error('Native queue is temporarily unavailable.'))
+        .mockResolvedValue(null);
+      const { bridge, driver, call } = harness({ native: native({ dropBinding }) });
+      await pick(call, driver);
+      await bridge.close();
+      expect(dropBinding).toHaveBeenCalledExactlyOnceWith(windowId.bindingId);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(dropBinding.mock.calls).toEqual([[windowId.bindingId], [windowId.bindingId]]);
+    } finally { vi.useRealTimers(); }
   });
 
   it('no native bridge => DRIVER_UNAVAILABLE, never a fallback', async () => {

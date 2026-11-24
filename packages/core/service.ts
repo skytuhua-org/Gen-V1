@@ -576,14 +576,19 @@ export class Service {
       throw new HarnessError('CAPABILITY_DENIED', 'Target selection requires a pending consent for this mode.');
     }
     const offer = await this.controlRuntime.targets(parsed, threadId, pending.consentId);
-    const currentOwner = this.controlOwner(this.thread(threadId));
-    const control = this.controlConsent.surfaceModel(threadId);
-    if (control.state !== 'consent' || control.pendingConsent?.consentId !== pending.consentId ||
-        !isDeepStrictEqual(pending.owner, currentOwner)) {
-      throw new HarnessError('CAPABILITY_DENIED', 'The consent changed while selecting targets.');
+    try {
+      const currentOwner = this.controlOwner(this.thread(threadId));
+      const control = this.controlConsent.surfaceModel(threadId);
+      if (control.state !== 'consent' || control.pendingConsent?.consentId !== pending.consentId ||
+          !isDeepStrictEqual(pending.owner, currentOwner)) {
+        throw new HarnessError('CAPABILITY_DENIED', 'The consent changed while selecting targets.');
+      }
+      this.controlRuntime.recordTargetOffer(threadId, offer);
+      return { candidates: offer.candidates, control };
+    } catch (error) {
+      void this.controlRuntime.discardTargetOffer(threadId, offer.offer);
+      throw error;
     }
-    this.controlRuntime.recordTargetOffer(threadId, offer);
-    return { candidates: offer.candidates, control };
   }
 
   /** S05: a consented observation only — bytes stay under the host artifact
@@ -1182,7 +1187,7 @@ export class Service {
       const owner=this.controlOwner(thread);
       const OPS=['CLICK','TYPE','KEYPRESS','UPLOAD','DOWNLOAD','NAVIGATE'] as const;
       const operations=Array.isArray(p.operations)?p.operations.filter((o):o is (typeof OPS)[number]=>typeof o==='string'&&(OPS as readonly string[]).includes(o)):[];
-      this.controlRuntime.discardTargetOffer(thread.id);
+      void this.controlRuntime.discardTargetOffer(thread.id);
       const request=this.controlConsent.requestConsent(owner,{mode,observe:p.observe===true,operations,allowedOrigins:Array.isArray(p.allowedOrigins)?p.allowedOrigins.filter((o):o is string=>typeof o==='string'):[]});
       return {consent:request,control:this.controlConsent.surfaceModel(thread.id)};
     });

@@ -3,6 +3,7 @@ import {lstatSync,readFileSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {basename,isAbsolute} from 'node:path';
+import {CONTROL_GRANT_TTL_MS} from '../../packages/contracts/interactive-control.ts';
 
 /** M16 C3/C4 first-party Windows control bridge — the desktop-main half of the
  * single approved driver. The backend attaches a sidecar proxy; every driver
@@ -39,6 +40,7 @@ export interface BridgeWebContents {
   id: number;
   isDestroyed(): boolean;
   isFocused(): boolean;
+  isLoadingMainFrame(): boolean;
   getURL(): string;
   capturePage(): Promise<{ toPNG(): Buffer; getSize(): { width: number; height: number } }>;
   sendInputEvent(event: Record<string, unknown>): void;
@@ -59,6 +61,17 @@ export interface BridgeBrowser {
   /** Bumps the navigation generation after a driver-initiated navigate so a
    * pre-navigation grant identity can never satisfy a post-navigation state. */
   navigated?(): void;
+}
+
+/** Watch primary-frame navigation without invalidating grants for subframes. */
+export function bindBrowserNavigationFence(contents: {
+  on(event: 'did-start-navigation', listener: (event: { isMainFrame: boolean }) => void): unknown;
+  on(event: 'did-navigate', listener: () => void): unknown;
+  on(event: 'did-navigate-in-page', listener: (event: unknown, url: string, isMainFrame: boolean) => void): unknown;
+}, advance: () => void): void {
+  contents.on('did-start-navigation', event => { if (event.isMainFrame) advance(); });
+  contents.on('did-navigate', advance);
+  contents.on('did-navigate-in-page', (_event, _url, isMainFrame) => { if (isMainFrame) advance(); });
 }
 
 export interface BridgeWindowIdentity {
@@ -117,6 +130,7 @@ const SESSION_BIND = (parts: readonly (string | number)[]) => parts.join('|');
 function browserIdentity(browser: BridgeBrowser): Identity {
   const contents = browser.contents;
   if (contents.isDestroyed()) fail('TARGET_MISMATCH', 'The consented browser target was destroyed.');
+  if (contents.isLoadingMainFrame()) fail('TARGET_MISMATCH', 'The consented browser target is navigating.');
   const geometry = browser.geometry();
   if (!geometry) fail('TARGET_MISMATCH', 'The consented browser target is no longer placed on screen.');
   const origin = browserOrigin(contents.getURL());
@@ -156,6 +170,7 @@ function windowIdentity(nativeId: BridgeWindowIdentity, chooserSession: string):
 }
 
 export interface ControlBridge {
+  close(): Promise<void>;
   /** Routes one 'harness.control.call' frame; returns true when handled. */
   handleCall(value: Record<string, unknown>): Promise<boolean>;
   /** Pushes the built-artifact manifest to the backend and resolves when the
@@ -164,6 +179,36 @@ export interface ControlBridge {
 }
 
 export function createControlBridge(deps: ControlBridgeDeps): ControlBridge {
+  type Binding = { expiry: ReturnType<typeof setTimeout>; release?: Promise<void> };
+  const bindings = new Map<string, Binding>();
+  let closed = false;
+
+  function scheduleBindingRelease(bindingId: string, delay: number) {
+    return setTimeout(() => { void releaseBinding(bindingId).catch(() => {}); }, delay).unref();
+  }
+
+  async function releaseBinding(bindingId: string): Promise<void> {
+    const binding = bindings.get(bindingId);
+    const native = deps.native;
+    if (!binding || !native) return;
+    if (binding.release) return binding.release;
+    clearTimeout(binding.expiry);
+    const release = Promise.resolve().then(() => native.dropBinding(bindingId)).then(() => {
+      bindings.delete(bindingId);
+    }, error => {
+      // A rejected drop still belongs to this bridge, including after IPC
+      // disconnect. Retry it without keeping Electron alive.
+      binding.release = undefined;
+      binding.expiry = scheduleBindingRelease(bindingId, 5_000);
+      throw error;
+    });
+    binding.release = release;
+    return release;
+  }
+
+  function requireConnection(): void {
+    if (closed) fail('DRIVER_UNAVAILABLE', 'The control bridge was disconnected.');
+  }
 
   const findBrowser = (identity: Identity): BridgeBrowser => {
     const wanted = String(identity.creationIdentity);
@@ -177,6 +222,7 @@ export function createControlBridge(deps: ControlBridgeDeps): ControlBridge {
   };
 
   const requireLiveBrowser = (identity: Identity) => {
+    requireConnection();
     const browser = findBrowser(identity);
     const live = browserIdentity(browser);
     if (live.sessionIdentity !== identity.sessionIdentity || live.origin !== identity.origin) {
@@ -192,6 +238,7 @@ export function createControlBridge(deps: ControlBridgeDeps): ControlBridge {
   };
 
   const requireLiveWindow = async (identity: Identity): Promise<string> => {
+    requireConnection();
     if (!deps.native) fail('DRIVER_UNAVAILABLE', 'No approved window driver is present.');
     const bindingId = windowBinding(identity);
     // The binding is the creation-bound identity — the native side resolves
@@ -199,6 +246,7 @@ export function createControlBridge(deps: ControlBridgeDeps): ControlBridge {
     // marker + Closed event). A recycled HWND can never mint a new binding
     // under an old id.
     const native = await deps.native.windowIdentity(bindingId);
+    requireConnection();
     if (!native || native.bindingId !== bindingId) {
       fail('TARGET_MISMATCH', 'The consented window no longer exists or its binding cannot be proven.');
     }
@@ -239,6 +287,15 @@ export function createControlBridge(deps: ControlBridgeDeps): ControlBridge {
       if (!deps.native) fail('DRIVER_UNAVAILABLE', 'No approved window driver is present.');
       const chooserSession = `wgc-${randomUUID()}`;
       const windows = await deps.native.listWindows();
+      for (const { bindingId } of windows) {
+        // The host can hold an offer for one TTL and the selected grant for
+        // one more. Also retire bindings whose IPC response was lost.
+        if (!bindings.has(bindingId)) bindings.set(bindingId, { expiry: scheduleBindingRelease(bindingId, 2 * CONTROL_GRANT_TTL_MS) });
+      }
+      if (closed) {
+        await Promise.allSettled(windows.map(({ bindingId }) => releaseBinding(bindingId)));
+        fail('DRIVER_UNAVAILABLE', 'The control bridge was disconnected.');
+      }
       const candidates = windows.map(nativeId => ({
         target: windowIdentity(nativeId, chooserSession),
         title: nativeId.title || null,
@@ -266,6 +323,7 @@ export function createControlBridge(deps: ControlBridgeDeps): ControlBridge {
       if (target.kind === 'BROWSER_TAB') {
         const { browser } = requireLiveBrowser(target);
         const image = await browser.contents.capturePage();
+        requireLiveBrowser(target);
         const size = image.getSize();
         const png = image.toPNG();
         if (!size.width || !size.height || !png.byteLength) fail('DRIVER_ERROR', 'The browser target produced an empty capture.');
@@ -273,6 +331,7 @@ export function createControlBridge(deps: ControlBridgeDeps): ControlBridge {
       }
       const bindingId = await requireLiveWindow(target);
       const frame = await deps.native!.captureWindow(bindingId);
+      await requireLiveWindow(target);
       return { pngBase64: frame.data.toString('base64'), width: frame.width, height: frame.height };
     },
     async dispatch(payload) {
@@ -308,8 +367,10 @@ export function createControlBridge(deps: ControlBridgeDeps): ControlBridge {
       } else if (kind === 'NAVIGATE') {
         const url = String(params.url ?? '');
         if (!(await deps.allowNavigateUrl(url))) fail('CAPABILITY_DENIED', 'Only public HTTP and HTTPS pages are allowed.');
-        await contents.loadURL(url);
-        browser.navigated?.();
+        const { browser: liveBrowser } = requireLiveBrowser(target);
+        if (!liveBrowser.focused()) fail('TARGET_MISMATCH', 'The consented browser target no longer holds proven focus.');
+        await liveBrowser.contents.loadURL(url);
+        liveBrowser.navigated?.();
       } else {
         // UPLOAD/DOWNLOAD are session-blocked surfaces; unknown kinds are
         // classified before the driver — either way refuse here too.
@@ -319,27 +380,20 @@ export function createControlBridge(deps: ControlBridgeDeps): ControlBridge {
     },
     async cancel(payload) {
       const target = payload.target as Identity;
-      try {
-        if (target.kind === 'BROWSER_TAB') requireLiveBrowser(target);
-        else await requireLiveWindow(target);
-      } catch (error) {
-        // Stop on a dead target (or a driver that has already gone) is a
-        // successful cancel: no input can remain in flight to it (D06).
-        const code = (error as ControlBridgeError).code;
-        if (code !== 'TARGET_MISMATCH' && code !== 'DRIVER_UNAVAILABLE') throw error;
-      }
-      if (target.kind === 'APPLICATION' && deps.native) {
-        // Stop releases the held capture binding — the bound item, its Closed
-        // revoker and the window prop all go away with it.
-        try { await deps.native.dropBinding(windowBinding(target)); } catch { /* release is best-effort */ }
+      if (target.kind === 'APPLICATION') {
+        await releaseBinding(windowBinding(target));
       }
       return {};
     },
   };
 
   return {
+    async close() {
+      closed = true;
+      await Promise.allSettled([...bindings.keys()].map(releaseBinding));
+    },
     async handleCall(value) {
-      if (value.type !== 'harness.control.call' || value.token !== deps.token) return false;
+      if (closed || value.type !== 'harness.control.call' || value.token !== deps.token) return false;
       const requestId = String(value.requestId ?? '');
       const op = String(value.op ?? '');
       const payload = (value.payload ?? {}) as Record<string, unknown>;

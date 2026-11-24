@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { HarnessError } from '../contracts/index.ts';
 import type { ToolOwner } from '../contracts/tool-effects.ts';
 import {
+  CONTROL_GRANT_TTL_MS,
   storedCaptureV1Schema,
   type ControlActionV1,
   type ControlMode,
@@ -35,6 +36,9 @@ type ActionKind = (typeof ACTION_KINDS)[number];
 
 interface TargetOffer {
   consentId: string;
+  driver: ControlDriverOperations;
+  expiry?: ReturnType<typeof setTimeout>;
+  expiresAtMs?: number;
   pending: Promise<ControlTargetCandidateV1[]>;
   targets?: ControlTargetIdentityV1[];
 }
@@ -70,7 +74,7 @@ export class ControlRuntime {
   }
   detachDriver(): void {
     this.driverGeneration += 1;
-    this.targetOffers.clear();
+    for (const threadId of this.targetOffers.keys()) void this.discardTargetOffer(threadId);
     const grants = [...this.driverGrants.values()];
     for (const threadId of new Set([...this.dispatchers.keys(), ...this.driverGrants.keys()])) {
       void this.stopDispatch(threadId);
@@ -93,38 +97,70 @@ export class ControlRuntime {
    * window handle — the system picker's pickTarget stays held). */
   async targets(mode: ControlMode, threadId: string, consentId: string) {
     const driver = this.requireDriver();
-    const existing = this.targetOffers.get(threadId);
-    const offer = existing?.consentId === consentId && !existing.targets ? existing : {
-      consentId, pending: this.consent.listTargets(mode, () => driver.candidates(mode)),
-    };
-    this.targetOffers.set(threadId, offer);
+    let offer = this.activeTargetOffer(threadId);
+    if (offer?.consentId !== consentId || offer.targets) {
+      const cleanup = this.discardTargetOffer(threadId);
+      const refreshingNative = mode === 'SELECTED_DESKTOP_APPLICATION' && offer?.targets !== undefined;
+      const current: TargetOffer = {
+        consentId,
+        driver,
+        pending: this.consent.listTargets(mode, () => refreshingNative
+          ? cleanup.then(() => {
+              if (this.activeTargetOffer(threadId) !== current) {
+                throw new HarnessError('CAPABILITY_DENIED', 'The target selection was invalidated.');
+              }
+              return this.consent.listTargets(mode, () => driver.candidates(mode));
+            })
+          : driver.candidates(mode)),
+      };
+      this.targetOffers.set(threadId, current);
+      if (mode === 'SELECTED_DESKTOP_APPLICATION') {
+        current.expiresAtMs = this.now() + CONTROL_GRANT_TTL_MS;
+        current.expiry = setTimeout(() => { void this.discardTargetOffer(threadId, current); }, CONTROL_GRANT_TTL_MS).unref();
+      }
+      offer = current;
+    }
     try {
-      const candidates = await (offer === existing
-        ? this.consent.listTargets(mode, () => offer.pending)
-        : offer.pending);
+      const candidates = await this.consent.listTargets(mode, () => offer.pending);
       return { offer, candidates };
     } catch (error) {
-      if (this.targetOffers.get(threadId) === offer) this.discardTargetOffer(threadId);
+      void this.discardTargetOffer(threadId, offer);
       throw error;
     }
   }
 
   recordTargetOffer(threadId: string, result: Awaited<ReturnType<ControlRuntime['targets']>>): void {
-    if (this.targetOffers.get(threadId) !== result.offer) {
+    if (this.activeTargetOffer(threadId) !== result.offer) {
       throw new HarnessError('CAPABILITY_DENIED', 'The target selection was invalidated.');
     }
     result.offer.targets = result.candidates.map(({ target }) => ({ ...target }));
   }
 
-  discardTargetOffer(threadId: string): void {
+  private activeTargetOffer(threadId: string): TargetOffer | undefined {
+    const offer = this.targetOffers.get(threadId);
+    if (offer?.expiresAtMs !== undefined && this.now() >= offer.expiresAtMs) {
+      void this.discardTargetOffer(threadId, offer);
+      return undefined;
+    }
+    return offer;
+  }
+
+  async discardTargetOffer(threadId: string, offer = this.targetOffers.get(threadId), retained?: ControlTargetIdentityV1): Promise<void> {
+    if (!offer || this.targetOffers.get(threadId) !== offer) return;
     this.targetOffers.delete(threadId);
+    clearTimeout(offer.expiry);
+    // A discarded enumeration may still complete on the original driver.
+    await offer.pending.then(candidates => Promise.allSettled(candidates
+      .map(({ target }) => target)
+      .filter(target => target.kind === 'APPLICATION' && target.creationIdentity !== retained?.creationIdentity)
+      .map(async target => offer.driver.cancelInput(target))), () => {});
   }
 
   /** Consent resolution stays a synchronous host command path: the grant is
    * written under the open command transaction with this host's authenticated
    * device/session identity. */
   grant(consentId: string, owner: ToolOwner, target: ControlTargetIdentityV1): InteractiveGrantV1 {
-    const offer = this.targetOffers.get(owner.threadId);
+    const offer = this.activeTargetOffer(owner.threadId);
     const offeredTarget = offer?.consentId === consentId
       ? offer.targets?.find(candidate => sameTargetIdentity(candidate, target) && candidate.origin === target.origin)
       : undefined;
@@ -132,7 +168,8 @@ export class ControlRuntime {
       throw new HarnessError('CAPABILITY_DENIED', 'Select a target offered for this consent.');
     }
     const grant = this.consent.grant(consentId, owner, offeredTarget, this.deps.device);
-    this.discardTargetOffer(owner.threadId);
+    void this.discardTargetOffer(owner.threadId, offer, offeredTarget);
+    if (this.driverGrants.has(owner.threadId)) void this.stopDispatch(owner.threadId);
     this.driverGrants.set(owner.threadId, grant);
     return grant;
   }
@@ -261,7 +298,7 @@ export class ControlRuntime {
   /** G03 rollback for dispatch: the dispatcher's generation is revoked before
    * queued actions are cancelled. Unconditional for this thread. */
   async stopDispatch(threadId: string): Promise<void> {
-    this.discardTargetOffer(threadId);
+    void this.discardTargetOffer(threadId);
     const target = this.driverGrants.get(threadId)?.target;
     this.driverGrants.delete(threadId);
     const dispatcher = this.dispatchers.get(threadId);

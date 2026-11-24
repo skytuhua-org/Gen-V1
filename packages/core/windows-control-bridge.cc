@@ -666,11 +666,15 @@ void identityOnSta(void* raw) {
   result->window = std::move(*desc);
 }
 
+constexpr size_t kMaxChooserRows = 64;
+constexpr size_t kMaxHeldWindowBindings = 256;
+
 struct ListResult { std::vector<WindowDesc> windows; std::string error; };
 
 BOOL CALLBACK bindEnumeratedWindow(HWND hwnd, LPARAM param) {
   auto& rows = *reinterpret_cast<std::vector<WindowDesc>*>(param);
   try {
+    if (rows.size() >= kMaxChooserRows || bindings().size() >= kMaxHeldWindowBindings) return TRUE;
     if (!enumerableAppWindow(hwnd)) return TRUE;
     auto marker = markWindow(hwnd);
     if (!marker || !marker->matches()) return TRUE;

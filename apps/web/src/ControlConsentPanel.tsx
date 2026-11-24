@@ -57,8 +57,7 @@ export function ControlConsentPanel({ threadId }: { threadId: string }) {
   if (model.state === 'consent' && model.pendingConsent) {
     const pending = model.pendingConsent;
     // Target selection is explicit: the approved driver names each candidate
-    // and the user picks the exact one the grant binds to (S02/U02). For the
-    // desktop mode the driver's OS picker runs inside this request.
+    // and the user picks the exact one the grant binds to (S02/U02).
     const loadTargets = () => {
       setBusy(true); setNote(null); setTargets(null); setSelected(null);
       void authenticated(() => fetch(`/api/threads/${encodeURIComponent(threadId)}/control-targets?mode=${encodeURIComponent(pending.mode)}`, { credentials: 'same-origin', cache: 'no-store' }))
@@ -84,7 +83,7 @@ export function ControlConsentPanel({ threadId }: { threadId: string }) {
         <p>{MODE_LABEL[pending.mode] ?? pending.mode}</p>
         <p>Observe: {pending.requestedObserve ? 'requested' : 'not requested'} · Interact: {pending.requestedOperations.length ? pending.requestedOperations.join(', ') : 'not requested'} · Expires 10 minutes after approval.</p>
         {pending.allowedOrigins.length > 0 && <p>Origins: {pending.allowedOrigins.join(', ')}</p>}
-        {targets === null && <p><button type="button" onClick={loadTargets} disabled={busy}>{pending.mode === 'SELECTED_DESKTOP_APPLICATION' ? 'Choose a window…' : 'List targets'}</button></p>}
+        <p><button type="button" onClick={loadTargets} disabled={busy}>{targets !== null ? 'Refresh targets' : pending.mode === 'SELECTED_DESKTOP_APPLICATION' ? 'Choose a window…' : 'List targets'}</button></p>
         {targets !== null && (
           <ul className="control-consent-targets">
             {targets.map((candidate, index) => (

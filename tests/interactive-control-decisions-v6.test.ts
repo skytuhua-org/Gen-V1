@@ -7,6 +7,7 @@ import { Service } from '../packages/core/service.ts';
 import { BrowserConsentHost, ControlDriverRegistry, hostControlDriverRegistry } from '../packages/core/browser-consent.ts';
 import { ControlDispatcher, controlCapability, type ControlDriverHandle, type ControlDriverOperations } from '../packages/core/desktop-control.ts';
 import { __setCapabilityFlagForTests } from '../packages/core/capability-flags.ts';
+import { CONTROL_GRANT_TTL_MS } from '../packages/contracts/interactive-control.ts';
 import type { ControlDriverRegistrationV1, ControlTargetIdentityV1, InteractiveGrantV1, TargetObservationV1 } from '../packages/contracts/interactive-control.ts';
 import { HarnessError, type RuntimeAdapter, type Thread } from '../packages/contracts/index.ts';
 import type { ToolOwner } from '../packages/contracts/tool-effects.ts';
@@ -264,6 +265,7 @@ it.each([
   const list = new Promise<CandidateList>(resolve => { completeList = resolve; });
   const candidates = vi.fn<ControlDriverOperations['candidates']>().mockReturnValue(list);
   const adapter = attachTestTargetChooser(service, candidates);
+  const release = vi.spyOn(adapter, 'cancelInput');
   const payload = { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true };
   await service.command({ id: 'chooser-request', type: 'control.request', threadId: thread.id, payload });
 
@@ -286,6 +288,7 @@ it.each([
   completeList([{ target: app, title: 'Fixture app' }]);
 
   await expect(listing).rejects.toMatchObject({ code });
+  expect(release).toHaveBeenCalledExactlyOnceWith(app);
 });
 
 it('M16 refuses to enumerate or grant after the consent owner scope changes', async () => {
@@ -330,6 +333,57 @@ it('M16 shares a single target snapshot across concurrent requests for the same 
   candidates.mockResolvedValue(refreshed);
   await expect(service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION')).resolves.toMatchObject({ candidates: refreshed });
   expect(candidates).toHaveBeenCalledTimes(2);
+});
+
+it('M16 releases stale offers and retains only the chosen window until Stop', async () => {
+  const { service, thread } = serviceFixture();
+  const unused = { ...app, creationIdentity: 'unused-window' };
+  const chosen = { ...app, creationIdentity: 'chosen-window' };
+  const candidates = vi.fn<ControlDriverOperations['candidates']>()
+    .mockResolvedValueOnce([{ target: app, title: 'Previous fixture window' }])
+    .mockResolvedValue([{ target: unused, title: 'Unselected window' }, { target: chosen, title: 'Selected window' }]);
+  const release = vi.spyOn(attachTestTargetChooser(service, candidates), 'cancelInput');
+  const started = await service.command({
+    id: 'owned-chooser', type: 'control.request', threadId: thread.id,
+    payload: { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true },
+  });
+  const { consent } = started.result as { consent: { consentId: string } };
+
+  await service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
+  let settleRelease!: () => void;
+  const settling = new Promise<void>(resolve => { settleRelease = resolve; });
+  let enterRelease!: () => void;
+  const entered = new Promise<void>(resolve => { enterRelease = resolve; });
+  release.mockImplementationOnce(async () => { enterRelease(); await settling; });
+  const refreshed = service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
+  await entered;
+  expect(candidates).toHaveBeenCalledTimes(1);
+  expect(release).toHaveBeenCalledExactlyOnceWith(app);
+  settleRelease();
+  await refreshed;
+  await service.command({
+    id: 'owned-chooser-approve', type: 'control.grant', threadId: thread.id,
+    payload: { consentId: consent.consentId, target: chosen },
+  });
+  expect(release.mock.calls).toEqual([[app], [unused]]);
+  await service.command({ id: 'owned-chooser-stop', type: 'control.stop', threadId: thread.id, payload: {} });
+  expect(release.mock.calls).toEqual([[app], [unused], [chosen]]);
+});
+
+it('M16 releases an abandoned native offer at its expiry', async () => {
+  const { service, thread } = serviceFixture();
+  const release = vi.spyOn(attachTestTargetChooser(service, async () => [{ target: app, title: 'Fixture' }]), 'cancelInput');
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    await service.command({
+      id: 'abandoned-chooser', type: 'control.request', threadId: thread.id,
+      payload: { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true },
+    });
+    await service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
+    expect(release).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(CONTROL_GRANT_TTL_MS);
+    expect(release).toHaveBeenCalledExactlyOnceWith(app);
+  } finally { vi.useRealTimers(); }
 });
 
 it('M16 revokes control on archive and hides stale persisted grants on restart', async () => {
