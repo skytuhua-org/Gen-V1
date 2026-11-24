@@ -13,6 +13,7 @@ import {encodeInput} from '../packages/runtime-pi/input-envelope.ts';
 import {createHash} from 'node:crypto';
 import {projectContextGrantDigest} from '../packages/core/approved-project-context.ts';
 import {REPOSITORY_MAP} from '../packages/core/repository-map-tool.ts';
+import {hermesRequestScheduler} from '../packages/runtime/request-scheduler.ts';
 
 it('passes owned project instruction bytes only through the native system prefix and rejects changed active-turn instructions',async()=>{
  const f=await fixture({systemPrompt:'Host policy'}),input=run(),text='\nApproved project instructions: preserve the API.';
@@ -174,6 +175,115 @@ it('buffers steering without claiming entry and denies changed account/model own
 });
 it('does not release ownership on a cancellation acknowledgement before actual source settlement',async()=>{
  const f=await fixture();try{await f.runtime.start(run());let finished=false;const cancelling=f.runtime.cancel(run()).then(()=>{finished=true;});await vi.waitFor(()=>expect(f.source().calls.some(call=>call.method==='agent.cancelBackground')).toBe(true));expect(finished).toBe(false);expect(f.accounts.releaseUse).not.toHaveBeenCalled();f.event('settled',{cancelled:true});await cancelling;expect(f.accounts.releaseUse).toHaveBeenCalledOnce();}finally{await f.runtime.dispose();}
+});
+it('retries Hermes settlement after a transient account lease write failure',async()=>{
+ const f=await fixture(),input=run(),cancelled=vi.fn(),cancelFailed=vi.fn();
+ try{
+  await f.runtime.start(input);
+  f.accounts.releaseUse.mockImplementationOnce(()=>{throw Error('Synthetic lease store busy');});
+  f.event('settled');
+  await vi.waitFor(()=>expect(f.events).toContainEqual(expect.objectContaining({type:'error',message:expect.stringContaining('cleanup could not be confirmed')})));
+  expect(f.accounts.releaseUse).toHaveBeenCalledOnce();
+  expect(f.runtime.reviewBusy).toBe(true);
+  void f.runtime.cancel(input).then(cancelled,cancelFailed);
+  await vi.waitFor(()=>expect(cancelled).toHaveBeenCalledOnce());
+  expect(cancelFailed).not.toHaveBeenCalled();
+  expect(f.accounts.releaseUse).toHaveBeenCalledTimes(2);
+  expect(f.events.filter(event=>event.type==='settled'&&event.runId===input.runId)).toHaveLength(1);
+  await f.runtime.start(run({runId:'after-lease-retry',epoch:2,inputId:'next'}));
+  await f.settle();
+ }finally{await f.runtime.dispose().catch(()=>{});}
+});
+it('signals failed Hermes settlement to a queued run and retries confirmed source teardown',async()=>{
+ const f=await fixture(),input=run(),next=run({runId:'after-source-retry',epoch:2,inputId:'next'});
+ const admitted=vi.fn(),rejected=vi.fn();
+ try{
+  await f.runtime.start(input);
+  const {client,options}=f.source();
+  vi.mocked(client.dispose).mockRejectedValueOnce(Error('Synthetic transient source teardown failure'));
+  f.event('foreground_settled');
+  void f.runtime.start(next).then(admitted,rejected);
+  options.onFailure?.(Error('Synthetic worker failure'));
+  await vi.waitFor(()=>expect(rejected).toHaveBeenCalledWith(expect.objectContaining({code:'HERMES_CLEANUP_UNCONFIRMED'})));
+  expect(admitted).not.toHaveBeenCalled();
+  expect(f.accounts.claimUse).toHaveBeenCalledOnce();
+  expect(f.accounts.releaseUse).not.toHaveBeenCalled();
+  await f.runtime.cancel(input);
+  expect(client.dispose).toHaveBeenCalledTimes(2);
+  expect(f.accounts.releaseUse).toHaveBeenCalledOnce();
+  await f.runtime.start(next);
+  expect(f.source().client).not.toBe(client);
+  await f.settle();
+ }finally{await f.runtime.dispose();}
+});
+it('signals failed forced Hermes settlement and allows cancellation to retry it',async()=>{
+ const f=await fixture(),input=run(),next=run({runId:'after-forced-retry',epoch:2,inputId:'next'}),rejected=vi.fn();
+ try{
+  await f.runtime.start(input);
+  const {client}=f.source(),request=client.request.bind(client);
+  client.request=async<T>(method:string,params?:Record<string,unknown>)=>{
+   if(method==='agent.cancel')throw Error('Synthetic missing cancellation acknowledgement');
+   return request<T>(method,params);
+  };
+  vi.mocked(client.dispose).mockRejectedValueOnce(Error('Synthetic transient source teardown failure'));
+  f.event('foreground_settled');
+  void f.runtime.start(next).catch(rejected);
+  await expect(f.runtime.cancel(input)).rejects.toBeInstanceOf(AggregateError);
+  await vi.waitFor(()=>expect(rejected).toHaveBeenCalledWith(expect.objectContaining({code:'HERMES_CLEANUP_UNCONFIRMED'})));
+  expect(f.accounts.releaseUse).not.toHaveBeenCalled();
+  await f.runtime.cancel(input);
+  expect(client.dispose).toHaveBeenCalledTimes(2);
+  expect(f.accounts.releaseUse).toHaveBeenCalledOnce();
+  await f.runtime.start(next);
+  await f.settle();
+ }finally{await f.runtime.dispose();}
+});
+it('keeps the Hermes lease while a concurrent settled frame awaits forced source teardown',async()=>{
+ const f=await fixture(),input=run();let confirm!:()=>void;
+ const sourceClosed=new Promise<void>(resolve=>{confirm=resolve;});
+ try{
+  await f.runtime.start(input);
+  const {client,options}=f.source();
+  vi.mocked(client.dispose).mockImplementationOnce(()=>sourceClosed);
+  options.onFailure?.(Error('Synthetic worker failure'));
+  f.event('settled');
+  // The real loopback broker is idle. Its close has no native operation to drain.
+  await vi.waitFor(()=>expect(client.dispose).toHaveBeenCalledOnce());
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  expect(f.accounts.releaseUse).not.toHaveBeenCalled();
+  expect(f.runtime.sourceBusy).toBe(true);
+  expect(f.runtime.reviewBusy).toBe(true);
+  confirm();
+  await vi.waitFor(()=>expect(f.accounts.releaseUse).toHaveBeenCalledOnce());
+  expect(f.events.filter(event=>event.type==='settled'&&event.runId===input.runId)).toHaveLength(1);
+ }finally{confirm();await f.runtime.dispose();}
+});
+it('signals unconfirmed Hermes broker teardown without releasing native capacity or the account lease',async()=>{
+ const f=await fixture(),input=run(),releasePermit=vi.fn(),rejected=vi.fn();
+ const acquire=vi.spyOn(hermesRequestScheduler,'acquire').mockResolvedValueOnce({release:releasePermit,queuedMs:0,requestClass:'foreground'});
+ try{
+  await f.runtime.start(input);
+  f.event('model_request',{sequence:1,inputIds:['input']});
+  const response=fetch(f.start().brokerURL as string,{method:'POST',headers:{Authorization:'Bearer '+f.start().jobKey,'content-type':'application/json'},body:JSON.stringify({sessionId:'fixture',modelId:input.modelId,prompt:'Synthetic teardown fixture'})});
+  await vi.waitFor(()=>expect(f.natives[0]?.input).toBeDefined());
+  const native=f.natives[0];
+  vi.mocked(native.runtime.dispose).mockRejectedValueOnce(Error('Synthetic unconfirmed native teardown'));
+  native.callbacks.onEvent({...native.input,type:'settled'});
+  expect((await response).status).toBe(400);
+  f.event('settled');
+  void f.runtime.start(run({runId:'blocked-by-native',epoch:2,inputId:'next'})).catch(rejected);
+  await vi.waitFor(()=>expect(rejected).toHaveBeenCalledWith(expect.objectContaining({code:'HERMES_CLEANUP_UNCONFIRMED'})));
+  await expect(f.runtime.cancel(input)).rejects.toBeInstanceOf(AggregateError);
+  expect(native.runtime.dispose).toHaveBeenCalledOnce();
+  expect(releasePermit).not.toHaveBeenCalled();
+  expect(f.accounts.claimUse).toHaveBeenCalledOnce();
+  expect(f.accounts.releaseUse).not.toHaveBeenCalled();
+ }finally{
+  acquire.mockRestore();
+  const disposed=f.runtime.dispose().catch(()=>{});
+  // On regression the queued admission can keep disposal pending as well.
+  if(rejected.mock.calls.length)await disposed;
+ }
 });
 it('rejects compaction of a different retained task, account or model',async()=>{
  const f=await fixture();try{await f.runtime.start(run());const path=f.start().sessionPath as string;await f.settle();for(const value of [run({threadId:'different'}),run({accountId:'different'}),run({modelId:'other/model'})])await expect(f.runtime.compact(value,path,value.modelId,value.accountId)).rejects.toMatchObject({code:'HERMES_SESSION_INVALID'});expect(f.source().calls.some(call=>call.method==='agent.compact')).toBe(false);
