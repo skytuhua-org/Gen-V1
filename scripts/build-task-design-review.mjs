@@ -11,7 +11,7 @@ const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&
 await mkdir(output,{recursive:true});
 const tasksFolder=join(root,argument('--task-folder')??'videos');
 const tasks=await read(join(tasksFolder,'manifest.json'));
-if(tasks.captures.length!==18||tasks.captures.some(c=>c.failed)||tasks.missing.length)throw Error('All 18 task recordings and all 48 visible component targets must pass first.');
+if(tasks.captures.length!==19||tasks.captures.some(c=>c.failed)||tasks.missing.length)throw Error('All 19 task recordings and all 49 visible component targets must pass first.');
 const videos=[];
 async function asset(folder,file,prefix){const dest=prefix+'-'+basename(file);await copyFile(join(folder,file),join(output,dest));return dest;}
 for(const capture of tasks.captures){
@@ -44,7 +44,7 @@ for(const folder of (argument('--extra-folders')??'').split(',').filter(Boolean)
 }
 if(argument('--require-dark')==='1'&&videos.some(video=>video.theme!=='dark'||!video.themeAudit?.length||video.themeAudit.some(record=>record.theme!=='dark')))throw Error('Every current recording must have a complete dark-theme audit.');
 const coverage=tasks.advertised.map(component=>({component,evidence:tasks.coverage.filter(row=>row.component===component).map(row=>({scene:row.scene,chapter:row.chapter,video:'task-'+row.scene,frame:'task-'+row.scene+'-'+basename(row.frame),...(row.interaction?{interaction:row.interaction}:{})}))}));
-if(coverage.length!==48||coverage.some(row=>!row.evidence.length))throw Error('Incomplete visible coverage.');
+if(coverage.length!==49||coverage.some(row=>!row.evidence.length))throw Error('Incomplete visible coverage.');
 const comparisons=[];
 for(const [name,reference,scenario]of [['Signing','signing-18.png','signing'],['Vertical PR','merge-16.png','pr-dark'],['Migration','migration-16.png','migration'],['Progressive questions','faq-24.png','faq'],['Context','context-10.png','context']]){
  const ref='reference-frame-'+reference;await copyFile(resolve('docs/reference',reference),join(output,ref));const video=videos.find(v=>v.id==='reference-'+scenario);comparisons.push({name,reference:ref,result:video.chapters[Math.min(1,video.chapters.length-1)].frame,video:video.id});

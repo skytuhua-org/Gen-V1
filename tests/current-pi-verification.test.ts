@@ -50,7 +50,7 @@ describe('fresh-source primary Pi verification',()=>{
    const context={threadId:thread.id,runId:'fixture-run',epoch:thread.epoch};
    store.internal('fixture.run',thread.id,()=>store.put('thread',thread.id,thread.id,{...thread,runId:context.runId,status:'working'}));
    await service.tool({name:'ui_discover',args:{}},context);
-   expect(seen).toHaveLength(1);expect(seen[0]).toMatchObject({query:'',total:61,componentNames:expect.arrayContaining(['TraceWaterfall','Comparison'])});
+   expect(seen).toHaveLength(1);expect(seen[0]).toMatchObject({query:'',total:62,componentNames:expect.arrayContaining(['TraceWaterfall','Comparison'])});
    expect(JSON.stringify(seen)).not.toContain('dataSchemas');expect(JSON.stringify(seen)).not.toContain('props');
    await expect(service.tool({name:'task_delegate',args:{}},context)).rejects.toThrow(/primary/i);
    await expect(service.tool({name:'operation_execute',args:{operationId:'foreign'}},context)).rejects.toThrow(/primary/i);
