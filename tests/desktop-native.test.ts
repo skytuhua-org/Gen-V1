@@ -69,7 +69,7 @@ describe('native desktop surface authority',()=>{
   expect(trustedDesktopUrl('http://127.0.0.1:4317','main:1')).toBe('http://127.0.0.1:4317/?desktopWindow=main%3A1');
  });
  it('restricts plug-in native IPC to its window lifecycle',()=>{
-  const allowed=new Set<string>([DESKTOP_CHANNELS.theme,DESKTOP_CHANNELS.context,DESKTOP_CHANNELS.ready,DESKTOP_CHANNELS.list,DESKTOP_CHANNELS.control,DESKTOP_CHANNELS.minimize,DESKTOP_CHANNELS.reset,DESKTOP_CHANNELS.focus,DESKTOP_CHANNELS.closeAnswer,DESKTOP_CHANNELS.detach,DESKTOP_CHANNELS.reattach]);
+  const allowed=new Set<string>([DESKTOP_CHANNELS.theme,DESKTOP_CHANNELS.context,DESKTOP_CHANNELS.ready,DESKTOP_CHANNELS.list,DESKTOP_CHANNELS.control,DESKTOP_CHANNELS.minimize,DESKTOP_CHANNELS.reset,DESKTOP_CHANNELS.focus,DESKTOP_CHANNELS.closeAnswer,DESKTOP_CHANNELS.detach,DESKTOP_CHANNELS.reattach,DESKTOP_CHANNELS.zoom]);
   for(const channel of Object.values(DESKTOP_CHANNELS))expect(pluginDesktopChannelAllowed(channel),channel).toBe(allowed.has(channel));
   expect(pluginDesktopChannelAllowed('harness-desktop:unknown')).toBe(false);
  });

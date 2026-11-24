@@ -20,7 +20,7 @@ const nativeLayout:DesktopLayout={version:1,windows:[{surface:{kind:'main'},boun
 const desktopContext:DesktopContext={windowId:'main',surface:{kind:'main'},windows:[{id:'main',surface:{kind:'main'},ready:true,minimized:false,visible:true}]};
 const unsupported=async()=>{throw Error('This fixture does not support native window mutation.');};
 const bridge:DesktopBridge={getContext:async()=>desktopContext,ready:async()=>desktopContext,
- detach:unsupported,reattach:unsupported,minimize:unsupported,signIn:unsupported,resetBounds:unsupported,focus:unsupported,browser:unsupported,
+ detach:unsupported,reattach:unsupported,minimize:unsupported,signIn:unsupported,resetBounds:unsupported,focus:unsupported,browser:unsupported,zoom:unsupported,
  list:async()=>desktopContext.windows,onState:()=>()=>{},onCloseRequested:()=>()=>{},
  control:async value=>{record('native.control',value);throw Error('Canvas controls must not change native windows.');},
  captureLayout:async()=>structuredClone(nativeLayout),

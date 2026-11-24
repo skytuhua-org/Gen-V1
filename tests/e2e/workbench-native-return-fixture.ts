@@ -32,7 +32,7 @@ export async function serveWorkbenchNativeReturnFixture(page:Page){
    reattach:async()=>{calls.push({type:'reattach'});},
    minimize:async()=>{calls.push({type:'minimize'});},
    focus:async windowId=>{calls.push({type:'focus',windowId});},
-   resetBounds:async()=>{},browser:async()=>{},signIn:async()=>{},
+   resetBounds:async()=>{},browser:async()=>{},zoom:async()=>{},signIn:async()=>{},
   };
   w.harnessDesktop=bridge;
  });

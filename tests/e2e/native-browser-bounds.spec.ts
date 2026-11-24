@@ -16,6 +16,14 @@ test('fixed CSS browser slots resend after owner zoom changes and remain occlude
  await page.evaluate(()=>document.getElementById('geometry-modal')!.remove());await expect.poll(()=>page.evaluate(()=>window.geometryCalls.at(-1)?.native)).toEqual({x:125,y:125,width:375,height:250});
 });
 
+test('the docked browser slot tracks app zoom at 50%, 150% and 200%',async({page})=>{
+ await openGeometryFixture(page);await expect.poll(()=>page.evaluate(()=>window.geometryCalls?.length??0)).toBe(1);
+ for(const [zoom,native]of [[0.5,{x:50,y:50,width:150,height:100}],[1.5,{x:150,y:150,width:450,height:300}],[2,{x:200,y:200,width:600,height:400}]] as const){
+  await page.evaluate(value=>{window.geometryZoom=value;Object.defineProperty(window,'devicePixelRatio',{configurable:true,value});window.dispatchEvent(new Event('resize'));},zoom);
+  await expect.poll(()=>page.evaluate(()=>window.geometryCalls.at(-1)?.native)).toEqual(native);
+ }
+});
+
 for(const kind of ['menu','select'] as const)test(`shared ${kind} popup hides the native browser until dismissal`,async({page})=>{
  await openGeometryFixture(page);
  const before=await page.evaluate(()=>window.geometryCalls.at(-1)!.native);
