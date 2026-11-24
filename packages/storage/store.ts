@@ -30,6 +30,10 @@ export class Store {
   readonly dataDir: string;
   private listeners = new Set<(event: WorkspaceEvent) => void>();
   private transactionOpen = false;
+  /** True while an abandoned transaction is still open on this connection:
+   * reads would observe writes the next commit reconciles away, so every
+   * read entry point must refuse until the orphan is rolled back. */
+  private reconcileRequired = false;
   private committedEvents: WorkspaceEvent[] = [];
   private drainingEvents = false;
   private readonly statements: {
@@ -105,6 +109,7 @@ export class Store {
     };
   }
   get<T = unknown>(kind: string, id: string): T | null {
+    this.assertDurable();
     const row = this.statements.get.get(kind, id) as { body: string } | undefined;
     if (!row) return null;
     const value = JSON.parse(row.body);
@@ -118,6 +123,7 @@ export class Store {
     return value as T;
   }
   compactionProjection(threadId: string): CompactionProjectionV1 | undefined {
+    this.assertDurable();
     const thread = this.get<Thread>('thread', threadId);
     // A retained model/session is already account-bound. As in Service.binding,
     // its absent legacy field means null; it never uses the selected default.
@@ -139,6 +145,7 @@ export class Store {
     return {version: 1, candidates, accounting: {...counts, costBytes: 0}};
   }
   all<T = unknown>(kind: string, threadId?: string): T[] {
+    this.assertDurable();
     const rows = (threadId === undefined ? this.statements.allKind.all(kind) : this.statements.allKindThread.all(kind, threadId)) as { body: string }[];
     return rows.map(row => JSON.parse(row.body) as T);
   }
@@ -150,7 +157,11 @@ export class Store {
     if (!this.transactionOpen) throw new Error("Projection writes require a command transaction");
     this.statements.remove.run(kind, id);
   }
+  private assertDurable(): void {
+    if (this.reconcileRequired) throw new HarnessError('STORE_INCONSISTENT', 'A previous transaction is still open and its uncommitted writes are visible; reconcile it or reopen the store before reading.');
+  }
   receipt(command: HostCommand): CommandReceipt | null {
+    this.assertDurable();
     const row = this.statements.receipt.get(command.id) as { hash: string; body: string } | undefined;
     if (!row) return null;
     if (row.hash !== digest(command)) throw new HarnessError("DUPLICATE_COMMAND", "Command ID reused with different content");
@@ -163,9 +174,13 @@ export class Store {
       return {commandId:command.id,eventSeq:event.seq,result};
     } catch (error) {
       // A competing writer may have committed the same command while ours
-      // failed; its durable receipt wins over our error.
-      const raced = this.receipt(command);
-      if (raced) return raced;
+      // failed; its durable receipt wins over our error. Re-check only once
+      // our own transaction has actually closed: while it is still open the
+      // row we read could be our own uncommitted insert, not durable proof.
+      if (!this.db.isTransaction) {
+        const raced = this.receipt(command);
+        if (raced) return raced;
+      }
       throw error;
     }
   }
@@ -183,6 +198,7 @@ export class Store {
       try { this.db.exec("ROLLBACK"); } catch { /* The orphan is closed on a best-effort basis. */ }
       if (this.db.isTransaction) throw new HarnessError('STORE_INCONSISTENT', 'The store transaction could not be reconciled. Reopen the store.');
     }
+    this.reconcileRequired = false;
     try { this.db.exec("BEGIN IMMEDIATE"); }
     catch (error) { throw Store.transactionError(error); }
     this.transactionOpen = true;
@@ -201,7 +217,12 @@ export class Store {
       try { this.db.exec("ROLLBACK"); } catch { /* best-effort rollback */ }
       throw Store.transactionError(error);
     }
-    finally { this.transactionOpen = false; }
+    finally {
+      this.transactionOpen = false;
+      // A still-open transaction here means the rollback failed; until a
+      // later commit reconciles it, reads would see abandoned writes.
+      if (this.db.isTransaction) this.reconcileRequired = true;
+    }
     this.committedEvents.push(event!);
     this.drainCommittedEvents();
     return {event:event!,result};
@@ -221,11 +242,12 @@ export class Store {
     return this.commit(type,threadId,apply).result;
   }
   eventsAfter(seq: number, limit?: number): WorkspaceEvent[] {
+    this.assertDurable();
     if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)) throw new HarnessError('INVALID_INPUT', 'Event page size must be between 1 and 1000');
     const rows = (limit === undefined ? this.statements.eventsAfter.all(seq) : this.statements.eventsAfterLimit.all(seq, limit)) as unknown as { seq: number; id: string; type: string; thread_id: string | null; payload: string; occurred_at: string }[];
     return rows.map(row => ({ seq: row.seq, id: row.id, type: row.type, threadId: row.thread_id, payload: JSON.parse(row.payload), occurredAt: row.occurred_at }));
   }
-  get sequence(): number { return Number((this.statements.sequence.get() as { seq: number }).seq); }
+  get sequence(): number { this.assertDurable(); return Number((this.statements.sequence.get() as { seq: number }).seq); }
   /** True while a command/internal commit is open: host modules invoked from
    * a command write through the open transaction instead of opening a nested
    * one (Store rejects nested commits). */
@@ -240,6 +262,7 @@ export class Store {
   }
   /** Inbox and desktop notification polling need no transcripts or artifact history. */
   attentionProjection(): Pick<Snapshot, "threads" | "requests" | "operations"> {
+    this.assertDurable();
     const {archived, visible} = this.visibleEntities();
     return {
       threads: this.all<Snapshot["threads"][number]>("thread").filter(thread => !archived.has(thread.id)),
@@ -248,6 +271,7 @@ export class Store {
     };
   }
   snapshot(): Snapshot {
+    this.assertDurable();
     const allThreads = this.all<Snapshot["threads"][number]>("thread");
     const {archived, archivedIds, visible} = this.visibleEntities();
     const threads = allThreads.filter(thread => !archived.has(thread.id));
@@ -275,6 +299,7 @@ export class Store {
     };
   }
   messagesFor(threadId: string, beforeId?: string, limit = 200): { messages: Message[]; truncated: number } {
+    this.assertDurable();
     const cap = Math.min(500, Math.max(1, Math.ceil(limit)));
     let rows: { body: string }[], count: { count: number };
     if (beforeId === undefined) {

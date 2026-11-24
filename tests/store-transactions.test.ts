@@ -41,6 +41,12 @@ describe("store transaction consistency", () => {
         .toThrowError("causal: apply blew up");
       // The orphaned transaction is real but the flag is clear.
       expect(store.db.isTransaction).toBe(true);
+      // Reads refuse the abandoned transaction's uncommitted view until reconciled:
+      // callers must not persist state the next rollback will discard.
+      const inconsistent = expect.objectContaining({name: "HarnessError", code: "STORE_INCONSISTENT"});
+      expect(() => store.get("sample", "x")).toThrowError(inconsistent);
+      expect(() => store.snapshot()).toThrowError(inconsistent);
+      expect(() => store.eventsAfter(0)).toThrowError(inconsistent);
       failRollback = false;
       // The next commit reconciles the orphan instead of wedging on it.
       store.internal("fixture.after", null, () => store.put("sample", "after", null, {v: 2}));
@@ -85,6 +91,30 @@ describe("store transaction consistency", () => {
       expect(raced).toEqual(seeded);
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it("does not report its own uncommitted receipt when commit and rollback both fail", () => {
+    const store = setup();
+    const command = {id: "cmd-phantom", type: "fixture.phantom", payload: {n: 1}};
+    const originalExec = store.db.exec.bind(store.db);
+    let failWrites = true;
+    (store.db as { exec: typeof store.db.exec }).exec = (sql: string) => {
+      if (failWrites && /COMMIT|ROLLBACK/i.test(sql)) throw new Error("injected: write device failed");
+      return originalExec(sql);
+    };
+    try {
+      // COMMIT fails after our receipt was inserted, and ROLLBACK fails too:
+      // the open transaction still exposes our own row, which is no durable proof.
+      expect(() => store.command(command, () => ({v: 1}))).toThrowError("injected: write device failed");
+      expect(store.db.isTransaction).toBe(true);
+      failWrites = false;
+      store.internal("fixture.after", null, () => {});
+      // Reconciliation discarded the uncommitted receipt with its transaction.
+      expect(store.receipt(command)).toBeNull();
+    } finally {
+      store.db.exec = originalExec;
+      if (store.db.isTransaction) store.db.exec("ROLLBACK");
     }
   });
 
