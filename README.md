@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/public/brand/gen-v1-logo.svg" width="360" alt="Gen V1">
+
 <p><strong>GEN V1 · WINDOWS PREVIEW</strong></p>
 
 # Agent runs you can inspect, review and recover
@@ -92,7 +94,7 @@ pnpm desktop:dev
 
 Protected credential evidence on Windows also requires Visual Studio C++ Build Tools to build the Node-API helper. Desktop packaging builds it automatically. Credential files must belong to the current user and grant access only to that user, SYSTEM and Administrators; the helper refuses broader access.
 
-For the browser interface, use `pnpm dev` and open `http://127.0.0.1:5173`. Open **Settings → Providers**, add an account and choose **Connect**, then refresh models and select an available model.
+For the browser interface, use `pnpm dev` and open `http://127.0.0.1:5173`. Open **Settings → Models & Accounts**, add an account and choose **Connect**, then refresh models and select an available model.
 
 Use the [development setup guide](docs/public/getting-started.md#develop-from-a-fresh-checkout) to create a separate data directory before sign-in and startup. See the [full setup reference](docs/getting-started.md) for runtime and packaging details. Repository access and use remain subject to [LICENSE](LICENSE).
 
@@ -120,6 +122,7 @@ Read [release status](docs/public/release-notes.md), [security and local data](S
 | Understand the current preview | [Release notes and limitations](docs/public/release-notes.md) |
 | Understand the host and recovery model | [Architecture](docs/architecture.md) |
 | Build a workspace extension | [Plug-in API](docs/plugin-api.md) |
+| Use the Gen V1 logo | [Logo and brand assets](docs/public/brand/README.md) |
 | Report a bug or suggest a feature | [Issue forms](#report-an-issue) |
 | Report a security issue privately | [Security policy](SECURITY.md) |
 | Make a useful contribution | [Contributor guide](CONTRIBUTING.md) |
