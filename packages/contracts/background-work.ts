@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { toolOwnerSchema } from "./tool-effects.ts";
+import type { ToolResultHandleV1 } from "./request-context.ts";
 
 /** M10 durable background work contracts. The host Store is the only writer;
  * timestamps, event payloads and external content never supply execution
@@ -19,6 +20,9 @@ export const BACKGROUND_SCHEDULER_LIMITS = {
   reviewForkDeadlineMs: 60_000,
   reviewForkMaxModelCalls: 4,
   outputWindowBytes: 512 * 1024,
+  /** Minted context handles stay model-readable for the same 60-minute
+   * authority window as other context results. */
+  outputHandleTtlMs: 60 * 60_000,
   shutdownDrainMs: 5_000,
 } as const;
 
@@ -158,3 +162,20 @@ export const BACKGROUND_HOLD_REASONS = {
 
 export const M10_FLAG_KEYS = ["jobs.backgroundV1", "jobs.serviceLifetimeV1", "jobs.idleReviewV1", "integrations.intakeV1"] as const;
 export type M10FlagKey = (typeof M10_FLAG_KEYS)[number];
+
+/** M10→M04 output publication seam (#2014 T02). The coordinator hands the
+ * bounded retained window to the service; the service mints a canonical
+ * ToolResultHandleV1 in private custody under current authority. `bytes`
+ * are the raw retained stream bytes; `startByte` is the offset of the first
+ * retained byte in the original stream and `omittedBytes` the count dropped
+ * ahead of it. Owner fields are the work's immutable admission binding —
+ * never the current thread's, so a drifted owner keeps its own record. */
+export type BackgroundOutputPublicationV1 = {
+  workId: string;
+  owner: { threadId: string; runId: string | null; epoch: number; projectId: string | null; workspaceId: string | null; accountBinding: string | null };
+  effectId: string | null;
+  bytes: Uint8Array;
+  startByte: number;
+  omittedBytes: number;
+};
+export type BackgroundOutputPublisherV1 = (input: BackgroundOutputPublicationV1) => Promise<ToolResultHandleV1 | null>;
