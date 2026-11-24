@@ -210,4 +210,39 @@ describe('bounded transcript paging', () => {
       expect(store.messagesFor('missing')).toEqual({ messages: [], truncated: 0 });
     } finally { decode.mockRestore(); }
   });
+
+  it('sweeps event history above durable watermarks, keeps live receipts, and records an audit event', () => {
+    const store = setup();
+    const commands = Array.from({ length: 20 }, (_, i) => store.command({ id: `sweep-command-${i}`, type: 'fixture.command', payload: { i } }, () => ({ i })));
+    // The durable consumer: a plan extension replays only seq > watermark.
+    store.internal('fixture.watermark', null, () => {
+      store.put('planExtension', 'plan-a', null, { reportWatermark: commands[7].eventSeq });
+      store.put('workspaceAction', commands[2].commandId, null, { command: { id: commands[2].commandId, type: 'fixture.command', payload: {} } });
+    });
+    const result = store.retentionSweep({ keepEvents: 10, batchSize: 7 });
+    const floor = commands[7].eventSeq; // min(head-keep, watermark): the watermark retains more.
+    expect(result.floor).toBe(floor);
+    expect(result.removedEvents).toBe(floor);
+    expect(store.retentionFloor()).toBe(floor + 1);
+    expect(store.eventsAfter(floor).map(event => event.seq)).toEqual([...Array(store.sequence - floor).keys()].map(n => n + floor + 1));
+    // The swept audit event is itself retained history.
+    expect(store.eventsAfter(0).at(-1)).toMatchObject({ type: 'store.retention.swept', payload: { result: { floor, removedEvents: result.removedEvents } } });
+    // Receipts below the floor expire except the one a live workspaceAction still references: 20 - 8 swept + 1 pinned.
+    expect(store.db.prepare("SELECT COUNT(*) AS n FROM receipts").get()).toMatchObject({ n: 13 });
+    // A pinned receipt still short-circuits its command; so does a retained one.
+    expect(store.command({ id: commands[2].commandId, type: 'fixture.command', payload: { i: 2 } }, () => { throw new Error('kept receipt must short-circuit'); })).toEqual(commands[2]);
+    expect(store.command({ id: commands[19].commandId, type: 'fixture.command', payload: { i: 19 } }, () => { throw new Error('kept receipt must short-circuit'); })).toEqual(commands[19]);
+    // A stale sweep is a no-op below the keep window and inside a transaction it is rejected.
+    expect(store.retentionSweep({ keepEvents: store.sequence }).removedEvents).toBe(0);
+    expect(() => store.internal('fixture.nested', null, () => store.retentionSweep())).toThrow(expect.objectContaining({ code: 'TRANSACTION_OPEN' }));
+    // Resumable: bounded batches leave committed progress the next call resumes from.
+    store.internal('fixture.watermark2', null, () => store.put('planExtension', 'plan-a', null, { reportWatermark: store.sequence }));
+    const partial = store.retentionSweep({ keepEvents: 1, batchSize: 3, maxBatches: 2 });
+    expect(partial.batches).toBe(2); expect(partial.removedEvents).toBe(6);
+    store.retentionSweep({ keepEvents: 1, batchSize: 50 });
+    const tail = store.eventsAfter(0).map(event => event.seq);
+    expect(tail.filter(seq => seq <= 22)).toEqual([]); // everything at or below the watermark is gone
+    expect(tail.length).toBe(3); // kept head event + the two sweep audit events
+    expect(store.retentionFloor()).toBe(tail[0]);
+  });
 });

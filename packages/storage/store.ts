@@ -200,6 +200,52 @@ export class Store {
     return rows.map(row => ({ seq: row.seq, id: row.id, type: row.type, threadId: row.thread_id, payload: JSON.parse(row.payload), occurredAt: row.occurred_at }));
   }
   get sequence(): number { return Number((this.statements.sequence.get() as { seq: number }).seq); }
+  /** Oldest retained event seq; consumers holding a lower cursor have lost the
+   * gap (read-sync resyncs against this floor). */
+  retentionFloor(): number {
+    return (this.db.prepare("SELECT COALESCE(MIN(seq),0) AS floor FROM events").get() as { floor: number }).floor;
+  }
+  /** Lowest seq a durable consumer may still replay: plan extensions keep a
+   * persisted `reportWatermark` and read `seq > watermark`, so rows at or
+   * below the minimum watermark are expendable. */
+  private retentionWatermarkFloor(): number {
+    const row = this.db.prepare("SELECT MIN(json_extract(body,'$.reportWatermark')) AS watermark FROM entities WHERE kind='planExtension' AND json_type(body,'$.reportWatermark')='integer'").get() as { watermark: number | null };
+    return row.watermark ?? Number.MAX_SAFE_INTEGER;
+  }
+  /** Bounded, resumable deletion of replayable event history and expired
+   * command receipts. Keeps `seq > floor` where
+   * `floor = min(headSeq - keepEvents, minWatermark)` so both the recency
+   * window and every durable consumer cursor stay readable. Each batch is its
+   * own committed transaction, so an interrupted sweep resumes safely on the
+   * next call; a `store.retention.swept` audit event is recorded on success.
+   * Receipts tied to retained events are kept, and receipts referenced by a
+   * live `workspaceAction` command are always kept so crash recovery can still
+   * resolve uncertain outcomes. */
+  retentionSweep(options: { keepEvents?: number; batchSize?: number; maxBatches?: number; receipts?: 'with-events' | 'keep' } = {}): { floor: number; removedEvents: number; removedReceipts: number; batches: number } {
+    if (this.transactionOpen) throw new HarnessError('TRANSACTION_OPEN', 'Retention sweep cannot run inside a command transaction');
+    const keep = options.keepEvents ?? 50_000;
+    if (!Number.isSafeInteger(keep) || keep < 1) throw new HarnessError('INVALID_INPUT', 'keepEvents must be a positive integer');
+    const batch = Math.max(1, Math.min(10_000, options.batchSize ?? 5_000));
+    const floor = Math.max(0, Math.min(this.sequence - keep, this.retentionWatermarkFloor()));
+    if (floor <= 0) return { floor, removedEvents: 0, removedReceipts: 0, batches: 0 };
+    const removeEvents = this.db.prepare("DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE seq<=? LIMIT ?)");
+    const removeReceipts = this.db.prepare("DELETE FROM receipts WHERE id IN (SELECT id FROM receipts WHERE json_extract(body,'$.eventSeq')<=? AND id NOT IN (SELECT json_extract(body,'$.command.id') FROM entities WHERE kind IN ('workspaceAction','workspaceActionOutcome') AND json_type(body,'$.command.id')='text') LIMIT ?)");
+    let removedEvents = 0, removedReceipts = 0, batches = 0;
+    while (options.maxBatches === undefined || batches < options.maxBatches) {
+      this.db.exec("BEGIN IMMEDIATE"); this.transactionOpen = true;
+      let batchEvents = 0, batchReceipts = 0;
+      try {
+        batchEvents = Number(removeEvents.run(floor, batch).changes);
+        if (options.receipts !== 'keep') batchReceipts = Number(removeReceipts.run(floor, batch).changes);
+        this.db.exec("COMMIT");
+      } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+      finally { this.transactionOpen = false; }
+      removedEvents += batchEvents; removedReceipts += batchReceipts; batches++;
+      if (batchEvents < batch && batchReceipts < batch) break;
+    }
+    this.commit('store.retention.swept', null, () => ({ floor, removedEvents, removedReceipts, batches, keepEvents: keep }));
+    return { floor, removedEvents, removedReceipts, batches };
+  }
   /** True while a command/internal commit is open: host modules invoked from
    * a command write through the open transaction instead of opening a nested
    * one (Store rejects nested commits). */
