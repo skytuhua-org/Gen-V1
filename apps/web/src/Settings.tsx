@@ -1,4 +1,4 @@
-import {persistSettingsChange, SettingsRefreshError, settleSettingsOperations} from './settings-operations';
+import {persistSettingsChange, SettingsRefreshError, settingsOperation, settleSettingsOperations} from './settings-operations';
 import {registerEditorHandoff} from './editor-handoff';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {notifyAccountAuthChanged,onAccountCatalogChanged,mergeAccountModels} from './account-api';

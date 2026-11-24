@@ -33,7 +33,7 @@ it('treats the write as the acknowledgment: a failing refresh is not a failed sa
 it('does not hold the handoff on a pending refresh once the write settled', async () => {
  let release!: () => void;
  const action = persistSettingsChange(async () => 'saved', () => new Promise<void>(resolve => { release = resolve; }));
- const done = vi.fn(); const handoff = settleSettingsOperations().then(done);
+ const done = vi.fn(); settleSettingsOperations().then(done);
  await vi.waitFor(() => expect(done).toHaveBeenCalledOnce());
  release(); await action;
 });
