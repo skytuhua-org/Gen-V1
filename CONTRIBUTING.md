@@ -59,6 +59,8 @@ pnpm build
 pnpm test --maxWorkers=1
 ```
 
+Optional Git hooks run the same checks before code leaves your machine. Install [hk](https://hk.jdx.dev/getting_started) 2.13 or later, then run `hk install` once. Before each commit, `hk.pkl` lints and fixes the staged files with `bun lint` (about 0.6 s). Before each push, it runs `pnpm lint`, `pnpm typecheck` and the tests reachable from your changes since `origin/main`, the same commands CI runs on a pull request. Skip a hook once with `HK_SKIP_HOOK=pre-push git push`; CI and the merge queue still run every check.
+
 Every tracked Markdown file is link-checked except the provenance trees `docs/implementation` and `docs/review-evidence` and the retained upstream bytes under `third-party`. The check runs on every pull request that changes a `.md` file, so run it after moving, renaming or re-anchoring a target; add `--external` to request the remote URLs that scheduled runs probe:
 
 ```powershell

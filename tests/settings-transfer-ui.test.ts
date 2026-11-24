@@ -1,6 +1,20 @@
 import {afterAll, beforeAll, describe, expect, it} from 'vitest';
 import {build} from 'esbuild';
 import {chromium, type Browser, type Page} from '@playwright/test';
+import type {Dispatch, SetStateAction} from 'react';
+import type {UiPreferences} from '../packages/contracts/preferences';
+
+declare global {
+  interface Window {
+    settingsTransferCalls: {
+      export: {serialized: string; filename: string}[];
+      persist: Record<string, unknown>[];
+      cancel: boolean;
+      persistOk?: boolean;
+    };
+    setSettingsTransferPrefs: Dispatch<SetStateAction<UiPreferences>>;
+  }
+}
 
 const fixture = `
 import React, {useState} from 'react';
@@ -11,7 +25,7 @@ import {Toaster} from './packages/ui-shell/Toast';
 import {DEFAULT_PREFERENCES} from './packages/contracts/preferences';
 
 const calls = {export: [], persist: [], cancel: false};
-window.calls = calls;
+window.settingsTransferCalls = calls;
 const bridge = {
   exportSettings: (serialized, filename) => { calls.export.push({serialized, filename}); return Promise.resolve(calls.cancel ? {status: 'cancelled', admitted: true, filename, bytes: 0, sha256: ''} : {status: 'saved', admitted: true, filename, bytes: serialized.length, sha256: ''}); },
   onState: () => () => {}, onCloseRequested: () => () => {},
@@ -21,7 +35,7 @@ const persist = async payload => { calls.persist.push(payload); if (calls.persis
 function Fixture() {
   const [prefs, setPrefs] = useState({...DEFAULT_PREFERENCES});
   const [theme, setTheme] = useState('dark');
-  window.setPrefs = setPrefs;
+  window.setSettingsTransferPrefs = setPrefs;
   window.applyWrite = payload => { setPrefs(p => ({...p, ...payload.preferences, keybindings: {...p.keybindings, ...(payload.preferences?.keybindings ?? {})}})); if (payload.theme) setTheme(payload.theme); };
   const body = <SettingsTransfer theme={theme} preferences={prefs} persist={persist}/>;
   return <>{window.desktopMode ? <DesktopProvider bridge={bridge} context={{windowId: 'main-1', surface: {kind: 'main'}, windows: []}}>{body}</DesktopProvider> : body}<Toaster/></>;
@@ -49,8 +63,8 @@ describe('SettingsTransfer', () => {
   it('exports through the desktop bridge with the generated filename and shows saved status', async () => {
     const page = await open();
     await page.getByRole('button', {name: 'Export…'}).click();
-    await expect.poll(() => page.evaluate(() => window.calls.export.length)).toBe(1);
-    const call = await page.evaluate(() => window.calls.export[0]);
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.export.length)).toBe(1);
+    const call = await page.evaluate(() => window.settingsTransferCalls.export[0]);
     expect(call.filename).toMatch(/^gen-settings-\d{4}-\d{2}-\d{2}\.json$/);
     expect(JSON.parse(call.serialized).format).toBe('gen.settings');
     await expect.poll(async()=>page.locator('[role=status]').last().textContent()).toBe('Settings saved to file.');
@@ -58,9 +72,9 @@ describe('SettingsTransfer', () => {
 
   it('shows nothing when the native save dialog is cancelled', async () => {
     const page = await open();
-    await page.evaluate(() => { window.calls.cancel = true; });
+    await page.evaluate(() => { window.settingsTransferCalls.cancel = true; });
     await page.getByRole('button', {name: 'Export…'}).click();
-    await expect.poll(() => page.evaluate(() => window.calls.export.length)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.export.length)).toBe(1);
     await new Promise(r=>setTimeout(r,300));expect(await page.locator('[role=status]').count()).toBe(0);
   });
 
@@ -80,7 +94,7 @@ describe('SettingsTransfer', () => {
     const page = await open();
     await page.locator('input[type=file]').setInputFiles(file(content));
     await expect.poll(async()=>page.getByRole('alert').textContent()).toBe(error);
-    expect(await page.evaluate(() => window.calls.persist.length)).toBe(0);
+    expect(await page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(0);
   });
 
   it('previews changes, applies them in one write, then undoes via the toast', async () => {
@@ -91,11 +105,11 @@ describe('SettingsTransfer', () => {
     expect(await page.getByText('Send shortcut').isVisible()).toBe(true);
     expect(await page.getByRole('button', {name: 'Apply 2 changes'}).isVisible()).toBe(true);
     await page.getByRole('button', {name: 'Apply 2 changes'}).click();
-    await expect.poll(() => page.evaluate(() => window.calls.persist.length)).toBe(1);
-    expect(await page.evaluate(() => window.calls.persist[0])).toEqual({preferences: {sendShortcut: 'mod-enter', showWorkingSection: false}});
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(1);
+    expect(await page.evaluate(() => window.settingsTransferCalls.persist[0])).toEqual({preferences: {sendShortcut: 'mod-enter', showWorkingSection: false}});
     await page.getByRole('button', {name: 'Undo', exact: true}).click();
-    await expect.poll(() => page.evaluate(() => window.calls.persist.length)).toBe(2);
-    expect(await page.evaluate(() => window.calls.persist[1])).toEqual({preferences: {sendShortcut: 'enter', showWorkingSection: true}});
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(2);
+    expect(await page.evaluate(() => window.settingsTransferCalls.persist[1])).toEqual({preferences: {sendShortcut: 'enter', showWorkingSection: true}});
     await expect.poll(async()=>page.getByRole('button', {name: 'Undo import'}).count()).toBe(0);
   });
 
@@ -103,11 +117,11 @@ describe('SettingsTransfer', () => {
     const page = await open();
     await page.locator('input[type=file]').setInputFiles(file(settingsFile({sendShortcut: 'mod-enter', showWorkingSection: false})));
     await page.getByRole('button', {name: 'Apply 2 changes'}).click();
-    await expect.poll(() => page.evaluate(() => window.calls.persist.length)).toBe(1);
-    await page.evaluate(() => window.setPrefs(prefs => ({...prefs, sendShortcut: 'mod-enter-multiline'})));
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(1);
+    await page.evaluate(() => window.setSettingsTransferPrefs(prefs => ({...prefs, sendShortcut: 'mod-enter-multiline'})));
     await page.getByRole('button', {name: 'Undo import'}).click();
-    await expect.poll(() => page.evaluate(() => window.calls.persist.length)).toBe(2);
-    expect(await page.evaluate(() => window.calls.persist[1])).toEqual({preferences: {showWorkingSection: true}});
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(2);
+    expect(await page.evaluate(() => window.settingsTransferCalls.persist[1])).toEqual({preferences: {showWorkingSection: true}});
     await expect.poll(async()=>page.getByText('Kept 1 setting you changed after importing.').isVisible()).toBe(true);
   });
 
@@ -126,9 +140,9 @@ describe('SettingsTransfer', () => {
   it('keeps the modal open with an inline alert when apply fails', async () => {
     const page = await open();
     await page.locator('input[type=file]').setInputFiles(file(settingsFile({sendShortcut: 'mod-enter'})));
-    await page.evaluate(() => { window.calls.persistOk = false; });
+    await page.evaluate(() => { window.settingsTransferCalls.persistOk = false; });
     await page.getByRole('button', {name: 'Apply 1 change'}).click();
-    await expect.poll(() => page.evaluate(() => window.calls.persist.length)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(1);
     await expect.poll(async()=>page.getByRole('dialog').isVisible()).toBe(true);
     await expect.poll(async()=>page.getByRole('alert').textContent()).toBe('Couldn\'t apply the imported settings. Nothing was changed.');
   });

@@ -3,7 +3,7 @@ import {createRoot} from 'react-dom/client';
 import {SettingsTransfer} from '../../apps/web/src/SettingsTransfer';
 import {Toaster} from '../../packages/ui-shell/Toast';
 import {DEFAULT_PREFERENCES, type UiPreferences} from '../../packages/contracts/preferences';
-import type {Theme} from '../../packages/contracts';
+import type {Theme} from '../../packages/contracts/settings-transfer';
 
 declare global {
   interface Window { commands?: {type: string; payload: Record<string, unknown>}[] }
