@@ -398,12 +398,20 @@ export class EditJournal {
     // diff engines legitimately pick different copies among identical lines,
     // but joint over-claim (a foreign deletion of content the receipt also
     // deleted) can never be credited because every coverage position is
-    // consumed at most once. Positions in `reservedRemoved` — every HEAD line
-    // some hunk of this file removes — are exact-match territory: the hunk
-    // that removes such a line claims it directly, so a fallback borrow can
-    // never hand one hunk's proof to another. Claims stay tentative until the
-    // whole hunk is covered, so a failed evaluation never consumes coverage a
-    // later hunk may legitimately need.
+    // consumed at most once. Two restrictions keep borrowed matches honest:
+    // positions in `reservedRemoved` — every HEAD line some hunk of this file
+    // removes — are exact-match territory, claimed directly by the hunk that
+    // removes them; and a borrowable position must sit in the same maximal
+    // run of identical HEAD lines as the hunk's own removed line, the only
+    // place diff alignment can legitimately pick a different copy. Claims
+    // stay tentative until the whole hunk is covered, so a failed evaluation
+    // never consumes coverage a later hunk may legitimately need.
+    const headLines = headBytes ? splitLines(headBytes) : null;
+    const sameRun = (a: number, b: number, content: string): boolean => {
+      if (!headLines) return false;
+      for (let i = Math.min(a, b); i <= Math.max(a, b); i++) if (headLines[i - 1] !== content) return false;
+      return true;
+    };
     const covers = (entry: StoredReceipt, coverage: { added: Set<number>; removed: Map<number, string> | null }) => {
       const tentative: [string, number][] = [];
       const claim = (kind: "r" | "a", position: number): boolean => {
@@ -419,7 +427,7 @@ export class EditJournal {
         for (const [position, content] of change.removed) {
           if (coverage.removed === null) return false;
           if (coverage.removed.get(position) === content ? claim("r", position)
-              : [...coverage.removed].some(([held, heldContent]) => heldContent === content && !reservedRemoved.has(held) && claim("r", held))) continue;
+              : [...coverage.removed].some(([held, heldContent]) => heldContent === content && !reservedRemoved.has(held) && sameRun(held, position, content) && claim("r", held))) continue;
           return false;
         }
         for (const line of change.added) if (!coverage.added.has(line) || !claim("a", line)) return false;
