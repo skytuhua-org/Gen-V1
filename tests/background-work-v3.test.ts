@@ -16,7 +16,7 @@ import { openContextResultCustody } from "../packages/core/context-result-custod
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
-  for (const key of ["jobs.backgroundV1", "jobs.serviceLifetimeV1", "jobs.idleReviewV1", "integrations.intakeV1"] as const) __setCapabilityFlagForTests(key, undefined);
+  for (const key of ["jobs.backgroundV1", "jobs.serviceLifetimeV1", "jobs.idleReviewV1", "integrations.intakeV1", "context.compilerV1", "tools.deferredV1"] as const) __setCapabilityFlagForTests(key, undefined);
   vi.restoreAllMocks();
   while (cleanups.length) await cleanups.pop()!();
 });
@@ -1003,5 +1003,36 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     expect(() => f.coordinator.readOutput(work.workId, f.thread.id)).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED" }));
     killOwnedProcess(started.processIdentity!.pid);
     await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED" || f.coordinator.work(work.workId).state === "UNKNOWN");
+  });
+
+  it("mints a canonical custody record through the host publication seam (T02)", async () => {
+    const f = fixture();
+    const runtime = { configure: () => {}, models: async () => [], start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {}, history: async () => [], dispose: async () => {} } as unknown as RuntimeAdapter;
+    const service = new Service(f.store, runtime, {});
+    cleanups.push(async () => service.dispose());
+    await service.recover();
+    __setCapabilityFlagForTests("context.compilerV1", true); __setCapabilityFlagForTests("tools.deferredV1", true);
+    f.store.internal("fixture.live-owner", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-1", epoch: 3, status: "working", accountId: "acct-1", workspaceId: "ws-1", projectId: "proj-1" } as Thread));
+    const bytes = new TextEncoder().encode("retained window");
+    const publish = (service as unknown as { publishBackgroundOutput: (i: unknown) => Promise<{ handle: string; digest: string; owner: { workspaceId: string; accountId: string | null } } | null> }).publishBackgroundOutput;
+    const record = await publish.call(service, { workId: "work-1", owner: { threadId: f.thread.id, runId: "run-1", epoch: 3, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-1" }, effectId: "eff-1", bytes, startByte: 0, omittedBytes: 0 });
+    // Canonical M04 shape: UUID handle accepted by context_result_read and
+    // resolvable through the private custody vault, digest over retained bytes.
+    expect(record?.handle).toMatch(HANDLE);
+    expect(record?.digest).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(record?.owner).toMatchObject({ workspaceId: JSON.stringify(["ws-1", "proj-1"]), accountId: "acct-1" });
+    expect(contextResultReadArgs.safeParse({ handle: record!.handle, offset: 0, length: 1 }).success).toBe(true);
+    const custody = await openContextResultCustody(f.store.dataDir);
+    await expect(custody.getRecord!(record!.handle)).resolves.toMatchObject({ handle: record!.handle });
+    // A live-run read through the canonical vault returns the exact bytes…
+    const vault = (service as unknown as { contextResultVault: () => { read: (i: unknown) => Promise<{ status: string }> } }).contextResultVault();
+    const owner = { threadId: f.thread.id, workspaceId: JSON.stringify(["ws-1", "proj-1"]), accountId: "acct-1" };
+    await expect(vault.read({ owner, handle: record!.handle, offset: 0, length: bytes.length })).resolves.toMatchObject({ status: "OK" });
+    // …and drifts in the owner binding make it unavailable without touching
+    // retained evidence.
+    f.store.internal("fixture.drift-owner", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-1", epoch: 3, status: "working", accountId: "acct-2", workspaceId: "ws-1", projectId: "proj-1" } as Thread));
+    await expect(vault.read({ owner: { ...owner, accountId: "acct-2" }, handle: record!.handle, offset: 0, length: 1 })).resolves.toMatchObject({ status: "UNAVAILABLE" });
+    __setCapabilityFlagForTests("tools.deferredV1", undefined);
+    expect(await publish.call(service, { workId: "work-1", owner: { threadId: f.thread.id, runId: "run-1", epoch: 3, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-2" }, effectId: null, bytes, startByte: 0, omittedBytes: 0 })).toBeNull();
   });
 });

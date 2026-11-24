@@ -10,7 +10,7 @@ import { capabilityEnabled } from "./capability-flags.ts";
 import { DurableWakeupScheduler, waitForBackgroundDrain, type DeliveryOutcome, type WakeupDelivery, type WakeupRecord } from "./durable-wakeups.ts";
 import {
   BACKGROUND_HOLD_REASONS, BACKGROUND_SCHEDULER_LIMITS, backgroundWorkV1Schema, humanStepV1Schema,
-  type BackgroundOutcome, type BackgroundWorkKind, type BackgroundWorkV1, type HumanStepV1,
+  type BackgroundOutcome, type BackgroundOutputPublisherV1, type BackgroundWorkKind, type BackgroundWorkV1, type HumanStepV1,
   type M10FlagKey, type ProcessIdentityV1, type ReviewForkApi, type ReviewForkHandleV1,
 } from "../contracts/background-work.ts";
 
@@ -58,6 +58,10 @@ export interface BackgroundWorkOptions {
   forkApi?: ReviewForkApi | null;
   /** S04: host-owned account/grant/budget revalidation before any delivery. */
   revalidateAuthority?: (work: BackgroundWorkRecord) => { ok: true } | { ok: false; blockedReason: string };
+  /** M10→M04 seam (#2014 T02): publishes the bounded retained output window
+   * into canonical custody once, after stream close. Absent or returning
+   * null leaves outputRef unset — never widens legacy access. */
+  publishOutput?: BackgroundOutputPublisherV1;
   onPaused?: () => void;
 }
 

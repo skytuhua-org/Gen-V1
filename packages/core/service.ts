@@ -2,7 +2,7 @@ import {attestVerificationArtifacts} from './verification-artifacts.ts';
 import { randomUUID, createHash } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
 import { MODEL_ONLY_MAX_PROMPT_BYTES } from '../runtime/model-only.ts';
-import type { ContextRequestObservationV1 } from '../contracts/request-context.ts';
+import type { ContextRequestObservationV1, ContextResultOwnerV1, ToolResultHandleV1 } from '../contracts/request-context.ts';
 import { createContextResults, encodeContextResult, CONTEXT_PREVIEW_CAP_BYTES, MAX_TRACKED_RESULTS, type ContextResultStorage } from './context-results.ts';
 import { createContextResultLineage } from './context-result-lineage.ts';
 import { openContextResultCustody } from './context-result-custody.ts';
@@ -83,7 +83,8 @@ import type {MemoryAccess,MemoryAction,MemoryScope} from '../contracts/project-m
 import {BackgroundWorkCoordinator,type BackgroundWorkOptions} from './background-work.ts';
 import {ExternalIntakeCoordinator,type IntakeAuth,type IntakeRecord} from './external-intake.ts';
 import type {ModelRequestGate} from '../runtime/model-capacity.ts';
-import type {BackgroundWorkKind} from '../contracts/background-work.ts';
+import type {BackgroundWorkKind, BackgroundOutputPublicationV1} from '../contracts/background-work.ts';
+import {BACKGROUND_SCHEDULER_LIMITS} from '../contracts/background-work.ts';
 
 type Outbox = WorkbenchQueuedInput & {messageId?:string;completedWrite?:CompletedWriteReceipt;hookClaimed?:boolean;hookDiagnostic?:WriteHookDiagnostic;sendMode?:SendModeV1};
 type Lease = { id: string; threadId: string; clientId: string; fields: string[]; expiresAt: number };
@@ -244,6 +245,37 @@ export class Service {
       },
     });
   }
+  /** M10→M04 seam (#2014 T02): publish the bounded retained output window
+   * into canonical custody and mint a ToolResultHandleV1. The handle is
+   * model-readable only through the normal context_result_read path while
+   * the mint-time authority proof stays valid in a live run; the drawer
+   * keeps its own revalidated read. Returns null when publication is
+   * unavailable — callers then leave outputRef unset rather than widening
+   * legacy access. */
+  private async publishBackgroundOutput(input: BackgroundOutputPublicationV1): Promise<ToolResultHandleV1 | null> {
+    if (this.closed || !this.contextResultsEnabled()) return null;
+    const thread = this.store.get<Thread>("thread", input.owner.threadId);
+    if (!thread || this.store.get("archivedThread", input.owner.threadId)) return null;
+    const owner: ContextResultOwnerV1 = { threadId: input.owner.threadId, workspaceId: JSON.stringify([input.owner.workspaceId ?? null, input.owner.projectId ?? null]), accountId: input.owner.accountBinding };
+    const now = Date.now(), expiresAtMs = now + BACKGROUND_SCHEDULER_LIMITS.outputHandleTtlMs;
+    for (const [id, proof] of this.contextResultAuthorities) if (proof.expiresAtMs <= now) this.contextResultAuthorities.delete(id);
+    if (this.contextResultAuthorities.size >= MAX_TRACKED_RESULTS) return null;
+    const invocationId = this.contextResultInvocation(thread) + ":" + randomUUID();
+    const record: ToolResultHandleV1 = { handle: randomUUID(), owner, sourceInvocationId: invocationId,
+      digest: createHash("sha256").update(input.bytes).digest("hex"), bytes: input.bytes.length,
+      mediaType: "text/plain", expiresAtMs, operation: "read-result-range" };
+    this.contextResultAuthorities.set(invocationId, { expiresAtMs, authorized: async () => {
+      const current = this.store.get<Thread>("thread", input.owner.threadId);
+      if (!current || this.closed || this.store.get("archivedThread", input.owner.threadId)) return false;
+      const binding = this.contextResultOwner(current);
+      return binding.workspaceId === owner.workspaceId && binding.accountId === owner.accountId;
+    } });
+    try {
+      const custody = this.contextStorage ??= openContextResultCustody(this.store.dataDir).catch(cause => { this.contextStorage = undefined; throw cause; });
+      await (await custody).put(record.handle, input.bytes, record);
+    } catch { this.contextResultAuthorities.delete(invocationId); return null; }
+    return record;
+  }
   private async deliverContextResult(value: unknown, publicCatalog: boolean, thread: Thread, assertCurrent: () => void, lineage?: ReturnType<typeof createContextResultLineage>) {
     const encoded = encodeContextResult(value);
     const absent = { status: 'FULL_RESULT_UNAVAILABLE' as const, handle: null, preview: '', omittedBytes: encoded.totalBytes, totalBytes: encoded.totalBytes };
@@ -321,6 +353,7 @@ export class Service {
       enqueueFollowUp:input=>{this.enqueueInput({id:input.id,threadId:input.threadId,content:input.content,status:'persisted',runId:null});queueMicrotask(()=>this.background(this.deliverOutbox(input.threadId)));},
       gate:options.background?.gate,executionGate:options.background?.executionGate,idleExecutor:options.background?.idleExecutor,forkApi:options.background?.forkApi,
       revalidateAuthority:work=>{try{const thread=this.store.get<Thread>('thread',work.owner.threadId);if(thread?.modelId)assertAccountAvailable(this.store,modelProvider(thread.modelId),thread.accountId??null);return{ok:true};}catch(error){return{ok:false,blockedReason:error instanceof HarnessError?error.code:'ACCOUNT_UNAVAILABLE'};}},
+      publishOutput:input=>this.publishBackgroundOutput(input),
       onPaused:()=>{this.intake.stop();}});
     this.intake=new ExternalIntakeCoordinator({store,auth:options.background?.intakeAuth,fetchImpl:options.background?.intakeFetch,
       createTask:async request=>{
