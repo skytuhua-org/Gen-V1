@@ -194,7 +194,9 @@ export class SecurityFindingLedger {
   constructor(private readonly store: Store) {}
   record(finding: Omit<SecurityFindingV1, 'updatedAt'>, threadId: string): SecurityFindingV1 {
     const parsed = securityFindingV1Schema.parse({ ...finding, updatedAt: finding.createdAt });
-    const id = `finding-${digest({ source: parsed.source, findingId: parsed.findingId }).slice(0, 24)}`;
+    // Dedupe binds to the recording owner: the same source path/blob and
+    // findingId under a different thread is a separate finding, never a merge.
+    const id = `finding-${digest({ owner: threadId, source: parsed.source, findingId: parsed.findingId }).slice(0, 24)}`;
     return this.store.internal('securityFinding.recorded', threadId, (): SecurityFindingV1 => {
       const prior = this.store.get<SecurityFindingV1>('securityFinding', id);
       const merged = prior ? { ...parsed, updatedAt: now() } : parsed;
