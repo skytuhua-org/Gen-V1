@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import {panelBindingSchema} from '../../packages/contracts/workspace';
 import {splitWorkspaceLayoutSchema,type SplitWorkspaceLayout} from '../../packages/contracts/split-workspace';
-import type { ArtifactRecord, HostCommand, Snapshot } from '../../packages/contracts';
+import type { ArtifactRecord, HostCommand, Snapshot, WorkspaceEvent } from '../../packages/contracts';
 import {applySplitWorkspaceCommand, createSplitWorkspaceLayout} from '../../packages/core/split-workspace-layout';
 
 export type TaskSpec = NonNullable<ArtifactRecord['spec']>;
@@ -51,15 +51,43 @@ function taskSplitCommand(layout: SplitWorkspaceLayout, command: HostCommand, sn
 export async function serveTaskFixture(page: Page, snapshot: Snapshot, action?: (command: HostCommand) => Promise<unknown>) {
   const commands: HostCommand[] = [];
   let splitLayout = taskSplitLayout(snapshot);
+  // A settings event invalidates the snapshot without assuming which projection a test changed.
+  const settingsEvent = (): WorkspaceEvent => ({
+    seq: snapshot.seq, id: `fixture-event-${snapshot.seq}`, type: 'settings.update', threadId: null,
+    payload: { result: snapshot.settings }, occurredAt: now,
+  });
+  const broadcast = (event: WorkspaceEvent) => page.evaluate(detail => {
+    window.dispatchEvent(new CustomEvent('task-fixture-update', { detail }));
+  }, event);
   await page.addInitScript(() => {
-    class Source {
-      onopen: (() => void) | null = null;
-      onerror = null;
-      onmessage: ((event: { data: string }) => void) | null = null;
-      receive = (event: Event) => this.onmessage?.({ data: JSON.stringify({ seq: (event as CustomEvent<number>).detail, type: 'fixture.changed' }) });
-      constructor() { window.addEventListener('task-fixture-update', this.receive); queueMicrotask(() => this.onopen?.()); }
-      addEventListener() {}
-      close() { window.removeEventListener('task-fixture-update', this.receive); }
+    class Source extends EventTarget {
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      private readonly subscription = new AbortController();
+
+      constructor() {
+        super();
+        const { signal } = this.subscription;
+        window.addEventListener('task-fixture-update', event => {
+          const record = (event as CustomEvent<WorkspaceEvent>).detail;
+          this.dispatchEvent(new MessageEvent('workspace', {
+            data: JSON.stringify(record), lastEventId: String(record.seq),
+          }));
+        }, { signal });
+        window.addEventListener('task-fixture-disconnect', () => {
+          const error = new Event('error');
+          this.dispatchEvent(error);
+          this.onerror?.(error);
+        }, { signal });
+        queueMicrotask(() => {
+          if (signal.aborted) return;
+          const open = new Event('open');
+          this.dispatchEvent(open);
+          this.onopen?.(open);
+        });
+      }
+
+      close() { this.subscription.abort(); }
     }
     Object.defineProperty(window, 'EventSource', { value: Source });
   });
@@ -90,14 +118,15 @@ export async function serveTaskFixture(page: Page, snapshot: Snapshot, action?: 
     if (command.type === 'state.save') { snapshot.userStates[0].values = command.payload.values as Record<string, unknown>; snapshot.userStates[0].revision++; result = snapshot.userStates[0]; }
     if (command.type === 'action.submit') result = await action?.(command) ?? {};
     snapshot.seq++;
+    const event = command.type === 'settings.update' ? settingsEvent() : undefined;
     await route.fulfill({ json: { commandId: command.id, seq: snapshot.seq, result } });
     // The real host broadcasts accepted settings writes to every snapshot subscriber
     // (embedded conversations included); mirror that so tests see the same propagation.
-    if (command.type === 'settings.update') await page.evaluate(seq => window.dispatchEvent(new CustomEvent('task-fixture-update', { detail: seq })), snapshot.seq);
+    if (event) await broadcast(event);
   });
   return {
     commands, snapshot,
-    async publish() { snapshot.seq++; await page.evaluate(seq => window.dispatchEvent(new CustomEvent('task-fixture-update', { detail: seq })), snapshot.seq); },
+    async publish() { snapshot.seq++; await broadcast(settingsEvent()); },
     setInput(name: string, value: unknown) { const data = snapshot.data.find(row => row.id === `input-${name}`)!; data.value = value; data.revision++; },
   };
 }
