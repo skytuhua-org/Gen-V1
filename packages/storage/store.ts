@@ -219,8 +219,8 @@ export class Store {
    * own committed transaction, so an interrupted sweep resumes safely on the
    * next call; a `store.retention.swept` audit event is recorded on success.
    * Receipts tied to retained events are kept, and receipts referenced by a
-   * live `workspaceAction` command are always kept so crash recovery can still
-   * resolve uncertain outcomes. */
+   * live `workspaceAction`/`workspaceActionOutcome` entity's command are always
+   * kept so crash recovery can still resolve uncertain outcomes. */
   retentionSweep(options: { keepEvents?: number; batchSize?: number; maxBatches?: number; receipts?: 'with-events' | 'keep' } = {}): { floor: number; removedEvents: number; removedReceipts: number; batches: number } {
     if (this.transactionOpen) throw new HarnessError('TRANSACTION_OPEN', 'Retention sweep cannot run inside a command transaction');
     const keep = options.keepEvents ?? 50_000;
