@@ -496,7 +496,7 @@ export class BackgroundWorkCoordinator {
     if (session || work.state !== "SETTLED") {
       const verdict = this.revalidateOwner(work);
       if (!verdict.ok) throw new HarnessError("CAPABILITY_DENIED", `Output is unavailable: ${verdict.blockedReason}`);
-    } else if ((thread.projectId ?? null) !== work.owner.projectId || (thread.accountId ?? null) !== work.owner.accountBinding) {
+    } else if ((thread.projectId ?? null) !== work.owner.projectId || (thread.workspaceId ?? null) !== work.owner.workspaceId || (thread.accountId ?? null) !== work.owner.accountBinding) {
       throw new HarnessError("CAPABILITY_DENIED", "Output is unavailable: owner scope or account drifted.");
     }
     const stored = this.store.get<{ output: string; start: number }>("backgroundOutput", workId) ?? { output: "", start: 0 };
@@ -572,7 +572,7 @@ export class BackgroundWorkCoordinator {
       const stored = this.store.get<{ output: string; start: number }>("backgroundOutput", workId);
       const bytes = stored ? Buffer.from(stored.output, "utf8") : Buffer.alloc(0);
       if (!work || work.state !== "SETTLED" || !bytes.length) { this.outputPublished.delete(workId); return; }
-      const handle = await this.publishOutput({ workId, owner: work.owner, effectId: work.effectId ?? null, bytes, startByte: stored!.start, omittedBytes: stored!.start });
+      const handle = await this.publishOutput({ workId, owner: work.owner, effectId: work.effectId ?? null, bytes, startByte: stored?.start ?? 0, omittedBytes: stored?.start ?? 0 });
       if (handle) this.store.internal("background.output.published", null, () => {
         const current = this.requireWork(workId);
         this.store.put("backgroundWork", workId, current.owner.threadId, { ...current, outputRef: handle.handle });
