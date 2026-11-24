@@ -12,6 +12,7 @@ import {registerGitHubAuthRoutes} from './github-auth-routes.ts';
 import {SplitWorkspaceRepository} from '../../packages/core/split-workspace.ts';
 import {WorkspaceActionOutcomes} from '../../packages/workspace/action-outcomes.ts';
 import {workspaceActionTypeSchema,workspaceActionOperationSchema} from '../../packages/contracts/workspace-action-outcomes.ts';
+import {LINE_ATTRIBUTION_LIMITS,lineAttributionRequestSchema} from '../../packages/contracts/file-line-attribution.ts';
 import {capabilityEnabled} from '../../packages/core/capability-flags.ts';
 import {workspaceOwnerScope} from '../../packages/workspace/edit-journal.ts';
 import {CheckpointService} from '../../packages/workspace/checkpoints.ts';
@@ -68,6 +69,11 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
  });
  app.get('/api/projects/:projectId/files',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path}=querySchema.parse(request.query);return projects.files(projectId,threadId,path);});
  app.get('/api/projects/:projectId/file',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,path}=querySchema.parse(request.query);return projects.file(projectId,threadId,z.string().min(1).parse(path));});
+ app.post('/api/projects/:projectId/file/line-attribution',{bodyLimit:LINE_ATTRIBUTION_LIMITS.requestBodyBytes},async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),input=lineAttributionRequestSchema.parse(request.body);
+  return projects.fileLineAttribution(projectId,input);
+ });
  app.get('/api/projects/:projectId/pull-requests',async request=>{
   const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,linked}=pullQuerySchema.parse(request.query);if(!linked)return github.list(projectId,threadId);
   await projects.binding(projectId,threadId);const{repo}=await github.repo(projectId,threadId);

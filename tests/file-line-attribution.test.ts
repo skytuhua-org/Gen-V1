@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../packages/storage/store.ts';
 import { ProjectTools } from '../packages/workspace/tools.ts';
-import { withPathGuard } from '../packages/core/file-access.ts';
+import { withPathGuard, type GuardEntry } from '../packages/core/file-access.ts';
 import type { LineAttributionPreview } from '../packages/contracts/file-line-attribution.ts';
 
 // The path guard is mocked to the real manifest entries it would capture; files,
@@ -14,7 +14,7 @@ vi.mock('../packages/core/file-access.ts', async original => ({
   ...await original<typeof import('../packages/core/file-access.ts')>(),
   withPathGuard: vi.fn<typeof withPathGuard>(async (paths, signal, action) => {
     signal.throwIfAborted();
-    const manifest = [];
+    const manifest: GuardEntry[] = [];
     const push = async (path: string) => {
       const stat = await fs.lstat(path, { bigint: true });
       manifest.push({ path, directory: stat.isDirectory(), dev: String(stat.dev), ino: String(stat.ino), size: Number(stat.size) });
@@ -44,7 +44,7 @@ vi.mock('../packages/core/file-access.ts', async original => ({
 // The native directory guard is a host runtime fixture, not the custody under
 // test; it is stubbed to admit the requested namespace.
 vi.mock('../packages/core/linux-path-guard.ts', () => ({
-  withLinuxDirectoryGuard: async (paths: { path: string; leaf: boolean }[], _signal: AbortSignal, action: (session: unknown, entries: unknown[]) => Promise<unknown>) =>
+  withLinuxDirectoryGuard: async (_paths: { path: string; leaf: boolean }[], _signal: AbortSignal, action: (session: unknown, entries: unknown[]) => Promise<unknown>) =>
     action({ exited: false, loss: new Set(), rpc: async () => [] }, []),
 }));
 
@@ -138,4 +138,38 @@ describe('file line attribution host custody', () => {
     expect(git(f.path, ['show-ref']).trim()).toBe(refsBefore);
     expect(git(f.path, ['status', '--porcelain=v1', '-z']).trim()).toBe(statusBefore);
   });
+});
+
+// HTTP coverage: the proof secret lives in the server's own ProjectTools, so
+// the preview is minted through GET /file before POST /file/line-attribution.
+vi.mock('node-pty', () => ({ spawn: () => { throw Error('PTY is outside the attribution HTTP fixture'); } }));
+
+it('serves line attribution over the strict POST route with host session + CSRF', async () => {
+  const f = await fixture();
+  const runtime: import('../packages/contracts/index.ts').RuntimeAdapter = { configure() {}, models: async () => [], start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {}, history: async () => [], dispose: async () => {} };
+  const { buildServer } = await import('../apps/server/server.ts'), { Service } = await import('../packages/core/service.ts');
+  const service = new Service(f.store, runtime), app = await buildServer(service, { port: 4319, dev: false });
+  cleanup.push(async () => { await app.close(); await service.dispose(); });
+  const host = { host: '127.0.0.1:4319' }, boot = await app.inject({ url: '/api/bootstrap', headers: host });
+  const headers = { ...host, cookie: String(boot.headers['set-cookie']).split(';')[0], 'x-harness-csrf': boot.json().csrfToken };
+  const url = `/api/projects/${f.projectId}/file/line-attribution`;
+  const preview = await app.inject({ url: `/api/projects/${f.projectId}/file?path=example.txt`, headers });
+  expect(preview.statusCode).toBe(200);
+  const read = preview.json() as { sha256: string; lineAttribution: LineAttributionPreview };
+  expect(read.lineAttribution.kind).toBe('eligible');
+  const proof = read.lineAttribution.kind === 'eligible' ? read.lineAttribution.previewProof : '';
+  const attributed = await app.inject({ method: 'POST', url, headers, payload: { path: 'example.txt', previewSha256: read.sha256, previewProof: proof, line: 2 } });
+  expect(attributed.statusCode).toBe(200);
+  expect(attributed.headers['cache-control']).toBe('no-store');
+  expect(attributed.json()).toEqual({ kind: 'attributed', sha: f.sha2, author: 'Bo Fixture', authorDateUtc: '2024-01-03T07:30:00.000Z', subject: 'Revise sample' });
+  // Session cookie and CSRF header are both required for the write-style route.
+  expect((await app.inject({ method: 'POST', url, headers: host, payload: { path: 'example.txt', previewSha256: read.sha256, previewProof: proof, line: 2 } })).statusCode).toBe(401);
+  expect((await app.inject({ method: 'POST', url, headers: { ...host, cookie: headers.cookie }, payload: { path: 'example.txt', previewSha256: read.sha256, previewProof: proof, line: 2 } })).statusCode).toBe(403);
+  // Strict schema rejects extra keys, malformed proofs and out-of-range lines.
+  for (const payload of [
+    { path: 'example.txt', previewSha256: read.sha256, previewProof: proof, line: 2, extra: 1 },
+    { path: 'example.txt', previewSha256: read.sha256, previewProof: 'forged', line: 2 },
+    { path: 'example.txt', previewSha256: read.sha256, previewProof: proof, line: 0 },
+    { path: '../escape', previewSha256: read.sha256, previewProof: proof, line: 2 },
+  ]) expect((await app.inject({ method: 'POST', url, headers, payload })).statusCode).toBe(400);
 });
