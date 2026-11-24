@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { link, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../packages/storage/store.ts";
@@ -125,15 +125,22 @@ it("leaves no staging file behind when publication fails cleanly", async () => {
   expect(await readdir(blobRoot)).toEqual([ref]);
 });
 
-it("sweeps a crash-orphaned staging file during garbage collection", async () => {
+it("sweeps only stale crash-orphaned staging files during garbage collection", async () => {
   const { store, project, service, owner, blobRoot } = await fixture();
   await writeFile(join(project, "a.txt"), "a-old\n");
   const checkpoint = await service.create({ owner, root: project, paths: ["a.txt"] });
   const stale = join(blobRoot, ".gen-blob-deadbeef.tmp");
   await writeFile(stale, "partial-staged-bytes");
+  // A young staging file may still be an in-flight publish — GC must not
+  // sweep it out from under a live writer.
+  const fresh = join(blobRoot, ".gen-blob-live.tmp");
+  await writeFile(fresh, "in-flight-bytes");
+  const old = new Date(Date.now() - 120_000);
+  await utimes(stale, old, old);
   const result = await service.collectGarbage();
   expect(result.removed).toBe(1);
   await expect(readFile(stale)).rejects.toThrow();
+  await expect(readFile(fresh)).resolves.toBeTruthy();
   await expect(readFile(join(blobRoot, checkpoint.files[0]!.blobRef))).resolves.toBeTruthy();
   void store;
 });

@@ -681,6 +681,12 @@ export class CheckpointService {
       for (const name of await readdir(this.blobRoot)) {
         const staging = name.startsWith(".gen-blob-") && name.endsWith(".tmp");
         if ((!staging && (!/^[a-f0-9]{64}$/.test(name) || referenced.has(name)))) continue;
+        // A live publish stages under the private name for under a second;
+        // only sweep staging files too old to belong to an in-flight write.
+        if (staging) {
+          const info = await lstat(join(this.blobRoot, name)).catch(() => null);
+          if (!info?.isFile() || Date.now() - info.mtimeMs < 60_000) continue;
+        }
         await rm(join(this.blobRoot, name), { force: true });
         removed++;
       }
