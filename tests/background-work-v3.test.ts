@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -10,7 +10,8 @@ import { DurableWakeupScheduler } from "../packages/core/durable-wakeups.ts";
 import { ModelCapacity } from "../packages/runtime/model-capacity.ts";
 import { __setCapabilityFlagForTests, registeredCapabilityFlags } from "../packages/core/capability-flags.ts";
 import type { RuntimeAdapter, Thread } from "../packages/contracts/index.ts";
-import { BACKGROUND_HOLD_REASONS, BACKGROUND_SCHEDULER_LIMITS, backgroundWorkV1Schema, humanStepV1Schema, intakeV1Schema, occurrenceKeyForEvent, occurrenceKeyForTime, wakeupV1Schema, type BackgroundOccurrenceV1 } from "../packages/contracts/background-work.ts";
+import { BACKGROUND_HOLD_REASONS, BACKGROUND_SCHEDULER_LIMITS, backgroundWorkV1Schema, humanStepV1Schema, intakeV1Schema, occurrenceKeyForEvent, occurrenceKeyForTime, wakeupV1Schema, type BackgroundOccurrenceV1, type BackgroundOutputPublicationV1 } from "../packages/contracts/background-work.ts";
+import type { ToolResultHandleV1 } from "../packages/contracts/request-context.ts";
 import { contextResultReadArgs } from "../packages/core/context-result-tool.ts";
 import { openContextResultCustody } from "../packages/core/context-result-custody.ts";
 
@@ -24,13 +25,25 @@ afterEach(async () => {
 const M10_FLAGS = ["jobs.backgroundV1", "jobs.serviceLifetimeV1", "jobs.idleReviewV1", "integrations.intakeV1"] as const;
 function enable(...keys: (typeof M10_FLAGS)[number][]) { for (const key of keys) __setCapabilityFlagForTests(key, true); }
 
-function fixture(options: { idleExecutor?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["idleExecutor"]; gate?: ModelCapacity; executionGate?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["executionGate"]; enqueueFollowUp?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["enqueueFollowUp"] } = {}) {
+const CANONICAL_HANDLE = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+
+function fixture(options: { idleExecutor?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["idleExecutor"]; gate?: ModelCapacity; executionGate?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["executionGate"]; enqueueFollowUp?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["enqueueFollowUp"]; publishOutput?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["publishOutput"] } = {}) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-background-"));
   const store = new Store(join(root, "state"));
   let clock = 1_700_000_000_000;
   const now = () => clock;
   const advance = (ms: number) => { clock += ms; };
-  const coordinator = new BackgroundWorkCoordinator({ store, now, gate: options.gate, idleExecutor: options.idleExecutor, executionGate: options.executionGate, enqueueFollowUp: options.enqueueFollowUp });
+  // Mirrors Service.publishBackgroundOutput: mints a canonical UUID record in
+  // the same private custody the service uses (store.dataDir).
+  const publishOutput = options.publishOutput ?? (async (input: BackgroundOutputPublicationV1) => {
+    const custody = await openContextResultCustody(store.dataDir);
+    const record: ToolResultHandleV1 = { handle: randomUUID(), owner: { threadId: input.owner.threadId, workspaceId: JSON.stringify([input.owner.workspaceId ?? null, input.owner.projectId ?? null]), accountId: input.owner.accountBinding },
+      sourceInvocationId: input.effectId ?? input.workId, digest: createHash("sha256").update(input.bytes).digest("hex"), bytes: input.bytes.length,
+      mediaType: "text/plain", expiresAtMs: now() + BACKGROUND_SCHEDULER_LIMITS.outputHandleTtlMs, operation: "read-result-range" };
+    await custody.put(record.handle, input.bytes, record);
+    return record;
+  });
+  const coordinator = new BackgroundWorkCoordinator({ store, now, gate: options.gate, idleExecutor: options.idleExecutor, executionGate: options.executionGate, enqueueFollowUp: options.enqueueFollowUp, publishOutput });
   const thread: Thread = { id: "thread-1", title: "Owner", projectName: null, createdAt: new Date(clock).toISOString(), updatedAt: new Date(clock).toISOString(), status: "ready", epoch: 0, runId: null, modelId: null, sessionPath: null };
   store.internal("fixture.thread", thread.id, () => store.put("thread", thread.id, thread.id, thread));
   cleanups.push(() => { coordinator.dispose(); store.close(); rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); });
@@ -273,7 +286,7 @@ describe("M10-S02/S03/T02 owned RUN-lifetime commands", () => {
     expect(output.cursor).toBeGreaterThan(0);
     expect(f.coordinator.readOutput(work.workId, "thread-1", output.cursor).output).toBe("");
     expect(f.coordinator.exitReceipt(work.workId)?.exitCode).toBe(0);
-    expect(settled.outputRef).toMatch(/^bw-result:/);
+    expect(settled.outputRef).toMatch(CANONICAL_HANDLE);
     expect(() => f.coordinator.readOutput(work.workId, "other-thread")).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED" }));
   });
   it("failed exit codes settle FAILED, never SUCCEEDED", async () => {
@@ -899,12 +912,12 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     await f.coordinator.startCommand(work.workId);
     await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
     const handle = f.coordinator.work(work.workId).outputRef;
-    // Baseline defects: outputRef is 'bw-result:<workId>', which fails the
-    // context_result_read z.uuid() schema and is absent from canonical custody.
+    // Canonical contract: outputRef is a UUID that context_result_read's
+    // z.uuid() schema accepts and private custody at the service's location
+    // (store.dataDir) resolves.
     expect(handle).toMatch(HANDLE);
     expect(contextResultReadArgs.safeParse({ handle, offset: 0, length: 1 }).success).toBe(true);
-    mkdirSync(join(f.root, "profile"), { recursive: true });
-    const custody = await openContextResultCustody(join(f.root, "profile"));
+    const custody = await openContextResultCustody(f.store.dataDir);
     await expect(custody.getRecord!(handle!)).resolves.toMatchObject({ handle });
   });
 
@@ -919,9 +932,12 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     await f.coordinator.startCommand(work.workId);
     await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
     const output = f.coordinator.readOutput(work.workId, "thread-1", 0).output;
+    // Streams multiplex in arrival order, so the stderr write may land
+    // mid-word; removing it must restore the exact stdout text with every
+    // scalar intact.
     expect(output).not.toContain("�");
-    expect(output).toContain(text);
     expect(output).toContain("mark\n");
+    expect(output.replace("mark\n", "")).toContain(text);
   });
 
   it("round-trips complete multi-byte scalars delivered in aligned chunks (control)", async () => {
@@ -967,11 +983,15 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     const script = `const g=require("child_process").spawn(process.execPath,["-e","setTimeout(()=>process.stdout.write('tail-after-exit'),150)"],{stdio:["ignore","inherit","inherit"]});g.unref();process.stdout.write("head\\n");`;
     const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "tail", command: spec(f, ["-e", script]) });
     await f.coordinator.startCommand(work.workId);
-    const handle = `bw-result:${work.workId}`;
-    await waitFor(() => !!f.store.get("backgroundResultHandle", handle));
+    // Publication happens at close — after the grandchild's tail lands — so
+    // the minted digest covers the final retained window.
+    await waitFor(() => !!f.coordinator.work(work.workId).outputRef);
     await waitFor(() => f.coordinator.readOutput(work.workId, "thread-1", 0).output === "head\ntail-after-exit");
-    const record = f.store.get<{ digest: string }>("backgroundResultHandle", handle)!;
-    expect(record.digest).toBe(createHash("sha256").update("head\ntail-after-exit").digest("hex"));
+    const handle = f.coordinator.work(work.workId).outputRef!;
+    expect(handle).toMatch(HANDLE);
+    const custody = await openContextResultCustody(f.store.dataDir);
+    const record = await custody.getRecord!(handle);
+    expect(record?.digest).toBe(createHash("sha256").update("head\ntail-after-exit").digest("hex"));
   });
 
   it("denies output reads once the owner binding drifts (run, epoch, account)", async () => {
