@@ -8,11 +8,11 @@ import { ProjectTools } from "../packages/workspace/tools.ts";
 import { GitHubTools } from "../packages/workspace/github.ts";
 import type { TerminalHost } from "../packages/workspace/terminal.ts";
 
-// #2039 T02 (M08-S12/U04/T06): source-bound check observations and bounded
-// retry/backoff for pull-request status. `github.details` today reads the
-// provider live on every call with no persisted observation, backoff or
-// tested-head binding — the `it.fails` fixtures below pin the desired
-// contract and flip to `it` when the repair lands.
+// #2039 T03 (M08-S12/U04/T06): source-bound check observations and bounded
+// retry/backoff for pull-request status. `github.details` persists a
+// versioned check observation
+// (repo+PR keyed) carrying the tested head, normalized state and backoff;
+// reads inside the window serve the stored record flagged stale.
 
 vi.mock("../packages/core/file-access.ts", async original => ({
   ...await original<typeof import("../packages/core/file-access.ts")>(),
@@ -74,7 +74,7 @@ async function fixture() {
   return { github, tools, store, projectId, provider };
 }
 
-it.fails("bounds provider calls with a persisted check observation and backoff", async () => {
+it("bounds provider calls with a persisted check observation and backoff", async () => {
   const { github, tools, projectId, provider } = await fixture();
   await github.details(projectId, "main", 12);
   await github.details(projectId, "main", 12);
@@ -88,7 +88,7 @@ it.fails("bounds provider calls with a persisted check observation and backoff",
   expect(provider).toHaveBeenCalledTimes(1);
 }, 60000);
 
-it.fails("check observations name their exact tested head and go stale on head change", async () => {
+it("check observations name their exact tested head and go stale on head change", async () => {
   const { github, projectId, provider } = await fixture();
   const rollup = [{ __typename: "CheckRun", name: "unit", status: "COMPLETED", conclusion: "SUCCESS" }];
   provider.mockImplementation(async () => JSON.stringify(detailsItem(headA, rollup)));
@@ -98,11 +98,12 @@ it.fails("check observations name their exact tested head and go stale on head c
   expect(first.checkObservation ?? first.observation).toMatchObject({ headOid: headA, stale: false });
   provider.mockImplementation(async () => JSON.stringify(detailsItem(headB, rollup)));
   const second = await github.details(projectId, "main", 12) as Record<string, unknown>;
-  // Head B never inherits head A's verified checks: a fresh observation names B.
-  expect(second.checkObservation ?? second.observation).toMatchObject({ headOid: headB });
+  // Inside the backoff window the stored observation may be served — but it
+  // still names head A and is flagged stale; head B never inherits a pass.
+  expect(second.checkObservation ?? second.observation).toMatchObject({ headOid: headA, stale: true });
 }, 60000);
 
-it.fails("pending, unavailable and billing-blocked provider states are never PASS", async () => {
+it("pending, unavailable and billing-blocked provider states are never PASS", async () => {
   const { github, projectId, provider } = await fixture();
   // A rollup with no completed success is unknown/pending — the observation
   // must not surface it as a pass (M08-S12).
