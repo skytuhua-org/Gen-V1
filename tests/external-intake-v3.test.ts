@@ -355,3 +355,73 @@ it("keeps valid intake records when the upstream list also contains a null item"
   expect(f.intake.records().map(r=>r.eventId)).toEqual(["I_issue1"]);
   expect(f.executorCalls).toHaveLength(0);
 });
+
+describe("M10 durable approval identity across crash and rejection races", () => {
+  const propose = async (intake: ExternalIntakeCoordinator) => {
+    await intake.pollOnce();
+    const record = intake.records()[0]!;
+    expect(record.disposition).toBe("PROPOSED");
+    return record;
+  };
+  it("reuses the durable claim's stable command ids on restart instead of creating a second task", async () => {
+    const created: string[] = [];
+    const taskFor = (store: Store) => async (request: { threadCommandId: string; messageCommandId: string }) => {
+      store.command({ id: request.threadCommandId, type: "intake.thread", threadId: null }, () => {
+        store.put("thread", request.threadCommandId, request.threadCommandId, { id: request.threadCommandId, kind: "delegate" });
+        created.push(request.threadCommandId);
+        return request.threadCommandId;
+      });
+      return { threadId: request.threadCommandId };
+    };
+    const f = fixture();
+    const record = await propose(f.intake);
+    // Crash window: the thread command committed but the decision never did.
+    const crashing = new ExternalIntakeCoordinator({ store: f.store, createTask: async (request: { threadCommandId: string; messageCommandId: string }) => {
+      await taskFor(f.store)(request);
+      throw new Error("simulated host loss before the decision commit");
+    } });
+    cleanups.push(() => crashing.stop());
+    await expect(crashing.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" })).rejects.toThrow("simulated host loss");
+    expect(created).toHaveLength(1);
+    expect(f.intake.records()[0]!.disposition).toBe("PROPOSED");
+    // A restarted host re-approves: the claim replays the same thread command.
+    const restarted = new ExternalIntakeCoordinator({ store: f.store, createTask: taskFor(f.store) });
+    cleanups.push(() => restarted.stop());
+    const approved = await restarted.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" });
+    expect(approved.disposition).toBe("APPROVED");
+    expect(created).toHaveLength(1);
+    expect(f.store.all("thread").filter(t => (t as { kind?: string }).kind === "delegate")).toHaveLength(1);
+    expect(approved.decision?.threadId).toBe(created[0]);
+  });
+  it("a rejection landing during task creation is not overwritten by the in-flight approval", async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const f = fixture({ createTask: async () => { await barrier; return { threadId: "late-thread" }; } });
+    const record = await propose(f.intake);
+    const approval = f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" });
+    await vi.waitFor(() => expect(f.store.get<{ intakeId: string }>("intakeApprovalClaim", `approve:${record.intakeId}`)).toBeTruthy());
+    const rejected = f.intake.reject(command("intake.reject"), { intakeId: record.intakeId, reason: "USER_REJECTED" });
+    expect(rejected.disposition).toBe("REJECTED");
+    release();
+    const settled = await approval;
+    const current = f.intake.records()[0]!;
+    expect(current.disposition).toBe("REJECTED");
+    expect(settled.disposition).toBe("REJECTED");
+    // The already-created thread keeps a visible link instead of being hidden.
+    expect(current.decision?.threadId).toBe("late-thread");
+  });
+  it("a second host with different approval input conflicts against the durable claim", async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const f = fixture({ createTask: async () => { await barrier; return { threadId: "t" }; } });
+    const record = await propose(f.intake);
+    const approval = f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" });
+    await vi.waitFor(() => expect(f.store.get("intakeApprovalClaim", `approve:${record.intakeId}`)).toBeTruthy());
+    const otherHost = new ExternalIntakeCoordinator({ store: f.store, createTask: async () => ({ threadId: "other" }) });
+    cleanups.push(() => otherHost.stop());
+    await expect(otherHost.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "other/model" })).rejects.toMatchObject({ code: "STALE_REVISION" });
+    release();
+    await approval;
+    expect(f.intake.records()[0]!.disposition).toBe("APPROVED");
+  });
+});
