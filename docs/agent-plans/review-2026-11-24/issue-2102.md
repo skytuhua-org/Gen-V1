@@ -1,3 +1,75 @@
+# Source-current complete handoff for #2102
+
+## META
+
+Repository: skytuhua-org/Gen-V1. Revision: `issue-2102-metadata-r3-2026-11-24`. Baseline: `main@9ddd536cc84c0f327ddf6133d485f8ab8baf294b`. Inventory cutoff: 2026-11-24T12:06:11Z. Candidate: [PR #2118](https://github.com/skytuhua-org/Gen-V1/pull/2118), head `f4df850ed17c925d4633f349d571a72a4f92312e`, open and unmerged. Coordination: [#1803](https://github.com/skytuhua-org/Gen-V1/issues/1803).
+
+This complete revision preserves the entire r2 source below, including the verbatim original r1 body. The r2 source was published at `78253df0c9e3b60a321377e315935104a8608adb` but withheld from canonical-body mutation when this candidate arrived. This r3 STATE supersedes older statements that no implementation PR exists. Source findings do not resolve the original one-slot versus all-20-applied contradiction, authorize a detach/restore expansion, or weaken any recovery criterion.
+
+## OBJECTIVE
+
+Make the retained in-scope split-workspace commands respect their accepted revision/admission contract, surface a single dismissable friendly error, and preserve every view and valid title through failure and retry. The complete original objective and effective r2 corrections remain the task contract.
+
+## REQUIREMENTS
+
+Preserve the original in-scope command and recovery criteria, exact error copy, no raw banner during retry, deduplication and working Dismiss. Keyboard resizing is coordinated through #2101; detach/restore remains excluded. The one-slot first-structural-wins design and T01 all-20-mixed-commands-applied acceptance remain an unresolved decision. A candidate branch is not evidence that this contradiction was accepted.
+
+## REPO_MAP
+
+The candidate modifies `apps/web/src/WorkspaceSplitLayout.tsx`, `packages/core/split-workspace-layout.ts`, and the layout/renderer/App browser tests. `apps/web/src/split-workspace-api.ts` and the relevant `App.tsx` placement/error paths are unchanged from main at the reviewed head. These actual boundaries are necessary to evaluate the end-to-end requirements. #2116 overlaps the component and renderer tests; integration must preserve both unique changes.
+
+## DESIGN
+
+The producer adds lazy revision acquisition in `send()`, one retry, a single queued operation, component error deduplication/Dismiss, lone-pane root normalization and a render-time empty-title filter. Exact-source review establishes these remaining gaps:
+
+1. The unchanged API hook still stores the raw revision-conflict text, and unchanged App renders it in another alert without Dismiss. Component-friendly errors therefore do not establish no raw message during retry, one banner or every-banner Dismiss. The two error paths must satisfy the original single effective user-facing error contract.
+2. Changed App browser assertions expect held detach/return/dock operations to use a fresh revision. The actual unchanged `runPlacementCommand` sends the captured `intent.baseRevision` and catches the conflict. Those paths do not route through the component's new wrapper. This is a source-implied mismatch with the edited expectations, not an executed test failure. Preserve the existing captured-intent custody behavior and detach/restore exclusion until an explicit scoped plan decision.
+3. The one-slot queue retains the first structural operation and discards further structural requests. This does not satisfy the unchanged all-20-applied criterion; admission/overflow/coalescing policy remains held. A queued `run()` resolves before its held action executes, so integrating #2116's preview-clear continuation without fixing that lifecycle can clear feedback before execution.
+4. Filtering empty labels at render does not implement the retained data-layer non-empty-title requirement. The new lone-pane test does not establish the complete failed/retried mixed-command view-retention invariant.
+
+The r2 requirement to classify a confirmed conflict at its actual typed boundary remains active. The candidate's `WORKSPACE_CHANGED | /revision/i` classification is reported source, not acceptance of arbitrary message-based retries. No requirement or fixture assertion is removed merely because the current candidate does not satisfy it.
+
+## EXECUTION_DAG
+
+The full T01-T04 contracts and requirement mapping remain below. Current task status is:
+
+| Task | Current status | Remaining evidence |
+| --- | --- | --- |
+| T01 | PARTIAL candidate; final acceptance BLOCKED | Verify authoritative conflict classification and dispatch-time revision in the actual in-scope path. Resolve the 20-command acceptance/admission contradiction without silently losing work. Preserve excluded placement custody. |
+| T02 | BLOCKED on admission decision and lifecycle proof | Establish the accepted structural overflow policy and tie completion to actual queued execution; prove the held mixed burst and #2101 preview integration. |
+| T03 | PARTIAL component implementation | Remove the raw/duplicate/undismissable App error behavior under the retained contract; exercise actual App/API retry success and final failure. |
+| T04 | PARTIAL candidate | Prove authoritative data-layer title integrity and complete view/root preservation across failed and retried mixed commands. Render-time hiding is insufficient. |
+
+The producer released T01-T04 to review. This metadata worker takes no source ownership. A current integration owner must refresh journals and coordinate both overlapping PRs before editing.
+
+## VALIDATION
+
+The producer [reports](https://github.com/skytuhua-org/Gen-V1/issues/2102#issuecomment-7130964594) typecheck, 16/16 reducer tests and 13/13 renderer tests at this head. The edited split-App browser suite was explicitly NOT_RUN locally. These reported counts do not establish that unchanged App placement code meets the edited test expectations.
+
+The [independent review](https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131148702) compared full plans, journals, diffs and actual component/API/App/reducer paths, including exact unchanged App/API blobs. It ran no new product/browser/native tests. Preserve the entire original and r2 validation contract, with source-current App/API duplicate-error and mixed-burst evidence. A source-predicted failure must remain described as such until executed; no missing environment run is reported as passing.
+
+## STATE
+
+KEEP OPEN. #2118 is a unique partial implementation candidate. The producer's all-done-when assertion is not adopted because the exact source retains unmet error, queue, placement-scope and data-integrity criteria. Integrate with #2116 only under a documented owner and accepted admission/gesture lifecycle contract.
+
+Producer handoff: [checkpoint](https://github.com/skytuhua-org/Gen-V1/issues/2102#issuecomment-7130964594), [release](https://github.com/skytuhua-org/Gen-V1/issues/2102#issuecomment-7130964977). Independent review: [findings](https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131148702), [recipient correction](https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131162805). Full frontend, CI, merge and main acceptance remain pending. Publication changes no feature owner, assignee or in-progress label.
+
+Publish the complete identical r3 source through #1994 before replacing the body. Expected original canonical body SHA256: `1ca53c67a7b18882e2e76d5c1581941c7b5ee256aed53c77058fb800e37f7aac`. Concurrent canonical changes require reconciliation before mutation. The earlier r2 bytes remain immutable history.
+
+## REFERENCES
+
+- [Candidate component](https://github.com/skytuhua-org/Gen-V1/blob/f4df850ed17c925d4633f349d571a72a4f92312e/apps/web/src/WorkspaceSplitLayout.tsx)
+- [Unchanged API hook](https://github.com/skytuhua-org/Gen-V1/blob/f4df850ed17c925d4633f349d571a72a4f92312e/apps/web/src/split-workspace-api.ts)
+- [Unchanged App placement and error paths](https://github.com/skytuhua-org/Gen-V1/blob/f4df850ed17c925d4633f349d571a72a4f92312e/apps/web/src/App.tsx)
+- [Edited App browser assertions](https://github.com/skytuhua-org/Gen-V1/blob/f4df850ed17c925d4633f349d571a72a4f92312e/tests/split-app-browser.test.ts)
+- [Keyboard coordination #2101](https://github.com/skytuhua-org/Gen-V1/issues/2101)
+- [Immutable r2 full source](https://github.com/skytuhua-org/Gen-V1/blob/78253df0c9e3b60a321377e315935104a8608adb/docs/agent-plans/review-2026-11-24/issue-2102.md)
+- [Independent exact-source review](https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131148702)
+
+## Retained complete r2 source and original r1 plan
+
+The text below is preserved verbatim. Its pre-arrival no-implementation STATE is historical and superseded by r3 above; the effective source corrections, decision holds and all other requirements remain active.
+
 # Current complete handoff revision for #2102
 
 ## META

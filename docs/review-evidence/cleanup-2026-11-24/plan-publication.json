@@ -1,10 +1,21 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "tracker": "https://github.com/skytuhua-org/Gen-V1/issues/1803",
   "publication_pr": "https://github.com/skytuhua-org/Gen-V1/pull/1994",
-  "starting_docs_commit": "f3e947245e1b67916bc3393b934202d93827da64",
   "main_baseline": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+  "arrival_cutoff_utc": "2026-11-24T12:06:11Z",
+  "prior_publication": {
+    "commit": "78253df0c9e3b60a321377e315935104a8608adb",
+    "tree": "948fb0cc05fdcc03a7070be78ac0d07366f5c7b6",
+    "changed_files_read_back_exactly": 60,
+    "full_plan_files": 57,
+    "full_plan_revisions_deferred_before_canonical_write": [
+      2101,
+      2102
+    ]
+  },
   "publication_policy": "Publish and read back these exact full files before guarded canonical-body updates. Per-issue receipts record final body verification; historical plans remain in earlier immutable commits.",
+  "canonical_update_receipts": "Exact canonical readbacks are append-only in each linked issue journal; the final #1803 receipt confirms completion after this immutable publication.",
   "canonical_plans": [
     {
       "number": 1020,
@@ -67,14 +78,88 @@
       "action": "publish_mirror_then_guarded_full_body_revision"
     },
     {
+      "number": 1654,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1654.md",
+      "sha256": "0ca287ee1275677c79f56cfd5b8056b47af971e2ea505650f3e5550529c11ed3",
+      "bytes": 44209,
+      "git_blob": "25feb9643306e9393dd957d0c82f3ff513777f54",
+      "expected_old_body_sha256": "94305de397839491128c4eac0b3084d343164026533ffe4fd2e03d46b8d90910",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/1654"
+    },
+    {
       "number": 1666,
       "path": "docs/agent-plans/review-2026-11-24/issue-1666.md",
-      "sha256": "78f7eb8ce578496106c29cb52410ec4a30baf2b1c6b2856bb04b7d7fac519828",
-      "bytes": 12162,
-      "git_blob": "4b1f4b982a92a27f4574a0b3e1a41385455f4f14",
-      "expected_old_body_sha256": "78f7eb8ce578496106c29cb52410ec4a30baf2b1c6b2856bb04b7d7fac519828",
+      "sha256": "a67cd8fae3545f3646dacc5eb19e8af4a465b35c4cdf050eddd14233bdee7cba",
+      "bytes": 13168,
+      "git_blob": "7e49e47f192e907aede6fc5f3465a362b6b00b30",
+      "expected_old_body_sha256": "a67cd8fae3545f3646dacc5eb19e8af4a465b35c4cdf050eddd14233bdee7cba",
       "canonical_body_change": false,
-      "action": "publish_identical_mirror_only"
+      "action": "publish_identical_active_owner_revision5_mirror_only",
+      "source_pr": 2114,
+      "source_head": "1d739e99e34c7a148c9462dc6f27ae0880568444",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/1666",
+      "earlier_published_revision": {
+        "commit": "78253df0c9e3b60a321377e315935104a8608adb",
+        "path": "docs/agent-plans/review-2026-11-24/issue-1666.md",
+        "sha256": "78f7eb8ce578496106c29cb52410ec4a30baf2b1c6b2856bb04b7d7fac519828"
+      }
+    },
+    {
+      "number": 1803,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1803.md",
+      "sha256": "77c8c3a561c095d4af12c5fcce712ea0ba0bf2afbcc05c6a4156ca19244f427b",
+      "bytes": 11608,
+      "git_blob": "102e165af3556a1da7238587df7d9ba341926354",
+      "expected_old_body_sha256": "d0439402720157b09212962358e9b3b0b473794f9c8327a26edfb766407340e3",
+      "canonical_body_change": true,
+      "action": "complete_cleanup_after_final_publication_readback",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/1803"
+    },
+    {
+      "number": 1921,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1921.md",
+      "sha256": "dbd8c6c3644787f19d14118d1317b4992e44532a2018fb07f716b170a42cf0bc",
+      "bytes": 9181,
+      "git_blob": "3e08ca26237246b0a7016f7e03467e814c602deb",
+      "expected_old_body_sha256": "13e1cedfcf9644675c9b4a0438c0e9d2d0337516e5e420343d871272247918d5",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/1921"
+    },
+    {
+      "number": 1934,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1934.md",
+      "sha256": "70974b6f4bcfcb0f5fb81fc2327abfa816a439d675c7fc0532e8af64e33f415e",
+      "bytes": 8870,
+      "git_blob": "8dd5d11bec2baaa3fae82bae6b0cca5b5b5692d4",
+      "expected_old_body_sha256": "df164540b8103311a5671948fa8fab67c6a9e084c70cd50a77f7a72e626a0e36",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/1934"
+    },
+    {
+      "number": 1935,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1935.md",
+      "sha256": "3c9bdc844082bef9cf78753b596bfe9bd3c3638902f362566353fa867e1e5198",
+      "bytes": 8241,
+      "git_blob": "a9e71557381ad95838e3a5806e9c53dac008978a",
+      "expected_old_body_sha256": "34aa82aeb854bfc1a14bddf51776b04101f96354736cc8c5421259b5b5e50abc",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/1935"
+    },
+    {
+      "number": 1936,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1936.md",
+      "sha256": "2a826e860a9260422bb1c87945c444c4f2b0c39f42113d3ebc797764b9097443",
+      "bytes": 6591,
+      "git_blob": "28d5f36fda61d6be99b29eb31a34fa0097281d2c",
+      "expected_old_body_sha256": "4d8efa1989e31c2dc9d38436521b1900cf1e84050e718441d99d26eff8aa48de",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/1936"
     },
     {
       "number": 1947,
@@ -85,6 +170,28 @@
       "expected_old_body_sha256": "b3571929cf93384949e39a3425118b9030a5c7ca778e93ba343db5cd8f812b5b",
       "canonical_body_change": true,
       "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 1948,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1948.md",
+      "sha256": "1d02556aa3766d86e16dea48b2345ea41574ab9584a95124bbee7ecc4de515c9",
+      "bytes": 7747,
+      "git_blob": "e3ef37ac9d078ca636651a10029c5c43e91397cb",
+      "expected_old_body_sha256": "4a5b3c5ac1273280f46174c11a3bf2c2e3188113ceddfe1d9718ac1b754519cf",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/1948"
+    },
+    {
+      "number": 1949,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1949.md",
+      "sha256": "1e2e3ca539ad6a2f988d889242f3721b250871a95f53348eb0f7c3b2de1ea3c0",
+      "bytes": 7665,
+      "git_blob": "cb90721cf5dc7ef04c16113ffefcdf67d8022b6e",
+      "expected_old_body_sha256": "2569716626b1ac335b9f968f731a3eab9f6c7a66beeb5ee33621ef521373bc50",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/1949"
     },
     {
       "number": 1958,
@@ -469,22 +576,36 @@
     {
       "number": 2101,
       "path": "docs/agent-plans/review-2026-11-24/issue-2101.md",
-      "sha256": "efa6f75c561548c8a47641ccc1d9a7c1012a97eb3bd4318cf1737f3ad0f52611",
-      "bytes": 17197,
-      "git_blob": "e74dd9f0d63dd0f6d8d0fa49b4f171fc36adde21",
+      "sha256": "8f78c8f0e1c4d96da0038daf0f09cee2c912ae589d5ae7136627b95d673451a7",
+      "bytes": 24741,
+      "git_blob": "79ad85ca6e281542d26f3bc7245e9f5444ec2804",
       "expected_old_body_sha256": "2cf21544119d90dfa957583dc5e97fe8debace80f88badeebf0e40fc5945534a",
       "canonical_body_change": true,
-      "action": "publish_mirror_then_guarded_full_body_revision"
+      "action": "publish_mirror_then_guarded_full_body_revision",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/2101",
+      "earlier_published_revision": {
+        "commit": "78253df0c9e3b60a321377e315935104a8608adb",
+        "path": "docs/agent-plans/review-2026-11-24/issue-2101.md",
+        "sha256": "efa6f75c561548c8a47641ccc1d9a7c1012a97eb3bd4318cf1737f3ad0f52611",
+        "canonical_write": "deferred after new implementation arrival; superseded by this source-current revision"
+      }
     },
     {
       "number": 2102,
       "path": "docs/agent-plans/review-2026-11-24/issue-2102.md",
-      "sha256": "8e755c9ad3f2cdd7ba273d35c361201e651f176db2a7896165715d4fa3413e54",
-      "bytes": 20917,
-      "git_blob": "83bdf1c9a0ec2a1e0c0746716bfb3c8ba2a14989",
+      "sha256": "0ca96f9581bb6d9466d3e03675515eb70751c51fd6e9579faceaddf0feab41a7",
+      "bytes": 29665,
+      "git_blob": "b3708026986d5c58812794e78bb4acc6ab9e4ad3",
       "expected_old_body_sha256": "1ca53c67a7b18882e2e76d5c1581941c7b5ee256aed53c77058fb800e37f7aac",
       "canonical_body_change": true,
-      "action": "publish_mirror_then_guarded_full_body_revision"
+      "action": "publish_mirror_then_guarded_full_body_revision",
+      "receipt_journal": "https://github.com/skytuhua-org/Gen-V1/issues/2102",
+      "earlier_published_revision": {
+        "commit": "78253df0c9e3b60a321377e315935104a8608adb",
+        "path": "docs/agent-plans/review-2026-11-24/issue-2102.md",
+        "sha256": "8e755c9ad3f2cdd7ba273d35c361201e651f176db2a7896165715d4fa3413e54",
+        "canonical_write": "deferred after new implementation arrival; superseded by this source-current revision"
+      }
     },
     {
       "number": 2103,
@@ -577,13 +698,23 @@
       "action": "publish_mirror_then_guarded_full_body_revision"
     }
   ],
-  "consolidated_pr": {
+  "preserved_active_pr": {
     "number": 2114,
-    "head": "71c80cefe4739004be6ea51c5a128a862230aacf",
+    "head": "1d739e99e34c7a148c9462dc6f27ae0880568444",
     "path": "docs/agent-plans/1666-ci-pr-feedback-under-1-min.md",
-    "git_blob": "5d9589c1d65743828049deb56597554f89aee7b9",
-    "sha256": "82f8eb7505a9fc0faa9c779516c7ed4d5ad1e3c08e70311fe9b1484d98aef2bf",
-    "bytes": 11943,
-    "closure_gate": "Exact original blob retained and read back before closing the source PR; no branch deletion."
+    "git_blob": "e2787f27c76e9cecf8ff156fb03507f05c305760",
+    "sha256": "9a6ec30460093fdfe28b288e812b2b987ee492f5e2c867046202fe1b3db2fe00",
+    "bytes": 12949,
+    "disposition": "retain_open_under_active_owner; revision5 preserved exactly, no canonical body overwrite",
+    "ownership_receipt": "https://github.com/skytuhua-org/Gen-V1/issues/1666#issuecomment-7130859562",
+    "earlier_revision": {
+      "number": 2114,
+      "head": "71c80cefe4739004be6ea51c5a128a862230aacf",
+      "path": "docs/agent-plans/1666-ci-pr-feedback-under-1-min.md",
+      "git_blob": "5d9589c1d65743828049deb56597554f89aee7b9",
+      "sha256": "82f8eb7505a9fc0faa9c779516c7ed4d5ad1e3c08e70311fe9b1484d98aef2bf",
+      "bytes": 11943,
+      "closure_gate": "Exact original blob retained and read back before closing the source PR; no branch deletion."
+    }
   }
 }

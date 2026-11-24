@@ -1,3 +1,71 @@
+# Source-current complete handoff for #2101
+
+## META
+
+Repository: skytuhua-org/Gen-V1. Revision: `issue-2101-metadata-r3-2026-11-24`. Baseline: `main@9ddd536cc84c0f327ddf6133d485f8ab8baf294b`. Inventory cutoff: 2026-11-24T12:06:11Z. Candidate: [PR #2116](https://github.com/skytuhua-org/Gen-V1/pull/2116), head `d6fbdd560561838dd6d366bbc6fa67bfc77e9d86`, open and unmerged. Coordination: [#1803](https://github.com/skytuhua-org/Gen-V1/issues/1803).
+
+This complete revision preserves the entire r2 source below, including the verbatim original r1 body. The r2 source was published at `78253df0c9e3b60a321377e315935104a8608adb` but withheld from canonical-body mutation when this candidate arrived. This r3 STATE supersedes the older statements that no implementation PR exists. It does not weaken any retained requirement, decide the held queue/admission policy, or infer acceptance from an author's completion claim.
+
+## OBJECTIVE
+
+Deliver continuous keyboard split resizing with optimistic accumulated feedback and reliable final delivery. The full original objective and effective r2 source corrections remain the task contract.
+
+## REQUIREMENTS
+
+Preserve all original in-scope keys, steps, bounds, tooltip, accessibility, focus and cancellation behavior, as well as the pointer-user exclusion and the r2 delayed-operation acceptance cases. Resolve only the already identified final-send admission contract with #2102. Source findings below explain unmet criteria; they are not additional product scope.
+
+## REPO_MAP
+
+The candidate changes `apps/web/src/WorkspaceSplitLayout.tsx` and `tests/split-workspace-renderer.test.ts`. Its current delayed commit, gesture cancellation and `run()` boundaries were independently compared with the accepted plan. Both #2116 and #2118 touch the component and renderer tests; a single explicitly claimed integration must preserve their unique changes.
+
+## DESIGN
+
+The producer adds `keyPreview`, a 150 ms timer, accumulated ratio feedback, optimistic `aria-valuenow`, and two renderer cases. The exact-source review identifies remaining defects:
+
+1. The delayed key commit closes over the render's `layout.revision`. Waiting and re-arming while another operation is pending retains that stale value. If another command commits meanwhile, the resize can still be rejected. #2118's lazy `send()` wrapper does not automatically fix the keyboard path, which calls `run/onCommand` directly.
+2. Home/End commits immediately while `pending.current` can be true. The unchanged `run()` returns without executing; the resolved continuation then clears the preview. This drops the requested bound change.
+3. Cancellation listens for window blur, but the divider has no element `onBlur`. Focus transfer within the window does not invoke that cancellation. Effect cleanup does not clear the keyboard timer on unmount, and pointer-resize start leaves that timer alive. Delayed keyboard and pointer preview/commit custody can overlap.
+
+The effective implementation must satisfy the retained cancellation, final-delivery and unchanged-pointer requirements. Preserve the explicit #2102 admission decision hold; do not replace it with silent dropping or equate a queued promise resolving with execution of its command.
+
+## EXECUTION_DAG
+
+The complete T01-T03 inputs, outputs, dependencies, ownership, acceptance checks and handoff contract remain below. Current status against the named candidate is:
+
+| Task | Current status | Remaining evidence |
+| --- | --- | --- |
+| T01 | PARTIAL candidate | Accumulation/preview exists. Verify fresh revision at actual delayed dispatch and pending Home/End delivery; preserve both axes, Shift, bounds, focus and feedback criteria. |
+| T02 | BLOCKED for final acceptance | Resolve #2102 admission integration and repair divider blur, unmount/layout-removal cleanup, pending cancellation and keyboard-to-pointer transfer; prove rejection rollback. |
+| T03 | PARTIAL producer evidence | The two added renderer cases cover one rapid-arrow batch and Escape before dispatch. The retained delayed-operation, cancellation, pointer-regression and full keyboard fixture cases remain unproven. |
+
+The implementation producer released T01-T03 to review. This metadata worker holds no feature source claim. A current owner must refresh both journals and shared-file claims before integration.
+
+## VALIDATION
+
+The producer [reports](https://github.com/skytuhua-org/Gen-V1/issues/2101#issuecomment-7130806608) typecheck and 13/13 renderer tests at this candidate, including ten rapid ArrowRight presses producing one resize to 0.6 and Escape cancel before dispatch. The full split-App browser and gesture-cleanup suites were explicitly NOT_RUN by the producer. These counts are attributed evidence.
+
+The [independent review](https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131148702) executed source/plan/journal comparisons and control-flow analysis, with no new product/browser/native test run. It found the source defects above, and the two new cases do not discharge them. All original and r2 validation instructions remain required, including in-flight Home/End, retained delayed revision, divider blur, cleanup, both axes, Shift, error rollback and pointer-path preservation. Record exact integration head, commands, fixtures and actual results before a reviewer changes these statuses.
+
+## STATE
+
+KEEP OPEN. #2116 is a unique implementation candidate, not complete acceptance. The producer's statement that all done-when conditions are met is not adopted because the independent source review identifies failures at the retained boundaries. Integration with #2118 remains necessary and must preserve the held admission decision.
+
+Producer handoff: [checkpoint](https://github.com/skytuhua-org/Gen-V1/issues/2101#issuecomment-7130806608), [release](https://github.com/skytuhua-org/Gen-V1/issues/2101#issuecomment-7130806988). Independent review: [exact-source findings](https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131148702), [recipient correction](https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131162805). Review and ordinary CI/merge/main acceptance remain pending. No feature ownership, assignee or in-progress label is changed by publication.
+
+Publish the complete identical r3 file through #1994 before replacing the canonical body. Expected original canonical body SHA256: `2cf21544119d90dfa957583dc5e97fe8debace80f88badeebf0e40fc5945534a`. If that body changes concurrently, reconcile it before mutation. The previously published r2 bytes remain immutable history.
+
+## REFERENCES
+
+- [Current candidate component](https://github.com/skytuhua-org/Gen-V1/blob/d6fbdd560561838dd6d366bbc6fa67bfc77e9d86/apps/web/src/WorkspaceSplitLayout.tsx)
+- [Current renderer tests](https://github.com/skytuhua-org/Gen-V1/blob/d6fbdd560561838dd6d366bbc6fa67bfc77e9d86/tests/split-workspace-renderer.test.ts)
+- [Queue/admission coordination #2102](https://github.com/skytuhua-org/Gen-V1/issues/2102)
+- [Immutable r2 full source](https://github.com/skytuhua-org/Gen-V1/blob/78253df0c9e3b60a321377e315935104a8608adb/docs/agent-plans/review-2026-11-24/issue-2101.md)
+- [Independent source and acceptance review](https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131148702)
+
+## Retained complete r2 source and original r1 plan
+
+The text below is preserved verbatim. Its pre-arrival no-implementation STATE is historical and superseded by r3 above; the effective source corrections, decision holds and all other requirements remain active.
+
 # Current complete handoff revision for #2101
 
 ## META
