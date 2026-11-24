@@ -96,6 +96,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('ui-shell-controls'),
   suite('usage-context'),
   suite('wo8'),
+  suite('review-comments'),
 ];
 
 export function validateBrowserSuites(specs:string[], suites=browserSuites):void {

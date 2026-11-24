@@ -729,7 +729,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     if (!loaded) return;
     let active = true;
     const key = 'workspace-sync:'+notificationOwner;
-    const stop = subscribe(snapshotRef.current.seq, event => {if(event.type.startsWith('workspace.')||event.type.startsWith('project.')||event.type.startsWith('split-workspace.'))window.dispatchEvent(new Event('harness:workspace-changed'));const patched=applyRuntimeEvent(snapshotRef.current,event);if(patched)apply(patched);else void refresh().catch(cause => {if(active)notifications.report(messageOf(cause),{key,title:'Couldn’t update workspace',retry:refresh});}); }, setOnline, refresh);
+    const stop = subscribe(snapshotRef.current.seq, event => {if(event.type.startsWith('workspace.')||event.type.startsWith('project.')||event.type.startsWith('split-workspace.'))window.dispatchEvent(new Event('harness:workspace-changed'));if(event.type.startsWith('review.comment.'))window.dispatchEvent(new Event('harness:review-comment-changed'));const patched=applyRuntimeEvent(snapshotRef.current,event);if(patched)apply(patched);else void refresh().catch(cause => {if(active)notifications.report(messageOf(cause),{key,title:'Couldn’t update workspace',retry:refresh});}); }, setOnline, refresh);
     return () => { active = false; stop(); for(const entry of notifications.getSnapshot())if(entry.key===key)notifications.remove(entry.id); };
   }, [loaded, refresh, apply, notifications, notificationOwner]);
   useEffect(() => { const query = matchMedia('(prefers-color-scheme: dark)'); const change = () => setSystemDark(query.matches); query.addEventListener('change', change); return () => query.removeEventListener('change', change); }, []);
