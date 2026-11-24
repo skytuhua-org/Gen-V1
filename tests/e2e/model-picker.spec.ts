@@ -110,3 +110,14 @@ test('model selection fits both themes on a phone and removes spatial motion whe
     await page.getByRole('searchbox', { name: 'Search models', exact: true }).press('Escape');
   }
 });
+
+test('an empty catalog disables the chip with a stated reason', async ({ page }) => {
+  const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic model selection fixture' } } } });
+  snapshot.settings = { theme: 'dark' };
+  await serveTaskFixture(page, snapshot);
+  await page.route('**/api/models*', route => route.fulfill({ json: { models: [] } }));
+  await page.goto('/');
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await expect(trigger).toBeDisabled();
+  await expect(trigger).toHaveAttribute('title', 'No models available — check the provider connection');
+});
