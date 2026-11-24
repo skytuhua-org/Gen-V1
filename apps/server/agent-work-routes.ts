@@ -95,12 +95,16 @@ export function registerAgentWorkRoutes(app: FastifyInstance, service: Service) 
     const body = (record.value ?? {}) as {steps?: {id: string; status: string}[]; agents?: {id: string; status: string}[]};
     // Reported status stays verbatim: 'completed' here is reported completion,
     // not accepted verification, and an unlisted node is unknown — not pending.
-    const statuses: Record<string, 'completed' | 'pending' | 'unknown'> = {};
-    for (const node of [...(body.steps ?? []), ...(body.agents ?? [])]) {
-      if (node.status === 'completed' || node.status === 'unknown') statuses[node.id] = node.status;
-      else if (['pending', 'queued', 'in_progress', 'blocked', 'failed'].includes(node.status)) statuses[node.id] = 'pending';
-      // Unrecognized statuses stay unmapped -> unknown work, not assumed pending.
-    }
+    // Canonical step statuses: pending|working|completed|blocked; job statuses:
+    // queued|working|completed|needs_review|failed|cancelled|interrupted.
+    // Incomplete-and-continuable work is pending; 'cancelled' removes the work's
+    // outcome, so those units are unknown until the plan re-allocates them.
+    const continuable = ['pending', 'working', 'queued', 'in_progress', 'blocked', 'failed', 'interrupted', 'needs_review'];
+    const statuses: Record<string, 'completed' | 'pending' | 'unknown'> = Object.fromEntries(
+      [...(body.steps ?? []), ...(body.agents ?? [])]
+        .map(node => [node.id, node.status === 'completed' || node.status === 'unknown' ? node.status
+          : continuable.includes(node.status) ? 'pending' : 'unknown'] as const),
+    ) as Record<string, 'completed' | 'pending' | 'unknown'>;
     const reported = Object.fromEntries([...(body.steps ?? []), ...(body.agents ?? [])].map(node => [node.id, node.status] as const));
     return {extension: true, planId, weights: extension.weights, parentRelationships: extension.parentRelationships,
       reportedStatuses: reported,
