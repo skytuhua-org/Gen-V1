@@ -44,6 +44,54 @@ describe('desktop power keeper', () => {
     await flush();
     expect(f.keeper.state()).toEqual({ state: 'holding', reason: 'both' });
   });
+  it.each(['tasks', 'schedules'] as const)('reports only the enabled %s holding reason', async reason => {
+    vi.useFakeTimers();
+    const f = fixture({ tasks: 1, schedules: 1, keepAwakeTasks: reason === 'tasks', keepAwakeSchedules: reason === 'schedules' });
+    await flush();
+    expect(f.keeper.state()).toEqual({ state: 'holding', reason });
+    expect(f.started.size).toBe(1);
+  });
+  it.each(['release', 'dispose'] as const)('ignores an activity read that finishes after %s', async action => {
+    vi.useFakeTimers();
+    const f = fixture({ tasks: 1, keepAwakeTasks: true });
+    let finish!: (value: PowerActivityRead) => void;
+    f.read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await flush();
+    f.keeper.schedule();
+    f.keeper[action]();
+    finish({ tasks: 1, schedules: 0, keepAwakeTasks: true, keepAwakeSchedules: false });
+    await flush();
+    expect(f.started.size).toBe(0);
+    expect(f.keeper.state()).toEqual({ state: 'off' });
+    expect(f.changes).toEqual([]);
+    expect(f.read).toHaveBeenCalledTimes(1);
+    f.keeper.schedule();
+    await flush();
+    expect(f.keeper.state().state).toBe(action === 'release' ? 'holding' : 'off');
+  });
+  it('cancels a queued activity read when released', async () => {
+    vi.useFakeTimers();
+    const f = fixture({ tasks: 1, keepAwakeTasks: true });
+    f.keeper.release();
+    await flush();
+    expect(f.read).not.toHaveBeenCalled();
+    expect(f.started.size).toBe(0);
+  });
+  it('does not publish a stale read failure after release', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    f.fail(1);
+    await flush();
+    let reject!: (error: Error) => void;
+    f.read.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    f.keeper.schedule();
+    await flush();
+    f.keeper.release();
+    reject(Error('old backend disconnected'));
+    await flush();
+    expect(f.keeper.state()).toEqual({ state: 'off' });
+    expect(f.changes).toEqual([]);
+  });
   it('serializes bursts into one in-flight read and applies the latest activity', async () => {
     vi.useFakeTimers();
     let resolveRead!: (value: PowerActivityRead) => void;
@@ -81,6 +129,15 @@ describe('desktop power keeper', () => {
     f.throwStart();
     await flush();
     expect(f.keeper.state()).toEqual({ state: 'unavailable' });
+  });
+  it.each(['false', 'throw'] as const)('releases an unconfirmed native handle when isStarted returns %s', async result => {
+    vi.useFakeTimers();
+    const f = fixture({ tasks: 1, keepAwakeTasks: true });
+    f.api.isStarted.mockImplementation(() => { if (result === 'throw') throw Error('native confirmation failed'); return false; });
+    await flush();
+    expect(f.keeper.state()).toEqual({ state: 'unavailable' });
+    expect(f.started.size).toBe(0);
+    expect(f.changes).toEqual([{ state: 'unavailable' }]);
   });
   it('restarts the blocker when the OS reports the handle stopped', async () => {
     vi.useFakeTimers();

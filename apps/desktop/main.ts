@@ -27,6 +27,8 @@ import {createPersistenceQueue,reconcileSavedWindows} from './persistence.ts';
 import {createMemoryExportDownloads} from './memory-export.ts';
 import {createAttentionPopups,attentionPopupHtml,type AttentionPopupAction,type AttentionPopupWindow} from './attention-popups.ts';
 import {attentionDeliverySchema} from '../../packages/contracts/attention.ts';
+const trayMark16='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABmUlEQVR4nKRSz0sCURD+3u6akmRdRAgUuiXUKahrlw5C0Sm69yd0SkQRMqVLPy7RLSI6CUGIdO5Q0CEIL0UgHYoK8pBEWbnta976Vnd1LaIPhjc7876Zb+atgn9C+ykZn+HD4swV2FW3O6w9kJjlYcaxBgNTlO03gxxV8otcwdLKIbt1LZCe5Fo9gEUip+jT36XhK1kyU8AGUblzBD8ibeQvskvpR8lUshqpOLPIAorZfY736Ar2beRd3UAwU2CjwoRPUrOagQka4bRjBLEstdXtpe5DeDXPqk71nNk7W9CkjAFb7MROFkv16PDIIs1L1V48rOdZzSxgAM9qq4DPIdHAMY031N7ZX8MCHTvmDrxjuKbjTeaiYif4BYqCO6melpimPsCezIX0d2ylYzyAxuTbpHyT3FJLFi6IeNNwJeIxHlQ1lMntkyG3ZxSoaEJlgVWaCgRyR+yJVpSyqRSEEWnNFdE7JC2yQ4GFxDQfZwx5ciOOBEeZyPPLRXZuD3cUgLkTrnyWEFI/MGjO4sV99gCPbv+Ba4G/4BsAAP//kHXAcgAAAAZJREFUAwCek3yWjk772wAAAABJRU5ErkJggg==';
+const trayMark32='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAC/ElEQVR4nOxXS0hVURRd574rKQ3sQwZSg2gifSBNfA2sIAcN1KcEr1kTIYsahIMgPw9uPLWgSRRBRZATR0HlLx2FRT8zHFTD7KeUEUKBqdXz7tYVBO9757zu85OTFlzOuefus/c6+5y997kWVhgWVhgrTsBGhnAcsWZeIMzuFlch3xuzBJ/YvAsVY8BxlJuJPhVUMFYlO8XFSXYP8dlgEPvK57aycCXeoV4hAP5KoLFCSrlPZ0ShHBlACXroivMt3epRWrl0H2OVsp2G+yDYhIVhxFY44HSqNyYB4yFsjEixCB4vwriHzQnqiJXLbmRCoC4qOXThdfonF4uEAJMJCz9M37VRsHoaN9kUwqx1gHv3gHs8ZFnedqMILvaRcDhJ7ombhci5O2rcpCrlDNRXybaQi5fshjTyE7RWF+9WN3TKmirkKDVeYjebbbu9CjXOLfULaZBCoKlSrrI5liLJ1diCI06Peos0qK+UArp1T7xLtSEAfARqayUr7zNG2N2okT3e3KWuYYnhOwN5YygzGP/2PYE2LAN8UcBMt8sg13+5V/3EMsDnAaWwRiul0A8DYhEpZLJaj6AGBe/nJyY7ydC0F7gpEI4b4AouMDLKEBAJMLkBpXPvvi1gHRvTTeIKTVuzEPiSkp1kSEuAK1wyAtxmHwGfB1jfn9LdvzXzShoiklE1NIH1ZdRIoLVTfREL9zXzLMtFu5dksEjQm1NGArMCwEX9TOQyNw/Optt5yMpGdcLFOu/h6k5xaAImCKITOXCS7KWCpbiPTA/CrGiA1B9y8pDrgk5DEYNnf0ox8hvqYHquTh7XVsMsoIbhMshuPvTawiQR9iKWh0obuUmEh0MWTuhVGdBQLjtYavvZDZxkDBhnXQ0331XDuo/GG1Frj3otM/BuMs+wcDwPCYpMxtMS8NByT32ws7m3gjhfM6kFk5zjcO7es93qYzrBwNfypmrZihmcZvcwn7UGsdlruZ1As9OrRoPoDUxgDtGohAqmUIJ//WOyXPj/c/oHAAD//863s6QAAAAGSURBVAMAQjrrdqpvZbAAAAAASUVORK5CYII=';
 const persistence=createPersistenceQueue();
 
 interface BrowserRecord {id:string;view:WebContentsView;state:DesktopBrowserState;owner?:WindowRecord;generation:number;networkReady:Promise<void>}
@@ -44,7 +46,7 @@ app.setName('Gen V1');
 const profileRoot=testData?resolve(testData,'desktop-profile'):join(app.getPath('appData'),'GenerativeHarnessDesktop');mkdirSync(profileRoot,{recursive:true});mkdirSync(join(profileRoot,'session'),{recursive:true});app.setPath('userData',profileRoot);app.setPath('sessionData',join(profileRoot,'session'));
 app.commandLine.appendSwitch('disable-quic');app.commandLine.appendSwitch('disable-features','WebTransport,DirectSockets');
 const stateFile=join(app.getPath('userData'),'desktop-windows.json');
-let saved:SavedWindow[]=[],saveTimer:ReturnType<typeof setTimeout>|undefined,backend:ChildProcess|undefined,backendOrigin='',backendError:string|undefined,launchToken='',quitting=false,quitPending=false,closing=false,restarting=false;
+let saved:SavedWindow[]=[],saveTimer:ReturnType<typeof setTimeout>|undefined,backend:ChildProcess|undefined,backendOrigin='',backendError:string|undefined,launchToken='',quitting=false,quitPending=false,restarting=false;
 let updater:DesktopUpdater|undefined,osSessionEnding=false,restartForUpdate=false;
 let updateStatus:UpdateStatus={state:'unavailable',message:'Install Gen to receive automatic updates.'};
 let startup:BrowserWindow|undefined,startupTimer:ReturnType<typeof setTimeout>|undefined;
@@ -161,7 +163,7 @@ async function openSurface(raw:unknown,sourceBounds?:DesktopBounds):Promise<Desk
  if(windows.size>=24)throw Error('Close a window before opening another');
  if(surface.kind==='browser'&&!browsers.has(surface.browserId)&&browsers.size>=12)throw Error('Close a browser before opening another');
  const size=surfaceSize(surface),previous=saved.find(entry=>desktopSurfaceKey(entry.surface)===key),all=displays(),placement=previous?.placement??(previous?captureDesktopPlacement(previous.bounds,all):undefined),bounds=restoreDesktopPlacement(placement,all,size,sourceBounds),id=randomUUID(),url=trustedUrl(id);
- const native=new BrowserWindow({...bounds,...nativeTitlebarOptions(process.platform),minWidth:Math.min(320,bounds.width),minHeight:Math.min(160,bounds.height),show:false,alwaysOnTop:previous?.alwaysOnTop===true,title:displayTitle(surface),backgroundColor:'#0f0f0f',autoHideMenuBar:true,webPreferences:{preload,partition:'persist:harness',sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false}});
+ const native=new BrowserWindow({...bounds,...nativeTitlebarOptions(process.platform),minWidth:Math.min(320,bounds.width),minHeight:Math.min(160,bounds.height),show:false,alwaysOnTop:previous?.alwaysOnTop===true,title:displayTitle(surface),backgroundColor:'#0f0f0f',autoHideMenuBar:true,icon:join(dirname(fileURLToPath(import.meta.url)),'icon.png'),webPreferences:{preload,partition:'persist:harness',sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false}});
  native.on('query-session-end',()=>{osSessionEnding=true;});native.on('session-end',()=>{osSessionEnding=true;});
  let resolveReady!:(value:DesktopWindowInfo)=>void,rejectReady!:(error:Error)=>void;
  const readyPromise=new Promise<DesktopWindowInfo>((resolve,reject)=>{resolveReady=resolve;rejectReady=reject;});void readyPromise.catch(()=>{});
@@ -208,8 +210,8 @@ function backendRequest(type:'harness.stopAll'|'harness.layout.save'|'harness.pl
  return new Promise((resolve,reject)=>{const finish=(error?:Error,value?:Record<string,unknown>)=>{clearTimeout(timer);child.removeListener('message',receive);child.removeListener('exit',exited);child.removeListener('disconnect',exited);if(error)reject(error);else resolve(value!);};const receive=(raw:unknown)=>{if(!raw||typeof raw!=='object'||Array.isArray(raw))return;const value=raw as Record<string,unknown>;if(value.type===reply&&value.token===token&&value.requestId===requestId){if(value.error)finish(Error(String(value.error).slice(0,500)));else finish(undefined,value);}};const exited=()=>finish(Error('The local backend disconnected before acknowledging the action.'));const timer=setTimeout(()=>finish(Error('The local backend did not acknowledge the action. Restore the workspace and retry.')),15000);child.on('message',receive);child.once('exit',exited);child.once('disconnect',exited);try{child.send({type,token,requestId,...extra},error=>{if(error)finish(error);});}catch(error){finish(error instanceof Error?error:Error(String(error)));}});
 }
 function installTray(){
- const pixels=Buffer.alloc(16*16*4);for(let y=3;y<13;y++)for(let x=2;x<14;x++)if(x===2||x===13||y===3||y===11||y===12&&x===4){const offset=(y*16+x)*4;pixels[offset]=pixels[offset+1]=pixels[offset+2]=210;pixels[offset+3]=255;}
- tray=new Tray(nativeImage.createFromBitmap(pixels,{width:16,height:16,scaleFactor:1}));tray.setToolTip(trayTooltip());
+ const icon=nativeImage.createFromDataURL(trayMark16);icon.addRepresentation({scaleFactor:2,dataURL:trayMark32});
+ tray=new Tray(icon);tray.setToolTip(trayTooltip());
  const report=(cause:unknown)=>{layoutError=String(cause instanceof Error?cause.message:cause).slice(0,500);broadcast();if(!testData)void dialog.showMessageBox({type:'error',title:'Gen V1',message:layoutError,buttons:['Close']});};
  tray.on('double-click',()=>void mainWindow().catch(report));tray.setContextMenu(Menu.buildFromTemplate([{label:'Restore Workspace',click:()=>{void (async()=>{await mainWindow();for(const record of windows.values()){record.visible=true;if(record.window.isMinimized())record.window.restore();record.window.show();remember(record);}broadcast();})().catch(report);}},{label:'Stop running tasks',enabled:true,click:()=>{void backendRequest('harness.stopAll').then(value=>{if(Array.isArray(value.errors)&&value.errors.length)throw Error(value.errors.map(String).join('\n'));}).catch(report);}},{type:'separator'},{label:'Quit Gen V1',click:()=>app.quit()}]));
 }
@@ -308,7 +310,22 @@ function registerIpc(){
   else if(command.type==='stop')contents.stop();
  });
 }
+function scheduleBackendRestart(child:ChildProcess){
+ if(quitting||backend!==child)return;
+ powerKeeper?.release();
+ backendError='The local backend stopped. Reconnecting…';broadcast();
+ if(restarting)return;
+ restarting=true;
+ setTimeout(()=>{
+  void startBackend().catch(error=>{
+   if(quitting)return;
+   backendError='Backend restart failed: '+String(error instanceof Error?error.message:error).slice(0,500);broadcast();
+  }).finally(()=>{restarting=false;});
+ },700);
+}
 async function startBackend():Promise<void>{
+ // An accepted quit owns backend shutdown even if a restart timer was already queued.
+ if(quitting)return;
  if(!launchToken)launchToken=randomBytes(32).toString('hex');const token=launchToken;
  const env:NodeJS.ProcessEnv={...process.env,HARNESS_DATA_DIR:backendDataDir,HARNESS_PORT:String(backendPort),HARNESS_WIDGET_PORT:String(widgetPort),HARNESS_DESKTOP_LAUNCH_TOKEN:token,HARNESS_DEV:'0'};delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
  env.HARNESS_PACKAGED=app.isPackaged?'1':'0';env.HARNESS_BUNDLED_GIT=join(root,'.harness-tool-bundles/git/cmd/git.exe');
@@ -320,15 +337,18 @@ async function startBackend():Promise<void>{
  let stderr='';child.stderr?.on('data',bytes=>{stderr=(stderr+String(bytes)).slice(-8000);output?.write('stderr',bytes);});child.stdout?.on('data',(bytes:Buffer)=>output?.write('stdout',bytes));
  try{
  const value=await waitForBackendReady(child,token,backendPort,()=>stderr,observeStartup);
+ if(quitting||backend!==child)return;
  const oldRelay=workspaceRelay;workspaceRelay=undefined;
  await finishBackendStartup(child,oldRelay?.close(),()=>stderr,()=>{
+  if(quitting||backend!==child)return;
   backendOrigin=value.origin as string;
   if(value.nativeLayout!==undefined)try{hostLayout=parseDesktopLayout(value.nativeLayout);}catch{layoutError='The saved host workspace layout is invalid. The local backup is retained.';}
   workspaceRelay=workspaceEvents(backendOrigin,change=>{powerKeeper?.schedule();for(const record of windows.values())if(!record.window.isDestroyed())record.window.webContents.send(channels.workspaceChanged,change);},token);
   powerKeeper?.schedule();
-  child.once('exit',()=>{if(closing||backend!==child)return;powerKeeper?.release();backendError='The local backend stopped. Reconnecting…';broadcast();if(restarting)return;restarting=true;setTimeout(()=>{void startBackend().catch(error=>{backendError='Backend restart failed: '+String(error instanceof Error?error.message:error).slice(0,500);broadcast();}).finally(()=>{restarting=false;});},700);});
+  child.once('exit',()=>scheduleBackendRestart(child));
+  child.once('disconnect',()=>{if(backend===child)powerKeeper?.release();});
   backendError=undefined;broadcast();
- },observeStartup);
+ },observation=>{if(!quitting)observeStartup(observation);});
  }finally{try{if(output)startupDiagnostic('backend-output',null,output.read().streams);}catch{}}
 }
 async function stopBackend():Promise<boolean>{
@@ -336,7 +356,7 @@ async function stopBackend():Promise<boolean>{
  let clean=true;
  try{await workspaceRelay?.close();}catch{clean=false;}workspaceRelay=undefined;
  try{await signInFlows.close();}catch{clean=false;}
- closing=true;const child=backend;if(!child||child.exitCode!==null||child.signalCode)return false;
+ const child=backend;if(!child||child.exitCode!==null||child.signalCode)return false;
  let acknowledged=false;const token=launchToken;
  const message=(value:unknown)=>{if(value&&typeof value==='object'&&(value as Record<string,unknown>).type==='harness.stopped'&&(value as Record<string,unknown>).token===token)acknowledged=true;};
  child.on('message',message);
@@ -389,11 +409,11 @@ if(!app.requestSingleInstanceLock()){app.exit(0);}else{
   powerMonitor.on('shutdown',()=>{osSessionEnding=true;});
   powerMonitor.on('resume',()=>powerKeeper?.schedule());
   installApplicationMenu();installTray();startupDiagnostic('shell-ready');
-  startupTimer=setTimeout(()=>{if(quitting||quitPending)return;startup=new BrowserWindow({width:420,height:190,...nativeTitlebarOptions(process.platform),resizable:false,maximizable:false,minimizable:false,title:'Opening Gen V1',autoHideMenuBar:true,backgroundColor:'#0f0f0f',webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});startup.webContents.setWindowOpenHandler(()=>({action:'deny'}));startup.webContents.on('will-navigate',event=>event.preventDefault());void startup.loadFile(join(dirname(fileURLToPath(import.meta.url)),'startup.html')).catch(()=>{});},1200);
-  await startBackend();powerKeeper=createPowerKeeper({api:powerSaveBlocker,read:async()=>await backendRequest('harness.power.read') as unknown as {tasks:number;schedules:number;keepAwakeTasks:boolean;keepAwakeSchedules:boolean},onChange:state=>{powerState=state;tray?.setToolTip(trayTooltip());broadcast();}});if(hostLayout)saved=reconcileSavedWindows(saved,hostLayout.windows.map(entry=>({...entry,open:true})));const initial=structuredClone(saved.filter(entry=>entry.open&&entry.surface.kind!=='main')),savedDocked=saved.find(entry=>entry.surface.kind==='main')?.dockedBrowserId;startupDiagnostic('main-opening');const main=await mainWindow();startupDiagnostic('main-ready');clearTimeout(startupTimer);startup?.destroy();startup=undefined;if(savedDocked)moveBrowser(browserRecord(savedDocked),main,true);
+  startupTimer=setTimeout(()=>{if(quitting||quitPending)return;startup=new BrowserWindow({width:420,height:190,...nativeTitlebarOptions(process.platform),resizable:false,maximizable:false,minimizable:false,title:'Opening Gen V1',autoHideMenuBar:true,backgroundColor:'#0f0f0f',icon:join(dirname(fileURLToPath(import.meta.url)),'icon.png'),webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});startup.webContents.setWindowOpenHandler(()=>({action:'deny'}));startup.webContents.on('will-navigate',event=>event.preventDefault());void startup.loadFile(join(dirname(fileURLToPath(import.meta.url)),'startup.html')).catch(()=>{});},1200);
+  await startBackend();if(quitting)return;powerKeeper=createPowerKeeper({api:powerSaveBlocker,read:async()=>await backendRequest('harness.power.read') as unknown as {tasks:number;schedules:number;keepAwakeTasks:boolean;keepAwakeSchedules:boolean},onChange:state=>{powerState=state;tray?.setToolTip(trayTooltip());broadcast();}});if(hostLayout)saved=reconcileSavedWindows(saved,hostLayout.windows.map(entry=>({...entry,open:true})));const initial=structuredClone(saved.filter(entry=>entry.open&&entry.surface.kind!=='main')),savedDocked=saved.find(entry=>entry.surface.kind==='main')?.dockedBrowserId;startupDiagnostic('main-opening');const main=await mainWindow();startupDiagnostic('main-ready');clearTimeout(startupTimer);startup?.destroy();startup=undefined;if(savedDocked)moveBrowser(browserRecord(savedDocked),main,true);
   const failures:string[]=[];for(const entry of initial)try{await openSurface(entry.surface);}catch(error){failures.push(displayTitle(entry.surface)+': '+String(error instanceof Error?error.message:error));}
   restoringLayout=false;if(failures.length){layoutError='Some saved windows could not restore. Their layout is retained: '+failures.join('; ').slice(0,800);broadcast();}else if(!layoutError)persist();
   startUpdater();startAttention();
   const displaysChanged=()=>{attentionPopups?.displayChanged();const all=displays();for(const record of windows.values()){record.monitorRescued=!!record.placement&&!all.some(display=>display.id===record.placement!.displayId);applyPlacement(record,restoreDesktopPlacement(record.placement,all,surfaceSize(record.surface)));}installApplicationMenu();};screen.on('display-removed',displaysChanged);screen.on('display-added',displaysChanged);screen.on('display-metrics-changed',displaysChanged);startupSettled=true;
- }).catch(async error=>{startupDiagnostic('startup-failed',startupErrorDiagnostic(error));startupSettled=true;clearTimeout(startupTimer);startup?.destroy();startup=undefined;const message=String(error instanceof Error?error.message:error).slice(0,1200);process.stderr.write('Gen V1 startup failed: '+message+'\n');quitting=true;await stopBackend();if(!testData)await dialog.showMessageBox({type:'error',title:'Gen V1 could not start',message,buttons:['Close']});app.exit(1);});
+ }).catch(async error=>{if(quitting)return;startupDiagnostic('startup-failed',startupErrorDiagnostic(error));startupSettled=true;clearTimeout(startupTimer);startup?.destroy();startup=undefined;const message=String(error instanceof Error?error.message:error).slice(0,1200);process.stderr.write('Gen V1 startup failed: '+message+'\n');quitting=true;await stopBackend();if(!testData)await dialog.showMessageBox({type:'error',title:'Gen V1 could not start',message,buttons:['Close']});app.exit(1);});
 }

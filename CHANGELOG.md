@@ -33,6 +33,7 @@ Expect Windows SmartScreen to show a
 
 ### Workspace and UI
 
+- Refresh repository and application branding with the purple Halftone logo, desktop icons and usage guidance.
 - Add a durable split workspace with existing-thread dragging, retained editors,
   in-app floating conversations, parked-view recovery, undo/redo and named layouts;
   preserve legacy canvases and exact saved-layout ownership.

@@ -42,7 +42,7 @@ const preferenceRows: Record<string, { key: keyof UiPreferences; options?: reado
   'time-format': { key: 'timeFormat', options: ['system', '12h', '24h'], labels: ['System', '12 hour', '24 hour'], description: 'Clock format for thread and activity timestamps.' },
   'archive-confirmation': { key: 'archiveConfirmation', description: 'Ask before archiving.' },
   'unpin-confirmation': { key: 'unpinConfirmation', description: 'Ask before removing a pinned thread.' },
-  'keep-awake-tasks': { key: 'keepAwakeTasks', description: 'Hold this PC awake while task runs are active. Power button sleep is ignored while a hold is active.' },
+  'keep-awake-tasks': { key: 'keepAwakeTasks', description: 'Keep this PC awake while task runs are active. The screen can still turn off.' },
   'keep-awake-schedules': { key: 'keepAwakeSchedules', description: 'Hold this PC awake while scheduled runs are armed.' },
   'composer-context': { key: 'showComposerContext', description: 'Show conversation capacity beside the composer.' },
   'harness-composer-predictions': { key: 'composerPredictions', description: 'Uses the selected model and subscription quota.' },
@@ -162,16 +162,24 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const chooseSection = (id: string) => { if(id==='providers')setConnectionsOpened(true);setQuery(''); setSection(id); };
   const revealTarget = (item: SupportedSettingRow) => { if(item.targetId.startsWith('provider-'))setConnectionProvider(item.targetId.slice('provider-'.length));chooseSection(item.section); setPendingTarget(item.targetId); };
   const details = (item: SettingsInventoryRow): { description: string; after?: ReactNode; control: ReactNode } => {
+    if (item.id === 'keep-awake-tasks') {
+      const power = desktop?.state.power;
+      const status: Record<string, string> = { off: 'This PC sleeps normally.', idle: 'Work is armed, but the PC can still sleep between runs.', unavailable: 'Power status is unavailable. The app keeps retrying automatically.' };
+      const holdingCopy: Record<string, string> = { tasks: 'A task run is keeping this PC awake.', schedules: 'An armed schedule is keeping this PC awake.', both: 'Tasks and schedules are keeping this PC awake.' };
+      const label = power?.state === 'holding' ? holdingCopy[power.reason ?? 'both'] : (status[power?.state ?? 'off'] ?? status.off);
+      return {
+        description: preferenceRows[item.id]!.description,
+        after: desktop ? <><p className={`settings-power-status settings-power-${power?.state ?? 'off'}`} role="status" aria-live="polite"><span className="settings-power-dot" aria-hidden="true"/>{label}</p><p>Sleep, lid-close and power-button actions follow your system settings.</p></> : undefined,
+        control: <PreferenceControl item={item} preferences={preferences} update={update} busy={busy}/>
+      };
+    }
     if (item.id === 'keep-awake-schedules') {
       const power = desktop?.state.power;
       const locked = Boolean(!preferences.keepAwakeSchedules && power?.state === 'holding' && (power.reason === 'tasks' || power.reason === 'both'));
-      const status: Record<string, string> = { off: 'This PC sleeps normally.', idle: 'Work is armed, but the PC can still sleep between runs.', unavailable: 'Power status is unavailable — the app keeps retrying automatically.' };
-      const holdingCopy: Record<string, string> = { tasks: 'A task run is keeping this PC awake — side power-button sleep is blocked.', schedules: 'An armed schedule is keeping this PC awake — side power-button sleep is blocked.', both: 'Tasks and schedules are keeping this PC awake — side power-button sleep is blocked.' };
-      const label = power?.state === 'holding' ? holdingCopy[power.reason ?? 'both'] : (status[power?.state ?? 'off'] ?? status.off);
       return {
-        description: `${preferenceRows[item.id]!.description}${locked ? ' Task runs already hold this PC awake; the schedule setting can change once they finish.' : ''}`,
-        after: desktop ? <p className={`settings-power-status settings-power-${power?.state ?? 'off'}`} role="status"><span className="settings-power-dot" aria-hidden="true"/>{label}</p> : undefined,
-        control: <button type="button" role="switch" aria-label={item.title} aria-checked={preferences.keepAwakeSchedules} disabled={busy || locked} className="settings-switch" onClick={() => void update({ keepAwakeSchedules: !preferences.keepAwakeSchedules })}><span/></button>
+        description: preferenceRows[item.id]!.description,
+        after: locked ? <p id="settings-power-schedule-help">Task runs already hold this PC awake; the schedule setting can change once they finish.</p> : undefined,
+        control: <button type="button" role="switch" aria-label={item.title} aria-describedby={locked ? 'settings-power-schedule-help' : undefined} aria-checked={preferences.keepAwakeSchedules} disabled={busy || locked} className="settings-switch" onClick={() => void update({ keepAwakeSchedules: !preferences.keepAwakeSchedules })}><span/></button>
       };
     }
     if (item.id === 'thread-notifications') return { description: desktop ? preferenceRows[item.id]!.description : `${preferenceRows[item.id]!.description} System popups and sound are unavailable in this browser build; in-app notices stay active.`, control: <PreferenceControl item={item} preferences={preferences} update={update} busy={busy}/> };
