@@ -29,7 +29,7 @@ function syntheticRuntime() {
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'operation-recovery-')), stateDir = join(dir, 'state');
   const calls: string[] = [];
-  const executors = { 'integration.synthetic': async (op: Operation) => { calls.push(op.id); return { ok: true }; } };
+  const executors: Record<string, (op: Operation, control: { signal: AbortSignal }) => Promise<unknown>> = { 'integration.synthetic': async (op: Operation) => { calls.push(op.id); return { ok: true }; } };
   const options = { approvedWriteHooks: true, hostOperationExecutors: executors };
   let store = new Store(stateDir), adapter = syntheticRuntime(), service = new Service(store, adapter.runtime, options);
   cleanups.push(async () => { try { await service.dispose(); } finally { store.close(); rmSync(dir, { recursive: true, force: true }); } });
@@ -39,7 +39,7 @@ async function setup() {
   await send('message.send', { content: 'Bind the synthetic model', modelId: 'test/model' }, thread.id);
   await service.deliverOutbox(thread.id);
   return {
-    get store() { return store; }, get service() { return service; }, get adapter() { return adapter; }, send, calls, threadId: thread.id, dir,
+    get store() { return store; }, get service() { return service; }, get adapter() { return adapter; }, send, calls, executors, threadId: thread.id, dir,
     restart: async () => {
       await service.dispose(); store.close();
       store = new Store(stateDir); adapter = syntheticRuntime(); service = new Service(store, adapter.runtime, options);
@@ -85,6 +85,21 @@ it('restarts an approved-but-undispatched operation through resume', async () =>
   expect(x.store.get<Operation>('operation', op.id)!.status).toBe('succeeded');
   // The recorded receipt is delivered once through the normal outbox path.
   await vi.waitFor(() => expect(x.adapter.runs.some(run => run.inputIds?.includes('operation-result:' + op.id))).toBe(true));
+});
+
+it('keeps a recovered in-flight operation under the run controller so Stop still cancels it', async () => {
+  const x = await setup();
+  // Park the executor mid-effect: exactly the in-flight work Stop must reach.
+  // The run installs its controller after the recovered dispatch captured it,
+  // so an orphaned controller would let this operation survive the Stop.
+  x.executors['integration.synthetic'] = async (op, control) => { x.calls.push(op.id); await new Promise((_, reject) => control.signal.addEventListener('abort', () => reject(new Error('stopped')))); return { ok: true }; };
+  const op = x.seedOp({ approved: true });
+  await x.restart();
+  await x.resume();
+  await vi.waitFor(() => expect(x.calls).toEqual([op.id]));
+  await vi.waitFor(() => expect(x.adapter.runs.length).toBeGreaterThan(0));
+  await x.send('run.stop', {}, x.threadId);
+  await vi.waitFor(() => expect(x.store.get<Operation>('operation', op.id)!.status).toBe('unknown'));
 });
 
 it('restarts an approved operation on an uninterrupted thread at recovery', async () => {
