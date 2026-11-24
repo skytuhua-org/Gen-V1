@@ -202,8 +202,10 @@ export class HostFixture {
       finally { clearTimeout(pending); stage.finishedAt = new Date().toISOString(); stage.elapsedMs = performance.now() - stage.startedMs; }
     };
     return this.closing ??= (async () => {
-      await observe('host.close', () => host?.close());
-      await observe('widgets.close', () => widgets?.close());
+      // Keep-alive sockets from the browser hold server.close() pending past the
+      // test timeout; drain idle connections before closing.
+      await observe('host.close', () => { host?.server.closeIdleConnections(); return host?.close(); });
+      await observe('widgets.close', () => { widgets?.server.closeIdleConnections(); return widgets?.close(); });
       await observe('service.dispose', () => service?.dispose());
       await observe('store.close', () => store?.close());
     })();
