@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -297,7 +297,9 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       if(purpose==='memory-extraction')throw new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot read conversations.');
       if(purpose==='prediction')throw new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot read conversations.');
       const file = await validateSessionPath(storage, sessionPath);
-      return extractInputIds(await readFile(file, "utf8"));
+      const info = await stat(file).catch((error: unknown) => { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new HarnessError("PI_SESSION_MISSING", "Pi session history is missing or moved. Restore the session file or start a new session."); throw error; });
+      if (!info.isFile() || info.size > 32 * 1024 * 1024) throw new HarnessError("PI_HISTORY_LIMIT", "Pi session history exceeds the bounded reader limit.");
+      return extractInputIds(await readFile(file, "utf8").catch((error: unknown) => { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new HarnessError("PI_SESSION_MISSING", "Pi session history is missing or moved. Restore the session file or start a new session."); throw error; }));
     },
     async dispose() {
       disposed = true;

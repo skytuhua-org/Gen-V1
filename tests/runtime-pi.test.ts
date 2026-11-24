@@ -860,3 +860,27 @@ it("rejects a malformed UTF-8 Pi header instead of substituting characters", asy
     await expect(validateSessionPath(root, path, "thread")).rejects.toMatchObject({ code: "PI_SESSION_INVALID" });
   } finally { await fileSystem.rm(root, { recursive: true, force: true }); }
 });
+
+it("distinguishes missing, torn and oversized Pi history on resume reads", async () => {
+  const fileSystem = await import("node:fs/promises");
+  const root = await fileSystem.mkdtemp(join(tmpdir(), "pi-history-recovery-"));
+  const runtime = createPiRuntime({ dataDir: root });
+  try {
+    const { sessionsDir } = taskPaths(root, "thread");
+    await fileSystem.mkdir(sessionsDir, { recursive: true });
+    const path = join(sessionsDir, "session.jsonl");
+    const header = JSON.stringify({ type: "session", id: "s1", version: 3 });
+    const envelope = encodeInput({ ...input, prompt: "delivered work", inputId: "input-1" });
+    const delivered = JSON.stringify({ type: "message", message: { role: "user", content: envelope } });
+    // A torn final append still yields every durable delivered input.
+    await fileSystem.writeFile(path, header + "\n" + delivered + "\n" + delivered.slice(0, 20));
+    expect(await runtime.history(path)).toEqual(["input-1"]);
+    // A missing transcript is a typed recovery state, not a raw ENOENT.
+    await fileSystem.rm(path);
+    await expect(runtime.history(path)).rejects.toMatchObject({ code: "PI_SESSION_MISSING" });
+    await expect(validateSessionPath(root, path, "thread")).rejects.toMatchObject({ code: "PI_SESSION_MISSING" });
+    // Oversized transcripts are rejected before a full read.
+    await fileSystem.writeFile(path, header + "\n" + "x".repeat(33 * 1024 * 1024));
+    await expect(runtime.history(path)).rejects.toMatchObject({ code: "PI_HISTORY_LIMIT" });
+  } finally { await runtime.dispose(); await fileSystem.rm(root, { recursive: true, force: true }); }
+});
