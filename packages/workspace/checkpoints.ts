@@ -365,7 +365,19 @@ export class CheckpointService {
   async list(owner: CheckpointScope, options: { cursor?: string; signal?: AbortSignal } = {}) {
     const signal = options.signal ?? new AbortController().signal;
     const entries = this.checkpoints(owner).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const start = options.cursor ? Number(options.cursor) : 0;
+    let start = 0;
+    if (options.cursor) {
+      // The cursor is bound to the exact owner and the snapshot it pages: it
+      // carries the resume position plus the id of the newest entry when it
+      // was issued. Anything else — invented, malformed, foreign or stale —
+      // fails closed instead of serving a shifted page.
+      const match = /^(\d+):(.+)$/.exec(options.cursor);
+      const position = match ? Number(match[1]) : NaN;
+      const head = match?.[2];
+      if (!match || !Number.isSafeInteger(position) || entries[0]?.id !== head || position > entries.length)
+        throw new HarnessError("REVISION_CHANGED", "Checkpoint listing changed; restart pagination from the first page.");
+      start = position;
+    }
     const page = entries.slice(start, start + 50);
     // Refresh retention for the page: a missing blob demotes the checkpoint.
     for (const entry of page) {
@@ -374,7 +386,7 @@ export class CheckpointService {
     return {
       owner,
       items: page.map((entry) => this.adapterCheckpoint(entry, signal)),
-      nextCursor: start + 50 < entries.length ? String(start + 50) : null,
+      nextCursor: start + 50 < entries.length ? `${start + 50}:${entries[0]!.id}` : null,
     };
   }
 
