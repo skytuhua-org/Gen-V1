@@ -116,7 +116,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       {error ? <ErrorState className="composer-command-status" message={error} retryLabel="Reload" onRetry={() => {setReload(value => value + 1);}}/> : !loading && !options.length && !unavailableSources.length && <div role="status" className="composer-command-status"><Search size={14}/>No commands or skills found</div>}
       {Boolean(unavailableSources.length) && <div role="status" aria-label="Unavailable skill sources" className="composer-command-unavailable">{unavailableSources.map(source => <div key={source.id}><span>{source.label}</span><span>{source.availability.status === 'unavailable' ? availabilityLabel[source.availability.reason] : ''}</span></div>)}</div>}
       {!loading && page?.nextCursor && <button type="button" className="composer-command-more" onPointerDown={event => event.preventDefault()} onClick={() => void loadMore()}>Load more skills</button>}
-      <div className="composer-command-hint" aria-hidden="true">↑ ↓ Navigate <span>Enter/Tab Select · Esc Close</span></div>
+      <div className="composer-command-hint" aria-hidden="true">↑ ↓ Navigate · <span>Enter/Tab Select · Esc Close</span></div>
     </Popover>
     {!open && error && <div role="status" className="composer-command-error">{error}<button type="button" aria-label="Dismiss command error" onClick={() => setError('')}><X size={13}/></button></div>}
   </>;
