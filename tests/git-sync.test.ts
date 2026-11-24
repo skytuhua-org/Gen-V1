@@ -88,7 +88,7 @@ it('fetch moves only refs/remotes/origin/* and pull fast-forwards a clean behind
  const f=await fixture(),{GitHubTools}=await import('../packages/workspace/github.ts');
  const bare=join(f.root,'remote.git');execFileSync('git',['init','--bare','-q',bare],{windowsHide:true});
  const github=new GitHubTools(f.tools,{} as never,'gh',()=>bare);
- const status=()=>f.git(f.worktree,'status','--porcelain=v1','-z').split('').filter(entry=>entry&&!entry.endsWith('.harness-directory-guard')).join('');
+ const status=()=>f.git(f.worktree,'status','--porcelain=v1','-z').split('\0').filter(entry=>entry&&!entry.endsWith('.harness-directory-guard')).join('');
  const before=status(),head=f.git(f.worktree,'rev-parse','HEAD');
  const remote=await remoteCommit(f,'remote.txt','remote side\n');f.git(f.path,'push','-q',bare,'HEAD:refs/heads/'+f.branch);
  let sync=await github.fetch(f.projectId,f.threadId);
