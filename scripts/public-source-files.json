@@ -3002,6 +3002,8 @@
     "tests/e2e/composer-press.spec.ts",
     "tests/e2e/composer-press.vite.config.ts",
     "tests/e2e/composer-reference.spec.ts",
+    "tests/e2e/connect-project.playwright.config.ts",
+    "tests/e2e/connect-project.spec.ts",
     "tests/e2e/context-compact-fixture.tsx",
     "tests/e2e/context-compact.spec.ts",
     "tests/e2e/context-connections.playwright.config.ts",
