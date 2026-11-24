@@ -8,18 +8,22 @@ const starts=[...jobSource.matchAll(/^  ([\w-]+):\n/gm)];
 const jobs=starts.map((match,index)=>{
   const block=jobSource.slice(match.index,starts[index+1]?.index);
   const shards=/^        shard:\s*(\[[^\]\n]+\])/m.exec(block)?.[1];
-  return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',shards:shards?JSON.parse(shards) as number[]:null};
+  return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',needs:/^    needs:\s*(.+)$/m.exec(block)?.[1],shards:shards?JSON.parse(shards) as number[]:null};
 });
 const requiredJobs=['checks','test-1','test-2','test-3','test-4','browser','installed-memory'];
 const pullRequestJobs=['changes','checks','select','selected'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
 type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number;plansOnly?:string;classificationResult?:string};
 function context(event:CiEvent){return {workflow:'CI',ref:event.ref??'refs/pull/42/merge',event_name:event.name,event:event.name==='pull_request'?{action:event.action,pull_request:{number:42,draft:event.draft}}:{}};}
-function evaluate(expression:string,event:CiEvent):unknown {
+function classifierResult(event:CiEvent){return event.classificationResult??(event.name==='pull_request'&&event.draft===false?'success':'skipped');}
+function evaluate(expression:string,event:CiEvent,dependencySuccess=true):unknown {
   // The policy uses boolean/string comparisons and property access, whose
   // JavaScript and Actions semantics agree for these boolean/string fixtures.
-  const skipPlans=event.plansOnly==='true'&&(event.classificationResult??'success')==='success';
-  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),cancelled:()=>false,needs:{changes:{result:event.classificationResult??'success',outputs:{plans_only:event.plansOnly??'false'}},select:{result:skipPlans?'skipped':'success',outputs:{total:skipPlans?'':String(event.selectedShards??1)}}}},{timeout:100});
+  // Actions adds success() when the condition has no explicit status function.
+  // A failed/skipped ancestor still matters after an intermediate job recovers.
+  if(!/\b(?:success|failure|always|cancelled)\s*\(/.test(expression)&&!dependencySuccess)return false;
+  const skipPlans=event.plansOnly==='true'&&classifierResult(event)==='success';
+  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),cancelled:()=>false,needs:{changes:{result:classifierResult(event),outputs:{plans_only:event.plansOnly??'false'}},select:{result:skipPlans?'skipped':'success',outputs:{total:skipPlans?'':String(event.selectedShards??1)}}}},{timeout:100});
 }
 function scheduledJobs(event:CiEvent):string[]|null {
   if(event.name==='pull_request'&&!types.includes(event.action??''))return null;
@@ -29,7 +33,8 @@ function scheduledJobs(event:CiEvent):string[]|null {
   }
   if(event.name==='workflow_dispatch'&&!/^  workflow_dispatch:/m.test(workflow))return null;
   if(event.name==='merge_group'&&!/^  merge_group:/m.test(workflow))return null;
-  return jobs.filter(job=>evaluate(job.condition,event)).flatMap(job=>job.shards?job.shards.map(shard=>job.id+'/'+shard):[job.id]);
+  const classifierSucceeded=classifierResult(event)==='success';
+  return jobs.filter(job=>evaluate(job.condition,event,!job.needs||classifierSucceeded)).flatMap(job=>job.shards?job.shards.map(shard=>job.id+'/'+shard):[job.id]);
 }
 
 it.each(['opened','synchronize','reopened'])('keeps draft %s events out of every runner job',action=>{
@@ -48,6 +53,11 @@ it('keeps application checks enabled when classification is absent or invalid',(
     const block=jobSource.split(new RegExp('^  '+id+':\\n','m'))[1]?.split(/^  \S/m)[0]??'';
     expect(block).toMatch(/^    needs: changes$/m);
     expect(block).toContain('!cancelled()');
+  }
+});
+it('runs selected tests after selection recovers from a failed or skipped classifier ancestor',()=>{
+  for(const classificationResult of ['failure','skipped']){
+    expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,classificationResult,selectedShards:2})).toContain('selected');
   }
 });
 it('classifies the merge diff without installing or executing application dependencies',()=>{
