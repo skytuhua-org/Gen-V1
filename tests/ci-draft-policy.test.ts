@@ -11,14 +11,15 @@ const jobs=starts.map((match,index)=>{
   return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',shards:shards?JSON.parse(shards) as number[]:null};
 });
 const requiredJobs=['checks','test-1','test-2','test-3','test-4','browser','installed-memory'];
-const pullRequestJobs=['checks','select','selected'];
+const pullRequestJobs=['changes','checks','select','selected'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
-type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number};
+type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number;plansOnly?:string;classificationResult?:string};
 function context(event:CiEvent){return {workflow:'CI',ref:event.ref??'refs/pull/42/merge',event_name:event.name,event:event.name==='pull_request'?{action:event.action,pull_request:{number:42,draft:event.draft}}:{}};}
 function evaluate(expression:string,event:CiEvent):unknown {
   // The policy uses boolean/string comparisons and property access, whose
   // JavaScript and Actions semantics agree for these boolean/string fixtures.
-  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),needs:{select:{outputs:{total:String(event.selectedShards??1)}}}},{timeout:100});
+  const skipPlans=event.plansOnly==='true'&&(event.classificationResult??'success')==='success';
+  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),cancelled:()=>false,needs:{changes:{result:event.classificationResult??'success',outputs:{plans_only:event.plansOnly??'false'}},select:{result:skipPlans?'skipped':'success',outputs:{total:skipPlans?'':String(event.selectedShards??1)}}}},{timeout:100});
 }
 function scheduledJobs(event:CiEvent):string[]|null {
   if(event.name==='pull_request'&&!types.includes(event.action??''))return null;
@@ -36,6 +37,24 @@ it.each(['opened','synchronize','reopened'])('keeps draft %s events out of every
 });
 it.each(['opened','synchronize','reopened'])('runs checks and diff-selected tests for reviewable %s events',action=>{
   expect(scheduledJobs({name:'pull_request',action,draft:false})).toEqual(pullRequestJobs);
+});
+it('uses only the lightweight classifier for a proven plan-only pull request',()=>{
+  expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,plansOnly:'true'})).toEqual(['changes']);
+});
+it('keeps application checks enabled when classification is absent or invalid',()=>{
+  for(const plansOnly of ['','false','unknown'])expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,plansOnly})).toEqual(pullRequestJobs);
+  for(const classificationResult of ['failure','skipped',''])expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,plansOnly:'true',classificationResult})).toEqual(pullRequestJobs);
+  for(const id of ['checks','select']){
+    const block=jobSource.split(new RegExp('^  '+id+':\\n','m'))[1]?.split(/^  \S/m)[0]??'';
+    expect(block).toMatch(/^    needs: changes$/m);
+    expect(block).toContain('!cancelled()');
+  }
+});
+it('classifies the merge diff without installing or executing application dependencies',()=>{
+  const changes=jobSource.split(/^  changes:\n/m)[1]?.split(/^  checks:\n/m)[0]??'';
+  expect(changes).toContain('node scripts/ci-plan-scope.mjs');
+  expect(changes).toMatch(/^          fetch-depth: 2$/m);
+  expect(changes).not.toMatch(/\.\/\.github\/actions\/setup|pnpm|npm install|continue-on-error/);
 });
 it('starts pull-request feedback when a draft becomes ready without another commit',()=>{
   expect(scheduledJobs({name:'pull_request',action:'opened',draft:true})).toEqual([]);
@@ -133,11 +152,11 @@ it('selects pull-request tests from the merge commit diff and keeps the full sui
   for(const id of ['test-1','test-2','test-3','test-4','browser','installed-memory'])expect(jobs.find(job=>job.id===id)?.condition).toBe("github.event_name != 'pull_request'");
 });
 it('books no Windows test runner when the diff reaches no test',()=>{
-  expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual(['checks','select']);
+  expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual(['changes','checks','select']);
 });
 it('fails any job that exceeds its time budget',()=>{
   const budgets=Object.fromEntries(starts.map((match,index)=>[match[1],Number(/^    timeout-minutes: (\d+)$/m.exec(jobSource.slice(match.index,starts[index+1]?.index))?.[1])]));
-  expect(budgets).toEqual({checks:15,'test-1':22,'test-2':22,'test-3':22,'test-4':22,browser:30,'installed-memory':60,select:5,selected:22});
+  expect(budgets).toEqual({changes:5,checks:15,'test-1':22,'test-2':22,'test-3':22,'test-4':22,browser:30,'installed-memory':60,select:5,selected:22});
 });
 
 it('gives every job skipped on pull requests a literal name so its required check still reports',()=>{
