@@ -158,12 +158,34 @@ export class Store {
   }
   command(command: HostCommand, apply: () => unknown): CommandReceipt {
     const existing = this.receipt(command); if (existing) return existing;
-    const {event,result}=this.commit(command.type,command.threadId??null,apply,command);
-    return {commandId:command.id,eventSeq:event.seq,result};
+    try {
+      const {event,result}=this.commit(command.type,command.threadId??null,apply,command);
+      return {commandId:command.id,eventSeq:event.seq,result};
+    } catch (error) {
+      // A competing writer may have committed the same command while ours
+      // failed; its durable receipt wins over our error.
+      const raced = this.receipt(command);
+      if (raced) return raced;
+      throw error;
+    }
+  }
+  /** SQLITE_BUSY (5) and SQLITE_LOCKED (6) classify as retryable store contention. */
+  private static transactionError(error: unknown): unknown {
+    const errcode = (error as { errcode?: number }).errcode;
+    if (errcode === 5 || errcode === 6) return new HarnessError('STORE_BUSY', 'The store is busy with another writer. Retry the command.', { cause: (error as Error).message });
+    return error;
   }
   private commit(type: string, threadId: string | null, apply: () => unknown, command?: HostCommand): {event:WorkspaceEvent;result:unknown} {
     if (this.transactionOpen) throw new Error("Nested command transaction");
-    this.db.exec("BEGIN IMMEDIATE"); this.transactionOpen = true;
+    if (this.db.isTransaction) {
+      // A failed rollback can leave this connection's own transaction open;
+      // the store owns the connection, so reclaim it instead of wedging.
+      try { this.db.exec("ROLLBACK"); } catch { /* The orphan is closed on a best-effort basis. */ }
+      if (this.db.isTransaction) throw new HarnessError('STORE_INCONSISTENT', 'The store transaction could not be reconciled. Reopen the store.');
+    }
+    try { this.db.exec("BEGIN IMMEDIATE"); }
+    catch (error) { throw Store.transactionError(error); }
+    this.transactionOpen = true;
     let event: WorkspaceEvent;
     let result: unknown;
     try {
@@ -174,7 +196,11 @@ export class Store {
       event = { seq: Number(inserted.lastInsertRowid), id, type, threadId, payload: { result }, occurredAt };
       if(command){const receipt:CommandReceipt={commandId:command.id,eventSeq:event.seq,result};this.statements.insertReceipt.run(command.id,digest(command),JSON.stringify(receipt));}
       this.db.exec("COMMIT");
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+    } catch (error) {
+      // Preserve the causal failure: a rollback error must not replace it.
+      try { this.db.exec("ROLLBACK"); } catch { /* best-effort rollback */ }
+      throw Store.transactionError(error);
+    }
     finally { this.transactionOpen = false; }
     this.committedEvents.push(event!);
     this.drainCommittedEvents();
