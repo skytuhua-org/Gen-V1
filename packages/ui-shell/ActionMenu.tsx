@@ -22,10 +22,12 @@ export interface ActionMenuProps {
   iconOnly?: boolean;
   onOpenChange: (open: boolean) => void;
   disabled?: boolean;
+  /** Optional tab index on the trigger button (e.g. roving tabindex lists). */
+  triggerTabIndex?: number;
   items: readonly ActionMenuItem[];
 }
 
-export function ActionMenu({ label, icon, iconOnly, open, onOpenChange, disabled, items }: ActionMenuProps) {
+export function ActionMenu({ label, icon, iconOnly, open, onOpenChange, disabled, triggerTabIndex, items }: ActionMenuProps) {
   const anchor = useRef<HTMLButtonElement>(null), content = useRef<HTMLDivElement>(null);
   const id = useId(), start = useRef(false);
   const [fieldsetDisabled, setFieldsetDisabled] = useState(false);
@@ -60,7 +62,7 @@ export function ActionMenu({ label, icon, iconOnly, open, onOpenChange, disabled
   };
   const navigation = useListNavigation(items, choose, close);
   return <>
-    <button ref={anchor} type="button" className="ui-action-trigger" disabled={disabled} aria-label={iconOnly ? label : undefined}
+    <button ref={anchor} type="button" className="ui-action-trigger" disabled={disabled} tabIndex={triggerTabIndex} aria-label={iconOnly ? label : undefined}
       aria-haspopup="menu" aria-expanded={open && !effectivelyDisabled} aria-controls={open && !effectivelyDisabled ? id : undefined}
       onClick={() => { start.current = false; navigation.reset(); onOpenChange(!open); }}
       onKeyDown={event => {

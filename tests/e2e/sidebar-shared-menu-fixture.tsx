@@ -34,7 +34,7 @@ function Fixture() {
     <div className="app-shell" data-theme="dark" style={{height: '100vh'}}>
       <ShellSidebar elementRef={elementRef} searchRef={searchRef} mobile={query.has('mobile')} open={visible} layout={layout}
         preferences={{...DEFAULT_PREFERENCES, projectGrouping: true, showWorkingSection: false, panelAnimations: false}}
-        matching={rows} selectedId="thread-0" loaded creating={false} search="" setSearch={() => {}} close={() => setVisible(false)}
+        matching={rows} selectedId="thread-0" loaded creating={false} search="" setSearch={() => {}} close={() => setVisible(false)} hoverBlocked={query.has('nohover')}
         toggleCollapsed={() => setLayout(value => ({...value, sidebarCollapsed: !value.sidebarCollapsed}))}
         setFolded={(key, folded) => setLayout(value => ({...value, folded: {...value.folded, [key]: folded}}))}
         select={id => calls.push({select: id})} create={() => {}} settings={() => {}}

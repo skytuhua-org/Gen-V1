@@ -94,6 +94,52 @@ test('Custom has no placement action or shortcut and row context keys add no men
   await options(page).click(); await expect(menu(page).getByRole('menuitem', {name: 'Place in workspace'})).toHaveCount(0);
 });
 
+test('roving tabindex keeps one row in the tab order and arrows move focus without selecting', async ({page}) => {
+  await expect(page.locator('nav.thread-list')).not.toHaveAttribute('tabindex', '0');
+  await expect(page.locator('.thread-item[tabindex="0"]')).toHaveCount(1);
+  const selected = page.getByRole('button', {name: 'Selected conversation Ready', exact: true});
+  await expect(selected).toHaveAttribute('tabindex', '0');
+  await selected.focus();
+  await page.keyboard.press('ArrowDown');
+  const second = page.getByRole('button', {name: 'Other conversation Working', exact: true});
+  await expect(second).toBeFocused();
+  // focus moved but selection did not
+  await expect(page.locator('.thread-item[aria-current="page"]')).toHaveAttribute('aria-label', 'Selected conversation Ready');
+  await page.keyboard.press('End');
+  const last = page.getByRole('button', {name: 'Delegate conversation Ready', exact: true});
+  await expect(last).toBeFocused();
+  await page.keyboard.press('ArrowDown'); // no wrapping off the list
+  await expect(last).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(selected).toBeFocused();
+  await page.keyboard.press('ArrowUp'); // stops at the first row
+  await expect(selected).toBeFocused();
+});
+
+test('tab reaches only the focused row’s actions, Escape returns to search and Enter opens', async ({page}) => {
+  // hover cards would otherwise open on focus and turn Tab into 'enter card'
+  await page.goto('/sidebar-shared-menu-check?nohover');
+  await expect(page.locator('.sidebar-row-action[tabindex="0"], .sidebar-thread-menu-button .ui-action-trigger[tabindex="0"]')).toHaveCount(0);
+  const selected = page.getByRole('button', {name: 'Selected conversation Ready', exact: true});
+  await selected.focus();
+  await expect(page.locator('.sidebar-row-action[tabindex="0"]')).toHaveCount(1);
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', {name: 'Archive Selected conversation', exact: true})).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', {name: 'Options for Selected conversation', exact: true})).toBeFocused();
+  await selected.focus();
+  await page.keyboard.press('Escape'); // row Escape hands focus to search, not a filter clear
+  await expect(page.getByLabel('Search threads')).toBeFocused();
+  await selected.focus();
+  await page.keyboard.press('Enter');
+  expect(await calls(page)).toEqual([{select: 'thread-0'}]);
+});
+
+test('an empty thread list keeps its single nav tab stop', async ({page}) => {
+  await page.getByRole('button', {name: 'Remove threads'}).click();
+  await expect(page.locator('nav.thread-list')).toHaveAttribute('tabindex', '0');
+});
+
 test('hover is suppressed while the menu is open and drag retains its scoped payload', async ({page}) => {
   const row = page.getByRole('button', {name: 'Other conversation Working', exact: true});
   await row.hover(); await expect(page.locator('.thread-hover-card[data-state="open"]')).toBeVisible();

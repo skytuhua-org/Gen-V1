@@ -161,6 +161,8 @@ export function ShellSidebar({
   const [menuId, setMenuId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'working' | 'waiting'>('all');
   const [showAllSettled, setShowAllSettled] = useState(false);
+  const [focusedThreadId, setFocusedThreadId] = useState<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLElement>());
   const navRef = useRef<HTMLElement | null>(null);
   const threadMove = useThreadMove(elementRef, matching,
     !mobile && !layout.sidebarCollapsed,
@@ -189,6 +191,17 @@ export function ShellSidebar({
   const orderedRemaining = orderSidebarProjects(remaining, preferences.projectGrouping, preferences.projectOrder);
   const settledFolded = layout.folded['settled'] ?? false;
   const visibleSettled = showAllSettled ? settled : settled.slice(0, 6);
+  // Flattened rendered order (pinned → working → remaining → settled) drives roving tabindex.
+  const renderedRows = [...pinned, ...working, ...orderedRemaining, ...visibleSettled];
+  const rovingId = focusedThreadId ?? selectedId ?? renderedRows[0]?.id;
+  const moveRowFocus = (fromId: string, direction: 'up' | 'down' | 'first' | 'last') => {
+    const index = renderedRows.findIndex(item => item.id === fromId);
+    const target = direction === 'first' ? renderedRows[0] : direction === 'last' ? renderedRows[renderedRows.length - 1] : direction === 'down' ? renderedRows[index + 1] : renderedRows[index - 1];
+    if (!target) return;
+    const element = rowRefs.current.get(target.id);
+    element?.focus();
+    element?.scrollIntoView({ block: 'nearest' });
+  };
   const locked = search.trim().length > 0 || filter !== 'all';
   const reorder = useThreadReorder(navRef, {
     // Ordering needs every settled row; only rendering stops at six.
@@ -207,6 +220,7 @@ export function ShellSidebar({
     <span className="sidebar-thread-menu-button" {...threadMove.menuEvents}>
       <ActionMenu label={`Options for ${item.title}`} icon={<MoreHorizontal size={14} aria-hidden="true" />} iconOnly
         open={menuId === item.id} onOpenChange={open => setMenuId(open ? item.id : null)}
+        triggerTabIndex={focusedThreadId === item.id ? 0 : -1}
         items={[
           ...(onPlaceThread ? [{id: 'place', label: 'Place in workspace', shortcut: 'Alt Enter', onSelect: () => onPlaceThread(item)}] : []),
           ...(detachThread ? [{id: 'detach', label: 'Detach thread', icon: <ExternalLink size={13} />, onSelect: () => detachThread(item)}] : []),
@@ -236,12 +250,19 @@ export function ShellSidebar({
         key={item.id}
         data-thread-id={item.id}
         className={`sidebar-thread-row ${compactSettled ? 'sidebar-settled-row' : ''} ${item.id === selectedId ? 'active' : ''} ${item.kind === 'delegate' ? 'sidebar-delegate' : ''} ${reorder.dragging?.id === item.id ? 'sidebar-drag-source' : ''}`}
+        onFocus={() => setFocusedThreadId(item.id)}
+        onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusedThreadId(null); }}
       >
         <ThreadHoverCard facts={{scope,title:item.title,project:item.projectName?{name:item.projectName,monogram:projectMonogram(item.projectName)}:undefined,model:item.modelId??undefined,reasoning:item.thinkingLevel??undefined,activity:threadStatus(item),lastActivity:{label:threadAge(item.updatedAt),at:item.updatedAt},parent:item.parentThreadId?{threadId:item.parentThreadId,title:matching.find(parent=>parent.id===item.parentThreadId)?.title}:undefined}}
           cache={hoverCache} loadFacts={copy&&scope.projectId?loadPersonalThreadHover:undefined} projectColors={preferences.projectColors} onOpenPR={onOpenThreadPR} preferredSide="right"
           blocked={hoverBlocked||Boolean(menuId)||Boolean(reorder.dragging)||(!mobile&&layout.sidebarCollapsed)||(mobile&&!open)}>{trigger=><button {...trigger}
           type="button"
           className="thread-item"
+          ref={element => {
+            if (element) rowRefs.current.set(item.id, element); else rowRefs.current.delete(item.id);
+            (trigger.ref as {current: HTMLButtonElement | null}).current = element;
+          }}
+          tabIndex={item.id === rovingId ? 0 : -1}
           draggable={!locked}
           onDragStart={event => {
             event.dataTransfer.effectAllowed = 'copyMove';
@@ -256,7 +277,17 @@ export function ShellSidebar({
               onPlaceThread(item);
               return;
             }
-            if (reorder.key(item, event)) return;
+            if (event.altKey || event.ctrlKey || event.metaKey) {
+              if (reorder.key(item, event)) return;
+            } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+              event.preventDefault();
+              moveRowFocus(item.id, event.key === 'ArrowDown' ? 'down' : event.key === 'ArrowUp' ? 'up' : event.key === 'Home' ? 'first' : 'last');
+              return;
+            } else if (event.key === 'Escape') {
+              if (reorder.key(item, event)) return;
+              searchRef.current?.focus();
+              return;
+            } else if (reorder.key(item, event)) return;
             trigger.onKeyDown?.(event);
           }}
           aria-label={`${item.title} ${threadStatus(item)}`}
@@ -317,6 +348,7 @@ export function ShellSidebar({
           <button type="button" className="sidebar-row-action" aria-label={`Archive ${item.title}`}
             title={item.runId ? 'Stop the task before archiving.' : 'Archive'}
             disabled={Boolean(item.runId)}
+            tabIndex={focusedThreadId === item.id ? 0 : -1}
             onClick={() => archive(item.id)}>
             <Archive size={13} aria-hidden="true" />
           </button>
@@ -424,7 +456,7 @@ export function ShellSidebar({
           <button type="button" className="icon-button" aria-label="Clear thread filter" title="Show all threads" onClick={() => setFilter('all')}><X size={12} /></button>
         </div>
       )}
-      <nav className="thread-list" aria-label="Threads" tabIndex={0} ref={navRef}>
+      <nav className="thread-list" aria-label="Threads" tabIndex={visibleMatching.length === 0 ? 0 : undefined} ref={navRef}>
         {group('pinned', 'Pinned', pinned, {
           list: 'pinned',
           keepVisible: !locked,
