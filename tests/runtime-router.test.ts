@@ -234,5 +234,9 @@ it('keeps healthy provider models while a sibling provider signs in',async()=>{
  expect(refreshQueries.every(q=>q?.providerId!=='github-copilot')).toBe(true);
  expect(refreshQueries.every(q=>q?.refresh===true)).toBe(true);
  expect(refreshed.some(model=>model.provider==='openai')).toBe(true);
+ // Every provider disconnected: the probe rejects so sign-in guidance wins.
+ vi.mocked(pi.runtime.models).mockRejectedValue(Object.assign(new Error('Sign in first.'),{code:'PI_AUTH_REQUIRED'}));
+ vi.mocked(official.runtime.models).mockRejectedValue(new Error('discovery failed'));
+ await expect(runtime.models({refresh:true})).rejects.toMatchObject({code:'AI_AUTH_REQUIRED'});
  await runtime.dispose();
 });
