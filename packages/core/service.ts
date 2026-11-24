@@ -1241,9 +1241,10 @@ export class Service {
           || digest(ownerFor(currentThread)) !== digest(ownerFor(thread)) || !current || digest(current) !== digest(operation))
           throw new HarnessError("STALE_OPERATION", "The action or its owner changed while inspecting its outcome. Reload the action before inspecting again.");
         const status: Operation["status"] = observed.status === "unknown" && resolution ? resolution as Operation["status"] : observed.status;
-        const next = { ...current, status, ...(status === observed.status && observed.result !== undefined ? { result: observed.result } : {}), error: status === "unknown" || status !== observed.status ? observed.message : undefined };
+        const dispositioned = status !== observed.status;
+        const next = { ...current, status, ...(dispositioned ? {} : observed.result !== undefined ? { result: observed.result } : {}), error: status === "unknown" || dispositioned ? observed.message : undefined };
         this.store.put("operation", operation.id, thread.id, next); this.operationData(next);
-        if (status !== observed.status) this.enqueueInput({ id: randomUUID(), threadId: thread.id, content: "The owner resolved the unobserved outcome of operation " + operation.id + " (" + operation.kind + ") as " + status + ". " + observed.message, status: "persisted", runId: null });
+        if (dispositioned) this.enqueueInput({ id: randomUUID(), threadId: thread.id, content: "The owner resolved the unobserved outcome of operation " + operation.id + " (" + operation.kind + ") as " + status + ". " + observed.message, status: "persisted", runId: null });
         return { ...observed, status };
       });
     }
@@ -2246,7 +2247,7 @@ export class Service {
   // instead of letting a failed admission mark them 'failed'.
   private dispatchApprovedPrepared(threadId: string): void {
     const thread = this.store.get<Thread>("thread", threadId);
-    if (!thread || thread.mode === "plan" || ["stopped", "interrupted"].includes(thread.status) || this.hasGate(threadId) || this.effects.admissionsDisabled()) return;
+    if (!thread || thread.mode === "plan" || ["stopped", "interrupted"].includes(thread.status) || this.store.get("archivedThread", threadId) || this.hasGate(threadId) || this.effects.admissionsDisabled()) return;
     for (const op of this.store.all<Operation>("operation", threadId).filter(o => o.approved && o.status === "prepared")) this.background(this.dispatchOperation(op.id));
   }
   async dispatchOperation(id: string): Promise<unknown> {
