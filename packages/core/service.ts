@@ -75,7 +75,7 @@ import {cancelImport,commitImport,prepareImport,stageImport} from './history-imp
 import type {MemoryExtractionAdmission,MemoryExtractionJob} from './memory-extraction.ts';
 import type {MemoryAccess,MemoryAction,MemoryScope} from '../contracts/project-memory.ts';
 import {BackgroundWorkCoordinator,type BackgroundWorkOptions} from './background-work.ts';
-import {ExternalIntakeCoordinator,type IntakeAuth} from './external-intake.ts';
+import {ExternalIntakeCoordinator,type IntakeAuth,type IntakeRecord} from './external-intake.ts';
 import type {ModelRequestGate} from '../runtime/model-capacity.ts';
 import type {BackgroundWorkKind} from '../contracts/background-work.ts';
 
@@ -309,9 +309,9 @@ export class Service {
       createTask:async request=>{
         // S10: the approved external task enters the same project, role and
         // execution gates as a manual task; external text carries no authority.
-        const created=await this.command({id:randomUUID(),type:'thread.create',payload:{title:request.title.slice(0,140),...(request.projectId?{projectId:request.projectId}:{})}});
+        const created=await this.command({id:request.threadCommandId,type:'thread.create',payload:{title:request.title.slice(0,140),...(request.projectId?{projectId:request.projectId}:{})}});
         const thread=created.result as Thread;
-        await this.command({id:randomUUID(),type:'message.send',threadId:thread.id,payload:{content:request.content,modelId:request.modelId}});
+        await this.command({id:request.messageCommandId,type:'message.send',threadId:thread.id,payload:{content:request.content,modelId:request.modelId}});
         return {threadId:thread.id};
       }});
     this.curatorTimer=setInterval(()=>{if(!this.closed&&!this.updateClosing)this.curateIdle();},60_000);this.curatorTimer.unref();
@@ -2433,6 +2433,13 @@ export class Service {
     this.backgroundWork.recover();
     this.backgroundWork.start();
     this.intake.start();
+    // An approved external task whose host died between admission and dispatch
+    // still holds a persisted input, and replaying the approval is rejected as
+    // a duplicate, so recovery re-delivers it rather than stranding the task.
+    for (const record of this.store.all<IntakeRecord>('intakeRecord')) {
+      const threadId = record.disposition === 'APPROVED' ? record.decision?.threadId : null;
+      if (threadId && this.store.all<Outbox>('outbox', threadId).some(i => i.status !== 'handled')) this.background(this.deliverOutbox(threadId));
+    }
     // M09 recovery runs after the listeners bind (service.recover is called
     // post-listen in launchHost) so a failed launch never mutates saved work.
     this.agentWork.recover();
