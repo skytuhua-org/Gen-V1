@@ -24,7 +24,7 @@ async function serve(page: Parameters<typeof serveTaskFixture>[0]) {
 test('pasting an image uploads it through resource.upload and shows a chip without touching the draft', async ({page}) => {
   const host = await serve(page);
   const draft = page.getByRole('textbox', {name: 'Message', exact: true});
-  const allowed = await draft.evaluate(paste, 'image');
+  const allowed = await draft.evaluate<boolean, Parameters<typeof paste>[1], HTMLElement>(paste, 'image');
   expect(allowed).toBe(false);
   await expect.poll(() => host.commands.filter(command => command.type === 'resource.upload')).toHaveLength(1);
   const upload = host.commands.find(command => command.type === 'resource.upload')!;
@@ -37,21 +37,21 @@ test('pasting an image uploads it through resource.upload and shows a chip witho
 test('pasting plain text inserts natively and uploads nothing', async ({page}) => {
   const host = await serve(page);
   const draft = page.getByRole('textbox', {name: 'Message', exact: true});
-  const allowed = await draft.evaluate(paste, 'text');
+  const allowed = await draft.evaluate<boolean, Parameters<typeof paste>[1], HTMLElement>(paste, 'text');
   expect(allowed).toBe(true);
   expect(host.commands.filter(command => command.type === 'resource.upload')).toHaveLength(0);
 });
 test('a clipboard carrying both text and an image pastes as text only', async ({page}) => {
   const host = await serve(page);
   const draft = page.getByRole('textbox', {name: 'Message', exact: true});
-  const allowed = await draft.evaluate(paste, 'text+image');
+  const allowed = await draft.evaluate<boolean, Parameters<typeof paste>[1], HTMLElement>(paste, 'text+image');
   expect(allowed).toBe(true);
   expect(host.commands.filter(command => command.type === 'resource.upload')).toHaveLength(0);
 });
 test('an oversized pasted image shows the attachment limit error and uploads nothing', async ({page}) => {
   const host = await serve(page);
   const draft = page.getByRole('textbox', {name: 'Message', exact: true});
-  const allowed = await draft.evaluate(paste, 'oversized');
+  const allowed = await draft.evaluate<boolean, Parameters<typeof paste>[1], HTMLElement>(paste, 'oversized');
   expect(allowed).toBe(false);
   await expect(page.locator('.composer-error', {hasText: 'larger than the 20 MB attachment limit'})).toBeVisible();
   expect(host.commands.filter(command => command.type === 'resource.upload')).toHaveLength(0);
