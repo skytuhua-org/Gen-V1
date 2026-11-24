@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { lstat, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -49,7 +49,7 @@ const fixture = async () => {
   registerCodeIntelligenceRoutes(app, service, { env: { HARNESS_FLAG_CODING_INTELLIGENCE_V1: '1' } });
   const post = (body: Record<string, unknown>) =>
     app.inject({ method: 'POST', url, payload: body });
-  return { dir, post, service };
+  return { dir, root, post, service };
 };
 
 afterEach(async () => {
@@ -88,22 +88,79 @@ it('refuses a client-declared APPLIED without a host-verified write', async () =
 it('scopes preview ownership to the streaming thread, not the whole project', async () => {
   const f = await fixture();
   const previewId = (await f.post({ command: 'begin', threadId: 'thread-a', schemaDigest })).json().previewId;
-  await f.post({ command: 'append', previewId, chunk: args('a.ts', 'x') });
+  await f.post({ command: 'append', threadId: 'thread-a', previewId, chunk: args('a.ts', 'x') });
   // A different thread under the same project is a different owner and must
   // never see, seal, validate or settle the preview (M07-S07).
   const foreignSeal = await f.post({ command: 'seal', threadId: 'thread-b', previewId });
   expect(foreignSeal.statusCode).toBeGreaterThanOrEqual(400);
 });
 
+it('settles APPLIED through an approved file.replace receipt that covers every target', async () => {
+  const f = await fixture();
+  await writeFile(join(f.dir, 'a.ts'), 'before');
+  const previewId = (await f.post({ command: 'begin', threadId: 'thread-a', schemaDigest })).json().previewId;
+  const raw = args('a.ts', 'after');
+  await f.post({ command: 'append', threadId: 'thread-a', previewId, chunk: raw });
+  await f.post({ command: 'seal', threadId: 'thread-a', previewId });
+  await f.post({ command: 'validate', threadId: 'thread-a', previewId, finalArgumentsDigest: sha(raw) });
+  // The approved write the receipt records, committed to the thread's ledger.
+  const stamp = new Date().toISOString();
+  f.service.store.internal('fixture.write', 'thread-a', () => {
+    f.service.store.put('resource', 'res-1', 'thread-a', { id: 'res-1', threadId: 'thread-a', kind: 'project', path: f.root, label: 'p', writable: true, createdAt: stamp });
+    f.service.store.put('operation', 'op-1', 'thread-a', { id: 'op-1', threadId: 'thread-a', revision: 1, kind: 'file.replace', description: 'replace a.ts', args: { resourceId: 'res-1', path: 'a.ts', content: 'after', expectedSha256: sha('before') }, resourceIds: ['res-1'], preconditions: { sha256: sha('before') }, status: 'succeeded', approved: true, createdAt: stamp });
+  });
+  await writeFile(join(f.dir, 'a.ts'), 'after');
+  const settled = await f.post({ command: 'settle', threadId: 'thread-a', previewId, outcome: 'APPLIED', operationIds: ['op-1'] });
+  expect(settled.statusCode).toBe(200);
+  expect(settled.json().state).toBe('APPLIED');
+});
+
+it('rejects a receipt that resolves the same relative path under another grant', async () => {
+  const f = await fixture();
+  await writeFile(join(f.dir, 'a.ts'), 'before');
+  const previewId = (await f.post({ command: 'begin', threadId: 'thread-a', schemaDigest })).json().previewId;
+  const raw = args('a.ts', 'after');
+  await f.post({ command: 'append', threadId: 'thread-a', previewId, chunk: raw });
+  await f.post({ command: 'seal', threadId: 'thread-a', previewId });
+  await f.post({ command: 'validate', threadId: 'thread-a', previewId, finalArgumentsDigest: sha(raw) });
+  // Identical digests and path, but the grant resolves 'a.ts' under a
+  // different root: the receipt never covered this workspace's file.
+  const stamp = new Date().toISOString();
+  const other = join(f.dir, 'other-root');
+  await mkdir(other);
+  await writeFile(join(other, 'a.ts'), 'after');
+  f.service.store.internal('fixture.write', 'thread-a', () => {
+    f.service.store.put('resource', 'res-2', 'thread-a', { id: 'res-2', threadId: 'thread-a', kind: 'project', path: other, label: 'q', writable: true, createdAt: stamp });
+    f.service.store.put('operation', 'op-2', 'thread-a', { id: 'op-2', threadId: 'thread-a', revision: 1, kind: 'file.replace', description: 'replace a.ts', args: { resourceId: 'res-2', path: 'a.ts', content: 'after', expectedSha256: sha('before') }, resourceIds: ['res-2'], preconditions: { sha256: sha('before') }, status: 'succeeded', approved: true, createdAt: stamp });
+  });
+  const settled = await f.post({ command: 'settle', threadId: 'thread-a', previewId, outcome: 'APPLIED', operationIds: ['op-2'] });
+  expect(settled.statusCode).toBeGreaterThanOrEqual(400);
+});
+
+it('does not fingerprint a target whose link escapes the project root', async () => {
+  const f = await fixture();
+  const outside = join(tmpdir(), `harness-preview-external-${Date.now()}.txt`);
+  dirs.push(outside);
+  await writeFile(outside, 'external preimage');
+  await symlink(outside, join(f.dir, 'link.ts'));
+  const previewId = (await f.post({ command: 'begin', threadId: 'thread-a', schemaDigest })).json().previewId;
+  await f.post({ command: 'append', threadId: 'thread-a', previewId, chunk: args('link.ts', 'x') });
+  const sealed = await f.post({ command: 'seal', threadId: 'thread-a', previewId });
+  expect(sealed.statusCode).toBe(200);
+  // A path leaving the granted root must keep its baseline unknown — never a
+  // digest of bytes outside the project.
+  expect(sealed.json().targetFiles[0].beforeDigest).toBeNull();
+});
+
 it('cancelling the streaming run discards every preview it opened', async () => {
   const f = await fixture();
   const previewId = (await f.post({ command: 'begin', threadId: 'thread-a', schemaDigest })).json().previewId;
-  await f.post({ command: 'append', previewId, chunk: args('a.ts', 'x') });
+  await f.post({ command: 'append', threadId: 'thread-a', previewId, chunk: args('a.ts', 'x') });
   // M07-S07: aborting the owning run must discard its previews; no append,
   // seal or settle may follow. Drive the real run.stop surface.
   f.service.store.internal('fixture.run', 'thread-a', () => f.service.store.put('thread', 'thread-a', 'thread-a', { ...f.service.store.get<import('../packages/contracts/index.ts').Thread>('thread', 'thread-a')!, runId: 'run-1', status: 'running' }));
   await f.service.command({ id: 'stop-1', type: 'run.stop', threadId: 'thread-a', payload: {} });
-  const after = await f.post({ command: 'append', previewId, chunk: 'x' });
+  const after = await f.post({ command: 'append', threadId: 'thread-a', previewId, chunk: 'x' });
   expect(after.statusCode).toBeGreaterThanOrEqual(400);
 });
 

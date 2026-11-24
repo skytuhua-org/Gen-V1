@@ -139,6 +139,10 @@ export class EditPreviewRegistry {
           beforeDigest: await beforeDigestFor(target.path),
           proposedDigest: sha(target.proposedContent),
         });
+      // The preimage reads above await; a discard while they ran removed the
+      // record and must not be revived by publishing the candidate back.
+      if (this.previews.get(previewId) !== preview)
+        throw new HarnessError("NOT_FOUND", "The edit preview was discarded.");
       const candidate: Preview = { ...preview, finalArgumentsDigest: parsed.digest, targetFiles, state: "READY_UNAPPLIED" };
       const result = this.view(candidate);
       this.previews.set(previewId, candidate);

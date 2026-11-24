@@ -17,10 +17,11 @@ import { hostFlagEnabled, type RegisteredHostFlag } from '../../packages/core/ho
 import { ProjectVerificationService } from '../../packages/core/project-verification.ts';
 import type { CheckObservationV1 } from '../../packages/contracts/verification.ts';
 import { approvalSchema, type ApprovalV1, type ToolOwner } from '../../packages/contracts/tool-effects.ts';
-import type { Operation, Thread } from '../../packages/contracts/index.ts';
+import type { Operation, ResourceGrant, Thread } from '../../packages/contracts/index.ts';
 import { actionCommitment } from '../../packages/core/tool-effects.ts';
 import { CODE_INTELLIGENCE_LIMITS, renamePlanIdSchema, renamePlanV1Schema } from '../../packages/contracts/code-intelligence.ts';
 import { readBoundFile } from '../../packages/core/file-access.ts';
+import { realpath } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import { digest } from '../../packages/storage/store.ts';
 import { randomUUID } from 'node:crypto';
@@ -225,12 +226,17 @@ export function registerCodeIntelligenceRoutes(app: FastifyInstance, service: Se
       const owner = sha(`${projectId}:${input.threadId ?? ''}`);
       // Bound read of a preview target's current preimage under the admitted
       // project root; a missing or unreadable target keeps its baseline
-      // unknown rather than guessing it.
+      // unknown rather than guessing it. Containment is proven on canonical
+      // paths so a link inside the project cannot fingerprint an outside file.
+      const boundRoot = await realpath(bound.root);
       const boundDigest = async (path: string): Promise<string | null> => {
-        const resolved = resolve(bound.root, path);
-        if (resolved !== bound.root && !resolved.startsWith(bound.root + sep)) return null;
-        try { return sha(await readBoundFile(resolved, CODE_INTELLIGENCE_LIMITS.previewBufferBytes)); }
-        catch { return null; }
+        const resolved = resolve(boundRoot, path);
+        if (resolved !== boundRoot && !resolved.startsWith(boundRoot + sep)) return null;
+        try {
+          const canonical = await realpath(resolved);
+          if (canonical !== boundRoot && !canonical.startsWith(boundRoot + sep)) return null;
+          return sha(await readBoundFile(canonical, CODE_INTELLIGENCE_LIMITS.previewBufferBytes));
+        } catch { return null; }
       };
       switch (input.command) {
         case 'begin': {
@@ -253,24 +259,45 @@ export function registerCodeIntelligenceRoutes(app: FastifyInstance, service: Se
           if (!input.previewId) throw new HarnessError('INVALID_INPUT', 'Settle requires a previewId.');
           const preview = previews.get(input.previewId, owner);
           if (!preview) throw new HarnessError('NOT_FOUND', 'Unknown edit preview.');
-          // The outcome is host-derived, never client-declared: a changed
-          // preimage since seal is a conflict; APPLIED is reachable only
-          // through committed approved writes covering every sealed target.
-          let drift = false;
-          for (const target of preview.targetFiles)
-            if ((await boundDigest(target.path)) !== target.beforeDigest) drift = true;
-          if (drift || input.outcome === 'CONFLICT') return previews.settle(input.previewId, owner, 'CONFLICT');
+          // The outcome is host-derived, never client-declared: APPLIED is
+          // reachable only through committed approved writes covering every
+          // sealed target — the receipt must have landed on this workspace's
+          // file and the file must still hold exactly the proposed bytes.
+          // Anything else is drift and settles CONFLICT.
+          if (input.outcome === 'CONFLICT') return previews.settle(input.previewId, owner, 'CONFLICT');
           const receipts = input.operationIds ?? [];
-          const covered = (target: { path: string; beforeDigest: string | null; proposedDigest: string }): boolean =>
-            receipts.some(id => {
+          const covered = async (target: { path: string; beforeDigest: string | null; proposedDigest: string }): Promise<boolean> => {
+            const sealedAt = await realpath(resolve(boundRoot, target.path)).catch(() => null);
+            for (const id of receipts) {
               const operation = service.store.get<Operation>('operation', id);
-              const args = operation?.args as { path?: unknown; expectedSha256?: unknown; content?: unknown } | undefined;
-              return !!operation && operation.kind === 'file.replace' && operation.status === 'succeeded' && operation.approved
-                && operation.threadId === input.threadId && args?.path === target.path
-                && args.expectedSha256 === target.beforeDigest
-                && typeof args.content === 'string' && sha(args.content) === target.proposedDigest;
-            });
-          if (!preview.targetFiles.every(covered))
+              const args = operation?.args as { resourceId?: unknown; path?: unknown; expectedSha256?: unknown; content?: unknown } | undefined;
+              if (!operation || operation.kind !== 'file.replace' || operation.status !== 'succeeded' || !operation.approved
+                || operation.threadId !== input.threadId || args?.path !== target.path
+                || args.expectedSha256 !== target.beforeDigest
+                || typeof args.content !== 'string' || sha(args.content) !== target.proposedDigest
+                || typeof args.resourceId !== 'string') continue;
+              const grant = service.store.get<ResourceGrant>('resource', args.resourceId);
+              if (!grant || grant.threadId !== input.threadId) continue;
+              // `executeDomainOperation` resolves args.path against the
+              // operation's grant, not the preview's workspace: the receipt
+              // only covers this target when both resolve to the same file.
+              const wrote = await realpath(resolve(grant.path, args.path as string)).catch(() => null);
+              if (wrote !== null && wrote === sealedAt) return true;
+            }
+            return false;
+          };
+          let uncovered = false;
+          for (const target of preview.targetFiles) {
+            const current = await boundDigest(target.path);
+            if (await covered(target)) {
+              // The approved write changed the file legitimately; only a
+              // post-write mutation counts as conflict.
+              if (current !== target.proposedDigest) return previews.settle(input.previewId, owner, 'CONFLICT');
+            } else if (current !== target.beforeDigest) {
+              return previews.settle(input.previewId, owner, 'CONFLICT');
+            } else uncovered = true;
+          }
+          if (uncovered)
             throw new HarnessError('APPROVAL_REQUIRED', 'An edit preview settles APPLIED only through committed approved writes covering every sealed target.');
           return previews.settle(input.previewId, owner, 'APPLIED');
         }

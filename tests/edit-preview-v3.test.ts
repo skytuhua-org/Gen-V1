@@ -146,6 +146,15 @@ it('a failed final seal invalidates an incomplete preview and frees its slot for
  expect((await registry.seal(retry.previewId,owner,()=>null)).state).toBe('READY_UNAPPLIED');
 });
 
+it('a preview discarded while its seal reads the preimage stays discarded',async()=>{
+ const registry=new EditPreviewRegistry();
+ const preview=registry.begin(owner,schemaDigest);
+ registry.append(preview.previewId,owner,args('a.ts','complete'));
+ await expect(registry.seal(preview.previewId,owner,()=>{registry.discardOwner(owner);return sha('old');}))
+  .rejects.toThrowError(/discarded/i);
+ expect(registry.get(preview.previewId,owner)).toBeNull();
+});
+
 it('rolls back an unpublishable final preview without retaining its argument bytes',async()=>{
  const registry=new EditPreviewRegistry();
  const preview=registry.begin(owner,schemaDigest);
