@@ -287,7 +287,10 @@ export class AgentWorkCoordinator {
     const live = this.live.get(workId);
     if (!live) return;
     this.live.delete(workId);
-    void (cancel ? live.child.cancel() : Promise.resolve()).finally(() => void live.child.dispose());
+    // Teardown is best-effort: a rejected cancel/dispose (e.g. an unconfirmed
+    // broker close) must not surface as an unhandled rejection on the host.
+    const release = (): void => { void live.child.dispose().catch(() => {}); };
+    void (cancel ? live.child.cancel() : Promise.resolve()).then(release, release);
   }
 
   private artifact(workId: string, kind: WorkArtifact['kind'], value: unknown): WorkArtifact {

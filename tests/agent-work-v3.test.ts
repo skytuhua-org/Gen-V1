@@ -180,6 +180,15 @@ describe('AgentWorkV1 admission and role gates', () => {
 });
 
 describe('output schema, repair and verification', () => {
+  it('settles the work even when child teardown rejects', async () => {
+    const rejecting: AgentWorkChild = {supportsLiveSteer: false, send: async () => {}, cancel: async () => { throw new Error('unconfirmed broker close'); }, dispose: async () => { throw new Error('unconfirmed broker close'); }};
+    const f = fixture({runtimeFactory: () => rejecting});
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    f.coordinator.onChildEvent(work.workId, {type: 'error', threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch, message: 'upstream failed'});
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(f.coordinator.inspect(work.workId)).toMatchObject({state: 'FAILED', failureReason: 'RUNTIME_FAILURE'});
+  });
+
   it('fails work when the child run settles without submitting a result', async () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
