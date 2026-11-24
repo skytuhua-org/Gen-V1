@@ -530,7 +530,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const setWorkspaceMode=(mode:'chat'|'split'|'retained-canvas')=>{setWorkspaceModeState(mode);try{localStorage.setItem('harness:workspace-mode:v3',mode);}catch{/* The source layouts remain saved on the host. */}};
   const [documentWindow,setDocumentWindow]=useState<import('./workspace-context').OpenDocumentWindow|null>(null);
   useEffect(()=>setDocumentWindow(null),[selectedId]);
-  const [planOpen,setPlanOpen]=useState(false),[planFocusOnOpen,setPlanFocusOnOpen]=useState(false),[,setPlanExpandRequest]=useState(0);
+  const [planOpen,setPlanOpen]=useState(false);
   const [planVisibility]=useState(()=>createPlanVisibility());
   const preferences = getPreferences(snapshot.settings);
   const prepareSidebarToggle = useSidebarCollapse(sidebar, layout.sidebarCollapsed, preferences.panelAnimations && preferences.motionDuration > 0, mobile);
@@ -752,8 +752,8 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const closeProjectConnect=()=>{const opener=projectConnectTarget.current?.opener;projectConnectTarget.current=null;setProjectConnectOpen(false);const resume=projectConnectPicker.current;projectConnectPicker.current=null;if(resume){setProjectPicker(resume);return;}requestAnimationFrame(()=>{if(opener?.isConnected)opener.focus({preventScroll:true});});};
   const selectedPlan=useMemo(()=>selectPlanRecord(snapshot,thread?.id),[snapshot.data,thread?.id]);
   const planOwner=useRef<{id?:string;run:string|null|undefined}>({id:undefined,run:undefined});
-  useEffect(()=>{const before=planOwner.current;planOwner.current={id:thread?.id,run:thread?.runId};const appeared=planVisibility.observe(thread,selectedPlan);if(before.id!==thread?.id||thread?.runId&&before.run!==thread.runId)setPlanOpen(planVisibility.isOpen(thread?.id));if(appeared){setPlanFocusOnOpen(false);setPlanExpandRequest(value=>value+1);setPlanOpen(true);}},[thread?.id,thread?.runId,selectedPlan]);
-  const dismissPlan=()=>{planVisibility.dismiss(thread);if(planFocusOnOpen)document.querySelector<HTMLButtonElement>('.thread-menu-wrap>button')?.focus({preventScroll:true});setPlanOpen(false);};
+  useEffect(()=>{const before=planOwner.current;planOwner.current={id:thread?.id,run:thread?.runId};const appeared=planVisibility.observe(thread,selectedPlan);if(before.id!==thread?.id||thread?.runId&&before.run!==thread.runId)setPlanOpen(planVisibility.isOpen(thread?.id));if(appeared)setPlanOpen(true);},[thread?.id,thread?.runId,selectedPlan]);
+  const dismissPlan=()=>{planVisibility.dismiss(thread);setPlanOpen(false);};
   const conversation = useRef<HTMLDivElement>(null),findScope=useRef<HTMLDivElement>(null);
   const readingPositions = useRef(new Map<string, { top: number; tail: boolean }>());
   const previousConversation = useRef('');
@@ -1126,7 +1126,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   });
   const sharedUsageOwner=usageCandidates.find(owner=>owner.id===selectedId)??usageCandidates.find(owner=>owner.id===thread?.id);
   const fullPlanVisible=Boolean(thread&&convSplitState.layout&&planVisible(convSplitState.layout,thread.id));
-  const projectOverview=<SurfaceBoundary resetKey={candidateThread?.id??'new'}><ProjectContextSurface composerChangesAvailable={composerChangesAvailable} key={candidateThread?.id??'new'} thread={candidateThread} snapshot={snapshot} planOpen={planOpen} fullPlanVisible={fullPlanVisible||Boolean(detachedPlan)} onOpenDetailedPlan={()=>{if(convSplitState.layout)void openSplitTool('plan',undefined,true,candidateThread?.id).catch(cause=>setError(messageOf(cause)));else revealWorkspaceTool('plan');}} onTogglePlan={()=>{if(planOpen)dismissPlan();else{planVisibility.show(candidateThread);setPlanFocusOnOpen(false);setPlanExpandRequest(value=>value+1);setPlanOpen(true);}}} onSelectThread={select} onShowChanges={()=>{if(convSplitState.layout)void openSplitTool('diff',undefined,true,candidateThread?.id).catch(cause=>setError(messageOf(cause)));else revealWorkspaceTool('diff');}} onConnect={()=>openProjectConnect({threadId:candidateThread?.id,projectId:candidateThread?.projectId})}/></SurfaceBoundary>;
+  const projectOverview=<SurfaceBoundary resetKey={candidateThread?.id??'new'}><ProjectContextSurface composerChangesAvailable={composerChangesAvailable} key={candidateThread?.id??'new'} thread={candidateThread} snapshot={snapshot} planOpen={planOpen} fullPlanVisible={fullPlanVisible||Boolean(detachedPlan)} onOpenDetailedPlan={()=>{if(convSplitState.layout)void openSplitTool('plan',undefined,true,candidateThread?.id).catch(cause=>setError(messageOf(cause)));else revealWorkspaceTool('plan');}} onTogglePlan={()=>{if(planOpen)dismissPlan();else{planVisibility.show(candidateThread);setPlanOpen(true);}}} onSelectThread={select} onShowChanges={()=>{if(convSplitState.layout)void openSplitTool('diff',undefined,true,candidateThread?.id).catch(cause=>setError(messageOf(cause)));else revealWorkspaceTool('diff');}} onConnect={()=>openProjectConnect({threadId:candidateThread?.id,projectId:candidateThread?.projectId})}/></SurfaceBoundary>;
   const contextSummaries=<SummaryDock><UsageFooter open={liveUsageOpen} threadId={sharedUsageOwner?.id} usage={sharedUsageOwner?snapshot.usage[sharedUsageOwner.id]:undefined} visible={Boolean(sharedUsageOwner)&&preferences.showUsageFooter&&!rightWindowOpen} onOpenUsage={openUsage}/></SummaryDock>;
   const [retryingMainLayout,setRetryingMainLayout]=useState(false);
   const retryMainLayout=()=>{
