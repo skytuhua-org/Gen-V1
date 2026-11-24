@@ -17,3 +17,4 @@
 .memory-recovery { margin: 8px 0 0; font-size: 12px; line-height: 1.5; }
 .memory-recovery p { margin: 0 0 8px; }
 .memory-resume { margin-top: 8px; }
+.memory-note footer .memory-saved { color: var(--success); }
