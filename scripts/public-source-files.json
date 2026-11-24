@@ -149,6 +149,7 @@
     "apps/web/src/SoftwareDevelopment.tsx",
     "apps/web/src/SourceSelectionActions.tsx",
     "apps/web/src/SourceWorkbench.tsx",
+    "apps/web/src/StashPanel.tsx",
     "apps/web/src/SurfaceBoundary.tsx",
     "apps/web/src/TaskDisclosure.tsx",
     "apps/web/src/TaskHistory.tsx",

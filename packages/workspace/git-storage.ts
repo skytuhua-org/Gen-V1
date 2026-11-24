@@ -32,6 +32,16 @@ export async function nativeGit(executable:string,metadata:string,worktree:strin
  if(result.exitCode!==0||result.cancelled||result.timedOut)throw new HarnessError(result.cancelled?'CANCELLED':'GIT_ERROR','Git operation did not complete.',result);
  return result.stdout;
 }
+/** Same sandboxed invocation as nativeGit, but a non-zero exit returns the raw
+ * result instead of throwing — for commands whose failures carry meaning
+ * (stash apply conflicts). Cancellation, timeout and truncation still throw. */
+export async function nativeGitResult(executable:string,metadata:string,worktree:string|undefined,args:string[],signal:AbortSignal,environment:NodeJS.ProcessEnv={}){
+ const prefix=['--no-pager','--no-replace-objects','--git-dir='+metadata,...(worktree?['--work-tree='+worktree]:[]),'-c','core.hooksPath='+nullFile,'-c','core.fsmonitor=false','-c','core.untrackedCache=false','-c','submodule.recurse=false','-c','diff.external=','-c','core.attributesFile=','-c','core.excludesFile=','-c','credential.helper=','-c','gc.auto=0','-c','maintenance.auto=false'];
+ const result=await runProcess(executable,[...prefix,...args],worktree??metadata,signal,()=>{},120000,environment,4*1024*1024);
+ if(result.truncated)throw new HarnessError('RESOURCE_LIMIT','Git output exceeds the 4 MiB review limit.');
+ if(result.cancelled||result.timedOut)throw new HarnessError(result.cancelled?'CANCELLED':'GIT_ERROR','Git operation did not complete.',result);
+ return{exitCode:result.exitCode,stdout:result.stdout,stderr:result.stderr};
+}
 async function pointer(path:string){return(await readBoundFile(path,4096)).toString().replace(/\r?\n$/,'');}
 async function verifyManaged(family:ManagedGitFamily){
  for(const[path,wanted]of[[family.path,family.identity],[family.gitDirectory,family.gitDirectoryIdentity],[family.commonDirectory,family.commonDirectoryIdentity]]as const)if(!sameIdentity(await directoryIdentity(path),wanted))throw denied();

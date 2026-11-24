@@ -7,7 +7,7 @@ const identifier = z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/);
 const revision = z.string().regex(/^[a-f0-9]{64}$/),
   oid = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const repo = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
-export const workspaceActionTypeSchema = z.enum(['stage', 'unstage', 'commit', 'review-pr', 'create-pr']);
+export const workspaceActionTypeSchema = z.enum(['stage', 'unstage', 'commit', 'review-pr', 'create-pr', 'stash-push', 'stash-apply', 'stash-pop', 'stash-drop']);
 type WorkspaceActionType = z.infer<typeof workspaceActionTypeSchema>;
 export const workspaceActionEnvelopeSchema = z.strictObject({
   id: identifier,
@@ -22,6 +22,10 @@ export interface WorkspaceActionEnvelope {
   threadId?: string;
 }
 const local = { revision, expectedHead: oid };
+// A stash OID is the merge commit git writes for the stash entry (40-hex); the
+// widened form also admits the 64-hex object names SHA-256 repositories produce.
+const stashOid = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
+const stashTarget = { ...local, oid: stashOid, stashRevision: z.string().regex(/^[0-9a-f]{64}$/) };
 const paths = z.array(z.string().min(1).max(1024)).min(1).max(1000);
 const unicode = (value: string) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(new TextEncoder().encode(value)) === value;
 const text = (max: number) =>
@@ -51,6 +55,10 @@ export const workspaceActionPayloadSchemas = {
     head: oid,
     revision,
   }),
+  'stash-push': z.strictObject({ ...local, message: text(200).refine(value => value.trim().length > 0) }),
+  'stash-apply': z.strictObject(stashTarget),
+  'stash-pop': z.strictObject(stashTarget),
+  'stash-drop': z.strictObject(stashTarget),
 };
 type WorkspaceActionPayload = z.infer<(typeof workspaceActionPayloadSchemas)[WorkspaceActionType]>;
 export const workspaceActionOwnerSchema = z.strictObject({
@@ -110,5 +118,11 @@ export interface WorkspaceActionOperation {
   action: { head: string; revision: string; branch: string };
   payload: WorkspaceActionPayload;
 }
-export type WorkspaceActionOutcome = { state: 'confirmed' | 'not-applied' | 'uncertain' | 'revoked' };
-export type WorkspaceActionExecution = { state: 'confirmed'; receipt: CommandReceipt } | { state: 'not-applied' | 'uncertain' | 'revoked' };
+export type WorkspaceActionOutcome = { state: 'confirmed' | 'not-applied' | 'uncertain' | 'revoked'; error?: { code: string; message: string; details?: unknown } };
+export type WorkspaceActionExecution = { state: 'confirmed'; receipt: CommandReceipt } | { state: 'not-applied' | 'uncertain' | 'revoked'; error?: { code: string; message: string; details?: unknown } };
+
+export interface StashFile { path: string; oldPath?: string; status: 'A' | 'M' | 'D' | 'R'; untracked: boolean }
+export interface StashEntry { oid: string; index: number; message: string; branch: string | null; createdAt: string; files: StashFile[]; filesTruncated: boolean }
+export interface StashList { stashRevision: string; entries: StashEntry[]; total: number; gitWrite: boolean }
+/** apply/pop results; push returns { created: StashEntry }; drop returns { dropped: true }. */
+export type StashActionResult = { restored: 'clean' | 'conflicts'; conflicts: string[]; dropped: boolean };

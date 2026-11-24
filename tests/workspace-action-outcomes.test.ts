@@ -28,6 +28,19 @@ it('accepts canonical Unicode review text without normalizing a leading BOM or w
   expect(() => workspaceActionPayloadSchemas['review-pr'].parse(payload)).not.toThrow();
   expect(workspaceActionPayloadSchemas['review-pr'].parse(payload).body).toBe('\uFEFF\u00e9\u{1f680}\r\n  Literal\\n  ');
 });
+it('accepts valid stash payloads and rejects malformed stash fields', () => {
+  const local = { revision: 'b'.repeat(64), expectedHead: 'a'.repeat(40) };
+  expect(() => workspaceActionPayloadSchemas['stash-push'].parse({ ...local, message: 'WIP: before refactor' })).not.toThrow();
+  for (const message of ['', '   ', 'x'.repeat(201), 'bad\0message'])
+    expect(workspaceActionPayloadSchemas['stash-push'].safeParse({ ...local, message }).success).toBe(false);
+  const target = { ...local, oid: 'c'.repeat(40), stashRevision: 'd'.repeat(64) };
+  for (const type of ['stash-apply', 'stash-pop', 'stash-drop'] as const)
+    expect(() => workspaceActionPayloadSchemas[type].parse(target)).not.toThrow();
+  for (const oid of ['xyz', 'c'.repeat(39), 'g'.repeat(40)])
+    expect(workspaceActionPayloadSchemas['stash-apply'].safeParse({ ...target, oid }).success).toBe(false);
+  expect(workspaceActionPayloadSchemas['stash-apply'].safeParse({ ...local, oid: 'c'.repeat(40) }).success).toBe(false); // missing stashRevision
+  expect(workspaceActionPayloadSchemas['stash-drop'].safeParse({ ...target, extra: true }).success).toBe(false); // strict keys
+});
 it('bounds created receipt URLs to their repository while preserving canonical case differences',()=>{
  const result={url:'https://github.com/example/fixture/pull/14',repo:'Example/Fixture',head:'a'.repeat(40),revision:'b'.repeat(64)};expect(createdPullRequestResultSchema.parse(result)).toEqual(result);
  for(const url of ['https://evil.example/example/fixture/pull/14','https://github.com/other/fixture/pull/14','https://github.com/example/fixture/pull/14?token=private','https://github.com@example.invalid/example/fixture/pull/14'])expect(createdPullRequestResultSchema.safeParse({...result,url}).success).toBe(false);
