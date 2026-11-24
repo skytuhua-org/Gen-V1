@@ -97,7 +97,7 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
    matches(first,requestedId);confirmedId=first.id;setAcknowledged(true);
    try{localStorage.setItem(key,first.id);localStorage.removeItem(key+':pending');}catch{}
    append(first);sentCols=instance.cols;sentRows=instance.rows;
-   // fit() stays per ResizeObserver tick; the resize command is latest-wins
+   // fit runs per ResizeObserver tick; the resize command is latest-wins
    // with a trailing send so a drag cannot issue a request per frame.
    resizeThrottle=throttleLatest(150,()=>{if(!instance)return;const c=instance.cols,r=instance.rows;if(c===sentCols&&r===sentRows)return;sentCols=c;sentRows=r;void command({type:'resize',cols:c,rows:r}).catch(fail);});
    const canCapture=()=>ownerCurrent()&&latest.current.excerptComposer&&!latest.current.excerptComposer.readOnly&&latest.current.excerptComposer.projectId===projectId&&latest.current.excerptComposer.threadId===threadId;
