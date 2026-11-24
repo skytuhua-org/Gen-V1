@@ -1,6 +1,7 @@
 import { memo, useContext, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, useSyncExternalStore, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
 import { Activity, ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleHelp, CircleStop, Folder, Laptop, LoaderCircle, Menu, MessageSquare, PanelLeftOpen, PanelRight, PenLine, Plus, SlidersHorizontal, WifiOff, X } from 'lucide-react';
 import type { InputRequest, ModelInfo, Operation, Snapshot, Thread,Message } from '../../../packages/contracts';
+import type {LaunchRequestDelivery} from '../../../packages/desktop-contract';
 import { ApiError, bootstrap, command, getModels, getSnapshot, getThreadMessages, getToolEffectObservation, searchThreadMessages, subscribe, type ToolEffectObservation } from './api';
 import {onAccountCatalogChanged,notifyAccountCatalogChanged,mergeAccountModels} from './account-api';
 import type {AccountAuthTarget} from '../../../packages/contracts/authentication';
@@ -1110,6 +1111,33 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const openInbox=async(paneId=convSplitState.layout?.focusedPaneId)=>{if(!paneId)return;await prepareWorkspace();await convSplitState.send('view.open',{paneId,view:{id:'inbox:personal',kind:'workspace',binding:{authority:{kind:'local'},resourceId:'agent-inbox'}}});};
   const openBackgroundWork=async(paneId=convSplitState.layout?.focusedPaneId)=>{if(!paneId)return;await prepareWorkspace();await convSplitState.send('view.open',{paneId,view:{id:'background:personal',kind:'workspace',binding:{authority:{kind:'local'},resourceId:'background-work'}}});};
   useEffect(()=>{if(embeddedThreadId)return;return desktop?.bridge.onAttentionOpen?.(id=>select(id));},[desktop?.bridge,embeddedThreadId]);
+  const launchRequestHandler=useRef<(request:LaunchRequestDelivery)=>void>(()=>{});
+  launchRequestHandler.current=request=>{
+      const bridge=desktop?.bridge;
+      void (async()=>{
+        if(request.type==='new-thread'){
+          const currentId=(()=>{try{return localStorage.getItem('harness:selected-thread');}catch{return null;}})();
+          await createThread(undefined,snapshotRef.current.threads.find(item=>item.id===currentId)?.projectId??undefined);
+        }
+        else{
+          const project=workspaceState.envelope?.projects.find(item=>item.id===request.projectId);
+          if(!project){toast('That project could not be found.',{tone:'error'});return;}
+          const latest=snapshotRef.current.threads.filter(item=>item.projectId===request.projectId&&!threadParent(item)).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))[0];
+          if(latest)select(latest.id);else await createThread(undefined,request.projectId);
+        }
+        requestAnimationFrame(()=>document.querySelector<HTMLElement>('.composer-input textarea')?.focus());
+      })().catch(cause=>reportError(messageOf(cause))).finally(()=>{void bridge?.launchRequestAck?.(request.requestId).catch(()=>{});});
+  };
+  const launchRequestReady=loaded&&Boolean(workspaceEnvelope)&&(!splitEnabled||Boolean(convSplitState.layout));
+  useEffect(()=>{
+    if(embeddedThreadId||!launchRequestReady)return;
+    const bridge=desktop?.bridge;
+    if(!bridge?.onLaunchRequest)return;
+    const unsubscribe=bridge.onLaunchRequest(request=>launchRequestHandler.current(request));
+    // The main process may deliver its pending cold-launch request immediately.
+    void bridge.launchRequestReady?.().catch(()=>{});
+    return unsubscribe;
+  },[desktop?.bridge,embeddedThreadId,launchRequestReady]);
   const renderSplitView=(view:SurfaceRef,active:boolean)=>{
     if(view.binding.authority.kind!=='local')return <p className="panel-note">This view belongs to another installed workspace.</p>;
     if(view.kind==='thread')return <div className="split-thread-owner" onFocusCapture={()=>focusSplitOwner(view)}>{view.binding.threadId?<App onDirtyWidgetChange={onDirtyWidget} onComposerChangesAvailability={reportComposerChanges} sharedComposers={host?.composers??sharedComposers} embeddedThreadId={view.binding.threadId} embeddedActive={active} modelPickerRequest={modelPickerRequest} onRequestThread={select} liveUsage={{open:liveUsageOpen,toggle:()=>{focusSplitOwner(view);setLiveUsageOpen(value=>!value);}}}/>:<p>The owning conversation is unavailable.</p>}</div>;
