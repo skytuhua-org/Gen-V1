@@ -429,7 +429,7 @@ jobs:
       - name: List tests reachable from the pull request diff
         id: select
         run: |
-          pnpm exec vitest list --changed HEAD^1 --filesOnly --json="$RUNNER_TEMP/selected.json"
+          pnpm exec vitest list --changed HEAD~1 --filesOnly --json="$RUNNER_TEMP/selected.json"
           node -e '
             const files = require(process.argv[1]);
             const total = Math.min(4, Math.ceil(files.length / 35));
@@ -470,4 +470,7 @@ jobs:
       - name: Run this shard of the tests reachable from the pull request diff
         env:
           SHARD: ${{ matrix.shard }}/${{ needs.select.outputs.total }}
-        run: pnpm test --maxWorkers=1 --changed HEAD^1 --shard $env:SHARD
+        # HEAD~1, not the caret spelling: pnpm.cmd runs through cmd.exe, which drops a caret,
+        # so the shard compared against "HEAD1", found nothing changed and passed
+        # without running a test. A shard that finds no test file now fails.
+        run: pnpm test --maxWorkers=1 --changed HEAD~1 --passWithNoTests=false --shard $env:SHARD
