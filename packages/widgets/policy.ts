@@ -1,11 +1,16 @@
 export interface RenderNode { id: number; tag: string; attrs: Record<string, string>; children: RenderNode[]; text?: string; value?: string; checked?: boolean; selectedIndex?: number }
 export interface RenderTree { tree: RenderNode[]; css: string }
 
+// Allowlists are constant: build them once. The worker snapshot path calls
+// validateRender once per node and once per attribute every render tick, and
+// rebuilding two ~150-entry Sets per call dominated that repeated work.
+const ALLOWED_TAGS = new Set('div span p article section header footer main aside nav h1 h2 h3 h4 h5 h6 small strong em b i u s pre code blockquote ul ol li dl dt dd br hr table thead tbody tfoot tr td th caption form label input textarea button select option optgroup fieldset legend output progress meter details summary'.split(' '));
+const ALLOWED_ATTRS = new Set('id class style title role name type placeholder value checked disabled readonly required multiple selected min max step minlength maxlength rows cols for tabindex colspan rowspan open autocomplete'.split(' '));
+
 // Used independently in the host and bundled trusted receiver. Neither the
 // generated program nor its worker is trusted.
 export function validateRender(value: unknown): value is RenderTree {
-  const tags = new Set('div span p article section header footer main aside nav h1 h2 h3 h4 h5 h6 small strong em b i u s pre code blockquote ul ol li dl dt dd br hr table thead tbody tfoot tr td th caption form label input textarea button select option optgroup fieldset legend output progress meter details summary'.split(' '));
-  const attrs = new Set('id class style title role name type placeholder value checked disabled readonly required multiple selected min max step minlength maxlength rows cols for tabindex colspan rowspan open autocomplete'.split(' '));
+  const tags = ALLOWED_TAGS, attrs = ALLOWED_ATTRS;
   if (!value || typeof value !== 'object') return false;
   const render = value as RenderTree;
   if (!Array.isArray(render.tree) || render.tree.length > 800 || typeof render.css !== 'string' || render.css.length > 16384) return false;
