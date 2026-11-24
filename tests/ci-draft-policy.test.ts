@@ -1,6 +1,7 @@
 import {expect,it} from 'vitest';
-import {readFileSync} from 'node:fs';
+import {existsSync,readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
+import {publicSourceAllowed,publicRuntimeSourceAllowed} from '../scripts/public-source.ts';
 
 const workflow=readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url),'utf8').replaceAll('\r\n','\n');
 const jobSource=workflow.split(/^jobs:\n/m)[1]??'';
@@ -184,4 +185,71 @@ it('gives every job skipped on pull requests a literal name so its required chec
     expect(/^    name:\s*(.+)$/m.exec(block)?.[1]).not.toContain('${{');
     expect(job.shards).toBeNull();
   }
+});
+
+const purgeWorkflow=readFileSync(new URL('../.github/workflows/m05-purge-qualification.yml',import.meta.url),'utf8').replaceAll('\r\n','\n');
+const purgeCleanupUrl=new URL('../.github/workflows/m05-purge-pr-cleanup.yml',import.meta.url);
+const purgeCleanupWorkflow=existsSync(purgeCleanupUrl)?readFileSync(purgeCleanupUrl,'utf8').replaceAll('\r\n','\n'):'';
+type PurgeEvent={name:'pull_request'|'pull_request_target'|'workflow_dispatch';action?:string;draft?:boolean;number?:number;sha?:string;runId?:number};
+function purgeEvaluate(expression:string,event:PurgeEvent):unknown {
+  const github={event_name:event.name,sha:event.sha??'a'.repeat(40),run_id:String(event.runId??900),event:{action:event.action,pull_request:{number:event.number??42,draft:event.draft,head:{sha:event.name==='pull_request'?event.sha??'a'.repeat(40):undefined}}}};
+  const format=(template:string,...values:(string|number)[])=>template.replace(/\{(\d+)\}/g,(_,index:string)=>String(values[Number(index)]));
+  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github,format},{timeout:100});
+}
+function purgeGroup(event:PurgeEvent,source=purgeWorkflow){
+  const group=/^  group:\s*(.+)$/m.exec(source)?.[1]??'';
+  return group.replace(/\$\{\{\s*([\s\S]*?)\s*\}\}/g,(_,expression:string)=>String(purgeEvaluate(expression,event)));
+}
+function purgeJobs(event:PurgeEvent){
+  const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(purgeWorkflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
+  if(event.name==='pull_request'&&!types.includes(event.action??''))return null;
+  const condition=/^    if:\s*(.+)$/m.exec(purgeWorkflow)?.[1]??'true';
+  return purgeEvaluate(condition,event)?['qualification']:[];
+}
+it('replaces obsolete automatic purge qualification revisions only within the same PR',()=>{
+  const first:PurgeEvent={name:'pull_request',action:'synchronize',draft:false,number:42,sha:'a'.repeat(40)};
+  expect(purgeGroup(first)).toBe(purgeGroup({...first,sha:'b'.repeat(40)}));
+  expect(purgeGroup(first)).not.toBe(purgeGroup({...first,number:43}));
+  const cancel=/^  cancel-in-progress:\s*(.+)$/m.exec(purgeWorkflow)?.[1]??'false';
+  expect(purgeEvaluate(cancel,first)).toBe(true);
+  expect(purgeEvaluate(cancel,{name:'workflow_dispatch'})).toBe(false);
+  expect(purgeGroup({name:'workflow_dispatch',sha:'a'.repeat(40)})).not.toBe(purgeGroup({name:'workflow_dispatch',sha:'b'.repeat(40)}));
+  expect(purgeGroup({name:'workflow_dispatch',sha:'a'.repeat(40),runId:900})).not.toBe(purgeGroup({name:'workflow_dispatch',sha:'a'.repeat(40),runId:901}));
+  expect(purgeGroup(first)).not.toBe(purgeGroup({name:'workflow_dispatch',sha:'a'.repeat(40)}));
+});
+it('qualifies ready PRs and explicit manual runs without scheduling draft or closed qualifications',()=>{
+  for(const action of ['opened','synchronize','reopened','ready_for_review'])expect(purgeJobs({name:'pull_request',action,draft:false})).toEqual(['qualification']);
+  for(const action of ['opened','synchronize','reopened','converted_to_draft'])expect(purgeJobs({name:'pull_request',action,draft:true})).toEqual([]);
+  for(const draft of [true,false])expect(purgeJobs({name:'pull_request',action:'closed',draft})).toBeNull();
+  expect(purgeJobs({name:'workflow_dispatch'})).toEqual(['qualification']);
+});
+it('cancels conflicted, closed or draft purge PRs through a trusted runnerless event',()=>{
+  expect(purgeCleanupWorkflow).toMatch(/^on:\n  pull_request_target:\n    types: \[closed, converted_to_draft\]\n/m);
+  expect(purgeCleanupWorkflow).toMatch(/^permissions: \{\}$/m);
+  expect(purgeCleanupWorkflow).toMatch(/^  cancel-in-progress: true$/m);
+  const cleanupJobs=purgeCleanupWorkflow.split(/^jobs:\n/m)[1]??'';
+  expect(cleanupJobs.trim()).toBe("cleanup:\n    if: ${{ false }}\n    runs-on: ubuntu-latest\n    timeout-minutes: 1\n    steps:\n      - run: ':'");
+  expect(purgeCleanupWorkflow).not.toMatch(/\buses:|\bscript:|\bsecrets\b|\bgithub\.token\b|head\.sha|head_sha|paths:|mergeable/);
+  for(const action of ['closed','converted_to_draft'])for(const number of [42,43]){
+    const event:PurgeEvent={name:'pull_request_target',action,number,draft:true};
+    expect(purgeGroup(event,purgeCleanupWorkflow)).toBe(purgeGroup({name:'pull_request',number}));
+    expect(purgeGroup(event,purgeCleanupWorkflow)).not.toBe(purgeGroup({name:'pull_request',number:number+1}));
+    expect(purgeGroup(event,purgeCleanupWorkflow)).not.toBe(purgeGroup({name:'workflow_dispatch'}));
+    const condition=/^    if:\s*(.+)$/m.exec(cleanupJobs)?.[1]??'true';
+    expect(purgeEvaluate(condition,event)).toBe(false);
+  }
+  for(const path of ['.github/workflows/m05-purge-pr-cleanup.yml','.github/workflows/m05-purge-qualification.yml']){
+    expect(publicSourceAllowed(path),path).toBe(true);
+    expect(publicRuntimeSourceAllowed(path),path).toBe(false);
+  }
+});
+it('keeps exact-source Linux and Windows purge acceptance and all existing path filters',()=>{
+  const paths=[...purgeWorkflow.matchAll(/^      - '([^'\n]+)'$/gm)].map(match=>match[1]);
+  expect(paths).toEqual(['.github/workflows/m05-purge-qualification.yml','tests/project-memory-service-v3.test.ts','tests/memory-forget-v3.test.ts','packages/core/project-memory.ts','packages/contracts/project-memory.ts','apps/server/project-memory-routes.ts','packages/core/service.ts']);
+  expect(purgeWorkflow).toContain('os: [ubuntu-24.04, windows-latest]');
+  expect(purgeWorkflow).toContain('ref: ${{ github.event.pull_request.head.sha || github.sha }}');
+  expect(purgeWorkflow).toContain("if ($actual -ne $expected) { throw 'Purge test checkout source SHA mismatch' }");
+  expect(purgeWorkflow).toContain('timeout-minutes: 30');
+  for(const text of ['numFailedTests -ne 0','numPendingTests -ne 0','numTodoTests -ne 0','assertionsFound.Count -ne 1'])expect(purgeWorkflow).toContain(text);
+  expect(purgeWorkflow).not.toContain('continue-on-error');
 });

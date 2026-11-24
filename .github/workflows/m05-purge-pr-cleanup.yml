@@ -1,0 +1,21 @@
+name: M05 purge PR cleanup
+
+on:
+  pull_request_target:
+    types: [closed, converted_to_draft]
+
+permissions: {}
+
+# Cancel obsolete automatic qualification even when the PR has merge conflicts.
+# No PR source is checked out and the permanently skipped job needs no runner.
+concurrency:
+  group: m05-purge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  cleanup:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: ':'
