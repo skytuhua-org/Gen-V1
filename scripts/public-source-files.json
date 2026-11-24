@@ -3936,6 +3936,7 @@
     "tests/skills-http.test.ts",
     "tests/skills-integration.test.ts",
     "tests/skills.test.ts",
+    "tests/snapshot-events-reconcile-v3.test.ts",
     "tests/software-development.test.ts",
     "tests/source-composer-v3.test.ts",
     "tests/source-draft-transfer-v3.test.ts",

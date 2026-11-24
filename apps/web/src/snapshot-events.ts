@@ -7,15 +7,20 @@ import { MODEL_REQUEST_OBSERVATION_LIMIT, type ModelRequestObservationV1 } from 
 // the whole snapshot once per real change instead of once per chunk.
 export function applyRuntimeEvent(snapshot: Snapshot, event: WorkspaceEvent): Snapshot | null {
   if (!event.threadId || !event.type.startsWith('runtime.')) return null;
+  // A snapshot already past this event carries its change. Patching anyway
+  // would regress seq, letting an older refresh clobber a newer one.
+  if (event.seq <= snapshot.seq) return snapshot;
   const result = (event.payload as { result?: unknown } | null)?.result;
   if (!result || typeof result !== 'object') return null;
   if (event.type === 'runtime.assistant.delta' || event.type === 'runtime.assistant.message' || event.type === 'runtime.activity') {
     const message = (result as { message?: Message }).message;
     if (!message || typeof message.id !== 'string' || message.threadId !== event.threadId) return null;
     const known = snapshot.messages.some(item => item.id === message.id);
-    const messages = known ? snapshot.messages.map(item => item.id === message.id ? message : item) : [...snapshot.messages, message];
+    const messages = known ? snapshot.messages.map(item => item.id === message.id ? message : item) : insertByCreatedAt(snapshot.messages, message);
     // A stream append retains the current rows. Only a fresh host snapshot
     // replaces the window and can change how many older rows are hidden.
+    // A late event for an earlier row is inserted in createdAt order so the
+    // transcript stays ordered and paging does not develop a permanent gap.
     return { ...snapshot, seq: event.seq, messages };
   }
   if (event.type === 'runtime.usage' || event.type === 'runtime.context.request' || event.type === 'runtime.context.host' || event.type === 'runtime.compaction.start' || event.type === 'runtime.compaction.end') {
@@ -37,4 +42,13 @@ export function applyRuntimeEvent(snapshot: Snapshot, event: WorkspaceEvent): Sn
     return { ...snapshot, seq: event.seq, modelRequests: requests };
   }
   return null;
+}
+
+const compareByCreatedAt = (left: Message, right: Message) =>
+  left.createdAt === right.createdAt ? (left.id < right.id ? -1 : left.id > right.id ? 1 : 0) : (left.createdAt < right.createdAt ? -1 : 1);
+
+function insertByCreatedAt(messages: Message[], message: Message): Message[] {
+  let index = messages.length;
+  while (index > 0 && compareByCreatedAt(messages[index - 1]!, message) > 0) index--;
+  return [...messages.slice(0, index), message, ...messages.slice(index)];
 }
