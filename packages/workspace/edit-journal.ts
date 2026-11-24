@@ -379,7 +379,7 @@ export class EditJournal {
    *  coarser classes stay path-wide conservative. `change` carries the
    *  hunk's removed HEAD-preimage and added postimage line numbers; a null
    *  change is the legacy whole-path check. */
-  hunkAttribution(owner: CheckpointScope, path: string, liveBytes: Buffer | null, headBytes: Buffer | null, change: { removed: Map<number, string>; added: Set<number> } | null = null, claims: Map<string, Set<number>> = new Map(), reservedRemoved: Set<number> = new Set()): "proven" | "process-window" | "unattributed" {
+  hunkAttribution(owner: CheckpointScope, path: string, liveBytes: Buffer | null, headBytes: Buffer | null, change: { removed: Map<number, string>; added: Set<number> } | null = null, claims: Map<string, Set<number>> = new Map<string, Set<number>>(), reservedRemoved: Set<number> = new Set<number>()): "proven" | "process-window" | "unattributed" {
     const entries = this.receipts(owner, { path });
     if (!entries.length) return "unattributed";
     const classOf = (attribution: string) =>
