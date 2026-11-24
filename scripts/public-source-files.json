@@ -3427,6 +3427,7 @@
     "tests/plugin-worker-v3.test.ts",
     "tests/plugin-workspaces.test.ts",
     "tests/portable-verification.test.ts",
+    "tests/pr-check-retry.test.ts",
     "tests/prediction-runtime.test.ts",
     "tests/preferences-appearance.test.ts",
     "tests/preferences-presentation.test.ts",
