@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { PaneCompactContext } from './WorkspaceSplitLayout';
 import { GitBranch, History, Import } from 'lucide-react';
 import { ActionMenu, type ActionMenuItem } from '../../../packages/ui-shell/ActionMenu';
 import { Modal } from '../../../packages/ui-shell/Modal';
@@ -166,6 +167,7 @@ export interface SessionBranchMenuProps {
  * capability), Start new task with quoted context, and ArchiveV1 import. */
 export function SessionBranchMenu({ thread, messages, onOpenThread, onChanged, overview, reloadOverview }: SessionBranchMenuProps) {
   const [open, setOpen] = useState(false), [error, setError] = useState<string | null>(null);
+  const compact = useContext(PaneCompactContext);
   const [captureId, setCaptureId] = useState<string | null>(null), [importId, setImportId] = useState<string | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false), [staged, setStaged] = useState<StageOutcome | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -218,7 +220,7 @@ export function SessionBranchMenu({ thread, messages, onOpenThread, onChanged, o
     }] : []),
   ];
   return <>
-    <ActionMenu label="History" icon={<History size={13} />} open={open} onOpenChange={setOpen} items={items} disabled={!overview} />
+    <ActionMenu label="History" icon={<History size={13} />} iconOnly={compact} open={open} onOpenChange={setOpen} items={items} disabled={!overview} />
     <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) pickFile(file); }} />
     {error && <span className="error-text" role="alert">{error}</span>}
     {captureId && <CaptureViewer captureId={captureId} onClose={() => setCaptureId(null)} />}

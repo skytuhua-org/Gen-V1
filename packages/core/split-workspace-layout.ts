@@ -65,11 +65,11 @@ export function applySplitWorkspaceCommand(input:SplitWorkspaceLayout,type:strin
 }
 
 export function minimumViewSize(view?:SurfaceRef):{width:number;height:number}{
- if(!view)return{width:240,height:180};
+ if(!view)return{width:320,height:180};
  if(view.kind==='thread')return{width:320,height:220};
  if(view.kind==='diff'||view.kind==='pull-request'||view.kind==='linked-pull-requests')return{width:360,height:220};
  if(view.kind==='browser')return{width:320,height:180};
- return{width:240,height:180};
+ return{width:320,height:180};
 }
 export function minimumSplitSize(layout:SplitWorkspaceLayout,node:SplitWorkspaceNode=layout.root):{width:number;height:number}{
  if(node.kind==='pane'){const pane=layout.panes[node.paneId];if(pane?.collapsed)return{width:36,height:36};return minimumViewSize(pane?.activeViewId?layout.views[pane.activeViewId]:undefined);}
