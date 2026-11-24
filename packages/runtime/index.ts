@@ -95,7 +95,12 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
  async function probe<T>(adapter:RuntimeAdapter,providerIds:readonly ConnectionProviderId[],accountId:string|null,action:()=>Promise<T>):Promise<T> {
   const leases:AccountUseLease[]=[];
   const release=()=>{for(const lease of leases){options.accounts?.releaseUse?.(lease);probes.delete(lease.id);}};
-  try{for(const providerId of providerIds){available(providerId,accountId);const lease=options.accounts?.claimUse?.(providerId,accountId);if(lease){leases.push(lease);probes.set(lease.id,{adapter,lease});}}}catch(error){release();throw error;}
+  try{for(const providerId of providerIds){
+   // A sibling still signing in must not suppress the healthy providers a
+   // shared adapter serves; explicit or single-provider probes keep the error.
+   if(providerIds.length>1&&options.accounts?.isSigningIn?.(providerId,accountId))continue;
+   available(providerId,accountId);const lease=options.accounts?.claimUse?.(providerId,accountId);if(lease){leases.push(lease);probes.set(lease.id,{adapter,lease});}
+  }}catch(error){release();throw error;}
   try{const result=await action();release();return result;}
   catch(error){await retire(adapter);release();throw error;}
  }
@@ -122,6 +127,7 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
     const provider=providerForModel(model.id),providerId=model.id.split('/')[0];
     return (provider==='pi'||isConnectionProviderId(provider))&&(!query?.providerId||(model.provider===query.providerId&&providerId===query.providerId))&&(!isOfficialRuntimeProviderId(model.provider)||isConnectionProviderId(model.provider))&&(!account||(model.provider===account.providerId&&providerId===account.providerId))&&!(isConnectionProviderId(providerId)&&options.accounts?.isSigningIn?.(providerId,account?.id??null));
    });
+   if(providerId&&results.every(result=>result.status==='rejected'))throw results[0].reason;
    if(!models.length&&results.some(result=>result.status==='rejected'))throw new HarnessError('AI_AUTH_REQUIRED','No signed-in subscription runtime is available. Connect a provider in Settings and refresh models.');return models;
   },
   async invalidateModels(query){
