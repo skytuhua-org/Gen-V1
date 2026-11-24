@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { link, lstat, mkdir, open, readdir, rm } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { HarnessError } from "../contracts/index.ts";
 import { readBoundFile, replaceOwnedFile, withPathGuard } from "../core/file-access.ts";
@@ -153,18 +153,33 @@ export class CheckpointService {
       ],
       signal,
       async () => {
+        // Publish atomically: stage the complete bytes under a private name,
+        // verify the staged digest, then rename onto the content-addressed
+        // name. A killed write leaves only a staging file for GC to sweep —
+        // never a short blob a reader could trust.
+        const staging = join(this.blobRoot, `.gen-blob-${randomUUID()}.tmp`);
         try {
-          const file = await open(target, "wx", 0o600);
+          const file = await open(staging, "wx", 0o600);
           try {
             await file.writeFile(data);
           } finally {
             await file.close();
           }
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          const staged = await readBoundFile(staging, CHECKPOINT_V1_LIMITS.fileBytes + 1);
+          if (sha256hex(staged) !== ref) throw new HarnessError("CAPABILITY_DENIED", "Checkpoint blob verification failed.");
+          // An existing name must already hold exactly these bytes. Bytes
+          // that fail the digest (short write, tamper, hardlink policy) are
+          // replaced so a retry of the same capture recovers.
+          const intact = await readBoundFile(target, CHECKPOINT_V1_LIMITS.fileBytes + 1).then(
+            (bytes) => sha256hex(bytes) === ref,
+            () => false,
+          );
+          if (intact) return;
+          await rm(target, { force: true });
+          await rename(staging, target);
+        } finally {
+          await rm(staging, { force: true }).catch(() => {});
         }
-        const check = await readBoundFile(target, CHECKPOINT_V1_LIMITS.fileBytes + 1);
-        if (sha256hex(check) !== ref) throw new HarnessError("CAPABILITY_DENIED", "Checkpoint blob verification failed.");
       },
     );
     return ref;
@@ -179,9 +194,12 @@ export class CheckpointService {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
     }
-    return withPathGuard([{ path: this.blobRoot, leaf: false }, { path: target, leaf: true, readOnly: true }], signal, async () =>
-      readBoundFile(target, CHECKPOINT_V1_LIMITS.fileBytes + 1),
-    );
+    return withPathGuard([{ path: this.blobRoot, leaf: false }, { path: target, leaf: true, readOnly: true }], signal, async () => {
+      const data = await readBoundFile(target, CHECKPOINT_V1_LIMITS.fileBytes + 1);
+      // A name that does not hash to itself was never a complete publication;
+      // report its bytes as missing, never as trusted content.
+      return sha256hex(data) === ref ? data : null;
+    });
   }
 
   /** Read a file that may be absent, returning null instead of failing the guard. */
@@ -661,7 +679,14 @@ export class CheckpointService {
     let removed = 0;
     try {
       for (const name of await readdir(this.blobRoot)) {
-        if (!/^[a-f0-9]{64}$/.test(name) || referenced.has(name)) continue;
+        const staging = name.startsWith(".gen-blob-") && name.endsWith(".tmp");
+        if ((!staging && (!/^[a-f0-9]{64}$/.test(name) || referenced.has(name)))) continue;
+        // A live publish stages under the private name for under a second;
+        // only sweep staging files too old to belong to an in-flight write.
+        if (staging) {
+          const info = await lstat(join(this.blobRoot, name)).catch(() => null);
+          if (!info?.isFile() || Date.now() - info.mtimeMs < 60_000) continue;
+        }
         await rm(join(this.blobRoot, name), { force: true });
         removed++;
       }
