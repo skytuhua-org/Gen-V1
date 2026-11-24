@@ -35,7 +35,7 @@ const schemas = {
   Stack: z.strictObject({ gap, align: z.enum(["start", "center", "end", "stretch"]).optional(), scroll: z.literal('bounded').optional(), label: z.string().max(500).optional() }),
   Grid: z.strictObject({ columns: z.number().int().min(1).max(6).optional(), gap }),
   Split: z.strictObject({ ratio: z.number().min(0.1).max(0.9).optional(), gap }),
-  Tabs: z.strictObject({ labels: z.array(text).min(1).max(20).meta({ uniqueItems: true }), stateKey: key, statusBinding: binding }),
+  Tabs: z.strictObject({ labels: z.array(z.string().min(1).max(500)).min(1).max(20).meta({ uniqueItems: true }), stateKey: key, statusBinding: binding }),
   Panel: z.strictObject({ title: optionalText, description: optionalText, align: z.enum(['start', 'center']).optional() }),
   Disclosure: z.strictObject({ title: text, text: optionalText, stateKey: key, defaultOpen: z.boolean().optional(), dataBinding: binding, onOpenActionId: key.optional(), payload: z.record(key, z.unknown()).optional(), payloadFromState }),
   Text: z.strictObject({ text, tone: z.enum(["default", "muted", "success", "warning", "danger"]).optional(), size: z.enum(["sm", "md", "lg"]).optional() }),
@@ -57,7 +57,7 @@ const schemas = {
   Document: z.strictObject({ text: optionalText, dataBinding: binding, resourceId: opaqueId.optional(), resourcePath: z.string().min(1).max(1024).refine(path => !/[\u0000-\u001f:]/.test(path) && !/^[\\/]|(?:^|[\\/])\.\.(?:[\\/]|$)/.test(path)).optional(), title: optionalText, linkLabel: z.string().max(200).optional(), download: z.boolean().optional(), presentation: z.enum(['inline','window']).optional(), editableStateKey: key.optional() }).refine(value => !value.editableStateKey || value.presentation === 'window', 'Editable documents use window presentation'),
   Image: z.strictObject({ src: z.string().max(2048).refine(s => {
     try { const url = new URL(s); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && !/[\u0000-\u0020\\]/.test(s); } catch { return false; }
-  }, "Only safe HTTP(S) image URLs are allowed").optional(), resourceId: opaqueId.optional(), alt: text }),
+  }, "Only safe HTTP(S) image URLs are allowed").optional(), resourceId: opaqueId.optional(), alt: text }).refine(value => !(value.src && value.resourceId), 'An Image accepts only one source'),
 } satisfies Record<string, z.ZodType>;
 type ComponentName = keyof typeof schemas;
 const examples: Record<ComponentName, Record<string, unknown>> = {
