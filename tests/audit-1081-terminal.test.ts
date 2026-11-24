@@ -24,4 +24,3 @@ it('releases the spawned terminal when durable registration fails',async()=>{
  await expect(host.read('doomed',projectId)).rejects.toMatchObject({code:'NOT_FOUND'});
  store.internal=original;
 },20000);
-
