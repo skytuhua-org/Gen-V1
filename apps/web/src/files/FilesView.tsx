@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
 	ArrowLeft,
+	Download,
 	ChevronRight,
 	File,
 	Folder,
@@ -48,6 +49,8 @@ export function FilesView({
 	preview,
 	selector,
 	download,
+	previewActions,
+	previewNote,
 	limitNote,
 	projectSearch,
 	onDirectory,
@@ -64,6 +67,8 @@ export function FilesView({
 	preview: FilesRead<unknown> & { body: ReactNode };
 	selector?: ReactNode;
 	download?: string;
+	previewActions?: ReactNode;
+	previewNote?: ReactNode;
 	limitNote?: string;
 	projectSearch?: {
 		available: boolean;
@@ -308,12 +313,23 @@ export function FilesView({
 								<strong title={displayFilePath(selected.path)}>
 									{displayFilePath(selected.name)}
 								</strong>
-								{download && (
-									<a href={download} download={selected.name}>
-										Download
-									</a>
+								{(previewActions != null || download != null) && (
+									<div className="files-preview-actions">
+										{previewActions}
+										{download && (
+											<a
+												href={download}
+												download={selected.name}
+												aria-label={`Download ${displayFilePath(selected.name)}`}
+											>
+												<Download size={14} aria-hidden="true" />
+												<span>Download</span>
+											</a>
+										)}
+									</div>
 								)}
 							</header>
+							{previewNote}
 							<div
 								className="files-preview-content"
 								tabIndex={0}

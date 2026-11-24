@@ -14,6 +14,8 @@ import {readBoundFile,withPathGuard} from '../core/file-access.ts';
 import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead} from '../contracts/code-review.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
+import {gitBlobId,githubBlobUrl,parseGitHubOrigin,upstreamRef} from './github-file-link.ts';
+import type {GitHubFileLink} from '../contracts/github-file-link.ts';
 
 interface Identity{dev:string;ino:string}
 export interface WorkspaceBinding {id:string;threadId:string;projectId:string;familyId?:string;path:string;branch:string;gitDirectory:string;commonDirectory:string;identity:Identity;gitDirectoryIdentity:Identity;commonDirectoryIdentity:Identity}
@@ -202,5 +204,58 @@ export class ProjectTools{
   return withPathGuard([{path:target,leaf:false}],new AbortController().signal,async()=>{const{readdir}=await import('node:fs/promises'),entries=[];for(const item of(await readdir(target,{withFileTypes:true})).slice(0,500)){if(item.name.toLowerCase()==='.git'||item.name==='.harness-directory-guard'||item.isSymbolicLink())continue;entries.push({name:item.name,path:relativePath?relativePath+'/'+item.name:item.name,kind:item.isDirectory()?'directory':'file'});}return{path:relativePath,entries};});
  }
  async file(projectId:string,threadId:string|undefined,relativePath:string){const{path}=await this.binding(projectId,threadId),target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data)};});}
+ async githubFileLink(projectId:string,threadId:string|undefined,relativePath:string,sha256:string):Promise<GitHubFileLink>{
+  const bound=await this.binding(projectId,threadId),target=join(bound.path,pathName.parse(relativePath));
+  let resolved:string|null=null;
+  try{resolved=await realpath(target);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+  if(resolved!==null&&(!inside(bound.path,resolved)||gitSegment(relative(bound.path,resolved))||gitSegment(relativePath)))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');
+  let origin:string|undefined;try{origin=await this.gitReviewOrigin(projectId,threadId);}catch(error){
+   const code=error instanceof HarnessError?error.code:undefined;
+   if(code==='GITHUB_REMOTE_REQUIRED'||code==='GIT_ERROR')return{state:'unavailable',reason:'no-origin'};
+   if(code==='CAPABILITY_DENIED'||code==='NOT_FOUND'||code==='PROJECT_NOT_CONNECTED'||code==='CANCELLED')throw error;
+   return{state:'unavailable',reason:'check-failed'};
+  }
+  const parsed=origin?parseGitHubOrigin(origin):undefined;
+  if(!parsed)return{state:'unavailable',reason:'origin-not-github'};
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,async(metadata,worktree,signal)=>{
+   const git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,worktree,args,signal);
+   try{
+    const symbolic=(await git(['rev-parse','--symbolic-full-name','HEAD'])).trim();
+    if(symbolic==='HEAD')return{state:'unavailable',reason:'detached-head'} as GitHubFileLink;
+    const branch=symbolic.startsWith('refs/heads/')?symbolic.slice('refs/heads/'.length):symbolic;
+    let head:string;try{head=(await git(['rev-parse','--verify','--quiet','HEAD^{commit}'])).trim();}catch{return{state:'unavailable',reason:'unborn-head'};}
+    const listing=await git(['config','--list','--null']),config:{remote?:string;merge?:string}={};
+    for(const entry of listing.split('\0')){const line=entry.split('\n'),name=line[0]??'',value=line.slice(1).join('\n');
+     if(name==='branch.'+branch+'.remote')config.remote=value;else if(name==='branch.'+branch+'.merge')config.merge=value;}
+    const resolution=upstreamRef(branch,config);
+    if('reason' in resolution)return{state:'unavailable',reason:resolution.reason,detail:{branch}};
+    let upstreamOid:string|undefined;
+    for(const row of (await git(['for-each-ref','--format=%(refname)%00%(objectname)','refs/remotes/origin/'])).split('\n')){
+     const[refname,oid]=row.split('\0');if(refname===resolution.ref&&oid)upstreamOid=oid;}
+    if(!upstreamOid)return{state:'unavailable',reason:'no-upstream',detail:{branch}};
+    const ahead=(await git(['rev-list','--max-count=1',upstreamOid+'..'+head])).trim();
+    if(ahead)return{state:'unavailable',reason:'not-on-upstream',detail:{branch,commit:head.slice(0,7),upstream:resolution.refname}};
+    const tree=await git(['--literal-pathspecs','ls-tree','-z','--full-tree',head,'--',relativePath]);
+    let entryOid:string|undefined,entryMode:string|undefined;
+    for(const row of tree.split('\0')){const meta=row.split('\t');if(meta.length===2&&meta[1]===relativePath){const parts=meta[0]!.split(' ');entryMode=parts[0];entryOid=parts[2];}}
+    if(!entryOid||resolved===null)return{state:'unavailable',reason:'untracked'};
+    if(entryMode==='120000'||entryMode==='160000')return{state:'unavailable',reason:'not-regular-file'};
+    const bytes=await withPathGuard([{path:target,leaf:true,readOnly:true}],signal,()=>readBoundFile(target,1024*1024));
+    if(hash(bytes)!==sha256.toLowerCase())return{state:'unavailable',reason:'preview-stale'};
+    if(bytes.includes(0))return{state:'unavailable',reason:'binary'};
+    if(!Buffer.from(bytes.toString('utf8'),'utf8').equals(bytes))return{state:'unavailable',reason:'not-utf8'};
+    if(gitBlobId(bytes)!==entryOid)return{state:'unavailable',reason:'changed'};
+    const headNow=(await git(['rev-parse','--verify','--quiet','HEAD^{commit}'])).trim();
+    let upstreamNow:string|undefined;
+    for(const row of (await git(['for-each-ref','--format=%(refname)%00%(objectname)','refs/remotes/origin/'])).split('\n')){
+     const[refname,oid]=row.split('\0');if(refname===resolution.ref&&oid)upstreamNow=oid;}
+    if(headNow!==head||upstreamNow!==upstreamOid)return{state:'unavailable',reason:'changed-during-check'};
+    return{state:'ready',url:githubBlobUrl(parsed.owner,parsed.repo,head,relativePath),commit:head,repository:parsed.owner+'/'+parsed.repo,upstream:resolution.refname,path:relativePath};
+   }catch(error){
+    if(error instanceof HarnessError&&['CAPABILITY_DENIED','NOT_FOUND','PROJECT_NOT_CONNECTED','CANCELLED','UNSUPPORTED_PATH','RESOURCE_LIMIT'].includes(error.code))throw error;
+    return{state:'unavailable',reason:'check-failed'};
+   }
+  }));
+ }
  async dispose(){await Promise.allSettled([...this.queues.values()]);}
 }

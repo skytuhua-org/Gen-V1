@@ -408,3 +408,146 @@
 		grid-template-columns: minmax(0, 1fr);
 	}
 }
+
+/* GitHub permalink control (#1664) */
+.files-preview {
+	container-type: inline-size;
+}
+.files-preview > header strong {
+	min-width: 0;
+}
+.files-preview-actions {
+	display: flex;
+	align-items: center;
+	gap: var(--ui-space-1);
+	flex-shrink: 0;
+}
+.files-preview-actions > a {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 12px;
+	flex-shrink: 0;
+}
+.files-permalink-wrap {
+	display: inline-flex;
+}
+.files-permalink-wrap .copy-button[aria-disabled="true"] {
+	cursor: default;
+}
+.files-permalink-wrap .copy-button[aria-disabled="true"]:hover {
+	background: var(--hover);
+}
+.files-permalink-checking .copy-button {
+	opacity: 0.5;
+}
+.files-permalink-unavailable .copy-button {
+	color: var(--muted);
+	opacity: 0.6;
+}
+.files-permalink-wrap .copy-button[data-copied] {
+	color: var(--success-fg);
+	opacity: 1;
+}
+.files-permalink-wrap .copy-button svg {
+	transition:
+		opacity var(--ui-motion-status) var(--ui-ease-move),
+		color var(--ui-motion-hover) var(--ui-ease-move),
+		background var(--ui-motion-hover) var(--ui-ease-move),
+		transform var(--ui-motion-press) var(--ui-ease-move);
+}
+.files-permalink-wrap .copy-button:active {
+	transform: scale(0.96);
+}
+.files-permalink-wrap .copy-button[data-copied] svg {
+	animation: files-permalink-check var(--ui-motion-success)
+		var(--ui-ease-spring);
+}
+@keyframes files-permalink-check {
+	from {
+		opacity: 0;
+		transform: scale(0.85);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+.files-permalink-wrap .copy-button:focus-visible {
+	outline: 2px solid var(--ui-focus-ring, #808080);
+	outline-offset: -2px;
+}
+.files-permalink-note {
+	margin: 0;
+	padding: var(--ui-space-1) var(--files-inset) var(--ui-space-2);
+	border-bottom: 1px solid var(--border);
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--muted);
+	flex-shrink: 0;
+	overflow-wrap: anywhere;
+	animation: files-permalink-note-in var(--ui-motion-status)
+		var(--ui-ease-enter);
+}
+.files-permalink-note code {
+	font-family: var(--font-mono, monospace);
+	font-size: 11.5px;
+}
+.files-permalink-note.files-permalink-danger {
+	color: var(--danger-fg);
+}
+@keyframes files-permalink-note-in {
+	from {
+		opacity: 0;
+		transform: translateY(-2px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+.files-permalink-note.files-permalink-leaving {
+	opacity: 0;
+	transition: opacity var(--ui-motion-remove) var(--ui-ease-move);
+}
+.files-permalink-retry {
+	background: none;
+	border: none;
+	padding: 0;
+	font-size: 12px;
+	color: var(--accent-fg);
+	cursor: pointer;
+}
+.files-permalink-retry:hover {
+	text-decoration: underline;
+}
+@container (max-width: 360px) {
+	.files-preview-actions > a > span {
+		display: none;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.files-permalink-wrap .copy-button svg,
+	.files-permalink-note,
+	.files-permalink-note.files-permalink-leaving {
+		animation-duration: 0ms;
+		transition-duration: 0ms;
+	}
+	.files-permalink-note {
+		transform: none;
+	}
+}
+@media (forced-colors: active) {
+	.files-permalink-wrap .copy-button {
+		color: ButtonText;
+	}
+	.files-permalink-wrap .copy-button[aria-disabled="true"] {
+		color: GrayText;
+	}
+	.files-permalink-wrap .copy-button:focus-visible {
+		outline-color: Highlight;
+	}
+	.files-permalink-note {
+		border-bottom-color: CanvasText;
+	}
+}

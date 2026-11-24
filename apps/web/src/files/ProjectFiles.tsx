@@ -2,11 +2,16 @@ import {
 	Fragment,
 	useCallback,
 	useEffect,
+	useId,
 	useRef,
 	useState,
 	type ReactNode,
 } from "react";
+import { Link2 } from "lucide-react";
 import { authenticated, read } from "../api";
+import { CopyButton } from "../CopyButton";
+import type { GitHubFileLink } from "../../../../packages/contracts/github-file-link.ts";
+import { useGitHubFileLink } from "./useGitHubFileLink";
 import { FilesView, type FilesEntry } from "./FilesView";
 import { ProjectSearch } from "./ProjectSearch";
 import {
@@ -84,6 +89,134 @@ function ProjectFilesReader({
 			readFile,
 		);
 	const file = preview.value;
+	const [note, setNote] = useState<
+		| {
+				kind: "success" | "unavailable" | "check-failed" | "copy-failed";
+				link?: GitHubFileLink;
+				leaving?: boolean;
+		  }
+		| null
+	>(null);
+	const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
+		noteId = useId();
+	// The note belongs to the selected file: a new selection replaces it.
+	useEffect(() => {
+		setNote(null);
+		if (noteTimer.current) {
+			clearTimeout(noteTimer.current);
+			noteTimer.current = null;
+		}
+	}, [selected?.path, path]);
+	const dismissNote = () => {
+		setNote((current) => (current ? { ...current, leaving: true } : null));
+		noteTimer.current = setTimeout(() => {
+			noteTimer.current = null;
+			setNote(null);
+		}, 140);
+	};
+	const accepted = !!(
+		selected &&
+		file &&
+		!file.binary &&
+		!preview.pending &&
+		!preview.error
+	);
+	const link = useGitHubFileLink(
+		base,
+		query,
+		accepted && selected
+			? {
+					projectId: owner.projectId,
+					threadId: owner.threadId,
+					path: selected.path,
+					sha256: file!.sha256,
+				}
+			: null,
+	);
+	const checking = accepted && link.pending,
+		ready = link.value?.state === "ready" ? link.value : null,
+		unavailable = link.value?.state === "unavailable" ? link.value : null,
+		checkFailed = !!link.error,
+		hiddenReason = !!unavailable &&
+			["no-origin", "origin-not-github"].includes(unavailable.reason);
+	const reasonText = (
+		data: Extract<GitHubFileLink, { state: "unavailable" }>,
+	): string => {
+		switch (data.reason) {
+			case "detached-head":
+				return "No GitHub link: HEAD is detached. Check out a branch.";
+			case "unborn-head":
+				return "No GitHub link: this branch has no commits yet.";
+			case "no-upstream":
+				return `No GitHub link: no fetched origin branch for ${data.detail?.branch ?? ""}.`;
+			case "upstream-not-origin":
+				return "No GitHub link: this branch tracks a remote other than origin.";
+			case "not-on-upstream":
+				return `No GitHub link: commit ${(data.detail?.commit ?? "").slice(0, 7)} isn’t on ${data.detail?.upstream ?? ""} yet. Push, then fetch.`;
+			case "untracked":
+				return "No GitHub link: this file isn’t committed.";
+			case "not-regular-file":
+				return "No GitHub link: links are only available for regular files.";
+			case "changed":
+				return "No GitHub link: this file differs from the committed version.";
+			case "binary":
+			case "not-utf8":
+				return "No GitHub link: only text files can be linked.";
+			case "preview-stale":
+			case "changed-during-check":
+				return "No GitHub link: the file changed. Refresh and try again.";
+			default:
+				return "Couldn’t check the GitHub link.";
+		}
+	};
+	const showSuccessNote = (data: GitHubFileLink) => {
+		setNote({ kind: "success", link: data });
+		if (noteTimer.current) clearTimeout(noteTimer.current);
+		noteTimer.current = setTimeout(() => {
+			noteTimer.current = null;
+			dismissNote();
+		}, 6000);
+	};
+	const reasonNote = (data: Extract<GitHubFileLink, { state: "unavailable" }>) => {
+		switch (data.reason) {
+			case "detached-head":
+				return "No GitHub link: HEAD is detached. Check out a branch.";
+			case "unborn-head":
+				return "No GitHub link: this branch has no commits yet.";
+			case "no-upstream":
+				return (
+					<>
+						No GitHub link: no fetched origin branch for{" "}
+						<code>{data.detail?.branch ?? ""}</code>.
+					</>
+				);
+			case "upstream-not-origin":
+				return "No GitHub link: this branch tracks a remote other than origin.";
+			case "not-on-upstream":
+				return (
+					<>
+						No GitHub link: commit{" "}
+						<code>{(data.detail?.commit ?? "").slice(0, 7)}</code> isn’t on{" "}
+						<code>{data.detail?.upstream ?? ""}</code> yet. Push, then
+						fetch.
+					</>
+				);
+			case "untracked":
+				return "No GitHub link: this file isn’t committed.";
+			case "not-regular-file":
+				return "No GitHub link: links are only available for regular files.";
+			case "changed":
+				return "No GitHub link: this file differs from the committed version.";
+			case "binary":
+			case "not-utf8":
+				return "No GitHub link: only text files can be linked.";
+			case "preview-stale":
+			case "changed-during-check":
+				return "No GitHub link: the file changed. Refresh and try again.";
+			default:
+				return "Couldn’t check the GitHub link.";
+		}
+	};
 	const stale = !!(
 		selectedMatch &&
 		file &&
@@ -191,6 +324,84 @@ function ProjectFilesReader({
 				(folder.value?.entries.length ?? 0) >= 500
 					? "Showing up to 500 entries; more files may exist."
 					: undefined
+			}
+			previewActions={
+				accepted && !link.hidden && !hiddenReason ? (
+					<span
+						className={`files-permalink-wrap${
+							checking
+								? " files-permalink-checking"
+								: !ready
+									? " files-permalink-unavailable"
+									: ""
+						}`}
+					>
+					<CopyButton
+						text={ready?.url ?? ""}
+						label="Copy GitHub permalink"
+						icon={Link2}
+						copiedLabel="Copied GitHub link"
+						srLabel=""
+						failureMessage="Copy failed. Try again."
+						disabled={!ready}
+						busy={checking}
+						tooltip={
+							checking
+								? "Checking GitHub link…"
+								: unavailable
+									? reasonText(unavailable)
+									: checkFailed
+										? "Couldn’t check the GitHub link."
+										: undefined
+						}
+						describedBy={note ? noteId : undefined}
+						onCopied={() => ready && showSuccessNote(ready)}
+						onFailure={() => setNote({ kind: "copy-failed" })}
+						onDisabledPress={() => {
+							if (checking) return;
+							if (checkFailed || unavailable?.reason === "check-failed")
+								setNote({ kind: "check-failed", link: link.value! });
+							else if (unavailable) setNote({ kind: "unavailable", link: unavailable });
+						}}
+					/>
+					</span>
+				) : null
+			}
+			previewNote={
+				note ? (
+					<p
+						id={noteId}
+						className={`files-permalink-note${note.kind === "check-failed" || note.kind === "copy-failed" ? " files-permalink-danger" : ""}${note.leaving ? " files-permalink-leaving" : ""}`}
+						role="status"
+					>
+						{note.kind === "success" && note.link?.state === "ready" ? (
+							<>
+								Copied link to <code>{note.link.commit.slice(0, 7)}</code>{" "}
+								on <code>{note.link.upstream}</code> (last fetch). People
+								need access to <code>{note.link.repository}</code> to open
+								it.
+							</>
+						) : note.kind === "unavailable" && note.link?.state === "unavailable" ? (
+							reasonNote(note.link)
+						) : note.kind === "check-failed" ? (
+							<>
+								Couldn’t check the GitHub link.{" "}
+								<button
+									type="button"
+									className="files-permalink-retry"
+									onClick={() => {
+										setNote(null);
+										link.refresh();
+									}}
+								>
+									Retry
+								</button>
+							</>
+						) : (
+							"Copy failed. Try again."
+						)}
+					</p>
+				) : null
 			}
 			onDirectory={(next) => {
 				setSelectedMatch(null);

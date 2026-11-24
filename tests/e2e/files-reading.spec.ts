@@ -954,3 +954,280 @@ for (const source of ["project", "granted"])
 			).toBeVisible();
 		},
 	);
+
+// --- #1664 GitHub permalink ---------------------------------------------------
+const readyLink = {
+	state: "ready",
+	url:
+		"https://github.com/acme/widgets/blob/" +
+		"c".repeat(40) +
+		"/ok.txt",
+	commit: "c".repeat(40),
+	repository: "acme/widgets",
+	upstream: "origin/main",
+	path: "ok.txt",
+};
+async function githubLink(
+	page: Page,
+	respond: (path: string | null) => { status?: number; json: unknown } | "hold",
+	held: Route[] = [],
+) {
+	await page.route("**/api/projects/*/file/github-link*", (route) => {
+		const path = new URL(route.request().url()).searchParams.get("path");
+		const result = respond(path);
+		if (result === "hold") held.push(route);
+		else route.fulfill({ status: result.status ?? 200, json: result.json });
+	});
+}
+async function openOkSetup(page: Page) {
+	const go = await fixture(page);
+	await project(page, [entry("ok.txt"), entry("other.txt")]);
+	return go;
+}
+async function openFile(page: Page) {
+	await page.getByRole("button", { name: "ok.txt", exact: true }).click();
+	await expect(
+		page.getByRole("region", { name: "File content" }),
+	).toContainText("Current file");
+}
+const permalinkButton = (page: Page) =>
+	page.getByRole("button", { name: "Copy GitHub permalink" });
+
+test.describe("GitHub permalink", () => {
+	test.use({ permissions: ["clipboard-read", "clipboard-write"] });
+	test.beforeEach(async ({ page }) => {
+		// Fail on any request leaving the fixture (Vite) origin.
+		await page.route(/^https?:\/\//, (route) => {
+			const url = new URL(route.request().url());
+			if (url.host !== new URL(page.url() || "http://localhost").host)
+				return route.abort("failed");
+			return route.continue();
+		});
+	});
+
+	test("ready link copies the commit-pinned URL and shows the success note", async ({
+		page,
+	}) => {
+		const go = await openOkSetup(page);
+		await githubLink(page, () => ({ json: readyLink }));
+		await go();
+		await openFile(page);
+		const button = permalinkButton(page);
+		await expect(button).toBeVisible();
+		await expect.poll(() => button.getAttribute("aria-disabled")).toBeNull();
+		await button.click();
+		await expect(page.locator(".files-permalink-note")).toContainText(
+			"Copied link to ccccccc on origin/main (last fetch). People need access to acme/widgets to open it.",
+		);
+		expect(
+			await page.evaluate(() => navigator.clipboard.readText()),
+		).toBe(readyLink.url);
+	});
+
+	const reasons: [string, Record<string, unknown>, string][] = [
+		["detached-head", {}, "No GitHub link: HEAD is detached. Check out a branch."],
+		["unborn-head", {}, "No GitHub link: this branch has no commits yet."],
+		[
+			"no-upstream",
+			{ detail: { branch: "main" } },
+			"No GitHub link: no fetched origin branch for main.",
+		],
+		[
+			"upstream-not-origin",
+			{},
+			"No GitHub link: this branch tracks a remote other than origin.",
+		],
+		[
+			"not-on-upstream",
+			{ detail: { commit: "c".repeat(40), upstream: "origin/main" } },
+			"No GitHub link: commit ccccccc isn’t on origin/main yet. Push, then fetch.",
+		],
+		["untracked", {}, "No GitHub link: this file isn’t committed."],
+		[
+			"not-regular-file",
+			{},
+			"No GitHub link: links are only available for regular files.",
+		],
+		[
+			"changed",
+			{},
+			"No GitHub link: this file differs from the committed version.",
+		],
+		["binary", {}, "No GitHub link: only text files can be linked."],
+		["not-utf8", {}, "No GitHub link: only text files can be linked."],
+		[
+			"preview-stale",
+			{},
+			"No GitHub link: the file changed. Refresh and try again.",
+		],
+		[
+			"changed-during-check",
+			{},
+			"No GitHub link: the file changed. Refresh and try again.",
+		],
+	];
+	for (const [reason, extra, note] of reasons)
+		test("unavailable " + reason + " shows the exact note", async ({ page }) => {
+			const go = await openOkSetup(page);
+			await githubLink(page, () => ({
+				json: { state: "unavailable", reason, ...extra },
+			}));
+			await go();
+			await openFile(page);
+			const button = permalinkButton(page);
+			await expect.poll(() => button.getAttribute("aria-disabled")).toBe("true");
+			await button.click({ force: true });
+			await expect(page.locator(".files-permalink-note")).toContainText(note);
+		});
+
+	for (const hidden of ["no-origin", "origin-not-github"])
+		test("hidden for " + hidden, async ({ page }) => {
+			const go = await openOkSetup(page);
+			await githubLink(page, () => ({
+				json: { state: "unavailable", reason: hidden },
+			}));
+			await go();
+			await openFile(page);
+			await expect(permalinkButton(page)).toHaveCount(0);
+		});
+
+	test("404 route hides the control for the session", async ({ page }) => {
+		const go = await openOkSetup(page);
+		await githubLink(page, () => ({ status: 404, json: { error: { message: "x" } } }));
+		await go();
+		await openFile(page);
+		await expect(permalinkButton(page)).toHaveCount(0);
+	});
+
+	test("check-failed note offers a user-initiated Retry", async ({ page }) => {
+		let calls = 0;
+		const go = await openOkSetup(page);
+		await githubLink(page, () => {
+			calls++;
+			return { status: 500, json: { error: { message: "boom" } } };
+		});
+		await go();
+		await openFile(page);
+		const button = permalinkButton(page);
+		await expect.poll(() => button.getAttribute("aria-disabled")).toBe("true");
+		await button.click({ force: true });
+		const note = page.locator(".files-permalink-note");
+		await expect(note).toContainText("Couldn’t check the GitHub link.");
+		await expect(note.getByRole("button", { name: "Retry" })).toBeVisible();
+		await githubLink(page, () => ({ json: readyLink }));
+		await note.getByRole("button", { name: "Retry" }).click();
+		expect(calls).toBeGreaterThan(0);
+		await expect.poll(() => button.getAttribute("aria-disabled")).toBeNull();
+	});
+
+	test("stale response for a previous file is never shown or copied", async ({
+		page,
+	}) => {
+		const held: Route[] = [];
+		let aDone = false;
+		const go = await openOkSetup(page);
+		await page.route("**/api/projects/*/file/github-link*", async (route) => {
+			const path = new URL(route.request().url()).searchParams.get("path");
+			if (path === "ok.txt" && !aDone) {
+				held.push(route);
+				return;
+			}
+			return route.fulfill({
+				json: {
+					...readyLink,
+					path,
+					commit: "d".repeat(40),
+					url:
+						"https://github.com/acme/widgets/blob/" +
+						"d".repeat(40) +
+						"/" +
+						path,
+				},
+			});
+		});
+		await go();
+		await openFile(page);
+		await expect.poll(() => held.length > 0).toBe(true);
+		await page.getByRole("button", { name: "other.txt", exact: true }).click();
+		aDone = true;
+		for (const r of held.splice(0)) await r.fulfill({ json: readyLink });
+		const button = permalinkButton(page);
+		await expect.poll(() => button.getAttribute("aria-disabled")).toBeNull();
+		await button.click();
+		await expect(page.locator(".files-permalink-note")).toContainText(
+			"Copied link to ddddddd",
+		);
+		expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+			"other.txt",
+		);
+	});
+
+	test("clipboard rejection shows the failure note", async ({ page }) => {
+		const go = await openOkSetup(page);
+		await githubLink(page, () => ({ json: readyLink }));
+		await go();
+		await openFile(page);
+		await page.evaluate(() => {
+			Object.defineProperty(navigator.clipboard, "writeText", {
+				configurable: true,
+				value: () =>
+					Promise.reject(new DOMException("denied", "NotAllowedError")),
+			});
+		});
+		const button = permalinkButton(page);
+		await expect.poll(() => button.getAttribute("aria-disabled")).toBeNull();
+		await button.click();
+		await expect(page.locator(".files-permalink-note")).toContainText(
+			"Copy failed. Try again.",
+		);
+	});
+
+	test("keyboard: Tab reaches the button, Enter copies", async ({ page }) => {
+		const go = await openOkSetup(page);
+		await githubLink(page, () => ({ json: readyLink }));
+		await go();
+		await openFile(page);
+		const button = permalinkButton(page);
+		await expect.poll(() => button.getAttribute("aria-disabled")).toBeNull();
+		await button.focus();
+		await page.keyboard.press("Enter");
+		await expect(page.locator(".files-permalink-note")).toContainText(
+			"Copied link to ccccccc",
+		);
+		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+			readyLink.url,
+		);
+	});
+
+	test("reduced motion: no transitions on the permalink controls", async ({
+		page,
+	}) => {
+		await page.emulateMedia({ reducedMotion: "reduce" });
+		const go = await openOkSetup(page);
+		await githubLink(page, () => ({ json: readyLink }));
+		await go();
+		await openFile(page);
+		const button = permalinkButton(page);
+		await expect.poll(() => button.getAttribute("aria-disabled")).toBeNull();
+		const durations = await page.locator(".files-permalink-wrap").evaluate((el) =>
+			getComputedStyle(el).transitionDuration,
+		);
+		for (const d of durations.split(","))
+			expect(parseFloat(d)).toBeLessThanOrEqual(0.00001);
+	});
+
+	test("360px: Download collapses to an icon with an accessible name", async ({
+		page,
+	}) => {
+		const go = await fixture(page, "?width=360");
+		await project(page, [entry("ok.txt")]);
+		await githubLink(page, () => ({ json: readyLink }));
+		await go();
+		await openFile(page);
+		const button = permalinkButton(page);
+		await expect.poll(() => button.getAttribute("aria-disabled")).toBeNull();
+		await expect(button).toHaveAccessibleName(/Copy GitHub permalink/);
+		const actions = page.locator(".files-preview-actions");
+		await expect(actions).not.toContainText("Download");
+	});
+});
