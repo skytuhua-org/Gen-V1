@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Store } from "../packages/storage/store.ts";
 import { Service } from "../packages/core/service.ts";
 import { BackgroundWorkCoordinator, captureCreationToken, verifyProcessIdentity, type BackgroundWorkRecord } from "../packages/core/background-work.ts";
@@ -10,7 +10,9 @@ import { DurableWakeupScheduler } from "../packages/core/durable-wakeups.ts";
 import { ModelCapacity } from "../packages/runtime/model-capacity.ts";
 import { __setCapabilityFlagForTests, registeredCapabilityFlags } from "../packages/core/capability-flags.ts";
 import type { RuntimeAdapter, Thread } from "../packages/contracts/index.ts";
-import { BACKGROUND_HOLD_REASONS, backgroundWorkV1Schema, humanStepV1Schema, intakeV1Schema, occurrenceKeyForEvent, occurrenceKeyForTime, wakeupV1Schema, type BackgroundOccurrenceV1 } from "../packages/contracts/background-work.ts";
+import { BACKGROUND_HOLD_REASONS, BACKGROUND_SCHEDULER_LIMITS, backgroundWorkV1Schema, humanStepV1Schema, intakeV1Schema, occurrenceKeyForEvent, occurrenceKeyForTime, wakeupV1Schema, type BackgroundOccurrenceV1 } from "../packages/contracts/background-work.ts";
+import { contextResultReadArgs } from "../packages/core/context-result-tool.ts";
+import { openContextResultCustody } from "../packages/core/context-result-custody.ts";
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
@@ -891,5 +893,115 @@ describe("M10 v6 completeness regressions", () => {
       expect(deliver).toHaveBeenCalledTimes(1);
       expect(scheduler.occurrences(wakeup.wakeupId)[0]).toEqual(newer);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("M10-T01 canonical output custody reproduction (#2014)", () => {
+  // T01 evidence: every assertion below states the canonical contract the
+  // command-output path must satisfy. On the baseline each fails for the
+  // specific audited mismatch — not for import or toolchain errors — and
+  // T02/T03 implementations make them pass. Controls that already hold on
+  // the baseline are marked (control).
+  const HANDLE = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+  const spec = (f: ReturnType<typeof fixture>, argv: string[]) => ({ executable: process.execPath, argv, cwd: f.root, profileId: "p" });
+
+  it("issues a canonical M04 handle that context_result_read accepts and custody resolves", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "custody", command: spec(f, ["-e", "console.log('custody bytes')"]) });
+    await f.coordinator.startCommand(work.workId);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    const handle = f.coordinator.work(work.workId).outputRef;
+    // Baseline defects: outputRef is 'bw-result:<workId>', which fails the
+    // context_result_read z.uuid() schema and is absent from canonical custody.
+    expect(handle).toMatch(HANDLE);
+    expect(contextResultReadArgs.safeParse({ handle, offset: 0, length: 1 }).success).toBe(true);
+    mkdirSync(join(f.root, "profile"), { recursive: true });
+    const custody = await openContextResultCustody(join(f.root, "profile"));
+    await expect(custody.getRecord!(handle!)).resolves.toMatchObject({ handle });
+  });
+
+  it("preserves multi-byte scalars split across chunk boundaries with interleaved stderr", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    const text = "héllo wörld —€× tail";
+    // One byte per write on stdout plus a whole-UTF-8 stderr write: every
+    // scalar boundary is split, and per-chunk toString('utf8') yields U+FFFD.
+    const script = `const b=Buffer.from(${JSON.stringify(text)},"utf8"),fs=require("fs");let i=0;const t=setInterval(()=>{if(i>=b.length){clearInterval(t);return;}fs.writeSync(1,b.subarray(i,i+1));if(i===4)fs.writeSync(2,"mark\\n");i++},12);`;
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "split", command: spec(f, ["-e", script]) });
+    await f.coordinator.startCommand(work.workId);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    const output = f.coordinator.readOutput(work.workId, "thread-1", 0).output;
+    expect(output).not.toContain("�");
+    expect(output).toContain(text);
+    expect(output).toContain("mark\n");
+  });
+
+  it("round-trips complete multi-byte scalars delivered in aligned chunks (control)", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    const text = "€é—".repeat(100);
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "aligned", command: spec(f, ["-e", `require("fs").writeSync(1,${JSON.stringify(text)})`]) });
+    await f.coordinator.startCommand(work.workId);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    expect(f.coordinator.readOutput(work.workId, "thread-1", 0).output).toBe(text);
+  });
+
+  it("bounds the retained window in bytes, not UTF-16 units", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    // 200_000 '€' is 600_000 bytes but only 200_000 UTF-16 code units, so the
+    // code-unit comparison against outputWindowBytes never trims on baseline.
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "window", command: spec(f, ["-e", `require("fs").writeSync(1,"€".repeat(200000))`]) });
+    await f.coordinator.startCommand(work.workId);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    const read = f.coordinator.readOutput(work.workId, "thread-1", 0);
+    expect(Buffer.byteLength(read.output, "utf8")).toBeLessThanOrEqual(BACKGROUND_SCHEDULER_LIMITS.outputWindowBytes);
+    expect(read.truncated).toBe(true);
+  });
+
+  it("bounds the retained ASCII window at the byte limit (control)", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "ascii-window", command: spec(f, ["-e", `require("fs").writeSync(1,"a".repeat(600000))`]) });
+    await f.coordinator.startCommand(work.workId);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    const read = f.coordinator.readOutput(work.workId, "thread-1", 0);
+    expect(Buffer.byteLength(read.output, "utf8")).toBe(BACKGROUND_SCHEDULER_LIMITS.outputWindowBytes);
+    expect(read.truncated).toBe(true);
+  });
+
+  it("mints the published digest over the final close-tail bytes", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    // The child hands its stdout to a grandchild that writes the tail only
+    // after the owned process exits: 'exit' publishes the handle, then
+    // 'close' persists the tail — so the minted digest predates final bytes.
+    const script = `const g=require("child_process").spawn(process.execPath,["-e","setTimeout(()=>process.stdout.write('tail-after-exit'),150)"],{stdio:["ignore","inherit","inherit"]});g.unref();process.stdout.write("head\\n");`;
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "tail", command: spec(f, ["-e", script]) });
+    await f.coordinator.startCommand(work.workId);
+    const handle = `bw-result:${work.workId}`;
+    await waitFor(() => !!f.store.get("backgroundResultHandle", handle));
+    await waitFor(() => f.coordinator.readOutput(work.workId, "thread-1", 0).output === "head\ntail-after-exit");
+    const record = f.store.get<{ digest: string }>("backgroundResultHandle", handle)!;
+    expect(record.digest).toBe(createHash("sha256").update("head\ntail-after-exit").digest("hex"));
+  });
+
+  it("denies output reads once the owner binding drifts (run, epoch, account)", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    const owner = { ...f.owner, runId: "run-1", epoch: 1, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-1" };
+    f.store.internal("fixture.owner", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-1", epoch: 1, projectId: "proj-1", accountId: "acct-1" } as Thread));
+    const work = f.coordinator.admit(command("background.work.admit"), { owner, kind: "COMMAND", title: "drift", command: spec(f, ["-e", "console.log('x');setTimeout(()=>{},30000)"]) });
+    const started = await f.coordinator.startCommand(work.workId);
+    // Positive control: the authorized same-owner read succeeds while the
+    // binding still matches.
+    await waitFor(() => f.coordinator.readOutput(work.workId, f.thread.id, 0).output.includes("x"));
+    // Owner revision drift: a new run/epoch under a different account makes
+    // the prior binding stale; canonical custody must deny the read.
+    f.store.internal("fixture.drift", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-2", epoch: 2, projectId: "proj-1", accountId: "acct-2" } as Thread));
+    expect(() => f.coordinator.readOutput(work.workId, f.thread.id)).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED" }));
+    killOwnedProcess(started.processIdentity!.pid);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED" || f.coordinator.work(work.workId).state === "UNKNOWN");
   });
 });
