@@ -8,17 +8,17 @@ const fixture=()=>taskFixture({root:'text',elements:{text:{type:'Text',props:{te
 test('same-thread plan publication opens the overview without stealing the composer and collapse survives progress',async({page})=>{
  const snapshot=fixture();snapshot.threads[0].runId='run-a';snapshot.threads[0].epoch=1;
  const host=await serveTaskFixture(page,snapshot);await page.goto('/');const message=page.getByRole('textbox',{name:'Message',exact:true});await expect(message).toBeEnabled();await message.fill('Keep typing here.');await message.focus();
- const overview=page.getByRole('region',{name:'Project overview window',exact:true});await expect(overview).toHaveAttribute('data-collapsed','true');
+ const overview=page.getByRole('region',{name:'Project overview window',exact:true});await expect(overview).toBeHidden();
  snapshot.data.push({...row(),threadId:'other'});await host.publish();await expect(overview.locator('[data-plan-revision]')).toHaveCount(0);
  snapshot.data.push({...row(),value:{version:1,title:'Not a plan',steps:'invalid',agents:[]} });await host.publish();await expect(overview.locator('[data-plan-revision]')).toHaveCount(0);
  snapshot.data[snapshot.data.length-1]=row();await host.publish();
- await expect(overview.getByText('Update available',{exact:true})).toBeVisible();await expect(overview).toHaveAttribute('data-collapsed','true');await expect(message).toBeFocused();
- await overview.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(overview).toHaveAttribute('data-collapsed','false');await expect(overview.getByRole('region',{name:'Plan summary',exact:true})).toBeVisible();await expect(message).toHaveValue('Keep typing here.');
- await overview.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect(overview).toHaveAttribute('data-collapsed','true');
- snapshot.data[snapshot.data.length-1].revision++;await host.publish();await expect(overview).toHaveAttribute('data-collapsed','true');await expect(overview.getByText('Update available',{exact:true})).toHaveCount(0);
- await page.reload();await expect(message).toBeEnabled();await expect(overview).toHaveAttribute('data-collapsed','true');
- snapshot.threads[0].runId='run-b';snapshot.threads[0].epoch++;snapshot.data[snapshot.data.length-1].revision++;await host.publish();await expect(overview.getByText('Update available',{exact:true})).toBeVisible();
- await overview.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(overview).toHaveAttribute('data-collapsed','false');await expect(overview.getByRole('region',{name:'Plan summary',exact:true})).toHaveAttribute('data-plan-revision','3');await expect(message).toHaveValue('Keep typing here.');
+ await expect(page.getByRole('button',{name:'Expand Project overview',exact:true}).getByText('Update available',{exact:true})).toBeVisible();await expect(overview).toBeHidden();await expect(message).toBeFocused();
+ await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(overview).toHaveAttribute('data-collapsed','false');await expect(overview.getByRole('region',{name:'Plan summary',exact:true})).toBeVisible();await expect(message).toHaveValue('Keep typing here.');
+ await page.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect(overview).toBeHidden();
+ snapshot.data[snapshot.data.length-1].revision++;await host.publish();await expect(overview).toBeHidden();await expect(page.getByText('Update available',{exact:true})).toHaveCount(0);
+ await page.reload();await expect(message).toBeEnabled();await expect(overview).toBeHidden();
+ snapshot.threads[0].runId='run-b';snapshot.threads[0].epoch++;snapshot.data[snapshot.data.length-1].revision++;await host.publish();await expect(page.getByRole('button',{name:'Expand Project overview',exact:true}).getByText('Update available',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(overview).toHaveAttribute('data-collapsed','false');await expect(overview.getByRole('region',{name:'Plan summary',exact:true})).toHaveAttribute('data-plan-revision','3');await expect(message).toHaveValue('Keep typing here.');
 });
 
 test('attachment chips belong to the compact composer header utility group',async({page})=>{
@@ -29,9 +29,9 @@ test('attachment chips belong to the compact composer header utility group',asyn
 test('switching threads shows each plan in the shared overview and collapse persists',async({page})=>{
  const snapshot=fixture();snapshot.threads[0].title='First task';snapshot.data.push(row());const second={...snapshot.threads[0],id:'second',title:'Second task'};snapshot.threads.push(second,{...second,id:'empty',title:'Empty task'});snapshot.data.push({...row(),id:planDataId('second'),threadId:'second',revision:2});
  await serveTaskFixture(page,snapshot);await page.goto('/');const overview=page.getByRole('region',{name:'Project overview window',exact:true});const summary=overview.getByRole('region',{name:'Plan summary',exact:true});
- await overview.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(summary).toBeVisible();await expect(summary).toHaveAttribute('data-plan-revision','1');
- await page.locator('.sidebar').getByText('Second task',{exact:true}).click();await expect(summary).toHaveAttribute('data-plan-revision','2');
- await overview.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect(overview).toHaveAttribute('data-collapsed','true');
- await page.locator('.sidebar').getByText('First task',{exact:true}).click();await expect(overview).toHaveAttribute('data-collapsed','true');
+ await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(summary).toBeVisible();await expect(summary).toHaveAttribute('data-plan-revision','1');
+ await page.locator('.sidebar').getByText('Second task',{exact:true}).click();await expect(overview).toBeHidden();await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(summary).toBeVisible();await expect(summary).toHaveAttribute('data-plan-revision','2');
+ await page.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect(overview).toBeHidden();
+ await page.locator('.sidebar').getByText('First task',{exact:true}).click();await expect(overview).toBeHidden();
  await page.locator('.sidebar').getByText('Empty task',{exact:true}).click();await expect(overview.locator('[data-plan-revision]')).toHaveCount(0);
 });

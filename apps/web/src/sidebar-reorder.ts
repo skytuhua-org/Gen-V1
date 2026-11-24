@@ -240,6 +240,7 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
       if (!held.active) { if (Math.abs(event.clientY - held.startY) > 9) cancel(); return; }
       event.preventDefault();
       held.node.style.transform = `translateY(${event.clientY - held.startY}px)`;
+      if (Math.abs(event.clientY - held.startY) <= 9) { setTarget(null); return; }
       const resolved = resolve(held.item, { x: event.clientX, y: event.clientY });
       setTarget(current => {
         if (!resolved) return current?.valid ? { ...current, valid: false } : current;
@@ -256,7 +257,7 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
         const swallow = (click: Event) => { click.preventDefault(); click.stopPropagation(); };
         document.addEventListener('click', swallow, { capture: true, once: true });
         window.setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 400);
-        drop(was.item, point);
+        if (Math.abs(event.clientY - was.startY) > 9) drop(was.item, point);
       }
     };
     const cancelled = (event: PointerEvent) => { if (held && event.pointerId === held.pointerId) cancel(); };

@@ -17,6 +17,47 @@ test('clicking the overview title collapses its body exactly once', async ({ pag
   await expect(panel.getByRole('textbox', { name: 'Overview draft' })).toBeHidden();
 });
 
+test('keyboard opening focuses the overview actions and Escape returns focus to the toggle', async ({ page }) => {
+  await page.goto('/summary-dock?external=1');
+  const toggle = page.getByRole('button', { name: 'Expand Project overview', exact: true });
+  const region = page.getByRole('region', { name: 'Project overview window', exact: true });
+  await toggle.focus();
+  await toggle.press('Enter');
+  await expect(region).toBeFocused();
+  const firstAction = region.getByRole('button', { name: 'Open full plan', exact: true });
+  await page.keyboard.press('Tab');
+  await expect(firstAction).toBeFocused();
+  await expect(region).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(region).toBeHidden();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(toggle).toBeFocused();
+});
+
+test('restoring an open overview does not steal focus from the composer', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('harness:summary:plan:v1', JSON.stringify({ collapsed: false })));
+  await page.goto('/summary-dock?external=1&focus-main=1');
+  const region = page.getByRole('region', { name: 'Project overview window', exact: true });
+  const main = page.getByRole('textbox', { name: 'Main draft', exact: true });
+  await expect(region).toBeVisible();
+  await expect(main).toBeFocused();
+});
+
+test('controlled hide and re-show does not reuse the opening focus request', async ({ page }) => {
+  await page.goto('/summary-dock?external=1');
+  const toggle = page.getByRole('button', { name: 'Expand Project overview', exact: true });
+  const region = page.getByRole('region', { name: 'Project overview window', exact: true });
+  await toggle.focus();
+  await toggle.press('Enter');
+  await expect(region).toBeFocused();
+  await page.getByRole('button', { name: 'Hide overview', exact: true }).evaluate(button => (button as HTMLButtonElement).click());
+  await expect(region).toBeHidden();
+  const show = page.getByRole('button', { name: 'Show overview', exact: true });
+  await show.click();
+  await expect(region).toBeVisible();
+  await expect(show).toBeFocused();
+});
+
 test('the disclosure target covers the full header, including its blank area', async ({ page }) => {
   const panel = page.getByRole('region', { name: 'Project overview window', exact: true });
   const button = panel.getByRole('button', { name: /(?:Collapse|Minimize) Project overview/ });

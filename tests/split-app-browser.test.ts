@@ -470,7 +470,7 @@ describe.runIf(enabled)('actual App split workspace',()=>{
    const metadata=page.locator('[data-split-view="thread:thread-a"] .conversation-metadata');
    await metadata.waitFor({state:'visible'});
    await pw(metadata).toContainText('Model A');
-   await pw(metadata).toContainText('First project');
+   await pw(metadata).not.toContainText('First project');
    await pw(metadata).toContainText('Ready');
    const toggle=async()=>{
     await page.getByRole('button',{name:'Settings',exact:true}).dispatchEvent('click');
@@ -568,8 +568,8 @@ describe.runIf(enabled)('actual App split workspace',()=>{
 
  it('uses one canonical plan in the overview and detailed pane with actual companion sections',async()=>{
   const host=await fixture({plan:true}),{page}=host;try{
-   const overview=page.getByRole('region',{name:'Project overview window',exact:true});await overview.waitFor({state:'visible'});
-   if(await overview.getByRole('button',{name:'Expand Project overview',exact:true}).isVisible())await overview.getByRole('button',{name:'Expand Project overview',exact:true}).click();
+   const overview=page.getByRole('region',{name:'Project overview window',exact:true});await pw(overview).toBeHidden();
+   await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await overview.waitFor({state:'visible'});
    const summary=overview.getByRole('region',{name:'Plan summary',exact:true});await summary.waitFor({state:'visible'});expect(await summary.getAttribute('data-plan-revision')).toBe('7');expect(await summary.textContent()).toContain('Inspect then verify');expect(await summary.textContent()).toContain('1 of 2 tasks complete');
    await overview.locator('summary').filter({hasText:'Agents and history'}).click();expect(await overview.textContent()).toContain('Inspect source');await overview.locator('summary').filter({hasText:'Side conversations'}).click();expect(await overview.textContent()).toContain('Related discussion');expect(await overview.locator('summary').filter({hasText:'Automations'}).count()).toBe(0);
    const detailed=page.locator('[data-split-view="plan:thread-a"]').getByRole('region',{name:/^Task plan(?::|$)/});await detailed.waitFor({state:'visible'});expect(await summary.getByRole('button',{name:'Open full plan',exact:false}).count()).toBe(0);expect(await detailed.getAttribute('aria-label')).toBe('Task plan: Inspect then verify');expect(await detailed.textContent()).toContain('Verify the result');const planPane=Object.values(host.layout.panes).find(pane=>pane.viewIds.includes('plan:thread-a'))!,planBounds=await page.locator('[data-split-pane="'+planPane.id+'"]').boundingBox();expect(planBounds!.width).toBeGreaterThanOrEqual(240);expect(planBounds!.height).toBeGreaterThanOrEqual(180);expect(Object.values(host.layout.views).filter(view=>view.kind==='plan')).toHaveLength(1);expect(host.errors).toEqual([]);
@@ -609,10 +609,11 @@ describe.runIf(enabled)('actual App split workspace',()=>{
   }finally{await page.close();}
  },30000);
 
- it('keeps a narrow focused composer visible on plan publication until the user opens the full plan',async()=>{
+ it('keeps a narrow focused composer focused on plan publication until the overview is explicitly opened',async()=>{
   const host=await fixture({width:680}),{page}=host;try{
    const draft=page.locator('[data-split-view="thread:thread-a"]').getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep narrow plan publication focus');const focused=host.layout.focusedPaneId,areaCount=Object.keys(host.layout.panes).length;expect((await page.locator('.split-root-workarea').boundingBox())!.width).toBeLessThan(700);host.snapshot.data.push(canonicalPlan());await host.publish();
-   const overview=page.getByRole('region',{name:'Project overview window',exact:true}),summary=overview.getByRole('region',{name:'Plan summary',exact:true});await summary.waitFor({state:'visible'});expect(await summary.getAttribute('data-plan-revision')).toBe('7');expect(await summary.textContent()).toContain('Inspect then verify');expect(await draft.isVisible()).toBe(true);expect(await draft.evaluate(node=>node===document.activeElement)).toBe(true);expect(await draft.inputValue()).toBe('Keep narrow plan publication focus');expect(host.layout.focusedPaneId).toBe(focused);expect(Object.keys(host.layout.panes)).toHaveLength(areaCount);expect(Object.values(host.layout.views).some(view=>view.kind==='plan')).toBe(false);
+   const overview=page.getByRole('region',{name:'Project overview window',exact:true}),summary=overview.getByRole('region',{name:'Plan summary',exact:true}),toggle=page.getByRole('button',{name:'Expand Project overview',exact:true});await pw(overview).toBeHidden();await pw(toggle).toHaveAttribute('aria-expanded','false');await pw(toggle.getByText('Update available',{exact:true})).toBeVisible();expect(await draft.isVisible()).toBe(true);expect(await draft.evaluate(node=>node===document.activeElement)).toBe(true);expect(await draft.inputValue()).toBe('Keep narrow plan publication focus');expect(host.layout.focusedPaneId).toBe(focused);expect(Object.keys(host.layout.panes)).toHaveLength(areaCount);expect(Object.values(host.layout.views).some(view=>view.kind==='plan')).toBe(false);
+   await toggle.click();await summary.waitFor({state:'visible'});expect(await summary.getAttribute('data-plan-revision')).toBe('7');expect(await summary.textContent()).toContain('Inspect then verify');
    await summary.getByRole('button',{name:'Open full plan',exact:false}).click();const detail=page.locator('[data-split-view="plan:thread-a"]').getByRole('region',{name:/^Task plan(?::|$)/});await detail.waitFor({state:'visible'});expect(await detail.getByText('Retain the original draft',{exact:true}).isVisible()).toBe(true);expect(await page.locator('[data-split-view="thread:thread-a"] textarea[aria-label="Message"]').inputValue()).toBe('Keep narrow plan publication focus');expect(Object.values(host.layout.views).filter(view=>view.kind==='plan')).toHaveLength(1);expect(host.errors).toEqual([]);
   }finally{await page.close();}
  },30000);
@@ -698,7 +699,8 @@ describe.runIf(enabled)('actual App split workspace',()=>{
   const host=await fixture({mode:'chat',plan:true}),{page}=host;try{
    expect(await page.locator('.split-workspace').count()).toBeGreaterThan(0);
    const message=page.locator('[data-split-view="thread:thread-a"]').getByRole('textbox',{name:'Message',exact:true});await message.waitFor({state:'visible'});
-   const overview=page.getByRole('region',{name:'Project overview window',exact:true});await overview.waitFor({state:'visible'});
+   const overview=page.getByRole('region',{name:'Project overview window',exact:true});await pw(overview).toBeHidden();
+   await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await overview.waitFor({state:'visible'});
    await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();
    const panel=page.getByRole('complementary',{name:'Workspace panel',exact:true});await panel.waitFor({state:'visible'});
     expect(await panel.getByRole('button',{name:'Close workspace panel',exact:true}).count()).toBe(0);
@@ -706,10 +708,63 @@ describe.runIf(enabled)('actual App split workspace',()=>{
     await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name:'Plan',exact:true}).click();
     await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name:'Notes',exact:true}).click();
     expect(await panel.getByRole('tab',{name:'Plan',exact:true}).isVisible()).toBe(true);expect(await panel.getByRole('tab',{name:'Notes',exact:true}).isVisible()).toBe(true);
-   await page.getByRole('button',{name:'Hide workspace panel',exact:true}).click();await panel.waitFor({state:'hidden'});await overview.waitFor({state:'visible'});
+   await page.getByRole('button',{name:'Hide workspace panel',exact:true}).click();await panel.waitFor({state:'hidden'});await pw(overview).toBeHidden();await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await overview.waitFor({state:'visible'});
    expect(await page.getByRole('button',{name:'Undo layout',exact:true}).count()).toBe(0);expect(await page.getByRole('button',{name:'Redo',exact:true}).count()).toBe(0);expect(await page.getByRole('button',{name:'Restore last layout',exact:true}).count()).toBe(0);expect(await page.locator('.split-workspace-hint').count()).toBe(0);
    expect(host.errors).toEqual([]);
   }finally{await page.close();}
+ },30000);
+ it('opens one overview popover without moving the empty conversation and dismisses outside',async()=>{
+  const host=await fixture({mode:'chat',singleThread:true,plan:true}),{page}=host;try{
+   const thread=page.locator('[data-split-view="thread:thread-a"]');
+   await thread.getByRole('textbox',{name:'Message',exact:true}).waitFor({state:'visible'});
+   host.snapshot.messages=[];host.snapshot.artifacts=[];host.snapshot.userStates=[];await host.publish();
+   const title=thread.locator('.empty-state h1'),toggle=page.getByRole('button',{name:'Expand Project overview',exact:true});
+   await pw(title).toBeVisible();const centerX=async(selector:string)=>{const box=await page.locator(selector).boundingBox();if(!box)throw Error(`Missing bounds for ${selector}`);return box.x+box.width/2;};
+   const titleBefore=await centerX('.empty-state h1'),composerBefore=await centerX('.composer-dock'),layoutBefore=await page.locator('.summary-layout[data-summaries="true"]').boundingBox();
+   await toggle.click();
+   const overview=page.getByRole('region',{name:'Project overview window',exact:true}),popover=page.locator('.ui-popover.summary-overview');
+   await pw(overview).toBeVisible();await pw(overview).toHaveAttribute('data-collapsed','false');await pw(overview).toHaveAttribute('data-presentation','popover');
+   await pw(popover).toHaveCount(1);expect(await page.locator('.summary-dock [data-summary-id="plan"]').count()).toBe(0);
+   const workarea=page.locator('.app-shell:not(.embedded-thread-app) > .workspace-layout-workarea'),header=workarea.locator('.workspace-header:visible').first();
+   const assertPlacement=async()=>{
+    const overviewBounds=await popover.boundingBox(),workareaBounds=await workarea.boundingBox(),headerBounds=await header.boundingBox();
+    expect(overviewBounds).not.toBeNull();expect(workareaBounds).not.toBeNull();expect(headerBounds).not.toBeNull();
+    expect(Math.abs((overviewBounds!.x+overviewBounds!.width)-(workareaBounds!.x+workareaBounds!.width))).toBeLessThanOrEqual(20);
+    expect(overviewBounds!.y).toBeGreaterThanOrEqual(headerBounds!.y+headerBounds!.height);
+   };
+   await assertPlacement();
+   expect(Math.abs(await centerX('.empty-state h1')-titleBefore)).toBeLessThanOrEqual(1);
+   expect(Math.abs(await centerX('.composer-dock')-composerBefore)).toBeLessThanOrEqual(1);
+   const layoutOpen=await page.locator('.summary-layout[data-summaries="true"]').boundingBox();expect(Math.abs(layoutOpen!.x-layoutBefore!.x)).toBeLessThanOrEqual(1);expect(Math.abs(layoutOpen!.width-layoutBefore!.width)).toBeLessThanOrEqual(1);
+   await page.setViewportSize({width:1400,height:900});await pw(popover).toHaveAttribute('data-state','open');await pw(popover).toBeVisible();await assertPlacement();
+   await page.getByRole('button',{name:'Collapse sidebar',exact:true}).click();await assertPlacement();
+   await title.click();
+   await pw(toggle).toHaveAttribute('aria-expanded','false');await pw(page.getByRole('region',{name:'Project overview window',exact:true})).toHaveCount(0);
+   await pw(popover).toHaveAttribute('data-state','closed');expect(host.errors).toEqual([]);
+  }finally{await page.close();}
+ },30000);
+ it('uses inline chrome only for a lone thread pane and reserves measured header space',async()=>{
+  const lone=await fixture({mode:'split',singleThread:true});try{
+   const {page}=lone,workspace=page.locator('.split-workspace'),pane=page.locator('.split-pane[data-inline-chrome="true"]');
+   await pw(pane).toHaveCount(1);await pw(workspace).toHaveAttribute('data-inline-chrome','true');
+   const header=pane.locator('.split-pane-header'),tabs=pane.locator('.split-tab-strip'),slot=pane.locator('.split-pane-slot');
+   await pw(header).toHaveCSS('position','absolute');await pw(header).toHaveCSS('top','9px');await pw(header).toHaveCSS('height','34px');await pw(header).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+   await pw(tabs).toHaveCount(1);await pw(tabs).toHaveCSS('clip-path','inset(50%)');
+   await pw(pane.locator('.split-corner')).toBeVisible();await pw(pane.locator('.split-view-grip')).toBeVisible();
+   await pw(pane.getByRole('button',{name:'Area actions',exact:true})).toBeVisible();await pw(pane.getByRole('button',{name:'Minimize area',exact:true})).toBeVisible();
+   const relation=await workspace.evaluate(root=>{const header=root.querySelector('[data-split-view="thread:thread-a"] .workspace-header');return Boolean(header&&root.contains(header));});
+   expect(relation).toBe(true);
+   const paneBox=await pane.boundingBox(),slotBox=await slot.boundingBox();expect(Math.abs(slotBox!.height-paneBox!.height)).toBeLessThanOrEqual(2);
+   const measured=await page.evaluate(()=>{
+    const workspace=document.querySelector<HTMLElement>('.split-workspace')!,header=workspace.querySelector<HTMLElement>('[data-split-view="thread:thread-a"] .workspace-header')!,actions=header.querySelector<HTMLElement>('.header-actions')!;
+    const controls=workspace.querySelector('.split-pane[data-inline-chrome="true"] .split-area-controls')!,minimize=workspace.querySelector('.split-pane[data-inline-chrome="true"] .split-collapse')!;
+    return{padding:Number.parseFloat(getComputedStyle(header).paddingRight),reserve:Number.parseFloat(workspace.style.getPropertyValue('--inline-chrome-right-padding')),actionsRight:actions.getBoundingClientRect().right,controlsLeft:Math.min(controls.getBoundingClientRect().left,minimize.getBoundingClientRect().left)};
+   });
+   expect(measured.reserve).toBeGreaterThan(0);expect(measured.padding).toBeCloseTo(measured.reserve,0);expect(measured.actionsRight).toBeLessThanOrEqual(measured.controlsLeft+1);
+   expect(lone.errors).toEqual([]);
+  }finally{await lone.page.close();}
+  const tabs=await fixture({mode:'split',mainTabs:true});try{await pw(tabs.page.locator('.split-workspace')).not.toHaveAttribute('data-inline-chrome','true');await pw(tabs.page.locator('.split-pane[data-inline-chrome="true"]')).toHaveCount(0);}finally{await tabs.page.close();}
+  const panes=await fixture({mode:'split'});try{await pw(panes.page.locator('.split-workspace')).not.toHaveAttribute('data-inline-chrome','true');await pw(panes.page.locator('.split-pane[data-inline-chrome="true"]')).toHaveCount(0);}finally{await panes.page.close();}
  },30000);
  it('a browser dock shares the tool width budget and preserves chat space',async()=>{
   const{page}=await fixture({width:1440,height:900,mode:'chat'});

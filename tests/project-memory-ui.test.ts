@@ -3,7 +3,10 @@ import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import type {MemoryScope, MemoryItemV1, ProjectMemoryView} from '../packages/contracts/project-memory';
 import type {Snapshot, Thread} from '../packages/contracts';
+import type {ProjectContext} from '../packages/contracts/workspace';
 
+const projectApiState=vi.hoisted(()=>({value:{context:null as unknown,loading:true,error:''}}));
+vi.mock('../apps/web/src/project-api',()=>({useProjectContext:()=>({...projectApiState.value,action:async()=>{}})}));
 const scope: MemoryScope = {projectId: 'project-a', projectIdentity: 'a'.repeat(64), threadId: 'thread-a', accountId: 'account-a', bindingDigest: 'b'.repeat(64)};
 const item: MemoryItemV1 = {id: 'memory-a', projectIdentity: scope.projectIdentity, scope: 'PROJECT', kind: 'CONSTRAINT', text: 'Use UTC for exported dates.', revision: 2, state: 'ACCEPTED', sourceRefs: [{ownerThreadId: 'thread-a', sourceKind: 'MESSAGE', sourceId: 'message-a', sourceRevision: '1', capturedSeq: 4, digest: 'c'.repeat(64), observedStatus: 'REPORTED'}], assertedBy: {kind: 'USER', id: 'local-user'}, observedAt: '2026-11-15T00:00:00Z', expiresAt: null, supersedes: [], sensitivity: 'NORMAL', reviewDecision: null};
 const view = (): ProjectMemoryView => ({scope, projectName: 'Project A', available: true, disabledReason: null, enabled: true, configRevision: 1, sourceThreadIds: ['thread-a'], eligibleThreads: [{id: 'thread-a', title: 'Source conversation'}], items: [{item, lastUsedAt: null, conflictRevisions: []}], tombstones: []});
@@ -13,19 +16,65 @@ const api = async () => {
   expect(module, 'The bounded project memory client must be implemented.').not.toBeNull();
   return module!;
 };
-beforeEach(() => vi.resetModules());
+beforeEach(() => {vi.resetModules();projectApiState.value={context:null,loading:true,error:''};});
 afterEach(() => vi.unstubAllGlobals());
 function responses(body: unknown) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input) === '/api/bootstrap' ? Response.json({csrfToken: 'csrf'}) : Response.json(body)));
 }
 
-it('makes project memory reachable from an owning main project context without making a request', async () => {
+const projectContext=(local=true):ProjectContext=>({
+  project:{id:'project-a',name:'Project A',authority:local?{kind:'local'}:{kind:'plugin',pluginId:'fixture-plugin',scopeId:'fixture-scope'},rootPath:'/project-a',createdAt:'2026-11-15T00:00:00.000Z'},
+  threadId:'thread-a',machineName:'Fixture machine',editor:{available:false,label:''},branch:null,head:null,changes:{added:0,removed:0,files:0},lineage:[],scripts:[],
+  capabilities:{git:false,terminal:false,pullRequests:false},
+});
+async function surfaceMarkup(connect=true){
+  const {ProjectContextSurface}=await import('../apps/web/src/ProjectContextSurface');
+  const thread={id:'thread-a',projectId:'project-a',kind:'main',accountId:'account-a'} as Thread;
+  const snapshot={threads:[thread],data:[],messages:[],artifacts:[],operations:[],requests:[]} as unknown as Snapshot;
+  return renderToStaticMarkup(createElement(ProjectContextSurface,{thread,snapshot,...(connect?{onConnect:()=>{}}:{}),overviewStyle:true}));
+}
+
+it('hides project memory until the owning local context is usable', async () => {
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
-  const {ProjectContextSurface} = await import('../apps/web/src/ProjectContextSurface');
-  const thread = {id: 'thread-a', projectId: 'project-a', kind: 'main', accountId: 'account-a'} as Thread;
-  const snapshot = {threads: [thread], data: [], messages: [], artifacts: [], operations: [], requests: []} as unknown as Snapshot;
-  expect(renderToStaticMarkup(createElement(ProjectContextSurface, {thread, snapshot}))).toContain('Project memory');
+  projectApiState.value={context:null,loading:true,error:''};
+  expect(await surfaceMarkup()).not.toContain('Project memory');
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['a non-local project',projectContext(false),false,''],
+  ['a loading local project',projectContext(),true,''],
+  ['an errored local project',projectContext(),false,'Project context could not be loaded.'],
+  ['a disconnected project',null,false,'Connect this project to a local folder.'],
+] as const)('hides project memory for %s', async (_label,context,loading,error) => {
+  projectApiState.value={context,loading,error};
+  expect(await surfaceMarkup()).not.toContain('Project memory');
+});
+
+it('shows project memory for a loaded local project without making a request', async () => {
+  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+  projectApiState.value={context:projectContext(),loading:false,error:''};
+  const markup=await surfaceMarkup();
+  expect(markup).toContain('Project memory');
+  expect(markup).toContain('lucide-brain');
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it('suppresses only the expected disconnected context error when connect is available', async () => {
+  projectApiState.value={context:null,loading:false,error:'Connect this project to a local folder.'};
+  let markup=await surfaceMarkup();
+  expect(markup).toContain('Connect project');
+  expect(markup).not.toContain('Connect this project to a local folder.');
+  expect(markup).not.toContain('role="alert"');
+
+  expect(await surfaceMarkup(false)).toContain('Connect this project to a local folder.');
+
+  projectApiState.value={context:null,loading:false,error:'Project context could not be loaded.'};
+  markup=await surfaceMarkup();
+  expect(markup).toContain('Project context could not be loaded.');
+
+  projectApiState.value={context:{...projectContext(),error:'Project status is unavailable.'},loading:false,error:''};
+  expect(await surfaceMarkup()).toContain('Project status is unavailable.');
 });
 
 it.each(['projectId', 'threadId', 'accountId'] as const)('rejects a view returned for a different %s', async field => {

@@ -1,5 +1,5 @@
 import {useId,useState,type ReactNode} from 'react';
-import {Bot,CalendarClock,ChevronDown,ChevronRight,Code2,FileDiff,Folder,GitBranch,GitCommitHorizontal,ListChecks,MessageSquare,Plus,Server,Terminal} from 'lucide-react';
+import {Bot,CalendarClock,ChevronDown,ChevronRight,Code2,FileDiff,Folder,GitBranch,GitCommitHorizontal,ListChecks,MessageSquare,Plus,Server,Terminal,Wrench} from 'lucide-react';
 import type {Snapshot} from '../../../packages/contracts/index.ts';
 import type {ProjectContext} from '../../../packages/contracts/workspace.ts';
 import {contextCompanions} from './project-context-summary';
@@ -10,6 +10,7 @@ const compactCount=new Intl.NumberFormat(undefined,{notation:'compact',maximumFr
 
 export interface ProjectContextCardProps {
  context?:ProjectContext|null;loading?:boolean;error?:string;threadTitle?:string;plan?:ReactNode;planOpen?:boolean;onTogglePlan?:()=>void;
+ overviewStyle?:boolean;
  /** True when this thread's full plan is already visible elsewhere in the workspace. */
  fullPlanVisible?:boolean;
  onAction?:(type:string,payload?:Record<string,unknown>)=>Promise<void>;
@@ -20,11 +21,12 @@ export interface ProjectContextCardProps {
  automationItems?:{id:string;title:string;status:string;nextRunAt?:string}[];automationsAvailable?:boolean;
 }
 /** Data and callbacks only: this card is safe to consume from either authority's shell. */
-export function ProjectContextCard({context,loading,error,threadTitle,plan,planOpen=false,onTogglePlan,fullPlanVisible=false,onAction,onSelectThread,onShowChanges,onConnect,snapshot,threadId,onOpenDetailedPlan,automationItems=[],automationsAvailable=false,composerChangesAvailable=false}:ProjectContextCardProps){
+export function ProjectContextCard({context,loading,error,threadTitle,plan,planOpen=false,onTogglePlan,fullPlanVisible=false,onAction,onSelectThread,onShowChanges,onConnect,snapshot,threadId,onOpenDetailedPlan,automationItems=[],automationsAvailable=false,composerChangesAvailable=false,overviewStyle=false}:ProjectContextCardProps){
  const planId=useId(),[expanded,setExpanded]=useState<'scripts'|'branch'|'commit'|'lineage'|null>(null),[busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[scriptName,setScriptName]=useState(''),[scriptCommand,setScriptCommand]=useState(''),[branch,setBranch]=useState(''),[commit,setCommit]=useState('');
  const run=(type:string,payload:Record<string,unknown>={})=>{if(!onAction||busy)return;setBusy(true);setActionError('');void onAction(type,payload).then(()=>{setExpanded(null);setCommit('');}).catch(cause=>setActionError(cause instanceof Error?cause.message:'The project action could not finish.')).finally(()=>setBusy(false));};
  const toggle=(name:NonNullable<typeof expanded>)=>setExpanded(value=>value===name?null:name);
  const connected=Boolean(context&&(context.project.rootPath||context.capabilities.git||context.capabilities.terminal||context.editor.available));
+ const visibleError=actionError||(error==='Connect this project to a local folder.'&&!connected&&onConnect?undefined:error)||context?.error;
  const total=(value:number)=>compactCount.format(value);
  const lineage=context?.lineage.toSorted((a,b)=>Number(b.status==='working')-Number(a.status==='working'))??[];
  const companions=snapshot?contextCompanions(snapshot,threadId):null,agents=companions?.agents??[],sideConversations=companions?.sideConversations??[],summary=companions?.plan;
@@ -42,7 +44,7 @@ export function ProjectContextCard({context,loading,error,threadTitle,plan,planO
     </>}
    </section>
    {summary?<section className="project-context-plan-summary" aria-label="Plan summary" data-plan-revision={summary.revision}><div className="project-context-summary-title"><ListChecks size={15}/><strong>{summary.title}</strong></div>{summary.total>0&&<><div className="project-context-summary-progress" role="progressbar" aria-label="Plan tasks completed" aria-valuemin={0} aria-valuemax={summary.total} aria-valuenow={summary.completed}><span style={{width:`${summary.completed/summary.total*100}%`}}/></div><p>{summary.completed} of {summary.total} tasks complete</p></>}{summary.currentStep&&!fullPlanVisible&&<p className={summary.blocked?'project-context-summary-blocked':''}>{summary.blocked?'Blocked: ':''}{summary.currentStep}</p>}{onOpenDetailedPlan&&!fullPlanVisible&&<button type="button" className="quiet" onClick={onOpenDetailedPlan}>Open full plan<ChevronRight size={13}/></button>}</section>:Boolean(plan)&&<section className="project-context-plan"><button className="project-context-row" aria-expanded={planOpen} aria-controls={planId} onClick={onTogglePlan}><ListChecks size={16}/><span>Task plan</span>{planOpen?<ChevronDown size={14}/>:<ChevronRight size={14}/>}</button><div id={planId} className="project-plan-expansion" data-open={planOpen} inert={!planOpen}><div>{plan}</div></div></section>}
-   {context&&connected&&<details className="project-context-tools"><summary>Project tools<ChevronDown size={13}/></summary><div className="project-context-detail">
+   {context&&connected&&<details className="project-context-tools"><summary>{overviewStyle&&<Wrench size={16}/>}<span>Project tools</span><ChevronDown size={14}/></summary><div className="project-context-detail">
     <div className="project-context-machine"><Server size={15}/><strong title={context.machineName}>{context.machineName}</strong></div>
     {context.editor.available&&<button className="project-context-row" aria-busy={busy} disabled={busy||!onAction} onClick={()=>run('open-editor')}><Code2 size={16}/><span>Open in {context.editor.label}</span><ChevronRight size={13}/></button>}
     {context.capabilities.terminal&&<><button className="project-context-row" aria-busy={busy} disabled={busy||!onAction} aria-expanded={expanded==='scripts'} onClick={()=>toggle('scripts')}><Plus size={15}/><span>Add script</span><ChevronDown size={13}/></button>
@@ -58,6 +60,6 @@ export function ProjectContextCard({context,loading,error,threadTitle,plan,planO
    {snapshot&&automationsAvailable&&automationItems.length>0&&<details className="project-context-group"><summary><CalendarClock size={15}/><span>Automations</span><small>{automationItems.length}</small><ChevronDown size={13}/></summary><ul className="project-context-automations">{automationItems.map(item=><li key={item.id}><span>{item.title}</span><small>{item.status}{item.nextRunAt&&<> · <time dateTime={item.nextRunAt}>{new Date(item.nextRunAt).toLocaleString()}</time></>}</small></li>)}</ul></details>}
   </LoadingState>
   <PendingStatus pending={busy} label="Updating project…"/>
-  {(error||context?.error||actionError)&&<p role="alert" className="project-context-note error-text">{actionError||error||context?.error}</p>}
+  {visibleError&&<p role="alert" className="project-context-note error-text">{visibleError}</p>}
  </div>;
 }

@@ -43,8 +43,8 @@ async function ownerApp(page:Page,mode:'chat'|'split'|'desktop'|'loading'='chat'
  });
  await page.goto('/actual-app');
  if(mode==='loading')await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toBeDisabled();else await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();
  const overview=page.locator('.summary-overview:visible').first();
- await overview.getByRole('button',{name:'Expand Project overview',exact:true}).click();
  await expect(overview.locator('.project-context-card')).toContainText('Audit project');
  return {overview,fallback:overview.getByRole('button',{name:/^Changes/}),releaseSend};
 }
@@ -62,11 +62,11 @@ for(const state of ['parked','minimized'] as const)test(`actual ${state} split c
  if(state==='parked'){
   await page.getByRole('button',{name:'Area actions',exact:true}).click();await page.getByRole('menuitem',{name:'Park current view',exact:true}).click();
  }else await page.getByRole('button',{name:'Minimize area',exact:true}).click();
- await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toHaveCount(0);await expect(fallback).toBeVisible();
+ await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toHaveCount(0);await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(fallback).toBeVisible();
  await page.screenshot({path:info.outputPath(`r2-${state}.png`),fullPage:true});
  if(state==='minimized'){
   await page.getByRole('button',{name:'Restore area',exact:true}).click();await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toBeEnabled();await expect(fallback).toHaveCount(0);
-  await page.getByRole('button',{name:'Minimize area',exact:true}).click();await expect(fallback).toBeVisible();
+  await page.getByRole('button',{name:'Minimize area',exact:true}).click();await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(fallback).toBeVisible();
  }
  await fallback.focus();await page.keyboard.press('Enter');await expect(page.locator('.live-diff')).toContainText('Owner fallback diff');
 });
@@ -79,7 +79,7 @@ test('actual busy composer restores overview Changes until its action is enabled
  const {fallback,releaseSend}=await ownerApp(page);await expect(fallback).toHaveCount(0);
  await page.getByRole('textbox',{name:'Message',exact:true}).fill('Hold this ordinary send');
  try{
-  await page.getByRole('button',{name:'Send message',exact:true}).click();await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toBeDisabled();await expect(fallback).toBeVisible();
+  await page.getByRole('button',{name:'Send message',exact:true}).click();await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toBeDisabled();await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(fallback).toBeVisible();
  }finally{releaseSend();}
  await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toBeEnabled();await expect(fallback).toHaveCount(0);
 });

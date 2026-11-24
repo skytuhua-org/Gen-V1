@@ -303,7 +303,7 @@ test('workspace layout persists and context unknowns never appear as zero', asyn
   await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
   await expect(page.locator('.app-shell:not(.embedded-thread-app)')).toHaveAttribute('data-sidebar-collapsed', 'true');
   await page.getByRole('button', { name: 'Open workspace panel', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Open a surface', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Open a tool', exact: true })).toBeVisible();
   const launcher = page.getByRole('region', { name: 'Workspace launcher' });
   await expect(launcher.getByRole('button', { name: 'Device', exact: true })).toBeDisabled();
   await expect(launcher.getByRole('button', { name: 'Files', exact: true })).toBeEnabled();

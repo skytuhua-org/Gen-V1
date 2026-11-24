@@ -1,5 +1,7 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type MutableRefObject, type ReactNode, type RefObject } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { Popover } from './Popover';
+import type { OverlayAnchor } from './overlay-position';
 import './summary-dock.css';
 
 interface SummaryStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
@@ -23,45 +25,93 @@ export function writeSummaryCollapsed(id: string, collapsed: boolean, storage = 
   try { storage?.setItem(keyFor(id), JSON.stringify({ collapsed })); } catch { /* Keep the current disclosure state in memory. */ }
 }
 
+/** Disclosure state owned outside the dock, so a collapsed summary can release all of its space. */
+export interface SummaryDisclosure {
+  collapsed: boolean; updatePending: boolean; toggle: RefObject<HTMLButtonElement | null>;
+  focusPanelOnOpen: MutableRefObject<boolean>;
+  change(collapsed: boolean): void; setUpdatePending(pending: boolean): void;
+}
+export function useSummaryDisclosure(id: string, defaultCollapsed = true, persist = true): SummaryDisclosure {
+  const [collapsed, setCollapsed] = useState(() => readSummaryCollapsed(id, defaultCollapsed));
+  const [updatePending, setUpdatePending] = useState(false);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const focusPanelOnOpen = useRef(false);
+  useEffect(() => {
+    if (!persist) return;
+    const timer = setTimeout(() => writeSummaryCollapsed(id, collapsed), 120);
+    return () => clearTimeout(timer);
+  }, [id, collapsed, persist]);
+  const change = (next: boolean) => { setUpdatePending(false); setCollapsed(next); if (persist) writeSummaryCollapsed(id, next); };
+  return { collapsed, updatePending, toggle, focusPanelOnOpen, change, setUpdatePending };
+}
+export function SummaryToggle({ title, disclosure, children, className = '' }: { title: string; disclosure: SummaryDisclosure; children: ReactNode; className?: string }) {
+  const { collapsed, updatePending } = disclosure, statusId = useId();
+  return <button ref={disclosure.toggle} type="button" className={`icon-button summary-toggle ${collapsed ? '' : 'selected'} ${className}`}
+    aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`} aria-expanded={!collapsed} title={title}
+    aria-describedby={updatePending ? statusId : undefined} onKeyDown={event => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || collapsed) return;
+      event.preventDefault(); event.stopPropagation(); disclosure.change(true);
+    }} onClick={() => {
+      disclosure.focusPanelOnOpen.current = collapsed;
+      disclosure.change(!collapsed);
+    }}>
+    {children}{updatePending && <span id={statusId} className="summary-toggle-update" role="status">Update available</span>}
+  </button>;
+}
+
 export interface DockedSummaryProps {
   id: string; title: string; children: ReactNode; open?: boolean; defaultCollapsed?: boolean;
   summary?: ReactNode; collapsedLabel?: string; minimizeLabel?: string; ariaLabel?: string;
-  className?: string; focusOnOpen?: boolean; expandRequest?: number;
+  className?: string; focusOnOpen?: boolean; expandRequest?: number; disclosure?: SummaryDisclosure;
+  popoverAnchorRect?: () => OverlayAnchor;
 }
 export function DockedSummary({ id, title, children, open = true, defaultCollapsed = true, summary, collapsedLabel,
-  minimizeLabel, ariaLabel, className = '', focusOnOpen = false, expandRequest }: DockedSummaryProps) {
-  const [collapsed, setCollapsed] = useState(() => readSummaryCollapsed(id, defaultCollapsed));
-  const [expansionPending, setExpansionPending] = useState(false);
-  const panel = useRef<HTMLElement>(null), disclosure = useRef<HTMLButtonElement>(null), opener = useRef<HTMLElement | null>(null);
+  minimizeLabel, ariaLabel, className = '', focusOnOpen = false, expandRequest, disclosure: external, popoverAnchorRect }: DockedSummaryProps) {
+  const own = useSummaryDisclosure(id, defaultCollapsed, !external), state = external ?? own;
+  const { collapsed, updatePending: expansionPending, setUpdatePending: setExpansionPending, change, toggle: disclosure } = state;
+  const panel = useRef<HTMLElement>(null), popoverPanel = useRef<HTMLDivElement>(null), opener = useRef<HTMLElement | null>(null);
   const previousOpen = useRef<boolean | undefined>(undefined), bodyId = useId();
   const appliedExpansion = useRef<number | undefined>(undefined);
-  const change = (next: boolean) => { setExpansionPending(false); setCollapsed(next); writeSummaryCollapsed(id, next); };
+  const externalPresentation = Boolean(external), presentationOpen = open && !(externalPresentation && collapsed);
   useEffect(() => {
-    const timer = setTimeout(() => writeSummaryCollapsed(id, collapsed), 120);
-    return () => clearTimeout(timer);
-  }, [id, collapsed]);
+    if (presentationOpen && external) external.focusPanelOnOpen.current = false;
+  }, [presentationOpen, external]);
   useLayoutEffect(() => {
-    const previous = previousOpen.current; previousOpen.current = open;
-    if (!open) {
-      if (previous && panel.current?.contains(document.activeElement) && opener.current?.isConnected) opener.current.focus({ preventScroll: true });
+    const previous = previousOpen.current; previousOpen.current = presentationOpen;
+    const content = externalPresentation ? popoverPanel.current : panel.current;
+    if (!presentationOpen) {
+      if (previous && content?.contains(document.activeElement) && opener.current?.isConnected) opener.current.focus({ preventScroll: true });
       return;
     }
     if (previous === false) {
       opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       if (focusOnOpen) disclosure.current?.focus({ preventScroll: true });
     }
-  }, [open, focusOnOpen]);
+  }, [presentationOpen, focusOnOpen, externalPresentation]);
   useLayoutEffect(() => {
     // Consume each publication once, so hide/reveal cannot undo a later manual collapse.
     if (expandRequest === undefined || !open || appliedExpansion.current === expandRequest) return;
     appliedExpansion.current = expandRequest;
     const dock = panel.current?.closest('.summary-dock');
-    if (!focusOnOpen && collapsed && dock && getComputedStyle(dock).flexDirection === 'row') {
-      // Keep released-rail headers compact until explicit expansion: a body would move the composer.
+    if (!focusOnOpen && collapsed && (externalPresentation || dock && getComputedStyle(dock).flexDirection === 'row')) {
+      // Keep collapsed summaries closed until explicit expansion.
       setExpansionPending(true); return;
     }
     change(false);
-  }, [expandRequest, open, focusOnOpen, collapsed]);
+  }, [expandRequest, open, focusOnOpen, collapsed, externalPresentation]);
+  if (external) {
+    const viewportHeight = typeof window === 'undefined' ? 536 : (window.visualViewport?.height ?? window.innerHeight);
+    return <Popover anchor={disclosure} getAnchorRect={popoverAnchorRect} contentRef={popoverPanel} initialFocus={state.focusPanelOnOpen.current ? popoverPanel : undefined}
+      open={presentationOpen} present width={320} tabIndex={-1}
+      height={Math.max(1, Math.min(520, viewportHeight - 16))} preferredSide="below" align="end"
+      onDismiss={() => {
+        state.focusPanelOnOpen.current = false;
+        change(true);
+      }} className={`summary-overview ${className}`} role="region"
+      aria-label={ariaLabel ?? `${title} window`} data-presentation="popover" data-summary-id={id} data-collapsed={collapsed}>
+      <div id={bodyId} className="docked-summary-content">{children}</div>
+    </Popover>;
+  }
   return <section ref={panel} className={`docked-summary ${className}`} aria-label={ariaLabel ?? `${title} window`}
     hidden={!open} data-collapsed={collapsed} data-summary-id={id} onKeyDown={event => {
       if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || collapsed) return;
