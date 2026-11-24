@@ -110,7 +110,9 @@ it('reconciles a dispatched operation to unknown and gates resume until disposit
   expect(x.store.get<Operation>('operation', op.id)!.status).toBe('unknown');
   await expect(x.send('run.resume', {}, x.threadId)).rejects.toMatchObject({ code: 'RECONCILIATION_REQUIRED' });
   // The owner's explicit disposition settles the terminal state and un-gates
-  // the thread; the observation stays recorded on the operation.
+  // the thread; the observation stays recorded on the operation. Anything
+  // other than a terminal disposition is rejected.
+  await expect(x.send('operation.reconcile', { operationId: op.id, resolution: 'retry' }, x.threadId)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   await x.send('operation.reconcile', { operationId: op.id, resolution: 'cancelled' }, x.threadId);
   expect(x.store.get<Operation>('operation', op.id)).toMatchObject({ status: 'cancelled', error: expect.stringContaining('No read-only reconciliation') });
   await x.resume();
@@ -129,7 +131,7 @@ it('lets an unrelated thread proceed while another stays gated on unknown work',
 
 it('re-delivers a recorded operation result once and never re-queues a handled input', async () => {
   const x = await setup(), op = x.seedOp({ status: 'succeeded', result: { ok: true } });
-  const receipt = x.seedInput({ id: 'operation-result:' + op.id, content: 'Executor receipt: operation ' + op.id + ' (audit.synthetic) is succeeded.' });
+  const receipt = x.seedInput({ id: 'operation-result:' + op.id, content: 'Executor receipt: operation ' + op.id + ' (integration.synthetic) is succeeded.' });
   const done = x.seedInput({ status: 'handled' });
   await x.restart();
   await x.resume();
