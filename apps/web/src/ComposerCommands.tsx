@@ -89,6 +89,21 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       if (event.key === 'ArrowDown' && index === selectable.length - 1 && page?.nextCursor) void loadMore();
       return true;
     }
+    if (['Home', 'End', 'PageUp', 'PageDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (event.shiftKey) return false;
+      const selectable = options.filter(available); if (!selectable.length) return false;
+      event.preventDefault();
+      const index = selectable.findIndex(option => option.id === selected?.id);
+      if (event.key === 'Home') setActive(selectable[0]!.id);
+      else if (event.key === 'End') {setActive(selectable[selectable.length - 1]!.id); if (page?.nextCursor) void loadMore();}
+      else {
+        const rows = Math.max(1, Math.floor((content.current?.querySelector('.composer-command-list')?.clientHeight ?? 168) / 42));
+        const next = event.key === 'PageDown' ? Math.min(selectable.length - 1, index + rows) : Math.max(0, index - rows);
+        setActive(selectable[next]!.id);
+        if (event.key === 'PageDown' && next === selectable.length - 1 && page?.nextCursor) void loadMore();
+      }
+      return true;
+    }
     if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && selected) {event.preventDefault(); void choose(selected); return true;}
     // No active command: leave Enter to normal typing instead of swallowing it.
     return false;
