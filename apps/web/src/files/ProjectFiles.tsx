@@ -17,6 +17,7 @@ import {
 } from "./project-search-api";
 import {
 	lookupLineAttribution,
+	previewLineFromPointer,
 	useLineAttribution,
 	type FileLineAttribution,
 } from "./line-attribution";
@@ -160,8 +161,14 @@ function ProjectFilesReader({
 		let lineHeight = parseFloat(style.lineHeight);
 		if (!Number.isFinite(lineHeight))
 			lineHeight = (parseFloat(style.fontSize) || 13) * 1.4;
-		const row = Math.floor((event.clientY - rect.top - paddingTop) / lineHeight) + 1;
-		if (row >= 1 && row <= modelLines) attributionControl.pick(row);
+		const row = previewLineFromPointer(
+			event.clientY,
+			rect.top,
+			paddingTop,
+			lineHeight,
+			modelLines,
+		);
+		if (row !== null) attributionControl.pick(row);
 	};
 	// DOM carriage returns need an explicit visual break; retain the source text.
 	const renderParts = (parts: string[]) =>

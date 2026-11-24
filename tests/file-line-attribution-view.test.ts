@@ -6,7 +6,8 @@ import {chromium,type Browser,type Page} from '@playwright/test';
 // so the test resolves/rejects requests and checks the generation fence.
 const fixture=`
 import React,{useState} from 'react';import {createRoot} from 'react-dom/client';
-import {useLineAttribution} from './apps/web/src/files/line-attribution';
+import {previewLineFromPointer,useLineAttribution} from './apps/web/src/files/line-attribution';
+window.previewLineFromPointer=previewLineFromPointer;
 const waits=[];window.calls=[];window.waits=waits;
 const lookup=(line,signal)=>new Promise((resolve,reject)=>{window.calls.push(line);waits.push({line,resolve,reject,signal});});
 const attributed=(line)=>({kind:'attributed',sha:'a'.repeat(40),author:'Ada Fixture',authorDateUtc:'2024-01-02T12:00:00.000Z',subject:'S'+line});
@@ -69,6 +70,19 @@ describe('line attribution view ownership',()=>{
   await p.locator('.files-attribution').press('Escape');
   expect(await p.locator('.files-attribution').count()).toBe(0);
   expect(await text(p,'[data-testid="lines"]')).toBe('[null,3,null]');
+  await p.close();
+ });
+ it('maps pointer Y to a preview row and refuses out-of-range rows',async()=>{
+  const p=await page();
+  const map=(y:number,top:number,pad:number,lh:number,n:number)=>p.evaluate(
+   ([a,b,c,d,e])=>(window as any).previewLineFromPointer(a,b,c,d,e),[y,top,pad,lh,n]);
+  expect(await map(8,0,8,20,3)).toBe(1);
+  expect(await map(27,0,8,20,3)).toBe(1);
+  expect(await map(28,0,8,20,3)).toBe(2);
+  expect(await map(48,0,8,20,3)).toBe(3);
+  expect(await map(68,0,8,20,3)).toBeNull();
+  expect(await map(7,0,8,20,3)).toBeNull();
+  expect(await map(10,0,8,0,3)).toBeNull();
   await p.close();
  });
  it('opens to a read-only explanation when ineligible',async()=>{

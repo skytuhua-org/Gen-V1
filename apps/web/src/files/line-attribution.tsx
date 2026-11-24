@@ -7,6 +7,20 @@ import {
 	type LineAttributionResult,
 } from "../../../../packages/contracts/file-line-attribution.ts";
 
+// Pick mode maps a pointer Y to a logical row of the unwrapped preview: rows
+// above the text, past the last line and degenerate heights map to no pick.
+export function previewLineFromPointer(
+	clientY: number,
+	preTop: number,
+	paddingTop: number,
+	lineHeight: number,
+	lineCount: number,
+): number | null {
+	if (!Number.isFinite(lineHeight) || lineHeight <= 0 || lineCount < 1) return null;
+	const row = Math.floor((clientY - preTop - paddingTop) / lineHeight) + 1;
+	return row >= 1 && row <= lineCount ? row : null;
+}
+
 // Additive /file preview metadata; absent on older hosts.
 export type FileLineAttribution =
 	| { kind: "eligible"; previewProof: string; lineCount: number }
