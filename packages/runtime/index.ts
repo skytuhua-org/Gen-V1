@@ -95,7 +95,10 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
  async function probe<T>(adapter:RuntimeAdapter,providerIds:readonly ConnectionProviderId[],accountId:string|null,action:()=>Promise<T>):Promise<T> {
   const leases:AccountUseLease[]=[];
   const release=()=>{for(const lease of leases){options.accounts?.releaseUse?.(lease);probes.delete(lease.id);}};
-  try{for(const providerId of providerIds){available(providerId,accountId);const lease=options.accounts?.claimUse?.(providerId,accountId);if(lease){leases.push(lease);probes.set(lease.id,{adapter,lease});}}}catch(error){release();throw error;}
+  try{for(const providerId of providerIds){
+   try{available(providerId,accountId);const lease=options.accounts?.claimUse?.(providerId,accountId);if(lease){leases.push(lease);probes.set(lease.id,{adapter,lease});}}
+   catch(error){if(providerIds.length===1||!options.accounts?.isSigningIn?.(providerId,accountId))throw error;}
+  }}catch(error){release();throw error;}
   try{const result=await action();release();return result;}
   catch(error){await retire(adapter);release();throw error;}
  }

@@ -3435,6 +3435,7 @@
     "tests/proactive-presentation.test.ts",
     "tests/process.test.ts",
     "tests/profile-lease.test.ts",
+    "tests/provider-discovery-v3.test.ts",
     "tests/project-colors.test.ts",
     "tests/project-context-summary.test.ts",
     "tests/project-instructions-custody.test.ts",
