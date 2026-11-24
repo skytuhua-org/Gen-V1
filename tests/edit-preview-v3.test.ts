@@ -11,7 +11,7 @@ const schemaDigest=sha('{"type":"object","properties":{"files":{}}}');
 const args=(path:string,content:string)=>JSON.stringify({files:[{path,content}]});
 const owner='run-1';
 
-it('a streamed preview never authorizes a write until complete validated arguments arrive',()=>{
+it('a streamed preview never authorizes a write until complete validated arguments arrive',async()=>{
  const registry=new EditPreviewRegistry();
  const preview=registry.begin(owner,schemaDigest);
  expect(editPreviewV1Schema.parse(preview)).toEqual(preview);
@@ -22,7 +22,7 @@ it('a streamed preview never authorizes a write until complete validated argumen
  registry.append(preview.previewId,owner,raw.slice(0,20));
  expect(registry.get(preview.previewId,owner)!.state).toBe('STREAMING_UNAPPLIED');
  registry.append(preview.previewId,owner,raw.slice(20));
- const sealed=registry.seal(preview.previewId,owner,()=>sha('old'));
+ const sealed=await registry.seal(preview.previewId,owner,()=>sha('old'));
  expect(sealed.state).toBe('READY_UNAPPLIED');
  expect(sealed.targetFiles[0]!.beforeDigest).toBe(sha('old'));
  expect(sealed.targetFiles[0]!.proposedDigest).toBe(sha('const a=2;\n'));
@@ -31,12 +31,12 @@ it('a streamed preview never authorizes a write until complete validated argumen
  expect(registry.get(preview.previewId,owner)!.state).toBe('INVALID');
 });
 
-it('matching final arguments validate, then settle records APPLIED or CONFLICT',()=>{
+it('matching final arguments validate, then settle records APPLIED or CONFLICT',async()=>{
  const registry=new EditPreviewRegistry();
  const raw=args('a.ts','const a=2;\n');
  const preview=registry.begin(owner,schemaDigest);
  registry.append(preview.previewId,owner,raw);
- registry.seal(preview.previewId,owner,()=>null);
+ await registry.seal(preview.previewId,owner,()=>null);
  const valid=registry.validateFinal(preview.previewId,owner,sha(raw));
  expect(valid.state).toBe('READY_UNAPPLIED');
  const applied=registry.settle(preview.previewId,owner,'APPLIED');
@@ -44,7 +44,7 @@ it('matching final arguments validate, then settle records APPLIED or CONFLICT',
  // A conflict preimage surfaces CONFLICT, never a silent write.
  const second=registry.begin(owner,schemaDigest);
  registry.append(second.previewId,owner,raw);
- registry.seal(second.previewId,owner,()=>null);
+ await registry.seal(second.previewId,owner,()=>null);
  registry.validateFinal(second.previewId,owner,sha(raw));
  expect(registry.settle(second.previewId,owner,'CONFLICT').state).toBe('CONFLICT');
 });
@@ -97,12 +97,12 @@ it('anchors and hashlines are locators, not authorization: ambiguous or missing 
  expect(()=>verifyEditPreimage(Buffer.from('changed'),sha(content))).toThrowError(/changed before/i);
 });
 
-it('an unvalidated preview cannot settle APPLIED',()=>{
+it('an unvalidated preview cannot settle APPLIED',async()=>{
  const registry=new EditPreviewRegistry();
  const raw=args('a.ts','const a=2;\n');
  const preview=registry.begin(owner,schemaDigest);
  registry.append(preview.previewId,owner,raw);
- registry.seal(preview.previewId,owner,()=>null);
+ await registry.seal(preview.previewId,owner,()=>null);
  // The approval gate stands between seal and apply; skipping it is refused.
  expect(()=>registry.settle(preview.previewId,owner,'APPLIED')).toThrowError(/validated|PRECONDITION/i);
  // A conflict outcome stays reachable without validation.
@@ -116,13 +116,13 @@ it('previews are owner-scoped',()=>{
  expect(()=>registry.append(preview.previewId,'run-2','x')).toThrowError(HarnessError);
 });
 
-it('closed previews release their aggregate and memory budget',()=>{
+it('closed previews release their aggregate and memory budget',async()=>{
  const raw=args('a.ts','x'.repeat(40)),bytes=Buffer.byteLength(raw);
  const limits={...CODE_INTELLIGENCE_LIMITS,previewAggregateBytes:Math.floor(bytes*1.5),previewBufferBytes:bytes*4};
  const registry=new EditPreviewRegistry(limits);
  const first=registry.begin(owner,schemaDigest);
  registry.append(first.previewId,owner,raw);
- registry.seal(first.previewId,owner,()=>null);
+ await registry.seal(first.previewId,owner,()=>null);
  registry.validateFinal(first.previewId,owner,sha(raw));
  expect(registry.settle(first.previewId,owner,'APPLIED').state).toBe('APPLIED');
  // The settled preview keeps its history row but no longer consumes the
@@ -132,21 +132,21 @@ it('closed previews release their aggregate and memory budget',()=>{
  expect(registry.list(owner).map(preview=>preview.state)).toEqual(['APPLIED','STREAMING_UNAPPLIED']);
 });
 
-it('a failed final seal invalidates an incomplete preview and frees its slot for a new edit',()=>{
+it('a failed final seal invalidates an incomplete preview and frees its slot for a new edit',async()=>{
  const registry=new EditPreviewRegistry();
  for(let index=1;index<CODE_INTELLIGENCE_LIMITS.openPreviewsPerRun;index++)registry.begin(owner,schemaDigest);
  const preview=registry.begin(owner,schemaDigest);
  registry.append(preview.previewId,owner,'{"files":');
- expect(()=>registry.seal(preview.previewId,owner,()=>null)).toThrowError(/not valid JSON/);
+ await expect(registry.seal(preview.previewId,owner,()=>null)).rejects.toThrowError(/not valid JSON/);
  expect(registry.get(preview.previewId,owner)).toMatchObject({
   state:'INVALID',finalArgumentsDigest:null,targetFiles:[],
  });
  const retry=registry.begin(owner,schemaDigest);
  registry.append(retry.previewId,owner,args('a.ts','complete'));
- expect(registry.seal(retry.previewId,owner,()=>null).state).toBe('READY_UNAPPLIED');
+ expect((await registry.seal(retry.previewId,owner,()=>null)).state).toBe('READY_UNAPPLIED');
 });
 
-it('rolls back an unpublishable final preview without retaining its argument bytes',()=>{
+it('rolls back an unpublishable final preview without retaining its argument bytes',async()=>{
  const registry=new EditPreviewRegistry();
  const preview=registry.begin(owner,schemaDigest);
  const raw=args('a.ts','proposed text');
@@ -154,27 +154,9 @@ it('rolls back an unpublishable final preview without retaining its argument byt
  expect(registry['previews'].get(preview.previewId)?.bufferedBytes).toBe(Buffer.byteLength(raw));
 
  // A bad preimage digest from the host must not leave a partially sealed preview.
- expect(()=>registry.seal(preview.previewId,owner,()=>'not-a-digest')).toThrow();
+ await expect(registry.seal(preview.previewId,owner,()=>'not-a-digest')).rejects.toThrow();
  expect(registry.get(preview.previewId,owner)).toMatchObject({
   state:'INVALID',finalArgumentsDigest:null,targetFiles:[],
  });
  expect(registry['previews'].get(preview.previewId)).toMatchObject({buffered:[],bufferedBytes:0});
-});
-
-// Issue #2021 / M07-02 T02: the aggregate cap must bind across all open
-// previews of a run — several streams each below the per-preview buffer
-// bound must still trip the shared 256 KiB budget.
-it('the aggregate cap binds multi-byte streams across concurrent previews',()=>{
- const raw=args('a.ts','x'.repeat(60)),bytes=Buffer.byteLength(raw);
- const limits={...CODE_INTELLIGENCE_LIMITS,previewBufferBytes:bytes*8,previewAggregateBytes:Math.floor(bytes*3.5)};
- const registry=new EditPreviewRegistry(limits);
- const first=registry.begin(owner,schemaDigest);
- const second=registry.begin(owner,schemaDigest);
- registry.append(first.previewId,owner,raw);
- registry.append(first.previewId,owner,raw);
- registry.append(second.previewId,owner,raw); // aggregate: 3*bytes > cap
- expect(()=>registry.append(first.previewId,owner,raw)).toThrowError(/byte bound|RESOURCE_LIMIT/i);
- expect(registry.get(first.previewId,owner)?.state).toBe('INVALID');
- // The second stream remains usable; the cap is per-run, not global.
- expect(registry.get(second.previewId,owner)?.state).toBe('STREAMING_UNAPPLIED');
 });

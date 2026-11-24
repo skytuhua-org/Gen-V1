@@ -125,23 +125,21 @@ export class EditPreviewRegistry {
    * result marks that file's baseline unknown rather than guessing it.
    * A failed seal is terminal, even if arguments are incomplete. Begin a
    * fresh preview to send the arguments again. */
-  seal(previewId: string, owner: string, beforeDigestFor: (path: string) => string | null): EditPreviewV1 {
+  async seal(previewId: string, owner: string, beforeDigestFor: (path: string) => string | null | Promise<string | null>): Promise<EditPreviewV1> {
     const preview = this.require(previewId, owner);
     if (preview.state !== "STREAMING_UNAPPLIED")
       throw new HarnessError("INVALID_INPUT", "The edit preview is no longer streaming.");
     try {
       const parsed = parseFinalArguments(Buffer.concat(preview.buffered).toString("utf8"));
-      const candidate: Preview = {
-        ...preview,
-        finalArgumentsDigest: parsed.digest,
-        targetFiles: parsed.targets.map(target => ({
+      const targetFiles: EditPreviewFile[] = [];
+      for (const target of parsed.targets)
+        targetFiles.push({
           path: target.path,
           identity: null,
-          beforeDigest: beforeDigestFor(target.path),
+          beforeDigest: await beforeDigestFor(target.path),
           proposedDigest: sha(target.proposedContent),
-        })),
-        state: "READY_UNAPPLIED",
-      };
+        });
+      const candidate: Preview = { ...preview, finalArgumentsDigest: parsed.digest, targetFiles, state: "READY_UNAPPLIED" };
       const result = this.view(candidate);
       this.previews.set(previewId, candidate);
       return result;

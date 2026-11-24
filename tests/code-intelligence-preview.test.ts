@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -34,18 +34,29 @@ const fixture = async () => {
   const dir = await mkdtemp(join(tmpdir(), 'harness-previews-'));
   dirs.push(dir);
   const app = Fastify();
-  const service = new Service(new Store(dir), runtime);
+  const store = new Store(dir);
+  const service = new Service(store, runtime);
+  // Seed the project binding the preview owner resolves against.
+  const root = await realpath(dir);
+  const info = await lstat(root, { bigint: true });
+  const stamp = new Date().toISOString();
+  store.internal('fixture.seed', null, () => {
+    store.put('workspaceProject', projectId, null, { id: projectId, name: 'p', rootPath: root, authority: { kind: 'local' }, createdAt: stamp });
+    store.put('workspaceProjectRoot', projectId, null, { path: root, identity: { dev: String(info.dev), ino: String(info.ino) } });
+    for (const id of ['thread-a', 'thread-b'])
+      store.put('thread', id, id, { id, title: id, projectName: 'p', projectId, kind: 'main', status: 'idle', epoch: 0, runId: null, modelId: null, sessionPath: null, createdAt: stamp, updatedAt: stamp });
+  });
   registerCodeIntelligenceRoutes(app, service, { env: { HARNESS_FLAG_CODING_INTELLIGENCE_V1: '1' } });
   const post = (body: Record<string, unknown>) =>
     app.inject({ method: 'POST', url, payload: body });
-  return { dir, post };
+  return { dir, post, service };
 };
 
 afterEach(async () => {
   while (dirs.length) await rm(dirs.pop()!, { recursive: true, force: true });
 });
 
-it.fails('seal binds the current preimage of each real target so a post-seal mutation conflicts', async () => {
+it('seal binds the current preimage of each real target so a post-seal mutation conflicts', async () => {
   const f = await fixture();
   await writeFile(join(f.dir, 'a.ts'), 'before');
   const previewId = (await f.post({ command: 'begin', schemaDigest })).json().previewId;
@@ -60,7 +71,7 @@ it.fails('seal binds the current preimage of each real target so a post-seal mut
   expect(settled.json().state).toBe('CONFLICT');
 });
 
-it.fails('refuses a client-declared APPLIED without a host-verified write', async () => {
+it('refuses a client-declared APPLIED without a host-verified write', async () => {
   const f = await fixture();
   const previewId = (await f.post({ command: 'begin', schemaDigest })).json().previewId;
   const raw = args('a.ts', 'after');
@@ -74,7 +85,7 @@ it.fails('refuses a client-declared APPLIED without a host-verified write', asyn
   expect(claimsApplied).toBe(false);
 });
 
-it.fails('scopes preview ownership to the streaming thread, not the whole project', async () => {
+it('scopes preview ownership to the streaming thread, not the whole project', async () => {
   const f = await fixture();
   const previewId = (await f.post({ command: 'begin', threadId: 'thread-a', schemaDigest })).json().previewId;
   await f.post({ command: 'append', previewId, chunk: args('a.ts', 'x') });
@@ -84,13 +95,14 @@ it.fails('scopes preview ownership to the streaming thread, not the whole projec
   expect(foreignSeal.statusCode).toBeGreaterThanOrEqual(400);
 });
 
-it.fails('cancelling the streaming run discards every preview it opened', async () => {
+it('cancelling the streaming run discards every preview it opened', async () => {
   const f = await fixture();
   const previewId = (await f.post({ command: 'begin', threadId: 'thread-a', schemaDigest })).json().previewId;
   await f.post({ command: 'append', previewId, chunk: args('a.ts', 'x') });
   // M07-S07: aborting the owning run must discard its previews; no append,
-  // seal or settle may follow. No cancellation surface is wired today.
-  await runtime.cancel({} as Parameters<RuntimeAdapter['cancel']>[0]);
+  // seal or settle may follow. Drive the real run.stop surface.
+  f.service.store.internal('fixture.run', 'thread-a', () => f.service.store.put('thread', 'thread-a', 'thread-a', { ...f.service.store.get<import('../packages/contracts/index.ts').Thread>('thread', 'thread-a')!, runId: 'run-1', status: 'running' }));
+  await f.service.command({ id: 'stop-1', type: 'run.stop', threadId: 'thread-a', payload: {} });
   const after = await f.post({ command: 'append', previewId, chunk: 'x' });
   expect(after.statusCode).toBeGreaterThanOrEqual(400);
 });
