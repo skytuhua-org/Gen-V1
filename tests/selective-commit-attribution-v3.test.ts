@@ -151,9 +151,91 @@ it("keeps a wholly proven file auto-selectable and an out-of-journal-only file g
   expect(alien.every((hunk) => hunk.attribution === "unattributed" && hunk.requiresExplicitSelection)).toBe(true);
 });
 
+// A receipt that deleted one copy of a duplicated line must not cover a
+// foreign hunk deleting the other copy: removed lines are matched by HEAD
+// preimage position, mapped through the foreign delta — never by content.
+it("does not credit a foreign deletion of identical content elsewhere in the file", async () => {
+  const f = await fixture();
+  const path = join(f.worktree, "many.txt");
+  // HEAD: two identical "dup" lines, far enough apart to form two hunks.
+  const headLines = ["lead", "dup", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "dup", "tail"];
+  await writeFile(path, headLines.join("\n") + "\n");
+  gitSync(f.worktree, "add", ".");
+  gitSync(f.worktree, "commit", "-qm", "dup-baseline");
+  // Foreign (unjournaled) write removes the second copy first, then the
+  // proven receipt removes only the first copy.
+  const preimageLines = [...headLines];
+  preimageLines.splice(9, 1);
+  const preimage = Buffer.from(preimageLines.join("\n") + "\n");
+  const postimageLines = [...preimageLines];
+  postimageLines.splice(1, 1);
+  await writeFile(path, postimageLines.join("\n") + "\n");
+  const after = await readFile(path);
+  f.journal.recordProvenEdit({
+    invocationId: "inv-dup",
+    owner: f.scope,
+    workspaceIdentity: sha256hex("workspace"),
+    repositoryId: "repo",
+    path: "many.txt",
+    beforeIdentity: null,
+    beforeDigest: sha256hex(preimage),
+    afterDigest: sha256hex(after),
+    boundedBlobRefs: [
+      { ref: f.journal.writeBlob(preimage), bytes: preimage.length, retention: "AVAILABLE" },
+      { ref: f.journal.writeBlob(after), bytes: after.length, retention: "AVAILABLE" },
+    ],
+  });
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const hunks = preview.candidates.filter((candidate) => candidate.path === "many.txt");
+  expect(hunks.length).toBeGreaterThanOrEqual(2);
+  const proven = hunks.find((candidate) => candidate.patch.includes(" lead"))!;
+  const foreign = hunks.find((candidate) => candidate.patch.includes(" tail"))!;
+  expect(proven.attribution).toBe("proven");
+  expect(foreign.attribution).toBe("unattributed");
+});
+
+// A write that only flips one line's terminator credits that line alone: a
+// foreign hunk changing the file's final newline must not ride along.
+it("attributes a mid-file line-ending change without covering a foreign final-newline hunk", async () => {
+  const f = await fixture();
+  const path = join(f.worktree, "many.txt");
+  const headLines = Array.from({ length: 10 }, (_, index) => `l${index + 1}`);
+  await writeFile(path, headLines.join("\n") + "\n");
+  gitSync(f.worktree, "add", ".");
+  gitSync(f.worktree, "commit", "-qm", "eol-baseline");
+  // Foreign write drops the final newline first; the proven receipt then
+  // flips only line 2's terminator to CRLF.
+  const preimage = Buffer.from(headLines.join("\n"));
+  const postimage = Buffer.from("l1\nl2\r\n" + headLines.slice(2).join("\n"));
+  await writeFile(path, postimage);
+  const after = await readFile(path);
+  f.journal.recordProvenEdit({
+    invocationId: "inv-eol",
+    owner: f.scope,
+    workspaceIdentity: sha256hex("workspace"),
+    repositoryId: "repo",
+    path: "many.txt",
+    beforeIdentity: null,
+    beforeDigest: sha256hex(preimage),
+    afterDigest: sha256hex(after),
+    boundedBlobRefs: [
+      { ref: f.journal.writeBlob(preimage), bytes: preimage.length, retention: "AVAILABLE" },
+      { ref: f.journal.writeBlob(after), bytes: after.length, retention: "AVAILABLE" },
+    ],
+  });
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const hunks = preview.candidates.filter((candidate) => candidate.path === "many.txt");
+  expect(hunks.length).toBeGreaterThanOrEqual(2);
+  const foreign = hunks.find((candidate) => candidate.patch.includes("No newline"))!;
+  const proven = hunks.find((candidate) => !candidate.patch.includes("No newline"))!;
+  expect(proven.attribution).toBe("proven");
+  expect(foreign.attribution).toBe("unattributed");
+});
+
 // A foreign insertion above the proven region shifts HEAD preimage line
 // numbers away from the receipt's preimage numbering: the proven
-// replacement must still be attributed by removed-line content.
+// replacement must still be attributed positionally, mapped through the
+// foreign delta into the receipt's own preimage space.
 it("attributes a proven replacement when an earlier insertion shifts preimage lines", async () => {
   const f = await fixture();
   const path = join(f.worktree, "many.txt");
