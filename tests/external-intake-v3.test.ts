@@ -366,7 +366,7 @@ describe("M10 durable approval identity across crash and rejection races", () =>
   it("reuses the durable claim's stable command ids on restart instead of creating a second task", async () => {
     const created: string[] = [];
     const taskFor = (store: Store) => async (request: { threadCommandId: string; messageCommandId: string }) => {
-      store.command({ id: request.threadCommandId, type: "intake.thread", threadId: null }, () => {
+      store.command({ id: request.threadCommandId, type: "intake.thread", payload: {} }, () => {
         store.put("thread", request.threadCommandId, request.threadCommandId, { id: request.threadCommandId, kind: "delegate" });
         created.push(request.threadCommandId);
         return request.threadCommandId;
