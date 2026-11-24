@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import type { ApprovedWriteOrigin, Operation, RuntimeAdapter, RuntimeCallbacks, StartRun, Thread } from '../packages/contracts/index.ts';
 import { Service } from '../packages/core/service.ts';
 import { Store } from '../packages/storage/store.ts';
@@ -131,6 +132,22 @@ it('reconciles a dispatched operation to unknown and gates resume until disposit
   await x.send('operation.reconcile', { operationId: op.id, resolution: 'cancelled' }, x.threadId);
   expect(x.store.get<Operation>('operation', op.id)).toMatchObject({ status: 'cancelled', error: expect.stringContaining('No read-only reconciliation') });
   await x.resume();
+});
+
+it('reports an unobservable outcome when the granted file was replaced, then accepts disposition', async () => {
+  const x = await setup(), file = join(x.dir, 'doc.txt'), before = createHash('sha256').update('before').digest('hex');
+  writeFileSync(file, 'before');
+  const grant = (await x.send('resource.grant', { path: file, kind: 'file', writable: true }, x.threadId)).result as { id: string };
+  const op = x.seedOp({ kind: 'file.replace', status: 'running', args: { resourceId: grant.id, content: 'after', expectedSha256: before }, resourceIds: [grant.id], preconditions: { sha256: before } });
+  await x.restart();
+  // An atomic external replace leaves a new inode: the grant no longer
+  // identifies the file, so observation is unavailable — not a hard error
+  // that would lock the resume gate forever.
+  rmSync(file); writeFileSync(file, 'before');
+  await x.send('operation.reconcile', { operationId: op.id }, x.threadId);
+  expect(x.store.get<Operation>('operation', op.id)).toMatchObject({ status: 'unknown', error: expect.stringContaining('unavailable') });
+  await x.send('operation.reconcile', { operationId: op.id, resolution: 'failed' }, x.threadId);
+  expect(x.store.get<Operation>('operation', op.id)!.status).toBe('failed');
 });
 
 it('lets an unrelated thread proceed while another stays gated on unknown work', async () => {
