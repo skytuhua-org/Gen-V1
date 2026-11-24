@@ -108,7 +108,11 @@ export function usePromptSnippets(owner: PromptSnippetsOwner): PromptSnippetsSta
     return result.library;
   }, []);
 
+  // Load and subscribe only while a surface is open: a mount-time setLibrary
+  // re-renders the composer's controlled textarea while a draft is mid-flight
+  // through the async acceptance channel, which can visibly clear it.
   useEffect(() => {
+    if (!open && !manage) return;
     let alive = true;
     void loadSnippetLibrary(profileId).then(result => {
       if (!alive) return;
@@ -119,7 +123,7 @@ export function usePromptSnippets(owner: PromptSnippetsOwner): PromptSnippetsSta
       if (alive && result.ok) accept(result);
     });
     return () => { alive = false; unsubscribe(); };
-  }, [profileId, accept]);
+  }, [open, manage, profileId, accept]);
 
   // Re-read persisted state when the picker or manager opens and when the tab
   // regains focus while either surface is up (D07: latest persisted state wins).
