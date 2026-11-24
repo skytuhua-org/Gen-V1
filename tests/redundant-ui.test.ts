@@ -57,4 +57,18 @@ describe('proven duplicate removals',()=>{
   expect(app).toContain('available&&embeddedActive&&!threadHeld');
  });
  it('respects the footer visibility preference',()=>{expect(renderToStaticMarkup(createElement(UsageFooter,{usage,visible:false}))).toBe('');});
+ it('offers an actionable connect-folder notice instead of dead-end text in pull request surfaces',()=>{
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic'}}}});snapshot.activeThreadId='task-thread';
+  for(const kind of ['pull-request','linked-pull-requests'] as const){
+   const html=renderToStaticMarkup(createElement(WorkspaceSurfaceBody,{kind,binding:{authority:{kind:'local'}},snapshot,refresh:async()=>{},preferences:DEFAULT_PREFERENCES,onConnectProject:()=>{}}));
+   expect(html).toContain('connect-folder-notice');expect(html).toContain('Connect this project to a local folder');expect(html).not.toContain('error-text');expect(html).not.toContain('panel-note');
+   const fallback=renderToStaticMarkup(createElement(WorkspaceSurfaceBody,{kind,binding:{authority:{kind:'local'}},snapshot,refresh:async()=>{},preferences:DEFAULT_PREFERENCES}));
+   expect(fallback).toContain('panel-note');expect(fallback).not.toContain('connect-folder-notice');
+  }
+ });
+ it('explains disabled pull request actions instead of leaving dead ends',()=>{
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic'}}}});
+  const html=renderToStaticMarkup(createElement(WorkspaceSurfaceBody,{kind:'pull-request',binding:{authority:{kind:'local'},projectId:'project-one',threadId:'task-thread'},snapshot,refresh:async()=>{},preferences:DEFAULT_PREFERENCES}));
+  expect(html).toContain('title="Sign in to GitHub to draft PRs"');expect(html).toMatch(/<button[^>]*disabled[^>]*title="[^"]+"[^>]*>Link<\/button>/);expect(html).toMatch(/aria-describedby="[^"]+"/);
+ });
 });
