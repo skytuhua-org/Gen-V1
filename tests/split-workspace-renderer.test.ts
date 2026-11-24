@@ -157,5 +157,32 @@ it('keeps editor and recovery controls reachable inside a short pane',async()=>{
   const recovery=tab.getByRole('menuitem',{name:'Recover: two',exact:true});await recovery.focus();await recovery.scrollIntoViewIfNeeded();expect(await recovery.isVisible()).toBe(true);await recovery.press('Enter');await tab.getByRole('textbox',{name:'Draft two'}).waitFor({state:'visible'});expect(await tab.evaluate(()=>(window as any).mounts)).toEqual({one:1,two:1});
  }finally{await tab.close();}
 });
+it('exposes clipped tabs through scroll controls, an all-tabs menu and arrow-key focus',async()=>{
+ const tab=await page();try{
+  for(const id of ['t3','t4','t5','t6','t7','t8','t9','t10'])await issue(tab,'view.open',{paneId:'right',view:{id,kind:'thread',binding:{authority:{kind:'local'},threadId:id}}});
+  const right=tab.locator('[data-split-pane="right"]'),strip=right.locator('.split-tab-strip');
+  await tab.waitForFunction(()=>{const node=document.querySelector('[data-split-pane="right"] .split-tab-strip');return Boolean(node&&node.scrollWidth>node.clientWidth);});
+  const scrollRight=right.getByRole('button',{name:'Scroll tabs right'});
+  expect(await scrollRight.isVisible()).toBe(true);
+  expect(await right.getByRole('button',{name:'Scroll tabs left'}).isVisible()).toBe(true);
+  const before=await strip.evaluate(node=>node.scrollLeft);await scrollRight.click();
+  await tab.waitForFunction(start=>document.querySelector('[data-split-pane="right"] .split-tab-strip')!.scrollLeft>(start as number),before,{polling:100});
+  expect(await strip.evaluate(node=>node.scrollLeft)).toBeGreaterThan(before);
+  await right.getByRole('button',{name:'All tabs'}).click();
+  for(const id of ['two','t3','t4','t5','t6','t7','t8','t9','t10'])await tab.getByRole('menuitemcheckbox',{name:id,exact:true}).waitFor();
+  expect(await tab.getByRole('menuitemcheckbox',{name:'t10',exact:true}).getAttribute('aria-checked')).toBe('true');
+  await tab.getByRole('menuitemcheckbox',{name:'two',exact:true}).click();
+  await tab.waitForFunction(()=>(window as unknown as {currentLayout:{panes:Record<string,{activeViewId:string}>}}).currentLayout.panes['right']!.activeViewId==='two');
+  // Activating a clipped tab scrolls it into view.
+  await tab.waitForFunction(()=>{const node=document.querySelector('[data-split-pane="right"] [role="tab"][aria-selected="true"]') as HTMLElement;const stripEl=document.querySelector('[data-split-pane="right"] .split-tab-strip') as HTMLElement;return node.offsetLeft+node.offsetWidth>stripEl.scrollLeft&&node.offsetLeft<stripEl.scrollLeft+stripEl.clientWidth;});
+  const active=right.locator('[role="tab"][aria-selected="true"]');
+  expect(await active.getAttribute('tabindex')).toBe('0');
+  expect(await right.locator('[role="tab"][aria-selected="false"]').first().getAttribute('tabindex')).toBe('-1');
+  await active.focus();await tab.keyboard.press('ArrowRight');
+  await tab.waitForFunction(()=>(document.activeElement as HTMLElement|null)?.getAttribute('aria-selected')==='false');
+  // The newly focused tab is revealed even when it started clipped.
+  await tab.waitForFunction(()=>{const node=document.activeElement as HTMLElement;const stripEl=document.querySelector('[data-split-pane="right"] .split-tab-strip') as HTMLElement;return node.offsetLeft+node.offsetWidth>stripEl.scrollLeft&&node.offsetLeft<stripEl.scrollLeft+stripEl.clientWidth;});
+ }finally{await tab.close();}
+});
 
 });
