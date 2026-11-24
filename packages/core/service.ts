@@ -2169,7 +2169,8 @@ export class Service {
         const { commandId: _commandId, rootPath, ...findingArgs } = a;
         assertVerificationSourceRoot(this.store, ctx.threadId, rootPath as string);
         // The recording thread owns the finding; dedupe is per owner.
-        const recorded = new SecurityFindingLedger(this.store).record(securityFindingInput.parse({ version: 1, ...findingArgs }), ctx.threadId);
+        // Inside this command's transaction already — write, don't re-open one.
+        const recorded = new SecurityFindingLedger(this.store).recordInTransaction(securityFindingInput.parse({ version: 1, ...findingArgs }), ctx.threadId);
         return { findingId: recorded.findingId, status: recorded.status };
       }
       if (call.name === "task_finish") {
