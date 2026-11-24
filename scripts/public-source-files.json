@@ -3721,6 +3721,7 @@
     "tests/export-research-evidence.test.ts",
     "tests/external-intake-v3.test.ts",
     "tests/file-access-startup.test.ts",
+    "tests/file-checkpoints-history-empty.test.ts",
     "tests/file-checkpoints.test.ts",
     "tests/fixtures/deferred.ts",
     "tests/fixtures/effect-authenticator.ts",

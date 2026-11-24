@@ -25,7 +25,7 @@ export function FileCheckpoints({owner,preferences,current,recorded,adapter=disa
     </div>
     <div role="tabpanel" id={`${id}-body`} aria-labelledby={`${id}-${source}`} tabIndex={0}>
       <div hidden={source!=='Current'}>{current}</div><div hidden={source!=='Recorded'}>{recorded}</div>
-      {source==='History'&&(owner?<CheckpointHistory key={checkpointOwnerKey(owner)} owner={owner} adapter={adapter} preferences={preferences}/>:<p className="file-checkpoints-note">Checkpoint history unavailable.</p>)}
+      {source==='History'&&(owner?<CheckpointHistory key={checkpointOwnerKey(owner)} owner={owner} adapter={adapter} preferences={preferences}/>:<div className="file-checkpoints-history-empty"><strong>No checkpoint history</strong><p>Snapshots of this file will appear here once a checkpoint is recorded.</p></div>)}
     </div>
   </div>;
 }
