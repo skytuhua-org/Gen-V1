@@ -426,7 +426,7 @@
 	background: var(--surface);
 	min-width: 0;
 	font-size: 12px;
-	animation: files-attribution-fade 120ms ease-out;
+	animation: files-attribution-fade var(--ui-motion-insert) var(--ui-ease-enter) both;
 }
 @keyframes files-attribution-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .files-attribution { animation: none; } }
