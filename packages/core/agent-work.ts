@@ -47,7 +47,10 @@ export interface AgentWorkHooks {
   resourceResolver?: (grant: ResourceGrant, write: boolean, call: ToolCall) => Promise<unknown> | unknown;
   /** Global reservation limits; failed and cancelled work still counts. */
   globalBudget?: {tokens: number | null; ms: number | null};
-  runtimeFactory?: (work: AgentWorkV1, spec: {prompt: string; grants: ResourceGrant[]; allowSpawn: false}) => Promise<AgentWorkChild> | AgentWorkChild;
+  /** Typed native runtime factory. `ctx` resolves the work's current child
+   * run context (threadId/runId/epoch) at call time — the runId is minted
+   * only when the work records RUNNING, so it must be read lazily. */
+  runtimeFactory?: (work: AgentWorkV1, spec: {prompt: string; grants: ResourceGrant[]; allowSpawn: false; ctx: () => RunContext}) => Promise<AgentWorkChild> | AgentWorkChild;
 }
 
 interface LiveWork { child: AgentWorkChild; runId: string; delivery: Promise<void> }
@@ -220,8 +223,19 @@ export class AgentWorkCoordinator {
 
   private async dispatch(work: AgentWorkV1, spec: AgentWorkAdmissionV1, grants: ResourceGrant[]): Promise<AgentWorkV1> {
     try {
-      const child = await (this.hooks.runtimeFactory?.(work, {prompt: spec.prompt, grants, allowSpawn: false})
-        ?? Promise.resolve<AgentWorkChild>({supportsLiveSteer: false, send: async () => {}, cancel: async () => {}, dispose: async () => {}}));
+      // No typed runtime registered => nothing can receive START. Record an
+      // honest FAILED instead of minting a phantom RUNNING behind a no-op.
+      const factory = this.hooks.runtimeFactory;
+      if (!factory) {
+        this.finish(work.workId, 'FAILED', {failureReason: 'RUNTIME_FAILURE'});
+        throw new HarnessError('RUNTIME_FAILURE', 'No typed agent-work runtime is registered on this host; the admission cannot record RUNNING');
+      }
+      const child = await factory(work, {prompt: spec.prompt, grants, allowSpawn: false,
+        ctx: () => {
+          const current = this.stored(work.workId);
+          if (!current?.childOwner.runId) throw new HarnessError('RUNTIME_FAILURE', 'The child run context is unavailable before RUNNING is recorded');
+          return {threadId: current.childOwner.threadId, runId: current.childOwner.runId, epoch: current.childOwner.epoch};
+        }});
       // A stop/revocation landing while the runtime started cancels the work;
       // a late startup must never overwrite that terminal state or send START.
       const current = this.stored(work.workId);
