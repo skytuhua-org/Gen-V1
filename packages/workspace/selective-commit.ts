@@ -53,9 +53,9 @@ interface FileSection {
   path: string;
   header: string;
   hunks: string[];
-  // Digest of the live worktree bytes, for journal attribution. Null when the
-  // file is unreadable or exceeds the capture bound — never proven then.
-  postDigest?: string | null;
+  // Live worktree bytes, for journal attribution. Null when the file is
+  // unreadable, binary, or exceeds the capture bound — never proven then.
+  postBytes?: Buffer | null;
 }
 
 // Split a single-file unified diff into its header (diff/index/---/+++ lines)
@@ -130,20 +130,37 @@ export class SelectiveCommitService {
         } catch {
           continue;
         }
-        sections.push({ ...newFilePatch(path, text), postDigest: sha256hex(bytes) });
+        sections.push({ ...newFilePatch(path, text), postBytes: bytes });
         continue;
       }
       const patch = await git(["diff", "--full-index", "--no-ext-diff", "--no-textconv", "HEAD", "--", path]);
       if (!patch) continue;
       const post = await readBoundFile(join(worktree, path), 8 * 1024 * 1024 + 1).catch(() => null);
-      sections.push({ ...splitFileDiff(patch, path), postDigest: post && post.length <= 8 * 1024 * 1024 ? sha256hex(post) : null });
+      sections.push({ ...splitFileDiff(patch, path), postBytes: post && post.length <= 8 * 1024 * 1024 ? post : null });
     }
     void scope;
     return sections;
   }
 
-  private attributionFor(scope: CheckpointScope | undefined, path: string, postDigest: string | null): { attribution: HunkAttribution; requiresExplicitSelection: boolean } {
-    const attribution = this.journal && scope ? this.journal.hunkAttribution(scope, path, postDigest) : "unattributed";
+  // The exact preimage lines a hunk removes and postimage lines it adds, in
+  // 1-based numbers — the coverage the journal must prove.
+  private hunkChange(patch: string): { removed: Set<number>; added: Set<number> } | null {
+    const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/m.exec(patch);
+    if (!match) return null;
+    let before = parseInt(match[1], 10), after = parseInt(match[2], 10);
+    const removed = new Set<number>(), added = new Set<number>();
+    for (const line of patch.slice(patch.indexOf("\n") + 1).split("\n")) {
+      if (line.startsWith("-")) removed.add(before++);
+      else if (line.startsWith("+")) added.add(after++);
+      else if (line.startsWith(" ")) { before++; after++; }
+      else if (line.startsWith("\\")) continue;
+      else if (line.startsWith("@@")) break;
+    }
+    return { removed, added };
+  }
+
+  private attributionFor(scope: CheckpointScope | undefined, path: string, postBytes: Buffer | null, patch: string): { attribution: HunkAttribution; requiresExplicitSelection: boolean } {
+    const attribution = this.journal && scope ? this.journal.hunkAttribution(scope, path, postBytes, this.hunkChange(patch)) : "unattributed";
     return { attribution, requiresExplicitSelection: attribution !== "proven" };
   }
 
@@ -156,7 +173,7 @@ export class SelectiveCommitService {
       const candidates: SelectiveCandidate[] = [];
       for (const section of sections) {
         section.hunks.forEach((patch, index) => {
-          candidates.push({ path: section.path, index, digest: sha256hex(section.header + patch), patch: section.header + patch, ...this.attributionFor(scope, section.path, section.postDigest ?? null) });
+          candidates.push({ path: section.path, index, digest: sha256hex(section.header + patch), patch: section.header + patch, ...this.attributionFor(scope, section.path, section.postBytes ?? null, patch) });
         });
       }
       return { repositoryIdentity: repositoryIdentity(binding), managedWorktreeId: binding.id, branch, expectedHead: head, candidates };

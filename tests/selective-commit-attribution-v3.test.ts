@@ -72,16 +72,20 @@ async function fixture() {
 }
 
 // Two separated hunks in one file: an out-of-journal foreign write edits the
-// top region, then the journal's proven edit covers the bottom region and the
-// receipt's post-image digest covers the final file. Only the proven hunk may
-// be auto-selected.
+// top region, then the journal's proven edit covers the bottom region. The
+// receipt preserves its bounded pre/post images: its preimage already
+// contains the foreign line, so the proven delta is the bottom region only.
+// Only the proven hunk may be auto-selected.
 async function provenPlusForeignHunks(f: Awaited<ReturnType<typeof fixture>>) {
   const path = join(f.worktree, "many.txt");
-  const lines = Array.from({ length: 40 }, (_, index) => `line-${index}`);
-  lines[1] = "foreign-1";
+  const beforeLines = Array.from({ length: 40 }, (_, index) => `line-${index}`);
+  beforeLines[1] = "foreign-1";
+  const lines = [...beforeLines];
   lines[30] = "proven-30";
   lines[31] = "proven-31";
+  const before = Buffer.from(beforeLines.join("\n") + "\n");
   await writeFile(path, lines.join("\n") + "\n");
+  const after = await readFile(path);
   f.journal.recordProvenEdit({
     invocationId: "inv-proven",
     owner: f.scope,
@@ -89,8 +93,12 @@ async function provenPlusForeignHunks(f: Awaited<ReturnType<typeof fixture>>) {
     repositoryId: "repo",
     path: "many.txt",
     beforeIdentity: null,
-    beforeDigest: null,
-    afterDigest: sha256hex(await readFile(path)),
+    beforeDigest: sha256hex(before),
+    afterDigest: sha256hex(after),
+    boundedBlobRefs: [
+      { ref: f.journal.writeBlob(before), bytes: before.length, retention: "AVAILABLE" },
+      { ref: f.journal.writeBlob(after), bytes: after.length, retention: "AVAILABLE" },
+    ],
   });
 }
 
@@ -115,7 +123,9 @@ it("attributes only the proven hunk to the journal owner; a foreign hunk in the 
 it("keeps a wholly proven file auto-selectable and an out-of-journal-only file gated", async () => {
   const f = await fixture();
   // Positive control: every change journaled -> proven, auto-selectable.
+  const before = Buffer.from(Array.from({ length: 40 }, (_, i) => `line-${i}`).join("\n") + "\n");
   await writeFile(join(f.worktree, "many.txt"), Array.from({ length: 40 }, (_, i) => `owned-${i}`).join("\n") + "\n");
+  const after = await readFile(join(f.worktree, "many.txt"));
   f.journal.recordProvenEdit({
     invocationId: "inv-all",
     owner: f.scope,
@@ -123,8 +133,12 @@ it("keeps a wholly proven file auto-selectable and an out-of-journal-only file g
     repositoryId: "repo",
     path: "many.txt",
     beforeIdentity: null,
-    beforeDigest: null,
-    afterDigest: sha256hex(await readFile(join(f.worktree, "many.txt"))),
+    beforeDigest: sha256hex(before),
+    afterDigest: sha256hex(after),
+    boundedBlobRefs: [
+      { ref: f.journal.writeBlob(before), bytes: before.length, retention: "AVAILABLE" },
+      { ref: f.journal.writeBlob(after), bytes: after.length, retention: "AVAILABLE" },
+    ],
   });
   // Negative control: a second file edited outside the journal entirely.
   await writeFile(join(f.worktree, "two.txt"), "foreign\n");

@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { diff as diffLines } from "node:util";
 import { z } from "zod";
 import { HarnessError } from "../contracts/index.ts";
 import type { Store } from "../storage/store.ts";
@@ -22,6 +25,7 @@ const EDIT_JOURNAL_KIND = "workspaceEditReceipt" as const;
 const EDIT_JOURNAL_PREPARED_KIND = "workspaceEditPrepared" as const;
 
 export const sha256hex = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
+const splitLines = (bytes: Buffer) => bytes.toString("utf8").split(/\r?\n/);
 
 interface StoredReceipt extends EditReceiptV1 {
   journalId: string;
@@ -90,6 +94,36 @@ const sameScope = (a: CheckpointScope, b: CheckpointScope) =>
 
 export class EditJournal {
   constructor(private readonly store: Store) {}
+
+  private get blobRoot() {
+    return join(this.store.dataDir, "journal-blobs");
+  }
+
+  /** Persist bounded pre/post image bytes under content-addressed custody.
+   *  Receipts reference them through boundedBlobRefs; a digest-equal ref is
+   *  idempotent. */
+  writeBlob(data: Buffer): string {
+    const ref = sha256hex(data);
+    mkdirSync(this.blobRoot, { recursive: true });
+    const target = join(this.blobRoot, ref);
+    try {
+      writeFileSync(target, data, { flag: "wx", mode: 0o600 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (!readFileSync(target).equals(data)) throw error;
+    }
+    return ref;
+  }
+
+  /** Fetch a stored blob by ref (its sha256), verifying content on read. */
+  readBlob(ref: string): Buffer | null {
+    try {
+      const bytes = readFileSync(join(this.blobRoot, ref));
+      return sha256hex(bytes) === ref ? bytes : null;
+    } catch {
+      return null;
+    }
+  }
 
   /** A prepared marker survives a crash between admission and the confirmed write. */
   prepareStructuredEdit(input: {
@@ -239,15 +273,86 @@ export class EditJournal {
     return "unattributed";
   }
 
-  /** A hunk can auto-enter a selective commit only when every receipt covering it is proven
-   *  and the live bytes still equal the newest proven postimage — a later change made
-   *  outside the journal has no receipt and stays unattributed. */
-  hunkAttribution(owner: CheckpointScope, path: string, currentDigest: string | null): "proven" | "process-window" | "unattributed" {
+  /** Resolve a receipt's pre/post image bytes: boundedBlobRefs first, then a
+   *  blob stored under the bare digest ref, then the live file for an
+   *  afterDigest that still matches. */
+  private imageFor(receipt: EditReceiptV1, which: "before" | "after", liveBytes: Buffer | null): Buffer | null {
+    const digest = which === "before" ? receipt.beforeDigest : receipt.afterDigest;
+    for (const ref of receipt.boundedBlobRefs) if (ref.ref === digest) {
+      const bytes = this.readBlob(ref.ref);
+      if (bytes) return bytes;
+    }
+    if (digest) {
+      const bytes = this.readBlob(digest);
+      if (bytes) return bytes;
+      if (which === "after" && liveBytes && sha256hex(liveBytes) === digest) return liveBytes;
+    }
+    return null;
+  }
+
+  /** The postimage line numbers (added) and preimage line numbers (removed)
+   *  a receipt's write actually changed, computed by diffing its bounded
+   *  pre/post images. "wholesale" when the receipt recorded no preimage at
+   *  all — it asserts whole-postimage authorship and covers any hunk of the
+   *  path. Null when recorded images cannot bound the delta: the caller must
+   *  then treat coverage as unverifiable (coverage loss). */
+  private coverageOf(receipt: EditReceiptV1, liveBytes: Buffer | null): { added: Set<number>; removed: Set<number> } | "wholesale" | null {
+    const after = this.imageFor(receipt, "after", liveBytes);
+    if (!after) return null;
+    const before = this.imageFor(receipt, "before", liveBytes);
+    if (!before) return receipt.beforeDigest === null ? "wholesale" : null;
+    const added = new Set<number>(), removed = new Set<number>();
+    let beforeLine = 1, afterLine = 1;
+    for (const [kind] of diffLines(splitLines(before), splitLines(after))) {
+      if (kind === 1) removed.add(beforeLine++);
+      else if (kind === -1) added.add(afterLine++);
+      else { beforeLine++; afterLine++; }
+    }
+    return { added, removed };
+  }
+
+  /** A hunk can auto-enter a selective commit only when a proven receipt's
+   *  recorded bounded delta covers every line it changes and the live bytes
+   *  still equal that receipt's postimage. Receipts are scanned newest-first;
+   *  the newest receipt whose delta covers the hunk assigns its class, so a
+   *  foreign same-scope receipt downgrades only its own region and a later
+   *  foreign write takes precedence over an earlier proof. Regions with no
+   *  covering receipt surface coverage loss ("unattributed"), never
+   *  inheriting a path-level label. A receipt whose bounded images cannot be
+   *  resolved cannot bound a region: proven receipts then prove nothing,
+   *  coarser classes stay path-wide conservative. `change` carries the
+   *  hunk's removed preimage and added postimage line numbers; a null
+   *  change is the legacy whole-path check. */
+  hunkAttribution(owner: CheckpointScope, path: string, liveBytes: Buffer | null, change: { removed: Set<number>; added: Set<number> } | null = null): "proven" | "process-window" | "unattributed" {
     const entries = this.receipts(owner, { path });
     if (!entries.length) return "unattributed";
-    if (entries.some((entry) => entry.attribution === "UNATTRIBUTED")) return "unattributed";
-    if (entries.some((entry) => entry.attribution === "PROCESS_WINDOW_ONLY")) return "process-window";
-    return entries[entries.length - 1]!.afterDigest === currentDigest ? "proven" : "unattributed";
+    const classOf = (attribution: string) =>
+      attribution === "STRUCTURED_EDIT_PROVED" ? "proven" : attribution === "PROCESS_WINDOW_ONLY" ? "process-window" : "unattributed";
+    if (change === null) {
+      if (entries.some((entry) => entry.attribution === "UNATTRIBUTED")) return "unattributed";
+      if (entries.some((entry) => entry.attribution === "PROCESS_WINDOW_ONLY")) return "process-window";
+      const newest = entries[entries.length - 1]!;
+      return newest.attribution === "STRUCTURED_EDIT_PROVED" && liveBytes && newest.afterDigest === sha256hex(liveBytes) ? "proven" : "unattributed";
+    }
+    const covers = (coverage: { added: Set<number>; removed: Set<number> }) => {
+      for (const line of change.removed) if (!coverage.removed.has(line)) return false;
+      for (const line of change.added) if (!coverage.added.has(line)) return false;
+      return true;
+    };
+    for (const entry of [...entries].reverse()) {
+      const coverage = this.coverageOf(entry, liveBytes);
+      if (coverage !== null) {
+        if (coverage === "wholesale" || covers(coverage)) {
+          if (entry.attribution === "STRUCTURED_EDIT_PROVED" && liveBytes && entry.afterDigest === sha256hex(liveBytes)) return "proven";
+          return classOf(entry.attribution) === "proven" ? "unattributed" : classOf(entry.attribution);
+        }
+        continue;
+      }
+      // Coverage unverifiable: coarser evidence downgrades the whole path;
+      // an unverifiable proof proves nothing.
+      if (entry.attribution !== "STRUCTURED_EDIT_PROVED") return classOf(entry.attribution);
+    }
+    return "unattributed";
   }
 
   requireOwned(owner: CheckpointScope, scope: CheckpointScope): void {
