@@ -112,12 +112,12 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
    if(account)available(account.providerId,account.id);
    const targets=providerId?[isOfficialRuntimeProviderId(providerId)?selected.official:selected.pi]:account?[isOfficialRuntimeProviderId(account.providerId)?selected.official:selected.pi]:[selected.pi,selected.official];
    const refresh=query?.refresh;
-   const results=await withAccountProfile(root,account,async()=>{active();if(account)available(account.providerId,account.id);return Promise.allSettled(targets.map(adapter=>probe(adapter,providerId?[providerId]:probeProviders(account,adapter===selected.official),account?.id??null,async effective=>{
+   const results=await withAccountProfile(root,account,async()=>{active();if(account)available(account.providerId,account.id);return Promise.allSettled(targets.map(adapter=>{const requested=providerId?[providerId]:probeProviders(account,adapter===selected.official);return probe(adapter,requested,account?.id??null,async effective=>{
     try{
      if(providerId||refresh===undefined)return await adapter.models(providerId?{refresh,providerId}:undefined);
      // No provider skipped: keep the ordinary whole-adapter refresh so its
      // catalog cache warms and failures keep their all-or-nothing semantics.
-     if(effective.length===providerIds.length)return await adapter.models({refresh});
+     if(effective.length===requested.length)return await adapter.models({refresh});
      // A forced refresh must not reach a profile that is still signing in:
      // refresh each probeable provider on its own. Pi reports a disconnected
      // provider per refresh; keep the others instead of retiring the adapter.
@@ -136,7 +136,7 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
      if(providerId&&(error as {code?:unknown})?.code==='PI_AUTH_REQUIRED')return [];
      throw error;
     }
-   })));});active();
+   });}));});active();
    if(account){const current=resolveAccount(account.id);if(current?.providerId!==account.providerId)throw new HarnessError('ACCOUNT_PROVIDER_MISMATCH','This account changed during model discovery.');available(account.providerId,account.id);}
    const models=results.flatMap(result=>result.status==='fulfilled'?result.value:[]).filter(model=>{
     const provider=providerForModel(model.id),providerId=model.id.split('/')[0];
