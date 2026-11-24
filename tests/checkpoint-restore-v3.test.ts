@@ -332,6 +332,7 @@ it("keeps recorded file identities durable across a store reopen", async () => {
   await writeFile(join(project, "a.txt"), "a-old\n");
   const checkpoint = await service.create({ owner, root: project, paths: ["a.txt"] });
   expect(checkpoint.files[0]!.identity).toBeTruthy();
+  // Take the store out of shared cleanup before the reopen: close() is not idempotent.
   stores.splice(stores.indexOf(store), 1);
   store.close();
   const reopened = new Store(store.dataDir);
