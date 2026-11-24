@@ -61,3 +61,24 @@ test('Connect project failure reports the folder error with aria-invalid',async(
   await expect(error).toHaveCount(0);
   await expect(folder).toHaveAttribute('aria-invalid','false');
 });
+
+test('Connect project conversation-level failure stays form-level and off the folder field',async({page})=>{
+  await host(page);
+  await page.unroute('**/api/workspace/commands');
+  await page.route('**/api/workspace/commands',(r:Route)=>{
+    const c=r.request().postDataJSON();
+    if(c.type==='workspace.project.connect')return r.fulfill({status:409,json:{error:{code:'PROJECT_BUSY',message:'Connect a project before starting this thread.'}}});
+    return r.fulfill({json:{result:{state:{version:1,revision:2,activeCanvasId:'main',canvases:[],disabledKinds:[],integrations:{},profiles:[]},projects:[]}}});
+  });
+  const dialog=await openDialog(page);
+  const name=dialog.getByLabel('Project name',{exact:true});
+  const folder=dialog.getByLabel('Local folder',{exact:true});
+  await name.fill('Gamma');await folder.fill('/synthetic/gamma');
+  await dialog.getByRole('button',{name:'Connect project',exact:true}).click();
+  const alert=dialog.getByRole('alert');
+  await expect(alert).toHaveText('Connect a project before starting this thread.');
+  await expect(folder).toHaveAttribute('aria-invalid','false');
+  await expect(dialog.locator('#connect-project-path-error')).toHaveCount(0);
+  await folder.fill('/synthetic/gamma-fixed');
+  await expect(alert).toHaveText('Connect a project before starting this thread.');
+});
