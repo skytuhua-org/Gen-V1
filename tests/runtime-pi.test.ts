@@ -10,6 +10,7 @@ import { ToolBridge, routeToolCall } from "../packages/runtime-pi/ipc.ts";
 import { createHostTools, createHostResourceLoader } from "../packages/runtime-pi/tool-definitions.ts";
 import { dispatchInput } from "../packages/runtime-pi/delivery.ts";
 import { createPiRuntime } from "../packages/runtime-pi/index.ts";
+import { MEMORY_CHECKPOINT_TIMEOUT_MS } from "../packages/runtime/memory-checkpoint.ts";
 import { getOrCreateDeviceId } from "../packages/runtime-pi/login.ts";
 import { UI_TOOLS, loadDomainTools } from "../packages/runtime-pi/tool-definitions.ts";
 import { safeError } from "../packages/runtime-pi/sdk.ts";
@@ -467,6 +468,144 @@ describe("follow-up dispatch", () => {
 });
 
 describe("isolated process adapter", () => {
+  it.each(["cancel", "dispose", "exit"] as const)("bounds checkpoint cleanup after %s and fences a late receipt", async action => {
+    const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
+    const entered = barrier(), persisted = barrier(), onEvent = vi.fn();
+    const sessionPath = "synthetic-session.jsonl";
+    const request = { apiVersion: 2, requestId: "checkpoint", adapterId: "pi", ctx, sessionPath, modelId: input.modelId, accountId: null, reason: "manual" };
+    runtime.configure({ onTool: async () => null, onEvent, onMemoryCheckpoint: async () => {
+      entered.release();
+      await persisted.promise;
+      return { apiVersion: 2, requestId: request.requestId, checkpointId: "persisted", digest: "a".repeat(64), persisted: true };
+    } });
+    vi.useFakeTimers();
+    try {
+      await runtime.start({ ...input, sessionPath, memoryCheckpoint: { apiVersion: 2, required: true } });
+      const child = workers.children[0];
+      child.emit("message", { type: "memory.checkpoint", request });
+      await entered.promise;
+      if (action === "exit") {
+        Object.assign(child, { connected: false, exitCode: 1 });
+        child.emit("exit", 1, null);
+      }
+      let finished = false;
+      const closing = (action === "cancel" ? runtime.cancel(ctx) : runtime.dispose()).then(() => { finished = true; });
+      await vi.advanceTimersByTimeAsync(MEMORY_CHECKPOINT_TIMEOUT_MS);
+      expect(finished).toBe(true);
+      await closing;
+      if (action !== "dispose") expect(onEvent).toHaveBeenCalledWith({ ...ctx, type: "settled", aborted: true });
+      persisted.release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(workers.commands).not.toContainEqual(expect.objectContaining({ type: "memory.checkpoint.result", value: expect.anything() }));
+    } finally {
+      persisted.release();
+      vi.useRealTimers();
+      await runtime.dispose();
+    }
+  });
+
+  it("reports a timed-out checkpoint as unconfirmed without accepting another attempt while persistence is pending", async () => {
+    const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
+    const entered = barrier(), persisted = barrier();
+    const sessionPath = "synthetic-session.jsonl";
+    const request = { apiVersion: 2, requestId: "checkpoint", adapterId: "pi", ctx, sessionPath, modelId: input.modelId, accountId: null, reason: "manual" };
+    const onMemoryCheckpoint = vi.fn(async () => {
+      entered.release();
+      await persisted.promise;
+      return { apiVersion: 2 as const, requestId: request.requestId, checkpointId: "persisted", digest: "a".repeat(64), persisted: true as const };
+    });
+    runtime.configure({ onTool: async () => null, onEvent: () => {}, onMemoryCheckpoint });
+    vi.useFakeTimers();
+    try {
+      await runtime.start({ ...input, sessionPath, memoryCheckpoint: { apiVersion: 2, required: true } });
+      const child = workers.children[0];
+      child.emit("message", { type: "memory.checkpoint", request });
+      await entered.promise;
+      await vi.advanceTimersByTimeAsync(MEMORY_CHECKPOINT_TIMEOUT_MS);
+      const failedReply = (requestId: string) => expect.objectContaining({ type: "memory.checkpoint.result", requestId, error: expect.any(String) });
+      expect(workers.commands).toContainEqual(failedReply(request.requestId));
+      child.emit("message", { type: "memory.checkpoint", request: { ...request, requestId: "second-attempt" } });
+      expect(workers.commands).toContainEqual(failedReply("second-attempt"));
+      persisted.release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onMemoryCheckpoint).toHaveBeenCalledTimes(1);
+      expect(workers.commands).not.toContainEqual(expect.objectContaining({ type: "memory.checkpoint.result", value: expect.anything() }));
+    } finally {
+      persisted.release();
+      vi.useRealTimers();
+      await runtime.dispose();
+    }
+  });
+
+  it("rejects a late START reply after the Pi transport fails", async () => {
+    const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
+    const spawnWorker = workers.spawnWorker.getMockImplementation()!;
+    workers.spawnWorker.mockImplementation((...args) => {
+      const child = spawnWorker(...args) as unknown as typeof workers.children[number];
+      const send = child.send.getMockImplementation() as (message: {command?:string;requestId?:string}, callback: (error: Error | null) => void) => boolean;
+      child.send.mockImplementation((message, callback) => {
+        if (message.command !== "start") return send(message, callback);
+        Object.assign(child, { pid: 101 });
+        queueMicrotask(() => {
+          child.emit("error", Error("Synthetic transport interruption"));
+          child.emit("message", { type: "response", requestId: message.requestId, value: null });
+          callback(null);
+        });
+        return true;
+      });
+      return child as never;
+    });
+    runtime.configure({ onTool: async () => null, onEvent: () => {} });
+    try {
+      await expect(runtime.start(input)).rejects.toMatchObject({ code: "PI_WORKER_TRANSPORT_FAILED" });
+      expect(workers.terminate).toHaveBeenCalledOnce();
+    } finally { await runtime.dispose(); }
+  });
+
+  it("retries native Pi cancellation without releasing unconfirmed custody", async () => {
+    const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
+    const onEvent = vi.fn();
+    runtime.configure({ onTool: async () => null, onEvent });
+    await runtime.start(input);
+    workers.terminate.mockRejectedValueOnce(Error("Synthetic native cancellation failure"));
+    try {
+      await expect(runtime.cancel(ctx)).rejects.toThrow("Synthetic native cancellation failure");
+      expect(onEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "settled" }));
+      await expect(runtime.cancel(ctx)).resolves.toBeUndefined();
+      expect(workers.terminate).toHaveBeenCalledTimes(2);
+      expect(onEvent).toHaveBeenCalledWith({ ...ctx, type: "settled", aborted: true });
+    } finally {
+      const child = workers.children[0];
+      if (Reflect.get(child, "exitCode") === null) {
+        Object.assign(child, { connected: false, exitCode: 1 });
+        child.emit("exit", 1, null);
+      }
+      await runtime.dispose();
+    }
+  });
+
+  it("retains worker custody after a transport error without confirmed native exit", async () => {
+    const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
+    const onEvent = vi.fn();
+    runtime.configure({ onTool: async () => null, onEvent });
+    await runtime.start(input);
+    const child = workers.children[0];
+    Object.assign(child, { pid: 101 });
+    const unconfirmed = new Error("synthetic native termination failure");
+    workers.terminate.mockRejectedValue(unconfirmed);
+    try {
+      child.emit("error", new Error("synthetic transport failure"));
+      await expect(runtime.followUp(input)).rejects.toMatchObject({ code: "PI_STALE_RUN" });
+      await expect(runtime.cancel(ctx)).rejects.toBe(unconfirmed);
+      expect(onEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: "settled" }));
+      await expect(runtime.dispose()).rejects.toBe(unconfirmed);
+    } finally {
+      Object.assign(child, { connected: false, exitCode: 1 });
+      child.emit("exit", 1, null);
+      await runtime.dispose();
+    }
+  });
+
   it.each(["exit", "error"] as const)("settles and releases an exited worker when an observer throws (%s)", async eventType => {
     const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
     const events: string[] = [];
