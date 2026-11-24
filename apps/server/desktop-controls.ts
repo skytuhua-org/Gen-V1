@@ -1,7 +1,8 @@
 import {timingSafeEqual} from 'node:crypto';
 import type {AttentionDelivery} from '../../packages/contracts/attention.ts';
+import {parseDesktopProjectPathRequest,type DesktopProjectPathRequest} from '../../packages/desktop-contract/index.ts';
 
-interface DesktopHostControls{attentionRead?():Promise<AttentionDelivery>;attentionAction?(type:'open'|'dismiss',eventId:string):Promise<{threadId?:string;dismissed?:boolean}>;stopAll():Promise<{stopped:number;errors?:string[]}>;saveNativeLayout(layout:unknown):Promise<void>;validatePluginSurface?:(surface:unknown)=>Promise<boolean>;updateReadiness?:()=>Promise<{idle:boolean}>;prepareUpdateClose?:()=>Promise<{idle:boolean}>}
+interface DesktopHostControls{attentionRead?():Promise<AttentionDelivery>;attentionAction?(type:'open'|'dismiss',eventId:string):Promise<{threadId?:string;dismissed?:boolean}>;stopAll():Promise<{stopped:number;errors?:string[]}>;saveNativeLayout(layout:unknown):Promise<void>;validatePluginSurface?:(surface:unknown)=>Promise<boolean>;updateReadiness?:()=>Promise<{idle:boolean}>;prepareUpdateClose?:()=>Promise<{idle:boolean}>;projectPath?(request:DesktopProjectPathRequest):Promise<{path:string;kind:'file'|'directory';openable:boolean}>}
 /** Private parent IPC has the same launch-token custody as shutdown. No HTTP bypass. */
 export async function handleDesktopControl(value:unknown,token:string,host:DesktopHostControls,send:(value:Record<string,unknown>)=>unknown):Promise<boolean>{
  if(!value||typeof value!=='object'||Array.isArray(value)||!/^[a-f0-9]{32,128}$/i.test(token))return false;
@@ -25,6 +26,10 @@ export async function handleDesktopControl(value:unknown,token:string,host:Deskt
  if(input.type==='harness.plugin.validate'&&Object.keys(input).length===4&&Object.hasOwn(input,'surface')){
   try{await send({type:'harness.plugin.validated',token,requestId:input.requestId,allowed:await host.validatePluginSurface?.(input.surface)===true});}
   catch{await send({type:'harness.plugin.validated',token,requestId:input.requestId,allowed:false});}return true;
+ }
+ if(input.type==='harness.project.path'&&Object.keys(input).length===7&&Object.hasOwn(input,'projectId')&&Object.hasOwn(input,'threadId')&&Object.hasOwn(input,'path')&&Object.hasOwn(input,'action')){
+  try{if(!host.projectPath)throw Error('Unavailable');const request=parseDesktopProjectPathRequest({projectId:input.projectId,...(typeof input.threadId==='string'?{threadId:input.threadId}:{}),path:input.path,action:input.action});await send({type:'harness.project.path.result',token,requestId:input.requestId,...await host.projectPath(request)});}
+  catch(error){await send({type:'harness.project.path.result',token,requestId:input.requestId,error:error instanceof Error?error.message.slice(0,300):'The project path is unavailable.'});}return true;
  }
  if(input.type==='harness.layout.save'&&Object.keys(input).length===4&&Object.hasOwn(input,'layout')){
   try{await host.saveNativeLayout(input.layout);await send({type:'harness.layout.saved',token,requestId:input.requestId});}

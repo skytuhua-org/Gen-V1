@@ -7,7 +7,9 @@ import {
 	type ReactNode,
 } from "react";
 import { authenticated, read } from "../api";
+import { toast } from "../../../../packages/ui-shell/Toast";
 import { FilesView, type FilesEntry } from "./FilesView";
+import type { FileMenuAction } from "./FileContextMenu";
 import { ProjectSearch } from "./ProjectSearch";
 import {
 	unavailableProjectSearch,
@@ -44,7 +46,8 @@ function ProjectFilesReader({
 			null,
 		),
 		[searchRefresh, setSearchRefresh] = useState(0);
-	const matchLine = useRef<HTMLElement>(null);
+	const matchLine = useRef<HTMLElement>(null),
+		inFlight = useRef(false);
 	const owner = {
 		projectId: decodeURIComponent(base.split("/").at(-1) ?? ""),
 		threadId: new URLSearchParams(query).get("threadId") ?? null,
@@ -96,6 +99,41 @@ function ProjectFilesReader({
 				behavior: "instant",
 			});
 	}, [file, selectedMatch, stale, preview.pending]);
+	const bridge =
+		typeof window !== "undefined" ? window.harnessDesktop : undefined;
+	const fileActions = bridge?.projectPath
+		? {
+				run: async (entry: FilesEntry, action: FileMenuAction) => {
+					if (inFlight.current) return;
+					inFlight.current = true;
+					try {
+						await Promise.race([
+							bridge.projectPath!({
+								projectId: owner.projectId,
+								...(owner.threadId
+									? { threadId: owner.threadId }
+									: {}),
+								path: entry.path,
+								action,
+							}),
+							new Promise<never>((_resolve, reject) =>
+								setTimeout(() => reject(Error("timeout")), 15000),
+							),
+						]);
+					} catch (cause) {
+						const message =
+							cause instanceof Error && cause.message === "timeout"
+								? "Gen could not reach the local host. Try again."
+								: cause instanceof Error && cause.message
+									? cause.message
+									: "Gen could not reach the local host. Try again.";
+						toast(message, { tone: "error" });
+					} finally {
+						inFlight.current = false;
+					}
+				},
+			}
+		: undefined;
 	if (folder.errorCode === "PROJECT_NOT_CONNECTED") return fallback;
 	const line =
 		selectedMatch?.kind === "text" && !stale ? selectedMatch.line : undefined;
@@ -187,6 +225,7 @@ function ProjectFilesReader({
 					</>
 				) : null,
 			}}
+			fileActions={fileActions}
 			limitNote={
 				(folder.value?.entries.length ?? 0) >= 500
 					? "Showing up to 500 entries; more files may exist."

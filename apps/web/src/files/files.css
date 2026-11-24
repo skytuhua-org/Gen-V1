@@ -408,3 +408,9 @@
 		grid-template-columns: minmax(0, 1fr);
 	}
 }
+.files-list li > button[data-menu-open] {
+	background: var(--hover);
+}
+.files-context-menu {
+	padding: 0;
+}
