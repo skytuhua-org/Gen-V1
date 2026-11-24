@@ -26,7 +26,11 @@ function normalized(value: unknown): unknown {
 export function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(normalized(value))).digest("hex"); }
 
 export class Store {
-  readonly db: DatabaseSync;
+  private readonly connection: DatabaseSync;
+  /** The shared SQLite connection. Access reconciles an abandoned transaction
+   * first, so callers can never observe uncommitted writes the next rollback
+   * would discard. */
+  get db(): DatabaseSync { this.reconcileIfNeeded(); return this.connection; }
   readonly dataDir: string;
   private listeners = new Set<(event: WorkspaceEvent) => void>();
   private transactionOpen = false;
@@ -59,9 +63,9 @@ export class Store {
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
     this.dataDir = realpathSync(dataDir);
-    this.db = new DatabaseSync(join(this.dataDir, "harness.sqlite"));
-    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
-    this.db.exec(`
+    this.connection = new DatabaseSync(join(this.dataDir, "harness.sqlite"));
+    this.connection.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+    this.connection.exec(`
       CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS entities (kind TEXT NOT NULL, id TEXT NOT NULL, thread_id TEXT, body TEXT NOT NULL, PRIMARY KEY(kind,id));
       CREATE INDEX IF NOT EXISTS entities_thread ON entities(kind,thread_id);
@@ -70,17 +74,17 @@ export class Store {
       INSERT OR IGNORE INTO migrations(version) VALUES (1);
     `);
     this.statements = {
-      get: this.db.prepare("SELECT body FROM entities WHERE kind=? AND id=?"),
+      get: this.connection.prepare("SELECT body FROM entities WHERE kind=? AND id=?"),
       // rowid order is insertion order: callers rely on chronological message
       // order for windowing, cursor paging, and tail slices.
-      allKind: this.db.prepare("SELECT body FROM entities WHERE kind=? ORDER BY rowid"),
-      allKindThread: this.db.prepare("SELECT body FROM entities WHERE kind=? AND thread_id=? ORDER BY rowid"),
-      messageCursor: this.db.prepare("SELECT rowid FROM entities WHERE kind='message' AND id=? AND thread_id=?"),
-      messageTail: this.db.prepare("SELECT body FROM entities WHERE kind='message' AND thread_id=? ORDER BY rowid DESC LIMIT ?"),
-      messageBefore: this.db.prepare("SELECT body FROM entities WHERE kind='message' AND thread_id=? AND rowid<? ORDER BY rowid DESC LIMIT ?"),
-      messageCount: this.db.prepare("SELECT count(*) AS count FROM entities WHERE kind='message' AND thread_id=?"),
-      messageCountBefore: this.db.prepare("SELECT count(*) AS count FROM entities WHERE kind='message' AND thread_id=? AND rowid<?"),
-      snapshotMessages: this.db.prepare(`
+      allKind: this.connection.prepare("SELECT body FROM entities WHERE kind=? ORDER BY rowid"),
+      allKindThread: this.connection.prepare("SELECT body FROM entities WHERE kind=? AND thread_id=? ORDER BY rowid"),
+      messageCursor: this.connection.prepare("SELECT rowid FROM entities WHERE kind='message' AND id=? AND thread_id=?"),
+      messageTail: this.connection.prepare("SELECT body FROM entities WHERE kind='message' AND thread_id=? ORDER BY rowid DESC LIMIT ?"),
+      messageBefore: this.connection.prepare("SELECT body FROM entities WHERE kind='message' AND thread_id=? AND rowid<? ORDER BY rowid DESC LIMIT ?"),
+      messageCount: this.connection.prepare("SELECT count(*) AS count FROM entities WHERE kind='message' AND thread_id=?"),
+      messageCountBefore: this.connection.prepare("SELECT count(*) AS count FROM entities WHERE kind='message' AND thread_id=? AND rowid<?"),
+      snapshotMessages: this.connection.prepare(`
         WITH groups AS (
           SELECT thread_id, COUNT(*) AS total, MIN(rowid) AS first_row
           FROM entities
@@ -99,14 +103,14 @@ export class Store {
         WHERE entity.kind='message' AND entity.thread_id IS tails.thread_id AND entity.rowid >= tails.first_retained
         ORDER BY entity.rowid
       `),
-      put: this.db.prepare("INSERT INTO entities(kind,id,thread_id,body) VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET thread_id=excluded.thread_id,body=excluded.body"),
-      remove: this.db.prepare("DELETE FROM entities WHERE kind=? AND id=?"),
-      receipt: this.db.prepare("SELECT hash,body FROM receipts WHERE id=?"),
-      insertEvent: this.db.prepare("INSERT INTO events(id,type,thread_id,payload,occurred_at) VALUES(?,?,?,?,?)"),
-      insertReceipt: this.db.prepare("INSERT INTO receipts(id,hash,body) VALUES(?,?,?)"),
-      eventsAfter: this.db.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq"),
-      eventsAfterLimit: this.db.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?"),
-      sequence: this.db.prepare("SELECT COALESCE(MAX(seq),0) AS seq FROM events"),
+      put: this.connection.prepare("INSERT INTO entities(kind,id,thread_id,body) VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET thread_id=excluded.thread_id,body=excluded.body"),
+      remove: this.connection.prepare("DELETE FROM entities WHERE kind=? AND id=?"),
+      receipt: this.connection.prepare("SELECT hash,body FROM receipts WHERE id=?"),
+      insertEvent: this.connection.prepare("INSERT INTO events(id,type,thread_id,payload,occurred_at) VALUES(?,?,?,?,?)"),
+      insertReceipt: this.connection.prepare("INSERT INTO receipts(id,hash,body) VALUES(?,?,?)"),
+      eventsAfter: this.connection.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq"),
+      eventsAfterLimit: this.connection.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?"),
+      sequence: this.connection.prepare("SELECT COALESCE(MAX(seq),0) AS seq FROM events"),
     };
   }
   get<T = unknown>(kind: string, id: string): T | null {
@@ -132,9 +136,9 @@ export class Store {
     const ownerKey = compactionOwnerKey(thread, thread.modelId, thread.accountId ?? null);
     const joined = "FROM entities a LEFT JOIN entities u ON u.kind='compactionUsage' AND u.id=a.id AND u.thread_id=a.thread_id WHERE a.kind='compactionAttempt' AND a.thread_id=? AND json_extract(a.body,'$.ownerKey')=?";
     const proved = "(json_extract(u.body,'$.nativeReceipt.status')='APPLIED' AND json_extract(u.body,'$.nativeReceipt.candidateId')=a.id)";
-    const counts = this.db.prepare(`SELECT COUNT(*) AS attempts, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='FAILED' AND COALESCE(${proved},0)=0 THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='DISCARDED' AND COALESCE(${proved},0)=0 THEN 1 ELSE 0 END),0) AS discarded ${joined}`).get(threadId, ownerKey) as {attempts: number; failed: number; discarded: number};
+    const counts = this.connection.prepare(`SELECT COUNT(*) AS attempts, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='FAILED' AND COALESCE(${proved},0)=0 THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='DISCARDED' AND COALESCE(${proved},0)=0 THEN 1 ELSE 0 END),0) AS discarded ${joined}`).get(threadId, ownerKey) as {attempts: number; failed: number; discarded: number};
     if (!counts.attempts) return;
-    const rows = this.db.prepare(`SELECT a.body, u.body AS usage ${joined} ORDER BY a.rowid DESC LIMIT 8`).all(threadId, ownerKey) as {body: string; usage: string | null}[];
+    const rows = this.connection.prepare(`SELECT a.body, u.body AS usage ${joined} ORDER BY a.rowid DESC LIMIT 8`).all(threadId, ownerKey) as {body: string; usage: string | null}[];
     const candidates = rows.reverse().map(row => {
       const entry = JSON.parse(row.body) as CompactionAttemptRecord;
       const usage = row.usage ? JSON.parse(row.usage) as {nativeReceipt?: NativeCompactionReceiptV1} : null;
@@ -164,10 +168,10 @@ export class Store {
    * only a still-open orphan fails closed. */
   private reconcileIfNeeded(): void {
     if (!this.reconcileRequired) return;
-    if (this.db.isTransaction) {
-      try { this.db.exec("ROLLBACK"); } catch { /* State is checked again below. */ }
+    if (this.connection.isTransaction) {
+      try { this.connection.exec("ROLLBACK"); } catch { /* State is checked again below. */ }
     }
-    if (this.db.isTransaction) throw new HarnessError('STORE_INCONSISTENT', 'A previous transaction is still open and its uncommitted writes are visible; reopen the store.');
+    if (this.connection.isTransaction) throw new HarnessError('STORE_INCONSISTENT', 'A previous transaction is still open and its uncommitted writes are visible; reopen the store.');
     this.reconcileRequired = false;
   }
   receipt(command: HostCommand): CommandReceipt | null {
@@ -187,7 +191,7 @@ export class Store {
       // failed; its durable receipt wins over our error. Re-check only once
       // our own transaction has actually closed: while it is still open the
       // row we read could be our own uncommitted insert, not durable proof.
-      if (!this.db.isTransaction) {
+      if (!this.connection.isTransaction) {
         const raced = this.receipt(command);
         if (raced) return raced;
       }
@@ -202,14 +206,14 @@ export class Store {
   }
   private commit(type: string, threadId: string | null, apply: () => unknown, command?: HostCommand): {event:WorkspaceEvent;result:unknown} {
     if (this.transactionOpen) throw new Error("Nested command transaction");
-    if (this.db.isTransaction) {
+    if (this.connection.isTransaction) {
       // A failed rollback can leave this connection's own transaction open;
       // the store owns the connection, so reclaim it instead of wedging.
-      try { this.db.exec("ROLLBACK"); } catch { /* The orphan is closed on a best-effort basis. */ }
-      if (this.db.isTransaction) throw new HarnessError('STORE_INCONSISTENT', 'The store transaction could not be reconciled. Reopen the store.');
+      try { this.connection.exec("ROLLBACK"); } catch { /* The orphan is closed on a best-effort basis. */ }
+      if (this.connection.isTransaction) throw new HarnessError('STORE_INCONSISTENT', 'The store transaction could not be reconciled. Reopen the store.');
     }
     this.reconcileRequired = false;
-    try { this.db.exec("BEGIN IMMEDIATE"); }
+    try { this.connection.exec("BEGIN IMMEDIATE"); }
     catch (error) { throw Store.transactionError(error); }
     this.transactionOpen = true;
     let event: WorkspaceEvent;
@@ -221,17 +225,17 @@ export class Store {
       const inserted = this.statements.insertEvent.run(id, type, threadId, JSON.stringify({ result }), occurredAt);
       event = { seq: Number(inserted.lastInsertRowid), id, type, threadId, payload: { result }, occurredAt };
       if(command){const receipt:CommandReceipt={commandId:command.id,eventSeq:event.seq,result};this.statements.insertReceipt.run(command.id,digest(command),JSON.stringify(receipt));}
-      this.db.exec("COMMIT");
+      this.connection.exec("COMMIT");
     } catch (error) {
       // Preserve the causal failure: a rollback error must not replace it.
-      try { this.db.exec("ROLLBACK"); } catch { /* best-effort rollback */ }
+      try { this.connection.exec("ROLLBACK"); } catch { /* best-effort rollback */ }
       throw Store.transactionError(error);
     }
     finally {
       this.transactionOpen = false;
       // A still-open transaction here means the rollback failed; until a
       // later commit reconciles it, reads would see abandoned writes.
-      if (this.db.isTransaction) this.reconcileRequired = true;
+      if (this.connection.isTransaction) this.reconcileRequired = true;
     }
     this.committedEvents.push(event!);
     this.drainCommittedEvents();
@@ -263,10 +267,10 @@ export class Store {
    * one (Store rejects nested commits). */
   get inTransaction(): boolean { return this.transactionOpen; }
   private visibleEntities() {
-    const archivedRows = this.db.prepare("SELECT id,body FROM entities WHERE kind=?").all("archivedThread") as { id: string; body: string }[];
+    const archivedRows = this.connection.prepare("SELECT id,body FROM entities WHERE kind=?").all("archivedThread") as { id: string; body: string }[];
     const archived = new Set(archivedRows.filter(row => JSON.parse(row.body)).map(row => row.id));
     const archivedIds = JSON.stringify([...archived]);
-    const rows = this.db.prepare("SELECT body FROM entities WHERE kind=? AND (thread_id IS NULL OR thread_id NOT IN (SELECT value FROM json_each(?))) ORDER BY rowid");
+    const rows = this.connection.prepare("SELECT body FROM entities WHERE kind=? AND (thread_id IS NULL OR thread_id NOT IN (SELECT value FROM json_each(?))) ORDER BY rowid");
     const visible = <T>(kind: string): T[] => (rows.all(kind, archivedIds) as {body: string}[]).map(row => JSON.parse(row.body) as T);
     return {archived, archivedIds, visible};
   }
@@ -289,7 +293,7 @@ export class Store {
     const data = visible<Snapshot["data"][number]>("data"), seen = new Set(data.map(d => d.id + "@" + d.revision));
     const refs = [...artifacts.flatMap(a => Object.values(a.bindings).flatMap(b => b.mode === "snapshot" ? [b.ref] : [])), ...requests.flatMap(r => r.basis)];
     for (const ref of refs) { const key = ref.id + "@" + ref.revision; if (!seen.has(key)) { const item = this.get<Snapshot["data"][number]>("dataVersion", key); if (item) { data.push(item); seen.add(key); } } }
-    const skillUsage=new Map((this.db.prepare('SELECT id,body FROM entities WHERE kind=?').all('skillUsage') as {id:string;body:string}[]).map(row=>[row.id,JSON.parse(row.body) as {count:number;lastUsedAt:string}]));
+    const skillUsage=new Map((this.connection.prepare('SELECT id,body FROM entities WHERE kind=?').all('skillUsage') as {id:string;body:string}[]).map(row=>[row.id,JSON.parse(row.body) as {count:number;lastUsedAt:string}]));
     // Locate each visible thread's cutoff using the index, then read retained bodies.
     // Keep global insertion order for consumers that combine messages across threads.
     const rows = this.statements.snapshotMessages.all({archivedIds, windowSize: MESSAGE_WINDOW}) as {body:string; total:number}[];
@@ -301,7 +305,7 @@ export class Store {
     });
     return {
       seq: this.sequence, threads, archivedThreads: allThreads.filter(thread => archived.has(thread.id)), messages, messagesTruncated, artifacts, userStates: visible("userState"),
-      data, requests, accounts: this.all('account'), skills:this.all<import('../contracts/skills.ts').SkillSummary>('skill').map(skill=>{const usage=skillUsage.get(skill.name);return usage?{...skill,useCount:usage.count,lastUsedAt:usage.lastUsedAt}:skill;}),skillProposals:(this.db.prepare("SELECT json_remove(body,'$.operations') AS body FROM entities WHERE kind=? AND json_extract(body,'$.status')='pending'").all('skillProposal') as {body:string}[]).map(row=>JSON.parse(row.body)),learning:this.get('learningStatus','global')??{supported:false,status:'idle',lastReview:null},operations: visible("operation"), resources: visible("resource"), memory: visible('taskMemory'),
+      data, requests, accounts: this.all('account'), skills:this.all<import('../contracts/skills.ts').SkillSummary>('skill').map(skill=>{const usage=skillUsage.get(skill.name);return usage?{...skill,useCount:usage.count,lastUsedAt:usage.lastUsedAt}:skill;}),skillProposals:(this.connection.prepare("SELECT json_remove(body,'$.operations') AS body FROM entities WHERE kind=? AND json_extract(body,'$.status')='pending'").all('skillProposal') as {body:string}[]).map(row=>JSON.parse(row.body)),learning:this.get('learningStatus','global')??{supported:false,status:'idle',lastReview:null},operations: visible("operation"), resources: visible("resource"), memory: visible('taskMemory'),
       usage: Object.fromEntries(visible<{ id: string; value: unknown }>("usage").map(x => [x.id, this.get<{value: RuntimeUsage}>('usage', x.id)!.value])) as Snapshot["usage"],
       modelRequests: visible<{ id: string; value: import('../contracts/model-request.ts').ModelRequestObservationV1 }>("modelRequest").reduce((grouped, item) => { const owner = item.value?.owner?.threadId; if (owner) (grouped[owner] ??= []).push(item.value); return grouped; }, {} as Record<string, import('../contracts/model-request.ts').ModelRequestObservationV1[]>),
       settings: this.get("settings", "global") ?? { theme: "dark", modelId: null },
@@ -324,5 +328,5 @@ export class Store {
     return { messages: rows.reverse().map(row => JSON.parse(row.body) as Message), truncated: count.count - rows.length };
   }
   subscribe(listener: (event: WorkspaceEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  close(): void { this.listeners.clear(); this.committedEvents.length = 0; this.db.close(); }
+  close(): void { this.listeners.clear(); this.committedEvents.length = 0; this.connection.close(); }
 }

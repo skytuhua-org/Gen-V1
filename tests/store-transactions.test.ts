@@ -39,12 +39,11 @@ describe("store transaction consistency", () => {
     try {
       expect(() => store.internal("fixture.fail", null, () => { store.put("sample", "x", null, {v: 1}); throw new Error("causal: apply blew up"); }))
         .toThrowError("causal: apply blew up");
-      // The orphaned transaction is real but the flag is clear.
-      expect(store.db.isTransaction).toBe(true);
-      // While the orphan still cannot be rolled back, reads fail closed rather
-      // than observe uncommitted writes callers could persist.
+      // While the orphan still cannot be rolled back, every db access fails
+      // closed rather than observe uncommitted writes callers could persist.
       const inconsistent = expect.objectContaining({name: "HarnessError", code: "STORE_INCONSISTENT"});
       expect(() => store.get("sample", "x")).toThrowError(inconsistent);
+      expect(() => store.db.isTransaction).toThrowError(inconsistent);
       failRollback = false;
       // Once rollback can run, a read lazily heals the orphan and never sees
       // the abandoned writes; a retried command is itself the recovery path.
@@ -106,7 +105,7 @@ describe("store transaction consistency", () => {
       // COMMIT fails after our receipt was inserted, and ROLLBACK fails too:
       // the open transaction still exposes our own row, which is no durable proof.
       expect(() => store.command(command, () => ({v: 1}))).toThrowError("injected: write device failed");
-      expect(store.db.isTransaction).toBe(true);
+      expect(() => store.db.isTransaction).toThrowError(expect.objectContaining({code: "STORE_INCONSISTENT"}));
       failWrites = false;
       store.internal("fixture.after", null, () => {});
       // Reconciliation discarded the uncommitted receipt with its transaction.
