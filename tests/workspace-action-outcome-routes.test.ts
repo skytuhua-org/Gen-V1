@@ -141,3 +141,27 @@ it.each(['before write','after write'] as const)('keeps credential-bearing %s fa
  expect(publicAndDurable).not.toContain(token);
  expect(publicAndDurable).not.toContain(encoded);
 },60000);
+
+it('confirms a discard through the actions route, replays it and rejects it while a run is active',async()=>{
+ const f=await fixture(),app=Fastify(),service={store:f.store} as Service;
+ const trashed:string[]=[];f.projects.options.trash=async(target)=>{trashed.push(target);await rm(target,{force:true});};
+ registerWorkspaceHost(service,{projects:f.projects,github:f.github,terminals:{dispose:async()=>{}} as TerminalHost});
+ registerWorkspaceRoutes(app,service);cleanup.push(()=>app.close());
+ await writeFile(join(f.binding.path,'one.txt'),'changed\n');
+ const status=await f.projects.gitStatus(f.projectId,f.thread.id),url='/api/projects/'+f.projectId+'/actions';
+ const input={id:randomUUID(),type:'discard',threadId:f.thread.id,payload:{paths:['one.txt'],revision:status.revision,expectedHead:status.head}};
+ const first=await app.inject({method:'POST',url,payload:input});
+ expect(first.statusCode).toBe(200);expect(first.json()).toMatchObject({commandId:input.id});
+ expect(await readFile(join(f.binding.path,'one.txt'),'utf8')).toBe('first\n');
+ const replay=await app.inject({method:'POST',url,payload:input});
+ expect(replay.statusCode).toBe(200);expect(replay.json()).toEqual(first.json());
+ // A run on the owning thread rejects the discard before any write, mapped to the standard 409.
+ f.store.internal('fixture',null,()=>f.store.put('thread',f.thread.id,f.thread.id,{...f.store.get<typeof f.thread>('thread',f.thread.id)!,status:'working',runId:'run-1'}));
+ await writeFile(join(f.binding.path,'one.txt'),'changed again\n');
+ const next=await f.projects.gitStatus(f.projectId,f.thread.id);
+ const blocked=await app.inject({method:'POST',url,payload:{id:randomUUID(),type:'discard',threadId:f.thread.id,payload:{paths:['one.txt'],revision:next.revision,expectedHead:next.head}}});
+ expect(blocked.statusCode).toBe(409);
+ expect(blocked.json()).toMatchObject({error:{code:'ACTION_UNCERTAIN'}});
+ expect(await readFile(join(f.binding.path,'one.txt'),'utf8')).toBe('changed again\n');
+ expect(trashed).toHaveLength(0);
+},60000);

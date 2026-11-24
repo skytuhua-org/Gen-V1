@@ -7,7 +7,7 @@ const identifier = z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/);
 const revision = z.string().regex(/^[a-f0-9]{64}$/),
   oid = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const repo = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
-export const workspaceActionTypeSchema = z.enum(['stage', 'unstage', 'commit', 'review-pr', 'create-pr']);
+export const workspaceActionTypeSchema = z.enum(['stage', 'unstage', 'discard', 'commit', 'review-pr', 'create-pr']);
 type WorkspaceActionType = z.infer<typeof workspaceActionTypeSchema>;
 export const workspaceActionEnvelopeSchema = z.strictObject({
   id: identifier,
@@ -33,6 +33,7 @@ const text = (max: number) =>
 export const workspaceActionPayloadSchemas = {
   stage: z.strictObject({ ...local, paths }),
   unstage: z.strictObject({ ...local, paths }),
+  discard: z.strictObject({ ...local, paths: z.array(z.string().min(1).max(1024)).length(1) }),
   commit: z.strictObject({ ...local, message: text(4000).refine((value) => value.trim().length > 0) }),
   'review-pr': z.strictObject({
     repo: repo.optional(),

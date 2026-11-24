@@ -17,3 +17,11 @@
 .pr-checks-stale{max-width:64ch;margin:0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--warning-bg);color:var(--text);font-size:12px;line-height:1.5}
 .pr-checks .pr-check-list{max-width:480px;margin:0;gap:0;border:1px solid var(--border);border-radius:8px}.pr-checks .pr-check-list li{padding:6px 10px;font-size:13px}.pr-checks .pr-check-list li+li{border-top:1px solid var(--border)}
 .pr-check-list li[data-state=pass]::before{background:var(--success-fg)}.pr-check-list li[data-state=fail]::before{background:var(--danger-fg)}.pr-check-list li[data-state=pending]::before{background:var(--warning-fg)}.pr-check-list li[data-state=pass] small{color:var(--success-fg)}.pr-check-list li[data-state=fail] small{color:var(--danger-fg)}.pr-check-list li[data-state=pending] small{color:var(--warning-fg)}
+.live-discard{color:var(--danger-fg,#e05d5d);border-color:transparent;background:transparent}
+.live-discard:not(:disabled):hover{color:var(--danger-fg,#e05d5d);text-decoration:underline}
+.live-discard:disabled{color:var(--muted)}
+.discard-dialog .discard-path{display:block;font:12px/1.4 var(--font-mono,monospace);padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--selection-bg);overflow-wrap:anywhere;margin-bottom:10px}
+.discard-dialog p{max-width:52ch;margin:0 0 8px;line-height:1.5}
+.discard-dialog .live-discard{border-color:var(--danger-fg,#e05d5d)}
+.live-change-list li[data-leaving]{opacity:0;transition:opacity var(--ui-motion-status) var(--ui-ease-move)}
+@media(prefers-reduced-motion:reduce){.live-change-list li[data-leaving]{transition:none}}

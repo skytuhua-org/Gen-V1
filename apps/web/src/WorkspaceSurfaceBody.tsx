@@ -1,8 +1,10 @@
 import {useCallback,useEffect,useMemo,useRef,useState,type ReactNode} from 'react';
-import type {Snapshot} from '../../../packages/contracts/index.ts';
+import {isRunActive,type Snapshot} from '../../../packages/contracts/index.ts';
 import type {PanelBinding,WorkspacePanelKind} from '../../../packages/contracts/workspace.ts';
 import {workspaceActionEnvelopeSchema,workspaceActionPayloadSchemas,createdPullRequestResultSchema} from '../../../packages/contracts/workspace-action-outcomes';
-import type {GitStatus} from '../../../packages/workspace/tools.ts';
+import type {GitFile,GitStatus} from '../../../packages/workspace/tools.ts';
+import {Modal} from '../../../packages/ui-shell/Modal';
+import {toast} from '../../../packages/ui-shell/Toast';
 import {ApiError,authenticated,csrfToken,read} from './api.ts';
 import {UsageSummary,WorkspaceLauncher,GrantedFiles,RecordedDiffPanel,OutputPanel} from './WorkspacePanelBodies.tsx';
 import {getPreferences,type UiPreferences} from '../../../packages/contracts/preferences.ts';
@@ -36,19 +38,43 @@ function FilesBody({base,query,active,fallback}:{base:string;query:URLSearchPara
  const owner=base+'?'+query.toString();
  return <ProjectFiles key={owner} base={base} query={query.toString()} active={active} fallback={fallback}/>;
 }
-function DiffBody({base,query,active,fallback}:{base:string;query:URLSearchParams;active:boolean;fallback:ReactNode}){
+function DiffBody({base,query,active,fallback,runActive,checkpointsAvailable}:{base:string;query:URLSearchParams;active:boolean;fallback:ReactNode;runActive?:boolean;checkpointsAvailable?:boolean}){
  const{value,error,errorCode,load,setError}=useProjectRequest<GitStatus>(base+'/git?'+query,active),[staged,setStaged]=useState(false),[pending,setPending]=useState(false);
+ const[discarding,setDiscarding]=useState<GitFile|null>(null),[discardPending,setDiscardPending]=useState(false),[discardError,setDiscardError]=useState(''),[leaving,setLeaving]=useState(''),cancelRef=useRef<HTMLButtonElement|null>(null);
+ // Focus Cancel only after the dialog is open: autoFocus would mount before showModal.
+ useEffect(()=>{if(!discarding)return;const id=requestAnimationFrame(()=>cancelRef.current?.focus());return()=>cancelAnimationFrame(id);},[discarding]);
  const apply=async(type:string,path:string)=>{if(!value||value.gitWrite!==true||pending)return;setPending(true);try{await post(base+'/actions',{id:crypto.randomUUID(),type,payload:{paths:[path],revision:value.revision,expectedHead:value.head},...(query.get('threadId')?{threadId:query.get('threadId')}:{})});await load();}catch(error){setError(message(error));}finally{setPending(false);}};
+ const discardText=(file:GitFile)=>{
+  if(file.oldPath)return{body:`Undo the rename: restore ${file.oldPath} and move ${file.path} to the Recycle Bin.`,confirm:'Move to Recycle Bin'};
+  if(file.untracked||file.index==='A')return{body:'Move this new file to the Recycle Bin.',confirm:'Move to Recycle Bin'};
+  return{body:`Restore this file to the last commit (${value?.head.slice(0,7)??''}). ${checkpointsAvailable?'A checkpoint of the current file is saved first; restore it from History.':"Your edits to it can't be undone."}`,confirm:'Discard changes'};
+ };
+ const discard=async(file:GitFile)=>{
+  if(!value||discardPending)return;
+  setDiscardPending(true);setDiscardError('');
+  try{
+   await post(base+'/actions',{id:crypto.randomUUID(),type:'discard',payload:{paths:[file.path],revision:value.revision,expectedHead:value.head},...(query.get('threadId')?{threadId:query.get('threadId')}:{})});
+   setLeaving(file.path);setDiscarding(null);
+   toast(file.untracked||file.index==='A'||file.oldPath?`Moved ${file.path} to the Recycle Bin.`:`Discarded changes to ${file.path}.`);
+   await load();setLeaving('');
+  }catch(error){
+   if(error instanceof ApiError&&error.code==='REVISION_CHANGED'){setDiscarding(null);setError(message(error));void load();}
+   else setDiscardError(message(error));
+  }finally{setDiscardPending(false);}
+ };
  if(errorCode==='PROJECT_NOT_CONNECTED')return fallback;
  const legacy=(value as (GitStatus&{mode?:string})|null)?.mode==='legacy';
- return <div className="live-review"><div className="panel-toolbar"><strong>Changes</strong><span>{value?.branch}</span><button onClick={()=>void load()}>Refresh</button><label><input type="checkbox" checked={staged} onChange={event=>setStaged(event.target.checked)}/>Staged</label></div>{error&&<p role="status" className="error-text">{error}</p>}{legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}{value&&<><small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length} changed files</small><ul className="live-change-list">{value.files.map(file=><li key={file.path}><span>{file.oldPath?file.oldPath+' → ':''}{file.path}</span><small>{file.binary?'Binary':file.untracked?'Untracked':`${file.index}${file.worktree} +${file.added??'?'} −${file.removed??'?'}`}</small><button disabled={pending||value.gitWrite!==true} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button></li>)}</ul><pre className="live-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{(staged?value.stagedDiff:value.diff)||'No tracked changes in this view.'}</pre></>}</div>;
+ return <div className="live-review"><div className="panel-toolbar"><strong>Changes</strong><span>{value?.branch}</span><button onClick={()=>void load()}>Refresh</button><label><input type="checkbox" checked={staged} onChange={event=>setStaged(event.target.checked)}/>Staged</label></div>{error&&<p role="status" className="error-text">{error}</p>}{legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}{value&&<><small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length} changed files</small><ul className="live-change-list">{value.files.map(file=><li key={file.path} data-leaving={leaving===file.path||undefined}><span>{file.oldPath?file.oldPath+' → ':''}{file.path}</span><small>{file.binary?'Binary':file.untracked?'Untracked':`${file.index}${file.worktree} +${file.added??'?'} −${file.removed??'?'}`}</small><button disabled={pending||value.gitWrite!==true} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button><button type="button" className="live-discard" aria-haspopup="dialog" aria-label={`Discard changes to ${file.path}`} title={runActive?'Stop the run to discard files.':undefined} disabled={pending||value.gitWrite!==true||runActive} onClick={()=>{setDiscarding(file);setDiscardError('');}}>Discard…</button></li>)}</ul><pre className="live-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{(staged?value.stagedDiff:value.diff)||'No tracked changes in this view.'}</pre></>}
+ <Modal open={discarding!==null} title="Discard changes" className="discard-dialog" onClose={()=>{if(!discardPending){setDiscarding(null);setDiscardError('');}}}>
+  {discarding&&<><code className="discard-path">{discarding.path}</code><p>{discardText(discarding).body}</p>{discardError&&<p role="alert" className="error-text">{discardError}</p>}<div className="dialog-actions" aria-busy={discardPending||undefined}><button type="button" ref={cancelRef} disabled={discardPending} onClick={()=>{if(!discardPending)setDiscarding(null);}}>Cancel</button><button type="button" className="live-discard" disabled={discardPending} onClick={()=>void discard(discarding)}>{discardPending?'Discarding…':discardText(discarding).confirm}</button></div></>}
+ </Modal></div>;
 }
-function ChangesBody({base,query,active,recorded,preferences}:{base:string;query:URLSearchParams;active:boolean;recorded:ReactNode;preferences:UiPreferences}){
+function ChangesBody({base,query,active,recorded,preferences,runActive}:{base:string;query:URLSearchParams;active:boolean;recorded:ReactNode;preferences:UiPreferences;runActive?:boolean}){
  // Enable History only with a host adapter and the context's exact workingCopy.id.
  const threadId=query.get('threadId')??undefined;
  const{value}=useProjectRequest<{available:boolean;restore:boolean;owner?:CheckpointOwner}>(base+'/checkpoints/capability?'+query,active);
  const adapter=useMemo(()=>value?.available?createHttpCheckpointAdapter(base,threadId,value.restore===true):disabledCheckpointAdapter,[value?.available,value?.restore,base,threadId]);
- return <FileCheckpoints preferences={preferences} owner={value?.available?value.owner:undefined} adapter={adapter} current={<DiffBody base={base} query={query} active={active} fallback={recorded}/>} recorded={recorded}/>;
+ return <FileCheckpoints preferences={preferences} owner={value?.available?value.owner:undefined} adapter={adapter} current={<DiffBody base={base} query={query} active={active} fallback={recorded} runActive={runActive} checkpointsAvailable={value?.available===true}/>} recorded={recorded}/>;
 }
 export type ReviewRequest = {id:number;repo:string;number:number;threadId:string;projectId:string;panelId:string};
 export function WorkspaceSurfaceBody({kind,binding,snapshot,refresh,active=true,preferences,onSelectThread,onOpenTool,panelId,excerptComposer,reviewRequest,onReviewHandled}:{reviewRequest?:ReviewRequest;onReviewHandled?:(id:number)=>void;excerptComposer?:TerminalExcerptComposer;kind:WorkspacePanelKind;binding:PanelBinding;snapshot:Snapshot;refresh:()=>Promise<void>;active?:boolean;preferences?:UiPreferences;panelId?:string;onSelectThread?:(id:string)=>void|Promise<void>;onOpenTool?:(kind:WorkspacePanelKind)=>void|Promise<void>}){
@@ -69,7 +95,7 @@ export function WorkspaceSurfaceBody({kind,binding,snapshot,refresh,active=true,
  if(!projectId)return <p className="panel-note">Connect a project to use {panelLabels[kind].toLowerCase()}.</p>;
  const base='/api/projects/'+encodeURIComponent(projectId),query=new URLSearchParams(threadId?{threadId}:{});
  if(kind==='files')return <FilesBody base={base} query={query} active={active} fallback={files}/>;
- if(kind==='diff')return <ChangesBody key={base+'?'+query} base={base} query={query} active={active} recorded={recordedDiff} preferences={prefs}/>;
+ if(kind==='diff')return <ChangesBody key={base+'?'+query} base={base} query={query} active={active} recorded={recordedDiff} preferences={prefs} runActive={isRunActive(thread)}/>;
  if(kind==='terminal')return <TerminalBody key={projectId+':'+threadId+':'+binding.terminalId} projectId={projectId} threadId={threadId} terminalId={binding.terminalId} active={active} excerptComposer={excerptComposer} openAnother={onOpenTool?()=>onOpenTool('terminal'):undefined}/>;
  if(kind==='pull-request'||kind==='linked-pull-requests'){const journalKey='pr-panel:'+JSON.stringify(['local',projectId,threadId??null,kind,panelId??'sidebar']);return <PullRequestsBody key={journalKey} journalKey={journalKey} base={base} query={query} active={active} threadId={threadId} linked={kind==='linked-pull-requests'} reviewRequest={kind==='linked-pull-requests'&&reviewRequest&&reviewRequest.threadId===threadId&&reviewRequest.projectId===projectId&&reviewRequest.panelId===(panelId??'sidebar')?reviewRequest:undefined} onReviewHandled={onReviewHandled} timeFormat={prefs.timeFormat}/>;}
  return <p className="panel-note">Select this surface from the workspace.</p>;

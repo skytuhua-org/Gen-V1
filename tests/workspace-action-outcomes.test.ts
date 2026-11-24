@@ -534,3 +534,37 @@ it('supports local unstage and commit through the original revision and replays 
   expect(await f.outcomes.execute(f.projectId, commit.input)).toEqual(result);
   expect((await f.projects.gitStatus(f.projectId, f.thread.id)).head).toBe(after.head);
 }, 60000);
+
+it('limits a discard payload to exactly one path', () => {
+  const base = { expectedHead: 'a'.repeat(40), revision: 'b'.repeat(64) };
+  expect(workspaceActionPayloadSchemas.discard.safeParse({ ...base, paths: ['one.txt'] }).success).toBe(true);
+  for (const paths of [[], ['one.txt', 'two.txt']]) expect(workspaceActionPayloadSchemas.discard.safeParse({ ...base, paths }).success).toBe(false);
+});
+it('discards a tracked change once and replays the command without a second write', async () => {
+  const f = await fixture(), trashed: string[] = [];
+  f.projects.options.trash = async target => { trashed.push(target); await rm(target, { force: true }); };
+  await writeFile(join(f.binding.path, 'one.txt'), 'private local change\n');
+  const discard = await f.operation('discard');
+  expect((await f.outcomes.execute(f.projectId, discard.input)).state).toBe('confirmed');
+  expect(await readFile(join(f.binding.path, 'one.txt'), 'utf8')).toBe('first\n');
+  expect(trashed).toHaveLength(0);
+  expect((await f.outcomes.execute(f.projectId, discard.input)).state).toBe('confirmed');
+  expect(await readFile(join(f.binding.path, 'one.txt'), 'utf8')).toBe('first\n');
+}, 60000);
+it('sends an untracked file to the configured bin and skips an absent working copy', async () => {
+  const f = await fixture(), trashed: string[] = [];
+  f.projects.options.trash = async target => { trashed.push(target); await rm(target, { force: true }); };
+  await writeFile(join(f.binding.path, 'scratch.txt'), 'scratch\n');
+  const discard = await f.operation('discard');
+  discard.input = { ...discard.input, payload: { paths: ['scratch.txt'], expectedHead: discard.status.head, revision: discard.status.revision } };
+  expect((await f.outcomes.execute(f.projectId, discard.input)).state).toBe('confirmed');
+  expect(trashed.length).toBe(1);
+  expect(trashed[0]).toBe(join(f.binding.path, 'scratch.txt'));
+  // A file deleted between status and discard is a fresh REVISION_CHANGED, not a bin call.
+  await writeFile(join(f.binding.path, 'one.txt'), 'changed\n');
+  const stale = await f.operation('discard');
+  stale.input = { ...stale.input, payload: { paths: ['gone.txt'], expectedHead: stale.status.head, revision: stale.status.revision } };
+  const result = await f.outcomes.execute(f.projectId, stale.input);
+  expect(result.state).toBe('uncertain');
+  expect(trashed.length).toBe(1);
+}, 60000);

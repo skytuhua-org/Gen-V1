@@ -246,7 +246,7 @@ export class WorkspaceActionOutcomes {
         let result: unknown;
         if (input.type === 'review-pr') result = await this.github.review(projectId, input.threadId, input.payload);
         else if (input.type === 'create-pr') result = await this.github.create(projectId, input.threadId, input.payload, beginWrite);
-        else result = await this.projects.gitAction(projectId, input.threadId, { type: input.type, ...payload });
+        else result = await this.projects.gitAction(projectId, input.threadId, { type: input.type, ...payload, operationId: command.id });
         let fresh: Fence | undefined;
         try {
           fresh = await this.fence(projectId, input);

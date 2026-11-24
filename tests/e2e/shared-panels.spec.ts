@@ -43,17 +43,17 @@ test('directory navigation rejects a file response from the previous selection',
  await expect(panel.locator('.live-files .panel-toolbar')).toContainText('next');await expect(panel.getByRole('region',{name:'File content'})).not.toContainText('Content from the previous directory');
 });
 
-async function pullRequestFixture(page:Page,options:{gitWrite?:boolean;missingWrite?:boolean;kind?:string;dirty?:boolean;loseAcknowledgment?:boolean}={}){
+async function pullRequestFixture(page:Page,options:{gitWrite?:boolean;missingWrite?:boolean;kind?:string;dirty?:boolean;loseAcknowledgment?:boolean;files?:Record<string,unknown>[];runActive?:boolean}={}){
  const state={head:'a'.repeat(40),revision:'c'.repeat(64),gitWrite:options.gitWrite??true,remoteHead:'a'.repeat(40)},actions:Record<string,any>[]=[],lists:string[]=[];
  let pendingCreate:Route|undefined,pendingReview:Route|undefined,holdCreate=false,holdReview=false;
  const receipts=new Map<string,{command:Record<string,any>;receipt:unknown}>();
  const receiptFor=(command:Record<string,any>)=>({commandId:command.id,seq:1,result:command.type==='create-pr'?{url:'https://github.com/fixture/project/pull/14',repo:'fixture/project',head:command.payload.head,revision:command.payload.revision}:command.type==='review-pr'?{operationId:command.id,operation:'review-pr',state:'confirmed'}:{url:'https://github.com/fixture/project/pull/14'}});
  await page.route('**/api/bootstrap',route=>route.fulfill({json:{csrfToken:'fixture'}}));
- await page.route('**/api/projects/project-one/git?*',route=>route.fulfill({json:{head:state.head,revision:state.revision,branch:'gen/review',mode:'managed',...(options.missingWrite?{}:{gitWrite:state.gitWrite}),files:options.dirty?[{path:'source.ts',index:' ',worktree:'M',staged:false,untracked:false,binary:false,added:1,removed:0}]:[],diff:'',stagedDiff:'',truncated:false}}));
+ await page.route('**/api/projects/project-one/git?*',route=>route.fulfill({json:{head:state.head,revision:state.revision,branch:'gen/review',mode:'managed',...(options.missingWrite?{}:{gitWrite:state.gitWrite}),files:options.dirty?(options.files??[{path:'source.ts',index:' ',worktree:'M',staged:false,untracked:false,binary:false,added:1,removed:0}]):[],diff:'',stagedDiff:'',truncated:false}}));
  await page.route('**/api/projects/project-one/pull-requests?*',route=>{lists.push(route.request().url());return route.fulfill({json:{repo:'fixture/project',items:[12,13].map(number=>({number,title:'PR '+number,url:'https://github.com/fixture/project/pull/'+number,state:'OPEN'}))}});});
  await page.route('**/api/projects/project-one/pull-requests/*?*',route=>{const number=Number(new URL(route.request().url()).pathname.split('/').at(-1));return route.fulfill({json:{item:{number,title:'PR '+number,headRefOid:state.remoteHead,state:'OPEN',files:[],statusCheckRollup:[]},head:state.head,revision:state.revision,canReview:true}});});
  await page.route('**/api/projects/project-one/actions',async route=>{const command=route.request().postDataJSON();actions.push(command);if(command.type==='create-pr'&&holdCreate){pendingCreate=route;return;}if(command.type==='review-pr'&&holdReview){pendingReview=route;return;}if(options.loseAcknowledgment){if(!receipts.has(command.id)){receipts.set(command.id,{command,receipt:receiptFor(command)});if(receipts.size===1)return route.fulfill({status:200,contentType:'application/json',body:'{"commandId":'});}const stored=receipts.get(command.id)!;expect(command).toEqual(stored.command);return route.fulfill({json:stored.receipt});}await route.fulfill({json:receiptFor(command)});});
- await page.goto('/shared-panels-check?project=1&pr-panels='+(options.kind??'pull-request'));
+ await page.goto('/shared-panels-check?project=1&pr-panels='+(options.kind??'pull-request')+(options.runActive?'&run-active=1':''));
  const panel=page.getByRole('region',{name:'first PR panel',exact:true});if(options.kind==='diff')await expect(panel.getByRole('button',{name:'Stage',exact:true})).toBeVisible();else await expect(panel.getByRole('button',{name:'#12 PR 12',exact:true})).toBeVisible();
  return{panel,state,actions,lists,get effects(){return receipts.size;},holdCreate:()=>{holdCreate=true;},holdReview:()=>{holdReview=true;},releaseCreate:async()=>{await expect.poll(()=>Boolean(pendingCreate)).toBe(true);await pendingCreate!.fulfill({json:receiptFor(pendingCreate!.request().postDataJSON())});},releaseReview:async()=>{await expect.poll(()=>Boolean(pendingReview)).toBe(true);await pendingReview!.fulfill({json:receiptFor(pendingReview!.request().postDataJSON())});}};
 }
@@ -245,4 +245,61 @@ for(const outcome of ['success','failure'] as const)test(`retained profile sign-
 
 test('profile cancellation reports sign-in completion when the host commit already won',async({page})=>{
  const host=await profileAuthFixture(page);host.holdPoll();await host.panel.getByRole('button',{name:'Sign in to GitHub',exact:true}).click();await expect.poll(()=>host.actions.some(item=>item.action==='poll')).toBe(true);await page.route('**/api/github/auth/cancel',route=>route.fulfill({json:{status:'authenticated',login:'completed-user'}}));await host.panel.getByRole('button',{name:'Cancel sign-in',exact:true}).click();await expect(host.panel).toContainText('Sign-in completed as completed-user before cancellation.');await host.releasePoll();await expect(host.panel).not.toContainText('stale-user');await expect(host.panel).not.toContainText('Sign-in cancelled');
+});
+
+test('a tracked-file discard asks once and posts the exact path',async({page})=>{
+ const{panel,actions}=await pullRequestFixture(page,{kind:'diff',dirty:true});
+ const row=panel.locator('.live-change-list li',{hasText:'source.ts'});
+ const discard=row.getByRole('button',{name:'Discard changes to source.ts'});
+ await expect(discard).toBeEnabled();await discard.click();
+ const dialog=page.getByRole('dialog',{name:'Discard changes'});
+ await expect(dialog).toBeVisible();
+ await expect(dialog).toContainText("Restore this file to the last commit (aaaaaaa). Your edits to it can't be undone.");
+ await expect(dialog.getByRole('button',{name:'Cancel',exact:true})).toBeFocused();
+ await dialog.getByRole('button',{name:'Discard changes',exact:true}).click();
+ await expect.poll(()=>actions.filter(action=>action.type==='discard').length).toBe(1);
+ expect(actions.at(-1)!.payload).toMatchObject({paths:['source.ts'],expectedHead:'a'.repeat(40),revision:'c'.repeat(64)});
+});
+test('a failed discard keeps the dialog open with the server message',async({page})=>{
+ const{panel,actions}=await pullRequestFixture(page,{kind:'diff',dirty:true});
+ await page.route('**/api/projects/project-one/actions',async route=>{actions.push(route.request().postDataJSON());await route.fulfill({status:409,json:{state:'uncertain',error:{code:'ACTION_UNCERTAIN',message:'The outcome is uncertain. Inspect the original action before retrying.'}}});});
+ const row=panel.locator('.live-change-list li',{hasText:'source.ts'});
+ await row.getByRole('button',{name:'Discard changes to source.ts'}).click();
+ const dialog=page.getByRole('dialog',{name:'Discard changes'});
+ await dialog.getByRole('button',{name:'Discard changes',exact:true}).click();
+ await expect(dialog.getByRole('alert')).toContainText('uncertain');
+ await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'Discard changes'})).toHaveCount(0);
+});
+test('a new file discard offers the Recycle Bin copy',async({page})=>{
+ const{panel,actions}=await pullRequestFixture(page,{kind:'diff',dirty:true,files:[{path:'notes.txt',index:'?',worktree:'?',staged:false,untracked:true,binary:false,added:0,removed:0}]});
+ const row=panel.locator('.live-change-list li',{hasText:'notes.txt'});
+ await row.getByRole('button',{name:'Discard changes to notes.txt'}).click();
+ const dialog=page.getByRole('dialog',{name:'Discard changes'});
+ await expect(dialog).toContainText('Move this new file to the Recycle Bin.');
+ await dialog.getByRole('button',{name:'Move to Recycle Bin',exact:true}).click();
+ await expect.poll(()=>actions.filter(action=>action.type==='discard').length).toBe(1);
+ expect(actions.at(-1)!.payload.paths).toEqual(['notes.txt']);
+});
+test('a rename discard explains the restore plus bin',async({page})=>{
+ const{panel}=await pullRequestFixture(page,{kind:'diff',dirty:true,files:[{path:'renamed.ts',oldPath:'one.ts',index:' ',worktree:'R',staged:false,untracked:false,binary:false,added:0,removed:0}]});
+ const row=panel.locator('.live-change-list li',{hasText:'renamed.ts'});
+ await row.getByRole('button',{name:'Discard changes to renamed.ts'}).click();
+ const dialog=page.getByRole('dialog',{name:'Discard changes'});
+ await expect(dialog).toContainText('Undo the rename: restore one.ts and move renamed.ts to the Recycle Bin.');
+});
+test('an active run disables discard with the stop-first hint',async({page})=>{
+ const{panel,actions}=await pullRequestFixture(page,{kind:'diff',dirty:true,runActive:true});
+ const discard=panel.getByRole('button',{name:'Discard changes to source.ts'});
+ await expect(discard).toBeDisabled();
+ await expect(discard).toHaveAttribute('title','Stop the run to discard files.');
+ expect(actions).toHaveLength(0);
+});
+test('the checkpoint-enabled dialog promises a saved checkpoint first',async({page})=>{
+ await page.route('**/api/projects/project-one/checkpoints/capability?*',route=>route.fulfill({json:{available:true,restore:false,owner:{projectId:'project-one',threadId:'task-thread',workingCopyId:'copy',binding:'b'.repeat(64)}}}));
+ const{panel}=await pullRequestFixture(page,{kind:'diff',dirty:true});
+ const row=panel.locator('.live-change-list li',{hasText:'source.ts'});
+ await row.getByRole('button',{name:'Discard changes to source.ts'}).click();
+ const dialog=page.getByRole('dialog',{name:'Discard changes'});
+ await expect(dialog).toContainText('checkpoint of the current file is saved first');
 });
