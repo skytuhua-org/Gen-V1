@@ -12,6 +12,7 @@ import { withApprovedProjectContext } from './approved-project-context.ts';
 import { createRepositoryMapReader } from './repository-map-host.ts';
 import type {AccountAuthTarget} from '../contracts/authentication.ts';
 import {privateFamilyForBinding} from '../workspace/git-storage.ts';
+import {ProjectTools} from '../workspace/tools.ts';
 import { mkdir, readFile, writeFile, stat, open } from "node:fs/promises";
 import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from "node:path";
@@ -284,12 +285,17 @@ export class Service {
     this.research=new PersonalResearchRepository(store,{assertHostActive:()=>{if(this.closed||this.updateClosing)throw new HarnessError('HOST_CLOSING','Gen is closing. Saved work is retained.');}});
     this.predictions=new ComposerPredictions({factory:()=>{if(!options.predictionRuntimeFactory)throw new HarnessError('PREDICTION_UNAVAILABLE','Composer predictions are unavailable in this host.');return options.predictionRuntimeFactory();},current:id=>this.predictionBasis(id)});
     this.planning=new PlanningCoordinator({store,assertRun:ctx=>this.assertRun(ctx),domainContext:(ctx,signal)=>this.context(ctx.threadId,signal,undefined,ctx),runtimeFactory:options.planningRuntimeFactory,canonicalJobs:options.canonicalPlanJobs,observeTool:(call,parent,execute)=>{this.effects.assertAdmissionsEnabled();return this.effectFlags.enabled("audit.effectsV1")||this.effectFlags.enabled("security.authorityV1")?this.effects.invoke({call,ctx:parent,thread:this.thread(parent.threadId),role:"planning_child"},execute):execute();}});
-    // M09: typed multi-agent work. No registered M08 managed-worktree profile
-    // or M06 typed-verification proof exists on this host, so CODE_WORKTREE
-    // and QA expose ROLE_UNAVAILABLE while PLAN_READ/RESEARCH_READ run
+    // M09: typed multi-agent work. CODE_WORKTREE joins the delegating
+    // parent's managed working copy through the workspace owner: the role
+    // proof binds the parent's WorkspaceBinding and every worktree.* call is
+    // confined to it. No M06 typed-verification proof exists on this host, so
+    // QA still reports ROLE_UNAVAILABLE; PLAN_READ/RESEARCH_READ run
     // read-only through the restricted resolver below.
     this.planExtensions=new PlanExtensionStore({store});
+    const agentWorkProjects=new ProjectTools(store);
     this.agentWork=new AgentWorkCoordinator({store,assertRun:ctx=>this.assertRun(ctx),isEnabled:capabilityEnabled,
+      roleProofs:{codeWorktree:ctx=>agentWorkProjects.delegateProof(ctx.threadId)},
+      roleHandlers:{codeWorktree:(call,work)=>agentWorkProjects.delegateCall(call,work)},
       resourceResolver:async(_grant,_write,call)=>{const domain=await import('../capabilities/index.ts');return domain.handleDomainTool(call.name,call.args,this.agentReadDomain(_grant.threadId));},
       runtimeFactory:options.agentWorkRuntimeFactory});
     runtime.configure({ onEvent: event => {this.recordCompactionModelObservation(event);this.onRuntimeEvent(event);}, onTool: (call, ctx) => this.tool(call, ctx), onMemoryCheckpoint: request => this.memoryHost().checkpoint(request,()=>{this.assertRun(request.ctx);}), onBeforeInference: request => this.beforeInference(request), onCompactionCommit: request => this.commitNativeCompaction(request) });

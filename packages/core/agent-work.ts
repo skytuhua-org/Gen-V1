@@ -35,7 +35,7 @@ export interface AgentWorkHooks {
   isEnabled: (key: CapabilityFlagKey) => boolean;
   /** Registered host capabilities proving a role may run. Absent => ROLE_UNAVAILABLE. */
   roleProofs?: {
-    codeWorktree?: (ctx: RunContext) => Promise<CodeWorktreeProof> | CodeWorktreeProof;
+    codeWorktree?: (ctx: RunContext) => Promise<CodeWorktreeProof | null> | CodeWorktreeProof | null;
     qa?: (ctx: RunContext) => Promise<QaProof> | QaProof;
   };
   /** Effect entry points scoped to each gated role. Read roles never reach these. */
@@ -107,8 +107,11 @@ export class AgentWorkCoordinator {
       case 'PLAN_READ':
       case 'RESEARCH_READ': return {available: true};
       case 'CODE_WORKTREE':
+        // Availability is flag-gated: the host binds its managed-worktree
+        // capability behind the same flag. The actual proof is enforced at
+        // admission and re-checked on every dispatch/resume, where a missing
+        // or stale proof denies rather than degrading the gate.
         if (!this.hooks.isEnabled('workspace.writeDelegateV1')) return {available: false, reason: 'workspace.writeDelegateV1 disabled'};
-        if (!this.hooks.roleProofs?.codeWorktree) return {available: false, reason: 'no managed-worktree profile proof'};
         return {available: true};
       case 'QA':
         if (!this.hooks.roleProofs?.qa) return {available: false, reason: 'no verification capability proof'};
@@ -136,9 +139,14 @@ export class AgentWorkCoordinator {
     });
     const readOnly = spec.role === 'PLAN_READ' || spec.role === 'RESEARCH_READ';
     const proofMeta: Record<string, unknown> = {};
-    const worktreeProof = spec.role === 'CODE_WORKTREE' ? await this.hooks.roleProofs!.codeWorktree!(ctx) : null;
+    const worktreeProof = spec.role === 'CODE_WORKTREE' ? await this.hooks.roleProofs?.codeWorktree?.(ctx) ?? null : null;
+    if (spec.role === 'CODE_WORKTREE' && worktreeProof === null) throw new HarnessError('ROLE_UNAVAILABLE', 'Role CODE_WORKTREE is unavailable: no managed-worktree profile proof');
     if (worktreeProof) proofMeta.worktree = worktreeProof;
-    if (spec.role === 'QA') proofMeta.qa = await this.hooks.roleProofs!.qa!(ctx);
+    if (spec.role === 'QA') {
+      const qaProof = await this.hooks.roleProofs?.qa?.(ctx) ?? null;
+      if (qaProof === null) throw new HarnessError('ROLE_UNAVAILABLE', 'Role QA is unavailable: no verification capability proof');
+      proofMeta.qa = qaProof;
+    }
     const grants = selected.map(grant => (readOnly || (worktreeProof !== null && !pathWithin(grant.path, worktreeProof.path))) ? {...grant, writable: false} : grant);
     return {grants, proofMeta};
   }

@@ -676,9 +676,12 @@ export class CheckpointService {
    * entry is digest- and size-pinned; .env material, keys, credentials,
    * session files and symlinks are refused before a single byte is copied.
    */
-  async provisionManifest(manifest: ProvisionManifestV1, sourceRoot: string, targetRoot: string, signal = new AbortController().signal): Promise<{ copied: string[] }> {
+  async provisionManifest(manifest: ProvisionManifestV1, sourceRoot: string, targetRoot: string, signal = new AbortController().signal): Promise<{ copied: string[]; entries: { path: string; copied: boolean; error?: string }[] }> {
     const reviewed = provisionManifestV1Schema.parse(manifest);
-    const copied: string[] = [];
+    // Validate the whole manifest before any copy: every entry must name a
+    // non-secret regular file inside both roots and still match its pinned
+    // size and digest, so a denied or stale entry leaves zero effects.
+    const staged: { path: string; destination: string; data: Buffer }[] = [];
     for (const entry of reviewed.entries) {
       const name = entry.path.split("/").at(-1) ?? entry.path;
       if (SECRET_NAME.test(name) || SECRET_EXT.test(name)) throw new HarnessError("CAPABILITY_DENIED", `Provisioning refuses secret material at ${entry.path}.`);
@@ -691,10 +694,20 @@ export class CheckpointService {
       const data = await withPathGuard([{ path: source, leaf: true, readOnly: true }], signal, async () => readBoundFile(source, 1024 * 1024));
       if (data.length !== entry.bytes || sha256hex(data) !== entry.digest)
         throw new HarnessError("REVISION_CHANGED", `Provisioned file ${entry.path} no longer matches the reviewed manifest.`);
-      await this.writeRestored(destination, data, null, signal);
-      copied.push(entry.path);
+      staged.push({ path: entry.path, destination, data });
     }
-    return { copied };
+    const copied: string[] = [];
+    const entries: { path: string; copied: boolean; error?: string }[] = [];
+    for (const item of staged) {
+      try {
+        await this.writeRestored(item.destination, item.data, null, signal);
+        copied.push(item.path);
+        entries.push({ path: item.path, copied: true });
+      } catch (error) {
+        entries.push({ path: item.path, copied: false, error: error instanceof HarnessError ? error.code : "FAILED" });
+      }
+    }
+    return { copied, entries };
   }
 
   /** One repository per operation, or an approved multi-root recipe. */
