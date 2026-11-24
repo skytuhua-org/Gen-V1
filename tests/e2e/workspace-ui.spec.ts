@@ -356,3 +356,58 @@ test('a completed old project action cannot refresh over a retargeted context wh
  await page.evaluate(value=>(window as any).__pendingWorkspaceReads.filter((read:any)=>read.url.includes('/new-project/context')&&!read.aborted&&!read.completed).forEach((read:any)=>read.complete(value)),value('new-project','Refreshed current owner'));
  await expect(editor).toBeEnabled();await expect(tile).toContainText('Refreshed current owner');
 });
+
+test('workspace surface tabs close by button, middle-click and Delete with a stable Artifact fallback', async ({ page }) => {
+  await fixture(page, [], undefined, 'workspace');
+  await page.getByRole('button', { name: 'Open workspace panel', exact: true }).click();
+  const panel = page.getByRole('complementary', { name: 'Workspace panel', exact: true });
+  await expect(panel.getByRole('tab', { name: 'Artifact', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(panel.getByRole('button', { name: 'Close Artifact tab', exact: true })).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Add surface', exact: true }).click(); await page.getByRole('menuitem', { name: 'Files', exact: true }).click();
+  await panel.getByRole('button', { name: 'Add surface', exact: true }).click(); await page.getByRole('menuitem', { name: 'Diff', exact: true }).click();
+  await expect(panel.getByRole('tab', { name: 'Diff', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await panel.getByRole('button', { name: 'Close Files tab', exact: true }).click();
+  await expect(panel.getByRole('tab', { name: 'Files', exact: true })).toHaveCount(0);
+  await expect(panel.getByRole('tab', { name: 'Diff', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(panel.getByRole('tab', { name: 'Diff', exact: true })).toBeFocused();
+  await page.keyboard.press('Delete');
+  await expect(panel.getByRole('tab', { name: 'Diff', exact: true })).toHaveCount(0);
+  await expect(panel.getByRole('tab', { name: 'Artifact', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(panel.getByRole('tab', { name: 'Artifact', exact: true })).toBeFocused();
+  await panel.getByRole('button', { name: 'Add surface', exact: true }).click(); await page.getByRole('menuitem', { name: 'Notes', exact: true }).click();
+  await panel.getByRole('tab', { name: 'Notes', exact: true }).click({ button: 'middle' });
+  await expect(panel.getByRole('tab', { name: 'Notes', exact: true })).toHaveCount(0);
+  await expect(panel.getByRole('tab')).toHaveCount(1);
+  await expect(panel.getByRole('button', { name: 'Close Artifact tab', exact: true })).toHaveCount(0);
+  await expect(panel.getByRole('tab', { name: 'Artifact', exact: true })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('closing the only restored surface selects Artifact and keeps focus in the tab strip', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('harness:shell-layout:v1', JSON.stringify({
+    rightPanelOpen: true, openTabs: ['diff'], activeTab: 'diff'
+  })));
+  await fixture(page, [], undefined, 'workspace');
+  const panel = page.getByRole('complementary', { name: 'Workspace panel', exact: true });
+  const diff = panel.getByRole('tab', { name: 'Diff', exact: true });
+  await expect(panel.getByRole('tab')).toHaveCount(1);
+  await diff.focus();
+  await page.keyboard.press('Delete');
+  const artifact = panel.getByRole('tab', { name: 'Artifact', exact: true });
+  await expect(panel.getByRole('tab')).toHaveCount(1);
+  await expect(artifact).toHaveAttribute('aria-selected', 'true');
+  await expect(artifact).toBeFocused();
+
+  for (const name of ['Files', 'Plan', 'Notes']) {
+    await panel.getByRole('button', { name: 'Add surface', exact: true }).click();
+    await page.getByRole('menuitem', { name, exact: true }).click();
+  }
+  await panel.getByRole('button', { name: 'Close Notes tab', exact: true }).click();
+  const plan = panel.getByRole('tab', { name: 'Plan', exact: true });
+  await expect(plan).toHaveAttribute('aria-selected', 'true');
+  await expect(plan).toBeFocused();
+  await panel.getByRole('button', { name: 'Close Files tab', exact: true }).click();
+  await expect(plan).toHaveAttribute('aria-selected', 'true');
+  await panel.getByRole('button', { name: 'Close Plan tab', exact: true }).click();
+  await expect(artifact).toHaveAttribute('aria-selected', 'true');
+  await expect(artifact).toBeFocused();
+});
