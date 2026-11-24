@@ -4,6 +4,7 @@ import {createRequire} from 'node:module';
 import {existsSync} from 'node:fs';
 import {dirname,isAbsolute,join,parse,relative,resolve,sep} from 'node:path';
 import {z} from 'zod';
+import { Sha256Hex } from '../contracts/hashing.ts';
 import {pluginIdSchema,pluginManifestSchema,pluginPathSchema,pluginVersionSchema,type PluginManifest,type PluginCompatibility} from './contracts.ts';
 import {hostFlagEnabled} from '../core/host-flags.ts';
 import {screenPackage,screeningGate,type AdvisoryDatabase,type OperatorException,type ScreeningRecordCache} from '../core/package-screening.ts';
@@ -16,7 +17,7 @@ const packagedManifest=resources?join(resources,'host','package.json'):undefined
 const dependencyManifest=process.versions.electron?(process.env.HARNESS_DESKTOP_HOST_ROOT?join(process.env.HARNESS_DESKTOP_HOST_ROOT,'package.json'):packagedManifest&&existsSync(packagedManifest)?packagedManifest:resolve('package.json')):import.meta.url;
 const semver=createRequire(dependencyManifest)('semver') as {valid:(version:string)=>string|null;validRange:(range:string)=>string|null;satisfies:(version:string,range:string)=>boolean};
 const MAX_FILE_BYTES=16*1024*1024,VERIFY_CHUNK_BYTES=64*1024;
-const digestSchema=z.string().regex(/^[a-f0-9]{64}$/);
+const digestSchema=Sha256Hex;
 const inventorySchema=z.strictObject({version:z.literal(1),files:z.array(z.strictObject({path:pluginPathSchema,bytes:z.number().int().min(0).max(MAX_FILE_BYTES),sha256:digestSchema})).min(3).max(4096)});
 const indexSchema=z.strictObject({version:z.literal(1),plugins:z.array(z.strictObject({id:pluginIdSchema,version:pluginVersionSchema,digest:digestSchema})).max(100)});
 export type ActivePlugin=z.infer<typeof indexSchema>['plugins'][number];

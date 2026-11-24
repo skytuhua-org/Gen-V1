@@ -13,7 +13,7 @@ it.each([['café notes.txt', '資料.txt'], [' café notes.txt', ' 資料.txt']]
   try {
     const directory = 'docs/implementation/v3';
     for (const path of ['scripts', 'packages/contracts', directory]) mkdirSync(join(root, path), { recursive: true });
-    for (const path of ['scripts/verify-m05-evidence.ts', 'packages/contracts/implementation-evidence.ts'])
+    for (const path of ['scripts/verify-m05-evidence.ts', 'packages/contracts/implementation-evidence.ts', 'packages/contracts/hashing.ts'])
       copyFileSync(join(source, path), join(root, path));
     writeFileSync(join(root, 'package.json'), '{"type":"module"}');
     symlinkSync(join(source, 'node_modules'), join(root, 'node_modules'), 'junction');
