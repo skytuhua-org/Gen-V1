@@ -40,7 +40,7 @@ jobs:
     name: Windows checks
     runs-on: windows-2022
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    timeout-minutes: 30
+    timeout-minutes: 15
     defaults:
       run:
         shell: pwsh
@@ -122,7 +122,7 @@ jobs:
     name: Tests (shard 1/4)
     runs-on: windows-2022
     if: github.event_name != 'pull_request'
-    timeout-minutes: 30
+    timeout-minutes: 22
     defaults:
       run:
         shell: pwsh
@@ -148,7 +148,7 @@ jobs:
     name: Tests (shard 2/4)
     runs-on: windows-2022
     if: github.event_name != 'pull_request'
-    timeout-minutes: 30
+    timeout-minutes: 22
     defaults:
       run:
         shell: pwsh
@@ -174,7 +174,7 @@ jobs:
     name: Tests (shard 3/4)
     runs-on: windows-2022
     if: github.event_name != 'pull_request'
-    timeout-minutes: 30
+    timeout-minutes: 22
     defaults:
       run:
         shell: pwsh
@@ -200,7 +200,7 @@ jobs:
     name: Tests (shard 4/4)
     runs-on: windows-2022
     if: github.event_name != 'pull_request'
-    timeout-minutes: 30
+    timeout-minutes: 22
     defaults:
       run:
         shell: pwsh
@@ -442,7 +442,7 @@ jobs:
     needs: select
     runs-on: windows-2022
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.select.outputs.total != '0'
-    timeout-minutes: 30
+    timeout-minutes: 22
     strategy:
       fail-fast: false
       matrix:
