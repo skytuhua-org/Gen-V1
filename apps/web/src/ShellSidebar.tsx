@@ -423,7 +423,7 @@ export function ShellSidebar({
           element — mounting a status region is missed by some screen readers. */}
       <div className="sr-only" role="status" aria-atomic="true">
         {loaded && !visibleMatching.length
-          ? (search ? 'No matching threads.' : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.')
+          ? (search ? (filter === 'all' ? 'No matching threads.' : `No matching ${filter} threads.`) : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.')
           : filter === 'all' ? 'Showing all threads' : `Showing ${filter} threads`}
       </div>
       {filter !== 'all' && (
