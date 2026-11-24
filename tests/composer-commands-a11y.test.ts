@@ -47,13 +47,13 @@ describe('slash-command palette combobox semantics', () => {
   }
   const textarea = (page: Page) => page.locator('textarea[aria-label="Message"]');
 
-  it('wires combobox aria while the palette is open and strips it on Escape', async () => {
+  it('wires listbox aria while the palette is open and strips it on Escape', async () => {
     const page = await open();
     await page.evaluate(() => (window as unknown as HarnessWindow).type('/mod'));
     const box = textarea(page);
     await page.locator('.composer-command-option').first().waitFor({state: 'visible'});
-    expect(await box.getAttribute('role')).toBe('combobox');
-    expect(await box.getAttribute('aria-expanded')).toBe('true');
+    expect(await box.getAttribute('role')).toBeNull();
+    expect(await box.getAttribute('aria-expanded')).toBeNull();
     expect(await box.getAttribute('aria-haspopup')).toBe('listbox');
     expect(await box.getAttribute('aria-controls')).toBeTruthy();
     expect(await box.getAttribute('aria-autocomplete')).toBe('list');
@@ -62,15 +62,17 @@ describe('slash-command palette combobox semantics', () => {
     await page.locator('.composer-command-list').waitFor({state: 'detached'});
     expect(await box.getAttribute('role')).toBeNull();
     expect(await box.getAttribute('aria-haspopup')).toBeNull();
-    expect(await box.getAttribute('aria-expanded')).toBe('false');
+    expect(await box.getAttribute('aria-expanded')).toBeNull();
     expect(await box.getAttribute('aria-controls')).toBeNull();
     expect(await box.getAttribute('aria-autocomplete')).toBeNull();
     expect(await box.getAttribute('aria-activedescendant')).toBeNull();
     await page.close();
   });
-  it('reports aria-expanded=false before the palette ever opens', async () => {
+  it('keeps the native textbox semantics before the palette ever opens', async () => {
     const page = await open();
-    expect(await textarea(page).getAttribute('aria-expanded')).toBe('false');
+    expect(await textarea(page).getAttribute('role')).toBeNull();
+    expect(await textarea(page).getAttribute('aria-expanded')).toBeNull();
+    expect(await textarea(page).getAttribute('aria-haspopup')).toBeNull();
     await page.close();
   });
   it('documents Tab in the hint', async () => {

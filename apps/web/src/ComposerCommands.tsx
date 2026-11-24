@@ -97,12 +97,11 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   useEffect(() => {
     if (open && selected) content.current?.ownerDocument.getElementById(id + '-' + selected.id)?.scrollIntoView({block: 'nearest'});
     const element = input.current; if (!element) return;
-    element.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (!open) return;
-    element.setAttribute('role', 'combobox'); element.setAttribute('aria-haspopup', 'listbox');
+    element.setAttribute('aria-haspopup', 'listbox');
     element.setAttribute('aria-controls', id); element.setAttribute('aria-autocomplete', 'list');
     if (selected) element.setAttribute('aria-activedescendant', id + '-' + selected.id); else element.removeAttribute('aria-activedescendant');
-    return () => {element.removeAttribute('role'); element.removeAttribute('aria-haspopup'); element.removeAttribute('aria-controls'); element.removeAttribute('aria-autocomplete'); element.removeAttribute('aria-activedescendant'); element.setAttribute('aria-expanded', 'false');};
+    return () => {element.removeAttribute('aria-haspopup'); element.removeAttribute('aria-controls'); element.removeAttribute('aria-autocomplete'); element.removeAttribute('aria-activedescendant');};
   }, [open, selected?.id, id, input]);
   return <>
     <Popover anchor={input} contentRef={content} open={open} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={close} className="composer-command-popover">
