@@ -379,7 +379,7 @@ export class EditJournal {
    *  coarser classes stay path-wide conservative. `change` carries the
    *  hunk's removed HEAD-preimage and added postimage line numbers; a null
    *  change is the legacy whole-path check. */
-  hunkAttribution(owner: CheckpointScope, path: string, liveBytes: Buffer | null, headBytes: Buffer | null, change: { removed: Map<number, string>; added: Set<number> } | null = null, claims: Map<string, Set<number>> = new Map()): "proven" | "process-window" | "unattributed" {
+  hunkAttribution(owner: CheckpointScope, path: string, liveBytes: Buffer | null, headBytes: Buffer | null, change: { removed: Map<number, string>; added: Set<number> } | null = null, claims: Map<string, Set<number>> = new Map(), reservedRemoved: Set<number> = new Set()): "proven" | "process-window" | "unattributed" {
     const entries = this.receipts(owner, { path });
     if (!entries.length) return "unattributed";
     const classOf = (attribution: string) =>
@@ -398,24 +398,36 @@ export class EditJournal {
     // diff engines legitimately pick different copies among identical lines,
     // but joint over-claim (a foreign deletion of content the receipt also
     // deleted) can never be credited because every coverage position is
-    // consumed at most once.
+    // consumed at most once. Positions in `reservedRemoved` — every HEAD line
+    // some hunk of this file removes — are exact-match territory: the hunk
+    // that removes such a line claims it directly, so a fallback borrow can
+    // never hand one hunk's proof to another. Claims stay tentative until the
+    // whole hunk is covered, so a failed evaluation never consumes coverage a
+    // later hunk may legitimately need.
     const covers = (entry: StoredReceipt, coverage: { added: Set<number>; removed: Map<number, string> | null }) => {
+      const tentative: [string, number][] = [];
       const claim = (kind: "r" | "a", position: number): boolean => {
         const key = entry.journalId + ":" + kind;
         const claimed = claims.get(key) ?? new Set<number>();
         if (claimed.has(position)) return false;
         claimed.add(position);
         claims.set(key, claimed);
+        tentative.push([key, position]);
         return true;
       };
-      for (const [position, content] of change.removed) {
-        if (coverage.removed === null) return false;
-        if (coverage.removed.get(position) === content ? claim("r", position)
-            : [...coverage.removed].some(([held, heldContent]) => heldContent === content && claim("r", held))) continue;
-        return false;
-      }
-      for (const line of change.added) if (!coverage.added.has(line) || !claim("a", line)) return false;
-      return true;
+      const covered = () => {
+        for (const [position, content] of change.removed) {
+          if (coverage.removed === null) return false;
+          if (coverage.removed.get(position) === content ? claim("r", position)
+              : [...coverage.removed].some(([held, heldContent]) => heldContent === content && !reservedRemoved.has(held) && claim("r", held))) continue;
+          return false;
+        }
+        for (const line of change.added) if (!coverage.added.has(line) || !claim("a", line)) return false;
+        return true;
+      };
+      const ok = covered();
+      if (!ok) for (const [key, position] of tentative) claims.get(key)?.delete(position);
+      return ok;
     };
     for (const entry of [...entries].reverse()) {
       const coverage = this.coverageOf(entry, liveBytes, headBytes);

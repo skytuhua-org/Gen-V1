@@ -194,6 +194,49 @@ it("does not credit a foreign deletion of identical content elsewhere in the fil
   expect(foreign.attribution).toBe("unattributed");
 });
 
+// A foreign replacement of a duplicated line earlier in the file borrows the
+// proven deletion's covered position by content, then fails on its own
+// uncovered addition: the borrowed claim must be released, and the position
+// the later proven hunk actually removes stays reserved to it.
+it("does not let a foreign replacement consume the proven deletion's claim", async () => {
+  const f = await fixture();
+  const path = join(f.worktree, "many.txt");
+  const headLines = ["lead", "dup", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "dup", "tail"];
+  await writeFile(path, headLines.join("\n") + "\n");
+  gitSync(f.worktree, "add", ".");
+  gitSync(f.worktree, "commit", "-qm", "dup-replace-baseline");
+  // Foreign (unjournaled) write replaces the first copy; the proven receipt
+  // then removes only the second copy.
+  const preimageLines = [...headLines];
+  preimageLines[1] = "other";
+  const preimage = Buffer.from(preimageLines.join("\n") + "\n");
+  const postimageLines = [...preimageLines];
+  postimageLines.splice(9, 1);
+  await writeFile(path, postimageLines.join("\n") + "\n");
+  const after = await readFile(path);
+  f.journal.recordProvenEdit({
+    invocationId: "inv-dup-replace",
+    owner: f.scope,
+    workspaceIdentity: sha256hex("workspace"),
+    repositoryId: "repo",
+    path: "many.txt",
+    beforeIdentity: null,
+    beforeDigest: sha256hex(preimage),
+    afterDigest: sha256hex(after),
+    boundedBlobRefs: [
+      { ref: f.journal.writeBlob(preimage), bytes: preimage.length, retention: "AVAILABLE" },
+      { ref: f.journal.writeBlob(after), bytes: after.length, retention: "AVAILABLE" },
+    ],
+  });
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const hunks = preview.candidates.filter((candidate) => candidate.path === "many.txt");
+  expect(hunks.length).toBeGreaterThanOrEqual(2);
+  const foreign = hunks.find((candidate) => candidate.patch.includes("+other"))!;
+  const proven = hunks.find((candidate) => candidate.patch.includes(" tail"))!;
+  expect(foreign.attribution).toBe("unattributed");
+  expect(proven.attribution).toBe("proven");
+});
+
 // A write that only flips one line's terminator credits that line alone: a
 // foreign hunk changing the file's final newline must not ride along.
 it("attributes a mid-file line-ending change without covering a foreign final-newline hunk", async () => {

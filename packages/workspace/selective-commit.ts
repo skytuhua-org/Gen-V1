@@ -175,8 +175,8 @@ export class SelectiveCommitService {
     return { removed, added };
   }
 
-  private attributionFor(scope: CheckpointScope | undefined, path: string, postBytes: Buffer | null, headBytes: Buffer | null, patch: string, claims: Map<string, Set<number>>): { attribution: HunkAttribution; requiresExplicitSelection: boolean } {
-    const attribution = this.journal && scope ? this.journal.hunkAttribution(scope, path, postBytes, headBytes, this.hunkChange(patch), claims) : "unattributed";
+  private attributionFor(scope: CheckpointScope | undefined, path: string, postBytes: Buffer | null, headBytes: Buffer | null, patch: string, claims: Map<string, Set<number>>, reservedRemoved: Set<number>): { attribution: HunkAttribution; requiresExplicitSelection: boolean } {
+    const attribution = this.journal && scope ? this.journal.hunkAttribution(scope, path, postBytes, headBytes, this.hunkChange(patch), claims, reservedRemoved) : "unattributed";
     return { attribution, requiresExplicitSelection: attribution !== "proven" };
   }
 
@@ -191,8 +191,14 @@ export class SelectiveCommitService {
         // Coverage positions are claimed per file across its hunks, so two
         // hunks can never jointly over-claim one receipt's region.
         const claims = new Map<string, Set<number>>();
+        // Every HEAD line some hunk of this file removes is reserved for the
+        // hunk removing it: a same-content fallback can only borrow coverage
+        // no hunk removes, so a foreign hunk can never consume the position a
+        // proven hunk matches exactly.
+        const reservedRemoved = new Set<number>();
+        for (const patch of section.hunks) for (const position of this.hunkChange(patch)?.removed.keys() ?? []) reservedRemoved.add(position);
         section.hunks.forEach((patch, index) => {
-          candidates.push({ path: section.path, index, digest: sha256hex(section.header + patch), patch: section.header + patch, ...this.attributionFor(scope, section.path, section.postBytes ?? null, section.headBytes ?? null, patch, claims) });
+          candidates.push({ path: section.path, index, digest: sha256hex(section.header + patch), patch: section.header + patch, ...this.attributionFor(scope, section.path, section.postBytes ?? null, section.headBytes ?? null, patch, claims, reservedRemoved) });
         });
       }
       return { repositoryIdentity: repositoryIdentity(binding), managedWorktreeId: binding.id, branch, expectedHead: head, candidates };
