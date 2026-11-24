@@ -59,25 +59,30 @@ export function createTaskbarRefresher(deps:TaskbarRefresherDeps){
   last=next;deps.apply({...next});
  };
  const refresh=async()=>{
-  if(!alive||inFlight){queued=true;return;}
+  if(!alive)return;
+  if(inFlight){queued=true;return;}
   inFlight=true;
   try{
    const result=await deps.read();
+   // stop() permanently releases this refresher, including an already pending read.
+   if(!alive)return;
    failures=0;deps.result?.(result);
+   if(!alive)return;
    apply(taskbarNativeState(result.taskbar));
   }catch{
+   if(!alive)return;
    failures++;
    if(failures>=2)apply({...EMPTY});
   }finally{
-   inFlight=false;arm();
-   if(queued){queued=false;cancelTrail?.();cancelTrail=setTimer(()=>void refresh(),250);}
+   inFlight=false;
+   if(alive){arm();if(queued){queued=false;cancelTrail?.();cancelTrail=setTimer(()=>void refresh(),250);}}
   }
  };
  return{
   refresh:()=>{void refresh();},
-  reapply:()=>{deps.apply({...last});},
+  reapply:()=>{if(alive)deps.apply({...last});},
   clear:()=>{last={...EMPTY};heldProgress=-1;deps.apply({...EMPTY});},
   state:()=>({...last}),
-  stop:()=>{alive=false;cancelPoll?.();cancelTrail?.();cancelPoll=cancelTrail=undefined;},
+  stop:()=>{alive=false;queued=false;cancelPoll?.();cancelTrail?.();cancelPoll=cancelTrail=undefined;},
  };
 }

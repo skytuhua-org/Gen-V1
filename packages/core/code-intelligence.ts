@@ -7,6 +7,7 @@ import { HarnessError } from "../contracts/index.ts";
 import {
   CODE_INTELLIGENCE_LIMITS,
   diagnosticObservationV1Schema,
+  renamePlanIdSchema,
   renamePlanV1Schema,
   renameRecoveryResultSchema,
   type CodeDiagnostic,
@@ -756,7 +757,10 @@ export class CodeIntelligence {
    * its current bytes match the bundle's written postimage; an external edit
    * stops recovery with PARTIAL_RECOVERY_REQUIRED — never a silent overwrite. */
   async recoverRename(input: { journalRoot: string; planId: string; grantedRoots: readonly string[]; signal: AbortSignal }): Promise<RenameRecoveryResult> {
-    const journalDir = join(input.journalRoot, "code-intelligence", "rename", input.planId);
+    const planId = renamePlanIdSchema.safeParse(input.planId);
+    if (!planId.success)
+      throw new HarnessError("INVALID_INPUT", "A rename plan ID must be a UUID v4.");
+    const journalDir = join(input.journalRoot, "code-intelligence", "rename", planId.data);
     const journal = JSON.parse(await readFile(join(journalDir, "journal.json"), "utf8")
       .catch(() => { throw new HarnessError("NOT_FOUND", "No rename journal exists for this plan."); })) as {
       planId: string; resolved: boolean;

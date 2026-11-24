@@ -3,20 +3,80 @@ import {taskFixture,serveTaskFixture,serveTaskSplitLayout} from './task-interfac
 import {EMPTY_USAGE} from '../../packages/contracts';
 import {planDataId,PLANNING_PROVENANCE} from '../../packages/contracts/planning';
 import {CHAT_LAYOUT_KEY} from '../../packages/ui-shell/chat-layout';
+import {createWorkspaceCanvas} from '../../packages/core/workspace-layout';
+import type {WorkspaceEnvelope} from '../../packages/contracts/workspace';
+import type {LaunchRequestDelivery} from '../../packages/desktop-contract';
 const fixture=()=>{const s=taskFixture({root:'field',elements:{field:{type:'Input',props:{stateKey:'name',label:'Review name'}}}});s.usage['task-thread']={...EMPTY_USAGE,inputTokens:1234};s.data.push({id:planDataId('task-thread'),threadId:'task-thread',revision:1,provenance:PLANNING_PROVENANCE,createdAt:'2026-10-30T00:00:00Z',value:{version:1,title:'Repair checkout failures',steps:[{id:'inspect',title:'Inspect the task boundary',status:'working',requirements:[],agentIds:[]}],agents:[]}});return s;};
-async function bridge(page:Page,surface:Record<string,unknown>={kind:'main'}){
- await page.addInitScript(value=>{
+async function bridge(page:Page,surface:Record<string,unknown>={kind:'main'},pending?:LaunchRequestDelivery){
+ await page.addInitScript(({surface:value,pending})=>{
   const w=window as unknown as Record<string,any>,windowId=value.kind==='main'?'main':'satellite';
   let windows:any[]=[{id:'main',surface:{kind:'main'},ready:true,minimized:false},...(windowId==='main'?[]:[{id:windowId,surface:value,ready:true,minimized:false}])];
-  const context=()=>({windowId,surface:value,windows});w.__desktopCalls=[];w.__detachSeq=0;
+  const context=()=>({windowId,surface:value,windows});w.__desktopCalls=[];w.__detachSeq=0;w.__launchAcks=[];w.__launchReadyCount=0;
   w.harnessDesktop={getContext:async()=>context(),ready:async()=>context(),list:async()=>windows,
+   onLaunchRequest:(listener:(request:LaunchRequestDelivery)=>void)=>{w.__launchRequest=listener;return()=>{if(w.__launchRequest===listener)w.__launchRequest=undefined;};},
+   launchRequestReady:async()=>{w.__launchReadyCount++;if(pending){const request=pending;pending=null;w.__launchRequest?.(request);}},
+   launchRequestAck:async(requestId:string)=>{w.__launchAcks.push(requestId);},
    onState:(fn:(state:any)=>void)=>{w.__desktopState=(state:any)=>{windows=state.windows;fn(state);};return()=>{};},
    onCloseRequested:(fn:()=>Promise<boolean>)=>{w.__closeDesktop=fn;return()=>{};},
    detach:async(next:unknown)=>{w.__desktopCalls.push(['detach',next]);const info={id:'detached-'+String(++w.__detachSeq),surface:next,ready:true,minimized:false};windows=[...windows,info];w.__desktopState?.({windows});return info;},
    reattach:async()=>{w.__desktopCalls.push(['reattach']);},minimize:async()=>{w.__desktopCalls.push(['minimize']);},resetBounds:async()=>{},
    focus:async(id:string)=>{w.__desktopCalls.push(['focus',id]);},browser:async(command:unknown)=>{w.__desktopCalls.push(['browser',command]);if(w.__desktopFail)throw Error('Native browser action failed');}};
- },surface);
+ },{surface,pending:pending??null});
 }
+
+const launchEnvelope=(projectId:string,revision=0):WorkspaceEnvelope=>({
+ state:{version:1,revision,activeCanvasId:'main',canvases:[createWorkspaceCanvas('workspace','Workspace','main')],profiles:[],disabledKinds:[],integrations:{}},
+ projects:[{id:projectId,name:projectId,authority:{kind:'local'},createdAt:'2026-11-21T00:00:00Z'}],
+});
+const launchSnapshot=()=>{
+ const snapshot=fixture();snapshot.artifacts=[];snapshot.userStates=[];snapshot.data=[];snapshot.messages=[];
+ const initial=snapshot.threads[0];
+ snapshot.threads.push(
+  {...initial,id:'project-a-thread',title:'Project A latest',projectId:'project-a',updatedAt:'2026-11-22T00:00:00Z'},
+  {...initial,id:'project-b-thread',title:'Project B latest',projectId:'project-b',updatedAt:'2026-11-23T00:00:00Z'},
+ );
+ return snapshot;
+};
+const selectedLaunchThread=(page:Page,id:string)=>page.locator(`.sidebar-thread-row[data-thread-id="${id}"] .thread-item`);
+
+test('taskbar launch waits for workspace data and receives a cold request sent immediately on ready',async({page})=>{
+ await bridge(page,{kind:'main'},{type:'open-project-id',projectId:'project-a',requestId:'cold-project-a'});
+ await serveTaskFixture(page,launchSnapshot());
+ let release!:()=>void,reads=0;
+ const held=new Promise<void>(resolve=>{release=resolve;});
+ await page.route('**/api/workspace',async route=>{reads++;await held;await route.fulfill({json:launchEnvelope('project-a')});});
+ try{
+  await page.goto('/');
+  await expect.poll(()=>reads).toBeGreaterThan(0);
+  await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeEnabled();
+  expect(await page.evaluate(()=>(window as any).__launchReadyCount)).toBe(0);
+ }finally{release();}
+ await expect.poll(()=>page.evaluate(()=>(window as any).__launchAcks)).toEqual(['cold-project-a']);
+ await expect(selectedLaunchThread(page,'project-a-thread')).toHaveAttribute('aria-current','page');
+ await expect(page.getByText('That project could not be found.',{exact:true})).toHaveCount(0);
+});
+
+test('taskbar launch uses arrived and updated projects and keeps selection for a removed project',async({page})=>{
+ await bridge(page);const host=await serveTaskFixture(page,launchSnapshot());
+ let envelope=launchEnvelope('project-a');
+ await page.route('**/api/workspace',route=>route.fulfill({json:envelope}));
+ await page.goto('/');await expect(page.getByRole('button',{name:'All Agents',exact:true})).toBeEnabled();
+ await expect.poll(()=>page.evaluate(()=>typeof(window as any).__launchRequest)).toBe('function');
+ await page.evaluate(()=>(window as any).__launchRequest({type:'open-project-id',projectId:'project-a',requestId:'arrived-project-a'}));
+ await expect.poll(()=>page.evaluate(()=>(window as any).__launchAcks)).toContain('arrived-project-a');
+ await expect(selectedLaunchThread(page,'project-a-thread')).toHaveAttribute('aria-current','page');
+ envelope=launchEnvelope('project-b',1);
+ const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/workspace');
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await (await refreshed).finished();
+ await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+ await page.evaluate(()=>(window as any).__launchRequest({type:'open-project-id',projectId:'project-b',requestId:'updated-project-b'}));
+ await expect(selectedLaunchThread(page,'project-b-thread')).toHaveAttribute('aria-current','page');
+ await page.evaluate(()=>(window as any).__launchRequest({type:'open-project-id',projectId:'project-a',requestId:'removed-project-a'}));
+ await expect.poll(()=>page.evaluate(()=>(window as any).__launchAcks)).toEqual(['arrived-project-a','updated-project-b','removed-project-a']);
+ await expect(page.getByText('That project could not be found.',{exact:true})).toBeVisible();
+ await expect(selectedLaunchThread(page,'project-b-thread')).toHaveAttribute('aria-current','page');
+ expect(host.commands.filter(command=>command.type==='thread.create')).toEqual([]);
+});
 test('desktop context and usage minimize in the workspace while thread detachment stays available',async({page})=>{
  await bridge(page);
  await serveTaskFixture(page,fixture());

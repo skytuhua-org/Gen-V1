@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createTaskbarRefresher, failureOverlayBitmap, sameNativeState, taskbarNativeState, type NativeTaskbarState } from "../apps/desktop/taskbar-policy.ts";
-import type { TaskbarStatus } from "../packages/desktop-contract/index.ts";
+import type { TaskbarReadResult, TaskbarStatus } from "../packages/desktop-contract/index.ts";
 
 const status = (partial: Partial<TaskbarStatus>): TaskbarStatus => ({ enabled: true, mode: "none", progress: null, failed: false, ...partial });
-const result = (taskbar: TaskbarStatus) => ({ taskbar, jumpList: { enabled: true, projects: [] } });
+const result = (taskbar: TaskbarStatus): TaskbarReadResult => ({ taskbar, jumpList: { enabled: true, projects: [] } });
 
 describe("taskbarNativeState", () => {
  it("clears when disabled, missing, or mode none", () => {
@@ -99,5 +99,63 @@ describe("createTaskbarRefresher", () => {
   expect(timers.some(timer => timer.ms === 250)).toBe(true);
   timers.find(timer => timer.ms === 250)!.callback(); await new Promise(resolve => setTimeout(resolve, 0));
   expect(reads).toHaveLength(2);
+ });
+
+ it("keeps a stopped and cleared taskbar empty when its pending read succeeds", async () => {
+  const applied: NativeTaskbarState[] = [], delivered: ReturnType<typeof result>[] = [];
+  const timers = new Set<() => void>();
+  let resolveRead!: (value: ReturnType<typeof result>) => void;
+  let reads = 0;
+  const refresher = createTaskbarRefresher({
+   read: () => { reads++; return new Promise(resolve => { resolveRead = resolve; }); },
+   apply: value => applied.push(value), result: value => delivered.push(value),
+   setTimer: callback => { timers.add(callback); return () => { timers.delete(callback); }; },
+  });
+  refresher.refresh(); refresher.refresh();
+  refresher.stop(); refresher.clear();
+  resolveRead(result(status({ mode: "error", failed: true })));
+  await Promise.resolve(); await Promise.resolve();
+  expect(refresher.state()).toEqual({ progress: -1, mode: "none", overlay: false });
+  expect(applied).toEqual([{ progress: -1, mode: "none", overlay: false }]);
+  expect(delivered).toEqual([]);
+  expect(timers.size).toBe(0);
+  refresher.refresh(); await Promise.resolve();
+  expect(reads).toBe(1);
+ });
+
+ it("does not apply a second failure or queue followup work after stop", async () => {
+  const applied: NativeTaskbarState[] = [];
+  const timers = new Set<() => void>();
+  let rejectRead!: (reason: Error) => void;
+  let reads = 0;
+  const refresher = createTaskbarRefresher({
+   read: () => ++reads === 1 ? Promise.resolve(result(status({ mode: "normal", progress: .5 })))
+    : reads === 2 ? Promise.reject(Error("first failure")) : new Promise((_, reject) => { rejectRead = reject; }),
+   apply: value => applied.push(value),
+   setTimer: callback => { timers.add(callback); return () => { timers.delete(callback); }; },
+  });
+  refresher.refresh(); await Promise.resolve(); await Promise.resolve();
+  refresher.refresh(); await Promise.resolve(); await Promise.resolve();
+  refresher.refresh(); refresher.refresh();
+  refresher.stop();
+  rejectRead(Error("late second failure"));
+  await Promise.resolve(); await Promise.resolve();
+  expect(applied).toEqual([{ progress: .5, mode: "normal", overlay: false }]);
+  expect(timers.size).toBe(0);
+ });
+
+ it("does not apply native state when its result handler releases ownership", async () => {
+  const applied: NativeTaskbarState[] = [];
+  const timers = new Set<() => void>();
+  const refresher = createTaskbarRefresher({
+   read: () => Promise.resolve(result(status({ mode: "error", failed: true }))),
+   apply: value => applied.push(value),
+   result: () => { refresher.stop(); refresher.clear(); },
+   setTimer: callback => { timers.add(callback); return () => { timers.delete(callback); }; },
+  });
+  refresher.refresh(); await Promise.resolve(); await Promise.resolve();
+  expect(refresher.state()).toEqual({ progress: -1, mode: "none", overlay: false });
+  expect(applied).toEqual([{ progress: -1, mode: "none", overlay: false }]);
+  expect(timers.size).toBe(0);
  });
 });
