@@ -1,0 +1,107 @@
+{
+  "confirmed": [
+    {
+      "id": 45350461432,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "f16aee1a874e3569042fe722d1a152ae58a33769",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45350461432"
+    },
+    {
+      "id": 45339981913,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "f9061e767b3c97f646f1e90ca83be42da808bc1e",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45339981913"
+    },
+    {
+      "id": 45339916061,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "b6e36487ef4ee1420317b9787972c9aea277ba7d",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45339916061"
+    },
+    {
+      "id": 45339626931,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "d042110736de16b204956b9d670d6a3c58f2503c",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45339626931"
+    },
+    {
+      "id": 45338980457,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "82331bef935b96e17c3caee761bb9687dc3695b4",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45338980457"
+    },
+    {
+      "id": 45338054013,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "8cdb66a157293c1a00aa61d7e4b0bed054402464",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45338054013"
+    },
+    {
+      "id": 45337805914,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "437e20dc35473549e354825995f8e34daa75da2d",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45337805914"
+    },
+    {
+      "id": 45336273499,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "5d3c924be0f5e5ce35a3457bd8de77b236f63107",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45336273499"
+    },
+    {
+      "id": 45335088944,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "6e9433e7acf420437ba057bf106db45d6b53ffcc",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45335088944"
+    },
+    {
+      "id": 45334460754,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "319cdb683513b48340aef6e3299d1a0a7cd9e856",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45334460754"
+    },
+    {
+      "id": 45333847529,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "f31f7e5e213f4ef000f4bd95360cf8ebed83d475",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45333847529"
+    },
+    {
+      "id": 45333640998,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "12027e6bd564302bde509cf36b3b3aa0de018328",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45333640998"
+    },
+    {
+      "id": 45332514797,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "b6880dd121ab06777ac6d40d04fe7bb8d7075ac0",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45332514797"
+    },
+    {
+      "id": 45331917317,
+      "status": "completed",
+      "conclusion": "cancelled",
+      "head": "56811ca37dce734dd30ad0ee566cc4f99377afb2",
+      "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45331917317"
+    }
+  ],
+  "unresolved": {
+    "id": 43098118515,
+    "pr": 131,
+    "reason": "GitHub native cancellation returned Failed to cancel workflow twice across the original and resumed sessions; no force-cancel UI control available."
+  }
+}
