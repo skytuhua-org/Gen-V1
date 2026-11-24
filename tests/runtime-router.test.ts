@@ -223,10 +223,16 @@ it('keeps healthy provider models while a sibling provider signs in',async()=>{
  // A forced refresh must not reach the signing-in profile: each probeable
  // provider is refreshed on its own and the signing-in one is skipped.
  const before=vi.mocked(pi.runtime.models).mock.calls.length;
- await runtime.models({refresh:true});
+ vi.mocked(pi.runtime.models).mockImplementation(async query=>{
+  // One disconnected provider must not discard the others during refresh.
+  if(query?.providerId==='xai')throw Object.assign(new Error('Sign in first.'),{code:'PI_AUTH_REQUIRED'});
+  return [{id:(query?.providerId??'openai')+'/model',provider:query?.providerId??'openai',name:'A'}];
+ });
+ const refreshed=await runtime.models({refresh:true});
  const refreshQueries=vi.mocked(pi.runtime.models).mock.calls.slice(before).map(args=>args[0]);
  expect(refreshQueries.length).toBeGreaterThan(0);
  expect(refreshQueries.every(q=>q?.providerId!=='github-copilot')).toBe(true);
  expect(refreshQueries.every(q=>q?.refresh===true)).toBe(true);
+ expect(refreshed.some(model=>model.provider==='openai')).toBe(true);
  await runtime.dispose();
 });

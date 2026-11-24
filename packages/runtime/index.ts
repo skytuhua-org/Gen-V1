@@ -116,8 +116,12 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
     try{
      if(providerId||refresh===undefined)return await adapter.models(providerId?{refresh,providerId}:undefined);
      // A forced refresh must not reach a profile that is still signing in:
-     // refresh each probeable provider on its own.
-     const lists=await Promise.all(effective.map(id=>adapter.models({refresh,providerId:id})));
+     // refresh each probeable provider on its own. Pi reports a disconnected
+     // provider per refresh; keep the others instead of retiring the adapter.
+     const lists=await Promise.all(effective.map(id=>adapter.models({refresh,providerId:id}).catch(error=>{
+      if((error as {code?:unknown})?.code==='PI_AUTH_REQUIRED')return [];
+      throw error;
+     })));
      return lists.flat();
     }
     catch(error){
