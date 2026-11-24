@@ -3,7 +3,7 @@
 ## META
 - Repo: skytuhua-org/Gen-V1 · Issue: https://github.com/skytuhua-org/Gen-V1/issues/1666
 - PLAN_REV: 4 (2026-11-24). History: rev1 2026-11-22 (initial), rev2 2026-11-22 (maintainer: $0 budget, Blacksmith rejected, comment 7071834333), rev3 2026-11-23 (adds missing META/REQUIREMENTS/REPO_MAP/DESIGN/VALIDATION sections, records bun-test rejection; file pinned at 56458042e9183c0d68e197e628229918fc5beb2b on closed, unmerged #1899, whose copy is consolidated in open #1994), rev4 2026-11-24 (this: state after all PRs merged, T14/T15 results, T09a hook fix, new baseline; no requirement change).
-- Baseline: main@9ddd536cc84c0f327ddf6133d485f8ab8baf294b (verified 2026-11-24T11:30Z).
+- Baseline: main@9ddd536cc84c0f327ddf6133d485f8ab8baf294b (verified 2026-11-24T11:14Z).
 - Linked PRs: merged via merge queue #1667, #1669, #1670, #1671, #1672, #1673; #1227 fixes #1228 and #1898 merged; open #2113 (T09a).
 - Status: implemented except T04, T10 caching, T12; speed target NOT met (see VALIDATION).
 - Provenance: original task brief from the maintainer (session chat; the rules are restated verbatim in REQUIREMENTS), audit in this issue, checkpoints in this issue's comments.
