@@ -4,7 +4,7 @@ import {existsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import { StringDecoder } from 'node:string_decoder';
 import { HarnessError } from "../contracts/index.ts";
-export interface ProcessResult { status: "succeeded" | "failed" | "cancelled"; exitCode: number | null; signal: string | null; cancelled: boolean; timedOut: boolean; stdout: string; stderr: string; truncated: boolean; pid: number | undefined }
+export interface ProcessResult { status: "succeeded" | "failed" | "cancelled"; exitCode: number | null; signal: string | null; cancelled: boolean; timedOut: boolean; stdout: string; stderr: string; stdoutBytes?: Buffer; truncated: boolean; pid: number | undefined }
 export function gitExecutable():string{
   const bundled=process.env.HARNESS_BUNDLED_GIT??fileURLToPath(new URL('../../.harness-tool-bundles/git/cmd/git.exe',import.meta.url));
   if(existsSync(bundled))return bundled;
@@ -17,6 +17,15 @@ export function processEnvironment(): NodeJS.ProcessEnv {
   return { ...env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_LAZY_FETCH: "1" };
 }
 export async function runProcess(command: string, args: string[], cwd: string, signal: AbortSignal, progress: (message: string) => void, timeoutMs = 120_000, environment:NodeJS.ProcessEnv={},outputLimit=256*1024): Promise<ProcessResult> {
+  return runProcessShared(command, args, cwd, signal, progress, timeoutMs, environment, outputLimit, false);
+}
+
+/** Opt-in raw stdout collection for callers that must compare exact bytes. */
+export async function runProcessRaw(command: string, args: string[], cwd: string, signal: AbortSignal, progress: (message: string) => void, timeoutMs = 120_000, environment:NodeJS.ProcessEnv={},outputLimit=256*1024): Promise<ProcessResult> {
+  return runProcessShared(command, args, cwd, signal, progress, timeoutMs, environment, outputLimit, true);
+}
+
+async function runProcessShared(command: string, args: string[], cwd: string, signal: AbortSignal, progress: (message: string) => void, timeoutMs: number, environment:NodeJS.ProcessEnv,outputLimit:number,rawStdout:boolean): Promise<ProcessResult> {
   if (signal.aborted) throw new HarnessError("CANCELLED", "Operation cancelled before process start");
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env: {...processEnvironment(),...environment}, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
@@ -34,7 +43,19 @@ export async function runProcess(command: string, args: string[], cwd: string, s
       });
       return () => text;
     };
-    const stdout = capture(child.stdout), stderr = capture(child.stderr);
+    const captureRaw = (stream: NodeJS.ReadableStream) => {
+      const chunks: Buffer[] = [];
+      let bytes = 0, full = false;
+      stream.on('data', (chunk: Buffer) => {
+        if (full) return;
+        const remaining = outputLimit - bytes;
+        const data = chunk.length > remaining ? chunk.subarray(0, remaining) : chunk;
+        if (chunk.length > remaining) { truncated = true; full = true; }
+        chunks.push(data); bytes += data.length;
+      });
+      return () => Buffer.concat(chunks);
+    };
+    const stdout = rawStdout ? captureRaw(child.stdout) : capture(child.stdout), stderr = capture(child.stderr);
     let treeKill: Promise<void> | undefined;
     function stop() {
       if (!child.pid || settled || treeKill) return;
@@ -53,6 +74,6 @@ export async function runProcess(command: string, args: string[], cwd: string, s
     const cleanup = () => { clearTimeout(timer); signal.removeEventListener("abort", onAbort); };
     child.once("spawn", () => { report(`Started ${command === process.execPath ? "node --test" : "git"} (PID ${child.pid})`); if (signal.aborted) onAbort(); });
     child.once("error", error => { settled = true; cleanup(); reject(error); });
-    child.once("close", async (exitCode, terminationSignal) => { cleanup(); await treeKill; settled = true; report(`Process exited: ${exitCode ?? terminationSignal ?? "unknown"}`); resolve({ status: cancelled ? "cancelled" : !timedOut && exitCode === 0 ? "succeeded" : "failed", exitCode, signal: terminationSignal, cancelled, timedOut, stdout: stdout(), stderr: stderr(), truncated, pid: child.pid }); });
+    child.once("close", async (exitCode, terminationSignal) => { cleanup(); await treeKill; settled = true; report(`Process exited: ${exitCode ?? terminationSignal ?? "unknown"}`); resolve({ status: cancelled ? "cancelled" : !timedOut && exitCode === 0 ? "succeeded" : "failed", exitCode, signal: terminationSignal, cancelled, timedOut, stdout: rawStdout ? '' : (stdout as () => string)(), stdoutBytes: rawStdout ? (stdout as () => Buffer)() : undefined, stderr: stderr(), truncated, pid: child.pid }); });
   });
 }

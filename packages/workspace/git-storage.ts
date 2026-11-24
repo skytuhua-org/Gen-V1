@@ -4,7 +4,7 @@ import {dirname,isAbsolute,join,relative,sep} from 'node:path';
 import {HarnessError} from '../contracts/index.ts';
 import type {Store} from '../storage/store.ts';
 import type {ManagedGitFamily} from '../capabilities/git-access.ts';
-import {runProcess} from '../capabilities/process.ts';
+import {runProcess,runProcessRaw} from '../capabilities/process.ts';
 import {copyBoundGitMetadata,readBoundFile,removeOwnedFile,withPathGuard,type GuardEntry} from '../core/file-access.ts';
 
 export type Identity={dev:string;ino:string};
@@ -31,6 +31,14 @@ export async function nativeGit(executable:string,metadata:string,worktree:strin
  if(result.truncated)throw new HarnessError('RESOURCE_LIMIT','Git output exceeds the 4 MiB review limit.');
  if(result.exitCode!==0||result.cancelled||result.timedOut)throw new HarnessError(result.cancelled?'CANCELLED':'GIT_ERROR','Git operation did not complete.',result);
  return result.stdout;
+}
+/** Raw-byte stdout for exact blob comparison; same spawn/abort/output policy as nativeGit. */
+export async function nativeGitBytes(executable:string,metadata:string,worktree:string|undefined,args:string[],signal:AbortSignal,environment:NodeJS.ProcessEnv={},outputLimit=4*1024*1024){
+ const prefix=['--no-pager','--no-replace-objects','--git-dir='+metadata,...(worktree?['--work-tree='+worktree]:[]),'-c','core.hooksPath='+nullFile,'-c','core.fsmonitor=false','-c','core.untrackedCache=false','-c','submodule.recurse=false','-c','diff.external=','-c','core.attributesFile=','-c','core.excludesFile=','-c','credential.helper=','-c','gc.auto=0','-c','maintenance.auto=false'];
+ const result=await runProcessRaw(executable,[...prefix,...args],worktree??metadata,signal,()=>{},120000,environment,outputLimit);
+ if(result.truncated)throw new HarnessError('RESOURCE_LIMIT','Git output exceeds the raw review limit.');
+ if(result.exitCode!==0||result.cancelled||result.timedOut)throw new HarnessError(result.cancelled?'CANCELLED':'GIT_ERROR','Git operation did not complete.',result);
+ return result.stdoutBytes!;
 }
 async function pointer(path:string){return(await readBoundFile(path,4096)).toString().replace(/\r?\n$/,'');}
 async function verifyManaged(family:ManagedGitFamily){
