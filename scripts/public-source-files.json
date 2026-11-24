@@ -3244,6 +3244,7 @@
     "scripts/run-dependency-contracts.ts",
     "scripts/run-desktop.ts",
     "scripts/software-development-fixtures.ts",
+    "scripts/store-read-benchmark.ts",
     "scripts/task-design-scenes.ts",
     "scripts/test-browser.ts",
     "scripts/theme-contrast.ts",
