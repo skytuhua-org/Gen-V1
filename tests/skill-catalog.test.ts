@@ -2,7 +2,7 @@ import {afterEach,expect,it} from 'vitest';
 import {mkdtemp,mkdir,writeFile,readFile,lstat,realpath,rm,symlink,link,rename} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve,sep} from 'node:path';
-import {SkillCatalogRepository} from '../packages/skill-catalog/repository.ts';
+import {SkillCatalogRepository,personalScope,type SkillCatalogCapabilityProvider} from '../packages/skill-catalog/repository.ts';
 import {directoryCatalog,parseSkillMetadata} from '../packages/skill-catalog/filesystem.ts';
 import {harnessCatalog,bundledCatalog,projectCatalog,installedAppCatalog,createPersonalSkillCatalog} from '../packages/skill-catalog/adapters.ts';
 import {Store} from '../packages/storage/store.ts';
@@ -45,11 +45,35 @@ it('pins exact bytes and supporting-file custody, rejecting edits even when size
 
 it('binds authenticated cursors to inventory, search, page size and connection context',async()=>{
  const f=await fixture();for(let i=0;i<4;i++)await f.skill(`item-${i}`);
- const page=await f.repo.list({limit:1,query:'item'});expect(page.nextCursor).toBeTruthy();
- for(const options of [{limit:2,query:'item'},{limit:1,query:'other'},{limit:1,query:'item',threadId:'different'}])await expect(f.repo.list({...options,cursor:page.nextCursor!})).rejects.toMatchObject({code:'INVALID_CURSOR'});
+ // A zero-TTL repo behaves like the pre-snapshot code: every read is live.
+ const repo=new SkillCatalogRepository([f.provider],undefined,{snapshotTtlMs:0});
+ const page=await repo.list({limit:1,query:'item'});expect(page.nextCursor).toBeTruthy();
+ for(const options of [{limit:2,query:'item'},{limit:1,query:'other'},{limit:1,query:'item',threadId:'different'}])await expect(repo.list({...options,cursor:page.nextCursor!})).rejects.toMatchObject({code:'INVALID_CURSOR'});
  const cursor=page.nextCursor!,index=cursor.length-5,tampered=cursor.slice(0,index)+(cursor[index]==='a'?'b':'a')+cursor.slice(index+1);
- await expect(f.repo.list({limit:1,query:'item',cursor:tampered})).rejects.toMatchObject({code:'INVALID_CURSOR'});
- await f.skill('item-new');await expect(f.repo.list({limit:1,query:'item',cursor})).rejects.toMatchObject({code:'SKILL_CATALOG_CHANGED'});
+ await expect(repo.list({limit:1,query:'item',cursor:tampered})).rejects.toMatchObject({code:'INVALID_CURSOR'});
+ await f.skill('item-new');await expect(repo.list({limit:1,query:'item',cursor})).rejects.toMatchObject({code:'SKILL_CATALOG_CHANGED'});
+});
+
+it('serves cursor continuation pages from the minted snapshot without rescanning providers',async()=>{
+ let reads=0,version=0;
+ const entry=(n:string):SkillCatalogPage['skills'][number]=>({id:'s:'+n,sourceId:'s',name:n,description:n,files:0,availability:{status:'available'},ref:null});
+ const provider:SkillCatalogCapabilityProvider={scope:personalScope,read:async()=>{
+  reads++;const items=[0,1,2,3].map(i=>({entry:entry(`i${i}`)}));
+  if(version)items.push({entry:entry(`new${version}`)});
+  return{sources:[{id:'s',kind:'personal' as const,label:'S',availability:{status:'available'} as const}],items};
+ }};
+ const repo=new SkillCatalogRepository([provider]);
+ const first=await repo.list({limit:2});expect(reads).toBe(1);expect(first.nextCursor).toBeTruthy();
+ // A change inside the snapshot window keeps the minted revision consistent
+ // instead of aborting a pager mid-scroll.
+ version=1;
+ const second=await repo.list({limit:2,cursor:first.nextCursor!});
+ expect(reads).toBe(1);expect(second.skills).toHaveLength(2);expect(second.inventoryRevision).toBe(first.inventoryRevision);
+ // Expired snapshots revalidate against the live inventory.
+ const strict=new SkillCatalogRepository([provider],undefined,{snapshotTtlMs:0});
+ const page=await strict.list({limit:2});const before=reads;
+ await strict.list({limit:2,cursor:page.nextCursor!});expect(reads).toBe(before+1);
+ version=2;await expect(strict.list({limit:2,cursor:page.nextCursor!})).rejects.toMatchObject({code:'SKILL_CATALOG_CHANGED'});
 });
 
 it('denies file/directory symlinks and hardlinks while retaining other safe packages',async()=>{

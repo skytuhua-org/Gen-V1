@@ -22,14 +22,33 @@ export function deniedItem(sourceId:string,key:string,reason:Extract<SkillAvaila
 const fail=(code:string,message:string):never=>{throw new HarnessError(code,message);};
 export class SkillCatalogRepository {
  private readonly secret=randomBytes(32);
- constructor(private readonly providers:readonly SkillCatalogCapabilityProvider[],readonly scope:SkillCatalogScope=personalScope){}
- private async inventory(query:SkillCatalogQuery){
+ private readonly snapshotTtlMs:number;
+ // Cursor-bound inventory snapshots: continuation pages reuse the revision
+ // their cursor was minted from instead of rescanning every provider.
+ private readonly snapshots=new Map<string,{inventory:CatalogInventory&{revision:string};expires:number}>();
+ constructor(private readonly providers:readonly SkillCatalogCapabilityProvider[],readonly scope:SkillCatalogScope=personalScope,options:{snapshotTtlMs?:number}={}){
+  this.snapshotTtlMs=options.snapshotTtlMs??15_000;
+ }
+ private async inventory(query:SkillCatalogQuery,context?:string){
   const all:CatalogInventory={sources:[],items:[]};
   for(const provider of this.providers){if(JSON.stringify(provider.scope)!==JSON.stringify(this.scope))continue;const value=await provider.read(query);all.sources.push(...value.sources);all.items.push(...value.items);}
   if(all.sources.length>512||all.items.length>20000)fail('RESOURCE_LIMIT','The catalog exceeds its inventory limit.');
   if(new Set(all.sources.map(s=>s.id)).size!==all.sources.length||new Set(all.items.map(i=>i.entry.id)).size!==all.items.length)fail('INVALID_SKILL_CATALOG','Catalog identities must be unique.');
   all.sources.sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);all.items.sort((a,b)=>a.entry.id<b.entry.id?-1:a.entry.id>b.entry.id?1:0);
-  const revision=catalogHash({sources:all.sources,entries:all.items.map(i=>i.entry)});return{...all,revision};
+  const revision=catalogHash({sources:all.sources,entries:all.items.map(i=>i.entry)});
+  if(context&&this.snapshotTtlMs>0){
+   if(this.snapshots.size>=8&&!this.snapshots.has(context))this.snapshots.delete(this.snapshots.keys().next().value!);
+   this.snapshots.set(context,{inventory:{...all,revision},expires:Date.now()+this.snapshotTtlMs});
+  }
+  return{...all,revision};
+ }
+ /** A fresh, same-revision snapshot is a suitable basis; anything else
+  * triggers a live read so cursors still invalidate on real change. */
+ private snapshot(query:SkillCatalogQuery,context:string,expected?:string){
+  const cached=this.snapshots.get(context);
+  if(expected!==undefined&&cached&&cached.expires>Date.now()&&cached.inventory.revision===expected)return Promise.resolve(cached.inventory);
+  if(cached&&cached.expires<=Date.now())this.snapshots.delete(context);
+  return this.inventory(query,context);
  }
  async list(input:SkillCatalogQuery={}):Promise<SkillCatalogPage>{
   const query=skillCatalogQuerySchema.parse(input),{cursor}=query,limit=query.limit??50,context=catalogHash({scope:this.scope,query:query.query,threadId:query.threadId,projectId:query.projectId,limit});let offset=0,expected:string|undefined;
@@ -39,7 +58,7 @@ export class SkillCatalogRepository {
    if(actual.length!==wanted.length||!timingSafeEqual(actual,wanted))fail('INVALID_CURSOR','Choose a current catalog page.');
    try{const value=JSON.parse(Buffer.from(parts[0],'base64url').toString('utf8'));if(value.context!==context||!Number.isSafeInteger(value.offset)||value.offset<1||typeof value.revision!=='string')throw Error();offset=value.offset;expected=value.revision;}catch{fail('INVALID_CURSOR','Choose a current catalog page.');}
   }
-  const inventory=await this.inventory(query);if(expected&&expected!==inventory.revision)fail('SKILL_CATALOG_CHANGED','The catalog changed. Start again from its first page.');
+  const inventory=await this.snapshot(query,context,expected);if(expected&&expected!==inventory.revision)fail('SKILL_CATALOG_CHANGED','The catalog changed. Start again from its first page.');
   const terms=(query.query??'').toLowerCase().trim().split(/\s+/).filter(Boolean);
   const entries=inventory.items.map(i=>i.entry);
   const sourceLabels=new Map(inventory.sources.map(s=>[s.id,s.label]));
@@ -57,7 +76,9 @@ export class SkillCatalogRepository {
  /** Freshness/custody inspection only. SKSEND must independently admit and materialize on Send. */
  async checkReference(input:SkillReference,context:SkillCatalogQuery={}):Promise<CatalogCustody>{
   const ref=skillReferenceSchema.parse(input);if(JSON.stringify(ref.scope)!==JSON.stringify(this.scope))fail('CAPABILITY_DENIED','This catalog scope is unavailable.');
-  const inventory=await this.inventory(skillCatalogQuerySchema.parse(context)),item=inventory.items.find(i=>i.entry.id===ref.skillId&&i.entry.sourceId===ref.sourceId);
+  const referenceQuery=skillCatalogQuerySchema.parse(context);
+  const referenceContext=catalogHash({scope:this.scope,query:referenceQuery.query,threadId:referenceQuery.threadId,projectId:referenceQuery.projectId,limit:referenceQuery.limit??50});
+  const inventory=await this.snapshot(referenceQuery,referenceContext),item=inventory.items.find(i=>i.entry.id===ref.skillId&&i.entry.sourceId===ref.sourceId);
   if(!item?.entry.ref||!item.custody||JSON.stringify(skillReferenceSchema.parse(item.entry.ref))!==JSON.stringify(ref))fail('SKILL_CATALOG_CHANGED','This skill changed or is unavailable. Select it again.');
   return structuredClone(item!.custody!);
  }
