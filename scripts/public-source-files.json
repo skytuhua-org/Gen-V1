@@ -3454,6 +3454,7 @@
     "tests/review-fixtures.test.ts",
     "tests/review-host.test.ts",
     "tests/review-regressions.test.ts",
+    "tests/run-admission-v1.test.ts",
     "tests/runtime-model-only.test.ts",
     "tests/runtime-pi.test.ts",
     "tests/runtime-request-helpers.test.ts",
