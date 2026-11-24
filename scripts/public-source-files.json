@@ -3210,6 +3210,7 @@
     "scripts/m15-evidence.mts",
     "scripts/m15-record.mjs",
     "scripts/measure-context-efficiency.ts",
+    "scripts/measure-event-growth.ts",
     "scripts/motion-probe.ts",
     "scripts/package-desktop.ts",
     "scripts/plugin.ts",
