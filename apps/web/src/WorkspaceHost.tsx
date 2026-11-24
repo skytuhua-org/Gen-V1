@@ -211,6 +211,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   const [archive, setArchive] = useState<ThreadNavigationRow>();
   const [unpin, setUnpin] = useState<{ row: ThreadNavigationRow; patch: NonNullable<ThreadNavigationRow['presentation']>; decide: (accepted: boolean) => void }>();
   const mutationPending = useRef(false), [mutationBusy, setMutationBusy] = useState(false);
+  const renameInput = useRef<HTMLInputElement>(null), renameSelected = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const sidebar = useRef<HTMLElement>(null), scrim = useRef<HTMLButtonElement>(null), searchRef = useRef<HTMLInputElement>(null);
   const prepareSidebarToggle = useSidebarCollapse(sidebar, layout.sidebarCollapsed, preferences.panelAnimations && preferences.motionDuration > 0, mobile);
@@ -276,7 +277,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
       setFolded={(key, folded) => setLayout(value => ({...value, folded: {...value.folded, [key]: folded}}))}
       select={id => fail(() => openConversation(id))} create={() => action('new-thread')} settings={openSettings}
       onConnectProject={() => action('connect-project')} onOpenPullRequests={() => action('linked-pull-requests')} onOpenUsage={() => action('usage')}
-      rename={row => {setRename(row); setTitle(row.title);}} archive={id => {const row = navigation.page?.items.find(value => value.id === id); if (row) {if (preferences.archiveConfirmation) setArchive(row); else archiveRow(row);}}} presentation={present}
+      rename={row => {renameSelected.current = false; setRename(row); setTitle(row.title);}} archive={id => {const row = navigation.page?.items.find(value => value.id === id); if (row) {if (preferences.archiveConfirmation) setArchive(row); else archiveRow(row);}}} presentation={present}
       ensureManualOrder={() => mutate(async () => {await command('settings.update', {preferences: {projectOrder: 'manual'}}); await refreshSettings(); fail(navigation.refresh);})}
       pageControls={<div className="workspace-host-navigation-page">
         {navigation.error && <ErrorState message={navigation.error} retryLabel="Retry threads" onRetry={() => fail(navigation.refresh)}/>}
@@ -296,8 +297,8 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
     <Modal open={settingsOpen} title="Settings" className="settings-dialog" onClose={closeSettings}>
       {settingsOpen && <CompactSettingsContent scopeKey="personal-main" close={closeSettings} addResource={() => action('resources')} openBrowser={openBrowser}/>}
     </Modal>
-    <Modal open={Boolean(rename)} title="Rename thread" onClose={() => {if (!mutationPending.current) setRename(undefined);}}><form onSubmit={event => {event.preventDefault(); if (rename && title.trim()) mutate(async () => {await command('thread.rename', {title: title.trim()}, rename.id); await navigation.refresh(); setRename(undefined);});}}>
-      <label>Thread name<input autoFocus disabled={mutationBusy} value={title} maxLength={180} onChange={event => setTitle(event.target.value)}/></label><button disabled={mutationBusy || !title.trim()}>Save name</button>
+    <Modal open={Boolean(rename)} title="Rename thread" initialFocusRef={renameInput} onClose={() => {if (!mutationPending.current) setRename(undefined);}}><form onSubmit={event => {event.preventDefault(); if (rename && title.trim()) mutate(async () => {await command('thread.rename', {title: title.trim()}, rename.id); await navigation.refresh(); setRename(undefined);});}}>
+      <label>Thread name<input ref={el => { renameInput.current = el; if (el && !renameSelected.current) { renameSelected.current = true; el.select(); } }} autoFocus disabled={mutationBusy} value={title} maxLength={180} onChange={event => setTitle(event.target.value)}/></label><button disabled={mutationBusy || !title.trim()}>Save name</button>
     </form></Modal>
     <Modal open={Boolean(archive)} title="Archive thread" onClose={() => {if (!mutationPending.current) setArchive(undefined);}}><p>{archive?.title}</p><button disabled={mutationBusy} onClick={() => {if (archive) archiveRow(archive);}}>Archive</button></Modal>
     <Modal open={Boolean(unpin)} title="Unpin thread" onClose={() => {if (unpin && !mutationPending.current) answerUnpin(unpin, false);}}><p>{unpin?.row.title}</p><button disabled={mutationBusy} onClick={() => {if (unpin) answerUnpin(unpin, false);}}>Keep pinned</button><button disabled={mutationBusy} onClick={() => {if (unpin) answerUnpin(unpin, true);}}>Unpin</button></Modal>
