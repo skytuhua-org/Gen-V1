@@ -3942,6 +3942,7 @@
     "tests/side-chat.test.ts",
     "tests/side-draft-owner.test.ts",
     "tests/side-runtime-cleanup.test.ts",
+    "tests/sidebar-filter-a11y.test.ts",
     "tests/sidebar-project-order.test.ts",
     "tests/sidebar-reorder.test.ts",
     "tests/signature-approval.test.ts",
