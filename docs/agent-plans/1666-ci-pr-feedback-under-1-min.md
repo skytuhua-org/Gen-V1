@@ -2,11 +2,11 @@
 
 ## META
 - Repo: skytuhua-org/Gen-V1 · Issue: https://github.com/skytuhua-org/Gen-V1/issues/1666
-- PLAN_REV: 3 (2026-11-23). History: rev1 2026-11-22 (initial), rev2 2026-11-22 (maintainer: $0 budget, Blacksmith rejected, comment 7071834333), rev3 2026-11-23 (this: adds missing META/REQUIREMENTS/REPO_MAP/DESIGN/VALIDATION sections, records bun-test rejection and actual state; no requirement change).
-- Baseline: main@1cbd02cd78e93771ddca6f0f490c31133919e44a (verified 2026-11-23T11:07Z).
-- Linked PRs: merged #1667, #1669, #1670; open #1671, #1672, #1673; blocker fix #1898 (tracked on #1227).
-- Status: partially implemented; speed target NOT met.
-- Provenance: original task brief from the maintainer (session chat), audit in this issue, checkpoints in this issue's comments.
+- PLAN_REV: 4 (2026-11-24). History: rev1 2026-11-22 (initial), rev2 2026-11-22 (maintainer: $0 budget, Blacksmith rejected, comment 7071834333), rev3 2026-11-23 (adds missing META/REQUIREMENTS/REPO_MAP/DESIGN/VALIDATION sections, records bun-test rejection; file pinned at 56458042e9183c0d68e197e628229918fc5beb2b on closed, unmerged #1899, whose copy is consolidated in open #1994), rev4 2026-11-24 (this: state after all PRs merged, T14/T15 results, T09a hook fix, new baseline; no requirement change).
+- Baseline: main@9ddd536cc84c0f327ddf6133d485f8ab8baf294b (verified 2026-11-24T11:14Z).
+- Linked PRs: merged via merge queue #1667, #1669, #1670, #1671, #1672, #1673; #1227 fixes #1228 and #1898 merged; open #2113 (T09a).
+- Status: implemented except T04, T10 caching, T12; speed target NOT met (see VALIDATION).
+- Provenance: original task brief from the maintainer (session chat; the rules are restated verbatim in REQUIREMENTS), audit in this issue, checkpoints in this issue's comments.
 
 ## OBJECTIVE
 Make Gen-V1 CI as fast as possible without letting it lie. Target: a PR gets its result in under 1 minute at the median and under 2 minutes at p95, measured from push to final PR check result on real GitHub runs.
@@ -22,14 +22,15 @@ In scope / rules that outrank speed (maintainer, verbatim intent):
 - R7 Timings claimed only from real GitHub runs (queue wait, setup, run, wall clock, runner-minutes); queued CI != pass.
 Out of scope: changing test semantics, removing tests, paid infrastructure, self-hosted runners on a public repo (unsafe: untrusted PR code).
 
-## REPO_MAP (verified on main@1cbd02cd unless noted)
-- `.github/workflows/ci.yml` — CI workflow (folded `Windows checks` from #1667; selection + literal shard jobs on #1671; per-job budgets on #1673).
-- `vitest.config.ts` — force-rerun triggers for selection (#1671).
-- `tests/ci-draft-policy.test.ts` + CI policy tests — assert triggers, draft guard, required job names.
-- `package.json` — `lint` = `tsx scripts/lint-ui.ts --check && bun lint --no-script`; `typecheck` = `bun check --no-script`; devDependency `bun@1.4.5-canary.20261121.1` (#1669/#1670).
-- `.oxlintrc.json` — 1,021 explicit rules (533 error, 488 off where the repo currently violates them) (#1669).
-- `hk.pkl`, `CONTRIBUTING.md` — opt-in hk hooks (#1672, open).
-- Ruleset 27819131 on `main` — merge queue (MERGE, ALLGREEN, build 5, merge 5, check timeout 360 min) + the R6 required contexts; no review rule.
+## REPO_MAP (verified on main@9ddd536c unless noted)
+- `.github/workflows/ci.yml`: CI workflow. Folded `Windows checks` (#1667), PR diff selection plus literal full-suite shard jobs `test-1`..`test-4` (#1671), per-job `timeout-minutes` budgets (#1673). `select` runs on `ubuntu-latest`; every other job runs on `windows-2022`.
+- `vitest.config.ts`: `forceRerunTriggers` that make broad changes select every test (#1671).
+- `tests/ci-draft-policy.test.ts` and the other `tests/ci-*.test.ts` policy tests: assert triggers, draft guard, required job names, and literal names on PR-skipped required jobs.
+- `package.json`: `lint` = `tsx scripts/lint-ui.ts --check && bun lint --no-script`; `typecheck` = `bun check --no-script`; `test` = `pnpm build:credential-lease && pnpm build:widgets && vitest run`; devDependency `bun@1.4.5-canary.20261121.1` (#1669, #1670).
+- `.oxlintrc.json`: 1,021 explicit rules (533 error, 488 off where the repo currently violates them) (#1669).
+- `hk.pkl`, `CONTRIBUTING.md`: opt-in hk hooks (#1672 merged). The pre-push `tests` step runs `pnpm exec vitest run` on main and skips the widget build; #2113 (open) changes it to `pnpm test`.
+- `apps/server/server.ts`, `tests/host-close-connections.test.ts`: per-socket request accounting that closes idle sockets on `preClose` (#1898, tracked on #1227); `apps/server/event-stream.ts` late-SSE guard (#1228).
+- Ruleset 27819131 on `main`: merge queue (MERGE, ALLGREEN, build 5, merge 5, check timeout 360 min) plus the R6 required contexts; no review rule.
 
 ## DESIGN
 - PR push books Windows checks + only the test shards the diff reaches (`vitest list --changed HEAD^1 --filesOnly` on a short Linux selection job; shard count sized to the selection; zero selected tests => no Windows test runner). Broad changes (config, CI, docs, scripts, fixtures, e2e) force all tests.
@@ -43,31 +44,35 @@ Out of scope: changing test semantics, removing tests, paid infrastructure, self
 |---|---|---|---|---|
 | T01 | Audit last 150 CI runs | — | DONE | table below |
 | T02 | Fold Windows checks/Desktop build/Hermes into one job; `merge_group` trigger | T01 | DONE | #1667 merged |
-| T02b | Per-job budgets (no wider timeouts) | T02 | IMPLEMENTED | #1673 open, PR checks passed; queued after #1671 |
+| T02b | Per-job budgets (no wider timeouts) | T02 | DONE | #1673 merged via queue 2026-11-24T04:03Z |
 | T03 | `bun lint` pinned + `.oxlintrc.json` | — | DONE | #1669 merged via queue |
-| T04 | `bun fmt` | T03 | NOT_STARTED | large reformat; sequence last |
+| T04 | `bun fmt` | T03 | NOT_STARTED | large reformat (3516 files); sequence last; needs maintainer go-ahead |
 | T05 | `bun check` typecheck | T03 | DONE | #1670 merged via queue (run 45112847393 7/7) |
 | T06 | `bun test` | — | REJECTED | hundreds of failures/errors under bun test; Vitest kept |
 | T07 | install/scripts on bun | T06 | BLOCKED | depends on rejected T06 |
-| T08 | PR test selection + hidden-change red check | T02 | IMPLEMENTED | #1671 open; merge-group Browser failed twice from #1227 (runs 45101598407, 45121949413) |
-| T09 | hk hooks | T03 | IMPLEMENTED | #1672 in merge queue |
-| T10 | ~~Blacksmith~~ REJECTED; free alternatives (Linux selection job, caches, blobless checkout) | T08 | IN_PROGRESS | Linux selection job in #1671; caching/blobless NOT_STARTED |
+| T08 | PR test selection + hidden-change red check | T02 | DONE | #1671 merged via queue 2026-11-24T02:37Z, merge group 7/7 |
+| T09 | hk hooks | T03 | DONE | #1672 merged via queue |
+| T09a | Pre-push `tests` step builds widgets/lease first (`pnpm test --changed <merge-base>`) | T09 | IMPLEMENTED | #2113 open; done when merged via queue |
+| T10 | ~~Blacksmith~~ REJECTED; free alternatives (Linux selection job, caches, blobless checkout) | T08 | IN_PROGRESS | Linux selection job DONE (#1671); caching of the ~3 min `node-pty` toolchain install NOT_STARTED, proposed to the maintainer in comment 7122117459, awaiting decision |
 | T11 | Merge-queue ruleset on `main` | T02 | DONE | ruleset 27819131 active |
-| T12 | Two-week failure log; remove change-detector tests | T08 | NOT_STARTED | |
-| T13 | Unblock T08: root-cause #1227 remaining host.close socket | — | IMPLEMENTED | #1898 (scope on #1227) |
-| T14 | Re-run cancelled runs (211, list `cancelled-2026-11-23.tsv` on worker VM) only if PR open and head SHA unchanged | T08 | NOT_STARTED | automation armed |
-| T15 | Measure real PR timings after T08/T02b land | T08,T02b | NOT_STARTED | |
+| T12 | Two-week failure log; remove change-detector tests | T08 | NOT_STARTED | log window starts 2026-11-24 |
+| T13 | Unblock T08: root-cause #1227 remaining host.close socket | — | DONE | #1898 merged via queue 2026-11-24T02:37Z; #1227 closed `completed` by the maintainer 2026-11-24T05:12Z |
+| T14 | Re-run cancelled runs only if PR open and head SHA unchanged | T08 | DONE | 86 of 211 re-run, 126 skipped (PR closed or pushed); comment 7122117459 |
+| T15 | Measure real PR timings after T08/T02b land | T08,T02b | DONE | VALIDATION "Measured"; target not met |
 
 ## VALIDATION
 - Planned: CI policy tests (`pnpm exec vitest run tests/ci-*.test.ts`), `actionlint .github/workflows/ci.yml`; real PR runs for draft (0 jobs), ready (checks+selected), `merge_group` (7/7 full suite); required names equal ruleset contexts; selection red check (hidden break in a core module fails PR run).
-- Executed: policy tests 98/98 PASS on #1671; actionlint PASS; local selection counts empty=0, test-file=1, core module=114, broad=547; merge-group 7/7 PASS for #1669, #1670 (45112847393), #1815 (45117951623), #1228 (45121947837); #1671 merge group Browser FAIL x2 (#1227).
-- Measured so far: Windows checks job ≈ 9 min run time with no queue; test selection ≈ 1 min; #1669 4.1 h from enqueue to merge (runner wait).
-- Release gate: T08 + T02b merged via queue, then T15 numbers posted. Target p50<1 min / p95<2 min is NOT reachable on free Windows runners while `Windows checks` takes ≈9 min; record as finding, do not claim.
+- Executed before rev4: policy tests 98/98 PASS on #1671; actionlint PASS; local selection counts empty=0, test-file=1, core module=114, broad=547; merge-group 7/7 PASS for #1669, #1670 (45112847393), #1815 (45117951623), #1228 (45121947837), #1898 and #1671 (Browser `host-loop.spec.ts:389` passed in 5.7 s); #1671 merge-group Browser FAIL x2 before #1898 (runs 45101598407, 45121949413, cause #1227).
+- Executed 2026-11-24 review (Linux, Node 24.22.2, main@9ddd536c): `actionlint .github/workflows/ci.yml` PASS; `pnpm exec vitest run tests/ci-draft-policy.test.ts tests/bun-lint-config.test.ts tests/bun-check-typecheck.test.ts tests/host-close-connections.test.ts tests/public-source.test.ts` PASS 5 files / 48 tests; `pnpm lint` PASS (20.4 s); `pnpm typecheck` PASS (0.8 s, 1,511 files). T09a: old pre-push command on a clean worktree FAIL (`Trusted widget receiver is missing`), new command PASS 6/6, `hk validate` PASS.
+- Not run: the hk Windows (PowerShell) variant on a Windows host; a two-week flake log (T12).
+- Measured (real GitHub runs, first attempts only, `run_attempt == 1`): 3 early samples 12.1, 27.8, 31.2 min wall (comment 7122117459). 19 completed PR runs created 2026-11-24T02:39Z–04:24Z on the new workflow: wall clock p50 57.5 min, p95 399.5 min, max 401.8 min; 18 success, 1 failure. Per run, longest job queue wait p50 45.3 min, p95 376.9 min; longest job run p50 8.8 min; `Windows checks` run p50 8.7 min (5.5–9.4). The 86 T14 re-runs were queued in the same window and added to runner contention.
+- Cost: $0. All jobs run on free GitHub-hosted runners (public repo); no paid runner, service or secret was added.
+- Release gate: met for T08 and T02b (merged via queue, T15 posted). Target p50<1 min / p95<2 min is NOT met and not reachable on free Windows runners while `Windows checks` runs ≈9 min and the 20-job cap is saturated; recorded as a finding, not claimed.
 
 ## STATE
-- Owner: devin-cloud-37c167 (claim 7096892532). DONE: T01, T02, T03, T05, T11. IMPLEMENTED: T02b, T08, T09, T13. REJECTED: T06. NOT_STARTED: T04, T12, T14, T15. BLOCKED: T07.
-- Risks: free-runner queue saturation (20 concurrent jobs shared by ~200 open PRs); #1227 Windows-only shutdown hang.
-- Next: enqueue #1898 once its PR checks report, then #1671 behind it; #1673 after #1671; then T14, T15.
+- Owner: devin-cloud-37c167 until its RELEASE checkpoint on this issue. DONE: T01, T02, T02b, T03, T05, T08, T09, T11, T13, T14, T15. IMPLEMENTED: T09a (#2113). IN_PROGRESS: T10 (caching awaiting maintainer decision). REJECTED: T06. NOT_STARTED: T04, T12. BLOCKED: T07.
+- Risks: free-runner queue saturation (20 concurrent jobs shared by ~200 open PRs) dominates wall time; selection can miss a test that reads source files directly (merge queue still runs it).
+- Next: merge #2113 via the queue; maintainer decides on T10 caching (~1–2 min per Windows job, no checks dropped) and on T04; T12 log after two weeks.
 
 ## Audit (T01) — last 150 completed `CI` runs (2026-11-21T05:21Z → 2026-11-22T00:21Z)
 Run conclusions: 60 success, 57 cancelled, 33 failure. All jobs on GitHub-hosted `windows-2022`; org is on the **Free** plan (20 concurrent hosted jobs, shared across every workflow).
@@ -90,6 +95,6 @@ Totals over the 150 runs: **waiting 9103 h**, setup 43.6 h, running 145.7 h. Suc
 Measured locally (8 vCPU Linux) for the tool switch: `tsc --noEmit` 27.6 s vs `bun check` 0.64 s (both 0 errors); `pnpm lint` 21.5 s vs `bun lint` 0.04 s; `bun fmt --check` 0.13 s (3516 files would reformat); `pnpm install` 10.5 s.
 
 ## REFERENCES
-- Checkpoints: issue #1666 comments (latest worker devin-cloud-37c167).
-- #1227 (Browser shutdown hang), #993, #1031.
-- AGENTS.md: https://github.com/skytuhua-org/Gen-V1/blob/1cbd02cd78e93771ddca6f0f490c31133919e44a/AGENTS.md
+- Checkpoints: issue #1666 comments by devin-cloud-37c167 (latest substantive before rev4: https://github.com/skytuhua-org/Gen-V1/issues/1666#issuecomment-7122117459).
+- #1227 (Browser shutdown hang, closed), #993, #1031; plan-mirror consolidation #1994.
+- AGENTS.md: https://github.com/skytuhua-org/Gen-V1/blob/9ddd536cc84c0f327ddf6133d485f8ab8baf294b/AGENTS.md

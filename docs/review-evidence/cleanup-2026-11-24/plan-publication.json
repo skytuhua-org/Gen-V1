@@ -1,0 +1,589 @@
+{
+  "schema_version": 1,
+  "tracker": "https://github.com/skytuhua-org/Gen-V1/issues/1803",
+  "publication_pr": "https://github.com/skytuhua-org/Gen-V1/pull/1994",
+  "starting_docs_commit": "f3e947245e1b67916bc3393b934202d93827da64",
+  "main_baseline": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+  "publication_policy": "Publish and read back these exact full files before guarded canonical-body updates. Per-issue receipts record final body verification; historical plans remain in earlier immutable commits.",
+  "canonical_plans": [
+    {
+      "number": 1020,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1020.md",
+      "sha256": "9c56c04e0d6e3ab3b5d39e3e7e1713b5b9759943aa2f9c6e10d26e9a356fd376",
+      "bytes": 9253,
+      "git_blob": "899612089a90fbcec3942013884d038f026af34e",
+      "expected_old_body_sha256": "9d46397fef8e677352867f650581fed0fa6c40710e16950784acbfdc46b75c6e",
+      "canonical_body_change": true,
+      "action": "replace_complete_body_after_mirror_publication"
+    },
+    {
+      "number": 1322,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1322.md",
+      "sha256": "3bbd591102d67ff5ee76079a059b9bff3be070719e151de42cac23c853625160",
+      "bytes": 38495,
+      "git_blob": "1a2fb15732fb6ee0999047a5cdd3bca857427492",
+      "expected_old_body_sha256": "6d658ee35114f1d75a1046fd45b848841b9d8090db22fecb71d3b10d5bf2ff99",
+      "canonical_body_change": true,
+      "action": null
+    },
+    {
+      "number": 1323,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1323.md",
+      "sha256": "7fdd897ce640cee9e52c31086b5637420631a30534aed01f5ff4bc2fa5336063",
+      "bytes": 44999,
+      "git_blob": "d3a87aa3a833b90c52f397e420a6f2a022bc5aaf",
+      "expected_old_body_sha256": "56bd224ea0518fe1fb63ba71c8c1bff39d800c14c6cf49340beda94d7fbbd4a3",
+      "canonical_body_change": true,
+      "action": "replace_complete_body_after_mirror_publication"
+    },
+    {
+      "number": 1326,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1326.md",
+      "sha256": "417ed1fd5bb52006e25ad824a5e41c331722a6832cdd12de7b9a73c9cbb040c6",
+      "bytes": 42705,
+      "git_blob": "cc16c8b315bb1001afe91cd4e2fd5085a3599490",
+      "expected_old_body_sha256": "70af4e2acb8268f20c490114434e024f1e0b348d01ca36b69cb3b9e3941bbc7c",
+      "canonical_body_change": true,
+      "action": "replace_complete_body_after_mirror_publication"
+    },
+    {
+      "number": 1481,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1481.md",
+      "sha256": "af255a1324ca37a1b3e09ff6b648421bcf271f09a1a6184c5809f9e157e64685",
+      "bytes": 50063,
+      "git_blob": "2be7c7824eb271041c2c2483e33dbb2ae11c3b07",
+      "expected_old_body_sha256": "1d928b685f9d8c41a2fa73246fe1fa66a793a78f82f7da44815cb3a22d2b4a67",
+      "canonical_body_change": true,
+      "action": "replace_complete_body_after_mirror_publication"
+    },
+    {
+      "number": 1643,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1643.md",
+      "sha256": "98136dfc5cea6c072db671fa44571098bfed031f5a9fa4ec8852b56d4359c468",
+      "bytes": 41694,
+      "git_blob": "7fc7c8bb71b458ea2c1e1cad84883a160327e036",
+      "expected_old_body_sha256": "4a8141313483b35b3522814156a66b10ab760e4c8c89343769e524dfeaf0eda6",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 1666,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1666.md",
+      "sha256": "78f7eb8ce578496106c29cb52410ec4a30baf2b1c6b2856bb04b7d7fac519828",
+      "bytes": 12162,
+      "git_blob": "4b1f4b982a92a27f4574a0b3e1a41385455f4f14",
+      "expected_old_body_sha256": "78f7eb8ce578496106c29cb52410ec4a30baf2b1c6b2856bb04b7d7fac519828",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 1947,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1947.md",
+      "sha256": "80558a90dd749f52b5c7d8ed4a79229f15f73643367fcb13852dfd9178881de4",
+      "bytes": 14541,
+      "git_blob": "a36856c5905f983aabd5fab9852e81b899cceae7",
+      "expected_old_body_sha256": "b3571929cf93384949e39a3425118b9030a5c7ca778e93ba343db5cd8f812b5b",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 1958,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1958.md",
+      "sha256": "1c47ed0548b2849c3f05a1f5faff1d18d77649fae739b31840d363f084743e6c",
+      "bytes": 12532,
+      "git_blob": "425b35342f4d02ce8358e54b3d78258c41a44d31",
+      "expected_old_body_sha256": "2dc837c4db7f933db02473bd1c7a7d75eb708918ad08e77fb148d332935b8e98",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 1992,
+      "path": "docs/agent-plans/review-2026-11-24/issue-1992.md",
+      "sha256": "2eaf8e25d1d19b1a2bd577c36b8b672175ee4e480636ea1a4f1ea4c583f8c4c7",
+      "bytes": 43793,
+      "git_blob": "11002285da21335f76440bb5f01df490af5f42ac",
+      "expected_old_body_sha256": "466d9413ce7d714178afc0ff9c7f1265ed70cc87a325eddb575d603587949dd8",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision_and_completed_closure"
+    },
+    {
+      "number": 2014,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2014.md",
+      "sha256": "75f417fe695e973e6bcc49ee9aa5d560b41ac71df37d052535ca033d68f99ce7",
+      "bytes": 22694,
+      "git_blob": "5f2146e1f324c19fb4478cd439661ca866c59539",
+      "expected_old_body_sha256": "75f417fe695e973e6bcc49ee9aa5d560b41ac71df37d052535ca033d68f99ce7",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2016,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2016.md",
+      "sha256": "43ef3b5e001a1bcc7dd16826ae79f3a8fdee8349a2f959ccfad306d2f2bb4fab",
+      "bytes": 22513,
+      "git_blob": "362cf664e1f9097d8f8b1d4d424f9c765d82dad5",
+      "expected_old_body_sha256": "43ef3b5e001a1bcc7dd16826ae79f3a8fdee8349a2f959ccfad306d2f2bb4fab",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2017,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2017.md",
+      "sha256": "2f87c50cf785ada157f4239b634f8841a10ab651e1ca152f629ef77229f64c7c",
+      "bytes": 21672,
+      "git_blob": "6caaefb8257f12f584338e6b87ff4d59380b1af1",
+      "expected_old_body_sha256": "2f87c50cf785ada157f4239b634f8841a10ab651e1ca152f629ef77229f64c7c",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2020,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2020.md",
+      "sha256": "56a82ad512f0b20e5641d27000fea4a48078b3d3a9c75a4510d930ff7b4f8e57",
+      "bytes": 33424,
+      "git_blob": "4af9bdee6244f287f1ffc21d9a73206e59409898",
+      "expected_old_body_sha256": "56a82ad512f0b20e5641d27000fea4a48078b3d3a9c75a4510d930ff7b4f8e57",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2021,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2021.md",
+      "sha256": "8b1ded110883614624c90a21a838a768ef3fd9473426e53a366e04b1fefa5d8c",
+      "bytes": 29043,
+      "git_blob": "3a13d43abed4f5a557a2feb496ada76e7307783d",
+      "expected_old_body_sha256": "8b1ded110883614624c90a21a838a768ef3fd9473426e53a366e04b1fefa5d8c",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2022,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2022.md",
+      "sha256": "82e87128bed20a4c7bc1f1221126a066c3f05d6ff32533e359d7cf4a14c96a36",
+      "bytes": 29426,
+      "git_blob": "b69af4246b3813484c7ff99e7dcc50ded4eff7c0",
+      "expected_old_body_sha256": "82e87128bed20a4c7bc1f1221126a066c3f05d6ff32533e359d7cf4a14c96a36",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2023,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2023.md",
+      "sha256": "d8f21d4bcf0bc2877fa13c84cb9c1e2189dccacdba1ce37358dfb00562c1df55",
+      "bytes": 28883,
+      "git_blob": "61a7868944e8360d9c9943be954d68bc7599afc5",
+      "expected_old_body_sha256": "d8f21d4bcf0bc2877fa13c84cb9c1e2189dccacdba1ce37358dfb00562c1df55",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2024,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2024.md",
+      "sha256": "7a3b05d50f4ce91eea13beb0b57983af6df0fba62eed7f804726a18ac0eea037",
+      "bytes": 21098,
+      "git_blob": "8ace56da6d93c17a7ad323ea5623d81181b7656a",
+      "expected_old_body_sha256": "44c5c30e36de7429118306914854661168e334406cc5e5096a967cf79afb170d",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2025,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2025.md",
+      "sha256": "15f3a9322b33f3779b3b889b0c36ae05b6e304220c738a0f7e232751488c5a8e",
+      "bytes": 34304,
+      "git_blob": "5cf67fca449860cac2cbc096ec7c6541c6241f34",
+      "expected_old_body_sha256": "15f3a9322b33f3779b3b889b0c36ae05b6e304220c738a0f7e232751488c5a8e",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2026,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2026.md",
+      "sha256": "bc40b6dc9d27049d6e48c168ac8782eedc4e28d5d26586b12d0db92405acfbc1",
+      "bytes": 21289,
+      "git_blob": "74c84d206e5bf2a1993798ca450c5ea292d84770",
+      "expected_old_body_sha256": "232f3d06c966a84a99c3aecbe070e1de0fd55df922b734055434cbb8421be10c",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2027,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2027.md",
+      "sha256": "fc9c7eee541966a9d8793be639c54a706004f1eaf01462c0ef3d104392799499",
+      "bytes": 34558,
+      "git_blob": "8de3bfa3c1ceb13645554906248b2cd60fef0827",
+      "expected_old_body_sha256": "fc9c7eee541966a9d8793be639c54a706004f1eaf01462c0ef3d104392799499",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2028,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2028.md",
+      "sha256": "efa7568703874bfd0c502b1bd8509bbd364e98e5b52e2f429d1b1e5a505c7a03",
+      "bytes": 17105,
+      "git_blob": "bfe2b7c0a4a75b3c9fb650c7240753d5973d079c",
+      "expected_old_body_sha256": "be98901356e8a019b99bc4261d5635873894178a3e39fdfc4a38937371624cd1",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2029,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2029.md",
+      "sha256": "ef3cb23891140cac74a7617789d95a7062a1ba756ae3d83372539f7667e00edb",
+      "bytes": 18417,
+      "git_blob": "ad17996ea3a8094aac4db50ae5335e8266981336",
+      "expected_old_body_sha256": "6a523a84b9068a9f4e77bdf8e47a361634fee85c50ddf48b1e133e2223a53ae6",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2037,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2037.md",
+      "sha256": "07714596d553e2d6c10bfe58cde825a4c8d1f439687c09a2e5accc410cee26f8",
+      "bytes": 31180,
+      "git_blob": "6d33c6a4e902c6bf2780f8fcc5e68d26579b4f90",
+      "expected_old_body_sha256": "07714596d553e2d6c10bfe58cde825a4c8d1f439687c09a2e5accc410cee26f8",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2038,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2038.md",
+      "sha256": "9ce6d748f4141cbccd4e274438ee4fa756f07b116c53b65f32ee9726bf9fc0fd",
+      "bytes": 29447,
+      "git_blob": "f1f476ccdc4913565f43d0f7efaae3d8161cd1d8",
+      "expected_old_body_sha256": "9ce6d748f4141cbccd4e274438ee4fa756f07b116c53b65f32ee9726bf9fc0fd",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2039,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2039.md",
+      "sha256": "9d770d27880c410c54ad7191fccee255ac35d08b880c006f81b3e9e41a357c48",
+      "bytes": 25994,
+      "git_blob": "ef5140a0c3a00493de3c71130719a07dc1be921a",
+      "expected_old_body_sha256": "9d770d27880c410c54ad7191fccee255ac35d08b880c006f81b3e9e41a357c48",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2041,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2041.md",
+      "sha256": "f72dfcbe6d28464a1c5d0966aaf2efc4d33f79bde75d72c081d19b7b9c92b2cd",
+      "bytes": 31457,
+      "git_blob": "075c9c007b688dc0ce0582e0563c2ab37f7e2a36",
+      "expected_old_body_sha256": "f72dfcbe6d28464a1c5d0966aaf2efc4d33f79bde75d72c081d19b7b9c92b2cd",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2042,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2042.md",
+      "sha256": "63ab184a80470299417e0a30bcf97c0452c6ab047dabbc804841a89b3daccb2b",
+      "bytes": 30254,
+      "git_blob": "d51562c2af0723546d20507661341d4c9d981fce",
+      "expected_old_body_sha256": "63ab184a80470299417e0a30bcf97c0452c6ab047dabbc804841a89b3daccb2b",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2043,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2043.md",
+      "sha256": "9db08bf050659afc90345ed76388d3313b689e848565e30dc824048a7bb37d65",
+      "bytes": 29631,
+      "git_blob": "f727d864e76206826ff0765ea0f7cacd306e2b0f",
+      "expected_old_body_sha256": "9db08bf050659afc90345ed76388d3313b689e848565e30dc824048a7bb37d65",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2044,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2044.md",
+      "sha256": "19e79921586d5a8bbb11e1c0cdec3545c93bef99de184fa6270659e35d60a925",
+      "bytes": 28759,
+      "git_blob": "524152687095dc51a07ccb40d9e03df3244373f4",
+      "expected_old_body_sha256": "19e79921586d5a8bbb11e1c0cdec3545c93bef99de184fa6270659e35d60a925",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2045,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2045.md",
+      "sha256": "ce4e8631a36d4efbe3dfd9e8fc15a795bd3bb9e30d9c0f3e91ca30a015ea9cd3",
+      "bytes": 28846,
+      "git_blob": "f5e4d85a7a7afc86ad291a6acd986bb2f0619b09",
+      "expected_old_body_sha256": "ce4e8631a36d4efbe3dfd9e8fc15a795bd3bb9e30d9c0f3e91ca30a015ea9cd3",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2048,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2048.md",
+      "sha256": "95c826e1b48931eaec7675bc29056d1c8efd729ae1900179128d1268e7184a35",
+      "bytes": 31873,
+      "git_blob": "ac03cd0959be6c6d4f88bac2de1950fbdf982b3a",
+      "expected_old_body_sha256": "95c826e1b48931eaec7675bc29056d1c8efd729ae1900179128d1268e7184a35",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2049,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2049.md",
+      "sha256": "c65cfa88144356e2a884cae56caf8f82d4f6e38792870bacc79987b57cb72c80",
+      "bytes": 24852,
+      "git_blob": "ca9ac84bf67fb538b6f86b052ad28a5859d367e6",
+      "expected_old_body_sha256": "c65cfa88144356e2a884cae56caf8f82d4f6e38792870bacc79987b57cb72c80",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2050,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2050.md",
+      "sha256": "33184d8ba2ae0059fc69361e3e2048bcd5f7a1c55e3fc6ad12566021bc81362b",
+      "bytes": 21956,
+      "git_blob": "d3a87734ffc3bd524224e9b6d0b07c4c6eff1c24",
+      "expected_old_body_sha256": "33184d8ba2ae0059fc69361e3e2048bcd5f7a1c55e3fc6ad12566021bc81362b",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2051,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2051.md",
+      "sha256": "08ad010b968f9ed1b5512502b303bafdffb2fa5507cfc04501500d856695db67",
+      "bytes": 20003,
+      "git_blob": "d460c05a51b016743ff61849501b17c6aa4536e6",
+      "expected_old_body_sha256": "08ad010b968f9ed1b5512502b303bafdffb2fa5507cfc04501500d856695db67",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2054,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2054.md",
+      "sha256": "db85b44cf9209ebfcde05fbea7ac0d4fce3a06bfe0aed041146f23c3a131ec49",
+      "bytes": 18057,
+      "git_blob": "6890d492ca4dd0c26531d8b01cc837e3382523ff",
+      "expected_old_body_sha256": "db85b44cf9209ebfcde05fbea7ac0d4fce3a06bfe0aed041146f23c3a131ec49",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2055,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2055.md",
+      "sha256": "e6c0c05545f88fcc1f7b0f195cc2dd07baa1582b8d11b76b932800210133267e",
+      "bytes": 17144,
+      "git_blob": "1a19d4b9d68f04cb5a7050cae0ebd6de04216245",
+      "expected_old_body_sha256": "e6c0c05545f88fcc1f7b0f195cc2dd07baa1582b8d11b76b932800210133267e",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2057,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2057.md",
+      "sha256": "3df19f6d79e9cea58e2d224eed1f27e4d729513e4757b925041cfc20f515886c",
+      "bytes": 30412,
+      "git_blob": "306e9e0d18881b5ce48ca6668b374e87c6073757",
+      "expected_old_body_sha256": "3df19f6d79e9cea58e2d224eed1f27e4d729513e4757b925041cfc20f515886c",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2058,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2058.md",
+      "sha256": "1da62fa3f7ccd02a9772f08a701094db921c0cab6afb7d84a58ebff06bf4d23f",
+      "bytes": 24094,
+      "git_blob": "8595932eeeedc8a95a077296da17e6df564b6cd8",
+      "expected_old_body_sha256": "1da62fa3f7ccd02a9772f08a701094db921c0cab6afb7d84a58ebff06bf4d23f",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2059,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2059.md",
+      "sha256": "de0bcc4f32fd5c4641515185ca01c1c43bb7b0a1b5a3514d5eeb649c9a4608c2",
+      "bytes": 26208,
+      "git_blob": "d9db1af30519fb9b82d438761cc5141e43787145",
+      "expected_old_body_sha256": "de0bcc4f32fd5c4641515185ca01c1c43bb7b0a1b5a3514d5eeb649c9a4608c2",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2060,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2060.md",
+      "sha256": "7e0c872e4259bcf68b6f7fe40ff7aecc5656d964736bc60db3bae2b7a6e69ba0",
+      "bytes": 31185,
+      "git_blob": "6e823ce56afa7ef0744a3951bde89414cd357851",
+      "expected_old_body_sha256": "7e0c872e4259bcf68b6f7fe40ff7aecc5656d964736bc60db3bae2b7a6e69ba0",
+      "canonical_body_change": false,
+      "action": "publish_identical_mirror_only"
+    },
+    {
+      "number": 2084,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2084.md",
+      "sha256": "1c9cfe1e775437fa67e17991c1354a8b677a335cce0d03ff367ff0572642c955",
+      "bytes": 17645,
+      "git_blob": "af074c6f3d2acd9327bff2764a3f23779853c173",
+      "expected_old_body_sha256": "1c213adb10f7f32326c1d128b930135a79be8befe823acfea7cc8bd7012e50d0",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2085,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2085.md",
+      "sha256": "1ad6a75359f66140e912dda117b23d2f7c7e60702738f409ccea0cc82ab94ab7",
+      "bytes": 16482,
+      "git_blob": "230f182227b5d654d6f9cfe293ba8783a207900a",
+      "expected_old_body_sha256": "fce32d43a8041a7da58cc859277ed7b8a4a1819b52508638501ab93480d8a024",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2086,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2086.md",
+      "sha256": "24791db0e7e59afafac2f4aa99b3e4599bdf5f9b691009a062770c2660884844",
+      "bytes": 14499,
+      "git_blob": "207ba876d8d9c7deefdaa3fe97b4b5c155c62157",
+      "expected_old_body_sha256": "6deb7470af479d4b1b83b1e97ef8829bbbeea8a1e5269f6bcd75d8ea73368b97",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2087,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2087.md",
+      "sha256": "519a647b0c9c1f672b4e06cf30d962af06a9ab5c0f9af22de0dae107724985c9",
+      "bytes": 15002,
+      "git_blob": "7b83ec2f8c151d52de3f48ea783fc68cccf01151",
+      "expected_old_body_sha256": "74f0fde5940d822aae5bd7ca64e93c2d1fcee550fa5f6aa529c3551b578e70df",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2088,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2088.md",
+      "sha256": "70877eee7274aed23d2fc3946f74ead101c5e80ce623b7637e0dc795d839c5b0",
+      "bytes": 14498,
+      "git_blob": "4ceff2b88bcceba8957689dbc2ab126c9509abfe",
+      "expected_old_body_sha256": "7cc2e95896c76b2a6426f4053f1a1fde55d6e92dc3670fbcbc40d1f83ed9a076",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2101,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2101.md",
+      "sha256": "efa6f75c561548c8a47641ccc1d9a7c1012a97eb3bd4318cf1737f3ad0f52611",
+      "bytes": 17197,
+      "git_blob": "e74dd9f0d63dd0f6d8d0fa49b4f171fc36adde21",
+      "expected_old_body_sha256": "2cf21544119d90dfa957583dc5e97fe8debace80f88badeebf0e40fc5945534a",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2102,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2102.md",
+      "sha256": "8e755c9ad3f2cdd7ba273d35c361201e651f176db2a7896165715d4fa3413e54",
+      "bytes": 20917,
+      "git_blob": "83bdf1c9a0ec2a1e0c0746716bfb3c8ba2a14989",
+      "expected_old_body_sha256": "1ca53c67a7b18882e2e76d5c1581941c7b5ee256aed53c77058fb800e37f7aac",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2103,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2103.md",
+      "sha256": "429cba81b4bb02adc14b667c8c5c16f162de5214723449461137b8065ef822e1",
+      "bytes": 14967,
+      "git_blob": "9c03f0feae8d2a7426dd636d8d81b9d8aafe5cc7",
+      "expected_old_body_sha256": "35ff987dceb2e8e7039abf64692b83514ebc2f58233681e3dd4b3b9c421ec182",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2104,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2104.md",
+      "sha256": "d1b14c64b7cd077ad7be86161a748e759da1871233954dfef70dcbf836e36786",
+      "bytes": 17055,
+      "git_blob": "ba52fc9c12a8797084128f07ec62bcc4f8d9ae9b",
+      "expected_old_body_sha256": "51a970aa18d4dd7f99d6f31ffd1e09d95b4d6cc14175d427b63b121b5ef54c31",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2105,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2105.md",
+      "sha256": "66c2368925f116836b726d598a9133b40fb1b611f49d5e40d611e2f89c5badb7",
+      "bytes": 15112,
+      "git_blob": "b72852312ff75a85e6bbc9a6d5736182c002b4c4",
+      "expected_old_body_sha256": "8052f071372d7c2799a12ffe92a39b8e4ad6b6fc84dc8b5874968a2cbec9201b",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2106,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2106.md",
+      "sha256": "1f85f938152567a80d90f1028c160fb9a50efc6a45ed9e66500f2fdee6bde8c1",
+      "bytes": 17079,
+      "git_blob": "4dda2cff0ace5d3cfafa0f7dc734698ac496f43d",
+      "expected_old_body_sha256": "d53b803cf57e69c5fcaadf8bbe54de439af782a5e5409a7386a12abc1137bea2",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2107,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2107.md",
+      "sha256": "36079d1918a275bcf21b77e831ac66b4dd2acbfd2328d2672e27c7615b6737e6",
+      "bytes": 17503,
+      "git_blob": "6cf2c6628cc48db7294da0fc0da510be4baea7b0",
+      "expected_old_body_sha256": "26975fd7d4d947985bdf165a298edd54732f927b7913a66c5052af7477b1bd6f",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2108,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2108.md",
+      "sha256": "4a813965ef48989a3aed059e2f60468befc420660254fadf1e3e44f7ef470e5f",
+      "bytes": 20623,
+      "git_blob": "77eeafebc712f8981c3f196d32d20d20741ec494",
+      "expected_old_body_sha256": "a8a502ac8214b2ea87d010532e0a100b27927aac7115c0cdbef4fce7f7b46769",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2109,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2109.md",
+      "sha256": "61dd46c227d3fb6e0a637d48920e3d14ab6d851eb60c9444dcd51f7427be75f3",
+      "bytes": 20682,
+      "git_blob": "526c3e73b3ed4f13dabd3cc835c442e13cb9eca7",
+      "expected_old_body_sha256": "5b71772de3870995a82b7a27d85d3274683ba2beddb2a1ef7a37cacd4f8611a3",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2110,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2110.md",
+      "sha256": "e63ab4eeedca8a4b5a2ab2e2e9181c50016cf5cab8df6a6badf82a2608e69d5d",
+      "bytes": 17826,
+      "git_blob": "8f2c74954be7cb99f0a176947545ebcb8637c896",
+      "expected_old_body_sha256": "d3e283d67aa3b348aafc71b32ca8406163ce35ae63ae73b2d383bb52452b46ea",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    },
+    {
+      "number": 2111,
+      "path": "docs/agent-plans/review-2026-11-24/issue-2111.md",
+      "sha256": "51fc08cbb0e905fb456893263b22342dd6f32803b1bb034aeaff20a58a79ff01",
+      "bytes": 17183,
+      "git_blob": "f312e01c155701e654ac62de71b9e73f35da8926",
+      "expected_old_body_sha256": "263fc7a96dde4dca44eb863533a8b06c9823f76644a4e655d3008eb6bd714663",
+      "canonical_body_change": true,
+      "action": "publish_mirror_then_guarded_full_body_revision"
+    }
+  ],
+  "consolidated_pr": {
+    "number": 2114,
+    "head": "71c80cefe4739004be6ea51c5a128a862230aacf",
+    "path": "docs/agent-plans/1666-ci-pr-feedback-under-1-min.md",
+    "git_blob": "5d9589c1d65743828049deb56597554f89aee7b9",
+    "sha256": "82f8eb7505a9fc0faa9c779516c7ed4d5ad1e3c08e70311fe9b1484d98aef2bf",
+    "bytes": 11943,
+    "closure_gate": "Exact original blob retained and read back before closing the source PR; no branch deletion."
+  }
+}
