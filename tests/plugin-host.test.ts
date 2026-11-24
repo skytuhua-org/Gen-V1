@@ -31,6 +31,29 @@ describe('trusted separately installed plug-ins',()=>{
   await writeFile(join(g.root,'.registry-lock'),JSON.stringify({pid:process.pid,at:Date.now()}));
   await expect(installPluginPackage(g.source,g.root,g.digest,'0.6.3')).rejects.toThrow(/busy/i);
  });
+ it('recovers an interrupted install whose version was promoted without an index entry',async()=>{
+  const f=await fixture();
+  const installed=await installPluginPackage(f.source,f.root,f.digest,'0.6.3');
+  // Promotion completed but index publication did not: the immutable version
+  // directory exists while active.json has no entry. A retry must recover,
+  // not report "already exists".
+  await writeFile(join(f.root,'active.json'),JSON.stringify({version:1,plugins:[]}));
+  await mkdir(join(f.root,'.install-leftover'));
+  await writeFile(join(f.root,'.install-leftover','partial.txt'),'interrupted staging');
+  const recovered=await installPluginPackage(f.source,f.root,f.digest,'0.6.3');
+  expect(recovered.directory).toBe(installed.directory);
+  expect(await readFile(join(recovered.directory,'plugin.json'),'utf8')).toBe(JSON.stringify(manifest));
+  const registry=await loadInstalledPlugins(f.root,'0.6.3');
+  expect(registry.list()).toEqual([manifest]);
+  await registry.close();
+  // An unpromoted staging directory is reclaimed, not trusted.
+  await expect(fs.access(join(f.root,'.install-leftover'))).rejects.toThrow();
+  const stale=await fixture();
+  await mkdir(join(stale.root,manifest.id),{recursive:true});
+  await mkdir(join(stale.root,manifest.id,manifest.version));
+  await writeFile(join(stale.root,manifest.id,manifest.version,'plugin.json'),'{"corrupt":true}');
+  await expect(installPluginPackage(stale.source,stale.root,stale.digest,'0.6.3')).rejects.toThrow(/conflicting/i);
+});
  it('rejects undeclared files and inventory traversal',async()=>{const f=await fixture();await writeFile(join(f.source,'unlisted.txt'),'extra');await expect(installPluginPackage(f.source,f.root,f.digest,'0.6.3')).rejects.toThrow(/undeclared/i);const g=await fixture();g.inventory.files[0].path='../outside';const raw=JSON.stringify(g.inventory);await writeFile(join(g.source,'plugin-files.json'),raw);await expect(installPluginPackage(g.source,g.root,hash(raw),'0.6.3')).rejects.toThrow();});
  it('rejects linked package files without following them',async()=>{const f=await fixture();await symlink(f.source,join(f.source,'linked'),'junction');await expect(installPluginPackage(f.source,f.root,f.digest,'0.6.3')).rejects.toThrow(/link/i);});
  it('rechecks installed integrity before loading or serving and never serves host source',async()=>{const f=await fixture(),installed=await installPluginPackage(f.source,f.root,f.digest,'0.6.3');const registry=await loadInstalledPlugins(f.root,'0.6.3');await writeFile(join(installed.directory,'frontend/index.html'),'changed');await expect(registry.readAsset(manifest.id,'frontend/index.html')).rejects.toThrow(/integrity/i);const fresh=await loadInstalledPlugins(f.root,'0.6.3');expect(fresh.list()).toEqual([]);expect(fresh.failures().map(failure=>failure.id)).toEqual([manifest.id]);await fresh.close();await registry.close();});
