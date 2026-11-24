@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../packages/storage/store.ts";
@@ -269,6 +269,80 @@ it("refuses to re-apply a plan left APPLYING by a killed process", async () => {
   await expect(service.applyRestore(owner, { planId: plan.id, approvalId: "approval-kill", root: project })).rejects.toMatchObject({ code: "REVISION_CHANGED" });
   expect(store.get<{ state: string }>("workspaceRestorePlan", plan.id)!.state).toBe("APPLYING");
   expect((await readFile(join(project, "a.txt"), "utf8"))).toBe("a-old\n");
+});
+
+it("preserves a destination created between preview and apply instead of clobbering it", async () => {
+  const { project, service, owner } = await fixture();
+  await writeFile(join(project, "a.txt"), "a-old\n");
+  const checkpoint = await service.create({ owner, root: project, paths: ["a.txt"] });
+  await rm(join(project, "a.txt"));
+  const plan = await service.planRestore(owner, { checkpointId: checkpoint.id, root: project, selectedPaths: ["a.txt"], approvalId: "approval-appear" });
+  // Another writer lands the path between preview and apply; those bytes have
+  // no recovery backup, so the link path must conflict rather than rename over.
+  await writeFile(join(project, "a.txt"), "a-foreign\n");
+  const applied = await service.applyRestore(owner, { planId: plan.id, approvalId: "approval-appear", root: project });
+  expect(applied.state).toBe("CONFLICT");
+  expect(applied.conflicts).toEqual(["a.txt"]);
+  expect((await readFile(join(project, "a.txt"), "utf8"))).toBe("a-foreign\n");
+  expect((await readdir(project)).filter((name) => name.startsWith(".gen-restore-"))).toEqual([]);
+});
+
+it("reports a conflict when a selected path disappears between preview and apply", async () => {
+  const { project, service, owner } = await fixture();
+  await writeFile(join(project, "a.txt"), "a-old\n");
+  const checkpoint = await service.create({ owner, root: project, paths: ["a.txt"] });
+  const plan = await service.planRestore(owner, { checkpointId: checkpoint.id, root: project, selectedPaths: ["a.txt"], approvalId: "approval-vanish" });
+  await rm(join(project, "a.txt"));
+  const applied = await service.applyRestore(owner, { planId: plan.id, approvalId: "approval-vanish", root: project });
+  expect(applied.state).toBe("CONFLICT");
+  expect(applied.conflicts).toEqual(["a.txt"]);
+  await expect(readFile(join(project, "a.txt"))).rejects.toThrow();
+});
+
+it("lets at most one of two outstanding restores write the same paths", async () => {
+  const { project, service, owner } = await fixture();
+  await writeFile(join(project, "a.txt"), "a-old\n");
+  const checkpoint = await service.create({ owner, root: project, paths: ["a.txt"] });
+  await writeFile(join(project, "a.txt"), "a-new\n");
+  // Both plans were approved against the same recorded preimage.
+  const first = await service.planRestore(owner, { checkpointId: checkpoint.id, root: project, selectedPaths: ["a.txt"], approvalId: "approval-dual-1" });
+  const second = await service.planRestore(owner, { checkpointId: checkpoint.id, root: project, selectedPaths: ["a.txt"], approvalId: "approval-dual-2" });
+  const appliedFirst = await service.applyRestore(owner, { planId: first.id, approvalId: "approval-dual-1", root: project });
+  expect(appliedFirst.state).toBe("APPLIED");
+  // The second plan's recorded preimage no longer matches disk, so it
+  // conflicts and leaves the first restore's bytes untouched.
+  const appliedSecond = await service.applyRestore(owner, { planId: second.id, approvalId: "approval-dual-2", root: project });
+  expect(appliedSecond.state).toBe("CONFLICT");
+  expect(appliedSecond.conflicts).toEqual(["a.txt"]);
+  expect((await readFile(join(project, "a.txt"), "utf8"))).toBe("a-old\n");
+});
+
+it("refuses a restore plan under a different scope", async () => {
+  const { project, service, owner } = await fixture();
+  await writeFile(join(project, "a.txt"), "a-old\n");
+  const checkpoint = await service.create({ owner, root: project, paths: ["a.txt"] });
+  const plan = await service.planRestore(owner, { checkpointId: checkpoint.id, root: project, selectedPaths: ["a.txt"], approvalId: "approval-scope" });
+  const other = checkpointScope({ projectId: "project", threadId: "thread", workingCopyId: "wc-2", binding: { path: project } });
+  await expect(service.applyRestore(other, { planId: plan.id, approvalId: "approval-scope", root: project })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  await expect(service.planRestore(other, { checkpointId: checkpoint.id, root: project, selectedPaths: ["a.txt"], approvalId: "approval-scope" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+});
+
+it("keeps recorded file identities durable across a store reopen", async () => {
+  const { project, service, owner, store } = await fixture();
+  await writeFile(join(project, "a.txt"), "a-old\n");
+  const checkpoint = await service.create({ owner, root: project, paths: ["a.txt"] });
+  expect(checkpoint.files[0]!.identity).toBeTruthy();
+  stores.splice(stores.indexOf(store), 1);
+  store.close();
+  const reopened = new Store(store.dataDir);
+  stores.push(reopened);
+  const service2 = new CheckpointService(reopened);
+  const listed = await service2.list(owner);
+  const detail = await service2.detail(owner, checkpoint.id);
+  expect(listed.items[0]!.id).toBe(checkpoint.id);
+  expect(detail.files[0]!.path).toBe("a.txt");
+  const persisted = reopened.get<{ files: { path: string; identity: { dev: string; ino: string } | null }[] }>("workspaceCheckpoint", checkpoint.id)!;
+  expect(persisted.files[0]!.identity).toEqual(checkpoint.files[0]!.identity);
 });
 
 it("emits unified diffs whose headers, counts and markers apply to the exact bytes", () => {
