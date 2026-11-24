@@ -3283,6 +3283,7 @@
     "tests/agents-workspace-dispatch.test.ts",
     "tests/agents-workspace-grid-fixture.ts",
     "tests/agents-workspace-grid.test.ts",
+    "tests/analyze-initiated-motion.test.ts",
     "tests/appearance-draft.test.ts",
     "tests/artifact-inputs.test.ts",
     "tests/attention-boundaries.test.ts",
