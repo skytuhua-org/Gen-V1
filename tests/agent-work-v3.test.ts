@@ -429,6 +429,23 @@ describe('M09-04 atomic admission and resume budgets', () => {
     expect(f.children).toHaveLength(3);
     expect(admits.filter(result => result.status === 'rejected').map(result => (result as PromiseRejectedResult).reason?.code)).toEqual(['AGENT_LIMIT']);
   });
+  it('rejects a racing admit whose reservation would over-commit the token budget', async () => {
+    __setCapabilityFlagForTests('agents.workV1', true);
+    __setCapabilityFlagForTests('workspace.writeDelegateV1', true);
+    let release!: () => void, calls = 0;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const proof = {worktreeId: 'wt-1', path: 'C:/work', profileDigest: 'a'.repeat(64)};
+    const f = fixture({flags: {}, globalBudget: {tokens: 15, ms: null}, roleProofs: {codeWorktree: async () => { if (++calls === 2) release(); await barrier; return proof; }}});
+    // Both admits pass the pre-await budget check (0 + 10 <= 15) while the
+    // barrier holds; only the inner transaction re-verification can stop the
+    // second one from over-reserving.
+    const admits = await Promise.allSettled(
+      Array.from({length: 2}, (_, i) => f.coordinator.admit(f.ctx, f.admission({role: 'CODE_WORKTREE', budget: {tokens: 10, ms: null}}, i), new AbortController().signal)),
+    );
+    expect(admits.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(admits.filter(result => result.status === 'rejected').map(result => (result as PromiseRejectedResult).reason?.code)).toEqual(['AGENT_BUDGET_EXHAUSTED']);
+    expect(f.coordinator.budgetLedger()).toMatchObject({reservedTokens: 10});
+  });
   it('reserves the wall-time budget again on resume, refusing an exhausted-ms ledger', async () => {
     const f = fixture({globalBudget: {tokens: 1000, ms: 15}});
     const work = await f.coordinator.admit(f.ctx, f.admission({budget: {tokens: 10, ms: 10}}), new AbortController().signal);

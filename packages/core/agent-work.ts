@@ -212,6 +212,11 @@ export class AgentWorkCoordinator {
       const admission: AdmissionRecord = {workId: work.workId, commandId: spec.commandId, admission: spec, bindingDigest, grants: effectiveGrants, proofMeta, createdAt: now};
       this.hooks.store.put(ADMISSION_KIND, work.workId, ctx.threadId, admission);
       const next = this.ledger();
+      // The budget checks above also ran before the awaited authority proof;
+      // re-verify against the ledger as committed inside this transaction so
+      // racing admits cannot over-reserve.
+      if (spec.budget.tokens !== null && this.hooks.globalBudget?.tokens != null && next.reservedTokens + next.spentTokens + spec.budget.tokens > this.hooks.globalBudget.tokens) throw new HarnessError('AGENT_BUDGET_EXHAUSTED', `Token reservation ${spec.budget.tokens} exceeds the remaining agent budget`);
+      if (spec.budget.ms !== null && this.hooks.globalBudget?.ms != null && next.reservedMs + next.spentMs + spec.budget.ms > this.hooks.globalBudget.ms) throw new HarnessError('AGENT_BUDGET_EXHAUSTED', `Wall-time reservation ${spec.budget.ms} exceeds the remaining agent budget`);
       next.reservedTokens += spec.budget.tokens ?? 0; next.reservedMs += spec.budget.ms ?? 0; next.admitted += 1;
       this.hooks.store.put(BUDGET_KIND, BUDGET_ID, null, next);
       return work;
@@ -497,6 +502,11 @@ export class AgentWorkCoordinator {
       this.hooks.store.put(WORK_KIND, workId, ctx.threadId, resumed);
       this.hooks.store.put(ADMISSION_KIND, workId, ctx.threadId, {...admission, grants: effectiveGrants, proofMeta});
       const next = this.ledger();
+      // The budget checks above also ran before the awaited authority proof;
+      // re-verify inside this transaction so racing resumes cannot
+      // over-reserve.
+      if (work.budget.tokens !== null && this.hooks.globalBudget?.tokens != null && next.reservedTokens + next.spentTokens + work.budget.tokens > this.hooks.globalBudget.tokens) throw new HarnessError('AGENT_BUDGET_EXHAUSTED', 'Resumed work exceeds the remaining agent budget');
+      if (work.budget.ms !== null && this.hooks.globalBudget?.ms != null && next.reservedMs + next.spentMs + work.budget.ms > this.hooks.globalBudget.ms) throw new HarnessError('AGENT_BUDGET_EXHAUSTED', 'Resumed work exceeds the remaining agent wall-time budget');
       next.reservedTokens += work.budget.tokens ?? 0; next.reservedMs += work.budget.ms ?? 0;
       this.hooks.store.put(BUDGET_KIND, BUDGET_ID, null, next);
       const thread = this.hooks.store.get<Thread>('thread', work.childOwner.threadId);
