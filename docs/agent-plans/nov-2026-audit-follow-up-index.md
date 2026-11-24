@@ -3,7 +3,7 @@ Second swarm audit, building on #1848 (round 1) and #1886 (remediation). READ-ON
 # November audit follow-up plan
 
 ## META
-- Repository `skytuhua-org/Gen-V1`. Follow-up plan revision `audit-index-r2`, 2026-11-23 Pacific time.
+- Repository `skytuhua-org/Gen-V1`. Follow-up plan revision `audit-index-r3`, 2026-11-23 Pacific time.
 - GitHub main at triage: `a64e9e2d03ce09c843bff0480d81311f2012c812`. Original audit coordination #1848 records its planned pinned main baseline. The round-one executive summary describes a separate historical working tree at `fix/audit-r08-chatview@6b9d1b0ba`. Round two used `chore/deletion-sweep@152cb5e1bdd652fd7dadf240b167e9ee5d37a578`. Compare these baselines before claiming current reachability.
 - Sources: reports 00–15. Worker attribution and verification quality are recorded in the reports. Use this issue's workstream links as the public follow-up ledger.
 
@@ -76,4 +76,42 @@ Depends on T01. For each report keep the stable finding ID or heading, source ba
 **Completion check:** Each unique finding has a verified disposition, with duplicate report entries tied to the canonical finding. A report link alone does not satisfy this check.
 
 [Prior index revision](https://github.com/skytuhua-org/Gen-V1/blob/4d97f729057d4777d5cc756ec68fb653dc7b6cb3/docs/agent-plans/nov-2026-audit-follow-up-index.md).
+
+## T05 current finding census and dispositions
+
+Revision date: 2026-11-24 Pacific time. Current GitHub main inspected at `fa8f814fd3f8c4b569c7be9932558ed6eff4cc9b`. The 16 source report fingerprints and explicit rows are preserved in the ledger. The issue/PR census captured 460 issues, including closed issues. A row is an audit record and can represent a supporting, repeated, or composite observation.
+
+- [Finding locators for reports 00–04](https://github.com/skytuhua-org/Gen-V1/blob/fb8680775064cc0e0d69accb8c809799b70e5d71/docs/review-evidence/nov-2026-audit-coverage/reports-00-04.md)
+- [Finding locators for reports 05–09](https://github.com/skytuhua-org/Gen-V1/blob/fb8680775064cc0e0d69accb8c809799b70e5d71/docs/review-evidence/nov-2026-audit-coverage/reports-05-09.md)
+- [Finding locators for reports 10–15](https://github.com/skytuhua-org/Gen-V1/blob/fb8680775064cc0e0d69accb8c809799b70e5d71/docs/review-evidence/nov-2026-audit-coverage/reports-10-15.md)
+- [194 historical PR head and base pins](https://github.com/skytuhua-org/Gen-V1/blob/fb8680775064cc0e0d69accb8c809799b70e5d71/docs/review-evidence/nov-2026-audit-coverage/pr-source-pins.md)
+
+| Disposition | Rows | Meaning |
+| --- | ---: | --- |
+| Summary reference | 18 | Executive summary pointer. |
+| Private routing | 380 | Withheld candidate or sensitive source row. Private receipt is still required. |
+| Review remaining | 707 | Exact coverage, reachability or equivalence remains open. |
+| Related scope only | 92 | An existing workstream may own the case. Its exact acceptance still needs checking. |
+| Historical disposition | 3 | Original report records refutation, intended behavior, or earlier fix. |
+| Named in issue scope | 220 | An existing issue names this finding or explicitly names its report section. Independent behavior and acceptance are still pending. |
+| Source changed | 5 | Current source differs in the relevant mechanism. Replay the exact case. |
+| New issue verified | 5 | A new issue body, Markdown plan and labels were read back. |
+| PR heads pinned | 168 | Head and base metadata are known. Exact defect review is still pending. |
+| PR patch checked | 7 | Relevant current patch/source was examined. Exact behavioral acceptance is still pending. |
+| Superseded with evidence | 1 | A closed duplicate has the existing repair and regression receipts linked. |
+
+### Newly filed findings
+- [#2159](https://github.com/skytuhua-org/Gen-V1/issues/2159) — 04 D13 tool inventory.
+- [#2160](https://github.com/skytuhua-org/Gen-V1/issues/2160) — 03 and 15 temporary evaluation input.
+- [#2161](https://github.com/skytuhua-org/Gen-V1/issues/2161) — 14 F1 memory availability recovery.
+
+### Recovered PR review records
+- Report 05’s seven truncated findings now have exact dispositions. #1082 was closed as superseded by #1867 in the #1081 record. #1035, #1036, #1069, #1146, #1151 and #1165 were read at their current patches. See their individual rows for scope recovered and acceptance still due.
+- Report 09 F1 remains visible in #1907 at `e2b18a6a0de16cfe87720385fbc241ab06a7d5b8` and #1909 at `f880c11420ba8e369becc0db52b03e74dc4f08b8`, on the existing #1626 stack. The local-file-preservation requirement belongs to #1626 T03. Establish a fixture result for ignored local files and preserve the prior PR owners. The inspected main file does not contain the stack's fast-forward implementation.
+- The earlier cleanup inventory has the same head for 179 of the 194 pinned PRs; 64 share both the recorded head and configured base. This supports source identity and duplicate checks. Issue acceptance and behavioral checks remain separate.
+
+### State and next checks
+T05 remains open. 707 indexed rows still need individual review and 92 have candidate ownership only. For a named issue verify the exact accepted behavior before claiming the finding resolved. For PR findings start from the pinned head and verify applicability to the configured base. Some prose, composite observations and truncated worker evidence still need manual enumeration. Sensitive rows remain pending private handling under repository policy. This pass ran source and issue/PR comparisons. Runtime reproduction, protected integration and installed acceptance remain pending.
+
+[Prior plan revision](https://github.com/skytuhua-org/Gen-V1/blob/949222a9dbf8dc3095df3c8d5dbbc1bb22838bb5/docs/agent-plans/nov-2026-audit-follow-up-index.md).
 
