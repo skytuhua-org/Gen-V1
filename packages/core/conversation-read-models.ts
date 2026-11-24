@@ -96,8 +96,12 @@ export class ConversationReadModels {
       return value;
     } catch (error) {if (open) this.store.db.exec('ROLLBACK'); throw error;}
   }
+  // Static admission statements are prepared once per database: subscriber
+  // loops re-admit scopes on every matching event.
+  private ownerStmt?: ReturnType<Store['db']['prepare']>;
+  private projectStmt?: ReturnType<Store['db']['prepare']>;
   private owner(id: string): OwnerRow {
-    const row = this.store.db.prepare(ownerSelect).get(id) as unknown as OwnerRow | undefined;
+    const row = (this.ownerStmt ??= this.store.db.prepare(ownerSelect)).get(id) as unknown as OwnerRow | undefined;
     if (!row || row.archived < 0 || !conversationOwnerSchema.safeParse(this.projectOwner(row)).success || typeof row.createdAt !== 'string') throw unavailable();
     if (row.kind !== null && !['main', 'side', 'delegate'].includes(row.kind)) throw unavailable();
     for (const link of [row.parentThreadId, row.sideParentId, row.workspaceId, row.accountId]) {
@@ -124,7 +128,7 @@ export class ConversationReadModels {
     for (const thread of lineage) {
       if (thread.archived && !target.includeArchived) throw unavailable();
       if (thread.projectId !== null) {
-        const project = this.store.db.prepare("SELECT id,json_extract(body,'$.authority') AS authority FROM entities WHERE kind='workspaceProject' AND id=? AND json_extract(body,'$.id')=id AND json_type(body,'$.id')='text' AND thread_id IS NULL")
+        const project = (this.projectStmt ??= this.store.db.prepare("SELECT id,json_extract(body,'$.authority') AS authority FROM entities WHERE kind='workspaceProject' AND id=? AND json_extract(body,'$.id')=id AND json_type(body,'$.id')='text' AND thread_id IS NULL"))
           .get(thread.projectId) as {id: string; authority: string | null} | undefined;
         if (!project?.authority || JSON.parse(project.authority)?.kind !== 'local') throw unavailable();
         projects.push(project);
