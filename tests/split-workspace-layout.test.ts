@@ -96,6 +96,19 @@ describe('durable split workspace',()=>{
   expect(()=>apply(layout,'view.open',{view:view('one','other-thread')})).toThrow(/rebound|owner/i);
   expect(()=>apply(layout,'pane.join',{paneId:layout.focusedPaneId})).toThrow(/one pane/i);
  });
+ it('rejects commands on a stale base revision and applies on the fresh one',()=>{
+  const layout=open(createSplitWorkspaceLayout(),'one');
+  expect(()=>apply(layout,'pane.resize',{splitId:'missing',ratio:.5,baseRevision:layout.revision+9})).toThrow(/revision changed/i);
+  const resized=apply(split(layout,'right'),'pane.resize',{splitId:'split-right',ratio:.7,baseRevision:layout.revision+1});
+  expect(resized.revision).toBe(layout.revision+2);
+ });
+ it('normalizes the root to a pane node when a join leaves one pane',()=>{
+  let layout=split(open(createSplitWorkspaceLayout(),'one'),'right');layout=split(layout,'far-right');
+  layout=apply(layout,'pane.join',{paneId:'far-right',targetPaneId:'right'});
+  layout=apply(layout,'pane.join',{paneId:'right',targetPaneId:'pane-main'});
+  expect(Object.keys(layout.panes)).toEqual(['pane-main']);expect(layout.root).toEqual({kind:'pane',paneId:'pane-main'});
+  expect(layout.focusedPaneId).toBe('pane-main');
+ });
  it('preserves focused conversation for explicitly requested automatic detail opening',()=>{
   let layout=open(createSplitWorkspaceLayout(),'one');const focused=layout.focusedPaneId;
   layout=apply(layout,'pane.split',{paneId:focused,newPaneId:'plan-pane',splitId:'plan-column',axis:'horizontal',view:{id:'plan',kind:'plan',binding:{authority:{kind:'local'},threadId:'one'}},preserveFocus:true});
