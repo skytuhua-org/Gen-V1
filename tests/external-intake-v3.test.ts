@@ -424,4 +424,48 @@ describe("M10 durable approval identity across crash and rejection races", () =>
     await approval;
     expect(f.intake.records()[0]!.disposition).toBe("APPROVED");
   });
+  it("a failure before any durable command releases the claim so a corrected model can approve", async () => {
+    let calls = 0;
+    const f = fixture({ createTask: async () => { calls++; if (calls === 1) throw new Error("model unavailable"); return { threadId: "fixed-thread" }; } });
+    const record = await propose(f.intake);
+    await expect(f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "gone/model" })).rejects.toThrow("model unavailable");
+    expect(f.store.get("intakeApprovalClaim", `approve:${record.intakeId}`)).toBeNull();
+    const approved = await f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "good/model" });
+    expect(approved.disposition).toBe("APPROVED");
+    expect(approved.decision?.threadId).toBe("fixed-thread");
+  });
+  it("a failure after a durable command keeps the claim, so a different model still conflicts", async () => {
+    const f = fixture();
+    const record = await propose(f.intake);
+    const crashing = new ExternalIntakeCoordinator({ store: f.store, createTask: async (request: { threadCommandId: string }) => {
+      f.store.command({ id: request.threadCommandId, type: "intake.thread", payload: {} }, () => {
+        f.store.put("thread", request.threadCommandId, request.threadCommandId, { id: request.threadCommandId, kind: "delegate" });
+        return request.threadCommandId;
+      });
+      throw new Error("simulated host loss mid-creation");
+    } });
+    cleanups.push(() => crashing.stop());
+    await expect(crashing.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" })).rejects.toThrow("simulated host loss");
+    // The thread command has a receipt, so releasing the claim would let a new
+    // approval mint fresh command ids and duplicate the task.
+    expect(f.store.get("intakeApprovalClaim", `approve:${record.intakeId}`)).toBeTruthy();
+    await expect(f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "other/model" })).rejects.toMatchObject({ code: "STALE_REVISION" });
+  });
+  it("recovery re-delivers a persisted input that a crash left on an approved task", async () => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-intake-recover-"));
+    const store = new Store(join(root, "state"));
+    const runtime: RuntimeAdapter = { configure: () => {}, models: async () => [{ id: "test/model", provider: "test", name: "Test" }], start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {}, history: async () => [], dispose: async () => {} };
+    const service = new Service(store, runtime);
+    cleanups.push(async () => { await service.dispose().catch(() => {}); store.close(); rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); });
+    // Stranded state: the approval decision and persisted input both committed,
+    // then the host died before the queued delivery ran.
+    store.internal("intake.stranded", null, () => {
+      store.put("thread", "t1", "t1", { id: "t1", kind: "delegate", status: "ready", modelId: "test/model", accountId: null, epoch: 0, runId: null, createdAt: "x", updatedAt: "x" });
+      store.put("outbox", "o1", "t1", { id: "o1", threadId: "t1", content: "approved external work", status: "persisted", runId: null });
+      store.put("intakeRecord", "i1", null, { intakeId: "i1", eventId: "e1", disposition: "APPROVED", sourceInstallation: "octocat", proposedTask: { title: "t", sourceUrl: "u", issueNumber: 1 }, receivedAt: "x", updatedAt: "x", rejectionReason: null, decision: { commandId: "c1", at: "x", threadId: "t1" } });
+    });
+    const spy = vi.spyOn(service, "deliverOutbox");
+    await service.recover();
+    expect(spy).toHaveBeenCalledWith("t1");
+  });
 });
