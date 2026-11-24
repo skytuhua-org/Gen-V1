@@ -93,9 +93,17 @@ export function registerAgentWorkRoutes(app: FastifyInstance, service: Service) 
     if (!record || record.provenance !== PLANNING_PROVENANCE || record.revision !== extension.canonicalRevision)
       return {extension: false, planId};
     const body = (record.value ?? {}) as {steps?: {id: string; status: string}[]; agents?: {id: string; status: string}[]};
-    const statuses = Object.fromEntries([...(body.steps ?? []), ...(body.agents ?? [])]
-      .map(node => [node.id, node.status === 'completed' ? 'completed' : node.status === 'unknown' ? 'unknown' : 'pending'] as const));
+    // Reported status stays verbatim: 'completed' here is reported completion,
+    // not accepted verification, and an unlisted node is unknown — not pending.
+    const statuses: Record<string, 'completed' | 'pending' | 'unknown'> = {};
+    for (const node of [...(body.steps ?? []), ...(body.agents ?? [])]) {
+      if (node.status === 'completed' || node.status === 'unknown') statuses[node.id] = node.status;
+      else if (['pending', 'queued', 'in_progress', 'blocked', 'failed'].includes(node.status)) statuses[node.id] = 'pending';
+      // Unrecognized statuses stay unmapped -> unknown work, not assumed pending.
+    }
+    const reported = Object.fromEntries([...(body.steps ?? []), ...(body.agents ?? [])].map(node => [node.id, node.status] as const));
     return {extension: true, planId, weights: extension.weights, parentRelationships: extension.parentRelationships,
+      reportedStatuses: reported,
       progress: service.planExtensions.progress(planId, statuses)};
   });
 }
