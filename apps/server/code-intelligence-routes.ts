@@ -19,7 +19,7 @@ import type { CheckObservationV1 } from '../../packages/contracts/verification.t
 import { approvalSchema, type ApprovalV1, type ToolOwner } from '../../packages/contracts/tool-effects.ts';
 import type { Operation, Thread } from '../../packages/contracts/index.ts';
 import { actionCommitment } from '../../packages/core/tool-effects.ts';
-import { renamePlanV1Schema } from '../../packages/contracts/code-intelligence.ts';
+import { renamePlanIdSchema, renamePlanV1Schema } from '../../packages/contracts/code-intelligence.ts';
 import { digest } from '../../packages/storage/store.ts';
 import { randomUUID } from 'node:crypto';
 
@@ -156,7 +156,7 @@ export function registerCodeIntelligenceRoutes(app: FastifyInstance, service: Se
   const renameSchema = z.strictObject({
     threadId: identifier.optional(), language: z.string().min(1).max(64), path: z.string().min(1).max(4096),
     text: z.string().max(4 * 1024 * 1024), position: z.strictObject({ line: z.number().int().nonnegative(), character: z.number().int().nonnegative() }),
-    newName: z.string().min(1).max(512), approvalId: z.string().min(1).max(256), plan: z.unknown().optional(), planId: z.string().max(128).optional(),
+    newName: z.string().min(1).max(512), approvalId: z.string().min(1).max(256), plan: z.unknown().optional(), planId: renamePlanIdSchema.optional(),
     command: z.enum(['plan', 'apply', 'recover']),
   });
   const debugSchema = z.strictObject({
