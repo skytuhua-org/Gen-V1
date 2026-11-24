@@ -92,7 +92,7 @@ The update was not signed by the expected publisher. Gen will keep the current v
 Each edit replaces the sentence about unsigned/SmartScreen status. Filenames of artifacts (`SHA256SUMS.txt`) are unchanged — checksum verification stays as a secondary, optional check.
 
 1. `README.md` L76 →
-   > The published download is a **signed prerelease**. Windows shows the publisher name on the install prompt; a new publisher may still see a SmartScreen reputation prompt on first downloads — choose "More info" → "Run anyway" to proceed. Read the release notes before running it. The source tree includes newer workspace and plug-in changes than the installer. The [demo notes](docs/public/media/launch-demos.md) identify which source was recorded.
+   > The published download is a **signed prerelease**. Windows shows the publisher name on the install prompt; a new publisher may still see a SmartScreen reputation prompt on first downloads — choose "More info" → "Run anyway" to proceed. Read the release notes before running it. The source tree includes newer workspace and plug-in changes than the installer. The [demo notes](../public/media/launch-demos.md) identify which source was recorded.
 
 2. `CHANGELOG.md` — the `unsigned prerelease (preview)` clause → `signed prerelease (preview)`; the SmartScreen expectation sentence →
    > The installer is signed; a brand-new publisher may still see a Windows SmartScreen reputation prompt on first downloads — choose "More info" → "Run anyway".
