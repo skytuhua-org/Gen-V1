@@ -31,8 +31,12 @@ export function useSnippetInsertion(owner: SnippetInsertionOwner) {
     if (!element) return;
     const update = () => {
       if (signature.current !== owner.signature) return;
+      // Read the caret synchronously (it is only valid inside the event) but defer the
+      // state update to a macrotask: a re-render committed before React finishes its
+      // own input handling restores the controlled textarea's stale draft value and
+      // wipes the in-flight edit (React then sees no change and never fires onChange).
       const next = captureSelection(element, owner.signature);
-      if (next) setCapture(next);
+      if (next) setTimeout(() => { if (signature.current === owner.signature) setCapture(next); }, 0);
     };
     for (const name of ['select', 'keyup', 'pointerup', 'input']) element.addEventListener(name, update);
     return () => { for (const name of ['select', 'keyup', 'pointerup', 'input']) element.removeEventListener(name, update); };
