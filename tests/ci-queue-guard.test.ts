@@ -11,7 +11,7 @@ const makeRun=()=>({id:501,name:'CI',path:'.github/workflows/ci.yml',event:'pull
 const makePull=()=>({number:42,state:'open',draft:true as boolean|undefined,base:{ref:'stack/base',repo:{id:71}},head:{repo:{id:72},ref:'stack/feature',sha:oldSha}});
 type Run=ReturnType<typeof makeRun>;
 type Pull=ReturnType<typeof makePull>;
-type Options={run?:Run;pull?:Pull;pulls?:Pull[];source?:Partial<Run>|null;readRun?:(index:number,run:Run)=>Run;readPull?:(index:number,pull:Pull)=>Pull;cancelStatus?:number;eventName?:string;action?:string;ref?:string;queued?:Run[];running?:Run[]};
+type Options={run?:Run;pull?:Pull;pulls?:Pull[];source?:Partial<Run>|null;readRun?:(index:number,run:Run)=>Run;readPull?:(index:number,pull:Pull)=>Pull;readCommits?:(index:number,commits:{sha:string}[])=>{sha:string}[];cancelStatus?:number;eventName?:string;action?:string;ref?:string;queued?:Run[];running?:Run[];commits?:{sha:string}[];commitStatus?:number};
 function makeContext(options:Options={}){return {repo:{owner:'owner',repo:'repo'},runId:900,eventName:options.eventName??'workflow_run',ref:options.ref??'refs/heads/main',payload:{action:options.action??'requested',repository:{id:71,default_branch:'main'},workflow_run:options.source===null?undefined:{...makeRun(),...options.source}}};}
 function admitted(options:Options={}){
   const context=makeContext(options),github={event_name:context.eventName,run_id:String(context.runId),ref:context.ref,event:{...context.payload,workflow_run:context.payload.workflow_run??{}}};
@@ -20,14 +20,14 @@ function admitted(options:Options={}){
 }
 async function execute(options:Options={}){
   const requests:{method:string;id?:number;status?:string;page?:number;per_page?:number}[]=[],cancelled:number[]=[],logs:string[]=[];
-  let runReads=0,pullReads=0;
+  let runReads=0,pullReads=0,commitReads=0;
   const check=(args:{owner:string;repo:string})=>{expect(args.owner).toBe('owner');expect(args.repo).toBe('repo');};
   const github={rest:{actions:{
     listWorkflowRuns:async(args:{owner:string;repo:string;workflow_id:string;event:string;status:string;page:number;per_page:number})=>{
       check(args);expect(args.workflow_id).toBe('ci.yml');expect(args.event).toBe('pull_request');
       requests.push({method:'list',status:args.status,page:args.page,per_page:args.per_page});
       const runs=args.status==='queued'?(options.queued??[options.run??makeRun()]):(options.running??[]);
-      return {data:{total_count:runs.length,workflow_runs:runs.slice(0,args.per_page)}};
+      return {data:{total_count:runs.length,workflow_runs:runs.slice((args.page-1)*args.per_page,args.page*args.per_page)}};
     },
     getWorkflowRun:async(args:{owner:string;repo:string;run_id:number})=>{
       check(args);requests.push({method:'run',id:args.run_id});
@@ -40,7 +40,13 @@ async function execute(options:Options={}){
       if(options.cancelStatus&&options.cancelStatus!==202)throw Object.assign(Error('cancel failed'),{status:options.cancelStatus});
       cancelled.push(args.run_id);return {status:202};
     }
-  },pulls:{get:async(args:{owner:string;repo:string;pull_number:number})=>{
+  },pulls:{listCommits:async(args:{owner:string;repo:string;pull_number:number;page:number;per_page:number})=>{
+    check(args);expect(args.pull_number).toBe(42);expect(args.per_page).toBe(100);
+    requests.push({method:'commits',id:args.pull_number,page:args.page,per_page:args.per_page});
+    if(options.commitStatus)throw Object.assign(Error('commit lookup failed'),{status:options.commitStatus});
+    const commits=(options.commits??[]).slice((args.page-1)*args.per_page,args.page*args.per_page);
+    return {data:options.readCommits?.(++commitReads,commits)??commits};
+  },get:async(args:{owner:string;repo:string;pull_number:number})=>{
     check(args);requests.push({method:'pull',id:args.pull_number});
     const pull=structuredClone(options.pulls?.find(pull=>pull.number===args.pull_number)??options.pull??makePull());
     return {data:options.readPull?.(++pullReads,pull)??pull};
@@ -100,6 +106,40 @@ it('preserves ready work when the run SHA is not proven to be the recorded PR he
   const run=makeRun();run.pull_requests[0].head.sha=newSha;const pull=makePull();pull.draft=false;pull.head.sha=newSha;
   expect((await execute({run,pull})).cancelled).toEqual([]);
 });
+it('cancels an older run when GitHub refreshes its association to the current PR head and commit membership proves the old source',async()=>{
+  const run=makeRun();run.pull_requests[0].head.sha=newSha;
+  const pull=makePull();pull.draft=false;pull.head.sha=newSha;
+  const result=await execute({run,pull,commits:[{sha:oldSha},{sha:newSha}]});
+  expect(result.cancelled).toEqual([501]);expect(result.result.cancellationRequested).toBe(1);
+});
+it('finds a proven superseded revision beyond the first discovery page before spending the sweep on current work',async()=>{
+  const queued=Array.from({length:150},(_,index)=>{const run=makeRun();run.id=1000+index;run.head_sha=newSha;run.pull_requests[0].head.sha=newSha;return run;});
+  const stale=makeRun();stale.id=4000;stale.pull_requests[0].head.sha=newSha;queued.push(stale);
+  const pull=makePull();pull.draft=false;pull.head.sha=newSha;
+  const result=await execute({queued,pull,commits:[{sha:oldSha},{sha:newSha}]});
+  expect(result.cancelled).toEqual([4000]);expect(result.result.checked).toBeLessThanOrEqual(100);
+});
+it('checks later PR commit pages while preserving current ready runs',async()=>{
+  const run=makeRun();run.pull_requests[0].head.sha=newSha;
+  const pull=makePull();pull.draft=false;pull.head.sha=newSha;
+  const commits=[...Array.from({length:100},()=>({sha:'c'.repeat(40)})),{sha:oldSha},{sha:newSha}];
+  expect((await execute({run,pull,commits})).cancelled).toEqual([501]);
+  run.head_sha=newSha;expect((await execute({run,pull,commits})).cancelled).toEqual([]);
+});
+it('preserves a run when a changed PR head would require proof after the final authority read',async()=>{
+  const run=makeRun();run.pull_requests[0].head.sha=newSha;
+  const pull=makePull();pull.draft=false;
+  let liveHead=newSha;
+  const result=await execute({run,pull,commits:[{sha:oldSha},{sha:newSha}],readPull:(index,pr)=>{
+    if(index===2)liveHead='c'.repeat(40);
+    return {...pr,head:{...pr.head,sha:liveHead}};
+  },readCommits:(index,commits)=>{
+    // The second proof request races a reset to the run's current ready head.
+    if(index===2){liveHead=oldSha;return [{sha:oldSha}];}
+    return commits;
+  }});
+  expect(result.cancelled).toEqual([]);expect(result.result.raced).toBe(1);
+});
 it('preserves a PR whose fetched identity does not match the run association',async()=>{
   const pull=makePull();pull.head.repo.id=99;expect((await execute({pull})).cancelled).toEqual([]);
 });
@@ -125,13 +165,27 @@ it('preserves a run whose association disappears or changes during the fresh che
 it('exposes a permission failure instead of claiming the queue was cleared',async()=>{
   await expect(execute({cancelStatus:403})).rejects.toMatchObject({status:403});
 });
-it.each(['push','requested','in_progress'])('bounds the %s sweep to two discovery pages and 100 distinct candidates',async event=>{
+it.each(['push','requested','in_progress'])('paginates the %s discovery before inspecting at most 100 distinct candidates',async event=>{
   const queued=Array.from({length:101},(_,index)=>({...makeRun(),id:501+index}));
   const running=[queued[0],{...makeRun(),id:1000}];
   const result=await execute({...(event==='push'?{eventName:event}:{action:event}),queued,running});
-  expect(result.requests.slice(0,2)).toEqual([{method:'list',status:'queued',page:1,per_page:100},{method:'list',status:'in_progress',page:1,per_page:100}]);
-  expect(result.requests.filter(request=>request.method==='list')).toHaveLength(2);
+  expect(result.requests.slice(0,3)).toEqual([{method:'list',status:'queued',page:1,per_page:100},{method:'list',status:'queued',page:2,per_page:100},{method:'list',status:'in_progress',page:1,per_page:100}]);
+  expect(result.requests.filter(request=>request.method==='list')).toHaveLength(3);
   expect(result.cancelled).toHaveLength(100);expect(new Set(result.cancelled).size).toBe(100);expect(result.result.checked).toBe(100);expect(result.result.limited).toBe(true);
+});
+it('reports a truncated discovery without reading an unbounded backlog',async()=>{
+  const queued=Array.from({length:1100},(_,index)=>({...makeRun(),id:1000+index}));
+  const pull=makePull();pull.draft=false;
+  const result=await execute({queued,pull});
+  const lists=result.requests.filter(request=>request.method==='list');
+  expect(lists).toHaveLength(11);expect(lists.every(request=>request.page!<=10)).toBe(true);
+  expect(result.result.checked).toBe(100);expect(result.result.limited).toBe(true);expect(result.cancelled).toEqual([]);
+});
+it.each([404,403])('preserves a run when commit proof lookup fails with HTTP %s',async commitStatus=>{
+  const run=makeRun();run.pull_requests[0].head.sha=newSha;
+  const pull=makePull();pull.draft=false;pull.head.sha=newSha;
+  if(commitStatus===403)await expect(execute({run,pull,commitStatus})).rejects.toMatchObject({status:403});
+  else expect((await execute({run,pull,commitStatus})).cancelled).toEqual([]);
 });
 it('keeps in-progress runs in the sweep when the queued page is full',async()=>{
   const queued=Array.from({length:100},(_,index)=>({...makeRun(),id:501+index}));

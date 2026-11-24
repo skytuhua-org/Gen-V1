@@ -7,8 +7,8 @@ function readWorkflow(path:string){const url=new URL('../'+path,import.meta.url)
 function block(workflow:string,key:string){return new RegExp('^'+key+':\\n((?:[ \\t].*\\n|\\n)*)','m').exec(workflow)?.[1]??'';}
 function name(workflow:string){return /^name:\s*(.+)$/m.exec(workflow)?.[1]??'';}
 const policies=[
-  {path:'.github/workflows/ci-merged-pr-cleanup.yml',source:'.github/workflows/ci.yml',prefix:'CI',fallback:'ci-merged-pr-cleanup'},
-  {path:'.github/workflows/m01-m03-audit-merged-pr-cleanup.yml',source:'.github/workflows/m01-m03-audit.yml',prefix:'m01-m03-audit',fallback:'m01-m03-audit-merged-pr-cleanup'}
+  {path:'.github/workflows/ci-merged-pr-cleanup.yml',source:'.github/workflows/ci.yml',prefix:'CI'},
+  {path:'.github/workflows/m01-m03-audit-merged-pr-cleanup.yml',source:'.github/workflows/m01-m03-audit.yml',prefix:'m01-m03-audit'}
 ].map(policy=>({...policy,workflow:readWorkflow(policy.path),sourceWorkflow:readWorkflow(policy.source)}));
 type Event={merged?:boolean|null;number?:number;runId?:number;ref?:string};
 function evaluate(expression:string,workflow:string,event:Event):unknown {
@@ -27,7 +27,7 @@ it.each(policies)('$path listens only for trusted PR closure events and requests
   expect(workflow).toMatch(/^permissions: \{\}$/m);
   expect([...workflow.matchAll(/^(\w[\w-]*):/gm)].map(match=>match[1])).toEqual(['name','on','permissions','concurrency','jobs']);
 });
-it.each(policies)('$path targets only the merged PR source workflow group',({workflow,sourceWorkflow,prefix})=>{
+it.each(policies)('$path targets only the closed PR source workflow group',({workflow,sourceWorkflow,prefix})=>{
   for(const number of [42,43,100001]){
     const group=groupFor(workflow,{merged:true,number});
     expect(group).toBe(prefix+'-refs/pull/'+number+'/merge');
@@ -36,13 +36,15 @@ it.each(policies)('$path targets only the merged PR source workflow group',({wor
   }
   expect(block(workflow,'concurrency')).toMatch(/^  cancel-in-progress: true$/m);
 });
-it.each(policies)('$path preserves unmerged closures and unknown merge states in separate groups',({workflow,fallback,prefix})=>{
-  for(const merged of [false,null,undefined]){
-    const group=groupFor(workflow,{merged,runId:900});
-    expect(group).toBe(fallback+'-900');
-    expect(group).not.toBe(groupFor(workflow,{merged,runId:901}));
-    expect(group).not.toBe(prefix+'-refs/pull/42/merge');
+it.each(policies)('$path cancels every trusted closed PR group independently of merge state or run associations',({workflow,sourceWorkflow,prefix})=>{
+  for(const merged of [true,false,null,undefined]){
+    const group=groupFor(workflow,{merged,number:42,runId:900});
+    expect(group).toBe(prefix+'-refs/pull/42/merge');
+    expect(group).toBe(groupFor(sourceWorkflow,{ref:'refs/pull/42/merge'}));
+    expect(group).toBe(groupFor(workflow,{merged,number:42,runId:901}));
+    expect(group).not.toBe(groupFor(workflow,{merged,number:43,runId:900}));
   }
+  expect(workflow).not.toMatch(/workflow_run|pull_requests|head_sha/);
 });
 it.each(policies)('$path cannot cancel main or any other branch CI from the target event ref',({workflow,sourceWorkflow,prefix})=>{
   for(const merged of [true,false,null,undefined])for(const ref of ['refs/heads/main','refs/heads/agent/m05-v3','refs/heads/stack/base']){

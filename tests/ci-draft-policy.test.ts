@@ -1,6 +1,7 @@
 import {expect,it} from 'vitest';
-import {readFileSync} from 'node:fs';
+import {existsSync,readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
+import {publicSourceAllowed,publicRuntimeSourceAllowed} from '../scripts/public-source.ts';
 
 const workflow=readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url),'utf8').replaceAll('\r\n','\n');
 const jobSource=workflow.split(/^jobs:\n/m)[1]??'';
@@ -8,17 +9,22 @@ const starts=[...jobSource.matchAll(/^  ([\w-]+):\n/gm)];
 const jobs=starts.map((match,index)=>{
   const block=jobSource.slice(match.index,starts[index+1]?.index);
   const shards=/^        shard:\s*(\[[^\]\n]+\])/m.exec(block)?.[1];
-  return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',shards:shards?JSON.parse(shards) as number[]:null};
+  return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',needs:/^    needs:\s*(.+)$/m.exec(block)?.[1],shards:shards?JSON.parse(shards) as number[]:null};
 });
 const requiredJobs=['checks','test-1','test-2','test-3','test-4','browser','installed-memory'];
-const pullRequestJobs=['checks','select','selected'];
+const pullRequestJobs=['changes','checks','select','selected'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
-type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number};
+type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number;plansOnly?:string;classificationResult?:string};
 function context(event:CiEvent){return {workflow:'CI',ref:event.ref??'refs/pull/42/merge',event_name:event.name,event:event.name==='pull_request'?{action:event.action,pull_request:{number:42,draft:event.draft}}:{}};}
-function evaluate(expression:string,event:CiEvent):unknown {
+function classifierResult(event:CiEvent){return event.classificationResult??(event.name==='pull_request'&&event.draft===false?'success':'skipped');}
+function evaluate(expression:string,event:CiEvent,dependencySuccess=true):unknown {
   // The policy uses boolean/string comparisons and property access, whose
   // JavaScript and Actions semantics agree for these boolean/string fixtures.
-  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),needs:{select:{outputs:{total:String(event.selectedShards??1)}}}},{timeout:100});
+  // Actions adds success() when the condition has no explicit status function.
+  // A failed/skipped ancestor still matters after an intermediate job recovers.
+  if(!/\b(?:success|failure|always|cancelled)\s*\(/.test(expression)&&!dependencySuccess)return false;
+  const skipPlans=event.plansOnly==='true'&&classifierResult(event)==='success';
+  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),cancelled:()=>false,needs:{changes:{result:classifierResult(event),outputs:{plans_only:event.plansOnly??'false'}},select:{result:skipPlans?'skipped':'success',outputs:{total:skipPlans?'':String(event.selectedShards??1)}}}},{timeout:100});
 }
 function scheduledJobs(event:CiEvent):string[]|null {
   if(event.name==='pull_request'&&!types.includes(event.action??''))return null;
@@ -28,7 +34,8 @@ function scheduledJobs(event:CiEvent):string[]|null {
   }
   if(event.name==='workflow_dispatch'&&!/^  workflow_dispatch:/m.test(workflow))return null;
   if(event.name==='merge_group'&&!/^  merge_group:/m.test(workflow))return null;
-  return jobs.filter(job=>evaluate(job.condition,event)).flatMap(job=>job.shards?job.shards.map(shard=>job.id+'/'+shard):[job.id]);
+  const classifierSucceeded=classifierResult(event)==='success';
+  return jobs.filter(job=>evaluate(job.condition,event,!job.needs||classifierSucceeded)).flatMap(job=>job.shards?job.shards.map(shard=>job.id+'/'+shard):[job.id]);
 }
 
 it.each(['opened','synchronize','reopened'])('keeps draft %s events out of every runner job',action=>{
@@ -36,6 +43,29 @@ it.each(['opened','synchronize','reopened'])('keeps draft %s events out of every
 });
 it.each(['opened','synchronize','reopened'])('runs checks and diff-selected tests for reviewable %s events',action=>{
   expect(scheduledJobs({name:'pull_request',action,draft:false})).toEqual(pullRequestJobs);
+});
+it('uses only the lightweight classifier for a proven plan-only pull request',()=>{
+  expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,plansOnly:'true'})).toEqual(['changes']);
+});
+it('keeps application checks enabled when classification is absent or invalid',()=>{
+  for(const plansOnly of ['','false','unknown'])expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,plansOnly})).toEqual(pullRequestJobs);
+  for(const classificationResult of ['failure','skipped',''])expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,plansOnly:'true',classificationResult})).toEqual(pullRequestJobs);
+  for(const id of ['checks','select']){
+    const block=jobSource.split(new RegExp('^  '+id+':\\n','m'))[1]?.split(/^  \S/m)[0]??'';
+    expect(block).toMatch(/^    needs: changes$/m);
+    expect(block).toContain('!cancelled()');
+  }
+});
+it('runs selected tests after selection recovers from a failed or skipped classifier ancestor',()=>{
+  for(const classificationResult of ['failure','skipped']){
+    expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,classificationResult,selectedShards:2})).toContain('selected');
+  }
+});
+it('classifies the merge diff without installing or executing application dependencies',()=>{
+  const changes=jobSource.split(/^  changes:\n/m)[1]?.split(/^  checks:\n/m)[0]??'';
+  expect(changes).toContain('node scripts/ci-plan-scope.mjs');
+  expect(changes).toMatch(/^          fetch-depth: 2$/m);
+  expect(changes).not.toMatch(/\.\/\.github\/actions\/setup|pnpm|npm install|continue-on-error/);
 });
 it('starts pull-request feedback when a draft becomes ready without another commit',()=>{
   expect(scheduledJobs({name:'pull_request',action:'opened',draft:true})).toEqual([]);
@@ -102,6 +132,13 @@ it.each(['opened','synchronize','reopened'])('keeps the Windows audit out of dra
 it.each(['opened','synchronize','reopened'])('runs the Windows audit for reviewable %s events',action=>{
   expect(scheduledAudit({name:'pull_request',action,draft:false})).toEqual(['integration']);
 });
+it('restarts ordinary CI and matching audit work when a closed PR reopens ready for review',()=>{
+  const reopened:CiEvent={name:'pull_request',action:'reopened',draft:false};
+  expect(scheduledJobs(reopened)).toEqual(pullRequestJobs);
+  expect(scheduledAudit(reopened)).toEqual(['integration']);
+  expect(scheduledJobs({...reopened,draft:true})).toEqual([]);
+  expect(scheduledAudit({...reopened,draft:true})).toEqual([]);
+});
 it('starts the audit when ready and cancels its same-PR run when converted back to draft',()=>{
   const ready:CiEvent={name:'pull_request',action:'ready_for_review',draft:false};
   const draft:CiEvent={...ready,action:'converted_to_draft',draft:true};
@@ -133,11 +170,11 @@ it('selects pull-request tests from the merge commit diff and keeps the full sui
   for(const id of ['test-1','test-2','test-3','test-4','browser','installed-memory'])expect(jobs.find(job=>job.id===id)?.condition).toBe("github.event_name != 'pull_request'");
 });
 it('books no Windows test runner when the diff reaches no test',()=>{
-  expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual(['checks','select']);
+  expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual(['changes','checks','select']);
 });
 it('fails any job that exceeds its time budget',()=>{
   const budgets=Object.fromEntries(starts.map((match,index)=>[match[1],Number(/^    timeout-minutes: (\d+)$/m.exec(jobSource.slice(match.index,starts[index+1]?.index))?.[1])]));
-  expect(budgets).toEqual({checks:15,'test-1':22,'test-2':22,'test-3':22,'test-4':22,browser:30,'installed-memory':60,select:5,selected:22});
+  expect(budgets).toEqual({changes:5,checks:15,'test-1':22,'test-2':22,'test-3':22,'test-4':22,browser:30,'installed-memory':60,select:5,selected:22});
 });
 
 it('gives every job skipped on pull requests a literal name so its required check still reports',()=>{
@@ -148,4 +185,71 @@ it('gives every job skipped on pull requests a literal name so its required chec
     expect(/^    name:\s*(.+)$/m.exec(block)?.[1]).not.toContain('${{');
     expect(job.shards).toBeNull();
   }
+});
+
+const purgeWorkflow=readFileSync(new URL('../.github/workflows/m05-purge-qualification.yml',import.meta.url),'utf8').replaceAll('\r\n','\n');
+const purgeCleanupUrl=new URL('../.github/workflows/m05-purge-pr-cleanup.yml',import.meta.url);
+const purgeCleanupWorkflow=existsSync(purgeCleanupUrl)?readFileSync(purgeCleanupUrl,'utf8').replaceAll('\r\n','\n'):'';
+type PurgeEvent={name:'pull_request'|'pull_request_target'|'workflow_dispatch';action?:string;draft?:boolean;number?:number;sha?:string;runId?:number};
+function purgeEvaluate(expression:string,event:PurgeEvent):unknown {
+  const github={event_name:event.name,sha:event.sha??'a'.repeat(40),run_id:String(event.runId??900),event:{action:event.action,pull_request:{number:event.number??42,draft:event.draft,head:{sha:event.name==='pull_request'?event.sha??'a'.repeat(40):undefined}}}};
+  const format=(template:string,...values:(string|number)[])=>template.replace(/\{(\d+)\}/g,(_,index:string)=>String(values[Number(index)]));
+  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github,format},{timeout:100});
+}
+function purgeGroup(event:PurgeEvent,source=purgeWorkflow){
+  const group=/^  group:\s*(.+)$/m.exec(source)?.[1]??'';
+  return group.replace(/\$\{\{\s*([\s\S]*?)\s*\}\}/g,(_,expression:string)=>String(purgeEvaluate(expression,event)));
+}
+function purgeJobs(event:PurgeEvent){
+  const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(purgeWorkflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
+  if(event.name==='pull_request'&&!types.includes(event.action??''))return null;
+  const condition=/^    if:\s*(.+)$/m.exec(purgeWorkflow)?.[1]??'true';
+  return purgeEvaluate(condition,event)?['qualification']:[];
+}
+it('replaces obsolete automatic purge qualification revisions only within the same PR',()=>{
+  const first:PurgeEvent={name:'pull_request',action:'synchronize',draft:false,number:42,sha:'a'.repeat(40)};
+  expect(purgeGroup(first)).toBe(purgeGroup({...first,sha:'b'.repeat(40)}));
+  expect(purgeGroup(first)).not.toBe(purgeGroup({...first,number:43}));
+  const cancel=/^  cancel-in-progress:\s*(.+)$/m.exec(purgeWorkflow)?.[1]??'false';
+  expect(purgeEvaluate(cancel,first)).toBe(true);
+  expect(purgeEvaluate(cancel,{name:'workflow_dispatch'})).toBe(false);
+  expect(purgeGroup({name:'workflow_dispatch',sha:'a'.repeat(40)})).not.toBe(purgeGroup({name:'workflow_dispatch',sha:'b'.repeat(40)}));
+  expect(purgeGroup({name:'workflow_dispatch',sha:'a'.repeat(40),runId:900})).not.toBe(purgeGroup({name:'workflow_dispatch',sha:'a'.repeat(40),runId:901}));
+  expect(purgeGroup(first)).not.toBe(purgeGroup({name:'workflow_dispatch',sha:'a'.repeat(40)}));
+});
+it('qualifies ready PRs and explicit manual runs without scheduling draft or closed qualifications',()=>{
+  for(const action of ['opened','synchronize','reopened','ready_for_review'])expect(purgeJobs({name:'pull_request',action,draft:false})).toEqual(['qualification']);
+  for(const action of ['opened','synchronize','reopened','converted_to_draft'])expect(purgeJobs({name:'pull_request',action,draft:true})).toEqual([]);
+  for(const draft of [true,false])expect(purgeJobs({name:'pull_request',action:'closed',draft})).toBeNull();
+  expect(purgeJobs({name:'workflow_dispatch'})).toEqual(['qualification']);
+});
+it('cancels conflicted, closed or draft purge PRs through a trusted runnerless event',()=>{
+  expect(purgeCleanupWorkflow).toMatch(/^on:\n  pull_request_target:\n    types: \[closed, converted_to_draft\]\n/m);
+  expect(purgeCleanupWorkflow).toMatch(/^permissions: \{\}$/m);
+  expect(purgeCleanupWorkflow).toMatch(/^  cancel-in-progress: true$/m);
+  const cleanupJobs=purgeCleanupWorkflow.split(/^jobs:\n/m)[1]??'';
+  expect(cleanupJobs.trim()).toBe("cleanup:\n    if: ${{ false }}\n    runs-on: ubuntu-latest\n    timeout-minutes: 1\n    steps:\n      - run: ':'");
+  expect(purgeCleanupWorkflow).not.toMatch(/\buses:|\bscript:|\bsecrets\b|\bgithub\.token\b|head\.sha|head_sha|paths:|mergeable/);
+  for(const action of ['closed','converted_to_draft'])for(const number of [42,43]){
+    const event:PurgeEvent={name:'pull_request_target',action,number,draft:true};
+    expect(purgeGroup(event,purgeCleanupWorkflow)).toBe(purgeGroup({name:'pull_request',number}));
+    expect(purgeGroup(event,purgeCleanupWorkflow)).not.toBe(purgeGroup({name:'pull_request',number:number+1}));
+    expect(purgeGroup(event,purgeCleanupWorkflow)).not.toBe(purgeGroup({name:'workflow_dispatch'}));
+    const condition=/^    if:\s*(.+)$/m.exec(cleanupJobs)?.[1]??'true';
+    expect(purgeEvaluate(condition,event)).toBe(false);
+  }
+  for(const path of ['.github/workflows/m05-purge-pr-cleanup.yml','.github/workflows/m05-purge-qualification.yml']){
+    expect(publicSourceAllowed(path),path).toBe(true);
+    expect(publicRuntimeSourceAllowed(path),path).toBe(false);
+  }
+});
+it('keeps exact-source Linux and Windows purge acceptance and all existing path filters',()=>{
+  const paths=[...purgeWorkflow.matchAll(/^      - '([^'\n]+)'$/gm)].map(match=>match[1]);
+  expect(paths).toEqual(['.github/workflows/m05-purge-qualification.yml','tests/project-memory-service-v3.test.ts','tests/memory-forget-v3.test.ts','packages/core/project-memory.ts','packages/contracts/project-memory.ts','apps/server/project-memory-routes.ts','packages/core/service.ts']);
+  expect(purgeWorkflow).toContain('os: [ubuntu-24.04, windows-latest]');
+  expect(purgeWorkflow).toContain('ref: ${{ github.event.pull_request.head.sha || github.sha }}');
+  expect(purgeWorkflow).toContain("if ($actual -ne $expected) { throw 'Purge test checkout source SHA mismatch' }");
+  expect(purgeWorkflow).toContain('timeout-minutes: 30');
+  for(const text of ['numFailedTests -ne 0','numPendingTests -ne 0','numTodoTests -ne 0','assertionsFound.Count -ne 1'])expect(purgeWorkflow).toContain(text);
+  expect(purgeWorkflow).not.toContain('continue-on-error');
 });
