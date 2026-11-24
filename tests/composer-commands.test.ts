@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {commandToken, replaceCommandToken, skillBindingSchema} from '../apps/web/src/composer-commands';
+import {commandPaletteHeight, commandToken, replaceCommandToken, skillBindingSchema} from '../apps/web/src/composer-commands';
 
 it('finds slash commands at the caret after text without interpreting URLs or paths', () => {
   expect(commandToken('Please explain /', 16)).toEqual({start: 15, end: 16, query: ''});
@@ -22,4 +22,25 @@ it('admits a bounded Personal selection identity without converting literal text
   expect(skillBindingSchema.parse(binding)).toEqual(binding);
   expect(skillBindingSchema.safeParse({...binding, ref: {...ref, scope: {kind: 'provider', providerId: 'private', scopeId: 'company'}}}).success).toBe(false);
   expect(skillBindingSchema.safeParse('/skill:Test').success).toBe(false);
+});
+
+it('sizes the slash palette for every footer block before the cap forces scrolling', () => {
+  const base = {loading: false, error: false, skillStatus: false, unavailableSources: 0, nextCursor: false};
+  const height = (over: Partial<Parameters<typeof commandPaletteHeight>[0]>) => commandPaletteHeight({...base, options: 3, ...over});
+  // Each footer block's allowance lands exactly once: deltas from the bare 3-option palette.
+  const bare = height({});
+  expect(bare).toBe(3 * 42 + 26 + 16); // no footer block renders -> no phantom allowance
+  expect(height({unavailableSources: 2}) - bare).toBe(Math.min(76, 2 * 17 + 6));
+  expect(height({unavailableSources: 8}) - height({unavailableSources: 6})).toBe(0); // sources block caps at 76px
+  expect(height({nextCursor: true}) - bare).toBe(30);
+  expect(height({skillStatus: true}) - bare).toBe(29);
+  expect(height({loading: true, skillStatus: true}) - bare).toBe(58); // two distinct status rows
+  expect(height({loading: true, error: true}) - bare).toBe(58); // loading and error rows render independently
+  // The empty-state row renders only when nothing else does: absent when sources are listed.
+  expect(commandPaletteHeight({...base, options: 0, unavailableSources: 2, nextCursor: true})).toBe(26 + Math.min(76, 2 * 17 + 6) + 30 + 16);
+  expect(commandPaletteHeight({...base, options: 0})).toBe(110); // empty-state row + 110px floor
+  // Tall sets cap at 352px and let the list scroll.
+  expect(commandPaletteHeight({...base, options: 50, skillStatus: true, unavailableSources: 8, nextCursor: true})).toBe(352);
+  // Repro of the reported clip: 3 options + unavailable sources must exceed the old 3*42+44=170px guess.
+  expect(height({unavailableSources: 2})).toBeGreaterThan(170);
 });
