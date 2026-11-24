@@ -2845,6 +2845,7 @@
     "tests/checkpoint-restore-v3.test.ts",
     "tests/ci-concurrency-policy.test.ts",
     "tests/ci-draft-policy.test.ts",
+    "tests/ci-failure-send.test.ts",
     "tests/ci-failures-contracts.test.ts",
     "tests/ci-failures-workspace.test.ts",
     "tests/ci-logs.test.ts",
