@@ -206,7 +206,8 @@ test('saved-note recovery failure blocks Delete until Retry and keeps stale revi
 test('Use saved note clears only its captured draft and a subsequent edit uses the saved revision', async ({ page }) => {
   const commands = await mount(page, { drafts: { [savedKey]: draft } }); await expect(editor(page)).toHaveValue(draft.content);
   await page.getByText('A newer saved note is available', { exact: true }).click();
-  await page.getByRole('button', { name: 'Use saved note', exact: true }).click(); await expect(editor(page)).toHaveValue('Saved decision.');
+  await page.getByRole('button', { name: 'Use saved note', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard my edits and use saved note', exact: true }).click(); await expect(editor(page)).toHaveValue('Saved decision.');
   await editor(page).fill('Edit after adopting the saved note.');
   await page.getByRole('button', { name: 'Save note', exact: true }).click(); await expect.poll(() => commands.length).toBe(1);
   expect(commands[0]).toMatchObject({ type: 'memory.save', threadId: 'thread-a', payload: { key: 'decision', content: 'Edit after adopting the saved note.', baseRevision: 3 } });
@@ -258,4 +259,40 @@ for (const view of [
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath(`${view.number}-${view.name}.png`), fullPage: true });
   if (view.failed) { const retry = page.getByRole('button', { name: 'Retry', exact: true }); await retry.scrollIntoViewIfNeeded(); await retry.focus(); await retry.press('Enter'); await expect(editor(page)).toHaveValue(draft.content); }
+});
+
+test('the newer-saved-note conflict is announced and needs a second confirmation', async ({ page }) => {
+  const keyed = (key: string, revision = 3): Note => ({ id: `thread-a:${key}`, threadId: 'thread-a', key, content: `Saved ${key} r${revision}.`, revision, author: 'user', updatedAt: '2026-11-07T00:00:00Z' });
+  await mount(page, { notes: [keyed('alpha', 3)] });
+  const editor = page.getByRole('textbox', { name: 'Note alpha', exact: true });
+  // A clean note never renders the conflict region.
+  await expect(page.locator('.memory-conflict')).toHaveCount(0);
+  await editor.fill('My unsaved edit.');
+  // The saved revision advancing elsewhere opens the conflict disclosure, announced politely.
+  await page.evaluate(note => window.memoryFixture.publish([note]), keyed('alpha', 5));
+  const region = page.locator('.memory-conflict[role="status"][aria-live="polite"]');
+  await expect(region).toHaveCount(1);
+  const disclosure = region.locator('details');
+  await expect(disclosure).not.toHaveAttribute('open', '');
+  await disclosure.locator('summary').click();
+  const useSaved = page.getByRole('button', { name: 'Use saved note' });
+  await expect(useSaved).toBeVisible();
+  // First click only arms; the draft is retained.
+  await useSaved.click();
+  const armed = page.getByRole('button', { name: 'Discard my edits and use saved note' });
+  await expect(armed).toBeVisible();
+  await expect(editor).toHaveValue('My unsaved edit.');
+  // The arming expires after four seconds.
+  await page.waitForTimeout(4300);
+  await expect(armed).toBeHidden(); await expect(useSaved).toBeVisible();
+  // A changed revision resets an armed confirmation before it can complete.
+  await useSaved.click(); await expect(armed).toBeVisible();
+  await page.evaluate(note => window.memoryFixture.publish([note]), keyed('alpha', 6));
+  await expect(armed).toBeHidden(); await expect(useSaved).toBeVisible(); await expect(editor).toHaveValue('My unsaved edit.');
+  // Keyboard confirmation adopts the saved note and focuses the editor.
+  await useSaved.focus(); await useSaved.press('Enter');
+  await expect(armed).toBeVisible(); await armed.press('Enter');
+  await expect(editor).toHaveValue('Saved alpha r6.');
+  await expect(region).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe('TEXTAREA');
 });
