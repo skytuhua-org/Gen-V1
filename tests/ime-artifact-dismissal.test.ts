@@ -24,7 +24,7 @@ beforeAll(async()=>{
   const root=createRoot(document.getElementById('root'));api.dispose=()=>root.unmount();
   api.mount=()=>root.render(kind==='floating'?<Floating/>:kind==='document'?<div className="artifact"><Document/></div>:<Region/>);
  `},bundle:true,write:false,platform:'browser',format:'iife',define:{'process.env.NODE_ENV':'"production"'},loader:{'.css':'empty'}});
- server=createServer((request,response)=>{if(request.url==='/bundle.js'){response.setHeader('Content-Type','text/javascript');response.end(bundle.outputFiles[0]!.text);}else{response.setHeader('Content-Type','text/html');response.end('<!doctype html><button id="prior">Prior focus</button><aside id="already-inert" inert>Previously inert</aside><div id="root"></div><script src="/bundle.js"></script>');}});
+ server=createServer((request,response)=>{if(request.url==='/bundle.js'){response.setHeader('Content-Type','text/javascript');response.end(bundle.outputFiles[0]!.text);}else{response.setHeader('Content-Type','text/html; charset=utf-8');response.end('<!doctype html><button id="prior">Prior focus</button><aside id="already-inert" inert>Previously inert</aside><div id="root"></div><script src="/bundle.js"></script>');}});
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));origin=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
  browser=await chromium.launch({headless:true});
 });

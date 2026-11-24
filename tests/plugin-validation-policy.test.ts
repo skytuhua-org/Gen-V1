@@ -29,8 +29,8 @@ it('boots the actual presentation bundle in an opaque browser frame without Node
       ui.ReactDOMClient.createRoot(document.getElementById('root')).render(ui.React.createElement(ui.ComposerView,{onSubmit:event=>event.preventDefault()},
         ui.React.createElement('label',null,'Draft',ui.React.createElement('textarea',{'aria-label':'Draft',defaultValue:'Recovered'})),ui.React.createElement('button',{type:'button',onClick:()=>{document.body.dataset.saved='yes';}},'Save locally')));
     `);return;}
-    if(request.url?.startsWith('/frame?')){response.writeHead(200,{'content-type':'text/html','content-security-policy':"default-src 'none'; script-src 'self'; frame-ancestors 'self'"});response.end('<meta name="gen-plugin-id" content="browser-test"><div id="root"></div><script src="/runtime.js"></script><script src="/check.js"></script>');return;}
-    response.writeHead(200,{'content-type':'text/html'});response.end('<iframe title="Isolated presentation" sandbox="allow-scripts" src="/frame?session=browser-test&theme=dark"></iframe>');
+    if(request.url?.startsWith('/frame?')){response.writeHead(200,{'content-type':'text/html; charset=utf-8','content-security-policy':"default-src 'none'; script-src 'self'; frame-ancestors 'self'"});response.end('<meta name="gen-plugin-id" content="browser-test"><div id="root"></div><script src="/runtime.js"></script><script src="/check.js"></script>');return;}
+    response.writeHead(200,{'content-type':'text/html; charset=utf-8'});response.end('<iframe title="Isolated presentation" sandbox="allow-scripts" src="/frame?session=browser-test&theme=dark"></iframe>');
   });
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
   const address=server.address();if(!address||typeof address==='string')throw Error('Fixture listener unavailable');
