@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Store, digest } from "../packages/storage/store.ts";
 
@@ -43,7 +43,7 @@ describe("transaction consistency across rollback and writers", () => {
   });
 
   it("preserves the original error and recovers the orphaned transaction when rollback fails", () => {
-    const { store } = setup();
+    const { store, path } = setup();
     const realExec = store.db.exec.bind(store.db);
     // COMMIT throws with the transaction still open; the recovery ROLLBACK
     // fails too — on main this both masks the original error and wedges the
@@ -62,6 +62,11 @@ describe("transaction consistency across rollback and writers", () => {
     expect(store.get<{ v: number }>("sample", "b")?.v).toBe(2);
     expect(store.get("sample", "a")).toBeNull();
     expect(store.db.isTransaction).toBe(false);
+    // A reopened store sees exactly the committed rows.
+    const reopened = new Store(dirname(path));
+    cleanups.push(() => reopened.close());
+    expect(reopened.get<{ v: number }>("sample", "b")?.v).toBe(2);
+    expect(reopened.get("sample", "a")).toBeNull();
   });
 
   it("gives snapshot() one consistent view while a second connection commits mid-read", () => {
