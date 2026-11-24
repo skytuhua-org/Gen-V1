@@ -353,6 +353,7 @@ interface PoolEntry {
 export class LanguageServerPool {
   private readonly entries = new Map<string, PoolEntry>();
   private readonly pending = new Map<string, Promise<PoolEntry>>();
+  private readonly retiring = new Set<Promise<void>>();
   private readonly reaper: ReturnType<typeof setInterval>;
   private seqCounter = 0;
   constructor(
@@ -416,9 +417,22 @@ export class LanguageServerPool {
     if (entry) { this.entries.delete(key); await entry.adapter.dispose().catch(() => {}); }
   }
 
+  /** Drop an entry immediately and finish its teardown in the background.
+   * `dispose` still awaits in-flight teardowns, so a quitting host cannot
+   * orphan a server whose shutdown is already under way. */
+  retire(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    const teardown = entry.adapter.dispose().catch(() => {});
+    this.retiring.add(teardown);
+    void teardown.then(() => this.retiring.delete(teardown));
+  }
+
   async dispose(): Promise<void> {
     clearInterval(this.reaper);
     for (const [key] of [...this.entries]) await this.release(key);
+    await Promise.all([...this.retiring]);
   }
 
   get size(): number { return this.entries.size; }
@@ -512,7 +526,7 @@ export class CodeIntelligence {
           // The server may be wedged; drop it from the pool now and let its
           // shutdown run in the background — awaiting it could stall the
           // UNAVAILABLE answer behind a hung server's shutdown timeout.
-          void this.pool.release(entry.key);
+          this.pool.retire(entry.key);
           return this.unavailable(input);
         }
         throw error;
