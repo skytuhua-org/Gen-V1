@@ -370,6 +370,8 @@ export function ShellSidebar({
           type="button"
           className="icon-button sidebar-close"
           aria-label={mobile ? 'Close navigation' : 'Collapse sidebar'}
+          aria-expanded={mobile ? open : !layout.sidebarCollapsed}
+          aria-controls="threads-nav"
           onClick={mobile ? close : toggleCollapsed}
         >
           <PanelLeftClose size={16} />
@@ -389,9 +391,8 @@ export function ShellSidebar({
         <button
           type="button"
           className={`icon-button sidebar-action-btn sidebar-filter ${filter !== 'all' ? 'selected' : ''}`}
-          aria-label="Filter threads"
-          title={`Filter: ${filter}. Click for ${filter === 'all' ? 'working' : filter === 'working' ? 'waiting' : 'all'} threads`}
-          aria-pressed={filter !== 'all'}
+          aria-label={`Thread filter: ${filter}`}
+          title={`Filter threads — currently ${filter}`}
           onClick={() => setFilter(value => (value === 'all' ? 'working' : value === 'working' ? 'waiting' : 'all'))}
         >
           <ListFilter size={15} />
@@ -419,12 +420,12 @@ export function ShellSidebar({
         </button>
       </div>
       {filter !== 'all' && (
-        <div className="sidebar-filter-chip">
+        <div className="sidebar-filter-chip" role="status" aria-atomic="true">
           <span>Showing {filter} threads</span>
           <button type="button" className="icon-button" aria-label="Clear thread filter" title="Show all threads" onClick={() => setFilter('all')}><X size={12} /></button>
         </div>
       )}
-      <nav className="thread-list" aria-label="Threads" tabIndex={0} ref={navRef}>
+      <nav id="threads-nav" className="thread-list" aria-label="Threads" tabIndex={0} ref={navRef}>
         {group('pinned', 'Pinned', pinned, {
           list: 'pinned',
           keepVisible: !locked,
@@ -479,7 +480,7 @@ export function ShellSidebar({
           </section>
         )}
         {loaded && !visibleMatching.length && (
-          <div className="sidebar-empty">{search ? 'No matching threads.' : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.'}</div>
+          <div className="sidebar-empty" role="status" aria-atomic="true">{search ? 'No matching threads.' : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.'}</div>
         )}
         {pageControls}
       </nav>
