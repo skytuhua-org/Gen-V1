@@ -1,6 +1,8 @@
 import {expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {runInNewContext} from 'node:vm';
+import {resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 
 const workflow=readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url),'utf8').replaceAll('\r\n','\n');
 const jobSource=workflow.split(/^jobs:\n/m)[1]??'';
@@ -13,12 +15,12 @@ const jobs=starts.map((match,index)=>{
 const requiredJobs=['checks','test-1','test-2','test-3','test-4','browser','installed-memory'];
 const pullRequestJobs=['checks','select','selected'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
-type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number};
+type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number;queueProof?:'true'|'false'};
 function context(event:CiEvent){return {workflow:'CI',ref:event.ref??'refs/pull/42/merge',event_name:event.name,event:event.name==='pull_request'?{action:event.action,pull_request:{number:42,draft:event.draft}}:{}};}
 function evaluate(expression:string,event:CiEvent):unknown {
   // The policy uses boolean/string comparisons and property access, whose
   // JavaScript and Actions semantics agree for these boolean/string fixtures.
-  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),needs:{select:{outputs:{total:String(event.selectedShards??1)}}}},{timeout:100});
+  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),cancelled:()=>false,needs:{select:{outputs:{total:String(event.selectedShards??1)}},proof:{outputs:{verified:event.queueProof??''}}}},{timeout:100});
 }
 function scheduledJobs(event:CiEvent):string[]|null {
   if(event.name==='pull_request'&&!types.includes(event.action??''))return null;
@@ -55,8 +57,37 @@ it('cancels the same PR run when reviewable work becomes draft and admits no rep
   expect(groupFor(draft)).not.toBe(groupFor({...draft,ref:'refs/pull/43/merge'}));
   expect(evaluate(cancel!,draft)).toBe(true);
 });
-it.each(['main','agent/m05-v3'])('preserves every job for pushes to %s without a pull request payload',branch=>{
-  expect(scheduledJobs({name:'push',ref:'refs/heads/'+branch})).toEqual(requiredJobs);
+it('preserves every job for pushes to agent/m05-v3 without a pull request payload or a proof lookup',()=>{
+  expect(scheduledJobs({name:'push',ref:'refs/heads/agent/m05-v3'})).toEqual(requiredJobs);
+});
+it.each([undefined,'false'] as const)('runs every job for a push to main when the proof lookup reports %s',queueProof=>{
+  // An absent output is what a failed, timed-out or skipped lookup job leaves behind.
+  expect(scheduledJobs({name:'push',ref:'refs/heads/main',queueProof})).toEqual(['proof',...requiredJobs]);
+});
+it('skips the repeat suite on main only for a commit the merge queue already passed, and still refreshes the caches',()=>{
+  expect(scheduledJobs({name:'push',ref:'refs/heads/main',queueProof:'true'})).toEqual(['proof','caches']);
+});
+it('looks for proof only on pushes to main, read-only, and never lets the lookup hide or replace a job',()=>{
+  const proof=jobSource.split(/^  proof:\n/m)[1]?.split(/^  \S/m)[0]??'';
+  expect(jobs.find(job=>job.id==='proof')?.condition).toBe("github.event_name == 'push' && github.ref == 'refs/heads/main'");
+  expect(proof).toMatch(/^    permissions:\n      actions: read\n      contents: read\n    outputs:\n      verified: \$\{\{ steps\.proof\.outputs\.verified \}\}$/m);
+  expect(proof).toContain('run: node scripts/ci-queue-verified.mjs');
+  expect(proof).toMatch(/^          sparse-checkout: scripts\/ci-queue-verified\.mjs$/m);
+  const caches=jobSource.split(/^  caches:\n/m)[1]?.split(/^  \S/m)[0]??'';
+  expect(jobs.find(job=>job.id==='caches')?.condition).toBe("needs.proof.outputs.verified == 'true'");
+  expect(caches).toMatch(/uses: \.\/\.github\/actions\/setup\n        with:\n          python: 'true'\n          playwright: 'true'$/m);
+  for(const job of [proof,caches])expect(job).not.toMatch(/continue-on-error|always\(\)/);
+  // Every required job waits for the lookup and runs unless it proved the commit.
+  for(const id of requiredJobs){
+    expect(jobSource.slice(jobSource.indexOf('  '+id+':\n')).split(/^  [^ \n]/m)[1]).toMatch(/^    needs: proof$/m);
+    expect(jobs.find(job=>job.id===id)?.condition).toContain("!cancelled() && needs.proof.outputs.verified != 'true' && ");
+  }
+  for(const event of [{name:'merge_group'},{name:'workflow_dispatch',ref:'refs/heads/main'},{name:'pull_request',action:'opened',draft:false},{name:'push',ref:'refs/heads/agent/m05-v3'}] as CiEvent[])
+    expect(scheduledJobs(event)).not.toContain('proof');
+});
+it('requires the lookup to find exactly the jobs this workflow names as required',async()=>{
+  const {requiredJobs:proven}=await import(pathToFileURL(resolve('scripts/ci-queue-verified.mjs')).href) as {requiredJobs:string[]};
+  expect(proven).toEqual(requiredJobs.map(id=>/^    name:\s*(.+)$/m.exec(jobSource.slice(jobSource.indexOf('  '+id+':\n')))?.[1]));
 });
 it('preserves every job for a manual dispatch without a pull request payload',()=>{
   expect(scheduledJobs({name:'workflow_dispatch',ref:'refs/heads/main'})).toEqual(requiredJobs);
@@ -130,14 +161,14 @@ it('selects pull-request tests from the merge commit diff and keeps the full sui
   expect(selected).toContain('pnpm test --maxWorkers=1 --changed HEAD^1 --shard $env:SHARD');
   expect(selected).toContain('shard: ${{ fromJSON(needs.select.outputs.shards) }}');
   for(const job of [select,selected])expect(job).not.toMatch(/continue-on-error|always\(\)|--passWithNoTests/);
-  for(const id of ['test-1','test-2','test-3','test-4','browser','installed-memory'])expect(jobs.find(job=>job.id===id)?.condition).toBe("github.event_name != 'pull_request'");
+  for(const id of ['test-1','test-2','test-3','test-4','browser','installed-memory'])expect(jobs.find(job=>job.id===id)?.condition).toBe("${{ !cancelled() && needs.proof.outputs.verified != 'true' && github.event_name != 'pull_request' }}");
 });
 it('books no Windows test runner when the diff reaches no test',()=>{
   expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual(['checks','select']);
 });
 it('fails any job that exceeds its time budget',()=>{
   const budgets=Object.fromEntries(starts.map((match,index)=>[match[1],Number(/^    timeout-minutes: (\d+)$/m.exec(jobSource.slice(match.index,starts[index+1]?.index))?.[1])]));
-  expect(budgets).toEqual({checks:15,'test-1':22,'test-2':22,'test-3':22,'test-4':22,browser:30,'installed-memory':60,select:5,selected:22});
+  expect(budgets).toEqual({proof:5,caches:10,checks:15,'test-1':22,'test-2':22,'test-3':22,'test-4':22,browser:30,'installed-memory':60,select:5,selected:22});
 });
 
 it('gives every job skipped on pull requests a literal name so its required check still reports',()=>{
