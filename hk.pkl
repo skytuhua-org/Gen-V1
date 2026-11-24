@@ -1,0 +1,45 @@
+amends "package://github.com/jdx/hk/releases/download/v2.13.0/hk@2.13.0#/Config.pkl"
+
+local bunLint = new Step {
+  glob = List("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}")
+  check = "pnpm exec bun lint --no-script {{files}}"
+  fix = "pnpm exec bun lint --no-script --fix {{files}}"
+}
+
+hooks {
+  // Lints and fixes only the staged files; unstaged work is stashed meanwhile.
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps {
+      ["bun-lint"] = bunLint
+    }
+  }
+  // The same commands CI runs on a pull request: lint and typecheck from
+  // "Windows checks", and the tests reachable from the diff against main.
+  ["pre-push"] {
+    steps {
+      ["lint"] = new Step { check = "pnpm lint" }
+      ["typecheck"] = new Step { check = "pnpm typecheck" }
+      // cmd.exe has no command substitution, so Windows uses PowerShell.
+      ["tests"] = new Step {
+        check = new Script {
+          linux = "pnpm exec vitest run --changed \"$(git merge-base HEAD origin/main)\""
+          macos = "pnpm exec vitest run --changed \"$(git merge-base HEAD origin/main)\""
+          windows = "powershell -NoProfile -Command \"pnpm exec vitest run --changed (git merge-base HEAD origin/main)\""
+        }
+      }
+    }
+  }
+  ["check"] {
+    steps {
+      ["bun-lint"] = bunLint
+    }
+  }
+  ["fix"] {
+    fix = true
+    steps {
+      ["bun-lint"] = bunLint
+    }
+  }
+}
