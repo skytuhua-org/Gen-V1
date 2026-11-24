@@ -223,7 +223,7 @@ test('a dropdown opened during the dialog entrance re-anchors when the entrance 
 });
 
 test('preferences and supported environment actions remain usable after search reset', async ({ page }) => {
-  const { dialog, nav, search, snapshot, commands } = await openSettings(page);
+  const { dialog, nav, search, publish, commands } = await openSettings(page);
   await search.fill('chat width');
   await dialog.getByRole('button', { name: /^Chat width/ }).click();
   await dialog.getByRole('combobox', { name: 'Chat width', exact: true }).click();
@@ -245,8 +245,7 @@ test('preferences and supported environment actions remain usable after search r
   await dialog.getByLabel('Store as a protected secret', { exact: true }).uncheck();
   await dialog.getByLabel('Variable name', { exact: true }).fill('EXAMPLE_VALUE');
   await dialog.getByLabel('Value', { exact: true }).fill('synthetic-value');
-  snapshot.seq++;
-  await page.evaluate(seq => window.dispatchEvent(new CustomEvent('task-fixture-update', { detail: seq })), snapshot.seq);
+  await publish();
   await expect(dialog.getByLabel('Value', { exact: true })).toHaveValue('synthetic-value');
   await dialog.getByRole('button', { name: 'Save variable', exact: true }).click();
   await expect(dialog.getByText('EXAMPLE_VALUE', { exact: true })).toBeVisible();

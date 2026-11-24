@@ -108,6 +108,21 @@ it('keeps concurrent disposal pending and account ownership held until adapter c
  await f.runtime.dispose();expect(f.pi.runtime.dispose).toHaveBeenCalledOnce();expect(f.official.runtime.dispose).toHaveBeenCalledOnce();
 });
 
+it('retries cancellation after unconfirmed cleanup and releases the lease once',async()=>{
+ const lease={id:'run-lease',nonce:'nonce'},releaseUse=vi.fn(),f=fixture({get:()=>null,claimUse:()=>lease,releaseUse});
+ await f.runtime.start(input());
+ vi.mocked(f.pi.runtime.cancel).mockRejectedValueOnce(Error('Native cleanup is unconfirmed'));
+ try{
+  await expect(f.runtime.cancel(input())).rejects.toThrow('Native cleanup is unconfirmed');
+  expect(releaseUse).not.toHaveBeenCalled();
+  await expect(f.runtime.start({...input(),runId:'other'})).rejects.toMatchObject({code:'RUNTIME_BUSY'});
+  await Promise.all([f.runtime.cancel(input()),f.runtime.cancel(input())]);
+  expect(f.pi.runtime.cancel).toHaveBeenCalledTimes(2);
+  expect(releaseUse).toHaveBeenCalledExactlyOnceWith(lease);
+  await expect(f.runtime.start({...input(),runId:'other'})).resolves.toBeUndefined();
+ }finally{await f.runtime.dispose();}
+});
+
 it('retains failed disposal and its account ownership for every later caller',async()=>{
  const lease={id:'run-lease',nonce:'nonce'},releaseUse=vi.fn(),f=fixture({get:()=>null,claimUse:()=>lease,releaseUse}),failure=Error('Native cleanup is unconfirmed');
  await f.runtime.start(input());vi.mocked(f.pi.runtime.dispose).mockRejectedValue(failure);
