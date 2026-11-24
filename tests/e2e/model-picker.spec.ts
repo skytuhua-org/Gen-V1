@@ -123,3 +123,16 @@ test('an unnamed provider renders a title-cased label in the rail and group head
   await expect(page.getByRole('button', { name: /Recording Fixture/ })).toBeVisible();
   await expect(page.getByRole('listbox', { name: 'Available models', exact: true }).getByRole('group', { name: 'Recording Fixture', exact: true })).toBeVisible();
 });
+
+test('reopening resets a picked type filter back to All', async ({ page }) => {
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  const listbox = page.getByRole('listbox', { name: 'Available models', exact: true });
+  await trigger.click();
+  await page.locator('.model-picker-rail-item', { hasText: 'ChatGPT / Codex' }).click();
+  await expect(listbox.getByRole('option')).toHaveCount(2);
+  await page.getByRole('searchbox', { name: 'Search models', exact: true }).press('Escape');
+  await trigger.click();
+  await expect(listbox.getByRole('option')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: /All models/ })).toHaveAttribute('aria-pressed', 'true');
+});
