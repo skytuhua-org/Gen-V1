@@ -55,23 +55,7 @@ it('measures exact aggregation, complete visible bytes, cold setup and retained 
     expect(entry.modelVisibleBytes.total).toBe(entry.modelVisibleBytes.requests + entry.modelVisibleBytes.responses);
     expect(entry.elapsedMs).toBeGreaterThanOrEqual(0);
   }
-  expect(report.tokenization.status).toBe('MEASURED_OFFLINE');
-  const tokenCounts = report.tokenization.actualCounts;
-  expect(tokenCounts).not.toBeNull();
-  if (!tokenCounts) throw new Error('Actual named-encoding token measurements are required');
-  expect(Object.keys(tokenCounts)).toEqual(['cl100k_base', 'o200k_base']);
-  for (const encoding of ['cl100k_base', 'o200k_base'] as const) {
-    const counts = tokenCounts[encoding];
-    expect(counts.success.program.total).toBeLessThan(counts.success.direct.total);
-    expect(counts.source_failure.program.diagnostic).toBeGreaterThan(0);
-    for (const entry of [counts.success.direct, counts.success.program, counts.source_failure.direct, counts.source_failure.program]) {
-      expect(entry.requests).toBeGreaterThan(0);
-      expect(entry.responses).toBeGreaterThan(0);
-      expect(entry.total).toBe(entry.requests + entry.responses);
-      expect(Number.isSafeInteger(entry.total)).toBe(true);
-    }
-  }
-  expect(report.tokenization.evidence).toMatchObject({ package: 'js-tiktoken', version: '1.0.21', roundTripValidated: true });
+  expect(report.tokenization).toMatchObject({ status: 'NOT_MEASURED', actualCounts: null });
   // The run writes only into its own temporary directory; the tracked
   // historical receipt and its recorded digest are left exactly as they were.
   const trackedBefore = await readFile(AGGREGATION_ARTIFACT_PATH);

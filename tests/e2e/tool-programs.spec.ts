@@ -31,17 +31,22 @@ interface ApiState {
   models: Record<string, Model>;
   commands: { type: string; payload: Record<string, unknown>; threadId: string }[];
   resultRequests: URL[];
+  listRequests: string[];
   listFailure?: boolean;
+  authorizationLost?: boolean;
   resultFailure?: boolean;
   holdList?: (threadId: string) => Promise<void>;
   holdResult?: () => Promise<void>;
 }
 async function install(page: Page, initial: Partial<ApiState> = {}) {
-  const state: ApiState = { models: { 'thread-a': model(), 'thread-b': model('thread-b') }, commands: [], resultRequests: [], ...initial };
+  const state: ApiState = { models: { 'thread-a': model(), 'thread-b': model('thread-b') }, commands: [], resultRequests: [], listRequests: [], ...initial };
   const send = (route: Route, body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) }).catch(() => {});
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url());
-    if (url.pathname === '/api/bootstrap') return send(route, { csrfToken: 'fixture-csrf' });
+    if (url.pathname === '/api/bootstrap') {
+      if (state.authorizationLost) return send(route, { error: { code: 'LAUNCH_TOKEN_REQUIRED', message: 'Launch access required.' } }, 403);
+      return send(route, { csrfToken: 'fixture-csrf' });
+    }
     if (url.pathname === '/api/commands') {
       const command = route.request().postDataJSON(); state.commands.push(command);
       const current = state.models[command.threadId];
@@ -61,7 +66,9 @@ async function install(page: Page, initial: Partial<ApiState> = {}) {
     const list = /^\/api\/threads\/([^/]+)\/tool-programs$/.exec(url.pathname);
     if (list) {
       const threadId = decodeURIComponent(list[1]), captured = structuredClone(state.models[threadId]);
+      state.listRequests.push(threadId);
       await state.holdList?.(threadId);
+      if (state.authorizationLost) return send(route, { error: { code: 'AUTH_REQUIRED', message: 'Session required.' } }, 401);
       if (state.listFailure) return send(route, { error: { code: 'HOST_UNAVAILABLE', message: 'Program status could not be read.' } }, 503);
       return send(route, captured);
     }
@@ -69,6 +76,48 @@ async function install(page: Page, initial: Partial<ApiState> = {}) {
   });
   return state;
 }
+
+test('keeps empty unavailable tool programs quiet after discovery', async ({ page }) => {
+  await page.clock.install();
+  const empty = { ...model(), programs: [], kernels: [] };
+  const api = await install(page, { models: { 'thread-a': empty } });
+  const discovery = page.waitForResponse(response => response.url().endsWith('/api/threads/thread-a/tool-programs'));
+  await page.goto('/tool-programs');
+  await discovery;
+  await page.clock.runFor(50);
+  api.listFailure = true;
+  await page.clock.runFor(9000);
+  expect(api.listRequests).toEqual(['thread-a']);
+  await expect(page.getByRole('region', { name: 'Tool programs' })).toHaveCount(0);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('keeps a failed background discovery out of chat', async ({ page }) => {
+  await page.clock.install();
+  const api = await install(page, { listFailure: true });
+  const discovery = page.waitForResponse(response => response.url().endsWith('/api/threads/thread-a/tool-programs'));
+  await page.goto('/tool-programs');
+  await discovery;
+  await page.clock.runFor(9000);
+  expect(api.listRequests).toEqual(['thread-a']);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('clears retained programs when session renewal rejects access', async ({ page }) => {
+  await page.clock.install();
+  const api = await install(page);
+  await page.goto('/tool-programs');
+  await page.getByRole('button', { name: 'Inspect original result', exact: true }).click();
+  await expect(page.getByLabel('Result page')).toBeVisible();
+  api.authorizationLost = true;
+  const renewal = page.waitForResponse(response => response.url().endsWith('/api/bootstrap') && response.status() === 403);
+  await page.getByRole('button', { name: 'Refresh program status' }).click();
+  await renewal;
+  await expect(page.getByRole('region', { name: 'Tool programs' })).toHaveCount(0);
+  await expect(page.getByLabel('Result page')).toHaveCount(0);
+  await page.clock.runFor(9000);
+  expect(api.listRequests).toEqual(['thread-a', 'thread-a']);
+});
 
 test('shows program metadata and fixed call details before explicit bounded source inspection', async ({ page }) => {
   const api = await install(page);
@@ -187,6 +236,7 @@ test('keeps controls and long references inside a narrow viewport and exposes li
   api.listFailure = true;
   await page.getByRole('button', { name: 'Refresh program status' }).click();
   await expect(page.getByRole('alert')).toHaveText('Program status could not be read.');
+  await expect(panel.getByRole('article', { name: 'JavaScript program program-a' })).toBeVisible();
 });
 
 test('advances active elapsed time while waiting and freezes the host value after settlement', async ({ page }) => {

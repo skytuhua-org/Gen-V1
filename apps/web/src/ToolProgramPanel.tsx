@@ -178,24 +178,38 @@ function ProgramPanelOwner({ threadId }: { threadId: string }) {
   const refresh = useRef<() => Promise<void>>(async () => {}), live = useRef(true);
   useEffect(() => {
     live.current = true;
+    let shouldPoll = false;
     let sequence = 0, timer: ReturnType<typeof setTimeout> | undefined, pending: AbortController | undefined;
     const load = async () => {
       if (!live.current) return;
       if (timer) clearTimeout(timer); pending?.abort();
       const request = ++sequence, abort = new AbortController(); pending = abort;
+      const isCurrent = () => live.current && request === sequence && !abort.signal.aborted;
+      const discard = () => {
+        shouldPoll = false;
+        setState({ model: null, error: '', loading: false });
+      };
+      let deniedBeforeRenewal = false;
       setState(current => ({ ...current, loading: true }));
       try {
-        const response = await authenticated(() => fetch(`/api/threads/${encodeURIComponent(threadId)}/tool-programs`, { credentials: 'same-origin', cache: 'no-store', signal: abort.signal }));
-        if (response.status === 404 || response.status === 501) {
-          if (live.current && request === sequence) setState({ model: null, error: '', loading: false });
-        } else {
-          const model = parseModel(await read<unknown>(response), threadId);
-          if (live.current && request === sequence && !abort.signal.aborted) setState({ model, error: '', loading: false });
-        }
+        const response = await authenticated(async () => {
+          const result = await fetch(`/api/threads/${encodeURIComponent(threadId)}/tool-programs`, { credentials: 'same-origin', cache: 'no-store', signal: abort.signal });
+          deniedBeforeRenewal = result.status === 401 || result.status === 403;
+          return result;
+        });
+        if (!isCurrent()) return;
+        if (deniedBeforeRenewal || response.status === 404 || response.status === 501) { discard(); return; }
+        const model = parseModel(await read<unknown>(response), threadId);
+        if (!isCurrent()) return;
+        shouldPoll = model.programs.length > 0 || model.kernels.length > 0 || Object.values(model.available).some(Boolean);
+        setState({ model, error: '', loading: false });
       } catch (cause) {
-        if (live.current && request === sequence && !abort.signal.aborted) setState({ model: null, error: messageOf(cause), loading: false });
+        if (!isCurrent()) return;
+        if (deniedBeforeRenewal || cause instanceof ApiError && ['AUTH_REQUIRED', 'LAUNCH_TOKEN_REQUIRED', 'CSRF_REQUIRED'].includes(cause.code)) { discard(); return; }
+        const error = shouldPoll ? messageOf(cause) : '';
+        setState(current => ({ ...current, error, loading: false }));
       } finally {
-        if (live.current && request === sequence) timer = setTimeout(() => void load(), POLL_MS);
+        if (shouldPoll && isCurrent()) timer = setTimeout(() => void load(), POLL_MS);
       }
     };
     refresh.current = load; void load();
@@ -212,8 +226,8 @@ function ProgramPanelOwner({ threadId }: { threadId: string }) {
   return <section className="tool-program-panel" aria-label="Tool programs" aria-busy={state.loading}>
     <header className="tool-program-panel-heading"><h2>Tool programs</h2><button className="quiet" disabled={state.loading} onClick={() => void refresh.current()}>Refresh program status</button></header>
     {state.error && <p className="tool-program-error" role="alert">{state.error}</p>}
-    {model?.programs.map(entry => <ProgramCard key={`${entry.program.programId}:${ownerKey(entry.program.owner)}`} entry={entry} threadId={threadId} execute={execute} disabled={state.loading} />)}
-    {model?.kernels.map(kernel => <KernelCard key={`${kernel.kernelId}:${kernel.generation}:${ownerKey(kernel.identity.owner)}`} kernel={kernel} execute={execute} disabled={state.loading} />)}
+    {model?.programs.map(entry => <ProgramCard key={`${entry.program.programId}:${ownerKey(entry.program.owner)}`} entry={entry} threadId={threadId} execute={execute} disabled={state.loading || Boolean(state.error)} />)}
+    {model?.kernels.map(kernel => <KernelCard key={`${kernel.kernelId}:${kernel.generation}:${ownerKey(kernel.identity.owner)}`} kernel={kernel} execute={execute} disabled={state.loading || Boolean(state.error)} />)}
   </section>;
 }
 
