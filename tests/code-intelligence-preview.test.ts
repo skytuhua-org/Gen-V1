@@ -90,7 +90,7 @@ it.fails('cancelling the streaming run discards every preview it opened', async 
   await f.post({ command: 'append', previewId, chunk: args('a.ts', 'x') });
   // M07-S07: aborting the owning run must discard its previews; no append,
   // seal or settle may follow. No cancellation surface is wired today.
-  await runtime.cancel({} as never);
+  await runtime.cancel({} as Parameters<RuntimeAdapter['cancel']>[0]);
   const after = await f.post({ command: 'append', previewId, chunk: 'x' });
   expect(after.statusCode).toBeGreaterThanOrEqual(400);
 });
@@ -107,5 +107,6 @@ it('counts multi-byte characters toward the aggregate preview cap', async () => 
     chunk: 'x'.repeat(CODE_INTELLIGENCE_LIMITS.previewAggregateBytes - 200 * 1024 + 1),
   });
   expect(second.statusCode).toBeGreaterThanOrEqual(400);
-  expect(second.json().error.code).not.toBe('INVALID_INPUT');
+  // The refusal is the byte bound, not malformed input.
+  expect(JSON.stringify(second.json())).toMatch(/RESOURCE_LIMIT|byte bound/i);
 });
