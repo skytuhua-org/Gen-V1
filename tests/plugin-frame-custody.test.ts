@@ -16,7 +16,7 @@ import {trustedPluginDocument,trustedPluginManifest,trustedPluginScript} from '.
 let browser:Browser,app:Awaited<ReturnType<typeof buildServer>>,attacker:Server,service:Service,store:Store;
 let directory='',documentPath='',documentName='',origin='',attackerOrigin='',externalLoads=0;
 const operations:string[]=[],slow=new Map<string,(value:unknown)=>void>();
-const manifest=trustedPluginManifest;
+const manifest=trustedPluginManifest,stalledManifest={...trustedPluginManifest,id:'stalled-plugin',name:'Stalled plug-in'};
 const parentDocument='<!doctype html><html><body><div id="root"></div><button id="flush">Save and close</button><output id="saved"></output><script src="/__custody-parent.js"></script></body></html>';
 async function bundle(contents:string,development=false,globalName?:string){return (await build({stdin:{contents,resolveDir:resolve('.'),loader:'tsx'},bundle:true,write:false,platform:'browser',format:'iife',globalName,define:{'process.env.NODE_ENV':JSON.stringify(development?'development':'production')},nodePaths:(process.env.NODE_PATH??'').split(delimiter).filter(Boolean),loader:{'.css':'empty'}})).outputFiles[0].text;}
 async function listen(server:Server){await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;}
@@ -36,7 +36,7 @@ beforeAll(async()=>{
  const registry={list:()=>[manifest],validateSurface:async()=>true,readAsset:async()=>({bytes:Buffer.from(trustedPluginDocument),contentType:'text/html'}),dispatch:async(_id:string,operation:string,input:{key?:string})=>{operations.push(input.key??operation);if(input.key?.startsWith('slow'))return new Promise(resolve=>slow.set(input.key!,resolve));return {private:'owner-only',key:input.key};}} as unknown as PluginRegistry;
  app=await buildServer(service,{port,dev:false,widgetPort:Number(new URL(attackerOrigin).port),plugins:registry});
  const parentJs=await bundle(`import React from 'react';import {flushSync} from 'react-dom';import {createRoot} from 'react-dom/client';import {PluginFrame} from './apps/web/src/PluginFrame.tsx';import {prepareEditorHandoff} from './apps/web/src/editor-handoff.ts';
-  const manifest=${JSON.stringify(manifest)};window.__lastFlush='';window.__globalRequests=[];addEventListener('message',event=>{if(event.data?.type==='gen.plugin.request')window.__globalRequests.push(event.data.id);});const original=MessagePort.prototype.postMessage;MessagePort.prototype.postMessage=function(value,...rest){if(value?.type==='gen.plugin.flush')window.__lastFlush=value.id;return original.call(this,value,...rest);};
+  const manifest=${JSON.stringify(manifest)};if(location.search.includes('stalled'))Object.assign(manifest,${JSON.stringify(stalledManifest)});window.__lastFlush='';window.__globalRequests=[];addEventListener('message',event=>{if(event.data?.type==='gen.plugin.request')window.__globalRequests.push(event.data.id);});const original=MessagePort.prototype.postMessage;MessagePort.prototype.postMessage=function(value,...rest){if(value?.type==='gen.plugin.flush')window.__lastFlush=value.id;return original.call(this,value,...rest);};
   const surface=location.search.includes('scoped')?{kind:'plugin',pluginId:'sample-plugin',scopeId:'project-a',surfaceId:'plan',resourceId:'order-a'}:undefined;
   window.__portCloses=0;const close=MessagePort.prototype.close;MessagePort.prototype.close=function(){window.__portCloses++;return close.call(this);};window.__readyOwners=[];const held=new Promise(()=>{});function Block({mode}){if(mode){window.__blockedMode=mode;throw held;}return null;}
   function Harness(){const[mode,setMode]=React.useState(0);React.useEffect(()=>{window.__committedMode=mode;},[mode]);window.__speculate=()=>React.startTransition(()=>setMode(1));window.__hide=()=>flushSync(()=>setMode(2));window.__reveal=()=>flushSync(()=>setMode(0));return <React.Suspense fallback={<p id="suspended">Suspended</p>}><PluginFrame plugin={manifest} surface={surface} theme="dark" active={mode!==1} onReady={()=>{window.__readyOwners.push(mode?'uncommitted':'committed');document.body.dataset.ready='true';}}/><Block mode={mode}/></React.Suspense>;}
@@ -168,5 +168,16 @@ it('rejects a redirected replacement before the initial trusted bootstrap can co
   await page.goto(`${origin}/${documentName}`);
   await expect.poll(()=>page.locator('[role="alert"]').textContent()).toContain('Reload');
   expect(externalLoads).toBe(previousLoads);expect(operations).not.toContain('attacker');
+ }finally{await page.close();}
+});
+
+it('lets the workspace hand off when the plug-in frame never connected',async()=>{
+ const page=await browser.newPage();try{
+  await page.goto(`${origin}/${documentName}?stalled`);
+  // stalled-plugin is not installed: CSP frame-src blocks its document, so
+  // the frame never connects and holds no accepted edits or unsaved state.
+  await expect.poll(()=>page.locator('iframe').count()).toBe(1);
+  await page.locator('#flush').click();
+  await expect.poll(()=>page.locator('#saved').textContent()).toBe('saved');
  }finally{await page.close();}
 });

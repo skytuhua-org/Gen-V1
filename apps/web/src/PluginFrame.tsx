@@ -33,7 +33,12 @@ function PluginFrameBody({plugin,theme,active=true,surface,workspace,projectColo
   useLayoutEffect(()=>{if(!surface&&focusSurface?.kind==='plugin'&&focusSurface.pluginId===plugin.id){if(focused.current?.target!==focusSurface)focused.current={target:focusSurface,id:crypto.randomUUID()};}else focused.current=null;},[surface,focusSurface,plugin.id]);
   const sendFocusedSurface=()=>{const focus=focused.current;if(focus)bridge.current?.postMessage({type:'gen.plugin.focus-surface',session,id:focus.id,surface:focus.target});};
   const flush=async()=>{
-    if(!bridge.current||revoked.current)throw Error('The plug-in could not confirm saved state.');
+    if(!bridge.current||revoked.current){
+      // A frame whose port never connected accepted no edits and holds no
+      // saved state; a pre-start failure must not block workspace navigation.
+      if(!bootstrapped.current&&!pendingData.current.size)return;
+      throw Error('The plug-in could not confirm saved state.');
+    }
     await new Promise<void>((resolve,reject)=>{const id=crypto.randomUUID(),timer=setTimeout(()=>{flushes.current.delete(id);reject(Error('The plug-in could not confirm saved state. Keep this window open.'));},20000);flushes.current.set(id,{resolve,reject:()=>reject(Error('The plug-in has unsaved work.')),timer});bridge.current!.postMessage({type:'gen.plugin.flush',session,id});});
     if(pendingData.current.size)throw Error('Wait for the plug-in request to finish before closing.');
   };
