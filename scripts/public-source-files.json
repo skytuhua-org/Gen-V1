@@ -195,6 +195,7 @@
     "apps/web/src/agents-workspace/project-catalog.ts",
     "apps/web/src/agents-workspace/transport.ts",
     "apps/web/src/api.ts",
+    "apps/web/src/app-panels.tsx",
     "apps/web/src/appearance-draft.ts",
     "apps/web/src/appearance-settings.css",
     "apps/web/src/appearance.css",
