@@ -16,8 +16,9 @@ const resources=(process as NodeJS.Process&{resourcesPath?:string}).resourcesPat
 const packagedManifest=resources?join(resources,'host','package.json'):undefined;
 const dependencyManifest=process.versions.electron?(process.env.HARNESS_DESKTOP_HOST_ROOT?join(process.env.HARNESS_DESKTOP_HOST_ROOT,'package.json'):packagedManifest&&existsSync(packagedManifest)?packagedManifest:resolve('package.json')):import.meta.url;
 const semver=createRequire(dependencyManifest)('semver') as {valid:(version:string)=>string|null;validRange:(range:string)=>string|null;satisfies:(version:string,range:string)=>boolean};
+const MAX_FILE_BYTES=16*1024*1024,VERIFY_CHUNK_BYTES=64*1024;
 const digestSchema=Sha256Hex;
-const inventorySchema=z.strictObject({version:z.literal(1),files:z.array(z.strictObject({path:pluginPathSchema,bytes:z.number().int().min(0).max(16*1024*1024),sha256:digestSchema})).min(3).max(4096)});
+const inventorySchema=z.strictObject({version:z.literal(1),files:z.array(z.strictObject({path:pluginPathSchema,bytes:z.number().int().min(0).max(MAX_FILE_BYTES),sha256:digestSchema})).min(3).max(4096)});
 const indexSchema=z.strictObject({version:z.literal(1),plugins:z.array(z.strictObject({id:pluginIdSchema,version:pluginVersionSchema,digest:digestSchema})).max(100)});
 export type ActivePlugin=z.infer<typeof indexSchema>['plugins'][number];
 export interface VerifiedPackage {manifest:PluginManifest;digest:string;directory:string;files:Map<string,Buffer>}
@@ -39,13 +40,36 @@ export async function safeDirectory(path:string,create=false):Promise<string>{
  }
  return absolute;
 }
-async function boundedFile(path:string,limit:number):Promise<Buffer>{const info=await lstat(path);if(info.isSymbolicLink())throw Error('Plug-in package links are forbidden.');if(!info.isFile()||info.size>limit)throw denied();const bytes=await readFile(path);if(bytes.length!==info.size||bytes.length>limit)throw denied();return bytes;}
+async function boundedFileSize(path:string,limit:number):Promise<number>{
+ const info=await lstat(path);if(info.isSymbolicLink())throw Error('Plug-in package links are forbidden.');if(!info.isFile()||info.size>limit)throw denied();return info.size;
+}
+async function boundedFile(path:string,limit:number):Promise<Buffer>{const size=await boundedFileSize(path,limit);const bytes=await readFile(path);if(bytes.length!==size||bytes.length>limit)throw denied();return bytes;}
 
-export async function verifyPluginPackage(directory:string,expectedDigest:string):Promise<VerifiedPackage>{
+async function verifyPayloadFile(path:string,file:{bytes:number;sha256:string},buffer:Buffer):Promise<void>{
+ if(await boundedFileSize(path,MAX_FILE_BYTES)!==file.bytes)throw denied();
+ const handle=await open(path,'r');
+ try{
+  const info=await handle.stat();if(!info.isFile()||info.size!==file.bytes)throw denied();
+  const digest=createHash('sha256');let remaining=file.bytes;
+  while(remaining>0){
+   const {bytesRead}=await handle.read(buffer,0,Math.min(buffer.length,remaining),null);
+   if(bytesRead===0)throw denied();
+   digest.update(buffer.subarray(0,bytesRead));remaining-=bytesRead;
+  }
+  // Confirm EOF on the same handle in case the file grew during the read.
+  if((await handle.read(buffer,0,1,null)).bytesRead!==0||digest.digest('hex')!==file.sha256)throw denied();
+ }finally{await handle.close();}
+}
+
+async function verifyPackage(directory:string,expectedDigest:string,files?:Map<string,Buffer>):Promise<PluginManifest>{
  digestSchema.parse(expectedDigest);await safeDirectory(directory);
  const raw=await boundedFile(join(directory,'plugin-files.json'),1024*1024);if(hash(raw)!==expectedDigest)throw Error('The trusted plug-in inventory digest does not match.');
- const inventory=inventorySchema.parse(JSON.parse(raw.toString('utf8'))),names=new Set<string>(),folded=new Set<string>();let total=0;
- for(const file of inventory.files){if(file.path==='plugin-files.json'||names.has(file.path)||folded.has(file.path.toLowerCase()))throw denied();names.add(file.path);folded.add(file.path.toLowerCase());total+=file.bytes;}
+ const inventory=inventorySchema.parse(JSON.parse(raw.toString('utf8'))),names=new Set<string>(),folded=new Set<string>();let total=0,largestPayload=1;
+ for(const file of inventory.files){
+  if(file.path==='plugin-files.json'||names.has(file.path)||folded.has(file.path.toLowerCase()))throw denied();
+  names.add(file.path);folded.add(file.path.toLowerCase());total+=file.bytes;
+  if(file.path!=='plugin.json')largestPayload=Math.max(largestPayload,file.bytes);
+ }
  if(total>128*1024*1024||!names.has('plugin.json'))throw denied();
  const found=new Set<string>();
  async function walk(folder:string,prefix=''):Promise<void>{for(const entry of await readdir(folder,{withFileTypes:true})){
@@ -55,10 +79,28 @@ export async function verifyPluginPackage(directory:string,expectedDigest:string
   else throw denied();
  }}
  await walk(directory);if(found.size!==names.size+1)throw denied();
- const files=new Map<string,Buffer>();for(const file of inventory.files){const bytes=await boundedFile(join(directory,file.path),16*1024*1024);if(bytes.length!==file.bytes||hash(bytes)!==file.sha256)throw denied();files.set(file.path,bytes);}
- const manifest=pluginManifestSchema.parse(JSON.parse(files.get('plugin.json')!.toString('utf8')));
- if(!semver.valid(manifest.version)||!semver.validRange(manifest.compatibleGenVersions)||!files.has(manifest.hostEntry)||!files.has(manifest.frontendEntry))throw denied();
- files.set('plugin-files.json',raw);return {manifest,digest:expectedDigest,directory:resolve(directory),files};
+ const scratch=files?undefined:Buffer.allocUnsafe(Math.min(largestPayload,VERIFY_CHUNK_BYTES));
+ let manifestBytes:Buffer|undefined;
+ for(const file of inventory.files){
+  const path=join(directory,file.path);
+  if(scratch&&file.path!=='plugin.json'){await verifyPayloadFile(path,file,scratch);continue;}
+  const bytes=await boundedFile(path,MAX_FILE_BYTES);if(bytes.length!==file.bytes||hash(bytes)!==file.sha256)throw denied();
+  if(file.path==='plugin.json')manifestBytes=bytes;
+  files?.set(file.path,bytes);
+ }
+ const manifest=pluginManifestSchema.parse(JSON.parse(manifestBytes!.toString('utf8')));
+ if(!semver.valid(manifest.version)||!semver.validRange(manifest.compatibleGenVersions)||!names.has(manifest.hostEntry)||!names.has(manifest.frontendEntry))throw denied();
+ files?.set('plugin-files.json',raw);return manifest;
+}
+
+export async function verifyPluginPackage(directory:string,expectedDigest:string):Promise<VerifiedPackage>{
+ const files=new Map<string,Buffer>(),manifest=await verifyPackage(directory,expectedDigest,files);
+ return {manifest,digest:expectedDigest,directory:resolve(directory),files};
+}
+
+/** Verify the package without retaining its payload bytes. */
+export function validatePluginPackage(directory:string,expectedDigest:string):Promise<PluginManifest>{
+ return verifyPackage(directory,expectedDigest);
 }
 
 export async function readPluginIndex(root:string):Promise<ActivePlugin[]>{
@@ -71,9 +113,9 @@ export async function checkInstalledCompatibility(root:string,version:string):Pr
  if(!validGenVersion(version))return {compatible:false,blockers:[{pluginId:'gen',reason:'The offered Gen version is invalid.'}]};
  const before=await readPluginIndex(root);
  for(const record of before){
-  const verified=await verifyPluginPackage(join(root,record.id,record.version),record.digest);
-  if(verified.manifest.id!==record.id||verified.manifest.version!==record.version)throw denied();
-  if(!versionCompatible(verified.manifest,version))blockers.push({pluginId:record.id,reason:'Update this plug-in before installing that Gen version.'});
+  const manifest=await validatePluginPackage(join(root,record.id,record.version),record.digest);
+  if(manifest.id!==record.id||manifest.version!==record.version)throw denied();
+  if(!versionCompatible(manifest,version))blockers.push({pluginId:record.id,reason:'Update this plug-in before installing that Gen version.'});
  }
  if(JSON.stringify(before)!==JSON.stringify(await readPluginIndex(root)))throw Error('The installed plug-in inventory changed. Retry the compatibility check.');
  return {compatible:blockers.length===0,blockers};
@@ -140,7 +182,7 @@ export async function installPluginPackage(source:string,root:string,expectedDig
   try{await lstat(directory);throw Error('This immutable plug-in version already exists.');}catch(error){if(!missing(error))throw error;}
   const stage=join(rootPath,'.install-'+randomUUID());await mkdir(stage,{mode:0o700});
   for(const [path,bytes]of verified.files){const target=join(stage,path);await mkdir(dirname(target),{recursive:true});await writeFile(target,bytes,{flag:'wx',mode:0o600});}
-  await verifyPluginPackage(stage,expectedDigest);await rename(stage,directory);
+  await validatePluginPackage(stage,expectedDigest);await rename(stage,directory);
   await saveIndex(rootPath,[...index.filter(row=>row.id!==verified.manifest.id),{id:verified.manifest.id,version:verified.manifest.version,digest:expectedDigest}]);
   return {manifest:verified.manifest,digest:expectedDigest,directory,...(screening?{screening}:{})};
  });

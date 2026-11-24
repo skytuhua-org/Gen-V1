@@ -11,17 +11,18 @@ import { safeError } from "./sdk.ts";
 import { taskPaths, validateSessionPath } from "./session.ts";
 import { terminateProcessTree } from "./process-tree.ts";
 import {assertModelOnlyInput,type ModelPurpose} from '../runtime/model-only.ts';
-import {requiresMemoryCheckpoint,routeMemoryCheckpoint,sameMemoryCheckpointRequirement} from '../runtime/memory-checkpoint.ts';
+import {MEMORY_CHECKPOINT_TIMEOUT_MS,requiresMemoryCheckpoint,routeMemoryCheckpoint,sameMemoryCheckpointRequirement} from '../runtime/memory-checkpoint.ts';
 
 interface Worker {
-  process: ChildProcess; ctx?: RunContext; allowed: Set<string>; active: boolean; stopping: boolean;
+  process: ChildProcess; ctx?: RunContext; allowed: Set<string>; active: boolean; stopping: boolean; transportFailed?: boolean;
   authority?: RunAuthority;
   pending: Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>;
   exited: Promise<void>;
   termination?: Promise<void>;
-  input?:StartRun;sessionPath?:string;checkpointWork?:Promise<unknown>;
+  input?:StartRun;sessionPath?:string;checkpointWork?:Promise<void>;
 }
 interface RunAuthority { ctx: RunContext; revoked: boolean; settled?: boolean; worker?: Worker }
+const failedTransport = () => new HarnessError("PI_WORKER_TRANSPORT_FAILED", "Pi worker transport failed before completing the request.");
 
 export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }: { dataDir: string;modelOnly?:boolean;purpose?:ModelPurpose }): RuntimeAdapter {
   const modelOnly=requestedModelOnly||purpose==='prediction'||purpose==='memory-extraction';
@@ -44,7 +45,8 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
     void next.finally(() => { if (locks.get(key) === next) locks.delete(key); }).catch(() => {});
     return next;
   }
-  const current = (worker: Worker) => !disposed && !worker.stopping && !worker.authority?.revoked && (!worker.ctx || runs.get(worker.ctx.threadId) === worker);
+  const ownsRun = (worker: Worker) => !disposed && !worker.stopping && !worker.authority?.revoked && (!worker.ctx || runs.get(worker.ctx.threadId) === worker);
+  const current = (worker: Worker) => ownsRun(worker) && !worker.transportFailed;
   function emit(worker: Worker, type: string, message: string) {
     if (worker.ctx && current(worker)) callbacks?.onEvent({ ...worker.ctx, type, message });
   }
@@ -98,12 +100,21 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
         callbacks?.onEvent(message.event);
       } else if(message.type==='memory.checkpoint'&&worker.ctx&&current(worker)){
         const request=message.request;
-        const check=()=>{if(!current(worker)||!worker.active||modelOnly||!worker.input||!requiresMemoryCheckpoint(worker.input.memoryCheckpoint))throw new HarnessError('MEMORY_CHECKPOINT_OWNER','Native checkpoint authority is no longer current.');};
+        let expired = false;
+        const check=()=>{if(expired||!current(worker)||!worker.active||modelOnly||!worker.input||!requiresMemoryCheckpoint(worker.input.memoryCheckpoint))throw new HarnessError('MEMORY_CHECKPOINT_OWNER','Native checkpoint authority is no longer current.');};
         const respond=(value?:unknown)=>{try{if(current(worker)&&child.connected)child.send({type:'memory.checkpoint.result',requestId:request?.requestId,ctx:worker.ctx,...(value?{value}:{error:'Required memory checkpoint was not confirmed.'})},()=>{});}catch{/* A disconnected owner cannot resume native compaction. */}};
         if(worker.checkpointWork){respond();return;}
         const work=Promise.resolve().then(()=>{check();return routeMemoryCheckpoint(request,{adapterId:'pi',ctx:worker.ctx!,sessionPath:worker.sessionPath??worker.input!.sessionPath??'',modelId:worker.input!.modelId,accountId:worker.input!.accountId??null},callbacks?.onMemoryCheckpoint,check);});
-        worker.checkpointWork=work;
-        void work.then(value=>respond(value),()=>respond()).finally(()=>{if(worker.checkpointWork===work)worker.checkpointWork=undefined;});
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const deadline = new Promise<undefined>(resolve => {
+          timer = setTimeout(() => { expired = true; resolve(undefined); }, MEMORY_CHECKPOINT_TIMEOUT_MS);
+        });
+        const completion = Promise.race([work, deadline]).then(respond, () => respond()).finally(() => clearTimeout(timer));
+        worker.checkpointWork = completion;
+        // The deadline bounds receipt and teardown waits. A still-pending host
+        // callback occupies the slot so repeated IPC cannot pile up persistence work.
+        const clear = () => { if (worker.checkpointWork === completion) worker.checkpointWork = undefined; };
+        void work.then(clear, clear);
       } else if (message.type === "tool.call" && worker.ctx && current(worker)) {
         const request = message as ToolRequest;
         void routeToolCall(request, worker.ctx, worker.allowed, callbacks!.onTool).then(
@@ -114,31 +125,47 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
     });
     // A lifecycle observer cannot veto worker cleanup or the next notification.
     const notifyExit = (notify: () => void) => { try { notify(); } catch { /* The native worker still needs to be released. */ } };
+    const rejectPending = (error: Error) => {
+      for (const pending of worker.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
+      worker.pending.clear();
+    };
     let didEnd = false;
     const ended = () => {
       if (didEnd) return;
       didEnd = true;
-      for (const pending of worker.pending.values()) { clearTimeout(pending.timer); pending.reject(new HarnessError("PI_WORKER_EXITED", "Pi worker exited before completing the request. Run pnpm install if the SDK cannot load; retry or sign in with pnpm agent:login.")); }
-      worker.pending.clear();
+      rejectPending(new HarnessError("PI_WORKER_EXITED", "Pi worker exited before completing the request. Run pnpm install if the SDK cannot load; retry or sign in with pnpm agent:login."));
       if (worker.active && !worker.stopping) {
         notifyExit(() => emit(worker, "error", "Pi worker exited unexpectedly. Persisted history will determine which inputs were delivered."));
         const ctx = worker.ctx;
-        if (ctx && current(worker)) notifyExit(() => callbacks?.onEvent({ ...ctx, type: "settled", aborted: true }));
+        if (ctx && ownsRun(worker)) notifyExit(() => callbacks?.onEvent({ ...ctx, type: "settled", aborted: true }));
       }
       worker.active = false;
       if (worker.authority) { worker.authority.settled = true; worker.authority.revoked = true; }
       if (worker.ctx && runs.get(worker.ctx.threadId) === worker) runs.delete(worker.ctx.threadId);
       const release=()=>{workers.delete(worker);if(authority)authorities.delete(authority);};
-      // Exiting the native process revokes execution, but pending trusted host
-      // persistence still belongs to this worker's cleanup barrier.
+      // Native exit revokes execution. Only the bounded checkpoint wait remains.
       if(worker.checkpointWork)void worker.checkpointWork.then(release,release);else release();
       didExit();
     };
     child.once("exit", ended);
-    child.once("error", error => { if (!didEnd) notifyExit(() => emit(worker, "error", safeError(error))); ended(); });
+    child.on("error", error => {
+      if (didEnd) return;
+      // IPC can fail while a spawned process is still running. Reject pending
+      // replies without treating the transport failure as confirmed native exit.
+      if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
+        notifyExit(() => emit(worker, "error", safeError(error)));
+        ended();
+        return;
+      }
+      const report = current(worker);
+      worker.transportFailed = true;
+      rejectPending(failedTransport());
+      if (report && ctx) notifyExit(() => callbacks?.onEvent({ ...ctx, type: "error", message: safeError(error) }));
+    });
     return worker;
   }
   function request(worker: Worker, command: string, args: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<unknown> {
+    if (worker.transportFailed && command !== "abort") return Promise.reject(failedTransport());
     if (!worker.process.connected) return Promise.reject(new Error("Pi worker is disconnected."));
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {
@@ -164,7 +191,11 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       await terminateProcessTree(worker.process);
       await worker.exited;
       await worker.checkpointWork?.catch(()=>{});
-    })();
+    })().catch(error => {
+      // Keep the stopped worker in custody while allowing a later teardown attempt.
+      worker.termination = undefined;
+      throw error;
+    });
     return worker.termination;
   }
   async function prepare(authority: RunAuthority) {
@@ -240,7 +271,7 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
     followUp(input) { if(purpose==='memory-extraction')return Promise.reject(new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot continue a conversation.'));if(purpose==='prediction')return Promise.reject(new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot continue a conversation.'));return serial(input.threadId, async () => {
       assertContext(input);
       const worker = runs.get(input.threadId);
-      if (!worker || !sameContext(worker.ctx, input) || worker.stopping || !worker.active) throw new HarnessError("PI_STALE_RUN", "No matching active Pi run for this follow-up. Start or resume the task first.");
+      if (!worker || !sameContext(worker.ctx, input) || !current(worker) || !worker.active) throw new HarnessError("PI_STALE_RUN", "No matching active Pi run for this follow-up. Start or resume the task first.");
       assertAuthority(worker.authority);
       if(!sameMemoryCheckpointRequirement(input.memoryCheckpoint,worker.input?.memoryCheckpoint)||(input.accountId??null)!==(worker.input?.accountId??null))throw new HarnessError('MEMORY_CHECKPOINT_OWNER','Follow-up changed the captured checkpoint or account binding.');
       worker.active = true;
