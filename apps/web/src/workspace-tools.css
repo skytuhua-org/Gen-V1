@@ -17,3 +17,12 @@
 .pr-checks-stale{max-width:64ch;margin:0;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--warning-bg);color:var(--text);font-size:12px;line-height:1.5}
 .pr-checks .pr-check-list{max-width:480px;margin:0;gap:0;border:1px solid var(--border);border-radius:8px}.pr-checks .pr-check-list li{padding:6px 10px;font-size:13px}.pr-checks .pr-check-list li+li{border-top:1px solid var(--border)}
 .pr-check-list li[data-state=pass]::before{background:var(--success-fg)}.pr-check-list li[data-state=fail]::before{background:var(--danger-fg)}.pr-check-list li[data-state=pending]::before{background:var(--warning-fg)}.pr-check-list li[data-state=pass] small{color:var(--success-fg)}.pr-check-list li[data-state=fail] small{color:var(--danger-fg)}.pr-check-list li[data-state=pending] small{color:var(--warning-fg)}
+.live-patch-actions{display:inline-flex;gap:4px}.live-patch-actions button{display:inline-flex;align-items:center;gap:4px}.live-patch-actions svg{color:var(--muted)}.live-patch-actions button:not(:disabled) svg.live-patch-copied{color:var(--accent)}
+.live-row-patch{display:inline-flex;gap:4px}.live-row-patch .icon-button{width:24px;height:24px;opacity:0;transition:opacity var(--ui-motion-hover) var(--ui-ease-enter)}
+.live-change-list li:hover .live-row-patch .icon-button,.live-change-list li:focus-within .live-row-patch .icon-button{opacity:1}
+@media (hover:none){.live-row-patch .icon-button{opacity:1}}
+.live-review{container-type:inline-size}
+@container (max-width:420px){.live-patch-actions .patch-label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}}
+@keyframes live-patch-spin{to{transform:rotate(360deg)}}
+.live-patch-spin{animation:live-patch-spin .8s linear infinite}
+@media (prefers-reduced-motion:reduce){.live-patch-spin{animation:none}.live-row-patch .icon-button{transition:none;opacity:1}}

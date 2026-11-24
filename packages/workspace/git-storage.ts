@@ -32,6 +32,14 @@ export async function nativeGit(executable:string,metadata:string,worktree:strin
  if(result.exitCode!==0||result.cancelled||result.timedOut)throw new HarnessError(result.cancelled?'CANCELLED':'GIT_ERROR','Git operation did not complete.',result);
  return result.stdout;
 }
+/** Byte-exact variant for patch export (T1604): same prefix, limit and error mapping; returns raw stdout. */
+export async function nativeGitBytes(executable:string,metadata:string,worktree:string|undefined,args:string[],signal:AbortSignal,environment:NodeJS.ProcessEnv={}):Promise<Buffer>{
+ const prefix=['--no-pager','--no-replace-objects','--git-dir='+metadata,...(worktree?['--work-tree='+worktree]:[]),'-c','core.hooksPath='+nullFile,'-c','core.fsmonitor=false','-c','core.untrackedCache=false','-c','submodule.recurse=false','-c','diff.external=','-c','core.attributesFile=','-c','core.excludesFile=','-c','credential.helper=','-c','gc.auto=0','-c','maintenance.auto=false'];
+ const result=await runProcess(executable,[...prefix,...args],worktree??metadata,signal,()=>{},120000,environment,4*1024*1024,{rawStdout:true});
+ if(result.truncated)throw new HarnessError('RESOURCE_LIMIT','Git output exceeds the 4 MiB review limit.');
+ if(result.exitCode!==0||result.cancelled||result.timedOut)throw new HarnessError(result.cancelled?'CANCELLED':'GIT_ERROR','Git operation did not complete.',result);
+ return result.stdoutBytes??Buffer.alloc(0);
+}
 async function pointer(path:string){return(await readBoundFile(path,4096)).toString().replace(/\r?\n$/,'');}
 async function verifyManaged(family:ManagedGitFamily){
  for(const[path,wanted]of[[family.path,family.identity],[family.gitDirectory,family.gitDirectoryIdentity],[family.commonDirectory,family.commonDirectoryIdentity]]as const)if(!sameIdentity(await directoryIdentity(path),wanted))throw denied();
