@@ -92,13 +92,14 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
   for(const [id,value]of pairs)if(value.pi===adapter||value.official===adapter)pairs.delete(id);
   for(const current of affected){releaseOwner(current);if(!disposed)callbacks?.onEvent({...current.ctx,type:'error',message:'The subscription runtime closed after discovery failed. Resume the task to continue.'});}
  }
- async function probe<T>(adapter:RuntimeAdapter,providerIds:readonly ConnectionProviderId[],accountId:string|null,action:()=>Promise<T>):Promise<T> {
+ async function probe<T>(adapter:RuntimeAdapter,providerIds:readonly ConnectionProviderId[],accountId:string|null,action:(providers:readonly ConnectionProviderId[])=>Promise<T>):Promise<T> {
   const leases:AccountUseLease[]=[],scoped=accountId!==null||providerIds.length===1;
   const release=()=>{for(const lease of leases){options.accounts?.releaseUse?.(lease);probes.delete(lease.id);}};
   // A scoped query must still fail on a signing-in provider; a broad probe
   // skips it instead, so one sign-in never blocks a healthy sibling's models.
-  try{for(const providerId of providerIds){if(!scoped&&isConnectionProviderId(providerId)&&options.accounts?.isSigningIn?.(providerId,null))continue;available(providerId,accountId);const lease=options.accounts?.claimUse?.(providerId,accountId);if(lease){leases.push(lease);probes.set(lease.id,{adapter,lease});}}}catch(error){release();throw error;}
-  try{const result=await action();release();return result;}
+  const effective:ConnectionProviderId[]=[];
+  try{for(const providerId of providerIds){if(!scoped&&isConnectionProviderId(providerId)&&options.accounts?.isSigningIn?.(providerId,null))continue;available(providerId,accountId);effective.push(providerId);const lease=options.accounts?.claimUse?.(providerId,accountId);if(lease){leases.push(lease);probes.set(lease.id,{adapter,lease});}}}catch(error){release();throw error;}
+  try{const result=await action(effective);release();return result;}
   catch(error){await retire(adapter);release();throw error;}
  }
  function probeProviders(account:ConnectionAccount|null,official:boolean):ConnectionProviderId[] {return account?[account.providerId]:(official?OFFICIAL_RUNTIME_PROVIDER_IDS:SUBSCRIPTION_PROVIDER_IDS).filter(isConnectionProviderId);}
@@ -111,8 +112,14 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
    if(account)available(account.providerId,account.id);
    const targets=providerId?[isOfficialRuntimeProviderId(providerId)?selected.official:selected.pi]:account?[isOfficialRuntimeProviderId(account.providerId)?selected.official:selected.pi]:[selected.pi,selected.official];
    const refresh=query?.refresh;
-   const results=await withAccountProfile(root,account,async()=>{active();if(account)available(account.providerId,account.id);return Promise.allSettled(targets.map(adapter=>probe(adapter,providerId?[providerId]:probeProviders(account,adapter===selected.official),account?.id??null,async()=>{
-    try{return await adapter.models(providerId?{refresh,providerId}:refresh===undefined?undefined:{refresh});}
+   const results=await withAccountProfile(root,account,async()=>{active();if(account)available(account.providerId,account.id);return Promise.allSettled(targets.map(adapter=>probe(adapter,providerId?[providerId]:probeProviders(account,adapter===selected.official),account?.id??null,async effective=>{
+    try{
+     if(providerId||refresh===undefined)return await adapter.models(providerId?{refresh,providerId}:undefined);
+     // A forced refresh must not reach a profile that is still signing in:
+     // refresh each probeable provider on its own.
+     const lists=await Promise.all(effective.map(id=>adapter.models({refresh,providerId:id})));
+     return lists.flat();
+    }
     catch(error){
      // Pi reports missing credentials only after its discovery worker has closed; other legacy runs keep their adapter.
      if(providerId&&(error as {code?:unknown})?.code==='PI_AUTH_REQUIRED')return [];

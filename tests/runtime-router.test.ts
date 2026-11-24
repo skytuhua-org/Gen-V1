@@ -220,5 +220,13 @@ it('keeps healthy provider models while a sibling provider signs in',async()=>{
  vi.mocked(official.runtime.models).mockResolvedValue([{id:'gemini-cli/pro',provider:'gemini-cli',name:'C'}]);
  signingIn='github-copilot';
  expect(await runtime.models()).toEqual([{id:'openai/model',provider:'openai',name:'A'},{id:'gemini-cli/pro',provider:'gemini-cli',name:'C'}]);
+ // A forced refresh must not reach the signing-in profile: each probeable
+ // provider is refreshed on its own and the signing-in one is skipped.
+ const before=vi.mocked(pi.runtime.models).mock.calls.length;
+ await runtime.models({refresh:true});
+ const refreshQueries=vi.mocked(pi.runtime.models).mock.calls.slice(before).map(args=>args[0]);
+ expect(refreshQueries.length).toBeGreaterThan(0);
+ expect(refreshQueries.every(q=>q?.providerId!=='github-copilot')).toBe(true);
+ expect(refreshQueries.every(q=>q?.refresh===true)).toBe(true);
  await runtime.dispose();
 });
