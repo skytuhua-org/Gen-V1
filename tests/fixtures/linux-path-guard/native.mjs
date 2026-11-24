@@ -81,9 +81,9 @@ try:
 finally: os.close(writer)
 identifier,mounts=directory.acquire_credential(str(auth),1000)
 assert len(mounts)==2
-assert directory.credential_mounts(directory.credentials[str(parent)],True)==set(mounts)
+assert set(directory.credential_mounts(directory.credentials[str(parent)],True))==set(mounts)
 directory.release_credential(identifier)
-assert directory.credential_mounts(directory.credentials[str(parent)],False)==set(mounts)
+assert set(directory.credential_mounts(directory.credentials[str(parent)],False))==set(mounts)
 os.close(owner_w);os.waitpid(owner,0)
 print(json.dumps({'scope':'LOCAL_SYNTHETIC_CREDENTIAL_ALIAS_QUALIFICATION','hiddenThreadDescriptorAndCwdRejected':True,'coveredAncestorDescriptorRejected':True,'writableMountAliasRejected':True,'unknownSubmountRejected':True,'descendantWriterAdmission':'EBUSY','recursiveExistingMountFence':True,'fixture':str(base)}))
 `;
