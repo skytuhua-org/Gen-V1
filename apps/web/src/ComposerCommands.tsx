@@ -3,7 +3,7 @@ import {Bot, LoaderCircle, Search, X} from 'lucide-react';
 import {Popover} from '../../../packages/ui-shell/Popover';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import type {SkillCatalogEntry, SkillCatalogPage} from '../../../packages/contracts/skill-catalog';
-import {builtinOptions, commandToken, replaceCommandToken, type BuiltinCommand, type CommandMode, type SkillBinding} from './composer-commands';
+import {builtinOptions, commandToken, replaceCommandToken, type BuiltinCommand, type CommandMode, type CommandToken, type SkillBinding} from './composer-commands';
 import {getSkillCatalog, mergeSkillCatalogPages} from './skill-catalog-api';
 import './composer-commands.css';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
@@ -27,29 +27,32 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   const [position, setPosition] = useState({caret: 0, end: 0, focused: false, composing: false});
   const [dismissed, setDismissed] = useState(''), [closedAt, setClosedAt] = useState(''), [captured, setCaptured] = useState<{key: string; page: SkillCatalogPage} | null>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [active, setActive] = useState('model'), [reload, setReload] = useState(0);
   const token = position.focused && !position.composing && !disabled ? commandToken(draft, position.caret, position.end) : null;
-  const signature = token ? `${threadId ?? ''}:${projectId ?? ''}:${token.start}` : '';
+  // Sticky dismissal (Escape, choosing an option) keys on the token's identity:
+  // editing inside the same token keeps it closed; a new token start reopens it.
+  const keyFor = (current: CommandToken | null) => current ? `${threadId ?? ''}:${projectId ?? ''}:${current.start}` : '';
+  const tokenKey = keyFor(token);
   // The transient outside-dismissal keys on the token's contents, so any edit —
   // including deleting and retyping a slash at the same position — reopens it.
-  const editKey = token ? `${signature}:${token.end}:${token.query}` : '';
-  const open = Boolean(token && signature !== dismissed && editKey !== closedAt), query = token?.query.replace(/^skill:/i, '') ?? '';
+  const editKey = token ? `${tokenKey}:${token.end}:${token.query}` : '';
+  const open = Boolean(token && tokenKey !== dismissed && editKey !== closedAt), query = token?.query.replace(/^skill:/i, '') ?? '';
 
   const catalogKey = JSON.stringify([threadId, projectId, query]), page = captured?.key === catalogKey ? captured.page : null;
   const unavailableSources = page?.sources.filter(source => source.availability.status === 'unavailable') ?? [];
   const options: Option[] = [...(token?.query.toLowerCase().startsWith('skill:') ? [] : builtinOptions(query, mode).map(builtin => ({id: builtin.id, builtin}))), ...(page?.skills ?? []).map(skill => ({id: skill.id, skill}))];
   const selected = options.find(option => option.id === active && available(option)) ?? options.find(available);
-  const close = () => setDismissed(signature);
+  const close = () => setDismissed(tokenKey);
   // The dismissal keys on the token's start; read the live DOM here because a
   // caret update can render before `draft` catches up, and the transient
-  // null-token signature would otherwise clear the dismissal mid-keystroke.
+  // null-token key would otherwise clear the dismissal mid-keystroke.
   // A non-collapsed selection also yields a null token, so fall back to the
   // selection start: selecting inside the dismissed token must not clear it.
   useEffect(() => {
     setDismissed(previous => {
       if (!previous) return previous;
       const element = input.current, live = element ? (commandToken(element.value, element.selectionStart, element.selectionEnd) ?? commandToken(element.value, element.selectionStart)) : null;
-      return previous !== (live ? `${threadId ?? ''}:${projectId ?? ''}:${live.start}` : '') ? '' : previous;
+      return previous !== keyFor(live) ? '' : previous;
     });
-  }, [signature, input, threadId, projectId]);
+  }, [tokenKey, input, threadId, projectId]);
   useLayoutEffect(() => {
     const element = input.current; if (!element) return;
     const update = () => setPosition(previous => {
@@ -62,7 +65,10 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
     // keep the dismissal when it is the same token, drop it for a different
     // token so that one can open. Outside any token there is nothing to open,
     // so the dismissal is preserved for the next edit in place.
-    const focus = () => {const current = commandToken(element.value, element.selectionStart, element.selectionEnd), sig = current ? `${threadId ?? ''}:${projectId ?? ''}:${current.start}` : ''; setDismissed(previous => sig && sig !== previous ? '' : previous); setClosedAt(''); update();};
+    const focus = () => {
+      const key = keyFor(commandToken(element.value, element.selectionStart, element.selectionEnd));
+      setDismissed(previous => key && key !== previous ? '' : previous); setClosedAt(''); update();
+    };
     for (const name of ['select', 'click', 'keyup', 'input']) element.addEventListener(name, update);
     element.addEventListener('focus', focus);
     element.addEventListener('compositionstart', start); element.addEventListener('compositionend', finish); update();
