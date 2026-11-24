@@ -125,6 +125,8 @@ describe('desktop distribution custody',()=>{
   expect(config.asar).toBe(true);
   expect(config.compression).toBe('normal');
   expect(config.win.target).toEqual([{target:'nsis',arch:['x64']}]);
+  expect(config.win.icon).toBe('C:/build/desktop-app/icon.ico');
+  expect(config.files).toEqual(expect.arrayContaining(['icon.ico','icon.png']));
   expect(config.nsis).toMatchObject({perMachine:false,oneClick:true,allowElevation:false,useZip:false,differentialPackage:false,runAfterFinish:false,deleteAppDataOnUninstall:false});
   expect(config.npmRebuild).toBe(false);expect(config.files).toContain('!node_modules/**/*');
   expect(config.extraResources.map(row=>row.to)).toEqual(['host','host/node_modules','host/.harness-hermes-python-deps','host/.harness-integrations-python-deps','host/.harness-tool-bundles','node']);
@@ -162,4 +164,5 @@ it('wires the NSIS uninstall include that deletes the sign-in Run entry',()=>{
  expect(source).toContain('customUnInstall');
  expect(source).toContain('HKCU');
  expect(source).toContain('Software\\Microsoft\\Windows\\CurrentVersion\\Run');
+ expect(source).toContain('Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run');
 });

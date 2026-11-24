@@ -118,10 +118,10 @@ export function desktopBuilderConfig(dist:string,channel=process.env.HARNESS_REL
  const root=dist.replaceAll('\\','/').replace(/\/$/,'');
  return {appId:'local.generativeharness.desktop',productName:'Gen V1',electronVersion:'45.2.0',asar:true,npmRebuild:false,forceCodeSigning:false,
   publish:[{provider:'github' as const,owner:'skytuhua-org',repo:'Gen-V1',releaseType:'release' as const,channel:channel==='prerelease'?'beta':'latest'}],
-  directories:{app:root+'/desktop-app',output:root+'/desktop-release'},files:['main.mjs','preload.cjs','startup.html','package.json','!node_modules/**/*'],
+  directories:{app:root+'/desktop-app',output:root+'/desktop-release'},files:['main.mjs','preload.cjs','startup.html','icon.ico','icon.png','package.json','!node_modules/**/*'],
   extraResources:[{from:root+'/desktop-host',to:'host'},{from:root+'/desktop-host/node_modules',to:'host/node_modules',filter:['**/*']},{from:root+'/desktop-host/.harness-hermes-python-deps',to:'host/.harness-hermes-python-deps',filter:['**/*']},{from:root+'/desktop-host/.harness-integrations-python-deps',to:'host/.harness-integrations-python-deps',filter:['**/*']},{from:root+'/desktop-host/.harness-tool-bundles',to:'host/.harness-tool-bundles',filter:['**/*']},{from:root+'/desktop-node',to:'node'}],
   // Use the supported 7z payload for large file counts. Its temporary-tree copy
   // occurs during installation; the installed application launches directly.
-  win:{target:[{target:'nsis',arch:['x64']}],signAndEditExecutable:false},
+  win:{target:[{target:'nsis',arch:['x64']}],icon:root+'/desktop-app/icon.ico',signAndEditExecutable:false},
   nsis:{include:'build/nsis-login-cleanup.nsh',artifactName:'Gen-V1-Setup-${version}-win-x64.exe',oneClick:true,perMachine:false,allowElevation:false,packElevateHelper:false,useZip:false,differentialPackage:channel!==undefined,runAfterFinish:false,deleteAppDataOnUninstall:false,createDesktopShortcut:false,createStartMenuShortcut:true},compression:'normal' as const};
 }
