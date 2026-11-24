@@ -237,6 +237,54 @@ it("does not let a foreign replacement consume the proven deletion's claim", asy
   expect(proven.attribution).toBe("proven");
 });
 
+// An approved edit deleting one of two adjacent identical blocks is the same
+// deletion whichever copy a diff engine names: the receipt's coverage sits on
+// one copy and the staged hunk names the other, so every unmatched line
+// borrows the covered position at one uniform shift — deleting either set
+// leaves identical survivors.
+it("attributes a proven deletion when the hunk names the other copy of a repeated block", async () => {
+  const f = await fixture();
+  const path = join(f.worktree, "many.txt");
+  const headLines = ["lead", "A", "B", "C", "A", "B", "C", "tail"];
+  await writeFile(path, headLines.join("\n") + "\n");
+  gitSync(f.worktree, "add", ".");
+  gitSync(f.worktree, "commit", "-qm", "block-baseline");
+  const preimage = Buffer.from(headLines.join("\n") + "\n");
+  const postimage = Buffer.from(["lead", "A", "B", "C", "tail"].join("\n") + "\n");
+  await writeFile(path, postimage);
+  const after = await readFile(path);
+  f.journal.recordProvenEdit({
+    invocationId: "inv-block",
+    owner: f.scope,
+    workspaceIdentity: sha256hex("workspace"),
+    repositoryId: "repo",
+    path: "many.txt",
+    beforeIdentity: null,
+    beforeDigest: sha256hex(preimage),
+    afterDigest: sha256hex(after),
+    boundedBlobRefs: [
+      { ref: f.journal.writeBlob(preimage), bytes: preimage.length, retention: "AVAILABLE" },
+      { ref: f.journal.writeBlob(after), bytes: after.length, retention: "AVAILABLE" },
+    ],
+  });
+  // util.diff covers the receipt's removal at HEAD positions 5..7 (the
+  // second copy); a patch engine may describe the same edit at 2..4.
+  expect(
+    f.journal.hunkAttribution(f.scope, "many.txt", after, preimage, {
+      removed: new Map([[2, "A"], [3, "B"], [4, "C"]]),
+      added: new Set(),
+    }),
+  ).toBe("proven");
+  // Deleting positions 2 and 7 is not a copy swap — it leaves different
+  // survivors and must stay unattributed.
+  expect(
+    f.journal.hunkAttribution(f.scope, "many.txt", after, preimage, {
+      removed: new Map([[2, "A"], [7, "C"], [8, "tail"]]),
+      added: new Set(),
+    }),
+  ).toBe("unattributed");
+});
+
 // A write that only flips one line's terminator credits that line alone: a
 // foreign hunk changing the file's final newline must not ride along.
 it("attributes a mid-file line-ending change without covering a foreign final-newline hunk", async () => {

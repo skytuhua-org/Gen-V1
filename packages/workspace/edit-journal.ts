@@ -394,23 +394,36 @@ export class EditJournal {
     // sides number the live file), removed lines in HEAD space, translated
     // per receipt through the foreign delta. Covered positions are consumed
     // through the caller's per-file `claims` ledger: a removed line takes its
-    // exact mapped position first, then an unclaimed same-content position —
-    // diff engines legitimately pick different copies among identical lines,
-    // but joint over-claim (a foreign deletion of content the receipt also
-    // deleted) can never be credited because every coverage position is
-    // consumed at most once. Two restrictions keep borrowed matches honest:
-    // positions in `reservedRemoved` — every HEAD line some hunk of this file
-    // removes — are exact-match territory, claimed directly by the hunk that
-    // removes them; and a borrowable position must sit in the same maximal
-    // run of identical HEAD lines as the hunk's own removed line, the only
-    // place diff alignment can legitimately pick a different copy. Claims
-    // stay tentative until the whole hunk is covered, so a failed evaluation
+    // exact mapped position first, then borrows an unclaimed same-content
+    // position — diff engines legitimately pick different copies among
+    // repeated text, but joint over-claim (a foreign deletion of content the
+    // receipt also deleted) can never be credited because every coverage
+    // position is consumed at most once. Two restrictions keep borrowed
+    // matches honest: positions in `reservedRemoved` — every HEAD line some
+    // hunk of this file removes — are exact-match territory, claimed directly
+    // by the hunk that removes them; and a borrow is only accepted when it
+    // describes the same edit — deleting the hunk's positions and deleting
+    // the claimed positions leave identical survivors. That permits a borrow
+    // inside one run of identical lines or one uniform shift of the whole
+    // unmatched set onto a repeated block, nothing else. Claims stay
+    // tentative until the whole hunk is covered, so a failed evaluation
     // never consumes coverage a later hunk may legitimately need.
     const headLines = headBytes ? splitLines(headBytes) : null;
-    const sameRun = (a: number, b: number, content: string): boolean => {
-      if (!headLines) return false;
-      for (let i = Math.min(a, b); i <= Math.max(a, b); i++) if (headLines[i - 1] !== content) return false;
-      return true;
+    // Removing position set `a` versus set `b` from the same HEAD text is the
+    // same edit iff the surviving lines agree; only the span where
+    // membership differs can disagree, outside it both align identically.
+    const sameDeletion = (a: Set<number>, b: Set<number>): boolean => {
+      if (!headLines || a.size !== b.size) return false;
+      let low = Infinity, high = -Infinity;
+      for (const position of a) if (!b.has(position)) { if (position < low) low = position; if (position > high) high = position; }
+      for (const position of b) if (!a.has(position)) { if (position < low) low = position; if (position > high) high = position; }
+      if (high < 0) return true;
+      const keptA: string[] = [], keptB: string[] = [];
+      for (let i = low; i <= high; i++) {
+        if (!a.has(i)) keptA.push(headLines[i - 1]!);
+        if (!b.has(i)) keptB.push(headLines[i - 1]!);
+      }
+      return keptA.length === keptB.length && keptA.every((line, index) => line === keptB[index]);
     };
     const covers = (entry: StoredReceipt, coverage: { added: Set<number>; removed: Map<number, string> | null }) => {
       const tentative: [string, number][] = [];
@@ -423,13 +436,65 @@ export class EditJournal {
         tentative.push([key, position]);
         return true;
       };
+      const removedClaims = () => claims.get(entry.journalId + ":r");
+      const borrowable = (removedCoverage: Map<number, string>, position: number, content: string, taken: Set<number>): number[] => {
+        const helds: number[] = [];
+        for (const [held, heldContent] of removedCoverage) {
+          if (heldContent !== content || held === position || reservedRemoved.has(held) || taken.has(held) || removedClaims()?.has(held)) continue;
+          helds.push(held);
+        }
+        return helds;
+      };
+      const borrow = (removedCoverage: Map<number, string>, unmatched: [number, string][]): boolean => {
+        if (!headLines) return false;
+        const removed = new Set<number>(change.removed.keys());
+        const verify = (picks: Map<number, number>): boolean => {
+          const held = new Set<number>(removed);
+          for (const position of picks.keys()) held.delete(position);
+          for (const position of picks.values()) held.add(position);
+          return sameDeletion(removed, held);
+        };
+        // Uniform shift: the diff named a different copy of a repeated block,
+        // so every unmatched line borrows the position shifted by one amount.
+        const [firstPosition, firstContent] = unmatched[0]!;
+        for (const anchor of borrowable(removedCoverage, firstPosition, firstContent, new Set())) {
+          const shift = anchor - firstPosition, picks = new Map<number, number>([[firstPosition, anchor]]);
+          let viable = true;
+          for (const [position, content] of unmatched.slice(1)) {
+            const held = position + shift;
+            if (removedCoverage.get(held) !== content || reservedRemoved.has(held) || removedClaims()?.has(held)) { viable = false; break; }
+            picks.set(position, held);
+          }
+          if (viable && verify(picks)) {
+            for (const held of picks.values()) if (!claim("r", held)) return false;
+            return true;
+          }
+        }
+        // Identical-line run: each line borrows an identical neighbor — a
+        // repeated single line is a block of one, and the same-edit check
+        // confirms the substitution.
+        const picks = new Map<number, number>(), taken = new Set<number>();
+        for (const [position, content] of unmatched) {
+          const held = borrowable(removedCoverage, position, content, taken).find((candidate) => {
+            for (let i = Math.min(candidate, position); i <= Math.max(candidate, position); i++) if (headLines![i - 1] !== content) return false;
+            return true;
+          });
+          if (held === undefined) return false;
+          picks.set(position, held);
+          taken.add(held);
+        }
+        if (!verify(picks)) return false;
+        for (const held of picks.values()) if (!claim("r", held)) return false;
+        return true;
+      };
       const covered = () => {
+        const unmatched: [number, string][] = [];
         for (const [position, content] of change.removed) {
           if (coverage.removed === null) return false;
-          if (coverage.removed.get(position) === content ? claim("r", position)
-              : [...coverage.removed].some(([held, heldContent]) => heldContent === content && !reservedRemoved.has(held) && sameRun(held, position, content) && claim("r", held))) continue;
-          return false;
+          if (coverage.removed.get(position) !== content) { unmatched.push([position, content]); continue; }
+          if (!claim("r", position)) return false;
         }
+        if (unmatched.length && !borrow(coverage.removed!, unmatched)) return false;
         for (const line of change.added) if (!coverage.added.has(line) || !claim("a", line)) return false;
         return true;
       };
