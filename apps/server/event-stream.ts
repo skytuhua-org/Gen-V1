@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { setImmediate as yieldToHost } from 'node:timers/promises';
 import type { ServerResponse } from 'node:http';
 import type { Store } from '../../packages/storage/store.ts';
+import type { WorkspaceEvent } from '../../packages/contracts/index.ts';
 
 /** Release hijacked SSE responses during Fastify preClose without waiting for
  * a second 'close' event. The client's disconnect can race with shutdown,
@@ -22,7 +23,7 @@ export function destroyEventStreams(streams: Map<ServerResponse, () => void>): v
 export function registerEventStream(
   streams: Map<ServerResponse, () => void>,
   response: ServerResponse,
-  store: Pick<Store, 'eventsAfter' | 'subscribe'>,
+  store: Pick<Store, 'eventsAfter' | 'subscribe' | 'sequence'>,
   after: number,
 ): void {
   if (closedRegistries.has(streams)) { response.destroy(); return; }
@@ -38,20 +39,38 @@ export function registerEventStream(
   }
 }
 
+/** Serialize an event once per commit; every subscriber writes the same chunk. */
+const chunkCache = new WeakMap<WorkspaceEvent, string>();
+function chunkFor(event: WorkspaceEvent): string {
+  let chunk = chunkCache.get(event);
+  if (!chunk) { chunk = `id: ${event.seq}\nevent: workspace\ndata: ${JSON.stringify(event)}\n\n`; chunkCache.set(event, chunk); }
+  return chunk;
+}
+
 /** The durable ledger is the queue. Retain only one event while a reader drains. */
-export function streamEvents(response: ServerResponse, store: Pick<Store, 'eventsAfter' | 'subscribe'>, after: number, onClose: () => void): () => void {
+export function streamEvents(response: ServerResponse, store: Pick<Store, 'eventsAfter' | 'subscribe' | 'sequence'>, after: number, onClose: () => void): () => void {
   if (response.destroyed || response.writableEnded) { onClose(); return () => {}; }
   const controller = new AbortController();
   let cursor = after, pumping = false, closed = false, comment = ': connected\n\n';
+  // subscribe() already delivers each parsed commit once, in order, to every
+  // listener. Buffer live pushes and reuse them once the backlog is drained so
+  // a caught-up reader costs no store read or re-parse per event.
+  const pending: WorkspaceEvent[] = [];
+  const unsubscribe = store.subscribe((event) => { pending.push(event); void pump(); });
+  const liveCut = store.sequence;
   async function pump() {
     if (pumping || closed) return;
     pumping = true;
     let written = 0;
     try {
       while (!closed) {
-        const event = store.eventsAfter(cursor, 1)[0];
+        // Every post-subscribe commit lands in pending (and only a pre-subscribe
+        // backlog, seq <= liveCut, can precede it), so pending is the ordered
+        // suffix once the store has been drained up to liveCut.
+        const event = cursor >= liveCut ? pending.shift() : store.eventsAfter(cursor, 64)[0];
         if (!event && !comment) break;
-        const chunk = event ? `id: ${event.seq}\nevent: workspace\ndata: ${JSON.stringify(event)}\n\n` : comment;
+        if (event && event.seq <= cursor) continue; // already written via store replay
+        const chunk = event ? chunkFor(event) : comment;
         if (event) cursor = event.seq; else comment = '';
         if (!response.write(chunk)) {
           await once(response, 'drain', { signal: controller.signal });
@@ -66,7 +85,6 @@ export function streamEvents(response: ServerResponse, store: Pick<Store, 'event
     } catch { if (!closed) shutdown(); }
     finally { pumping = false; }
   }
-  const unsubscribe = store.subscribe(() => { void pump(); });
   const heartbeat = setInterval(() => { comment = ': heartbeat\n\n'; void pump(); }, 15000);
   heartbeat.unref();
   const close = () => {

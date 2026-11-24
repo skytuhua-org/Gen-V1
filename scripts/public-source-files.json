@@ -3284,6 +3284,7 @@
     "tests/environment-settings.test.ts",
     "tests/eval-gates.test.ts",
     "tests/event-stream.test.ts",
+    "tests/event-stream-projection-v3.test.ts",
     "tests/everyday-catalog.test.ts",
     "tests/execution-boundary-v3.test.ts",
     "tests/expanded-review-fixtures.test.ts",
