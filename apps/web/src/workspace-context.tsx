@@ -14,6 +14,8 @@ export interface WorkspaceContextValue {
   openTab?: (tab: WorkspaceTab) => void;
   closeTab?: (tab: WorkspaceTab) => void;
   documentWindow?: OpenDocumentWindow | null;
+  /** Expand the project overview card at its model-defaults row. */
+  requestProjectDefaults?: () => void;
   requestOpenDocument?: (id:string) => void;
   closeDocument?: (id:string) => void;
   placeDocument?: (id:string,placement:DocumentWindowPlacement) => void;

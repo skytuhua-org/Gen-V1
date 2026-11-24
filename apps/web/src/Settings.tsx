@@ -3,7 +3,7 @@ import {registerEditorHandoff} from './editor-handoff';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {notifyAccountAuthChanged,onAccountCatalogChanged,mergeAccountModels} from './account-api';
 import type {AccountAuthTarget} from '../../../packages/contracts/authentication';
-import { Bell, Boxes, Check, Database, ExternalLink, Folder, GitBranch, Globe, Info, Keyboard, MessageSquare, Palette, Plug, Search, Settings2, type LucideIcon } from 'lucide-react';
+import { Bell, Boxes, Check, Database, ExternalLink, Folder, GitBranch, Globe, Info, Keyboard, MessageSquare, Palette, Plug, RotateCcw, Search, Settings2, type LucideIcon } from 'lucide-react';
 import type { ModelInfo, Snapshot } from '../../../packages/contracts';
 import { getPreferences, type UiPreferences } from '../../../packages/contracts/preferences';
 import { Select } from '../../../packages/ui-shell/Select';
@@ -25,6 +25,8 @@ import { AppearanceSettings, NotificationSettings, APPEARANCE_FIELDS } from './A
 import { PairedDevicesPanel } from './PairedDevicesPanel';
 import { version } from '../../../package.json';
 import {settingsDataFromSnapshot, type SettingsData} from './settings-data';
+import {getWorkspace} from './workspace-api';
+import {projectColorKey} from './project-colors';
 import {snapshotDraftReferences, type DraftReferenceSource} from './draft-transfer';
 import './settings.css';
 
@@ -66,7 +68,7 @@ export const SETTINGS_ROWS: SettingsInventoryRow[] = [
   row('harness-local-models', 'Available models', 'providers', 'refresh runtime'), row('default-model', 'Default model', 'providers'), row('harness-accounts', 'Accounts', 'providers', 'subscriptions sign in credentials'), row('harness-runtime', 'Local runtime & environments', 'providers', 'environment variables secret local host'),
   ...SUBSCRIPTION_CONNECTIONS.map(connection => row(`provider-${connection.id}`, connection.label, 'providers', `${connection.id} ${connection.description}`)),
   ...APPEARANCE_FIELDS.filter(field => field.id !== 'chat-width' && field.id !== 'word-wrap').map(field => row(field.id, field.label, 'appearance', field.terms)),
-  row('project-overview', 'Granted resources', 'projects', 'project folder working copies permissions access'),
+  row('project-overview', 'Granted resources', 'projects', 'project folder working copies permissions access'), row('project-model-defaults', 'Project model defaults', 'projects', 'model reasoning effort default per project new thread'),
   row('diff-layout', 'Diff layout', 'diffs'), row('hide-whitespace-changes', 'Hide whitespace changes', 'diffs'), row('default-diff-file-state', 'Expand diffs', 'diffs'), row('diff-color-scheme', 'Diff colors', 'diffs'),
   row('harness-skills', 'Skills & learning', 'skills', 'library proposals automatic learning review archive restore rollback'), row('harness-integrations', 'Bundled integrations', 'skills', 'humanizer impeccable graphify superpowers ponytail tools hooks mcp'),
   row('thread-notifications', 'Task notifications', 'notifications', 'sound popup'), row('in-app-notifications', 'In-app notifications', 'notifications'), row('live-usage', 'Live usage', 'notifications'), row('harness-notification-controls', 'Notification preferences', 'notifications', 'volume sound preview privacy quiet hours'),
@@ -87,6 +89,15 @@ function PreferenceControl({ item, preferences, update, busy }: { item: Settings
 }
 function ShortcutInput({ action, label, value, save, busy }: { action: string; label: string; value: string; save: (key: string, value: string) => void; busy: boolean }) {
   return <input aria-label={`${label} shortcut`} title="Focus and press a shortcut" readOnly value={value} disabled={busy} onKeyDown={event => { if (event.nativeEvent.isComposing || event.keyCode === 229 || event.key === 'Tab') return; event.preventDefault(); event.stopPropagation(); if (['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return; const key = event.key === ',' ? 'Comma' : event.key.length === 1 ? event.key.toUpperCase() : event.key; save(action, [event.ctrlKey ? 'Ctrl' : '', event.metaKey ? 'Meta' : '', event.altKey ? 'Alt' : '', event.shiftKey ? 'Shift' : '', key].filter(Boolean).join('+')); }}/>;
+}
+function ProjectModelDefaults({preferences, models, busy, update}:{preferences:UiPreferences;models:ModelInfo[];busy:boolean;update:(value:Partial<UiPreferences>)=>Promise<void>}) {
+  const [projects, setProjects] = useState<Awaited<ReturnType<typeof getWorkspace>>['projects'] | null>(null);
+  useEffect(() => { let live = true; void getWorkspace().then(envelope => { if (live) setProjects(envelope.projects); }).catch(() => { if (live) setProjects([]); }); return () => { live = false; }; }, []);
+  const entries = Object.entries(preferences.projectModelDefaults);
+  return <div className="settings-records" data-setting-id="project-model-defaults">
+    {entries.length === 0 && <p className="settings-empty">No project defaults yet.</p>}
+    {entries.map(([key, value]) => { const project = projects?.find(item => projectColorKey(item.authority, item.id) === key); return <div key={key}><strong>{project?.name ?? <span className="muted">{key}</span>}</strong><span>{models.find(model => model.id === value.modelId)?.name ?? value.modelId} · {value.thinkingLevel ?? 'Model default'}</span><button type="button" className="quiet" aria-label={`Remove model default for ${project?.name ?? key}`} disabled={busy} onClick={() => { const next = { ...preferences.projectModelDefaults }; delete next[key]; void update({ projectModelDefaults: next }); }}><RotateCcw size={13}/></button></div>; })}
+  </div>;
 }
 export interface SettingsActions {
   environmentSettings?: ReactNode; openBrowser?: (url: string) => Promise<void>;
@@ -165,7 +176,8 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
     if (item.id.startsWith('license-')) { const notice = DEPENDENCY_NOTICES.find(([name]) => name === item.title)!; return { description: `Version ${notice[1]} · ${notice[2]}. Complete LICENSE and NOTICE files remain in the installed package.`, control: <a href={`https://www.npmjs.com/package/${encodeURIComponent(notice[0])}/v/${notice[1]}`} target="_blank" rel="noreferrer">Package notice<ExternalLink size={12}/></a> }; }
     switch (item.id) {
       case 'harness-local-models': return { description: `${newTaskModels.length} ${newTaskModels.length === 1 ? 'model' : 'models'} reported by connected runtimes.`, control: <button type="button" className="secondary" disabled={busy} onClick={() => void refreshModels(true)}>Refresh models</button> };
-      case 'default-model': return { description: 'New conversations only.', control: <Select aria-label="Default model" disabled={busy || newTaskModels.length === 0} value={data.settings.modelId ?? ''} options={[{ value: '', label: 'Select model', disabled: true }, ...newTaskModels.map(model => ({ value: model.id, label: model.name }))]} onValueChange={modelId => void persist({ modelId })}/> };
+      case 'default-model': return { description: 'New conversations only. Projects can set their own default in the project panel.', control: <Select aria-label="Default model" disabled={busy || newTaskModels.length === 0} value={data.settings.modelId ?? ''} options={[{ value: '', label: 'Select model', disabled: true }, ...newTaskModels.map(model => ({ value: model.id, label: model.name }))]} onValueChange={modelId => void persist({ modelId })}/> };
+      case 'project-model-defaults': return { description: 'New threads in a project can start with their own model and reasoning. Set these from each project\u2019s panel.', control: null };
       case 'harness-runtime': return { description: desktop ? 'Runs locally in the Windows app.' : '', control: <span className="settings-value">Local host</span> };
       case 'project-overview': return { description: 'Files, folders and databases.', control: <button type="button" className="secondary" onClick={addResource}>Add resource</button> };
       case 'archive': return { description: 'Restore reopens a saved conversation without resuming its run.', control: <span className="settings-value">{data.counts.archivedThreads} archived</span> };
@@ -206,6 +218,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
       {matches('harness-paired-devices') && <div data-setting-id="harness-paired-devices"><PairedDevicesPanel/></div>}
       {newTaskModelError && rows.some(item => item.section === 'providers') && <p role="status" className="error-text">{newTaskModelError}</p>}
       {matches('project-overview') && <div className="settings-records">{data.resources.map(resource => <div key={resource.id}><strong>{resource.label}</strong><span>{resource.kind} · {resource.writable ? 'Approved changes allowed' : 'Read only'}</span><code>{resource.path}</code></div>)}</div>}
+      {matches('project-model-defaults') && <ProjectModelDefaults preferences={preferences} models={newTaskModels} busy={busy} update={update}/>}
       {matches('archive') && <div className="settings-records">{data.counts.archivedThreads !== data.archivedThreads.length && <p className="settings-empty">Showing {data.archivedThreads.length} archived conversations available in navigation. The total also includes conversations outside this list.</p>}{data.archivedThreads?.length ? data.archivedThreads.map(thread => <section className="settings-row" key={thread.id}><div className="settings-row-copy"><h2>{thread.title}</h2><p>{thread.projectName ?? 'Conversation'} · {thread.status}</p></div><button type="button" className="secondary" disabled={busy} onClick={() => { setBusy(true); void settingsOperation(() => command('thread.restore', {}, thread.id).then(refresh)).catch(cause => setError(String(cause))).finally(() => setBusy(false)); }}>Restore thread</button></section>) : <p className="settings-empty">{data.counts.archivedThreads ? 'No archived conversations are available in navigation.' : 'No archived threads.'}</p>}</div>}
       {matches('app-version') && <div data-setting-id="app-version"><p className="settings-version">Gen V1 {version} · {desktop ? 'Windows desktop' : 'Browser build'}</p><UpdateControl/></div>}
       {matches('browser-start-page') && <section className="settings-card" data-setting-id="browser-start-page"><h2>Manual browser</h2>{openBrowser ? <form onSubmit={event => { event.preventDefault(); void persist({ preferences: { browserStartUrl: browserUrl } }); }}><label className="field">Start page<input aria-label="Browser start page" type="url" placeholder="Blank page" maxLength={2048} value={browserUrl} disabled={busy} onChange={event => setBrowserUrl(event.target.value)}/></label><div className="settings-inline-controls"><button className="secondary" disabled={busy || browserUrl === preferences.browserStartUrl}>Save start page</button><button type="button" className="secondary" disabled={busy} onClick={() => { setBusy(true); void openBrowser(preferences.browserStartUrl).then(close).catch(cause => setError(String(cause))).finally(() => setBusy(false)); }}>Open browser</button></div></form> : <p className="settings-card-intro">Open the manual browser from the Windows desktop workspace. Navigation, reload and stop stay in its toolbar.</p>}</section>}

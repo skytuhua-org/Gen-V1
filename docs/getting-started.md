@@ -97,6 +97,12 @@ Each saved account has a separate app profile. Gen V1 does not automatically ado
 
 Only OpenAI has genuine live acceptance recorded for the preceding milestone. [The connection reference](subscription-connections.md) contains provider-specific constraints and earlier evidence; [the acceptance report](2026-11-01-product-completion.md) separates live and scripted checks.
 
+### Project model defaults
+
+Each project can start new threads on its own model and reasoning level. Open the project panel ("Expand Project overview") and use **New thread defaults** to pick a model and a reasoning level, then **Save** — **Use global default** removes the override. Values are stored in Gen (Settings → Project model defaults lists and removes them), never in the project repository or executable settings.
+
+Precedence for a new thread: an established thread's bound model > an explicit composer pick > the project default > the global default > the first eligible model. An explicit composer pick wins for that thread only and does not rewrite the project or global default while a project default is set. If the saved project model is not in the selected account's eligible catalog, the composer shows a notice and blocks Send until you choose a model or edit the project defaults; the account selection is never switched silently.
+
 ## Data and profiles
 
 The default backend directory remains `%LOCALAPPDATA%\GenerativeHarness`. The desktop's separate window/session profile remains `%APPDATA%\GenerativeHarnessDesktop`. These legacy names preserve existing installations after the Gen V1 rename.
