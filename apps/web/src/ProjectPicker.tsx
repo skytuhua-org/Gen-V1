@@ -83,9 +83,10 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
       placeholder="Search projects" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => {
         if (isComposing(event)) { if (event.key === 'Escape') event.preventDefault(); return; }
         if (event.altKey || event.ctrlKey || event.metaKey || locked) return;
-        // Home/End stay caret keys mid-text; they navigate the list only when the caret is already at that edge.
-        if (event.key === 'Home' && event.currentTarget.selectionStart !== 0) return;
-        if (event.key === 'End' && event.currentTarget.selectionEnd !== event.currentTarget.value.length) return;
+        // Home/End stay caret and selection keys mid-text; they navigate the list only when a collapsed caret is already at that edge.
+        if ((event.key === 'Home' || event.key === 'End') && (event.shiftKey
+          || event.currentTarget.selectionStart !== event.currentTarget.selectionEnd
+          || event.currentTarget.selectionStart !== (event.key === 'Home' ? 0 : event.currentTarget.value.length))) return;
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End' || event.key === 'PageUp' || event.key === 'PageDown') {
           event.preventDefault();
           if (choices.length) {
