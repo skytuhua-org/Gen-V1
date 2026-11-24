@@ -39,8 +39,8 @@ describe('terminateTerminalTree',()=>{
  });
  it('kills a real process tree',async()=>{
   if(process.platform==='win32')return;
-  const child=spawn('sh',['-c','sleep 60 & echo $!; sleep 60'],{stdio:['ignore','pipe','ignore']});
-  const grandchild=await new Promise<number>(resolve=>child.stdout.once('data',data=>resolve(Number(String(data).trim()))));
+  const child=spawn(process.execPath,['-e',`const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});child.once('error',error=>{process.stderr.write(String(error));process.exitCode=1;});child.once('spawn',()=>process.stdout.write(String(child.pid)));`],{stdio:['ignore','pipe','ignore']});
+  const grandchild=await new Promise<number>((resolve,reject)=>{child.once('error',reject);child.stdout.once('data',data=>resolve(Number(String(data).trim())));});
   const pid=child.pid!;
   const wrapper={pid,kill:()=>{child.kill('SIGTERM');}};
   await terminateTerminalTree(wrapper,{delay:ms=>new Promise(r=>setTimeout(r,ms))});
