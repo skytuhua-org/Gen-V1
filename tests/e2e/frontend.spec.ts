@@ -318,7 +318,7 @@ test('workspace layout persists and context unknowns never appear as zero', asyn
   await expect(page.getByRole('tab', { name: 'Artifact', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('button', { name: 'Hide workspace panel', exact: true }).click();
   await page.getByRole('button', { name: 'Inspect context usage' }).click();
-  await expect(page.getByRole('dialog', { name: 'Context inspector' })).toContainText('Not reported');
+  await expect(page.getByRole('dialog', { name: 'Context inspector' })).toContainText('Usage is not reported until the first response completes.');
   await expect(page.getByRole('progressbar', { name: 'Context used' })).toHaveCount(0);
 });
 
