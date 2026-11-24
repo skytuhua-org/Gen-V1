@@ -25,7 +25,11 @@ const EDIT_JOURNAL_KIND = "workspaceEditReceipt" as const;
 const EDIT_JOURNAL_PREPARED_KIND = "workspaceEditPrepared" as const;
 
 export const sha256hex = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
-const splitLines = (bytes: Buffer) => bytes.toString("utf8").split(/\r?\n/);
+const splitLines = (bytes: Buffer) => {
+  const lines = bytes.toString("utf8").split(/\r?\n/);
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+};
 
 interface StoredReceipt extends EditReceiptV1 {
   journalId: string;
@@ -296,19 +300,27 @@ export class EditJournal {
    *  all — it asserts whole-postimage authorship and covers any hunk of the
    *  path. Null when recorded images cannot bound the delta: the caller must
    *  then treat coverage as unverifiable (coverage loss). */
-  private coverageOf(receipt: EditReceiptV1, liveBytes: Buffer | null): { added: Set<number>; removed: Set<number> } | "wholesale" | null {
+  private coverageOf(receipt: EditReceiptV1, liveBytes: Buffer | null): { added: Set<number>; removedContent: Set<string> } | "wholesale" | null {
     const after = this.imageFor(receipt, "after", liveBytes);
     if (!after) return null;
     const before = this.imageFor(receipt, "before", liveBytes);
     if (!before) return receipt.beforeDigest === null ? "wholesale" : null;
-    const added = new Set<number>(), removed = new Set<number>();
+    const added = new Set<number>(), removedContent = new Set<string>();
     let beforeLine = 1, afterLine = 1;
-    for (const [kind] of diffLines(splitLines(before), splitLines(after))) {
-      if (kind === 1) removed.add(beforeLine++);
+    for (const [kind, value] of diffLines(splitLines(before), splitLines(after))) {
+      if (kind === 1) { removedContent.add(value); beforeLine++; }
       else if (kind === -1) added.add(afterLine++);
       else { beforeLine++; afterLine++; }
     }
-    return { added, removed };
+    // A write that only changes the final newline or line endings leaves an
+    // empty line delta but still authored the last line of its postimage.
+    if (added.size === 0 && removedContent.size === 0 && !before.equals(after)) {
+      const last = splitLines(after).length;
+      added.add(last);
+      const beforeLines = splitLines(before);
+      removedContent.add(beforeLines[beforeLines.length - 1] ?? "");
+    }
+    return { added, removedContent };
   }
 
   /** A hunk can auto-enter a selective commit only when a proven receipt's
@@ -323,7 +335,7 @@ export class EditJournal {
    *  coarser classes stay path-wide conservative. `change` carries the
    *  hunk's removed preimage and added postimage line numbers; a null
    *  change is the legacy whole-path check. */
-  hunkAttribution(owner: CheckpointScope, path: string, liveBytes: Buffer | null, change: { removed: Set<number>; added: Set<number> } | null = null): "proven" | "process-window" | "unattributed" {
+  hunkAttribution(owner: CheckpointScope, path: string, liveBytes: Buffer | null, change: { removedContent: Set<string>; added: Set<number> } | null = null): "proven" | "process-window" | "unattributed" {
     const entries = this.receipts(owner, { path });
     if (!entries.length) return "unattributed";
     const classOf = (attribution: string) =>
@@ -334,8 +346,11 @@ export class EditJournal {
       const newest = entries[entries.length - 1]!;
       return newest.attribution === "STRUCTURED_EDIT_PROVED" && liveBytes && newest.afterDigest === sha256hex(liveBytes) ? "proven" : "unattributed";
     }
-    const covers = (coverage: { added: Set<number>; removed: Set<number> }) => {
-      for (const line of change.removed) if (!coverage.removed.has(line)) return false;
+    // Added lines match by postimage position (both sides number the live
+    // file); removed lines match by content — the receipt's preimage line
+    // space differs from HEAD's whenever an earlier write shifted lines.
+    const covers = (coverage: { added: Set<number>; removedContent: Set<string> }) => {
+      for (const content of change.removedContent) if (!coverage.removedContent.has(content)) return false;
       for (const line of change.added) if (!coverage.added.has(line)) return false;
       return true;
     };

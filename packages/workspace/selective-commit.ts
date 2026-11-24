@@ -142,21 +142,23 @@ export class SelectiveCommitService {
     return sections;
   }
 
-  // The exact preimage lines a hunk removes and postimage lines it adds, in
-  // 1-based numbers — the coverage the journal must prove.
-  private hunkChange(patch: string): { removed: Set<number>; added: Set<number> } | null {
+  // The preimage line content a hunk removes and the postimage line numbers
+  // it adds — the coverage the journal must prove. Removed lines are compared
+  // by content because HEAD preimage positions differ from each receipt's own
+  // preimage whenever an earlier write shifted lines.
+  private hunkChange(patch: string): { removedContent: Set<string>; added: Set<number> } | null {
     const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/m.exec(patch);
     if (!match) return null;
     let before = parseInt(match[1], 10), after = parseInt(match[2], 10);
-    const removed = new Set<number>(), added = new Set<number>();
+    const removedContent = new Set<string>(), added = new Set<number>();
     for (const line of patch.slice(patch.indexOf("\n") + 1).split("\n")) {
-      if (line.startsWith("-")) removed.add(before++);
+      if (line.startsWith("-")) { removedContent.add(line.slice(1).replace(/\r$/, "")); before++; }
       else if (line.startsWith("+")) added.add(after++);
       else if (line.startsWith(" ")) { before++; after++; }
       else if (line.startsWith("\\")) continue;
       else if (line.startsWith("@@")) break;
     }
-    return { removed, added };
+    return { removedContent, added };
   }
 
   private attributionFor(scope: CheckpointScope | undefined, path: string, postBytes: Buffer | null, patch: string): { attribution: HunkAttribution; requiresExplicitSelection: boolean } {

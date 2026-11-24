@@ -150,3 +150,69 @@ it("keeps a wholly proven file auto-selectable and an out-of-journal-only file g
   expect(alien.length).toBeGreaterThanOrEqual(1);
   expect(alien.every((hunk) => hunk.attribution === "unattributed" && hunk.requiresExplicitSelection)).toBe(true);
 });
+
+// A foreign insertion above the proven region shifts HEAD preimage line
+// numbers away from the receipt's preimage numbering: the proven
+// replacement must still be attributed by removed-line content.
+it("attributes a proven replacement when an earlier insertion shifts preimage lines", async () => {
+  const f = await fixture();
+  const path = join(f.worktree, "many.txt");
+  const lines = Array.from({ length: 40 }, (_, index) => `line-${index}`);
+  const afterLines = [...lines];
+  afterLines.splice(10, 0, "foreign-inserted");
+  // The receipt's preimage already contains the foreign insertion: coverage
+  // is the proven replacement only, whose HEAD preimage position (30) differs
+  // from the receipt's preimage position (31).
+  const preimageLines = [...afterLines];
+  afterLines[31] = "proven-30";
+  const preimage = Buffer.from(preimageLines.join("\n") + "\n");
+  await writeFile(path, afterLines.join("\n") + "\n");
+  const after = await readFile(path);
+  f.journal.recordProvenEdit({
+    invocationId: "inv-shifted",
+    owner: f.scope,
+    workspaceIdentity: sha256hex("workspace"),
+    repositoryId: "repo",
+    path: "many.txt",
+    beforeIdentity: null,
+    beforeDigest: sha256hex(preimage),
+    afterDigest: sha256hex(after),
+    boundedBlobRefs: [
+      { ref: f.journal.writeBlob(preimage), bytes: preimage.length, retention: "AVAILABLE" },
+      { ref: f.journal.writeBlob(after), bytes: after.length, retention: "AVAILABLE" },
+    ],
+  });
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const proven = preview.candidates.find((candidate) => candidate.path === "many.txt" && candidate.patch.includes("proven-30"))!;
+  const foreign = preview.candidates.find((candidate) => candidate.path === "many.txt" && candidate.patch.includes("foreign-inserted"))!;
+  expect(proven.attribution).toBe("proven");
+  expect(foreign.attribution).toBe("unattributed");
+});
+
+// An approved write that only removes the final newline must stay proven:
+// the line-level delta is empty, so coverage is the authored last line.
+it("keeps a trailing-newline-only proven write attributable", async () => {
+  const f = await fixture();
+  const path = join(f.worktree, "many.txt");
+  const before = await readFile(path);
+  await writeFile(path, before.toString("utf8").replace(/\n$/, ""));
+  const after = await readFile(path);
+  f.journal.recordProvenEdit({
+    invocationId: "inv-eol",
+    owner: f.scope,
+    workspaceIdentity: sha256hex("workspace"),
+    repositoryId: "repo",
+    path: "many.txt",
+    beforeIdentity: null,
+    beforeDigest: sha256hex(before),
+    afterDigest: sha256hex(after),
+    boundedBlobRefs: [
+      { ref: f.journal.writeBlob(before), bytes: before.length, retention: "AVAILABLE" },
+      { ref: f.journal.writeBlob(after), bytes: after.length, retention: "AVAILABLE" },
+    ],
+  });
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const hunk = preview.candidates.find((candidate) => candidate.path === "many.txt")!;
+  expect(hunk.attribution).toBe("proven");
+  expect(hunk.requiresExplicitSelection).toBe(false);
+});
