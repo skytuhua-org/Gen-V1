@@ -44,7 +44,7 @@ import type {HermesEvent} from '../runtime-hermes/client.ts';
 import type {HermesRuntime} from '../runtime-hermes/index.ts';
 import type {HermesSourceLibrary} from '../runtime-hermes/library.ts';
 import type {ApprovedWriteOrigin,CompletedWriteReceipt,WriteHookDiagnostic} from '../contracts/index.ts';
-import { HarnessError, EMPTY_USAGE, type ArtifactRecord, type DataRecord, type HostCommand, type InputRequest, type Message, type Operation, type ResourceGrant, type RunContext, type CommandReceipt, type RuntimeAdapter, type RuntimeEvent, type RuntimeUsage, type Snapshot, type StartRun, type SurfaceSpec, type Thread, type ToolCall, type UserStateRecord } from "../contracts/index.ts";
+import { HarnessError, EMPTY_USAGE, type ArtifactRecord, type DataRecord, type HostCommand, type InputRequest, type Message, type Operation, type ResourceGrant, type RunContext, type CommandReceipt, type RuntimeAdapter, type RuntimeEvent, type RuntimeUsage, type Snapshot, type StartRun, type SurfaceSpec, type Thread, type ToolCall, type TurnOutcome, type TurnTimingV1, type UserStateRecord } from "../contracts/index.ts";
 import { hostFlagEnabled } from "./host-flags.ts";
 import { OperationProjectTrustHost } from './operation-project-trust.ts';
 import { OperationExecutionAdviceHost } from './operation-execution-advice.ts';
@@ -91,6 +91,7 @@ const object = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 const now = () => new Date().toISOString();
+const TURN_TIMING_LIMIT = 200;
 interface SourceIntegration {runtime:Pick<HermesRuntime,'sourceBusy'|'reviewBusy'|'cancelBackground'|'sourceRequest'>;library:Pick<HermesSourceLibrary,'initialize'|'command'|'view'|'proposal'|'refresh'>}
 type RunTeardown={ctx:RunContext;side:boolean;control:AbortController|undefined;promise:Promise<void>;failed:boolean;stop?:{epoch:number;childWork:Promise<void>}};
 const teardownKey=(ctx:RunContext)=>JSON.stringify([ctx.threadId,ctx.runId,ctx.epoch]);
@@ -533,6 +534,19 @@ export class Service {
   }
   private afterMaintenance(threadId: string, previous: Thread["status"]): Thread["status"] {
     return !["stopped", "interrupted", "failed"].includes(previous) && this.store.all<Outbox>("outbox", threadId).some(input => input.status === "persisted") ? this.hasGate(threadId) ? "awaiting_input" : "ready" : previous;
+  }
+  /** Called inside the admission transaction: one record per new non-compaction run. */
+  private startTurn(runId: string, threadId: string): void {
+    if (this.store.get<{ kind: string }>("runtimeIntent", runId)?.kind === "compaction") return;
+    this.store.put("turnTiming", runId, threadId, { runId, threadId, startedAt: now() });
+    const kept = this.store.all<TurnTimingV1>("turnTiming", threadId);
+    if (kept.length > TURN_TIMING_LIMIT) for (const stale of kept.slice(0, kept.length - TURN_TIMING_LIMIT)) this.store.remove("turnTiming", stale.runId);
+  }
+  /** Called inside the end transaction: first end wins, so every path is idempotent. */
+  private endTurn(runId: string, threadId: string, outcome: TurnOutcome): void {
+    const timing = this.store.get<TurnTimingV1>("turnTiming", runId);
+    if (!timing || timing.endedAt) return;
+    this.store.put("turnTiming", runId, threadId, { ...timing, endedAt: now(), outcome });
   }
   /** Called inside the same transaction as terminal authority changes. */
   private failUnansweredDetails(ctx:RunContext,error:string):void {
@@ -1215,7 +1229,7 @@ export class Service {
           this.planning.endRun(ctx,'cancelled');
           this.failUnansweredDetails(ctx,"The explanation was stopped. Resume the task to retry.");
           this.store.put("thread",thread.id,thread.id,{...thread,epoch:thread.epoch+1,runId:null,status:"stopped",updatedAt:now()});
-          return {stopped:true,nativeOwner:ctx};
+          this.endTurn(ctx.runId, thread.id, "stopped"); return {stopped:true,nativeOwner:ctx};
         });
         this.aborts.get(thread.id)?.abort();
         teardown=this.cancelRun(ctx,!!thread.sideParentId,true);
@@ -1691,6 +1705,7 @@ export class Service {
       const before=requestContextId?this.requestBasis(this.thread(threadId),modelId,thread.thinkingLevel):null;
       if(requestContextId)this.requestCustody.assertClaim(requestContextId,inputs[0].id,inputs[0].content,before!);
       this.store.put("thread", threadId, threadId, { ...thread, ...ctx,accountId:binding.accountId, id: threadId, status: this.hasGate(threadId) ? "awaiting_input" : "working", updatedAt: now() });
+      if(!thread.runId)this.startTurn(ctx.runId,threadId);
       if(!thread.sideParentId)this.planning.beginRun(ctx);
       for (const input of inputs) {
         let claimed:Partial<Outbox>={};const receipt=input.completedWrite;
@@ -1783,6 +1798,7 @@ export class Service {
         if(!this.store.get('runFailure',ctx.runId))this.store.put('runFailure',ctx.runId,thread.id,{threadId:ctx.threadId,runId:ctx.runId,epoch:ctx.epoch,projectId:thread.projectId??null,occurredAt:stamp});
       }
       this.store.put("thread", thread.id, thread.id, { ...thread, runId: null, status: intent?.kind === "compaction" ? this.afterMaintenance(thread.id, intent.previousStatus) : "interrupted", error: error instanceof Error ? error.message : String(error), updatedAt: stamp });
+      this.endTurn(ctx.runId, ctx.threadId, "failed");
       return { runId: ctx.runId };
     });
     // Clearing the projection must never detach a still-busy SDK session.
@@ -1984,6 +2000,7 @@ export class Service {
         if(intent?.kind!=="compaction")this.planning.endRun(event,event.aborted?"cancelled":unresolved?"interrupted":"review_required");
         const queuedNext = this.store.all<Outbox>('outbox', thread.id).some(input => input.status === 'persisted' && (input.sendMode === 'AFTER_CURRENT' || input.sourceFailure || input.sourceRecovery?.resumeRequired));
         this.store.put("thread", thread.id, thread.id, { ...thread, runId: null, status: event.aborted ? "stopped" : unresolved ? "interrupted" : intent?.kind === "compaction" ? this.afterMaintenance(thread.id, intent.previousStatus) : this.hasGate(thread.id) ? "awaiting_input" : finished && !finished.invalidated && !queuedNext ? "completed" : "ready", updatedAt: now() });
+        this.endTurn(event.runId, thread.id, event.aborted ? "stopped" : unresolved ? "interrupted" : "completed");
         const old = this.store.get<{ value: RuntimeUsage }>("usage", thread.id)?.value ?? EMPTY_USAGE; this.store.put("usage", thread.id, thread.id, { id: thread.id, value: { ...old, activity: "idle" } });
         advanceLifecycle();
         if(!event.aborted&&!unresolved&&intent?.kind!=='compaction')this.memoryHostInstance?.scheduleSettled(event);
@@ -2392,7 +2409,7 @@ export class Service {
         const next: Operation = { ...op, status: "unknown", error: "Execution was interrupted before its outcome was recorded" };
         this.store.put("operation", op.id, op.threadId, next); this.operationData(next);
       }
-      for (const thread of this.store.all<Thread>("thread").filter(t => t.runId)) { this.failUnansweredDetails({threadId:thread.id,runId:thread.runId!,epoch:thread.epoch},"The explanation was interrupted. Resume the task to retry."); this.store.put("thread", thread.id, thread.id, { ...thread, epoch: thread.epoch + 1, runId: null, status: "interrupted", updatedAt: now() }); }
+      for (const thread of this.store.all<Thread>("thread").filter(t => t.runId)) { this.failUnansweredDetails({threadId:thread.id,runId:thread.runId!,epoch:thread.epoch},"The explanation was interrupted. Resume the task to retry."); this.store.put("thread", thread.id, thread.id, { ...thread, epoch: thread.epoch + 1, runId: null, status: "interrupted", updatedAt: now() }); this.endTurn(thread.runId!, thread.id, "interrupted"); }
       // Inputs claimed as processing by a dead run would otherwise stay
       // unhandled forever and block isUpdateIdle/freezeForUpdate; mirror the
       // resume path (deliverOutbox) which re-persists anything not handled.
