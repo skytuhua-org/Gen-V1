@@ -67,6 +67,7 @@ export class ProjectTools{
    return action({git:(args,environment)=>nativeGit(this.gitExecutable(),metadata,path,args,signal,environment??{}),worktree:path,binding:workspace,signal});
   }));
  }
+ private delegateProfile(workspace:WorkspaceBinding):string{return hash(JSON.stringify({id:workspace.id,path:workspace.path,branch:workspace.branch,identity:workspace.identity,gitDirectoryIdentity:workspace.gitDirectoryIdentity,commonDirectoryIdentity:workspace.commonDirectoryIdentity}));}
  /** Typed managed-child allocation: a delegate thread binds to its parent's
   *  managed working copy. It never opens a sibling path, a plain folder or a
   *  worktree of its own; ownership stays with the parent's binding. */
@@ -77,7 +78,7 @@ export class ProjectTools{
   if(!delegate||delegate.kind!=='delegate'||delegate.parentThreadId!==parent.id||delegate.projectId!==parent.projectId)throw new HarnessError('CAPABILITY_DENIED','The child thread is not a delegate of this parent.');
   const bound=await this.binding(parent.projectId,parent.id),workspace=bound.workspace;
   if(!workspace||workspace.threadId!==parent.id)throw new HarnessError('CAPABILITY_DENIED','The parent working copy binding is unavailable.');
-  return{worktreeId:workspace.id,path:workspace.path,branch:workspace.branch,projectId:parent.projectId,profileDigest:hash(JSON.stringify({id:workspace.id,path:workspace.path,branch:workspace.branch,identity:workspace.identity,gitDirectoryIdentity:workspace.gitDirectoryIdentity,commonDirectoryIdentity:workspace.commonDirectoryIdentity}))};
+  return{worktreeId:workspace.id,path:workspace.path,branch:workspace.branch,projectId:parent.projectId,profileDigest:this.delegateProfile(workspace)};
  }
  /** Host proof for the CODE_WORKTREE role: the delegating parent's managed
   *  working copy. Null when the parent holds none — the role then reports
@@ -87,7 +88,7 @@ export class ProjectTools{
   if(!parent||parent.kind==='delegate'||parent.kind==='side'||parent.sideParentId||!parent.projectId||!parent.workspaceId)return null;
   const bound=await this.binding(parent.projectId,parent.id),workspace=bound.workspace;
   if(!workspace||workspace.threadId!==parent.id)return null;
-  return{worktreeId:workspace.id,path:workspace.path,profileDigest:hash(JSON.stringify({id:workspace.id,path:workspace.path,branch:workspace.branch,identity:workspace.identity,gitDirectoryIdentity:workspace.gitDirectoryIdentity,commonDirectoryIdentity:workspace.commonDirectoryIdentity}))};
+  return{worktreeId:workspace.id,path:workspace.path,profileDigest:this.delegateProfile(workspace)};
  }
  /** Effect entry for CODE_WORKTREE worktree.* calls against the parent's
   *  managed working copy. The coordinator has already clamped writability to
