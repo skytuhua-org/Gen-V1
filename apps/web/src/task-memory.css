@@ -12,6 +12,8 @@
 .memory-note textarea,.memory-note input { width: 100%; box-sizing: border-box; background: var(--input-bg, var(--surface)); color: var(--text); border: 1px solid var(--control-border); border-radius: 8px; padding: 10px; font: inherit; resize: vertical; }
 .memory-note footer { display: flex; justify-content: flex-end; gap: 8px; }
 .memory-note footer>.icon-button { margin-right: auto; color: var(--danger); }
+.memory-delete-confirm { margin-right: auto; color: var(--danger); background: var(--surface); border: 1px solid var(--danger); border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.memory-delete-confirm:disabled { cursor: default; opacity: .6; }
 .memory-note>header { flex-wrap: wrap; overflow-wrap: anywhere; }
 .memory-note details p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .memory-recovery { margin: 8px 0 0; font-size: 12px; line-height: 1.5; }
