@@ -126,6 +126,15 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
   const{owner,root}=await checkpointOwner(projectId,input.threadId??input.owner.threadId??undefined);admitOwner(owner,input.owner);
   return checkpoints.applyRestore(owner,{planId:input.planId,approvalId:input.approvalId,root});
  });
+ app.post('/api/projects/:projectId/checkpoints/restore/reconcile',{bodyLimit:64*1024},async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  if(!capabilityEnabled('workspace.restoreV1'))throw new HarnessError('CAPABILITY_DENIED','Checkpoint restore is disabled.');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),input=checkpointBody.extend({planId:identifier}).parse(request.body);
+  const{owner,root}=await checkpointOwner(projectId,input.threadId??input.owner.threadId??undefined);admitOwner(owner,input.owner);
+  // Reconcile reads only: it reports what an interrupted apply left on disk
+  // and settles the plan into a terminal state, so it needs no approval.
+  return checkpoints.reconcileRestore(owner,{planId:input.planId,root});
+ });
  app.post('/api/projects/:projectId/actions',{bodyLimit:1024*1024},async(request,reply)=>{
   const{projectId}=z.object({projectId:identifier}).parse(request.params),input=envelope.parse(request.body);
   if(workspaceActionTypeSchema.safeParse(input.type).success){
