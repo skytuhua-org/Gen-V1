@@ -32,7 +32,7 @@ describe('widget render perf (#1962)',()=>{
   // 20 ordinary update ticks (no DOM change): each pays a snapshot; dedupe keeps
   // render posts at 1. Measure total worker-side CPU for the 20 ticks.
   const t0=performance.now();
-  for(let i=0;i<20;i++){await new Promise(r=>setTimeout(r,55));send({type:'ui.event',payload:{id:1,event:'input',value:'x'}});}
+  for(let i=0;i<20;i++){await new Promise(r=>setTimeout(r,55));send({type:'ui.event',payload:{id:1,event:'keydown',key:'a'}});}
   const elapsed=performance.now()-t0-20*55;
   expect(renders()).toBe(1);
   console.log(`BASELINE 20 idle snapshots over 150-row tree: ~${elapsed.toFixed(0)}ms net`);

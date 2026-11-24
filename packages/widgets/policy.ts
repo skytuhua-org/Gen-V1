@@ -10,7 +10,6 @@ const ALLOWED_ATTRS = new Set('id class style title role name type placeholder v
 // Used independently in the host and bundled trusted receiver. Neither the
 // generated program nor its worker is trusted.
 export function validateRender(value: unknown): value is RenderTree {
-  const tags = ALLOWED_TAGS, attrs = ALLOWED_ATTRS;
   if (!value || typeof value !== 'object') return false;
   const render = value as RenderTree;
   if (!Array.isArray(render.tree) || render.tree.length > 800 || typeof render.css !== 'string' || render.css.length > 16384) return false;
@@ -18,11 +17,11 @@ export function validateRender(value: unknown): value is RenderTree {
   function visit(node: RenderNode, depth: number): boolean {
     if (!node || typeof node !== 'object' || depth > 24 || ++nodes > 800 || !Number.isSafeInteger(node.id) || node.id < 1 || ids.has(node.id)) return false;
     ids.add(node.id);
-    if (node.tag !== '#text' && !tags.has(node.tag)) return false;
+    if (node.tag !== '#text' && !ALLOWED_TAGS.has(node.tag)) return false;
     if (!node.attrs || typeof node.attrs !== 'object' || Array.isArray(node.attrs) || Object.keys(node.attrs).length > 32 || !Array.isArray(node.children) || node.children.length > 800) return false;
     if (node.tag === '#text' && (typeof node.text !== 'string' || node.children.length !== 0 || Object.keys(node.attrs).length !== 0)) return false;
     for (const [key, attr] of Object.entries(node.attrs)) {
-      if ((!attrs.has(key) && !/^aria-[a-z-]{1,40}$/.test(key) && !/^data-[a-z0-9-]{1,40}$/.test(key)) || typeof attr !== 'string' || attr.length > 1024) return false;
+      if ((!ALLOWED_ATTRS.has(key) && !/^aria-[a-z-]{1,40}$/.test(key) && !/^data-[a-z0-9-]{1,40}$/.test(key)) || typeof attr !== 'string' || attr.length > 1024) return false;
       if (key === 'type' && !['text', 'number', 'email', 'tel', 'search', 'password', 'url', 'date', 'time', 'datetime-local', 'month', 'week', 'color', 'range', 'checkbox', 'radio', 'button', 'submit', 'reset'].includes(attr)) return false;
       if (['rows', 'cols', 'colspan', 'rowspan', 'maxlength', 'minlength', 'tabindex'].includes(key) && (!/^-?\d{1,4}$/.test(attr) || Math.abs(Number(attr)) > 1000)) return false;
       bytes += attr.length;
