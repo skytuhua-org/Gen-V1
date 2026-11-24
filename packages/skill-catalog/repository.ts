@@ -20,10 +20,30 @@ export function deniedItem(sourceId:string,key:string,reason:Extract<SkillAvaila
  return{entry:{id:sourceId+':'+catalogHash(key),sourceId,name:key.split('/').at(-1)??key,description:'',files:0,availability:unavailable(reason),ref:null}};
 }
 const fail=(code:string,message:string):never=>{throw new HarnessError(code,message);};
+type ResolvedInventory=CatalogInventory&{revision:string};
 export class SkillCatalogRepository {
  private readonly secret=randomBytes(32);
- constructor(private readonly providers:readonly SkillCatalogCapabilityProvider[],readonly scope:SkillCatalogScope=personalScope){}
- private async inventory(query:SkillCatalogQuery){
+ private readonly inventoryTtlMs:number;
+ private readonly inventoryCacheSize:number;
+ private recent?:{key:string;at:number;promise:Promise<ResolvedInventory>};
+ private readonly byRevision=new Map<string,Promise<ResolvedInventory>>();
+ constructor(private readonly providers:readonly SkillCatalogCapabilityProvider[],readonly scope:SkillCatalogScope=personalScope,options:{inventoryTtlMs?:number;inventoryCacheSize?:number}={}){this.inventoryTtlMs=options.inventoryTtlMs??2000;this.inventoryCacheSize=options.inventoryCacheSize??8;}
+ private contextKey(query:SkillCatalogQuery){return catalogHash({scope:this.scope,query:query.query,threadId:query.threadId,projectId:query.projectId,limit:query.limit});}
+ /** Providers re-scan and re-hash the whole catalog per read, so consecutive
+  * pages and reference lookups reuse the same-context snapshot within the
+  * TTL and cursors reuse their pinned revision while it is retained. */
+ private inventory(query:SkillCatalogQuery):Promise<ResolvedInventory>{
+  const key=this.contextKey(query),now=Date.now();
+  if(this.recent&&this.recent.key===key&&now-this.recent.at<this.inventoryTtlMs)return this.recent.promise;
+  const promise=this.buildInventory(query);this.recent={key,at:now,promise};
+  void promise.then(inventory=>{
+   if(this.inventoryCacheSize===0)return;
+   this.byRevision.delete(inventory.revision);this.byRevision.set(inventory.revision,promise);
+   while(this.byRevision.size>this.inventoryCacheSize)this.byRevision.delete(this.byRevision.keys().next().value!);
+  },()=>{if(this.recent?.promise===promise)this.recent=undefined;});
+  return promise;
+ }
+ private async buildInventory(query:SkillCatalogQuery):Promise<ResolvedInventory>{
   const all:CatalogInventory={sources:[],items:[]};
   for(const provider of this.providers){if(JSON.stringify(provider.scope)!==JSON.stringify(this.scope))continue;const value=await provider.read(query);all.sources.push(...value.sources);all.items.push(...value.items);}
   if(all.sources.length>512||all.items.length>20000)fail('RESOURCE_LIMIT','The catalog exceeds its inventory limit.');
@@ -39,7 +59,10 @@ export class SkillCatalogRepository {
    if(actual.length!==wanted.length||!timingSafeEqual(actual,wanted))fail('INVALID_CURSOR','Choose a current catalog page.');
    try{const value=JSON.parse(Buffer.from(parts[0],'base64url').toString('utf8'));if(value.context!==context||!Number.isSafeInteger(value.offset)||value.offset<1||typeof value.revision!=='string')throw Error();offset=value.offset;expected=value.revision;}catch{fail('INVALID_CURSOR','Choose a current catalog page.');}
   }
-  const inventory=await this.inventory(query);if(expected&&expected!==inventory.revision)fail('SKILL_CATALOG_CHANGED','The catalog changed. Start again from its first page.');
+  // A signed cursor pins its revision: serve the retained snapshot when it is
+  // still cached, otherwise rescan and compare as before.
+  const inventory=expected&&this.byRevision.has(expected)?await this.byRevision.get(expected)!:await this.inventory(query);
+  if(expected&&expected!==inventory.revision)fail('SKILL_CATALOG_CHANGED','The catalog changed. Start again from its first page.');
   const terms=(query.query??'').toLowerCase().trim().split(/\s+/).filter(Boolean);
   const entries=inventory.items.map(i=>i.entry);
   const sourceLabels=new Map(inventory.sources.map(s=>[s.id,s.label]));
