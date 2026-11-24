@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject, type ReactNode, type MouseEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type RefObject, type ReactNode, type MouseEvent } from 'react';
 import {
   Archive,
   BarChart3,
@@ -12,13 +12,13 @@ import {
   GitPullRequest,
   ListFilter,
   LoaderCircle,
-  MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
   Pin,
   Search,
   Settings2,
   SquarePen,
+  X,
 } from 'lucide-react';
 import {threadNavigationRevision,type ThreadNavigationRow as Thread} from '../../../packages/contracts/shell-read-models';
 import type { UiPreferences } from '../../../packages/contracts/preferences';
@@ -31,6 +31,7 @@ import './sidebar-context.css';
 import {ThreadHoverCard} from './thread-hover/ThreadHoverCard';
 import {createThreadHoverCache} from './thread-hover/data';
 import type {ThreadHoverScope} from './thread-hover/facts';
+import {GenMark} from './GenMark';
 import {loadPersonalThreadHover,type ThreadHoverPRTarget} from './thread-hover/host';
 import { projectColor, threadDragPayload } from './project-colors';
 import { ActionMenu } from '../../../packages/ui-shell/ActionMenu';
@@ -301,31 +302,22 @@ export function ShellSidebar({
             </span>
           ) : (
             <>
-              <span className="thread-item-header">
-                <span className="thread-project-chip">
-                  <span className="thread-project-monogram" style={{ color: projectColor({ kind: 'local' }, item.projectId, preferences.projectColors) }} aria-hidden="true">
-                    {projectMonogram(item.projectName)}
-                  </span>
-                  {item.presentation?.pinned && <Pin size={10} className="thread-pin-icon" aria-hidden="true" />}
-                  <span className="thread-project-label">{item.projectName || 'Personal'}</span>
-                </span>
-                <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
-                  {showStatus && (
-                    <span className="thread-item-status">
-                      {isWorking ? (
-                        <LoaderCircle size={11} className="spinning" />
-                      ) : item.status === 'awaiting_input' ? (
-                        <span className="pending-dot" />
-                      ) : null}
-                      <span>{item.runId ? 'Working' : threadStatus(item)}</span>
-                    </span>
-                  )}
-                  <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
-                </span>
-              </span>
               <span className="thread-item-title">
                 {item.presentation?.unread && <span className="unread-dot" />}
                 {item.title}
+              </span>
+              <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
+                {showStatus && (
+                  <span className="thread-item-status">
+                    {isWorking ? (
+                      <LoaderCircle size={11} className="spinning" />
+                    ) : item.status === 'awaiting_input' ? (
+                      <span className="pending-dot" />
+                    ) : null}
+                    <span>{item.runId ? 'Working' : threadStatus(item)}</span>
+                  </span>
+                )}
+                <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
               </span>
               {(branch || item.kind === 'delegate') && (
                 <span className="thread-item-submeta">
@@ -392,7 +384,7 @@ export function ShellSidebar({
     >
       <div className="brand-row">
         <span className="brand-mark">
-          <MessageSquare size={16} />
+          <GenMark />
         </span>
         <strong>Gen V1</strong>
         <button
@@ -447,6 +439,12 @@ export function ShellSidebar({
           <SquarePen size={15} />
         </button>
       </div>
+      {filter !== 'all' && (
+        <div className="sidebar-filter-chip">
+          <span>Showing {filter} threads</span>
+          <button type="button" className="icon-button" aria-label="Clear thread filter" title="Show all threads" onClick={() => setFilter('all')}><X size={12} /></button>
+        </div>
+      )}
       <nav className="thread-list" aria-label="Threads" tabIndex={0} ref={navRef}>
         {group('pinned', 'Pinned', pinned, {
           list: 'pinned',
@@ -454,7 +452,17 @@ export function ShellSidebar({
           empty: <div className="sidebar-pinned-empty">Drag a thread here to pin it.</div>,
         })}
         {group('working', 'Working', working, { list: 'working' })}
-        {orderedRemaining.length > 0 && <div className="thread-flat-list" data-thread-list="flat">{orderedRemaining.map(item => row(item, false))}</div>}
+        {orderedRemaining.length > 0 && <div className="thread-flat-list" data-thread-list="flat">{orderedRemaining.map((item, index) => {
+          const projectKey = item.projectId ?? item.projectName ?? 'Conversations';
+          const previous = orderedRemaining[index - 1];
+          const previousKey = previous ? previous.projectId ?? previous.projectName ?? 'Conversations' : null;
+          return <Fragment key={item.id}>{projectKey !== previousKey && (
+            <div className="thread-project-header">
+              <span className="thread-project-monogram" style={{ color: projectColor({ kind: 'local' }, item.projectId, preferences.projectColors) }} aria-hidden="true">{projectMonogram(item.projectName)}</span>
+              <span className="thread-project-header-label">{item.projectName || 'Personal'}</span>
+            </div>
+          )}{row(item, false)}</Fragment>;
+        })}</div>}
         {reorder.indicatorTop != null && <div className="sidebar-drop-indicator" style={{ top: reorder.indicatorTop }} aria-hidden="true" />}
         {settled.length > 0 && (
           <section className="thread-group thread-group-settled" data-thread-list="settled">

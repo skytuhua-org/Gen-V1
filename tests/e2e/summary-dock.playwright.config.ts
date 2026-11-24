@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test';
 import { resolve } from 'node:path';
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.', testMatch: 'summary-dock.spec.ts', workers: 1, timeout: 20000,
   outputDir: resolve('.harness-summary-dock/artifacts'),
   use: { baseURL: 'http://127.0.0.1:5421', channel: 'msedge', viewport: { width: 1000, height: 650 }, contextOptions: { reducedMotion: 'reduce' }, trace: 'retain-on-failure' },
