@@ -58,6 +58,8 @@ export function streamEvents(response: ServerResponse, store: Pick<Store, 'event
   // stays the durable queue: a stalled reader drops the buffer past the cap
   // and serves everything from the store instead of retaining every commit.
   const pending: WorkspaceEvent[] = [];
+  // Fetched ledger pages: one store read serves up to 64 replayed events.
+  const backlog: WorkspaceEvent[] = [];
   let liveCut = 0, dropped = false;
   const unsubscribe = store.subscribe((event) => {
     if (dropped) void pump(); // ledger-only mode: pushes are not buffered
@@ -74,7 +76,8 @@ export function streamEvents(response: ServerResponse, store: Pick<Store, 'event
         // Every post-subscribe commit lands in pending (and only a pre-subscribe
         // backlog, seq <= liveCut, can precede it), so pending is the ordered
         // suffix once the store has been drained up to liveCut.
-        const event = cursor >= liveCut ? pending.shift() : store.eventsAfter(cursor, 64)[0];
+        if (cursor < liveCut && !backlog.length) backlog.push(...store.eventsAfter(cursor, 64));
+        const event = cursor >= liveCut ? pending.shift() : backlog.shift();
         if (!event && !comment) break;
         if (event && event.seq <= cursor) continue; // already written via store replay
         const chunk = event ? chunkFor(event) : comment;
