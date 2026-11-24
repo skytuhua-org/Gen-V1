@@ -75,7 +75,7 @@ import {cancelImport,commitImport,prepareImport,stageImport} from './history-imp
 import type {MemoryExtractionAdmission,MemoryExtractionJob} from './memory-extraction.ts';
 import type {MemoryAccess,MemoryAction,MemoryScope} from '../contracts/project-memory.ts';
 import {BackgroundWorkCoordinator,type BackgroundWorkOptions} from './background-work.ts';
-import {ExternalIntakeCoordinator,type IntakeAuth} from './external-intake.ts';
+import {ExternalIntakeCoordinator,type IntakeAuth,type IntakeRecord} from './external-intake.ts';
 import type {ModelRequestGate} from '../runtime/model-capacity.ts';
 import type {BackgroundWorkKind} from '../contracts/background-work.ts';
 
@@ -2404,6 +2404,13 @@ export class Service {
     this.backgroundWork.recover();
     this.backgroundWork.start();
     this.intake.start();
+    // An approved external task whose host died between admission and dispatch
+    // still holds a persisted input, and replaying the approval is rejected as
+    // a duplicate, so recovery re-delivers it rather than stranding the task.
+    for (const record of this.store.all<IntakeRecord>('intakeRecord')) {
+      const threadId = record.disposition === 'APPROVED' ? record.decision?.threadId : null;
+      if (threadId && this.store.all<Outbox>('outbox', threadId).some(i => i.status !== 'handled')) this.background(this.deliverOutbox(threadId));
+    }
     // M09 recovery runs after the listeners bind (service.recover is called
     // post-listen in launchHost) so a failed launch never mutates saved work.
     this.agentWork.recover();
