@@ -28,7 +28,7 @@ const viewConfig=bareConfig.replace('bare = true','bare = false');
 /** `status -b` header → branch name; empty on a detached HEAD. */
 export function statusBranch(header:string):string{
  if(!header.startsWith('## '))throw new HarnessError('GIT_ERROR','Git status did not report a branch header.');
- if(header.startsWith('## HEAD'))return '';
+ if(header.startsWith('## HEAD (no branch)'))return '';
  if(header.startsWith('## No commits yet on '))return header.slice('## No commits yet on '.length);
  return header.slice(3).split('...')[0]!.split(' ')[0]!;
 }

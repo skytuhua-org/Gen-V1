@@ -262,15 +262,37 @@ export async function readLocalComparisonFile(
       ...[name, ...(file.oldPath ? [file.oldPath] : [])].map((path) => ":(literal)" + path),
     ];
     try {
-      // One subprocess: `--numstat -z` output precedes the patch, which starts
-      // at the first `diff --git ` line (or is absent for an empty patch).
+      // One subprocess: `--numstat -z` output precedes the patch. Records are
+      // `A\tD\tpath\0`, or `A\tD\t\0old\0new\0` for a rename — walk them rather
+      // than searching for `diff --git a/`, which a rename path can literally
+      // start with.
       const read = async () => {
         const combined = await context.git(["diff", "--numstat", "-z", "--patch", ...args.slice(1)]);
-        // NUL before `a/` preimage prefix pins the split to the real patch
-        // header; a path named `diff --git …` inside numstat can't match.
-        const plain = combined.indexOf('\0diff --git a/'), quoted = combined.indexOf('\0diff --git "a/'),
-          cut = plain === -1 ? quoted : quoted === -1 ? plain : Math.min(plain, quoted);
-        return { text: cut === -1 ? "" : combined.slice(cut + 1), stats: combined.slice(0, cut === -1 ? combined.length : cut) };
+        let cut = 0;
+        while (cut < combined.length) {
+          const count = (s: string) => s.length > 0 && /^[-0-9]+$/.test(s),
+            t1 = combined.indexOf("\t", cut),
+            t2 = t1 === -1 ? -1 : combined.indexOf("\t", t1 + 1);
+          if (
+            t1 === -1 ||
+            t2 === -1 ||
+            !count(combined.slice(cut, t1)) ||
+            !count(combined.slice(t1 + 1, t2))
+          )
+            break;
+          const p = t2 + 1, e1 = combined.indexOf("\0", p);
+          if (e1 === -1) break;
+          if (e1 === p) {
+            // Rename: empty third field, then old\0new\0.
+            const e2 = combined.indexOf("\0", e1 + 1),
+              e3 = e2 === -1 ? -1 : combined.indexOf("\0", e2 + 1);
+            if (e3 === -1) break;
+            cut = e3 + 1;
+          } else cut = e1 + 1;
+        }
+        // A NUL separates the numstat block from the patch.
+        while (combined[cut] === "\0") cut += 1;
+        return { text: combined.slice(cut), stats: combined.slice(0, cut) };
       };
       // Pin existing worktree input through both Git reads. Cached/deleted reads use index objects.
       const { text, stats } =

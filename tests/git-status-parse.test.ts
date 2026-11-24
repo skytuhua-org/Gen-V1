@@ -13,6 +13,9 @@ describe('statusBranch',()=>{
  it('reports an empty branch on a detached HEAD',()=>{
   expect(statusBranch('## HEAD (no branch)')).toBe('');
  });
+ it('keeps branches whose name starts with HEAD',()=>{
+  expect(statusBranch('## HEAD-fix')).toBe('HEAD-fix');
+ });
  it('reads the unborn-branch header',()=>{
   expect(statusBranch('## No commits yet on trunk')).toBe('trunk');
  });

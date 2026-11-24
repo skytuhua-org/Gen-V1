@@ -33,16 +33,25 @@ async function untrackedDigestBytes(path:string,signal:AbortSignal){
   return{hash:digest.digest('hex'),binary};
  }finally{await file.close();}
 }
-// Digest each untracked path under as few guard acquisitions as the broker's
-// 256-path cap allows instead of one guarded round-trip per file. Order and
-// error propagation match the previous per-file loop.
+// Digest each untracked path under as few guard acquisitions as the broker
+// allows: at most 256 paths and ~48 KiB of JSON per acquire — a request over
+// the broker's 64 KiB line limit makes it exit mid-session. Order and error
+// propagation match the previous per-file loop.
 async function untrackedDigests(paths:string[],signal:AbortSignal){
  const results:{hash:string,binary:boolean}[]=[];
- for(let i=0;i<paths.length;i+=256){
-  const batch=paths.slice(i,i+256);
+ let i=0;
+ while(i<paths.length){
+  let bytes=0,j=i;
+  while(j<paths.length&&j-i<256){
+   const next=paths[j].length+64;
+   if(j>i&&bytes+next>48*1024)break;
+   bytes+=next;j++;
+  }
+  const batch=paths.slice(i,j);
   await withPathGuard(batch.map(path=>({path,leaf:true,readOnly:true})),signal,async()=>{
    for(const path of batch)results.push(await untrackedDigestBytes(path,signal));
   });
+  i=j;
  }
  return results;
 }
