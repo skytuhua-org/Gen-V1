@@ -47,6 +47,12 @@ export function createConversationScroll(element:HTMLElement){
   if(dragging||event.button!==1&&!(event.target===element&&event.clientX>=element.getBoundingClientRect().left+element.clientWidth))return;
   nativePointer=event.pointerId;dragging=true;interrupt();
  };
+ // Opening inline details is reading intent. Keep the reader in place when the content grows.
+ const preserveDisclosurePosition=(event:MouseEvent)=>{
+  if(!(event.target instanceof Element))return;
+  const summary=event.target.closest('summary[data-preserve-reading-position]');
+  if(summary?.parentElement instanceof HTMLDetailsElement && !summary.parentElement.open)interrupt();
+ };
  const pointerEnd=(event:PointerEvent)=>{if(dragging&&nativePointer!==undefined&&event.pointerId===nativePointer){nativePointer=undefined;dragging=false;following=nearTail();}};
  const key=(event:KeyboardEvent)=>{
   if(event.defaultPrevented||event.ctrlKey||event.metaKey||event.altKey||!['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key))return;
@@ -62,6 +68,7 @@ export function createConversationScroll(element:HTMLElement){
  element.addEventListener('touchstart',touchStart,{passive:true});
  element.addEventListener('touchend',touchEnd,{passive:true});
  element.addEventListener('touchcancel',touchEnd,{passive:true});
+ element.addEventListener('click',preserveDisclosurePosition);
  element.addEventListener('pointerdown',pointerDown);
  element.addEventListener('keydown',key);
  document.addEventListener('pointerup',pointerEnd);
@@ -96,6 +103,7 @@ export function createConversationScroll(element:HTMLElement){
   },
   dispose(){
    if(disposed)return;disposed=true;spring.dispose();observer.disconnect();observed.clear();
+   element.removeEventListener('click',preserveDisclosurePosition);
    element.removeEventListener('wheel',wheel);element.removeEventListener('touchstart',touchStart);element.removeEventListener('touchend',touchEnd);element.removeEventListener('touchcancel',touchEnd);element.removeEventListener('pointerdown',pointerDown);element.removeEventListener('keydown',key);
    document.removeEventListener('pointerup',pointerEnd);document.removeEventListener('pointercancel',pointerEnd);document.removeEventListener('visibilitychange',settleHidden);stopObservingMotion();
   },

@@ -23,10 +23,19 @@ async function fixture(page: Page, differentSizes = false) {
   return { ...host, requests: () => requests, deny() { denied = true; }, allow() { denied = false; }, hold() { delayed = new Promise<void>(resolve => { release = resolve; }); }, release() { release(); } };
 }
 const ready = async (page: Page) => { await bootstraps.get(page); await expect(page.locator('html')).toHaveAttribute('data-motion', /^(system|reduced|off)$/); await expect(page.getByRole('slider', { name: 'Comparison position', exact: true })).toBeEnabled(); };
+async function startComparisonDrag(page: Page) {
+  const stage = page.locator('.image-compare-stage');
+  await stage.scrollIntoViewIfNeeded();
+  const bounds = (await stage.boundingBox())!;
+  await stage.hover({ position: { x: bounds.width * .3, y: bounds.height * .5 } });
+  await page.mouse.down();
+  return (await stage.boundingBox())!;
+}
+
 test('another pointer losing capture cannot end the active comparison drag', async ({ page }) => {
   await fixture(page); await page.goto('/'); await ready(page);
-  const stage = page.locator('.image-compare-stage'), slider = page.getByRole('slider', { name: 'Comparison position', exact: true }), bounds = (await stage.boundingBox())!;
-  await page.mouse.move(bounds.x + bounds.width * .3, bounds.y + bounds.height * .5); await page.mouse.down();
+  const stage = page.locator('.image-compare-stage'), slider = page.getByRole('slider', { name: 'Comparison position', exact: true });
+  const bounds = await startComparisonDrag(page);
   await stage.dispatchEvent('pointerdown', { pointerId: 77, pointerType: 'touch', isPrimary: true, button: 0, bubbles: true });
   await stage.dispatchEvent('lostpointercapture', { pointerId: 77, pointerType: 'touch', bubbles: true });
   await page.mouse.move(bounds.x + bounds.width * .72, bounds.y + bounds.height * .5); await page.mouse.up();
@@ -35,8 +44,9 @@ test('another pointer losing capture cannot end the active comparison drag', asy
 test('comparison follows the pointer immediately and keeps keyboard and saved view state through reload', async ({ page }) => {
   const host = await fixture(page); await page.goto('/'); await ready(page);
   const slider = page.getByRole('slider', { name: 'Comparison position', exact: true }); await slider.focus(); await slider.press('End'); await expect(slider).toHaveValue('100'); await slider.press('Home'); await expect(slider).toHaveValue('0'); await slider.press('ArrowRight'); await expect(slider).toHaveValue('1');
-  const stage = page.locator('.image-compare-stage'), bounds = (await stage.boundingBox())!;
-  await page.mouse.move(bounds.x + bounds.width * .3, bounds.y + bounds.height * .5); await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width * .72, bounds.y + bounds.height * .5, { steps: 3 }); await page.mouse.up();
+  const stage = page.locator('.image-compare-stage');
+  const bounds = await startComparisonDrag(page);
+  await page.mouse.move(bounds.x + bounds.width * .72, bounds.y + bounds.height * .5, { steps: 3 }); await page.mouse.up();
   await expect.poll(() => host.snapshot.userStates[0].values.comparison).toMatchObject({ percent: 72, mode: 'overlay' });
   expect(await stage.evaluate(node => node.querySelector('.image-compare-before')!.getAnimations().length)).toBe(0);
   await page.getByRole('button', { name: 'Side by side', exact: true }).click(); await expect.poll(() => host.snapshot.userStates[0].values.comparison).toMatchObject({ percent: 72, mode: 'split' });
@@ -80,10 +90,28 @@ test('revoking either grant or moving it to another thread clears both images wi
 
 for(const policy of ['off','reduced'] as const){
  test(`app ${policy} settles active image geometry without replay`,async({page})=>{
+  const start = new Date('2026-10-30T12:00:00Z');
+  await page.clock.install({time:start});
   await page.emulateMedia({reducedMotion:'no-preference'});await fixture(page);await page.goto('/');await ready(page);
+  await page.clock.pauseAt(new Date(start.getTime() + 60_000));
+  const stage = page.locator('.image-compare-stage');
+  const width = () => stage.evaluate(node => (node as HTMLElement).style.getPropertyValue('--image-compare-width'));
   await page.getByRole('button',{name:'Side by side',exact:true}).click();
-  const values=await page.locator('.image-compare-stage').evaluate(async(node,policy)=>{const stage=node as HTMLElement,before=stage.style.getPropertyValue('--image-compare-width');document.documentElement.dataset.motion=policy;await Promise.resolve();const after=stage.style.getPropertyValue('--image-compare-width');document.documentElement.dataset.motion='system';await Promise.resolve();return {before,after,restored:stage.style.getPropertyValue('--image-compare-width')};},policy);
-  expect(values.before).not.toBe('50%');expect(values.after).toBe('50%');expect(values.restored).toBe('50%');
+  await expect(stage).toHaveAttribute('data-mode', 'split');
+  // The first animation frame sets the transfer's start time. Advance into the move.
+  await page.clock.runFor(48);
+  const inFlight = parseFloat(await width());
+  expect(inFlight).toBeGreaterThan(50);
+  expect(inFlight).toBeLessThan(100);
+
+  await page.evaluate(value => { document.documentElement.dataset.motion = value; }, policy);
+  expect(await width()).toBe('50%');
+  await page.evaluate(() => { document.documentElement.dataset.motion = 'system'; });
+  expect(await width()).toBe('50%');
+  await page.clock.runFor(48);
+  expect(await width()).toBe('50%');
+  await page.clock.runFor(250);
+  expect(await width()).toBe('50%');
  });
  test(`saved ${policy} reload reaches image geometry immediately`,async({page})=>{
   await page.emulateMedia({reducedMotion:'no-preference'});const host=await fixture(page);await page.goto('/');await ready(page);
@@ -112,4 +140,31 @@ test('System follows a live OS reduction without replaying image geometry',async
  await page.emulateMedia({reducedMotion:'no-preference'});await fixture(page);await page.goto('/');await ready(page);await page.getByRole('button',{name:'Side by side',exact:true}).click();
  await page.emulateMedia({reducedMotion:'reduce'});await expect.poll(()=>page.locator('.image-compare-stage').evaluate(node=>(node as HTMLElement).style.getPropertyValue('--image-compare-width'))).toBe('50%');
  await page.emulateMedia({reducedMotion:'no-preference'});expect(await page.locator('.image-compare-stage').evaluate(node=>(node as HTMLElement).style.getPropertyValue('--image-compare-width'))).toBe('50%');
+});
+
+test('split height follows the shared formula and hides overlay-only controls', async ({ page }) => {
+  await page.setViewportSize({ width: 780, height: 900 });
+  await fixture(page); await page.goto('/'); await ready(page);
+  const stage = page.locator('.image-compare-stage');
+  const measured = await stage.evaluate(node => {
+    const r = node.getBoundingClientRect();
+    return { width: r.width, height: r.height, innerH: window.innerHeight };
+  });
+  const ratio = 320 / 200; // fixture pair is 320x200 (aspect 1.6)
+  const cap = Math.min(540, measured.innerH * 0.7);
+  const expected = Math.min(cap, Math.max(0, measured.width / (2 * ratio)));
+  await page.getByRole('button', { name: 'Side by side', exact: true }).click();
+  await expect.poll(async () => Math.abs((await stage.boundingBox())!.height - expected)).toBeLessThanOrEqual(1);
+  const split = await stage.boundingBox();
+  expect(Math.abs(split!.height - expected)).toBeLessThanOrEqual(1);
+  // split keeps no comparison-position row and no divider in the accessibility tree
+  await expect(page.getByRole('slider', { name: 'Comparison position', exact: true })).toHaveCount(0);
+  expect(await page.locator('.image-compare-position').count()).toBe(0);
+  const divider = page.locator('.image-compare-divider');
+  if (await divider.count()) { // hidden from hit-testing and visibility when split
+    const st = await divider.evaluate(el => getComputedStyle(el));
+    expect(st.visibility === 'hidden' || st.display === 'none' || st.pointerEvents === 'none').toBeTruthy();
+  }
+  // same img handles, no extra fetch
+  expect(await page.locator('.image-compare-images img').count()).toBe(2);
 });
