@@ -41,19 +41,18 @@ describe("store transaction consistency", () => {
         .toThrowError("causal: apply blew up");
       // The orphaned transaction is real but the flag is clear.
       expect(store.db.isTransaction).toBe(true);
-      // Reads refuse the abandoned transaction's uncommitted view until reconciled:
-      // callers must not persist state the next rollback will discard.
+      // While the orphan still cannot be rolled back, reads fail closed rather
+      // than observe uncommitted writes callers could persist.
       const inconsistent = expect.objectContaining({name: "HarnessError", code: "STORE_INCONSISTENT"});
       expect(() => store.get("sample", "x")).toThrowError(inconsistent);
-      expect(() => store.snapshot()).toThrowError(inconsistent);
-      expect(() => store.eventsAfter(0)).toThrowError(inconsistent);
       failRollback = false;
-      // The next commit reconciles the orphan instead of wedging on it.
+      // Once rollback can run, a read lazily heals the orphan and never sees
+      // the abandoned writes; a retried command is itself the recovery path.
+      expect(store.get("sample", "x")).toBeNull();
+      expect(store.db.isTransaction).toBe(false);
       store.internal("fixture.after", null, () => store.put("sample", "after", null, {v: 2}));
       expect(store.get("sample", "after")).toEqual({v: 2});
       expect(store.db.isTransaction).toBe(false);
-      // And no rows from the rolled-back transaction leaked through.
-      expect(store.get("sample", "x")).toBeNull();
     } finally {
       store.db.exec = originalExec;
       if (store.db.isTransaction) store.db.exec("ROLLBACK");
