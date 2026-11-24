@@ -116,6 +116,7 @@ export async function withGitMetadata<T>(cwd: string, signal: AbortSignal, actio
     const snapshot = await mkdtemp(join(tmpdir(), "harness-git-snapshot-"));
     const owned: { path: string; dev: bigint; ino: bigint; directory: boolean }[] = [];
     const remember = async (path: string, directory: boolean) => { const identity = await lstat(path, { bigint: true }); owned.push({ path, dev: identity.dev, ino: identity.ino, directory }); };
+    const outcome: { value?: Awaited<ReturnType<typeof action>>; failure?: unknown; failed?: boolean } = {};
     try {
       await remember(snapshot, true);
       if (snapshot === cwd || child(cwd, snapshot) || family && (snapshot === family.commonDirectory || child(family.commonDirectory, snapshot))) throw deny();
@@ -138,13 +139,28 @@ export async function withGitMetadata<T>(cwd: string, signal: AbortSignal, actio
           } finally { await file.close(); }
         }
       }
-      return await withPathGuard([{ path: snapshot, leaf: false, tree: true, readOnly: true }], signal, () => action(join(snapshot, ".git"), snapshot,signal),()=>controller.abort());
-    } finally {
-      // Remove only identities created here, leaves first. Never recursively
-      // delete a pathname that a concurrent writer might have substituted.
-      for (const entry of owned.reverse()) {
-        await removeOwnedFile(entry.path, entry, new AbortController().signal, false, entry.directory);
-      }
+      outcome.value = await withPathGuard([{ path: snapshot, leaf: false, tree: true, readOnly: true }], signal, () => action(join(snapshot, ".git"), snapshot,signal),()=>controller.abort());
+    } catch (cause) { outcome.failed = true; outcome.failure = cause; }
+    // Remove only identities created here, leaves first. Never recursively
+    // delete a pathname that a concurrent writer might have substituted. A
+    // cleanup failure must not skip the remaining entries or hide the real
+    // operation outcome: it rides as `suppressed` on that outcome's error and
+    // is only thrown itself when the operation succeeded.
+    const cleanupErrors: unknown[] = [];
+    for (const entry of owned.reverse()) {
+      try { await removeOwnedFile(entry.path, entry, new AbortController().signal, false, entry.directory); }
+      catch (cause) { cleanupErrors.push(cause); }
     }
+    if (outcome.failed) {
+      const failure = outcome.failure;
+      if (cleanupErrors.length) {
+        const suppressed = new AggregateError(cleanupErrors, "Git snapshot cleanup could not remove every temporary file.");
+        if ((typeof failure === 'object' && failure !== null) || typeof failure === 'function') (failure as { suppressed?: unknown }).suppressed = suppressed;
+        else outcome.failure = Object.assign(new Error("Git snapshot action failed", { cause: failure }), { suppressed });
+      }
+      throw outcome.failure;
+    }
+    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "Git snapshot cleanup could not remove every temporary file.");
+    return outcome.value!;
   },()=>controller.abort());
 }

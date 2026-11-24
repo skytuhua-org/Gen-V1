@@ -1,6 +1,6 @@
 import {afterEach,expect,it} from 'vitest';
 import {execFileSync} from 'node:child_process';
-import {lstat,mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {lstat,mkdir,mkdtemp,readFile,rename,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {withGitMetadata,type ManagedGitFamily} from '../packages/capabilities/git-access.ts';
@@ -87,4 +87,12 @@ it.each(['identity','common identity','git identity','pointer','backref','common
  if(change==='config')await writeFile(join(f.family.commonDirectory,'config'),'[include]\npath = elsewhere\n');
  if(change==='alternates')await writeFile(join(f.family.commonDirectory,'objects','info','alternates'),'elsewhere\n');
  await expect(snapshot(f.path,f.family,async()=>true)).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+});
+
+it('keeps cleaning a snapshot when one removal fails, without hiding the real outcome',async()=>{
+ const f=await fixture(),substitute=async(worktree:string)=>{const config=join(worktree,'.git','config');await rename(config,config+'.moved');await writeFile(config,'swapped\n');};
+ // A substituted file fails its ownership check; remaining removals still run.
+ await expect(snapshot(f.base,undefined,async(_metadata,worktree)=>{await substitute(worktree);return 'done';})).rejects.toMatchObject({name:'AggregateError'});
+ // The operation's own failure wins; cleanup errors ride as `suppressed`.
+ await expect(snapshot(f.base,undefined,async(_metadata,worktree)=>{await substitute(worktree);throw Error('primary failure');})).rejects.toMatchObject({message:'primary failure',suppressed:expect.objectContaining({name:'AggregateError'})});
 });
