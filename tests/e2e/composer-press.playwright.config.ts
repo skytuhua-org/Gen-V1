@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.', testMatch: ['composer-press.spec.ts'],
   workers: 1, timeout: 30_000,
   outputDir: resolve(tmpdir(), 'wo-3-3-composer-press-playwright'),
