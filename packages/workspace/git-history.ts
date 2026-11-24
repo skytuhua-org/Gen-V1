@@ -149,11 +149,11 @@ async function unpushedSet(context: HistoryContext, headOid: string, upstreamOid
 }
 async function fileCount(context: HistoryContext, oid: string, parentOid: string | null): Promise<number | null> {
   const args = parentOid
-    ? ["diff-tree", "-r", "-z", "--numstat", "--no-commit-id", "--end-of-options", parentOid, oid, "--"]
-    : ["diff-tree", "-r", "-z", "--numstat", "--root", "--no-commit-id", "--end-of-options", oid, "--"];
+    ? ["diff-tree", "-r", "-z", "--numstat", "-M", "--no-commit-id", "--end-of-options", parentOid, oid, "--"]
+    : ["diff-tree", "-r", "-z", "--numstat", "-M", "--root", "--no-commit-id", "--end-of-options", oid, "--"];
   try {
     const raw = await run(context, args);
-    return raw.split("\0").filter((row) => row.length > 0).length;
+    return numstat(raw).size;
   } catch {
     return null;
   }
@@ -285,7 +285,11 @@ function numstat(raw: string): Map<string, { additions: number | null; deletions
   for (let i = 0; i < entries.length; i++) {
     const row = entries[i];
     if (!row) continue;
-    const [added, removed, path] = row.split("\t");
+    const first = row.indexOf("\t"), second = row.indexOf("\t", first + 1);
+    if (first === -1) continue;
+    const added = row.slice(0, first),
+      removed = second === -1 ? row.slice(first + 1) : row.slice(first + 1, second),
+      path = second === -1 ? "" : row.slice(second + 1);
     const binary = added === "-" && removed === "-";
     if (path === "") {
       const oldPath = entries[++i],

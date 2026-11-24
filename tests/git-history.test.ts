@@ -52,6 +52,7 @@ it("reads pages, details and patches directly against a plain repository", async
   expect(page.branch).toBe(git("branch", "--show-current"));
   expect(page.commits.map((row) => row.subject)).toEqual(["Binary", "Rename", "Base"]);
   expect(page.commits[0].filesChanged).toBe(1);
+  expect(page.commits[1].filesChanged).toBe(1);
   expect(page.commits[0].pushState).toBe("unknown");
   const head = await readHistoryCommit(context, snapshots, page.snapshotId!, page.commits[0].oid);
   expect(head.basis).toBe("first-parent");
