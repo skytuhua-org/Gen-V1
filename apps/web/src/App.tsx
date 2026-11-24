@@ -931,7 +931,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const updateModelScoped=(id:string)=>{
     void journalWrite(`modelChoice:${modelThread?.id??'new'}`,id).catch(()=>{});
     modelResolutionRef.current=modelResolutionRef.current?{...modelResolutionRef.current,modelId:id,source:'explicit',reasoningDropped:false}:modelResolutionRef.current;
-    setModelResolution(current=>current?{...current,modelId:id,source:'explicit'}:current);setModelDroppedReasoning(undefined);
+    setModelResolution(current=>current?{...current,modelId:id,source:'explicit',reasoningDropped:false}:current);setModelDroppedReasoning(undefined);
     if(modelPickWritesGlobal(modelThreadProjectDefault,modelBinding!==undefined))updateModel(id);else setModelId(id);
   };
   const [modelDefaultOpen,setModelDefaultOpen]=useState(0);
