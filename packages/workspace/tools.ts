@@ -13,6 +13,7 @@ import {gitExecutable} from '../capabilities/process.ts';
 import {readBoundFile,withPathGuard} from '../core/file-access.ts';
 import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead} from '../contracts/code-review.ts';
+import type {BranchEntry,BranchList} from '../contracts/workspace-branches.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
 
 interface Identity{dev:string;ino:string}
@@ -154,6 +155,63 @@ export class ProjectTools{
   return{head,branch,revision:hash(JSON.stringify([head,branch,raw,diff,stagedDiff,untracked])),files,diff,stagedDiff,truncated:false,mode:managed?'managed':'legacy',gitWrite:managed,untrackedIncluded:managed};
  }
  async gitStatus(projectId:string,threadId?:string):Promise<GitStatus>{return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed)=>this.status(metadata,path,signal,managed)));}
+ /** Message-only mirror of `git check-ref-format --branch`; the git call stays authoritative. */
+ private branchNameProblem(name:string):string|null{
+  if(!name)return 'empty name';
+  if(name.startsWith('-'))return 'starts with -';
+  if(name.includes('..'))return 'contains ..';
+  if(name.includes('@{'))return 'contains @{';
+  if(name==='@')return 'is just @';
+  if(/[\x00-\x20~^:?*[\]\\]/.test(name))return 'contains spaces, control characters, or ~ ^ : ? * [ \\';
+  for(const part of name.split('/')){if(!part)return 'contains an empty segment';if(part.startsWith('.'))return 'a segment starts with .';if(part.endsWith('.lock'))return 'a segment ends with .lock';}
+  if(name.endsWith('/')||name.endsWith('.'))return 'ends with / or .';
+  return null;
+ }
+ private async checkBranchName(git:(args:string[])=>Promise<string>,name:string){
+  const problem=this.branchNameProblem(name);let normalized='';
+  try{normalized=(await git(['check-ref-format','--branch',name])).trim();}catch{/* refused */}
+  if(problem||normalized!==name)throw new HarnessError('INVALID_BRANCH_NAME',problem?`Git doesn't allow this name: ${problem}.`:`Git doesn't allow the name ${JSON.stringify(name)}.`);
+ }
+ private async refExists(git:(args:string[])=>Promise<string>,ref:string){try{await git(['show-ref','--verify','--quiet',ref]);return true;}catch{return false;}}
+ /** branch name -> worktree path, for every branch checked out in this git family. */
+ private async occupiedBranches(git:(args:string[])=>Promise<string>){
+  const map=new Map<string,string>();
+  for(const record of (await git(['worktree','list','--porcelain','-z'])).split('\0\0')){
+   let tree:string|undefined,branch:string|undefined;
+   for(const line of record.split('\0')){if(line.startsWith('worktree '))tree=line.slice(9);else if(line.startsWith('branch refs/heads/'))branch=line.slice(18);}
+   if(tree&&branch)map.set(branch,tree);
+  }
+  return map;
+ }
+ private async sameWorktree(a:string,b:string){if(resolve(a)===resolve(b))return true;try{return equal(await identity(a),await identity(b));}catch{return false;}}
+ /** Read-only branch list for the composer picker (works on managed and legacy copies). */
+ async branches(projectId:string,threadId?:string):Promise<BranchList>{
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,async(metadata,path,signal,managed)=>{
+   const git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
+   const runActive=Boolean(threadId&&this.store.get<Thread>('thread',threadId)?.runId);
+   let status:GitStatus|undefined;try{status=await this.status(metadata,path,signal,managed);}catch{/* not a git worktree */}
+   if(!status)return{current:null,head:null,revision:hash('no-git'),detached:false,dirty:{tracked:0,untracked:0},canSwitch:false,reason:'no-git',local:[],remote:[],truncated:false};
+   const occupied=await this.occupiedBranches(git);
+   const format=['%(refname)','%(objectname)','%(committerdate:iso-strict)','%(upstream:short)','%(contents:subject)'].join('%1f')+'%00';
+   const read=async(prefix:string,strip:string,skip:RegExp|null)=>{
+    const rows=(await git(['for-each-ref','--format='+format,'--sort=-committerdate','--count=501',prefix])).split('\0').map(row=>row.replace(/^\n/,'')).filter(Boolean).map(row=>{const[ref,object,date,upstream,subject='']=row.split('\x1f');return{ref,object,date,upstream,subject};});
+    const entries:BranchEntry[]=[];
+    for(const row of rows.slice(0,500)){
+     const name=row.ref!.slice(strip.length);if(skip&&skip.test(name))continue;
+     const tree=occupied.get(name),current=status!.branch===name;
+     entries.push({name,head:row.object!,subject:row.subject!.slice(0,200),committedAt:row.date!,upstream:row.upstream||null,current,occupiedBy:tree===undefined?null:await this.sameWorktree(tree,path)?'this':'other'});
+    }
+    return{entries,truncated:rows.length>500};
+   };
+   const local=await read('refs/heads','refs/heads/',null),remote=await read('refs/remotes','refs/remotes/',/\/HEAD$/);
+   const reason:'run-active'|'read-only'|'no-git'|null=!managed?'read-only':runActive?'run-active':null;
+   return{
+    current:status.branch||null,head:status.head,revision:status.revision,detached:!status.branch,
+    dirty:{tracked:status.files.filter(file=>!file.untracked).length,untracked:status.files.filter(file=>file.untracked).length},
+    canSwitch:reason===null,reason,local:local.entries,remote:remote.entries,truncated:local.truncated||remote.truncated,
+   };
+  }));
+ }
  /** Read-only origin through the same attested managed/legacy Git boundary. */
  async gitReviewOrigin(projectId:string,threadId?:string){return this.exclusive(projectId,async()=>{
   const binding=await this.binding(projectId,threadId),signal=new AbortController().signal;
@@ -179,13 +237,54 @@ export class ProjectTools{
    return readLocalComparisonFile({git:args=>nativeGit(this.gitExecutable(),metadata,path,args,signal),path,signal,managed,owner},entry.value,request.path);
   }));
  }
- async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string}){
+ async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string;branch?:string;source?:'local'|'remote';bringChanges?:boolean}){
   return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
    const current=await this.status(metadata,path,signal,managed);if(input.revision!==current.revision)throw new HarnessError('REVISION_CHANGED','The worktree changed. Refresh the review before applying this action.');const paths=z.array(pathName).min(1).max(1000).optional().parse(input.paths),git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
    if(input.type==='stage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to stage.');await git(['add','--',...paths]);}
    else if(input.type==='unstage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to unstage.');await git(['restore','--staged','--',...paths]);}
    else if(input.type==='commit')await git(['-c','commit.gpgsign=false','commit','-m',z.string().trim().min(1).max(4000).parse(input.message)]);
    else if(input.type==='branch'){const branch=z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]{0,150}$/).refine(value=>!value.endsWith('/')&&!value.includes('//')).parse(input.name);await git(['switch','-c',branch]);}
+   else if(input.type==='switch-branch'||input.type==='create-branch'){
+    // Branch actions are refused with typed codes before any mutation; the
+    // action-outcome service records those refusals as not-applied.
+    if(threadId&&this.store.get<Thread>('thread',threadId)?.runId)throw new HarnessError('RUN_ACTIVE','Wait for the active run to finish, then switch.');
+    const name=z.string().min(1).max(250).refine(value=>!value.includes('\0')).parse(input.type==='create-branch'?input.name:input.branch);
+    await this.checkBranchName(git,name);
+    const dirty=current.files.length>0,occupied=await this.occupiedBranches(git);
+    const verify=async(target:string)=>{if((await git(['branch','--show-current'])).trim()!==target)throw new HarnessError('ACTION_UNCERTAIN',"Gen couldn't confirm the switch. Check branch.");};
+    const run=async(target:string,args:string[])=>{
+     const inUse=occupied.get(target);
+     if(inUse!==undefined&&!(await this.sameWorktree(inUse,path)))throw new HarnessError('BRANCH_IN_USE',`${target} is open in another thread. Switch that thread first.`);
+     if(current.branch===target)return;
+     if(dirty&&!input.bringChanges&&input.type==='switch-branch')throw new HarnessError('DIRTY_TREE',`You have ${current.files.length} uncommitted ${current.files.length===1?'change':'changes'}.`);
+     // Runs admit independently of the git lock; recheck immediately before mutating.
+     if(threadId&&this.store.get<Thread>('thread',threadId)?.runId)throw new HarnessError('RUN_ACTIVE','Wait for the active run to finish, then switch.');
+     try{await git(args);}catch(error){
+      const stderr=error instanceof HarnessError&&error.code==='GIT_ERROR'?String((error.details as {stderr?:string}|undefined)?.stderr??''):'';
+      if(/would be overwritten|Please commit your changes|Please stash/.test(stderr))throw new HarnessError('BRANCH_CONFLICT',`Your changes conflict with ${target}. Commit or stash them first, then switch.`);
+      throw error;
+     }
+     await verify(target);
+    };
+    if(input.type==='create-branch'){
+     if(await this.refExists(git,'refs/heads/'+name))throw new HarnessError('BRANCH_EXISTS',`A branch named ${name} already exists.`);
+     if(threadId&&this.store.get<Thread>('thread',threadId)?.runId)throw new HarnessError('RUN_ACTIVE','Wait for the active run to finish, then switch.');
+     try{await git(['switch','-c',name]);}catch(error){
+      const stderr=error instanceof HarnessError&&error.code==='GIT_ERROR'?String((error.details as {stderr?:string}|undefined)?.stderr??''):'';
+      if(/already exists/.test(stderr))throw new HarnessError('BRANCH_EXISTS',`A branch named ${name} already exists.`);
+      throw error;
+     }
+     await verify(name);
+    }
+    else if(input.source==='remote'){
+     const short=name.slice(name.indexOf('/')+1);
+     if(!short||short==='HEAD'||this.branchNameProblem(short))throw new HarnessError('INVALID_BRANCH_NAME',`Git doesn't allow this name: ${JSON.stringify(name)} has no valid local branch part.`);
+     if(await this.refExists(git,'refs/heads/'+short))await run(short,['switch','--no-guess',short]);
+     // --track writes branch.<name>.* into the pinned common config; --no-track -c gives the same local branch without a config write.
+     else await run(short,['switch','--no-track','-c',short,name]);
+    }
+    else await run(name,['switch','--no-guess',name]);
+   }
    else throw new HarnessError('INVALID_INPUT','Unknown Git action.');return this.status(metadata,path,signal,managed);
   }));
  }

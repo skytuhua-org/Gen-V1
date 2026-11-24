@@ -7,7 +7,7 @@ const identifier = z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/);
 const revision = z.string().regex(/^[a-f0-9]{64}$/),
   oid = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const repo = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
-export const workspaceActionTypeSchema = z.enum(['stage', 'unstage', 'commit', 'review-pr', 'create-pr']);
+export const workspaceActionTypeSchema = z.enum(['stage', 'unstage', 'commit', 'review-pr', 'create-pr', 'switch-branch', 'create-branch']);
 type WorkspaceActionType = z.infer<typeof workspaceActionTypeSchema>;
 export const workspaceActionEnvelopeSchema = z.strictObject({
   id: identifier,
@@ -51,6 +51,10 @@ export const workspaceActionPayloadSchemas = {
     head: oid,
     revision,
   }),
+  // Git's own rules stay authoritative on the server (`git check-ref-format`);
+  // the contract only bounds length/UTF-8/NUL like `text()`.
+  'switch-branch': z.strictObject({ ...local, branch: text(250), source: z.enum(['local', 'remote']), bringChanges: z.boolean() }),
+  'create-branch': z.strictObject({ ...local, name: text(250) }),
 };
 type WorkspaceActionPayload = z.infer<(typeof workspaceActionPayloadSchemas)[WorkspaceActionType]>;
 export const workspaceActionOwnerSchema = z.strictObject({
@@ -111,4 +115,6 @@ export interface WorkspaceActionOperation {
   payload: WorkspaceActionPayload;
 }
 export type WorkspaceActionOutcome = { state: 'confirmed' | 'not-applied' | 'uncertain' | 'revoked' };
-export type WorkspaceActionExecution = { state: 'confirmed'; receipt: CommandReceipt } | { state: 'not-applied' | 'uncertain' | 'revoked' };
+export type WorkspaceActionExecution =
+  | { state: 'confirmed'; receipt: CommandReceipt }
+  | { state: 'not-applied' | 'uncertain' | 'revoked'; error?: { code: string; message: string } };

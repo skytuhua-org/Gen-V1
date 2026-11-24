@@ -12,6 +12,7 @@ import {registerGitHubAuthRoutes} from './github-auth-routes.ts';
 import {SplitWorkspaceRepository} from '../../packages/core/split-workspace.ts';
 import {WorkspaceActionOutcomes} from '../../packages/workspace/action-outcomes.ts';
 import {workspaceActionTypeSchema,workspaceActionOperationSchema} from '../../packages/contracts/workspace-action-outcomes.ts';
+import {branchListSchema} from '../../packages/contracts/workspace-branches.ts';
 import {capabilityEnabled} from '../../packages/core/capability-flags.ts';
 import {workspaceOwnerScope} from '../../packages/workspace/edit-journal.ts';
 import {CheckpointService} from '../../packages/workspace/checkpoints.ts';
@@ -45,6 +46,11 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
  app.post('/api/workspace/commands',{bodyLimit:1024*1024},async request=>{const input=envelope.parse(request.body);return input.type==='workspace.project.connect'?projects.connect(input):projects.workspace.command(input);});
  app.get('/api/projects/:projectId/context',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);return projects.context(projectId,threadId);});
  app.get('/api/projects/:projectId/git',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);return projects.gitStatus(projectId,threadId);});
+ app.get('/api/projects/:projectId/branches',async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);
+  return branchListSchema.parse(await projects.branches(projectId,threadId));
+ });
  // Read-only comparison dependencies; retain existing action/review routes verbatim.
  app.get('/api/projects/:projectId/git/comparison',async(request,reply)=>{
   reply.header('Cache-Control','no-store');
@@ -133,8 +139,9 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
    const outcome=await actionOutcomes.execute(projectId,input);
    if(outcome.state==='confirmed')return outcome.receipt;
    reply.code(outcome.state==='revoked'?403:409);
-   const code=outcome.state==='revoked'?'CAPABILITY_DENIED':outcome.state==='not-applied'?'REVISION_CHANGED':'ACTION_UNCERTAIN';
-   const message=outcome.state==='revoked'?'Project access changed. Refresh before acting.':outcome.state==='not-applied'?'The reviewed changes are out of date. Refresh before acting.':'The outcome is uncertain. Inspect the original action before retrying.';
+   const refusal=outcome.state==='not-applied'?outcome.error:undefined;
+   const code=refusal?.code??(outcome.state==='revoked'?'CAPABILITY_DENIED':outcome.state==='not-applied'?'REVISION_CHANGED':'ACTION_UNCERTAIN');
+   const message=refusal?.message??(outcome.state==='revoked'?'Project access changed. Refresh before acting.':outcome.state==='not-applied'?'The reviewed changes are out of date. Refresh before acting.':'The outcome is uncertain. Inspect the original action before retrying.');
    return{...outcome,error:{code,message,details:{state:outcome.state,operationId:input.id}}};
   }
   const existing=service.store.receipt({...input,type:'project.'+input.type,payload:{...input.payload,projectId}});if(existing)return existing;

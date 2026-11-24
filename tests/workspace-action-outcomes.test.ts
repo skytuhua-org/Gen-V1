@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { Store } from '../packages/storage/store.ts';
 import { ProjectTools, type WorkspaceBinding } from '../packages/workspace/tools.ts';
 import { GitHubTools } from '../packages/workspace/github.ts';
+import type { Thread } from '../packages/contracts/index.ts';
 import type { TerminalHost } from '../packages/workspace/terminal.ts';
 import { WorkspaceActionOutcomes } from '../packages/workspace/action-outcomes.ts';
 import {
@@ -111,14 +112,18 @@ async function fixture() {
       const status = await projects.gitStatus(projectId, thread.id),
         comparison = await projects.gitComparison(projectId, thread.id, { scope: type === 'commit' ? 'staged' : 'worktree' });
       if (comparison.state !== 'ready' && comparison.state !== 'empty') throw Error('Fixture comparison failed');
-      const payload =
+      const payload: WorkspaceActionEnvelope['payload'] =
         type === 'create-pr'
           ? {title:'Private draft title',body:'Private draft description',base:'main',push:false,head:status.head,revision:status.revision}
           : type === 'review-pr'
           ? { number: 12, event: 'COMMENT' as const, body: 'private review text', head: status.head, revision: status.revision }
           : type === 'commit'
             ? { message: 'private commit message', expectedHead: status.head, revision: status.revision }
-            : { paths: ['one.txt'], expectedHead: status.head, revision: status.revision };
+            : type === 'switch-branch'
+              ? { branch: 'feature/x', source: 'local' as const, bringChanges: false, expectedHead: status.head, revision: status.revision }
+              : type === 'create-branch'
+                ? { name: 'feature/new', expectedHead: status.head, revision: status.revision }
+                : { paths: ['one.txt'], expectedHead: status.head, revision: status.revision };
       const operation: WorkspaceActionOperation = {
         operationId: randomUUID(),
         operation: type,
@@ -146,7 +151,7 @@ async function fixture() {
               }
             : comparison.value.identity,
         action: { head: status.head, revision: status.revision, branch: status.branch },
-        payload,
+        payload: payload as WorkspaceActionOperation['payload'],
       };
       return {
         operation,
@@ -533,4 +538,79 @@ it('supports local unstage and commit through the original revision and replays 
   expect(after.files).toHaveLength(0);
   expect(await f.outcomes.execute(f.projectId, commit.input)).toEqual(result);
   expect((await f.projects.gitStatus(f.projectId, f.thread.id)).head).toBe(after.head);
+}, 60000);
+
+it('parses valid switch-branch and create-branch payloads and rejects malformed ones', () => {
+  const base = { revision: 'a'.repeat(64), expectedHead: 'b'.repeat(40) };
+  const sw = workspaceActionPayloadSchemas['switch-branch'], cr = workspaceActionPayloadSchemas['create-branch'];
+  expect(() => sw.parse({ ...base, branch: 'feature/x', source: 'local', bringChanges: false })).not.toThrow();
+  expect(() => sw.parse({ ...base, branch: 'origin/fix', source: 'remote', bringChanges: true })).not.toThrow();
+  expect(() => cr.parse({ ...base, name: 'release/1.0' })).not.toThrow();
+  const badSwitch = [
+    { branch: 'has\0nul', source: 'local', bringChanges: false },
+    { branch: 'x'.repeat(251), source: 'local', bringChanges: false },
+    { branch: 'ok', source: 'local', bringChanges: 'yes' },
+    { branch: 'ok', source: 'local' },
+    { branch: 'ok', source: 'upstream', bringChanges: false },
+    { branch: '', source: 'local', bringChanges: false },
+    { branch: 'ok', source: 'local', bringChanges: false, extra: 1 },
+    { name: 'ok', source: 'local', bringChanges: false },
+  ];
+  for (const entry of badSwitch) expect(sw.safeParse({ ...base, ...entry }).success).toBe(false);
+  const badCreate = [
+    { name: 'has\0nul' },
+    { name: 'x'.repeat(251) },
+    { name: '' },
+    { name: 'ok', extra: 1 },
+    { name: 'ok', revision: 'nope' },
+    { name: 'ok', expectedHead: 'nope' },
+  ];
+  for (const entry of badCreate) expect(cr.safeParse({ ...base, ...entry }).success).toBe(false);
+  expect(sw.safeParse({ ...base, branch: 'latin-é', source: 'local', bringChanges: false }).success).toBe(true);
+});
+
+it('confirms a clean branch switch durably and replays the stored result', async () => {
+  const f = await fixture(),
+    wgit = (...args: string[]) => execFileSync('git', ['-C', f.binding.path, ...args], { windowsHide: true, encoding: 'utf8' }).trim();
+  wgit('branch', 'feature/x');
+  const { input, operation } = await f.operation('switch-branch'),
+    result = await f.outcomes.execute(f.projectId, input);
+  expect(result.state).toBe('confirmed');
+  expect(wgit('branch', '--show-current')).toBe('feature/x');
+  expect(await f.outcomes.execute(f.projectId, input)).toEqual(result);
+  expect((await f.outcomes.inspect(operation)).state).toBe('confirmed');
+}, 60000);
+
+it('returns not-applied with the refusal code for guarded branch actions and never retries', async () => {
+  const f = await fixture(),
+    wgit = (...args: string[]) => execFileSync('git', ['-C', f.binding.path, ...args], { windowsHide: true, encoding: 'utf8' }).trim();
+  wgit('branch', 'held');
+  wgit('worktree', 'add', join(f.root, 'second'), 'held');
+  const inUse = await f.operation('switch-branch');
+  inUse.input.payload = { ...inUse.input.payload, branch: 'held' };
+  const refused = await f.outcomes.execute(f.projectId, inUse.input);
+  expect(refused.state).toBe('not-applied');
+  expect(refused.state === 'not-applied' ? refused.error?.code : undefined).toBe('BRANCH_IN_USE');
+  expect(await f.outcomes.execute(f.projectId, inUse.input)).toEqual(refused); // replay, no retry
+  wgit('worktree', 'remove', join(f.root, 'second'));
+
+  const badName = await f.operation('switch-branch');
+  badName.input.payload = { ...badName.input.payload, branch: 'a..b' };
+  expect((await f.outcomes.execute(f.projectId, badName.input)).state).toBe('not-applied');
+  expect((await f.outcomes.execute(f.projectId, badName.input)).state).toBe('not-applied');
+
+  f.store.internal('fixture', null, () => { const live = f.store.get<Thread>('thread', f.thread.id)!; f.store.put('thread', live.id, live.id, { ...live, runId: 'run-1' }); });
+  const busy = await f.operation('create-branch');
+  expect((await f.outcomes.execute(f.projectId, busy.input)).state).toBe('not-applied');
+  f.store.internal('fixture', null, () => { const live = f.store.get<Thread>('thread', f.thread.id)!; f.store.put('thread', live.id, live.id, { ...live, runId: null }); });
+
+  const exists = await f.operation('create-branch');
+  exists.input.payload = { ...exists.input.payload, name: 'held' };
+  const dup = await f.outcomes.execute(f.projectId, exists.input);
+  expect(dup.state === 'not-applied' ? dup.error?.code : undefined).toBe('BRANCH_EXISTS');
+
+  const create = await f.operation('create-branch'),
+    created = await f.outcomes.execute(f.projectId, create.input);
+  expect(created.state).toBe('confirmed');
+  expect(wgit('branch', '--show-current')).toBe('feature/new');
 }, 60000);

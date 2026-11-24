@@ -6,6 +6,7 @@ import type {GitStatus} from '../../../packages/workspace/tools.ts';
 import {ApiError,authenticated,csrfToken,read} from './api.ts';
 import {UsageSummary,WorkspaceLauncher,GrantedFiles,RecordedDiffPanel,OutputPanel} from './WorkspacePanelBodies.tsx';
 import {getPreferences,type UiPreferences} from '../../../packages/contracts/preferences.ts';
+import {onWorkspaceChanged} from './useThreadBranch.ts';
 import type {TimeFormat} from './time-format';
 import {Artifact} from './Artifact.tsx';
 import {PlanStatus} from './PlanStatus.tsx';
@@ -38,6 +39,8 @@ function FilesBody({base,query,active,fallback}:{base:string;query:URLSearchPara
 }
 function DiffBody({base,query,active,fallback}:{base:string;query:URLSearchParams;active:boolean;fallback:ReactNode}){
  const{value,error,errorCode,load,setError}=useProjectRequest<GitStatus>(base+'/git?'+query,active),[staged,setStaged]=useState(false),[pending,setPending]=useState(false);
+ const threadId=query.get('threadId')??'';
+ useEffect(()=>onWorkspaceChanged(detail=>{if(detail.threadId===threadId)void load();}),[threadId,load]);
  const apply=async(type:string,path:string)=>{if(!value||value.gitWrite!==true||pending)return;setPending(true);try{await post(base+'/actions',{id:crypto.randomUUID(),type,payload:{paths:[path],revision:value.revision,expectedHead:value.head},...(query.get('threadId')?{threadId:query.get('threadId')}:{})});await load();}catch(error){setError(message(error));}finally{setPending(false);}};
  if(errorCode==='PROJECT_NOT_CONNECTED')return fallback;
  const legacy=(value as (GitStatus&{mode?:string})|null)?.mode==='legacy';

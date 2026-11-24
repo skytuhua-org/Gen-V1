@@ -5,7 +5,7 @@ import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Store} from '../packages/storage/store.ts';
-import {HarnessError} from '../packages/contracts/index.ts';
+import {HarnessError,type Thread} from '../packages/contracts/index.ts';
 import {ProjectTools} from '../packages/workspace/tools.ts';
 import {GitHubTools} from '../packages/workspace/github.ts';
 import type {TerminalHost} from '../packages/workspace/terminal.ts';
@@ -140,4 +140,37 @@ it.each(['before write','after write'] as const)('keeps credential-bearing %s fa
  const publicAndDurable=JSON.stringify([response.json(),f.store.eventsAfter(sequence),f.store.all('workspaceActionOutcome')]);
  expect(publicAndDurable).not.toContain(token);
  expect(publicAndDurable).not.toContain(encoded);
+},60000);
+
+it('serves the branch list read-only with a validated schema and no-store',async()=>{
+ const f=await fixture(),app=Fastify(),service={store:f.store} as Service;
+ registerWorkspaceHost(service,{projects:f.projects,github:f.github,terminals:{dispose:async()=>{}} as TerminalHost});registerWorkspaceRoutes(app,service);cleanup.push(()=>app.close());
+ const wgit=(...args:string[])=>execFileSync('git',['-C',f.binding.path,...args],{windowsHide:true,encoding:'utf8'}).trim();
+ wgit('branch','other');
+ const response=await app.inject({method:'GET',url:'/api/projects/'+f.projectId+'/branches?threadId='+f.thread.id});
+ expect(response.statusCode).toBe(200);expect(response.headers['cache-control']).toBe('no-store');
+ const list=response.json();
+ expect(list.current).toBe(f.binding.workspace!.branch);
+ expect(list.local.map((e:{name:string})=>e.name)).toEqual(expect.arrayContaining(['other',f.binding.workspace!.branch]));
+ expect(list.local.find((e:{name:string})=>e.name===f.binding.workspace!.branch).current).toBe(true);
+ expect(list.canSwitch).toBe(true);expect(list.reason).toBeNull();expect(list.truncated).toBe(false);expect(typeof list.revision).toBe('string');
+},60000);
+
+it('maps branch-action refusal codes to 409 bodies',async()=>{
+ const f=await fixture(),app=Fastify(),service={store:f.store} as Service;
+ const wgit=(...args:string[])=>execFileSync('git',['-C',f.binding.path,...args],{windowsHide:true,encoding:'utf8'}).trim();
+ wgit('branch','held');wgit('worktree','add',join(f.root,'second'),'held');
+ registerWorkspaceHost(service,{projects:f.projects,github:f.github,terminals:{dispose:async()=>{}} as TerminalHost});registerWorkspaceRoutes(app,service);cleanup.push(()=>app.close());
+ const status=await f.projects.gitStatus(f.projectId,f.thread.id),url='/api/projects/'+f.projectId+'/actions';
+ const post=(payload:Record<string,unknown>)=>app.inject({method:'POST',url,payload:{id:randomUUID(),type:'switch-branch',threadId:f.thread.id,payload:{branch:'held',source:'local',bringChanges:false,expectedHead:status.head,revision:status.revision,...payload}}});
+ const inUse=await post({});
+ expect(inUse.statusCode).toBe(409);
+ expect(inUse.json()).toMatchObject({state:'not-applied',error:{code:'BRANCH_IN_USE',details:{operationId:inUse.json().error.details.operationId,state:'not-applied'}}});
+ const bad=await post({branch:'a..b'});
+ expect(bad.statusCode).toBe(409);expect(bad.json().error.code).toBe('INVALID_BRANCH_NAME');
+ const stale=await post({branch:'held',revision:'0'.repeat(64)});
+ expect(stale.statusCode).toBe(409);expect(stale.json().error.code).toBe('REVISION_CHANGED');
+ f.store.internal('fixture',null,()=>{const live=f.store.get<Thread>('thread',f.thread.id)!;f.store.put('thread',live.id,live.id,{...live,runId:'run-1'});});
+ const busy=await post({branch:'held'});
+ expect(busy.statusCode).toBe(409);expect(busy.json().error.code).toBe('RUN_ACTIVE');
 },60000);
