@@ -212,7 +212,7 @@ export class Store {
     const row = this.db.prepare("SELECT MIN(json_extract(body,'$.reportWatermark')) AS watermark FROM entities WHERE kind='planExtension' AND json_type(body,'$.reportWatermark')='integer'").get() as { watermark: number | null };
     return row.watermark ?? Number.MAX_SAFE_INTEGER;
   }
-  /** Bounded, resumable deletion of replayable event history and expired
+  /** Bounded, resumable deletion of replayable event history and expiry of
    * command receipts. Keeps `seq > floor` where
    * `floor = min(headSeq - keepEvents, minWatermark)` so both the recency
    * window and every durable consumer cursor stay readable. Each batch is its
@@ -220,7 +220,11 @@ export class Store {
    * next call; a `store.retention.swept` audit event is recorded on success.
    * Receipts tied to retained events are kept, and receipts referenced by a
    * live `workspaceAction`/`workspaceActionOutcome` entity's command are always
-   * kept so crash recovery can still resolve uncertain outcomes. */
+   * kept so crash recovery can still resolve uncertain outcomes. An expired
+   * receipt is tombstoned, not deleted: its `id`, `hash` and `eventSeq`
+   * survive so a replayed command still dedupes and a reused ID with
+   * different content still raises DUPLICATE_COMMAND, while the heavy
+   * `result` payload is dropped (`result: null`, `expired: true`). */
   retentionSweep(options: { keepEvents?: number; batchSize?: number; maxBatches?: number; receipts?: 'with-events' | 'keep' } = {}): { floor: number; removedEvents: number; removedReceipts: number; batches: number } {
     if (this.transactionOpen) throw new HarnessError('TRANSACTION_OPEN', 'Retention sweep cannot run inside a command transaction');
     const keep = options.keepEvents ?? 50_000;
@@ -229,14 +233,14 @@ export class Store {
     const floor = Math.max(0, Math.min(this.sequence - keep, this.retentionWatermarkFloor()));
     if (floor <= 0) return { floor, removedEvents: 0, removedReceipts: 0, batches: 0 };
     const removeEvents = this.db.prepare("DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE seq<=? LIMIT ?)");
-    const removeReceipts = this.db.prepare("DELETE FROM receipts WHERE id IN (SELECT id FROM receipts WHERE json_extract(body,'$.eventSeq')<=? AND id NOT IN (SELECT json_extract(body,'$.command.id') FROM entities WHERE kind IN ('workspaceAction','workspaceActionOutcome') AND json_type(body,'$.command.id')='text') LIMIT ?)");
+    const expireReceipts = this.db.prepare("UPDATE receipts SET body=json_object('commandId',id,'eventSeq',json_extract(body,'$.eventSeq'),'result',null,'expired',json('true')) WHERE id IN (SELECT id FROM receipts WHERE json_extract(body,'$.eventSeq')<=? AND COALESCE(json_extract(body,'$.expired'),0)!=1 AND id NOT IN (SELECT json_extract(body,'$.command.id') FROM entities WHERE kind IN ('workspaceAction','workspaceActionOutcome') AND json_type(body,'$.command.id')='text') LIMIT ?)");
     let removedEvents = 0, removedReceipts = 0, batches = 0;
     while (options.maxBatches === undefined || batches < options.maxBatches) {
       this.db.exec("BEGIN IMMEDIATE"); this.transactionOpen = true;
       let batchEvents = 0, batchReceipts = 0;
       try {
         batchEvents = Number(removeEvents.run(floor, batch).changes);
-        if (options.receipts !== 'keep') batchReceipts = Number(removeReceipts.run(floor, batch).changes);
+        if (options.receipts !== 'keep') batchReceipts = Number(expireReceipts.run(floor, batch).changes);
         this.db.exec("COMMIT");
       } catch (error) { this.db.exec("ROLLBACK"); throw error; }
       finally { this.transactionOpen = false; }

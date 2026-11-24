@@ -227,11 +227,18 @@ describe('bounded transcript paging', () => {
     expect(store.eventsAfter(floor).map(event => event.seq)).toEqual([...Array(store.sequence - floor).keys()].map(n => n + floor + 1));
     // The swept audit event is itself retained history.
     expect(store.eventsAfter(0).at(-1)).toMatchObject({ type: 'store.retention.swept', payload: { result: { floor, removedEvents: result.removedEvents } } });
-    // Receipts below the floor expire except the one a live workspaceAction still references: 20 - 8 swept + 1 pinned.
-    expect(store.db.prepare("SELECT COUNT(*) AS n FROM receipts").get()).toMatchObject({ n: 13 });
+    // Receipts below the floor expire to tombstones except the one a live
+    // workspaceAction still references: 20 rows stay (12 intact incl. the pin),
+    // the 7 expired keep id+hash+eventSeq and drop their result.
+    expect(store.db.prepare("SELECT COUNT(*) AS n FROM receipts").get()).toMatchObject({ n: 20 });
+    expect(store.db.prepare("SELECT COUNT(*) AS n FROM receipts WHERE json_extract(body,'$.expired')=1").get()).toMatchObject({ n: 7 });
     // A pinned receipt still short-circuits its command; so does a retained one.
     expect(store.command({ id: commands[2].commandId, type: 'fixture.command', payload: { i: 2 } }, () => { throw new Error('kept receipt must short-circuit'); })).toEqual(commands[2]);
     expect(store.command({ id: commands[19].commandId, type: 'fixture.command', payload: { i: 19 } }, () => { throw new Error('kept receipt must short-circuit'); })).toEqual(commands[19]);
+    // An expired command replay never re-applies: same content dedupes to the
+    // tombstone, and a reused ID with different content still fails closed.
+    expect(store.command({ id: commands[0].commandId, type: 'fixture.command', payload: { i: 0 } }, () => { throw new Error('expired receipt must short-circuit'); })).toEqual({ commandId: commands[0].commandId, eventSeq: commands[0].eventSeq, result: null, expired: true });
+    expect(() => store.command({ id: commands[0].commandId, type: 'fixture.command', payload: { i: 99 } }, () => { throw new Error('unreachable'); })).toThrow(expect.objectContaining({ code: 'DUPLICATE_COMMAND' }));
     // A stale sweep is a no-op below the keep window and inside a transaction it is rejected.
     expect(store.retentionSweep({ keepEvents: store.sequence }).removedEvents).toBe(0);
     expect(() => store.internal('fixture.nested', null, () => store.retentionSweep())).toThrow(expect.objectContaining({ code: 'TRANSACTION_OPEN' }));
