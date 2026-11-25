@@ -25,22 +25,75 @@ env:
   GIT_CONFIG_VALUE_0: true
 
 jobs:
+  # The merge queue runs the full suite on a merge commit and then fast-forwards
+  # main to that same commit, so the push run on main would repeat seven Windows
+  # jobs on a revision that already passed them. This job looks for that passed
+  # merge-queue run of the exact pushed commit. Only a positive result skips the
+  # suite: no run, a failed lookup or a failed job here all keep it, and every
+  # other event never reaches this job.
+  proof:
+    name: Find the merge-queue run that tested this commit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      verified: ${{ steps.proof.outputs.verified }}
+    steps:
+      - name: Check out the lookup script
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-queue-verified.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Look for a passed merge-queue run of this exact commit
+        id: proof
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci-queue-verified.mjs
+
+  # Caches saved by a merge-queue run belong to its temporary branch. Only a run
+  # on main refreshes the dependency caches that pull requests and queue entries
+  # restore, so a push that skips the suite still installs the toolchain once.
+  caches:
+    name: Refresh shared toolchain caches
+    needs: proof
+    runs-on: windows-2022
+    if: needs.proof.outputs.verified == 'true'
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        uses: ./.github/actions/setup
+        with:
+          python: 'true'
+          playwright: 'true'
+
   # A draft pull request is not reviewable, so its jobs run when it becomes
   # ready for review instead of on every draft push; draft pushes otherwise
   # starve the shared runner pool that required checks depend on.
   #
   # A reviewable pull request gets Windows checks plus the tests reachable from
   # its diff. The full suite (four shards, browser and installed-memory) runs in
-  # the merge queue and on main, so nothing reaches main without it.
+  # the merge queue, so nothing reaches main without it, and again on any push
+  # to main that the proof job above cannot tie to a passed merge-queue run.
   #
   # Small checks share one job so they pay for one runner and one toolchain
   # install. Every step after setup runs even when an earlier one fails, so the
   # job lists every failure instead of stopping at the first.
   checks:
     name: Windows checks
+    needs: proof
     runs-on: windows-2022
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    timeout-minutes: 30
+    if: ${{ !cancelled() && needs.proof.outputs.verified != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    timeout-minutes: 15
     defaults:
       run:
         shell: pwsh
@@ -120,9 +173,10 @@ jobs:
   # unexpanded name, so the required "Tests (shard N/4)" checks would never report on PRs.
   test-1:
     name: Tests (shard 1/4)
+    needs: proof
     runs-on: windows-2022
-    if: github.event_name != 'pull_request'
-    timeout-minutes: 30
+    if: ${{ !cancelled() && needs.proof.outputs.verified != 'true' && github.event_name != 'pull_request' }}
+    timeout-minutes: 22
     defaults:
       run:
         shell: pwsh
@@ -146,9 +200,10 @@ jobs:
 
   test-2:
     name: Tests (shard 2/4)
+    needs: proof
     runs-on: windows-2022
-    if: github.event_name != 'pull_request'
-    timeout-minutes: 30
+    if: ${{ !cancelled() && needs.proof.outputs.verified != 'true' && github.event_name != 'pull_request' }}
+    timeout-minutes: 22
     defaults:
       run:
         shell: pwsh
@@ -172,9 +227,10 @@ jobs:
 
   test-3:
     name: Tests (shard 3/4)
+    needs: proof
     runs-on: windows-2022
-    if: github.event_name != 'pull_request'
-    timeout-minutes: 30
+    if: ${{ !cancelled() && needs.proof.outputs.verified != 'true' && github.event_name != 'pull_request' }}
+    timeout-minutes: 22
     defaults:
       run:
         shell: pwsh
@@ -198,9 +254,10 @@ jobs:
 
   test-4:
     name: Tests (shard 4/4)
+    needs: proof
     runs-on: windows-2022
-    if: github.event_name != 'pull_request'
-    timeout-minutes: 30
+    if: ${{ !cancelled() && needs.proof.outputs.verified != 'true' && github.event_name != 'pull_request' }}
+    timeout-minutes: 22
     defaults:
       run:
         shell: pwsh
@@ -224,8 +281,9 @@ jobs:
 
   browser:
     name: Browser tests
+    needs: proof
     runs-on: windows-2022
-    if: github.event_name != 'pull_request'
+    if: ${{ !cancelled() && needs.proof.outputs.verified != 'true' && github.event_name != 'pull_request' }}
     timeout-minutes: 30
     defaults:
       run:
@@ -278,8 +336,9 @@ jobs:
 
   installed-memory:
     name: Installed desktop memory retention and opt-in
+    needs: proof
     runs-on: windows-2022
-    if: github.event_name != 'pull_request'
+    if: ${{ !cancelled() && needs.proof.outputs.verified != 'true' && github.event_name != 'pull_request' }}
     timeout-minutes: 60
     defaults:
       run:
@@ -429,7 +488,7 @@ jobs:
       - name: List tests reachable from the pull request diff
         id: select
         run: |
-          pnpm exec vitest list --changed HEAD^1 --filesOnly --json="$RUNNER_TEMP/selected.json"
+          pnpm exec vitest list --changed HEAD~1 --filesOnly --json="$RUNNER_TEMP/selected.json"
           node -e '
             const files = require(process.argv[1]);
             const total = Math.min(4, Math.ceil(files.length / 35));
@@ -442,7 +501,7 @@ jobs:
     needs: select
     runs-on: windows-2022
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.select.outputs.total != '0'
-    timeout-minutes: 30
+    timeout-minutes: 22
     strategy:
       fail-fast: false
       matrix:
@@ -470,4 +529,7 @@ jobs:
       - name: Run this shard of the tests reachable from the pull request diff
         env:
           SHARD: ${{ matrix.shard }}/${{ needs.select.outputs.total }}
-        run: pnpm test --maxWorkers=1 --changed HEAD^1 --shard $env:SHARD
+        # HEAD~1, not the caret spelling: pnpm.cmd runs through cmd.exe, which drops a caret,
+        # so the shard compared against "HEAD1", found nothing changed and passed
+        # without running a test. A shard that finds no test file now fails.
+        run: pnpm test --maxWorkers=1 --changed HEAD~1 --passWithNoTests=false --shard $env:SHARD

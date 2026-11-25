@@ -25,6 +25,9 @@ function normalized(value: unknown): unknown {
 }
 export function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(normalized(value))).digest("hex"); }
 
+const COMPACTION_JOINED = "FROM entities a LEFT JOIN entities u ON u.kind='compactionUsage' AND u.id=a.id AND u.thread_id=a.thread_id WHERE a.kind='compactionAttempt' AND a.thread_id=? AND json_extract(a.body,'$.ownerKey')=?";
+const PROVED = "(json_extract(u.body,'$.nativeReceipt.status')='APPLIED' AND json_extract(u.body,'$.nativeReceipt.candidateId')=a.id)";
+
 export class Store {
   private readonly connection: DatabaseSync;
   /** The shared SQLite connection. Access reconciles an abandoned transaction
@@ -59,6 +62,8 @@ export class Store {
     eventsAfter: ReturnType<DatabaseSync['prepare']>;
     eventsAfterLimit: ReturnType<DatabaseSync['prepare']>;
     sequence: ReturnType<DatabaseSync['prepare']>;
+    compactionCounts: ReturnType<DatabaseSync['prepare']>;
+    compactionRows: ReturnType<DatabaseSync['prepare']>;
   };
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
@@ -111,6 +116,9 @@ export class Store {
       eventsAfter: this.connection.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq"),
       eventsAfterLimit: this.connection.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?"),
       sequence: this.connection.prepare("SELECT COALESCE(MAX(seq),0) AS seq FROM events"),
+      // Prepared once: snapshot() evaluates a compaction projection per usage row.
+      compactionCounts: this.connection.prepare(`SELECT COUNT(*) AS attempts, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='FAILED' AND COALESCE(${PROVED},0)=0 THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='DISCARDED' AND COALESCE(${PROVED},0)=0 THEN 1 ELSE 0 END),0) AS discarded ${COMPACTION_JOINED}`),
+      compactionRows: this.connection.prepare(`SELECT a.body, u.body AS usage ${COMPACTION_JOINED} ORDER BY a.rowid DESC LIMIT 8`),
     };
   }
   get<T = unknown>(kind: string, id: string): T | null {
@@ -127,18 +135,16 @@ export class Store {
     }
     return value as T;
   }
-  compactionProjection(threadId: string): CompactionProjectionV1 | undefined {
+  compactionProjection(threadId: string, threads?: Map<string, Thread>): CompactionProjectionV1 | undefined {
     this.reconcileIfNeeded();
-    const thread = this.get<Thread>('thread', threadId);
+    const thread = threads ? threads.get(threadId) : this.get<Thread>('thread', threadId);
     // A retained model/session is already account-bound. As in Service.binding,
     // its absent legacy field means null; it never uses the selected default.
     if (!thread?.modelId) return;
     const ownerKey = compactionOwnerKey(thread, thread.modelId, thread.accountId ?? null);
-    const joined = "FROM entities a LEFT JOIN entities u ON u.kind='compactionUsage' AND u.id=a.id AND u.thread_id=a.thread_id WHERE a.kind='compactionAttempt' AND a.thread_id=? AND json_extract(a.body,'$.ownerKey')=?";
-    const proved = "(json_extract(u.body,'$.nativeReceipt.status')='APPLIED' AND json_extract(u.body,'$.nativeReceipt.candidateId')=a.id)";
-    const counts = this.connection.prepare(`SELECT COUNT(*) AS attempts, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='FAILED' AND COALESCE(${proved},0)=0 THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='DISCARDED' AND COALESCE(${proved},0)=0 THEN 1 ELSE 0 END),0) AS discarded ${joined}`).get(threadId, ownerKey) as {attempts: number; failed: number; discarded: number};
+    const counts = this.statements.compactionCounts.get(threadId, ownerKey) as {attempts: number; failed: number; discarded: number};
     if (!counts.attempts) return;
-    const rows = this.connection.prepare(`SELECT a.body, u.body AS usage ${joined} ORDER BY a.rowid DESC LIMIT 8`).all(threadId, ownerKey) as {body: string; usage: string | null}[];
+    const rows = this.statements.compactionRows.all(threadId, ownerKey) as {body: string; usage: string | null}[];
     const candidates = rows.reverse().map(row => {
       const entry = JSON.parse(row.body) as CompactionAttemptRecord;
       const usage = row.usage ? JSON.parse(row.usage) as {nativeReceipt?: NativeCompactionReceiptV1} : null;
@@ -305,8 +311,17 @@ export class Store {
     });
     return {
       seq: this.sequence, threads, archivedThreads: allThreads.filter(thread => archived.has(thread.id)), messages, messagesTruncated, artifacts, userStates: visible("userState"),
-      data, requests, accounts: this.all('account'), skills:this.all<import('../contracts/skills.ts').SkillSummary>('skill').map(skill=>{const usage=skillUsage.get(skill.name);return usage?{...skill,useCount:usage.count,lastUsedAt:usage.lastUsedAt}:skill;}),skillProposals:(this.connection.prepare("SELECT json_remove(body,'$.operations') AS body FROM entities WHERE kind=? AND json_extract(body,'$.status')='pending'").all('skillProposal') as {body:string}[]).map(row=>JSON.parse(row.body)),learning:this.get('learningStatus','global')??{supported:false,status:'idle',lastReview:null},operations: visible("operation"), resources: visible("resource"), memory: visible('taskMemory'),
-      usage: Object.fromEntries(visible<{ id: string; value: unknown }>("usage").map(x => [x.id, this.get<{value: RuntimeUsage}>('usage', x.id)!.value])) as Snapshot["usage"],
+
+      data, requests, accounts: this.all('account'), skills:this.all<import('../contracts/skills.ts').SkillSummary>('skill').map(skill=>{const usage=skillUsage.get(skill.name);return usage?{...skill,useCount:usage.count,lastUsedAt:usage.lastUsedAt}:skill;}),skillProposals:(this.db.prepare("SELECT json_remove(body,'$.operations') AS body FROM entities WHERE kind=? AND json_extract(body,'$.status')='pending'").all('skillProposal') as {body:string}[]).map(row=>JSON.parse(row.body)),learning:this.get('learningStatus','global')??{supported:false,status:'idle',lastReview:null},operations: visible("operation"), resources: visible("resource"), memory: visible('taskMemory'),
+      usage: Object.fromEntries((() => {
+        // Batch: reuse the loaded threads instead of a get()+projection per row.
+        const threadsById = new Map(allThreads.map(thread => [thread.id, thread]));
+        return visible<{ id: string; value: RuntimeUsage }>("usage").map(row => {
+          const { compaction: _historical, ...value } = row.value as RuntimeUsage & { compaction?: unknown };
+          const compaction = this.compactionProjection(row.id, threadsById);
+          return [row.id, { ...value, ...(compaction ? { compaction } : {}) }];
+        });
+      })()) as Snapshot["usage"],
       modelRequests: visible<{ id: string; value: import('../contracts/model-request.ts').ModelRequestObservationV1 }>("modelRequest").reduce((grouped, item) => { const owner = item.value?.owner?.threadId; if (owner) (grouped[owner] ??= []).push(item.value); return grouped; }, {} as Record<string, import('../contracts/model-request.ts').ModelRequestObservationV1[]>),
       settings: this.get("settings", "global") ?? { theme: "dark", modelId: null },
       activeThreadId: threads.find(t => !t.sideParentId && t.runId !== null && (t.status === "working" || t.status === "awaiting_input"))?.id ?? null
