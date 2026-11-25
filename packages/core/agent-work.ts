@@ -43,6 +43,11 @@ export interface AgentWorkHooks {
     codeWorktree?: (call: ToolCall, work: AgentWorkV1) => Promise<unknown>;
     qa?: (call: ToolCall, work: AgentWorkV1) => Promise<unknown>;
   };
+  /** Typed evidence verifier: decides whether a durable record authoritatively
+   * proves the reported output's claimed requirements. Absent => the default
+   * M06-style checks (trusted host provenance, passing outcome, requirement
+   * binding) apply. Record existence alone is never acceptance. */
+  evidenceVerifier?: (input: {work: AgentWorkV1; requirementIds: string[]; record: DataRecord; ref: {id: string; revision: number}}) => Promise<{accepted: boolean; reason?: string}> | {accepted: boolean; reason?: string};
   /** Read-only resource access for the read roles; always invoked with write=false. */
   resourceResolver?: (grant: ResourceGrant, write: boolean, call: ToolCall) => Promise<unknown> | unknown;
   /** Global reservation limits; failed and cancelled work still counts. */
@@ -72,6 +77,10 @@ const ARTIFACT_KIND = 'agentWorkArtifact';
 const BUDGET_KIND = 'agentWorkBudget';
 const BUDGET_ID = 'global';
 const OUTPUT_PROVENANCE = 'harness:agent-output';
+/** Host-authoritative M06 verification provenance. Only records written by a
+ * trusted verifier may prove a reported output; model-authored records
+ * (harness:agent-output) never prove themselves. */
+const VERIFICATION_PROVENANCE = 'harness:verification';
 const outId = (workId: string) => `agent-output:${workId}`;
 
 const ajv = new Ajv({allErrors: true, strict: false, validateFormats: false});
@@ -80,6 +89,12 @@ const ajv = new Ajv({allErrors: true, strict: false, validateFormats: false});
 const READ_TOOLS = new Set(['repository_files', 'repository_read', 'repository_status', 'repository_diff', 'repository_log', 'text_import', 'knowledge_publish', 'skills_list', 'skill_view']);
 const QA_TOOLS = new Set(['verification.run', 'verification.observe', 'context.read']);
 const WORKTREE_TOOLS = new Set(['worktree.read', 'worktree.write', 'worktree.git']);
+
+/** Metadata uses the same role allowlists as the effect gate below. */
+export function agentWorkToolNames(role: AgentWorkRole): readonly string[] {
+  const tools = role === 'CODE_WORKTREE' ? WORKTREE_TOOLS : role === 'QA' ? QA_TOOLS : READ_TOOLS;
+  return ['agent_result', 'agent_progress', ...tools];
+}
 
 const EMPTY_LEDGER: BudgetLedger = {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0};
 
@@ -354,14 +369,40 @@ export class AgentWorkCoordinator {
       throw new HarnessError('INVALID_AGENT_EVIDENCE', 'Reported output record is missing or changed');
     const parsed = agentResultSchemaFor(work.role).safeParse(record.value);
     if (!parsed.success) throw new HarnessError('INVALID_AGENT_EVIDENCE', 'Reported output no longer satisfies its contract');
-    for (const ref of (parsed.data as {evidenceRefs: {id: string; revision: number}[]}).evidenceRefs) {
+    const output = parsed.data as {outcome?: string; evidenceRefs: {id: string; revision: number}[]; requirementIds?: string[]};
+    if (output.outcome && output.outcome !== 'COMPLETED')
+      throw new HarnessError('INVALID_AGENT_EVIDENCE', `Reported outcome ${output.outcome} cannot be verified — only COMPLETED reports may upgrade`);
+    if (!output.evidenceRefs.length)
+      throw new HarnessError('INVALID_AGENT_EVIDENCE', 'Reported output carries no evidence to verify');
+    const requirementIds = output.requirementIds ?? [];
+    for (const ref of output.evidenceRefs) {
       const evidence = this.hooks.store.get<DataRecord>('data', ref.id);
       if (!evidence || evidence.threadId !== work.parentOwner.threadId || evidence.revision !== ref.revision)
         throw new HarnessError('INVALID_AGENT_EVIDENCE', `Evidence ${ref.id}@${ref.revision} does not resolve inside the parent task`);
+      const verdict = await this.evidenceVerdict(work, requirementIds, evidence, ref);
+      if (!verdict.accepted)
+        throw new HarnessError('INVALID_AGENT_EVIDENCE', `Evidence ${ref.id}@${ref.revision} rejected: ${verdict.reason}`);
     }
     const next: AgentWorkV1 = {...work, state: 'VERIFIED', updatedAt: new Date().toISOString(), revision: work.revision + 1};
     this.hooks.store.internal('agentWork.verified', work.parentOwner.threadId, () => this.hooks.store.put(WORK_KIND, workId, work.parentOwner.threadId, next));
     return next;
+  }
+
+  /** Default evidence verdict using M06-style data contracts: trusted host
+   * verification provenance, a passing check outcome when declared, and a
+   * requirement binding inside the reported requirementIds. */
+  private async evidenceVerdict(work: AgentWorkV1, requirementIds: string[], record: DataRecord, ref: {id: string; revision: number}): Promise<{accepted: boolean; reason?: string}> {
+    if (this.hooks.evidenceVerifier) return this.hooks.evidenceVerifier({work, requirementIds, record, ref});
+    if (record.provenance !== VERIFICATION_PROVENANCE)
+      return {accepted: false, reason: `untrusted provenance ${record.provenance}`};
+    const value = (record.value ?? null) as {outcome?: unknown; requirementId?: unknown; requirementIds?: unknown} | null;
+    if (typeof value?.outcome === 'string' && value.outcome !== 'PASS')
+      return {accepted: false, reason: `check outcome ${value.outcome}`};
+    const bound = value?.requirementId ?? value?.requirementIds;
+    const declared = Array.isArray(bound) ? bound : typeof bound === 'string' ? [bound] : [];
+    if (declared.some(id => typeof id !== 'string' || !requirementIds.includes(id)))
+      return {accepted: false, reason: 'bound to a requirement outside the reported output'};
+    return {accepted: true};
   }
 
   markWaitingHuman(ctx: RunContext, workId: string): AgentWorkV1 {

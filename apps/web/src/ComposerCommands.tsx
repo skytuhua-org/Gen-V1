@@ -89,6 +89,21 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       if (event.key === 'ArrowDown' && index === selectable.length - 1 && page?.nextCursor) void loadMore();
       return true;
     }
+    if (['Home', 'End', 'PageUp', 'PageDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (event.shiftKey) return false;
+      const selectable = options.filter(available); if (!selectable.length) return false;
+      event.preventDefault();
+      const index = selectable.findIndex(option => option.id === selected?.id);
+      if (event.key === 'Home') setActive(selectable[0]!.id);
+      else if (event.key === 'End') {setActive(selectable[selectable.length - 1]!.id); if (page?.nextCursor) void loadMore();}
+      else {
+        const rows = Math.max(1, Math.floor((content.current?.querySelector('.composer-command-list')?.clientHeight ?? 168) / 42));
+        const next = event.key === 'PageDown' ? Math.min(selectable.length - 1, index + rows) : Math.max(0, index - rows);
+        setActive(selectable[next]!.id);
+        if (event.key === 'PageDown' && next === selectable.length - 1 && page?.nextCursor) void loadMore();
+      }
+      return true;
+    }
     if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && selected) {event.preventDefault(); void choose(selected); return true;}
     // No active command: leave Enter to normal typing instead of swallowing it.
     return false;
@@ -109,7 +124,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       </div>
       {Boolean(page?.skills.length) && <div role="status" aria-label="Skill selection unavailable" className="composer-command-status">Skill selection is unavailable for this runtime. You can still browse installed skills.</div>}
       {loading && <div role="status" className="composer-command-status"><LoaderCircle size={13} className="spinning"/>Loading skills…</div>}
-      {error ? <ErrorState className="composer-command-status" message={error} retryLabel="Reload" onRetry={() => {setReload(value => value + 1);}}/> : !loading && !options.length && !unavailableSources.length && <div role="status" className="composer-command-status"><Search size={14}/>No commands or skills found</div>}
+      {error ? <ErrorState className="composer-command-status" message={error} retryLabel="Reload" onRetry={() => {setReload(value => value + 1);}}/> : !loading && !options.length && <div role="status" className="composer-command-status"><Search size={14}/>No commands or skills found</div>}
       {Boolean(unavailableSources.length) && <div role="status" aria-label="Unavailable skill sources" className="composer-command-unavailable">{unavailableSources.map(source => <div key={source.id}><span>{source.label}</span><span>{source.availability.status === 'unavailable' ? availabilityLabel[source.availability.reason] : ''}</span></div>)}</div>}
       {!loading && page?.nextCursor && <button type="button" className="composer-command-more" onPointerDown={event => event.preventDefault()} onClick={() => void loadMore()}>Load more skills</button>}
       <div className="composer-command-hint" aria-hidden="true">↑ ↓ Navigate <span>Enter Select · Esc Close</span></div>
