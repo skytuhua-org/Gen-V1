@@ -3928,6 +3928,7 @@
     "tests/saved-drafts.test.ts",
     "tests/schema-admission.test.ts",
     "tests/scoped-conversation-fixture.ts",
+    "tests/secret-codec.test.ts",
     "tests/secret-custody-v3.test.ts",
     "tests/selective-commit-staged-v3.test.ts",
     "tests/selective-commit-v3.test.ts",
