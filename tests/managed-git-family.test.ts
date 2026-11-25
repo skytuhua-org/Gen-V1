@@ -104,7 +104,9 @@ it('keeps cleaning a snapshot when one removal fails, without hiding the real ou
  const f=await fixture();
  // One injected removal failure per snapshot: remaining removals still run.
  cleanupControl.failures=1;
- await expect(snapshot(f.base,undefined,async()=> 'done')).rejects.toMatchObject({name:'AggregateError'});
+ const warn=vi.spyOn(process.stderr,'write').mockImplementation(()=>true);
+ await expect(snapshot(f.base,undefined,async()=> 'done')).resolves.toBe('done');
+ expect(warn).toHaveBeenCalledWith(expect.stringContaining('Git snapshot temporary entry'));
  expect(cleanupControl.failures).toBe(0);
  // The operation's own failure wins; cleanup errors ride as `suppressed`.
  cleanupControl.failures=1;
