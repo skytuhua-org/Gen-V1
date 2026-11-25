@@ -2,11 +2,12 @@ import {randomUUID} from 'node:crypto';
 import {spawn,type IPty} from 'node-pty';
 import {z} from 'zod';
 import {HarnessError} from '../contracts/index.ts';
+import {normalizeTerminalName} from '../contracts/terminal-session.ts';
 import type {ProjectTools} from './tools.ts';
 import {processEnvironment} from '../capabilities/process.ts';
 import {environmentSettingsFor} from '../core/environment-settings.ts';
 
-interface Session{id:string;projectId:string;threadId?:string;path:string;pty:IPty;output:string;offset:number;exited:boolean;exitCode:number|null;done:Promise<void>;startupFailed?:boolean}
+interface Session{id:string;projectId:string;threadId?:string;path:string;pty:IPty;output:string;offset:number;exited:boolean;exitCode:number|null;name:string|null;nameRevision:number;done:Promise<void>;startupFailed?:boolean}
 const identifier=z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/),dimension=z.number().int().min(2).max(500);
 /** Host owns processes; renderer visibility and native reparenting do not own their lifetime. */
 export class TerminalHost{
@@ -34,7 +35,7 @@ export class TerminalHost{
   if([...this.sessions.values()].filter(item=>!item.exited).length>=12)throw new HarnessError('TERMINAL_CAPACITY','Twelve terminals are already running. Stop one before opening another.');
   // Trusted integration programs retain their explicitly pinned environments.
   const pty=spawn(input.program??shell,input.args??args,{name:'xterm-256color',cwd:binding.path,cols:dimension.parse(input.cols??100),rows:dimension.parse(input.rows??30),env:(input.environment??{...processEnvironment(),...configured}) as Record<string,string>,useConpty:true});
-  let finish!:()=>void;const session:Session={id:terminalId,projectId,...(threadId?{threadId}:{}),path:binding.path,pty,output:'',offset:0,exited:false,exitCode:null,done:new Promise<void>(resolve=>{finish=resolve;})};
+  let finish!:()=>void;const session:Session={id:terminalId,projectId,...(threadId?{threadId}:{}),path:binding.path,pty,output:'',offset:0,exited:false,exitCode:null,name:null,nameRevision:0,done:new Promise<void>(resolve=>{finish=resolve;})};
   let registered=false,observingExit=false;
   const discardFailedStartup=()=>{
    try{this.discardFailedStartup(session);}
@@ -100,7 +101,7 @@ export class TerminalHost{
   if(session.exited)throw new HarnessError('TERMINAL_ENDED','This terminal ended. Open a new terminal.');
   return this.result(session,0);
  }
- private persist(session:Session){this.projects.store.internal('terminal.changed',session.threadId??null,()=>this.projects.store.put('terminalSession',session.id,session.threadId??null,{id:session.id,projectId:session.projectId,threadId:session.threadId,exited:session.exited,exitCode:session.exitCode}));}
+ private persist(session:Session){this.projects.store.internal('terminal.changed',session.threadId??null,()=>this.projects.store.put('terminalSession',session.id,session.threadId??null,{id:session.id,projectId:session.projectId,threadId:session.threadId,exited:session.exited,exitCode:session.exitCode,name:session.name,nameRevision:session.nameRevision}));}
  /** Exited sessions keep up to 512 KiB of scrollback each; retain only the newest few so the map stays bounded. Reads of evicted ids still resolve TERMINAL_ENDED through the durable record. */
  private evictExited(session:Session){
   // Active terminals may outlive many later starts. Record recency when they exit.
@@ -108,7 +109,7 @@ export class TerminalHost{
   const dead=[...this.sessions.entries()].filter(([,session])=>session.exited&&!session.startupFailed);
   for(const [id]of dead.slice(0,Math.max(0,dead.length-48)))this.sessions.delete(id);
  }
- private result(session:Session,cursor:number){const end=session.offset+session.output.length,start=Math.min(end,Math.max(session.offset,cursor));return{id:session.id,projectId:session.projectId,threadId:session.threadId,output:session.output.slice(start-session.offset),start,cursor:end,exited:session.exited,exitCode:session.exitCode};}
+ private result(session:Session,cursor:number){const end=session.offset+session.output.length,start=Math.min(end,Math.max(session.offset,cursor));return{id:session.id,projectId:session.projectId,threadId:session.threadId,output:session.output.slice(start-session.offset),start,cursor:end,exited:session.exited,exitCode:session.exitCode,name:session.name,nameRevision:session.nameRevision};}
  private async owned(id:string,projectId:string,threadId?:string,stopping=false){const session=this.sessions.get(identifier.parse(id));if(!session){const old=this.projects.store.get<{projectId:string;threadId?:string}>('terminalSession',id);if(old&&old.projectId===projectId&&old.threadId===threadId)throw new HarnessError('TERMINAL_ENDED','The host restarted or this terminal ended. Open a new terminal.');throw new HarnessError('NOT_FOUND','Terminal is unavailable.');}if(session.projectId!==projectId||session.threadId!==threadId)throw new HarnessError('CAPABILITY_DENIED','Terminal belongs to another working copy.');if(!stopping){const binding=await this.projects.binding(projectId,threadId);if(session.path!==binding.path)throw new HarnessError('CAPABILITY_DENIED','Terminal belongs to another working copy.');this.assertStartupAvailable(session);}return session;}
  async read(id:string,projectId:string,threadId?:string,cursor=0){return this.result(await this.owned(id,projectId,threadId),z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(cursor));}
  private async stop(session:Session){
@@ -125,7 +126,8 @@ export class TerminalHost{
    if(session.startupFailed)this.discardFailedStartup(session);
   }else{
    if(session.exited)throw new HarnessError('TERMINAL_ENDED','The terminal has exited.');
-   if(input.type==='input')session.pty.write(z.string().max(64*1024).parse(input.data));
+   if(input.type==='rename'){const name=normalizeTerminalName(z.string().parse(input.name));if(name===undefined)throw new HarnessError('INVALID_INPUT','Terminal name exceeds 64 characters or contains forbidden characters.');if(name!==session.name){const next={...session,name,nameRevision:session.nameRevision+1};try{this.persist(next);}catch{throw new HarnessError('INTERNAL','Terminal name could not be saved.');}session.name=name;session.nameRevision=next.nameRevision;}}
+   else if(input.type==='input')session.pty.write(z.string().max(64*1024).parse(input.data));
    else if(input.type==='resize')session.pty.resize(dimension.parse(input.cols),dimension.parse(input.rows));
    else throw new HarnessError('INVALID_INPUT','Unknown terminal action.');
   }

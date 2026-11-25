@@ -4,3 +4,10 @@
 .terminal-read>.error-text{flex-shrink:0;overflow-wrap:anywhere}
 .terminal-read>.panel-toolbar>button:focus-visible{outline:2px solid var(--text);outline-offset:2px}
 .terminal-read>.panel-toolbar>button:disabled{opacity:.5;cursor:default}
+.terminal-name{flex:1;min-width:0;display:inline-flex;align-items:center;gap:var(--ui-space-2);flex-wrap:wrap}
+.terminal-name-heading{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.terminal-name-input{width:200px;max-width:100%;min-width:96px;min-height:var(--ui-row-compact);background:var(--surface);color:var(--text);border:1px solid var(--control-border);border-radius:var(--control-radius,8px);padding:0 var(--ui-space-2);font:inherit}
+.terminal-name-input[aria-invalid="true"]{border-color:var(--danger,#c0392b)}
+.terminal-name-help{color:var(--muted);font-size:12px}
+.terminal-name-input,.terminal-rename{transition:background var(--ui-motion-hover) var(--ui-ease-move),border-color var(--ui-motion-hover) var(--ui-ease-move),color var(--ui-motion-hover) var(--ui-ease-move)}
+@media (prefers-reduced-motion:reduce){.terminal-name-input,.terminal-rename{transition:none}}
