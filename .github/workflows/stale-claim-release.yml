@@ -63,15 +63,9 @@ jobs:
                   } else scopes.add(/^T\d+(?:[._-][a-z0-9]+)*$/i.test(part) || /^ALL$/i.test(part) ? part.toUpperCase() : part);
                 }
               }
-              // SCOPE is explicit custody metadata; TASKS is a fallback for journals
-              // that identify scoped work only through their task matrix.
-              if (!fields.SCOPE?.length) {
-                for (const value of fields.TASKS || []) {
-                  const tasks = [...value.matchAll(/\b(T\d+(?:[._-][a-z0-9]+)*)\s*:/gi)];
-                  if (!tasks.length && value.trim()) return null;
-                  for (const task of tasks) scopes.add(task[1].toUpperCase());
-                }
-              }
+              // SCOPE is explicit custody metadata. TASKS is only a work journal:
+              // the required full task matrix would refresh untouched scopes, so
+              // TASKS-derived custody is never inferred — see the record loop.
               return scopes.has('ALL') && scopes.size > 1 ? null : [...scopes];
             };
             const overdue = [], review = [];
@@ -121,6 +115,10 @@ jobs:
                 }
                 let scopes = parseScopes(fields);
                 if (!scopes) { diagnose(comment, worker, 'Invalid or ambiguous scope fields'); continue; }
+                if (!fields.SCOPE?.length && fields.TASKS?.length) {
+                  diagnose(comment, worker, 'TASKS is a work journal, not custody; SCOPE= required to refresh claim scope');
+                  continue;
+                }
                 const active = owners.get(worker) || new Map();
                 owners.set(worker, active);
                 const released = /(?:^|[+/])\s*RELEASED?\b/i.test(header) || ownerFields.some((owner) => owner.toUpperCase() === 'NONE');

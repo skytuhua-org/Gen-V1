@@ -88,9 +88,9 @@ it('replays creation time and comment ID, ignoring author UTC text and input ord
   expect(result.overdue).toEqual([{worker:a,scope:'T01'}]);
   expect((await execute([comment(2,release(a,'T01'),90),comment(1,claim(a,'T01'),90)])).overdue).toEqual([]);
 });
-it('expands bounded task ranges and task fields without refreshing other scopes',async()=>{
+it('expands bounded task ranges and sends TASKS-only records to manual review without refreshing scopes',async()=>{
   const result=await execute([comment(1,claim(a,'T01-T03')),comment(2,`[${a}] CHECKPOINT | TASKS=T02:ACTIVE, T03:DONE | OWNER=${a}`,5)]);
-  expect(result.overdue).toEqual([{worker:a,scope:'T01'}]);
+  expect(result.overdue).toEqual([{worker:a,scope:'T01'},{worker:a,scope:'T02'},{worker:a,scope:'T03'}]);expect(result.diagnostics.join(' ')).toMatch(/TASKS/);
   const invalid=await execute([comment(1,claim(a,'T01')),comment(2,release(a,'T01-T999'),5)]);
   expect(invalid.overdue).toEqual([{worker:a,scope:'T01'}]);expect(invalid.diagnostics.join(' ')).toMatch(/scope/i);
 });
