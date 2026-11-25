@@ -5,15 +5,43 @@ import {join} from "node:path";
 import {DatabaseSync} from "node:sqlite";
 import {Store} from "../packages/storage/store.ts";
 
-const cleanups: (() => void)[] = [];
-afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
-function setup() { const dir = mkdtempSync(join(tmpdir(), "harness-store-txn-")); const store = new Store(dir); cleanups.push(() => { try { store.close(); } catch { /* already closed by the test */ } rmSync(dir, { recursive: true, force: true }); }); return store; }
+// Windows holds open database handles: every connection must close before any
+// fixture directory is removed, and one failing cleanup must not skip the rest.
+const connections: (() => void)[] = [];
+const directories: string[] = [];
+afterEach(() => {
+  const errors: unknown[] = [];
+  for (const close of connections.splice(0).reverse()) {
+    try { close(); } catch (error) { errors.push(error); }
+  }
+  for (const dir of directories.splice(0)) {
+    try { rmSync(dir, { recursive: true, force: true }); } catch (error) { errors.push(error); }
+  }
+  if (errors.length) throw new AggregateError(errors, "fixture cleanup failed");
+});
+// SQLite refuses a second close; a test that closes a store itself must not
+// turn cleanup red, but every other close failure is collected and reported.
+function trackClose(close: () => void) {
+  connections.push(() => {
+    try { close(); } catch (error) {
+      if (error instanceof Error && error.message === "database is not open") return;
+      throw error;
+    }
+  });
+}
+function setup() {
+  const dir = mkdtempSync(join(tmpdir(), "harness-store-txn-"));
+  directories.push(dir);
+  const store = new Store(dir);
+  trackClose(() => store.close());
+  return store;
+}
 
 describe("store transaction consistency", () => {
   it("maps a second writer's lock to STORE_BUSY instead of a raw SQLite error", () => {
     const store = setup();
     const other = new DatabaseSync(join(store.dataDir, "harness.sqlite"));
-    cleanups.push(() => other.close());
+    trackClose(() => other.close());
     other.exec("PRAGMA busy_timeout=50;");
     store.db.exec("PRAGMA busy_timeout=50;");
     other.exec("BEGIN IMMEDIATE");
@@ -79,7 +107,7 @@ describe("store transaction consistency", () => {
     const command = {id: "cmd-race", type: "fixture.race", payload: {n: 1}};
     // The identical command is durably committed through a second connection.
     const other = new Store(store.dataDir);
-    cleanups.push(() => other.close());
+    trackClose(() => other.close());
     const seeded = other.command(command, () => ({v: 1}));
     // Our first dedupe check misses (as it would before the competing commit),
     // our commit then fails, and the durable receipt must win over the error.
@@ -118,8 +146,6 @@ describe("store transaction consistency", () => {
 
   it("keeps disk, a second reader and reopened state agreeing after an injected rollback", () => {
     const store = setup();
-    const other = new Store(store.dataDir + "-other");
-    cleanups.push(() => other.close());
     store.internal("fixture.commit", null, () => store.put("sample", "kept", null, {v: 1}));
     expect(() => store.internal("fixture.fail", null, () => { store.put("sample", "lost", null, {v: 2}); throw new Error("causal"); })).toThrowError("causal");
     // Same-connection view.
@@ -127,13 +153,13 @@ describe("store transaction consistency", () => {
     expect(store.get("sample", "lost")).toBeNull();
     // Second reader on the same database sees the same state.
     const second = new Store(store.dataDir);
-    cleanups.push(() => second.close());
+    trackClose(() => second.close());
     expect(second.get("sample", "kept")).toEqual({v: 1});
     expect(second.get("sample", "lost")).toBeNull();
     // Reopened store agrees and the event log contains only the committed event.
     store.close();
     const reopened = new Store(store.dataDir);
-    cleanups.push(() => reopened.close());
+    trackClose(() => reopened.close());
     expect(reopened.get("sample", "kept")).toEqual({v: 1});
     expect(reopened.get("sample", "lost")).toBeNull();
     expect(reopened.eventsAfter(0).map(event => event.type)).toEqual(["fixture.commit"]);
