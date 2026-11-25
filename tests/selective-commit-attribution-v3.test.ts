@@ -51,6 +51,8 @@ async function fixture() {
   const journal = new EditJournal(store);
   const binding = {
     id: "wc-1",
+    threadId: "thread",
+    projectId: "project",
     path: worktree,
     gitDirectory: join(worktree, ".git"),
     commonDirectory: join(worktree, ".git"),
@@ -58,6 +60,7 @@ async function fixture() {
     identity: { dev: "0", ino: "0" },
   } as unknown as WorkspaceBinding;
   const projects = {
+    store,
     managedWorktree: async (_projectId: string, _threadId: string, run: (ctx: { git: (args: string[], env?: NodeJS.ProcessEnv) => Promise<string>; binding: WorkspaceBinding; signal: AbortSignal }) => Promise<unknown>) =>
       run({
         git: async (args, env) =>
