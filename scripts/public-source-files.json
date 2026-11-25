@@ -2834,6 +2834,7 @@
     "tests/agents-workspace-grid.test.ts",
     "tests/appearance-draft.test.ts",
     "tests/artifact-inputs.test.ts",
+    "tests/artifact-restoring.test.ts",
     "tests/attention-boundaries.test.ts",
     "tests/attention-popups.test.ts",
     "tests/attention.test.ts",
