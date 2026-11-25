@@ -149,3 +149,51 @@ it.each(['version','ownerless'] as const)('keeps affected-thread quota and owner
  const copy={...owner,workingCopyId:'damaged-copy'},value=damage==='version'?{version:999,owner:copy,records:[]}:{version:1,records:[]};put(savedDraftLibraryKey(copy),value);put('draft:'+owner.threadId,'Keep current');
  await expect(loadSavedDrafts(owner)).rejects.toThrow();await expect(saveNamedDraft(owner,'Do not bypass quota')).rejects.toThrow();expect(local.rows.get(savedDraftLibraryKey(copy))?.value).toEqual(value);expect(local.rows.get('draft:'+owner.threadId)?.value).toBe('Keep current');
 });
+describe('saved drafts pasted text',()=>{
+ const paste=(text='pasted',id=crypto.randomUUID() as `${string}-${string}-${string}-${string}-${string}`)=>({version:1 as const,id,createdAt:'2026-11-11T00:00:00.000Z',text});
+ it('saves composer pastes with the draft and reloads records written without the field',async()=>{
+  put('draft:'+owner.threadId,'Prompt');put('draft-pastes:'+owner.threadId,[paste('pasted body')]);
+  await saveNamedDraft(owner,'With paste');const loaded=await loadSavedDrafts(owner);
+  expect(loaded.library.records[0].pastes).toHaveLength(1);
+  expect(loaded.library.records[0].pastes![0].text).toBe('pasted body');
+  const legacy={version:1,owner,records:[{...loaded.library.records[0]!} as never]};delete (legacy.records[0] as Record<string,unknown>).pastes;
+  expect(readSavedDraftLibrary(legacy,owner).records).toHaveLength(1);
+ });
+ it('replaces composer pastes on replace restore and keeps them in the recovery draft',async()=>{
+  const draft=createSavedDraft(owner,'Saved','Saved text',{pastes:[paste('saved paste','11111111-1111-4111-8111-111111111111')]});
+  seedLibrary();put(savedDraftLibraryKey(owner),{version:1,owner,records:[draft]});
+  put('draft:'+owner.threadId,'Current');put('draft-pastes:'+owner.threadId,[paste('current paste')]);
+  const plan=await planDraftRestore(owner,draft.id);await restoreSavedDraftText(owner,plan,'replace',0);
+  expect((local.rows.get('draft-pastes:'+owner.threadId)!.value as {text:string}[]).map(p=>p.text)).toEqual(['saved paste']);
+  const library=(local.rows.get(savedDraftLibraryKey(owner))!.value as {records:{name:string;pastes?:{text:string}[]}[]}).records;
+  const recovery=library.find(r=>r.name.startsWith('Before replacing'));expect(recovery?.pastes?.map(p=>p.text)).toEqual(['current paste']);
+ });
+ it('appends saved pastes on insert and rekeys duplicates',async()=>{
+  const shared=paste('shared');const draft=createSavedDraft(owner,'Saved','Saved text',{pastes:[shared]});
+  seedLibrary();put(savedDraftLibraryKey(owner),{version:1,owner,records:[draft]});
+  put('draft:'+owner.threadId,'Current ');put('draft-pastes:'+owner.threadId,[shared]);
+  const plan=await planDraftRestore(owner,draft.id);await restoreSavedDraftText(owner,plan,'insert',0);
+  const pastes=local.rows.get('draft-pastes:'+owner.threadId)!.value as {id:string;text:string}[];
+  expect(pastes).toHaveLength(2);expect(new Set(pastes.map(p=>p.id)).size).toBe(2);expect(local.rows.get('draft:'+owner.threadId)?.value).toBe('Saved textCurrent ');
+ });
+ it('restores a pastes-only draft and refuses a ninth paste on insert',async()=>{
+  const saved=Array.from({length:1},()=>paste('saved'));const draft=createSavedDraft(owner,'Only paste','',{pastes:saved});
+  seedLibrary();put(savedDraftLibraryKey(owner),{version:1,owner,records:[draft]});
+  const plan=await planDraftRestore(owner,draft.id);await restoreSavedDraftText(owner,plan,'insert',0);
+  expect((local.rows.get('draft-pastes:'+owner.threadId)!.value as {text:string}[]).map(p=>p.text)).toEqual(['saved']);
+  put('draft-pastes:'+owner.threadId,Array.from({length:8},()=>paste('full')));
+  const plan2=await planDraftRestore(owner,draft.id);await expect(restoreSavedDraftText(owner,plan2,'insert',0)).rejects.toThrow('Too many pasted texts');
+ });
+ it('rejects text+paste bytes over the draft budget',()=>{
+  expect(()=>createSavedDraft(owner,'Overflow','a'.repeat(90000),{pastes:[paste('b'.repeat(20000))]})).toThrow('Remove a pasted text');
+ });
+ it('rejects the whole restore when the paste journal changed since planning',async()=>{
+  const draft=createSavedDraft(owner,'Saved','Saved text',{pastes:[paste('saved')]});
+  seedLibrary();put(savedDraftLibraryKey(owner),{version:1,owner,records:[draft]});put('draft:'+owner.threadId,'Keep current');
+  const plan=await planDraftRestore(owner,draft.id);
+  put('draft-pastes:'+owner.threadId,[paste('concurrent')]);
+  await expect(restoreSavedDraftText(owner,plan,'replace',0)).rejects.toThrow('changed in another window');
+  expect(local.rows.get('draft:'+owner.threadId)?.value).toBe('Keep current');
+  expect((local.rows.get('draft-pastes:'+owner.threadId)!.value as {text:string}[]).map(p=>p.text)).toEqual(['concurrent']);
+ });
+});

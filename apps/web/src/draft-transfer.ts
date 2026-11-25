@@ -2,6 +2,7 @@ import type {Snapshot} from '../../../packages/contracts';
 import type {DraftTransferReferences} from '../../../packages/contracts/shell-read-models';
 import {journalCompareAndSwap,journalCompareAndSwapMany,journalEntries,journalReadRecord,type JournalRecord} from './journal';
 import {hasPendingDocumentAssets} from './signature-assets';
+import {readPastedTexts} from './pasted-text';
 import {logicalOwnerV1Schema,type LogicalOwnerV1} from '../../../packages/contracts/source-selection';
 import {parseSourceDraftMetadata,sourceDraftKey} from './workbench-recovery';
 export const DRAFT_TRANSFER_LIMIT=2*1024*1024;
@@ -10,7 +11,7 @@ type ReferenceInput = (Omit<DraftTransferReferences, 'skills'> & {skills?: Draft
 export function snapshotDraftReferences(snapshot: Pick<Snapshot, 'threads' | 'skills' | 'userStates' | 'requests'>): DraftTransferReferences {
  return {threads: snapshot.threads.map(({id}) => ({id})), skills: (snapshot.skills ?? []).map(({name, revision}) => ({name, revision})), userStates: snapshot.userStates.map(({id, revision}) => ({id, revision})), requests: snapshot.requests.map(({id, revision, presentation, responseSchema}) => ({id, revision, presentation: Boolean(presentation), responseSchema}))};
 }
-const transferableKey = (key: string) => key.length <= 2048 && /^(draft|thinking|skill-draft|state|request|source-context):.+/.test(key);
+const transferableKey = (key: string) => key.length <= 2048 && /^(draft|draft-pastes|thinking|skill-draft|state|request|source-context):.+/.test(key);
 const sourceKey = (key: string) => key.startsWith('source-context:');
 function sourceOwner(key: string): LogicalOwnerV1 {
  const parts=key.slice('source-context:'.length).split(':').map(decodeURIComponent);
@@ -44,6 +45,7 @@ function referenceError(key:string,value:unknown,snapshot:DraftTransferReference
  }
  if(key.startsWith('skill-draft:')){const skill=snapshot.skills?.find(skill=>key===`skill-draft:${skill.name}`);if(!skill)return 'Skill is unavailable';if(!record(value)||typeof value.content!=='string'||typeof value.description!=='string'||value.description.length>1024||!Number.isSafeInteger(value.baseRevision)||Number(value.baseRevision)<1)return 'Invalid skill draft';return importing&&value.baseRevision!==skill.revision?'Skill revision changed; resolve this draft manually':undefined;}
  if(key.startsWith('draft:')||key.startsWith('thinking:')){const id=key.slice(key.indexOf(':')+1);if(id!=='new'&&!snapshot.threads.some(thread=>thread.id===id))return 'Conversation is unavailable';return typeof value==='string'&&value.length<=100000?undefined:'Invalid draft text';}
+ if(key.startsWith('draft-pastes:')){const id=key.slice('draft-pastes:'.length);if(id!=='new'&&!snapshot.threads.some(thread=>thread.id===id))return 'Conversation is unavailable';try{readPastedTexts(value);return undefined;}catch{return 'Invalid pasted text draft';}}
  if(key.startsWith('state:')){const state=snapshot.userStates.find(state=>state.id===key.slice(6));if(!state)return 'Artifact state is unavailable';if(!record(value)||!record(value.values)||!Number.isSafeInteger(value.baseRevision)||Number(value.baseRevision)<0)return 'Invalid artifact draft';return importing&&value.baseRevision!==state.revision?'Artifact revision changed; resolve this draft manually':undefined;}
  if(key.startsWith('request:')){const request=snapshot.requests.find(request=>key===`request:${request.id}:${request.presentation?'planning':request.revision}`);if(!request)return 'Decision is unavailable or changed';return record(value)&&value.schema===JSON.stringify(request.responseSchema)&&Object.hasOwn(value,'response')?undefined:'Decision schema changed';}
  return 'Not a transferable draft';
@@ -106,15 +108,25 @@ export async function importDraftTransfer(text:string,input:ReferenceInput,signa
   const saved=await journalCompareAndSwapMany(group.map(row=>({key:row.key,generation:undefined,value:row.record.value})),[],{acknowledgeHandoffRetry:true});
   finish(group,saved?'imported':'retained',saved?undefined:'A local edit arrived during import');
  }
+ // A prompt's text and pasted-text chips are one draft: import or retain them
+ // together so a local draft never mixes with chips from the backup.
+ const promptGroups=new Map<string,TransferRow[]>();
+ for(const row of rows){
+  const match=/^draft(?:-pastes)?:(.+)$/.exec(row.key);
+  if(!match)continue;
+  const list=promptGroups.get(match[1])??[];list.push(row);promptGroups.set(match[1],list);
+ }
  for(const row of rows){
   signal?.throwIfAborted();if(results.has(row.key))continue;
-  const error=referenceError(row.key,row.record.value,snapshot,true);
-  if(error){finish([row],'blocked',error);continue;}
-  if(row.key.startsWith('draft:')&&localSources.some(source=>sourceThread(source.key)===row.key.slice(6))){finish([row],'retained','Local source context already exists; its prompt was not replaced');continue;}
-  const existing=await journalReadRecord(row.key);signal?.throwIfAborted();
-  if(existing){finish([row],'retained','A local entry already exists; it was not replaced');continue;}
-  const saved=await journalCompareAndSwap(row.key,undefined,row.record.value);
-  finish([row],saved?'imported':'retained',saved?undefined:'A local edit arrived during import');
+  const match=/^draft(?:-pastes)?:(.+)$/.exec(row.key);
+  const group=match?(promptGroups.get(match[1])??[row]):[row];
+  const error=group.map(member=>referenceError(member.key,member.record.value,snapshot,true)).find(Boolean);
+  if(error){finish(group,'blocked',error);continue;}
+  if(group.some(member=>member.key.startsWith('draft:')&&localSources.some(source=>sourceThread(source.key)===member.key.slice(6)))){finish(group,'retained','Local source context already exists; its prompt was not replaced');continue;}
+  const existing=await Promise.all(group.map(member=>journalReadRecord(member.key)));signal?.throwIfAborted();
+  if(existing.some(Boolean)){finish(group,'retained','A local entry already exists; it was not replaced');continue;}
+  const saved=group.length===1?await journalCompareAndSwap(group[0].key,undefined,group[0].record.value):await journalCompareAndSwapMany(group.map(member=>({key:member.key,generation:undefined,value:member.record.value})),[]);
+  finish(group,saved?'imported':'retained',saved?undefined:'A local edit arrived during import');
  }
  return rows.map(row=>results.get(row.key)!);
 }

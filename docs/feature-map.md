@@ -6,6 +6,7 @@ workspace presets and settings are application state, not separate URL routes.
 | Screen or flow | Owning files | Browser verification |
 | --- | --- | --- |
 | Conversation and composer | `App.tsx` (composer state), `ComposerView.tsx` (view) | `shell`, `composer-commands` suites |
+| Composer pasted-text chips | `App.tsx` (paste handling), `pasted-text.ts` (model), `PastedText.tsx`, `ComposerAttachments.tsx` (band) | `pasted-text` suite |
 | Workspace presets | `WorkspaceHost.tsx`, `WorkspaceCanvas.tsx` | `workspace-host` suite |
 | Split workspace and named layouts | `WorkspaceSplitLayout.tsx`, `split-workspace-api.ts`, `split-workspace-profiles.ts` | `tests/split-app-browser.test.ts` (opt-in: `GEN_SPLIT_APP_BROWSER=1`), `tests/split-workspace-renderer.test.ts` (not named browser suites) |
 | Inbox | `AgentInbox.tsx`, `InboxView.tsx`, `useAttention.ts` | `inbox-controls` suite |
