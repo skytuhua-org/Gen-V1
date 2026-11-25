@@ -90,7 +90,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       return true;
     }
     if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && selected) {event.preventDefault(); void choose(selected); return true;}
-    if (event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {event.preventDefault(); return true;}
+    // No active command: leave Enter to normal typing instead of swallowing it.
     return false;
   }}));
   useEffect(() => {

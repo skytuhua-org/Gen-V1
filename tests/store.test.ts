@@ -54,6 +54,22 @@ describe("durable command storage", () => {
     expect(next.data).toEqual(first.data); expect(next.data.map(item => item.value)).toEqual(['current', 'pinned']);
     queries.mockRestore();
   });
+  it('keeps snapshot query counts constant as usage rows grow', () => {
+    const store = setup();
+    const seed = (n: number) => {
+      store.put('thread', `t-${n}`, `t-${n}`, { id: `t-${n}`, title: `t-${n}`, status: 'ready', runId: null, modelId: 'model-1', accountId: 'acct' });
+      store.put('usage', `t-${n}`, `t-${n}`, { id: `t-${n}`, value: { inputTokens: n } });
+    };
+    store.internal('fixture.usage', null, () => { for (let n = 0; n < 30; n++) seed(n); });
+    const queries = vi.spyOn(store.db, 'prepare');
+    store.snapshot(); const count = queries.mock.calls.length;
+    store.internal('more-usage', null, () => { for (let n = 30; n < 130; n++) seed(n); });
+    queries.mockClear(); const snapshot = store.snapshot();
+    expect(queries.mock.calls.length).toBe(count);
+    expect(Object.keys(snapshot.usage)).toHaveLength(130);
+    expect(snapshot.usage['t-3']).toMatchObject({ inputTokens: 3 });
+    queries.mockRestore();
+  });
   it("commits internal state and events atomically without creating retry receipts", () => {
     const store=setup(),seen:unknown[]=[];
     store.subscribe(event=>seen.push({event,value:store.get("sample","internal")}));
