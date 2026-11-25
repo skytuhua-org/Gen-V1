@@ -3853,6 +3853,7 @@
     "tests/path-access.test.ts",
     "tests/pdf-draft-worker-v3.test.ts",
     "tests/pdf-structure.test.ts",
+    "tests/pdf-worker.test.ts",
     "tests/personal-visuals-ui.test.ts",
     "tests/personal-visuals.test.ts",
     "tests/plan-extension-v3.test.ts",
