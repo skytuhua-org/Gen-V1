@@ -542,7 +542,7 @@ export class Service {
         if(detail.status!=='pending'||input?.runId!==ctx.runId)return detail;
         changed=true;return {...detail,status:'failed' as const,error};
       });
-      if(changed)this.store.put('request',request.id,ctx.threadId,{...request,revision:request.revision+1,detailRequests:details});
+      if(changed)this.store.put('request',request.id,ctx.threadId,{...request,detailRequests:details});
     }
   }
   thread(id: string | undefined): Thread {
@@ -1428,7 +1428,7 @@ export class Service {
         const request=this.request(thread.id,p.requestId,p.revision);
         if(!request.presentation||!['explain','examples','more-options'].includes(String(p.kind)))throw new HarnessError('INVALID_INPUT','This question has no requested detail');
         if(p.kind!=='more-options'&&!request.presentation.options.some(option=>option.id===p.optionId))throw new HarnessError('INVALID_INPUT','Unknown option');
-        const prior=request.detailRequests?.find(detail=>detail.kind===p.kind&&detail.optionId===p.optionId&&this.store.get<Outbox>('outbox',detail.id)?.status!=='handled');if(prior){if(prior.status!=='pending')this.store.put('request',request.id,thread.id,{...request,revision:request.revision+1,detailRequests:request.detailRequests?.map(item=>item.id===prior.id?{...item,status:'pending',error:undefined}:item)});return {inputId:prior.id,pending:true};}
+        const prior=request.detailRequests?.find(detail=>detail.kind===p.kind&&detail.optionId===p.optionId&&this.store.get<Outbox>('outbox',detail.id)?.status!=='handled');if(prior){if(prior.status!=='pending')this.store.put('request',request.id,thread.id,{...request,detailRequests:request.detailRequests?.map(item=>item.id===prior.id?{...item,status:'pending',error:undefined}:item)});return {inputId:prior.id,pending:true};}
         if((request.detailRequests?.filter(detail=>detail.status==='pending').length??0)>=4)throw new HarnessError('REQUEST_BUSY','Wait for the pending explanation before adding more');
         const detail={id:command.id,kind:p.kind as 'explain'|'examples'|'more-options',...(p.kind!=='more-options'?{optionId:String(p.optionId)}:{}),status:'pending' as const};
         this.store.put('request',request.id,thread.id,{...request,detailRequests:[...(request.detailRequests??[]).filter(item=>item.status==='pending'),detail]});
