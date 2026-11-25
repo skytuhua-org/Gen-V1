@@ -39,6 +39,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('inbox-controls'),
   suite('memory-recovery', undefined, {env:{GEN_MEMORY_MODE:''}}),
   suite('redundant-ui'),
+  suite('running-servers'),
   suite('saved-drafts'),
   suite('saved-layout-chooser'),
   suite('scoped-conversation'),

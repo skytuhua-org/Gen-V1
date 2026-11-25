@@ -40,10 +40,11 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
   return actionOutcomes.inspect(operation);
  });
  registerGitHubAuthRoutes(app,github.auth);
- app.addHook('onClose',async()=>{await terminals.dispose();await projects.dispose();});
+ app.addHook('onClose',async()=>{await terminals.dispose();host.devServers?.dispose();await projects.dispose();});
  app.get('/api/workspace',async()=>projects.workspace.read());
  app.post('/api/workspace/commands',{bodyLimit:1024*1024},async request=>{const input=envelope.parse(request.body);return input.type==='workspace.project.connect'?projects.connect(input):projects.workspace.command(input);});
  app.get('/api/projects/:projectId/context',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);return projects.context(projectId,threadId);});
+ app.get('/api/projects/:projectId/dev-servers',async(request,reply)=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);await projects.binding(projectId,threadId);reply.header('Cache-Control','no-store');return{items:(host.devServers?.list(projectId)??[]).map(row=>({...row,threadTitle:row.threadId?(service.store.get<{title?:string}>('thread',row.threadId)?.title??null):null}))};});
  app.get('/api/projects/:projectId/git',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);return projects.gitStatus(projectId,threadId);});
  // Read-only comparison dependencies; retain existing action/review routes verbatim.
  app.get('/api/projects/:projectId/git/comparison',async(request,reply)=>{
@@ -167,7 +168,7 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
   if(input.type==='refresh'){const context=await projects.context(projectId,input.threadId);return service.store.command(command,()=>context);}
   if(input.type==='link-pr'){const pullNumber=z.number().int().positive().parse(p.number),details=await github.details(projectId,input.threadId,pullNumber),key=JSON.stringify([projectId,input.threadId??null,details.repo,pullNumber]);return service.store.command(command,()=>{service.store.put('linkedPullRequest',key,input.threadId??null,{projectId,threadId:input.threadId,...details,linkedAt:new Date().toISOString()});return details;});}
   if(input.type==='add-script'){const script={id:randomUUID(),projectId,name:z.string().trim().min(1).max(100).parse(p.name),command:z.string().trim().min(1).max(8000).parse(p.command)};return service.store.command(command,()=>{service.store.put('projectScript',script.id,null,script);return script;});}
-  if(input.type==='run-script'){const script=service.store.get<{projectId:string;command:string}>('projectScript',identifier.parse(p.scriptId));if(!script||script.projectId!==projectId)throw new HarnessError('NOT_FOUND','Project script is unavailable.');return terminals.open({projectId,threadId:input.threadId,command:script.command});}
+  if(input.type==='run-script'){const script=service.store.get<{projectId:string;name:string;command:string}>('projectScript',identifier.parse(p.scriptId));if(!script||script.projectId!==projectId)throw new HarnessError('NOT_FOUND','Project script is unavailable.');return terminals.open({projectId,threadId:input.threadId,command:script.command,scriptName:script.name});}
   if(input.type==='branch'){
    const intent=service.store.get('workspaceAction',input.id);if(intent)throw new HarnessError('ACTION_UNCERTAIN','This action already started. Refresh Git status before trying a new action.');
    service.store.internal('project.action.started',input.threadId??null,()=>service.store.put('workspaceAction',input.id,input.threadId??null,{command,status:'started'}));

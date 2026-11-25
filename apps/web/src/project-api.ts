@@ -1,6 +1,39 @@
 import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {authenticated,csrfToken,read} from './api.ts';
 import type {ProjectContext} from '../../../packages/contracts/workspace.ts';
+import {devServerListSchema,type DevServer} from '../../../packages/contracts/dev-servers.ts';
+
+export const DEV_SERVERS_REFRESH_EVENT='gen:dev-servers-refresh';
+export function refreshDevServers(){window.dispatchEvent(new Event(DEV_SERVERS_REFRESH_EVENT));}
+
+export function useDevServers(projectId?:string,threadId?:string){
+ const owner=projectId?JSON.stringify([projectId,threadId]):'';
+ const [state,setState]=useState<{owner:string;items:DevServer[];error:string}>({owner:'',items:[],error:''}),generation=useRef(0);
+ const load=useCallback(async()=>{
+  const captured=++generation.current;
+  if(!projectId){setState({owner,items:[],error:''});return;}
+  try{
+   const next=await authenticated(()=>fetch(`/api/projects/${encodeURIComponent(projectId)}/dev-servers${threadId?'?threadId='+encodeURIComponent(threadId):''}`,{credentials:'same-origin',cache:'no-store'})).then(read<unknown>);
+   if(captured!==generation.current)return;
+   const parsed=devServerListSchema.safeParse(next);
+   setState(parsed.success?{owner,items:parsed.data.items,error:''}:{owner,items:[],error:'The dev servers response was malformed.'});
+  }catch(reason){
+   if(captured!==generation.current)return;
+   const message=reason instanceof Error?reason.message:'Dev servers could not be loaded.';
+   setState(previous=>previous.owner===owner?{...previous,error:message}:{owner,items:[],error:message});
+  }
+ },[projectId,threadId,owner]);
+ useEffect(()=>{
+  void load();
+  const poll=()=>{if(document.visibilityState==='visible')void load();};
+  const timer=setInterval(poll,3000);
+  document.addEventListener('visibilitychange',poll);
+  window.addEventListener(DEV_SERVERS_REFRESH_EVENT,load);
+  return()=>{generation.current++;clearInterval(timer);document.removeEventListener('visibilitychange',poll);window.removeEventListener(DEV_SERVERS_REFRESH_EVENT,load);};
+ },[load]);
+ const current=state.owner===owner?state:{items:[],error:''};
+ return{items:current.items,error:current.error,refresh:load};
+}
 
 function isProjectContext(value:unknown):value is ProjectContext{
  if(!value||typeof value!=='object')return false;

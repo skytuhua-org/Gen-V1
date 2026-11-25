@@ -5,18 +5,22 @@ import {HarnessError} from '../contracts/index.ts';
 import type {ProjectTools} from './tools.ts';
 import {processEnvironment} from '../capabilities/process.ts';
 import {environmentSettingsFor} from '../core/environment-settings.ts';
+import {terminateTerminalTree} from './terminal-tree.ts';
+import type {SessionInfo} from './dev-servers.ts';
 
-interface Session{id:string;projectId:string;threadId?:string;path:string;pty:IPty;output:string;offset:number;exited:boolean;exitCode:number|null;done:Promise<void>;startupFailed?:boolean}
+interface Session{id:string;projectId:string;threadId?:string;path:string;pty:IPty;output:string;offset:number;exited:boolean;exitCode:number|null;done:Promise<void>;startedAt:string;scriptName:string|null;firstInput:string|null;pendingInput:string;startupFailed?:boolean}
 const identifier=z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/),dimension=z.number().int().min(2).max(500);
 /** Host owns processes; renderer visibility and native reparenting do not own their lifetime. */
 export class TerminalHost{
  private readonly sessions=new Map<string,Session>();
- constructor(private readonly projects:ProjectTools){
+ /** In-flight tree kills; dispose awaits them so descendant escalation cannot be cut short by process exit. */
+ private readonly terminating=new Set<Promise<void>>();
+ constructor(private readonly projects:ProjectTools,private readonly observer?:{output(info:SessionInfo,chunk:string):void;exit(info:SessionInfo):void}){
   const store=projects.store,unfinished=store.all<{id:string;exited:boolean}>('terminalSession').filter(item=>!item.exited);
   if(unfinished.length)store.internal('terminal.recovered',null,()=>{for(const item of unfinished)store.put('terminalSession',item.id,null,{...item,exited:true,exitCode:null,reason:'Host restarted; the previous terminal is no longer attached.'});});
  }
- async open(input:{projectId:string;threadId?:string;terminalId?:string;cols?:number;rows?:number;command?:string;program?:string;args?:string[];environment?:Record<string,string|undefined>}){
-  const projectId=identifier.parse(input.projectId),threadId=input.threadId===undefined?undefined:identifier.parse(input.threadId),terminalId=input.terminalId?identifier.parse(input.terminalId):randomUUID();
+ async open(input:{projectId:string;threadId?:string;terminalId?:string;cols?:number;rows?:number;command?:string;program?:string;args?:string[];environment?:Record<string,string|undefined>;scriptName?:string}){
+  const projectId=identifier.parse(input.projectId),threadId=input.threadId===undefined?undefined:identifier.parse(input.threadId),terminalId=input.terminalId?identifier.parse(input.terminalId):randomUUID(),scriptName=input.scriptName===undefined?null:z.string().trim().min(1).max(100).parse(input.scriptName);
   const command=input.command?z.string().min(1).max(8000).parse(input.command):undefined;
   const binding=await this.projects.binding(projectId,threadId),existing=this.reopen(this.sessions.get(terminalId),projectId,threadId,binding.path);
   if(existing)return existing;
@@ -34,7 +38,7 @@ export class TerminalHost{
   if([...this.sessions.values()].filter(item=>!item.exited).length>=12)throw new HarnessError('TERMINAL_CAPACITY','Twelve terminals are already running. Stop one before opening another.');
   // Trusted integration programs retain their explicitly pinned environments.
   const pty=spawn(input.program??shell,input.args??args,{name:'xterm-256color',cwd:binding.path,cols:dimension.parse(input.cols??100),rows:dimension.parse(input.rows??30),env:(input.environment??{...processEnvironment(),...configured}) as Record<string,string>,useConpty:true});
-  let finish!:()=>void;const session:Session={id:terminalId,projectId,...(threadId?{threadId}:{}),path:binding.path,pty,output:'',offset:0,exited:false,exitCode:null,done:new Promise<void>(resolve=>{finish=resolve;})};
+  let finish!:()=>void;const session:Session={id:terminalId,projectId,...(threadId?{threadId}:{}),path:binding.path,pty,output:'',offset:0,exited:false,exitCode:null,done:new Promise<void>(resolve=>{finish=resolve;}),startedAt:new Date().toISOString(),scriptName,firstInput:null,pendingInput:''};
   let registered=false,observingExit=false;
   const discardFailedStartup=()=>{
    try{this.discardFailedStartup(session);}
@@ -45,6 +49,7 @@ export class TerminalHost{
    session.exited=true;session.exitCode=event.exitCode;
    // Native exit is definitive even if the separate durable update fails.
    finish();
+   try{this.observer?.exit(this.info(session));}catch{}
    if(session.startupFailed){discardFailedStartup();return;}
    if(!registered)return;
    try{this.persist(session);}catch{process.stderr.write('Gen V1 could not persist terminal exit state.\n');}
@@ -64,9 +69,11 @@ export class TerminalHost{
      if(before>=0xd800&&before<=0xdbff&&after>=0xdc00&&after<=0xdfff)remove++;
      session.output=session.output.slice(remove);session.offset+=remove;
     }
+    if(registered&&!session.startupFailed&&!session.exited)try{this.observer?.output(this.info(session),data);}catch{}
    });
    this.persist(session);
    registered=true;
+   if(!session.exited&&session.output)try{this.observer?.output(this.info(session),session.output);}catch{}
    if(session.exited)this.evictExited(session);
    else if(command!==undefined)pty.write(command+'\r');
   }catch(error){
@@ -100,6 +107,7 @@ export class TerminalHost{
   if(session.exited)throw new HarnessError('TERMINAL_ENDED','This terminal ended. Open a new terminal.');
   return this.result(session,0);
  }
+ private info(session:Session):SessionInfo{return{id:session.id,projectId:session.projectId,...(session.threadId?{threadId:session.threadId}:{}),startedAt:session.startedAt,scriptName:session.scriptName,label:session.scriptName??session.firstInput};}
  private persist(session:Session){this.projects.store.internal('terminal.changed',session.threadId??null,()=>this.projects.store.put('terminalSession',session.id,session.threadId??null,{id:session.id,projectId:session.projectId,threadId:session.threadId,exited:session.exited,exitCode:session.exitCode}));}
  /** Exited sessions keep up to 512 KiB of scrollback each; retain only the newest few so the map stays bounded. Reads of evicted ids still resolve TERMINAL_ENDED through the durable record. */
  private evictExited(session:Session){
@@ -113,7 +121,7 @@ export class TerminalHost{
  async read(id:string,projectId:string,threadId?:string,cursor=0){return this.result(await this.owned(id,projectId,threadId),z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(cursor));}
  private async stop(session:Session){
   if(session.exited)return;
-  session.pty.kill();
+  const kill=terminateTerminalTree(session.pty).catch(()=>{process.stderr.write('Gen V1 could not terminate the terminal process tree.\n');});this.terminating.add(kill);void kill.finally(()=>this.terminating.delete(kill));
   let timer:ReturnType<typeof setTimeout>|undefined;
   try{await Promise.race([session.done,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new HarnessError('TERMINAL_CANCEL_UNCONFIRMED','Terminal termination was not confirmed.')),5000);})]);}
   finally{clearTimeout(timer);}
@@ -125,11 +133,11 @@ export class TerminalHost{
    if(session.startupFailed)this.discardFailedStartup(session);
   }else{
    if(session.exited)throw new HarnessError('TERMINAL_ENDED','The terminal has exited.');
-   if(input.type==='input')session.pty.write(z.string().max(64*1024).parse(input.data));
+   if(input.type==='input'){const text=z.string().max(64*1024).parse(input.data);session.pty.write(text);if(session.firstInput===null){session.pendingInput+=text;const cut=session.pendingInput.indexOf('\r');if(cut>=0){session.firstInput=session.pendingInput.slice(0,cut).replace(/[\x00-\x1f\x7f-\x9f]/g,'').trim().slice(0,120)||null;session.pendingInput='';}else if(session.pendingInput.length>200)session.pendingInput=session.pendingInput.slice(-200);}}
    else if(input.type==='resize')session.pty.resize(dimension.parse(input.cols),dimension.parse(input.rows));
    else throw new HarnessError('INVALID_INPUT','Unknown terminal action.');
   }
   return this.result(session,0);
  }
- async dispose(){const outcomes=await Promise.allSettled([...this.sessions.values()].filter(item=>!item.exited||item.startupFailed).map(item=>this.command(item.id,item.projectId,item.threadId,{type:'stop'})));const errors=outcomes.flatMap(item=>item.status==='rejected'?[item.reason]:[]);if(errors.length)throw new AggregateError(errors,'Terminal shutdown could not be confirmed.');}
+ async dispose(){const outcomes=await Promise.allSettled([...this.sessions.values()].filter(item=>!item.exited||item.startupFailed).map(item=>this.command(item.id,item.projectId,item.threadId,{type:'stop'})));await Promise.allSettled([...this.terminating]);const errors=outcomes.flatMap(item=>item.status==='rejected'?[item.reason]:[]);if(errors.length)throw new AggregateError(errors,'Terminal shutdown could not be confirmed.');}
 }

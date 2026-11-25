@@ -4,6 +4,8 @@ import type {Snapshot} from '../../../packages/contracts/index.ts';
 import type {ProjectContext} from '../../../packages/contracts/workspace.ts';
 import {contextCompanions} from './project-context-summary';
 import {LoadingState,PendingStatus} from './LoadingState';
+import {RunningServers} from './RunningServers.tsx';
+import {refreshDevServers} from './project-api.ts';
 import './project-context.css';
 
 const compactCount=new Intl.NumberFormat(undefined,{notation:'compact',maximumFractionDigits:1});
@@ -22,7 +24,7 @@ export interface ProjectContextCardProps {
 /** Data and callbacks only: this card is safe to consume from either authority's shell. */
 export function ProjectContextCard({context,loading,error,threadTitle,plan,planOpen=false,onTogglePlan,fullPlanVisible=false,onAction,onSelectThread,onShowChanges,onConnect,snapshot,threadId,onOpenDetailedPlan,automationItems=[],automationsAvailable=false,composerChangesAvailable=false}:ProjectContextCardProps){
  const planId=useId(),[expanded,setExpanded]=useState<'scripts'|'branch'|'commit'|'lineage'|null>(null),[busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[scriptName,setScriptName]=useState(''),[scriptCommand,setScriptCommand]=useState(''),[branch,setBranch]=useState(''),[commit,setCommit]=useState('');
- const run=(type:string,payload:Record<string,unknown>={})=>{if(!onAction||busy)return;setBusy(true);setActionError('');void onAction(type,payload).then(()=>{setExpanded(null);setCommit('');}).catch(cause=>setActionError(cause instanceof Error?cause.message:'The project action could not finish.')).finally(()=>setBusy(false));};
+ const run=(type:string,payload:Record<string,unknown>={})=>{if(!onAction||busy)return;setBusy(true);setActionError('');void onAction(type,payload).then(()=>{setExpanded(null);setCommit('');if(type==='run-script')refreshDevServers();}).catch(cause=>setActionError(cause instanceof Error?cause.message:'The project action could not finish.')).finally(()=>setBusy(false));};
  const toggle=(name:NonNullable<typeof expanded>)=>setExpanded(value=>value===name?null:name);
  const connected=Boolean(context&&(context.project.rootPath||context.capabilities.git||context.capabilities.terminal||context.editor.available));
  const total=(value:number)=>compactCount.format(value);
@@ -42,6 +44,7 @@ export function ProjectContextCard({context,loading,error,threadTitle,plan,planO
     </>}
    </section>
    {summary?<section className="project-context-plan-summary" aria-label="Plan summary" data-plan-revision={summary.revision}><div className="project-context-summary-title"><ListChecks size={15}/><strong>{summary.title}</strong></div>{summary.total>0&&<><div className="project-context-summary-progress" role="progressbar" aria-label="Plan tasks completed" aria-valuemin={0} aria-valuemax={summary.total} aria-valuenow={summary.completed}><span style={{width:`${summary.completed/summary.total*100}%`}}/></div><p>{summary.completed} of {summary.total} tasks complete</p></>}{summary.currentStep&&!fullPlanVisible&&<p className={summary.blocked?'project-context-summary-blocked':''}>{summary.blocked?'Blocked: ':''}{summary.currentStep}</p>}{onOpenDetailedPlan&&!fullPlanVisible&&<button type="button" className="quiet" onClick={onOpenDetailedPlan}>Open full plan<ChevronRight size={13}/></button>}</section>:Boolean(plan)&&<section className="project-context-plan"><button className="project-context-row" aria-expanded={planOpen} aria-controls={planId} onClick={onTogglePlan}><ListChecks size={16}/><span>Task plan</span>{planOpen?<ChevronDown size={14}/>:<ChevronRight size={14}/>}</button><div id={planId} className="project-plan-expansion" data-open={planOpen} inert={!planOpen}><div>{plan}</div></div></section>}
+   {context&&connected&&context.capabilities.terminal&&<RunningServers projectId={context.project.id} threadId={threadId}/>}
    {context&&connected&&<details className="project-context-tools"><summary>Project tools<ChevronDown size={13}/></summary><div className="project-context-detail">
     <div className="project-context-machine"><Server size={15}/><strong title={context.machineName}>{context.machineName}</strong></div>
     {context.editor.available&&<button className="project-context-row" aria-busy={busy} disabled={busy||!onAction} onClick={()=>run('open-editor')}><Code2 size={16}/><span>Open in {context.editor.label}</span><ChevronRight size={13}/></button>}

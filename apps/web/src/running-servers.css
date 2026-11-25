@@ -1,0 +1,135 @@
+.running-servers {
+  margin-block: var(--ui-space-2);
+}
+
+.running-servers-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  margin: 0 0 var(--ui-space-1);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.running-servers-count {
+  color: var(--ui-text-muted, color-mix(in srgb, currentColor 55%, transparent));
+  font-weight: 400;
+}
+
+.running-servers-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+}
+
+.running-servers-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  flex-wrap: wrap;
+  padding: var(--ui-space-1) 0;
+  animation: running-servers-enter var(--ui-motion-insert) var(--ui-ease-enter);
+}
+
+@keyframes running-servers-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.running-servers-row[data-stopping] {
+  opacity: 0.55;
+}
+
+.running-servers-main {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ui-space-2);
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+
+.running-servers-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 16rem;
+}
+
+.running-servers-url {
+  color: var(--ui-text-muted, color-mix(in srgb, currentColor 55%, transparent));
+  font-size: 0.8rem;
+}
+
+.running-servers-thread,
+.running-servers-uptime {
+  color: var(--ui-text-muted, color-mix(in srgb, currentColor 55%, transparent));
+  font-size: 0.75rem;
+}
+
+.running-servers-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  flex: none;
+}
+
+.running-servers-stop {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0 var(--ui-space-2);
+  min-height: 22px;
+  border: 1px solid var(--control-border, color-mix(in srgb, currentColor 20%, transparent));
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.running-servers-stop:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.running-servers-stop[data-armed] {
+  color: var(--danger, #e5686e);
+  border-color: var(--danger, #e5686e);
+}
+
+.running-servers-stop:disabled {
+  cursor: default;
+}
+
+.running-servers-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: running-servers-spin 0.7s linear infinite;
+}
+
+@keyframes running-servers-spin {
+  to { transform: rotate(360deg); }
+}
+
+.running-servers-error {
+  color: var(--danger, #e5686e);
+  font-size: 0.8rem;
+  margin: var(--ui-space-1) 0 0;
+  flex-basis: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .running-servers-row,
+  .running-servers-spinner { animation: none; }
+}
+
+.app-shell[data-panel-animations=false] .running-servers-row,
+:root:is([data-motion=reduced],[data-motion=off]) .running-servers-row {
+  animation: none !important;
+}

@@ -63,6 +63,10 @@ pnpm start
 
 Open `http://127.0.0.1:4317`. The host binds to loopback; remote/multi-user hosting is not an accepted deployment mode.
 
+## Running servers
+
+When a workspace terminal or a saved project script prints a `localhost` address, the project context card lists it under **Running** once the port answers a loopback probe. Each row offers **Copy URL** and a two-click **Stop** that ends the terminal's whole process tree; rows disappear when their terminal exits, and the list is not persisted across restarts. Quitting the desktop app with servers running asks before they are stopped.
+
 ## Connect a provider
 
 1. Open **Settings → Models & Accounts**.

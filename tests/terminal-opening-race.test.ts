@@ -5,7 +5,7 @@ vi.mock('../packages/core/environment-settings.ts',()=>({environmentSettingsFor:
 import {TerminalHost} from '../packages/workspace/terminal.ts';
 import type {ProjectTools} from '../packages/workspace/tools.ts';
 beforeEach(()=>{mocks.spawn.mockClear();mocks.resolve.mockClear();});
-function fixture(){const saved=new Map<string,unknown>();const projects={binding:vi.fn(async()=>({path:'C:/fixture'})),store:{dataDir:'C:/unused',all:()=>[],get:(_kind:string,id:string)=>saved.get(id),internal:(_type:string,_thread:unknown,apply:()=>unknown)=>apply(),put:(_kind:string,id:string,_thread:unknown,value:unknown)=>saved.set(id,value),remove:(_kind:string,id:string)=>saved.delete(id)}};return{host:new TerminalHost(projects as unknown as ProjectTools),projects};}
+function fixture(observer?:ConstructorParameters<typeof TerminalHost>[1]){const saved=new Map<string,unknown>();const projects={binding:vi.fn(async()=>({path:'C:/fixture'})),store:{dataDir:'C:/unused',all:()=>[],get:(_kind:string,id:string)=>saved.get(id),internal:(_type:string,_thread:unknown,apply:()=>unknown)=>apply(),put:(_kind:string,id:string,_thread:unknown,value:unknown)=>saved.set(id,value),remove:(_kind:string,id:string)=>saved.delete(id)}};return{host:new TerminalHost(projects as unknown as ProjectTools,observer),projects};}
 it('deduplicates concurrent same-pane opens after asynchronous environment resolution',async()=>{
  const {host}=fixture();const input={projectId:'project-a',threadId:'thread-a',terminalId:'terminal-a'};
  const results=await Promise.all([host.open(input),host.open(input)]);
@@ -53,6 +53,30 @@ function startupPty(){
  mocks.spawn.mockReturnValueOnce(pty);
  return {pty,exit};
 }
+
+it('delivers early terminal output to observers only after durable registration',async()=>{
+ const output=vi.fn(),exit=vi.fn(),{host,projects}=fixture({output,exit}),{pty}=startupPty();
+ pty.onData.mockImplementationOnce(handler=>{handler('http://localhost:3000/\n');expect(output).not.toHaveBeenCalled();});
+ await host.open({projectId:'project-a',terminalId:'early-output'});
+ expect(projects.store.get('terminalSession','early-output')).toMatchObject({exited:false});
+ expect(output).toHaveBeenCalledOnce();
+ expect(output).toHaveBeenCalledWith(expect.objectContaining({id:'early-output'}),'http://localhost:3000/\n');
+ await host.command('early-output','project-a',undefined,{type:'stop'});
+ expect(exit).toHaveBeenCalledOnce();
+});
+
+it('removes observed dev-server output when an initial terminal write fails',async()=>{
+ const output=vi.fn(),exit=vi.fn(),{host}=fixture({output,exit}),{pty}=startupPty();
+ const failure=Error('Fixture initial write failed after output');
+ pty.write.mockImplementationOnce(()=>{const data=pty.onData.mock.calls[0]![0] as (text:string)=>void;data('http://localhost:3000/\n');throw failure;});
+ await expect(host.open({projectId:'project-a',terminalId:'failed-observed',command:'start'})).rejects.toBe(failure);
+ expect(output).toHaveBeenCalledOnce();
+ expect(exit).toHaveBeenCalledOnce();
+ expect(exit).toHaveBeenCalledWith(expect.objectContaining({id:'failed-observed'}));
+ await expect(host.read('failed-observed','project-a')).rejects.toMatchObject({code:'NOT_FOUND'});
+ (pty.onData.mock.calls[0]![0] as (text:string)=>void)('late output');
+ expect(output).toHaveBeenCalledOnce();
+});
 
 it.each(['registration','initial write','data listener','exit listener'] as const)('rolls back a spawned terminal after %s fails',async(step)=>{
  const {host,projects}=fixture(),{pty}=startupPty();
