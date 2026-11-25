@@ -76,6 +76,20 @@ jobs:
           python: 'true'
           playwright: 'true'
 
+  linux-path-guard-cleanup:
+    name: Linux path guard cleanup
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Run unprivileged broker cleanup regressions
+        run: python3 -I -S -B tests/linux_path_guard_cleanup.py
+
   # A draft pull request is not reviewable, so its jobs run when it becomes
   # ready for review instead of on every draft push; draft pushes otherwise
   # starve the shared runner pool that required checks depend on.
@@ -429,16 +443,18 @@ jobs:
       # The declared installed lane is also valid without memory options: the
       # verifier launches the exact installed executable with ambient feature
       # activation suppressed, so a flag-less run is the default-off installed
-      # acceptance. It reuses this job's already pinned and packaged artifacts —
-      # packaging is not duplicated, and no production flag is changed.
-      - name: Verify installed default-off acceptance
+      # acceptance. The M16 wrapper reuses this job's already pinned and
+      # packaged artifacts, binds the checked-out source to the actual setup and
+      # payload digests, and adds one direct module-load smoke. Packaging is not
+      # duplicated, and no production flag, live driver or control action is used.
+      - name: Verify installed default-off identity and direct module load
         run: |
           $ErrorActionPreference = 'Stop'
           $version = (Get-Content -Raw -LiteralPath package.json | ConvertFrom-Json).version
           $release = Join-Path $PWD ('.harness-installed-package/desktop-release-' + $version)
           $setup = (Resolve-Path -LiteralPath (Join-Path $release ('Gen-V1-Setup-' + $version + '-win-x64.exe'))).Path
           $unpacked = (Resolve-Path -LiteralPath (Join-Path $release 'win-unpacked')).Path
-          $verifyArgs = @('exec', 'tsx', 'scripts/verify-installed-desktop.ts', $setup, $unpacked)
+          $verifyArgs = @('exec', 'tsx', 'scripts/m16-installed-identity.ts', $setup, $unpacked)
           Write-Output ('HARNESS_INSTALLED_VERIFY_ARGV=' + (@{executable='pnpm'; args=$verifyArgs} | ConvertTo-Json -Compress))
           & pnpm @verifyArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -456,6 +472,7 @@ jobs:
             .harness-installed-package/desktop-stage-*/desktop-host/third-party/integrations/PYTHON_INSTALLATION_V2.json
             .harness-desktop-installed/run-*/owner.json
             .harness-desktop-installed/run-*/verification.json
+            .harness-desktop-installed/run-*/m16-identity-receipt.json
             .harness-desktop-installed/run-*/*.png
             .harness-desktop-installed/run-*/installed-memory-redacted-export.json
             .harness-desktop-installed/run-*/enabled-memory/*.png
