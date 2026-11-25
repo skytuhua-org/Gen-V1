@@ -14,7 +14,7 @@ import { HarnessError } from '../packages/contracts/index.ts';
 import { runProcess } from '../packages/capabilities/process.ts';
 import { createSecretRedactor, MIN_TRACKED_SECRET_LENGTH } from '../packages/core/secret-references.ts';
 import type { BenchmarkRecord, CommandEvidence, CommandStatus, CommandTermination, ExpectedNegative, EvidenceIssue, SourceLockV3 } from '../packages/contracts/implementation-evidence.ts';
-import { sourceLockV3Schema } from '../packages/contracts/implementation-evidence.ts';
+import { commandEvidenceSchema, sourceLockV3Schema, validateCommandEvidence } from '../packages/contracts/implementation-evidence.ts';
 
 const OUTPUT_LIMIT = 256 * 1024;
 export const COMMAND_EVIDENCE_FINAL_LOG_BYTES = 544 * 1024;
@@ -244,7 +244,16 @@ function requireExactSafeIdentity(redactor: ReturnType<typeof createSecretRedact
   if (redactor.redact(value).redactions !== 0) throw new HarnessError('EVIDENCE_ADMISSION_DENIED', EXACT_IDENTITY_DENIED);
 }
 
+function redactPipe(redactor: ReturnType<typeof createSecretRedactor>, text: string, truncated: boolean): string {
+  const redacted = redactor.redact(text).text;
+  const bounded = truncated ? redactor.redactTruncatedSuffix(redacted).text : redacted;
+  if (redactor.containsTracked(bounded)) throw new HarnessError('EVIDENCE_ADMISSION_DENIED', UNSUPPORTED_SENSITIVE_VALUE);
+  return bounded;
+}
+
 export async function writeCommandEvidence(observation: RecordedObservation, outDir: string, id: string, status: CommandStatus, expectedNegative?: ExpectedNegative, options: WriteCommandEvidenceOptions = {}): Promise<CommandEvidence> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id))
+    throw new HarnessError('EVIDENCE_ADMISSION_DENIED', 'Evidence admission denied: artifact identifier is unsafe.');
   const redactor = evidenceRedactor(observation, options.sensitiveValues ?? []);
   for (const value of observation.argv) requireExactSafeIdentity(redactor, value);
   requireExactSafeIdentity(redactor, observation.cwdIdentity);
@@ -253,11 +262,15 @@ export async function writeCommandEvidence(observation: RecordedObservation, out
     + Buffer.byteLength(observation.cwdIdentity, 'utf8') + Buffer.byteLength(observation.executableIdentity, 'utf8');
   if (exactMetadataBytes > COMMAND_EVIDENCE_EXACT_METADATA_BYTES)
     throw new HarnessError('EVIDENCE_ADMISSION_DENIED', EXACT_IDENTITY_DENIED);
-  const stdout = redactor.redact(observation.stdout).text;
-  const stderr = redactor.redact(observation.stderr).text;
+  const stdout = redactPipe(redactor, observation.stdout, observation.truncated);
+  const stderr = redactPipe(redactor, observation.stderr, observation.truncated);
   const spawnError = observation.spawnError
     ? capUtf8(redactor.redact(observation.spawnError).text, COMMAND_EVIDENCE_SPAWN_DIAGNOSTIC_BYTES, DIAGNOSTIC_TRUNCATION_MARKER)
     : undefined;
+  if (spawnError && redactor.containsTracked(spawnError)) throw new HarnessError('EVIDENCE_ADMISSION_DENIED', UNSUPPORTED_SENSITIVE_VALUE);
+  const evidenceDir = resolve(outDir);
+  const boundedLogRef = join(evidenceDir, `${id}.log`);
+  requireExactSafeIdentity(redactor, boundedLogRef);
   const serialized = [
     `argv: ${JSON.stringify(observation.argv)}`,
     `cwd: ${observation.cwdIdentity}`,
@@ -271,19 +284,21 @@ export async function writeCommandEvidence(observation: RecordedObservation, out
     '--- stderr ---', stderr,
   ].join('\n');
   const log = capUtf8(serialized, COMMAND_EVIDENCE_FINAL_LOG_BYTES, FINAL_TRUNCATION_MARKER);
-  const boundedLogRef = join(outDir, `${id}.log`);
-  try {
-    await mkdir(outDir, { recursive: true });
-    await writeFile(boundedLogRef, log, { encoding: 'utf8', flag: 'wx' });
-  } catch {
-    throw new HarnessError('EVIDENCE_WRITE_FAILED', 'Command evidence could not be written safely.');
-  }
-  return {
+  const candidate: CommandEvidence = {
     argv: observation.argv, cwdIdentity: observation.cwdIdentity, executableIdentity: observation.executableIdentity,
     startedAt: observation.startedAt, endedAt: observation.endedAt, exitCode: observation.exitCode,
     termination: observation.termination, status, boundedLogRef, logDigest: sha256(log),
     ...(expectedNegative ? { expectedNegative } : {}),
   };
+  if (!commandEvidenceSchema.safeParse(candidate).success || validateCommandEvidence(candidate).length)
+    throw new HarnessError('EVIDENCE_ADMISSION_DENIED', 'Evidence admission denied: command evidence violates strict evidence semantics.');
+  try {
+    await mkdir(evidenceDir, { recursive: true });
+    await writeFile(boundedLogRef, log, { encoding: 'utf8', flag: 'wx' });
+  } catch {
+    throw new HarnessError('EVIDENCE_WRITE_FAILED', 'Command evidence could not be written safely.');
+  }
+  return candidate;
 }
 
 // The dependency-contract checker: verifies accepted commit ancestry, contract

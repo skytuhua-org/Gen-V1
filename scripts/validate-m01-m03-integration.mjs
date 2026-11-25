@@ -2,7 +2,7 @@
 // No remote ref is written. Failures remain failures, including expected regressions.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -135,12 +135,12 @@ async function validate() {
   const { resolvePackageManager, runRecordedCommand, statusFromObservation, writeCommandEvidence } =
     await import(pathToFileURL(join(root, 'scripts/research-baseline.ts')).href);
   const pm = resolvePackageManager(root);
-  const run = async (name, args, timeoutMs = 15 * 60_000) => {
+  const run = async (name, args, timeoutMs = 15 * 60_000, extraEnvironment = {}) => {
     console.log('M01_M03_COMMAND_START=' + JSON.stringify({ name }));
     const observation = await runRecordedCommand(pm.file, [...pm.prefix, ...args],
       { cwd: root, timeoutMs, outputLimit: 4 * 1024 * 1024, environment: {
         COREPACK_ENABLE_NETWORK: '0', CI: 'true', HARNESS_HERMES_PYTHON: process.env.HARNESS_HERMES_PYTHON,
-        GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.longpaths', GIT_CONFIG_VALUE_0: 'true',
+        GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.longpaths', GIT_CONFIG_VALUE_0: 'true', ...extraEnvironment,
       } });
     const command = await writeCommandEvidence(observation, evidence, name, statusFromObservation(observation));
     receipt.commands.push(command);
@@ -157,23 +157,28 @@ async function validate() {
   }
   await run('20-typecheck', ['typecheck']);
   const reportPath = join(evidence, 'targeted-tests.json');
+  const rawReportPath = join(evidence, '.raw-targeted-tests.json');
   generatedConfig = join(evidence, 'vitest.config.mjs');
   generatedConfigBytes = [
     'import base from ' + JSON.stringify(join(root, 'vitest.config.ts').replaceAll('\\', '/')) + ';',
     'export default {...base,root:' + JSON.stringify(root) + ',test:{...base.test,include:' + JSON.stringify(manifest.tests),
-    ',passWithNoTests:false,allowOnly:false,maxWorkers:1,reporters:["default","json"],outputFile:{json:' + JSON.stringify(reportPath) + '}}};',
+    ',passWithNoTests:false,allowOnly:false,maxWorkers:1,reporters:["default","json"],outputFile:{json:' + JSON.stringify(rawReportPath) + '}}};',
   ].join('\n');
   writeFileSync(generatedConfig, generatedConfigBytes, { flag: 'wx' });
-  await run('30-targeted-tests', ['exec', 'vitest', 'run', '--config', generatedConfig]);
+  process.env.M01_M03_RAW_TEST_REPORT = rawReportPath;
   try {
-    requireValue(statSync(reportPath).size <= 32 * 1024 * 1024, 'Test report exceeded its bound.');
-    const reportBytes = readFileSync(reportPath), report = JSON.parse(reportBytes);
-    receipt.testReport = { path: reportPath, digest: sha256(reportBytes), success: report.success };
+    await run('30-targeted-tests', ['exec', 'vitest', 'run', '--config', generatedConfig], 15 * 60_000, { M01_M03_RAW_TEST_REPORT: rawReportPath });
+  } finally { delete process.env.M01_M03_RAW_TEST_REPORT; }
+  try {
+    requireValue(statSync(rawReportPath).size <= 32 * 1024 * 1024, 'Test report exceeded its bound.');
+    const rawReportBytes = readFileSync(rawReportPath), report = JSON.parse(rawReportBytes);
+    requireValue(typeof report.success === 'boolean', 'Missing test report success boolean.');
     const expected = new Map(manifest.tests.map(path => [realpathSync(join(root, path)), path])), found = new Set();
     requireValue(Array.isArray(report.testResults), 'Missing per-file test results.');
     for (const file of report.testResults) {
       const path = typeof file.name === 'string' && expected.get(realpathSync(file.name));
-      requireValue(path && !found.has(path) && Array.isArray(file.assertionResults), 'Unexpected, duplicate, or malformed test result.');
+      requireValue(path && !found.has(path) && Array.isArray(file.assertionResults)
+        && typeof file.status === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(file.status), 'Unexpected, duplicate, or malformed test result.');
       found.add(path);
       const assertions = file.assertionResults;
       const result = { path, status: file.status, passed: assertions.filter(test => test.status === 'passed').length,
@@ -181,13 +186,17 @@ async function validate() {
         unexecuted: assertions.filter(test => !['passed', 'failed'].includes(test.status)).length };
       receipt.tests.push(result);
       console.log('M01_M03_TEST_FILE=' + JSON.stringify(result));
-      for (const assertion of assertions.filter(test => test.status === 'failed'))
-        console.log('M01_M03_TEST_FAILURE=' + JSON.stringify({ path, name: assertion.fullName }));
     }
     requireValue(found.size === expected.size, 'At least one declared test file did not execute.');
+    requireValue(report.success === true || receipt.tests.some(test => test.status !== 'passed' || test.failed > 0 || test.unexecuted > 0),
+      'Vitest success contradicted the file results.');
+    const projectionBytes = Buffer.from(JSON.stringify({ format: 'M01.RedactedTestReport.v1', success: report.success, testResults: receipt.tests }, null, 2) + '\n');
+    writeFileSync(reportPath, projectionBytes, { flag: 'wx' });
+    receipt.testReport = { path: reportPath, digest: sha256(projectionBytes), success: report.success };
     requireValue(report.success === true && receipt.tests.every(test => test.status === 'passed' && test.passed > 0
       && test.failed === 0 && test.unexecuted === 0), 'Required assertions failed or remain unexecuted.');
   } catch (error) { receipt.issues.push({ phase: 'unit-results', message: 'Targeted test report is unavailable or invalid.' }); }
+  finally { rmSync(rawReportPath, { force: true }); }
   // A unit failure does not suppress the independent browser observations.
   const browserDir = join(root, 'test-results/browser');
   const before = new Set(existsSync(browserDir) ? readdirSync(browserDir) : []);
@@ -197,10 +206,19 @@ async function validate() {
   const browserPath = join(browserDir, runs[0], 'root/results.json');
   requireValue(statSync(browserPath).size <= 32 * 1024 * 1024, 'Browser report exceeded its bound.');
   const bytes = readFileSync(browserPath), { errors, stats, suites } = JSON.parse(bytes);
-  receipt.browserReport = { path: relative(root, browserPath), digest: sha256(bytes), stats, errors: errors?.length };
   const { rootBrowserSpecs } = await import(pathToFileURL(join(root, 'scripts/browser-suites.ts')).href);
   requireValue(Array.isArray(suites) && suites.length === rootBrowserSpecs.length
     && rootBrowserSpecs.every(file => suites.some(suite => suite.file === file)), 'Incomplete root browser suite.');
-  requireValue(Array.isArray(errors) && errors.length === 0 && stats.unexpected === 0 && stats.flaky === 0
-    && Number.isSafeInteger(stats.expected) && stats.expected > 0, 'Root browser report has failed, flaky, or missing results.');
+  requireValue(stats && typeof stats === 'object' && ['expected', 'unexpected', 'flaky', 'skipped'].every(key =>
+    Number.isSafeInteger(stats[key]) && stats[key] >= 0), 'Invalid root browser statistics.');
+  requireValue(Array.isArray(errors), 'Invalid root browser errors.');
+  const safeStats = { expected: stats.expected, unexpected: stats.unexpected, flaky: stats.flaky, skipped: stats.skipped };
+  const browserProjection = { format: 'M01.RedactedBrowserReport.v1', stats: safeStats, errorCount: errors.length,
+    suites: rootBrowserSpecs.map(file => ({ file })) };
+  const browserProjectionBytes = Buffer.from(JSON.stringify(browserProjection, null, 2) + '\n');
+  const browserProjectionPath = join(evidence, 'browser-results.json');
+  writeFileSync(browserProjectionPath, browserProjectionBytes, { flag: 'wx' });
+  receipt.browserReport = { path: browserProjectionPath, digest: sha256(browserProjectionBytes), stats: safeStats, errors: errors.length };
+  requireValue(errors.length === 0 && stats.unexpected === 0 && stats.flaky === 0
+    && stats.expected > 0, 'Root browser report has failed, flaky, or missing results.');
 }

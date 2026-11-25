@@ -32,15 +32,22 @@ function fixture(t, wrongTree = false) {
       const fault = process.env.FIXTURE_FAULT;
       let exitCode = 0;
       if (task === 'exec') {
-        const assertions = [{status: 'passed'}];
-        const unit = {success:true, testResults:[{name:resolve(cwd,'tests/a.test.ts'),status:'passed',assertionResults:assertions}]};
-        writeFileSync(join(process.env.RUNNER_TEMP,'m01-m03-1-1','targeted-tests.json'), JSON.stringify(unit));
+        const secretReport = fault === 'secret-report';
+        const assertions = [secretReport
+          ? {status:'failed',fullName:'password=integration-report-title-secret-20261125',failureMessages:['Authorization: Bearer integration-report-bearer-secret-20261125']}
+          : {status: 'passed'}];
+        const unit = {success:!secretReport, testResults:[{name:resolve(cwd,'tests/a.test.ts'),status:secretReport?'failed':'passed',assertionResults:assertions}]};
+        const reportTarget = process.env.M01_M03_RAW_TEST_REPORT || join(process.env.RUNNER_TEMP,'m01-m03-1-1','targeted-tests.json');
+        writeFileSync(reportTarget, JSON.stringify(unit));
         if (fault === 'unit-exit') exitCode = 7;
       }
       if (task === 'test:browser') {
         const dir = join(cwd, 'test-results/browser/new/root');
         mkdirSync(dir,{recursive:true});
-        writeFileSync(join(dir,'results.json'), JSON.stringify({errors:[],stats:{expected:1,unexpected:fault==='browser-report'?1:0,flaky:0,skipped:0},suites:[{file:'a.spec.ts'}]}));
+        const secretBrowser = fault === 'browser-secret';
+        writeFileSync(join(dir,'results.json'), JSON.stringify({
+          errors:secretBrowser?[{message:'password=integration-browser-secret-20261125'}]:[],
+          stats:{expected:1,unexpected:fault==='browser-report'?1:0,flaky:0,skipped:0},suites:[{file:'a.spec.ts'}]}));
       }
       const secretOutput = fault === 'secret-output';
       return {stdout:task==='--version'?'10.30.3':secretOutput?'password=integration-stdout-secret-20261125':'', stderr:secretOutput?'Authorization: Bearer integration-stderr-secret-20261125':'', termination:'NONE', exitCode, argv:[file,pnpm,task]};
@@ -75,7 +82,7 @@ function fixture(t, wrongTree = false) {
   const validate = fault => invoke([join(evidence, 'validate-m01-m03-integration.mjs'), 'validate'],
     { INTEGRATED_HEAD: readFileSync(output, 'utf8').trim().split('=')[1], FIXTURE_FAULT: fault });
   const receipt = name => JSON.parse(readFileSync(join(evidence, name + '.json')));
-  return { assemble, validate, git, receipt, tree, validationSha, root };
+  return { assemble, validate, git, receipt, tree, validationSha, root, evidence };
 }
 
 test('a later control checkout cannot add merged main inputs to the original snapshot', t => {
@@ -129,4 +136,33 @@ test('the integration controller does not mirror raw confidential command output
   assert.equal(f.receipt('validation').status, 'PASS');
   assert.equal(publicOutput.includes('integration-stdout-secret-20261125'), false);
   assert.equal(publicOutput.includes('integration-stderr-secret-20261125'), false);
+});
+
+test('the integration controller publishes minimized redacted unit and browser report projections', t => {
+  const f = fixture(t);
+  assert.equal(f.assemble().status, 0);
+  const run = f.validate('secret-report');
+  const publicOutput = run.stdout + '\n' + run.stderr;
+  assert.equal(run.status, 1);
+  assert.equal(f.receipt('validation').status, 'FAIL');
+  const projection = readFileSync(join(f.evidence, 'targeted-tests.json'), 'utf8');
+  assert.equal(JSON.parse(projection).format, 'M01.RedactedTestReport.v1');
+  for (const secret of ['integration-report-title-secret-20261125', 'integration-report-bearer-secret-20261125']) {
+    assert.equal(projection.includes(secret), false);
+    assert.equal(publicOutput.includes(secret), false);
+  }
+  assert.equal(projection.includes('fullName'), false);
+  assert.equal(projection.includes('failureMessages'), false);
+});
+
+test('the integration controller does not publish raw browser error payloads', t => {
+  const f = fixture(t);
+  assert.equal(f.assemble().status, 0);
+  const run = f.validate('browser-secret');
+  assert.equal(run.status, 1);
+  assert.equal(f.receipt('validation').status, 'FAIL');
+  const projection = readFileSync(join(f.evidence, 'browser-results.json'), 'utf8');
+  assert.equal(JSON.parse(projection).format, 'M01.RedactedBrowserReport.v1');
+  assert.equal(projection.includes('integration-browser-secret-20261125'), false);
+  assert.equal((run.stdout + '\n' + run.stderr).includes('integration-browser-secret-20261125'), false);
 });

@@ -241,6 +241,29 @@ describe('M01 current dependency compatibility execution', () => {
     expect(readFileSync(join(value.out, 'compatibility.json'), 'utf8')).toBe('immutable earlier evidence\n');
   });
 
+
+  it('publishes only a minimized safe projection of a secret-bearing Vitest report', async () => {
+    const titleSecret = 'password=dependency-report-title-secret-20261125';
+    const messageSecret = 'Authorization: Bearer dependency-report-bearer-secret-20261125';
+    const body = [
+      "import { test } from 'vitest';",
+      'test(' + JSON.stringify(titleSecret) + ', () => { throw new Error(' + JSON.stringify(messageSecret) + '); });',
+    ].join('\n');
+    const value = fixture(body);
+    const receipt = await value.run();
+    expect(receipt.status).toBe('FAIL');
+    expect(receipt.report).not.toBeNull();
+    const reportText = readFileSync(receipt.report!.path, 'utf8');
+    expect(JSON.parse(reportText).format).toBe('M01.RedactedTestReport.v1');
+    expect(reportText).not.toContain(titleSecret);
+    expect(reportText).not.toContain(messageSecret);
+    expect(reportText).not.toContain('dependency-report-title-secret-20261125');
+    expect(reportText).not.toContain('dependency-report-bearer-secret-20261125');
+    expect(reportText).not.toContain('failureMessages');
+    expect(reportText).not.toContain('fullName');
+    expect(receipt.report!.digest).toBe(createHash('sha256').update(reportText).digest('hex'));
+  }, 120_000);
+
   it('projects output setup failure without raw private path text', async () => {
     const value = fixture();
     const secret = 'password=dependency-setup-secret-20261125';

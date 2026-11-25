@@ -29,8 +29,8 @@ function observation(overrides: Partial<RecordedObservation> = {}): RecordedObse
   };
 }
 
-async function write(value: RecordedObservation, directory: string, status = statusFromObservation(value)): Promise<CommandEvidence> {
-  return writeCommandEvidence(value, join(directory, 'evidence'), '00-command', status);
+async function write(value: RecordedObservation, directory: string, status = statusFromObservation(value), expectedNegative?: { assertedFailure: string; observed: true }): Promise<CommandEvidence> {
+  return writeCommandEvidence(value, join(directory, 'evidence'), '00-command', status, expectedNegative);
 }
 
 describe('M01/M03 baseline evidence confidentiality projection', () => {
@@ -76,7 +76,7 @@ process.stderr.write([
       cwd: directory, environment: { M01_TEST_SECRET_TOKEN: token },
     });
     expect(value.exitCode, value.stderr).toBe(0);
-    const evidence = await write(value, directory, statusFromObservation(value, { expectedNegativeMarker: 'ordinary public diagnostic' }));
+    const evidence = await write(value, directory, statusFromObservation(value, { expectedNegativeMarker: 'ordinary public diagnostic' }), { assertedFailure: 'ordinary public diagnostic', observed: true });
     const log = readFileSync(evidence.boundedLogRef, 'utf8');
     expect(evidence.status).toBe('EXPECTED_NEGATIVE');
     expect(log).toContain('ordinary public diagnostic');
@@ -173,6 +173,71 @@ process.stderr.write([
       .rejects.toMatchObject({ code: 'EVIDENCE_WRITE_FAILED' });
     expect(readFileSync(evidence.boundedLogRef, 'utf8')).toBe(before);
     expect(readFileSync(evidence.boundedLogRef, 'utf8')).not.toContain('replacement must not publish');
+  });
+
+
+  it('redacts canonical declared-scope variants that previously bypassed matching', async () => {
+    const directory = root();
+    const token = 'canonical-sensitive-token-20261125';
+    const encodedLower = encodeURIComponent(token).replace(/%([0-9A-F]{2})/g, (_all, hex) => '%' + String(hex).toLowerCase());
+    const base64 = Buffer.from(token, 'utf8').toString('base64');
+    const base64UrlPadded = base64.replace(/\+/g, '-').replace(/\//g, '_');
+    const wrappedBase64 = base64.replace(/(.{8})/g, '$1\n');
+    const ansiSplit = token.slice(0, 8) + '\x1b7' + token.slice(8) + '\x1b8';
+    const jsonUnicodeKeySecret = 'json-unicode-key-secret-20261125';
+    const commaSecret = 'comma-prefix,comma-suffix-secret-20261125';
+    const urlSecret = 'empty-user-url-secret-20261125';
+    const pgpBody = 'PGPPRIVATEKEYBODYsynthetic20261125';
+    const value = observation({
+      stdout: [
+        'ansi=' + ansiSplit,
+        'lower-percent=' + encodedLower,
+        'base64url-padded=' + base64UrlPadded,
+        'wrapped-base64=' + wrappedBase64,
+        '{"api\u005fkey":"' + jsonUnicodeKeySecret + '"}',
+        'password=' + commaSecret,
+        'url=https://:' + urlSecret + '@example.invalid/path',
+        '-----BEGIN PGP PRIVATE KEY BLOCK-----',
+        pgpBody,
+        '-----END PGP PRIVATE KEY BLOCK-----',
+      ].join('\n'),
+    });
+    const evidence = await writeCommandEvidence(value, join(directory, 'evidence'), '00-command', 'PASS', undefined, { sensitiveValues: [token] });
+    const log = readFileSync(evidence.boundedLogRef, 'utf8');
+    for (const secret of [token, encodedLower, base64UrlPadded, jsonUnicodeKeySecret, commaSecret, 'comma-prefix', ',comma-suffix-secret-20261125', urlSecret, pgpBody])
+      expect(log).not.toContain(secret);
+  });
+
+  it('removes a proper prefix of a registered secret at a truncated pipe boundary', async () => {
+    const directory = root();
+    const secret = 'boundary-secret-20261125';
+    const partial = secret.slice(0, secret.length - 1);
+    const value = observation({ stdout: 'public diagnostic ' + partial, truncated: true });
+    const evidence = await writeCommandEvidence(value, join(directory, 'evidence'), '00-command', 'PASS', undefined, { sensitiveValues: [secret] });
+    const log = readFileSync(evidence.boundedLogRef, 'utf8');
+    expect(log).toContain('public diagnostic');
+    expect(log).not.toContain(partial);
+  });
+
+  it.each([
+    ['an empty exact argv element', observation({ argv: [process.execPath, ''] }), 'PASS', undefined],
+    ['a PASS status for an exit-seven observation', observation({ exitCode: 7 }), 'PASS', undefined],
+    ['an unproven expected-negative status', observation(), 'EXPECTED_NEGATIVE', undefined],
+  ])('rejects %s instead of writing invalid command evidence', async (_name, value, status, expectedNegative) => {
+    const directory = root();
+    await expect(writeCommandEvidence(value, join(directory, 'evidence'), '00-command', status as never, expectedNegative as never))
+      .rejects.toMatchObject({ code: 'EVIDENCE_ADMISSION_DENIED' });
+    expect(existsSync(join(directory, 'evidence'))).toBe(false);
+  });
+
+  it('rejects evidence id traversal and secret-shaped artifact paths', async () => {
+    const directory = root();
+    await expect(writeCommandEvidence(observation(), join(directory, 'evidence'), '../escape', 'PASS'))
+      .rejects.toMatchObject({ code: 'EVIDENCE_ADMISSION_DENIED' });
+    expect(existsSync(join(directory, 'escape.log'))).toBe(false);
+    const secretPath = join(directory, 'password=artifact-path-secret-20261125', 'evidence');
+    await expect(writeCommandEvidence(observation(), secretPath, '00-command', 'PASS'))
+      .rejects.toMatchObject({ code: 'EVIDENCE_ADMISSION_DENIED' });
   });
 
   it('bounds the final combined serialized log with a deterministic UTF-8-safe marker and exact digest', async () => {
