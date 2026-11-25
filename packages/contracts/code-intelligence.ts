@@ -171,4 +171,6 @@ export const CODE_INTELLIGENCE_LIMITS = Object.freeze({
   renameFiles: 256,
   debugStackFrames: 100,
   debugVariables: 100,
+  debugThreads: 100,
+  debugScopes: 100,
 });
