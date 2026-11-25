@@ -58,7 +58,15 @@ export function applySplitWorkspaceCommand(input:SplitWorkspaceLayout,type:strin
  else if(action==='pane.focus')layout.focusedPaneId=pane(payload.paneId).id;
  else if(action==='pane.collapse')pane(payload.paneId).collapsed=z.boolean().parse(payload.collapsed);
  else if(action==='pane.resize'){
-  const target=splitNodeById(layout.root,id.parse(payload.splitId));if(!target)invalid('The divider is no longer available.');target!.ratio=z.number().finite().min(.05).max(.95).parse(payload.ratio);
+  const target=splitNodeById(layout.root,id.parse(payload.splitId));if(!target)invalid('The divider is no longer available.');
+  let low=.05,high=.95;
+  if(payload.span!==undefined){
+   const span=z.number().finite().positive().max(1e6).parse(payload.span),horizontal=target!.axis==='horizontal';
+   const firstSize=minimumSplitSize(layout,target!.first),secondSize=minimumSplitSize(layout,target!.second);
+   low=Math.max(low,(horizontal?firstSize.width:firstSize.height)/span);high=Math.min(high,1-(horizontal?secondSize.width:secondSize.height)/span);
+   if(low>high)invalid('The divider cannot fit both panes at this size.');
+  }
+  target!.ratio=Math.min(high,Math.max(low,z.number().finite().gt(0).lt(1).parse(payload.ratio)));
  }else invalid('Unknown split workspace command.');
  if(preserveFocus&&Object.hasOwn(layout.panes,original.focusedPaneId))layout.focusedPaneId=original.focusedPaneId;
  // Recovery invariant: a lone pane always becomes the root so it fills the container.

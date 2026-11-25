@@ -142,8 +142,11 @@ export async function withGitMetadata<T>(cwd: string, signal: AbortSignal, actio
     } finally {
       // Remove only identities created here, leaves first. Never recursively
       // delete a pathname that a concurrent writer might have substituted.
+      // Each removal is independent: one failure must not skip later entries
+      // or replace the operation's own result.
       for (const entry of owned.reverse()) {
-        await removeOwnedFile(entry.path, entry, new AbortController().signal, false, entry.directory);
+        try { await removeOwnedFile(entry.path, entry, new AbortController().signal, false, entry.directory); }
+        catch { /* Retain recoverable owned remnants; keep the operation outcome. */ }
       }
     }
   },()=>controller.abort());
