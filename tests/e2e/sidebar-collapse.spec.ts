@@ -180,6 +180,18 @@ test('search chord ignores inert copies and follows the rebound chord', async ({
   expect(focused).toEqual({copy: false, real: true});
 });
 
+test('mobile search chord preserves escape focus restoration', async ({page}) => {
+  await page.setViewportSize({width: 1024, height: 844});
+  await fixture(page);
+  await page.setViewportSize({width: 390, height: 844});
+  const composer = page.getByRole('textbox', {name: 'Message', exact: true});
+  await composer.click();
+  await page.keyboard.press('Control+k');
+  await expect(sidebar(page).getByRole('textbox', {name: 'Search threads'})).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(composer).toBeFocused();
+});
+
 test('pointer handoffs finish naturally and release the snapshot without moving the conversation', async ({page}, info) => {
   await fixture(page);
   for (const closed of [true, false]) {

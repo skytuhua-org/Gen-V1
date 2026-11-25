@@ -444,12 +444,12 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const searchRef = useRef<HTMLInputElement>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchFocusRequest, setSearchFocusRequest] = useState(0);
-  useLayoutEffect(() => { if (searchFocusRequest) focusSidebarSearch(searchRef.current); }, [searchFocusRequest]);
   const sidebar = useRef<HTMLElement>(null);
   const sidebarScrim = useRef<HTMLButtonElement>(null);
   const [mobile, setMobile] = useState(() => matchMedia('(max-width: 700px)').matches);
   useEffect(() => { const query = matchMedia('(max-width: 700px)'); const change = () => setMobile(query.matches); query.addEventListener('change', change); return () => query.removeEventListener('change', change); }, []);
   useModalRegion(sidebar, mobile && sidebarOpen, () => setSidebarOpen(false), 'input', sidebarScrim);
+  useLayoutEffect(() => { if (searchFocusRequest) focusSidebarSearch(searchRef.current); }, [searchFocusRequest]);
   const [focusedResource,setFocusedResource]=useState<string|undefined>(undefined);
   const [liveUsageOpen,setLiveUsageOpen]=useState(false);
   const [liveUsageViews,setLiveUsageViews]=useState<{workspaceId:string;viewIds:string[]}>({workspaceId:'',viewIds:[]});
