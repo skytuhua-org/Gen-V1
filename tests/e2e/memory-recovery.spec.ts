@@ -259,3 +259,29 @@ for (const view of [
   await page.screenshot({ path: info.outputPath(`${view.number}-${view.name}.png`), fullPage: true });
   if (view.failed) { const retry = page.getByRole('button', { name: 'Retry', exact: true }); await retry.scrollIntoViewIfNeeded(); await retry.focus(); await retry.press('Enter'); await expect(editor(page)).toHaveValue(draft.content); }
 });
+
+test('Discard restores the saved note, clears its draft generation and focuses the editor', async ({ page }) => {
+  const keyed = (key: string, revision = 3): Note => ({ id: `thread-a:${key}`, threadId: 'thread-a', key, content: `Saved ${key}.`, revision, author: 'user', updatedAt: '2026-11-07T00:00:00Z' });
+  await mount(page, { notes: [keyed('alpha')] });
+  const editor = page.getByRole('textbox', { name: 'Note alpha', exact: true });
+  // Clean and fresh notes never show Discard.
+  await expect(page.getByRole('button', { name: 'Discard unsaved changes to alpha' })).toBeHidden();
+  await editor.fill('Edited body.');
+  const discard = page.getByRole('button', { name: 'Discard unsaved changes to alpha' });
+  await expect(discard).toBeVisible();
+  await discard.focus(); await discard.press('Enter');
+  await expect(editor).toHaveValue('Saved alpha.');
+  await expect(discard).toBeHidden();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe('TEXTAREA');
+  // Journal cleared: a remount shows the saved note with no recovered draft.
+  await page.evaluate(() => window.memoryFixture.flush());
+  await page.evaluate(() => window.memoryFixture.show(false)); await page.evaluate(() => window.memoryFixture.show(true));
+  await expect(editor).toHaveValue('Saved alpha.');
+  await expect(page.getByRole('button', { name: 'Discard unsaved changes to alpha' })).toBeHidden();
+  // A later edit survives: it writes a new generation the earlier discard cannot clear.
+  await editor.fill('Edited again.');
+  await page.evaluate(() => window.memoryFixture.flush());
+  await page.evaluate(() => window.memoryFixture.show(false)); await page.evaluate(() => window.memoryFixture.show(true));
+  await expect(editor).toHaveValue('Edited again.');
+  await expect(page.getByRole('button', { name: 'Discard unsaved changes to alpha' })).toBeVisible();
+});
