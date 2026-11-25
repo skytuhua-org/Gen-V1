@@ -5,6 +5,7 @@ const MESSAGE_WINDOW = 300;
 import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { HarnessError, type CommandReceipt, type HostCommand, type Message, type RuntimeUsage, type Snapshot, type Thread, type WorkspaceEvent } from "../contracts/index.ts";
+import { applyMigrations, type Migration } from "./migrations.ts";
 import type { CompactionCandidateV1, CompactionMetadataV1, CompactionProjectionV1 } from '../contracts/request-context.ts';
 import type { NativeCompactionReceiptV1 } from '../contracts/native-compaction.ts';
 
@@ -31,6 +32,7 @@ const PROVED = "(json_extract(u.body,'$.nativeReceipt.status')='APPLIED' AND jso
 export class Store {
   readonly db: DatabaseSync;
   readonly dataDir: string;
+  readonly lastBackupPath: string | null;
   private listeners = new Set<(event: WorkspaceEvent) => void>();
   private transactionOpen = false;
   private committedEvents: WorkspaceEvent[] = [];
@@ -56,7 +58,7 @@ export class Store {
     compactionCounts: ReturnType<DatabaseSync['prepare']>;
     compactionRows: ReturnType<DatabaseSync['prepare']>;
   };
-  constructor(dataDir: string) {
+  constructor(dataDir: string, options?: { readonly migrations?: readonly Migration[] }) {
     mkdirSync(dataDir, { recursive: true });
     this.dataDir = realpathSync(dataDir);
     this.db = new DatabaseSync(join(this.dataDir, "harness.sqlite"));
@@ -69,6 +71,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, hash TEXT NOT NULL, body TEXT NOT NULL);
       INSERT OR IGNORE INTO migrations(version) VALUES (1);
     `);
+    this.lastBackupPath = applyMigrations(this.db, this.dataDir, options?.migrations ?? []).backupPath;
     this.statements = {
       get: this.db.prepare("SELECT body FROM entities WHERE kind=? AND id=?"),
       // rowid order is insertion order: callers rely on chronological message
