@@ -83,9 +83,9 @@ The baseline above is unchanged from the previous review. Child plans contain th
 
 | Outcome | Canonical plan | Implementation boundary |
 | --- | --- | --- |
-| Transcript reading and history focus | [#2218](https://github.com/skytuhua-org/Gen-V1/issues/2218), [full plan](frontend-transcript-reading-anchor.md) | One owner for main App/controller edits, coordinated with explicit navigation and performance candidates. |
-| Shared-tooltip warm transfer | [#2219](https://github.com/skytuhua-org/Gen-V1/issues/2219), [full plan](frontend-tooltip-warm-transfer.md) | Tooltip state machine, presentation marker, minimal real grouped surface and tests; coordinate #2011. |
-| Inbox focus continuation | [Full supplement](frontend-inbox-focus-continuation.md); #2155 | Existing accessibility task, with prior body preserved and selection-policy ownership unchanged. |
+| Transcript reading and history focus | [#2218](https://github.com/skytuhua-org/Gen-V1/issues/2218), [full plan](https://github.com/skytuhua-org/Gen-V1/blob/190da16adce4c30b659af892e445b36be7e41e01/docs/agent-plans/frontend-transcript-reading-anchor.md) | One owner for main App/controller edits, coordinated with explicit navigation and performance candidates. |
+| Shared-tooltip warm transfer | [#2219](https://github.com/skytuhua-org/Gen-V1/issues/2219), [full plan](https://github.com/skytuhua-org/Gen-V1/blob/190da16adce4c30b659af892e445b36be7e41e01/docs/agent-plans/frontend-tooltip-warm-transfer.md) | Tooltip state machine, presentation marker, minimal real grouped surface and tests; coordinate #2011. |
+| Inbox focus continuation | [Full supplement](https://github.com/skytuhua-org/Gen-V1/blob/190da16adce4c30b659af892e445b36be7e41e01/docs/agent-plans/frontend-inbox-focus-continuation.md); #2155 | Existing accessibility task, with prior body preserved and selection-policy ownership unchanged. |
 
 The child plans can be implemented in parallel after their existing owners acknowledge boundaries. Shared manifests and test registrations require one writer or sequenced commits. No database, persistence schema, backend action, authority or account change is required. Roll back an individual focused implementation and its tests together; do not revert adjacent candidate work. The old Bluma visual tracks proceed through their original dependency gates.
 
