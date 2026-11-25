@@ -4,7 +4,7 @@ import {pluginIdSchema,pluginPathSchema,pluginSurfaceSchema,type PluginCompatibi
 import {checkInstalledCompatibility,readPluginIndex,safeDirectory,validatePluginPackage,validGenVersion,verifyPluginPackage,versionCompatible,type ActivePlugin,type VerifiedPackage} from './installation.ts';
 export {installPluginPackage,removePlugin} from './installation.ts';
 
-interface LoadedPlugin {record:ActivePlugin;verified:VerifiedPackage;instance?:PluginHostInstance;pending:Set<AbortController>;closePromise?:Promise<void>;closeConfirmed?:boolean}
+interface LoadedPlugin {record:ActivePlugin;verified:VerifiedPackage;instance?:PluginHostInstance;pending:Set<AbortController>;closeConfirmed?:boolean}
 export interface PluginRegistry {
  list():PluginManifest[];
  failures():{id:string;message:string}[];
@@ -92,13 +92,7 @@ export async function loadInstalledPlugins(root:string,genVersion:string):Promis
    if(closing)return closing;closed=true;
    // Revoked admission does not confirm host cleanup. Retry only hosts whose
    // close was rejected; a confirmed close is never repeated.
-   const attempts=[...loaded.values()].filter(entry=>!entry.closeConfirmed).map(entry=>{
-    if(!entry.closePromise){
-     const attempt=Promise.resolve().then(()=>entry.instance?.close());
-     entry.closePromise=attempt.then(()=>{entry.closeConfirmed=true;},error=>{entry.closePromise=undefined;throw error;});
-    }
-    return entry.closePromise;
-   });
+   const attempts=[...loaded.values()].filter(entry=>!entry.closeConfirmed).map(entry=>Promise.resolve().then(()=>entry.instance?.close()).then(()=>{entry.closeConfirmed=true;}));
    const settle=Promise.allSettled(attempts).then(results=>{
     if(results.some(result=>result.status==='rejected'))throw Error('A plug-in host could not confirm shutdown.');
     shutdownConfirmed=true;
