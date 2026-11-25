@@ -39,6 +39,18 @@ export function conversationRanges(root:HTMLElement,query:string):ConversationMa
  });
  return result;
 }
+/** Coalesce transcript mutations into one scan per frame: every streamed
+ * delta is a fresh observer task, so rescanning per notification re-walks the
+ * whole transcript (layout reads per text node) once per delta. A trailing
+ * frame run keeps the final state exact; `active` lets an empty query skip
+ * scheduling entirely. */
+export function coalescedTranscriptScan(root:HTMLElement,active:()=>boolean,scan:()=>void):()=>void{
+ let frame=0;const view=root.ownerDocument.defaultView;
+ const queue=()=>{if(frame||!active())return;frame=view?.requestAnimationFrame(()=>{frame=0;scan();})??0;};
+ const observer=new MutationObserver(queue);
+ observer.observe(root,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['hidden','aria-hidden']});
+ return()=>{observer.disconnect();if(frame)view?.cancelAnimationFrame(frame);};
+}
 const owners=new WeakMap<Document,Map<string,{all:Range[];current:Range[]}>>();
 export function highlightConversation(document:Document,id:string,matches:ConversationMatch[],current:number){
  let records=owners.get(document);if(!records){records=new Map();owners.set(document,records);}

@@ -431,6 +431,17 @@
       "reason": "TOOLS: migrate expanded artifact to shared Modal, retaining artifact identity.",
       "evidence": "<section ref={section} className={`artifact artifact-width-${artifact.presentation?.width ?? 'standard'} artifact-frame-${artifact.presentation?.frame ?? 'card'} ${expanded ? 'artifact-expanded' : ''} ${inWorkspace ? 'ar",
       "disposition": "staged-migration"
+    },
+    {
+      "file": "apps/web/src/ComposerCommands.tsx",
+      "line": 102,
+      "column": 5,
+      "rule": "ad-hoc-overlay",
+      "message": "imperative overlay attributes: use packages/ui-shell primitives; legacy occurrences require an individually reviewed migration entry.",
+      "fingerprint": "f8aedfd96612481af554629997d752cd5afde3707d24956f3b280d77d83d09be",
+      "reason": "Issue #1880 combobox semantics: the textarea is owned by the parent composer, so only this effect can annotate it; role/aria wiring applies only while the palette is open and is removed on close and unmount. Migrate once the composer input is expressed through a shared primitive.",
+      "evidence": "element.setAttribute('role', 'combobox');",
+      "disposition": "staged-migration"
     }
   ]
 }
