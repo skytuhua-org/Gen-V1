@@ -2,7 +2,7 @@ import {afterEach,expect,it} from 'vitest';
 import {link,mkdir,mkdtemp,readFile,readdir,rm,symlink,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-import {IntegrationManager} from '../packages/integrations/index.ts';
+import {IntegrationManager,type IntegrationManagerOptions} from '../packages/integrations/index.ts';
 import type {IntegrationPreferences,IntegrationScope} from '../packages/contracts/integrations.ts';
 import {DOMAIN_TOOLS,handleDomainTool,executeDomainOperation,type DomainContext} from '../packages/capabilities/index.ts';
 import type {Operation} from '../packages/contracts/index.ts';
@@ -11,9 +11,9 @@ import {randomUUID} from 'node:crypto';
 const cleanups:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const cleanup of cleanups.splice(0))await cleanup();});
 const scope:IntegrationScope={authority:{kind:'local'},projectId:'fixture',accountId:'selected-account',modelId:'selected-model'};
-async function setup(){
+async function setup(hostComplete?:IntegrationManagerOptions['hostComplete']){
  const dataRoot=await mkdtemp(join(tmpdir(),'harness-real-mcp-'));let preferences:IntegrationPreferences={};const completions:{scope:IntegrationScope;prompt:string}[]=[];
- const manager=new IntegrationManager({root:resolve('.'),dataRoot,nodeExecutable:process.execPath,getPreferences:()=>preferences,setPreference:async(id,value)=>{preferences={...preferences,[id]:value};},authorize:async input=>{if(input.authority.kind!=='local')throw Error('Company authority denied');return {profileId:'real-mcp-test',projectRoot:dataRoot};},hostComplete:async(selected,prompt)=>{completions.push({scope:selected,prompt});return {output:prompt};},onDisable:async()=>{}});
+ const manager=new IntegrationManager({root:resolve('.'),dataRoot,nodeExecutable:process.execPath,getPreferences:()=>preferences,setPreference:async(id,value)=>{preferences={...preferences,[id]:value};},authorize:async input=>{if(input.authority.kind!=='local')throw Error('Company authority denied');return {profileId:'real-mcp-test',projectRoot:dataRoot};},hostComplete:hostComplete??(async(selected,prompt)=>{completions.push({scope:selected,prompt});return {output:prompt};}),onDisable:async()=>{}});
  cleanups.push(async()=>{await manager.dispose();await rm(dataRoot,{recursive:true,force:true});});return {manager,completions,dataRoot};
 }
 it('initializes the genuine Context7 stdio service and revokes its owned process on disable',async()=>{
@@ -39,6 +39,18 @@ it('runs the genuine Promptfoo CLI MCP evaluation through only the scoped host c
  expect(session.bridge.listening).toBe(true);await manager.releaseOwner(scope);expect(session.bridge.listening).toBe(false);
  await manager.disable('promptfoo',scope);expect((await manager.status('promptfoo',scope)).state).toBe('disabled');
 },90000);
+it('cleans staged evaluation configuration after owner release interrupts an in-flight read',async()=>{
+ let started=false;const {manager,dataRoot}=await setup(async(_selected,prompt,signal)=>{
+  started=true;if(!signal)throw Error('missing cancellation signal');
+  await new Promise<void>((_resolve,reject)=>{if(signal.aborted)reject(Error('interrupted before admission'));signal.addEventListener('abort',()=>reject(Error('interrupted')),{once:true});});
+  return {output:prompt};
+ });await manager.listTools('promptfoo',scope);
+ const session=[...(manager as unknown as {sessions:Map<string,{key:string}>}).sessions.values()][0],staged=join(dataRoot,'integrations','evaluations',session.key);
+ const names=async()=>await readdir(staged).catch(error=>{if((error as NodeJS.ErrnoException).code==='ENOENT')return[];throw error;});
+ const inFlight=manager.callTool('promptfoo','run_evaluation',{config:{prompts:['fixture interrupted read'],tests:[{assert:[{type:'equals',value:'fixture interrupted read'}]}]}},scope);
+ await expect.poll(()=>started,{timeout:10000}).toBe(true);expect((await names()).length).toBe(1);
+ await Promise.all([inFlight.catch(()=>{}),manager.releaseOwner(scope)]);expect(await names()).toEqual([]);
+},90000);
 it('bounds staged evaluation configuration lifetime across success failure and restart',async()=>{
  const {manager,dataRoot}=await setup();await manager.listTools('promptfoo',scope);
  type SessionClient={callTool:(request:{name:string;arguments?:Record<string,unknown>},...rest:unknown[])=>Promise<unknown>};
@@ -61,8 +73,9 @@ it('bounds staged evaluation configuration lifetime across success failure and r
  release();await first;expect(await names()).toEqual([]);
  await manager.callTool('promptfoo','run_evaluation',{config},scope);await manager.callTool('promptfoo','run_evaluation',{config},scope);expect(await names()).toEqual([]);
  failNext=true;await expect(manager.callTool('promptfoo','run_evaluation',{config},scope)).rejects.toThrow(/synthetic evaluator failure/);expect(await names()).toEqual([]);
+ const unowned=join(dataRoot,'integrations','evaluations','unowned');await mkdir(unowned,{recursive:true});await writeFile(join(unowned,'keep.json'),'keep',{flag:'wx'});
  await manager.releaseOwner(scope);await mkdir(staged,{recursive:true});await writeFile(join(staged,'abandoned.json'),'{}',{flag:'wx'});
- await manager.listTools('promptfoo',scope);expect(await names()).toEqual([]);
+ await manager.listTools('promptfoo',scope);expect(await names()).toEqual([]);expect(await readFile(join(unowned,'keep.json'),'utf8')).toBe('keep');
 },90000);
 it('builds a real Graphify code graph, queries its stdio server and exports GraphML without a model',async()=>{
  const {manager,completions,dataRoot}=await setup();await writeFile(join(dataRoot,'sample.py'),'def add(first, second):\n    return first + second\n\ndef run():\n    return add(1, 2)\n');
