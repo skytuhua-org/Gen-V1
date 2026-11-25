@@ -20,6 +20,9 @@ export function useShellLayout() {
   useEffect(() => { try { localStorage.setItem('harness:shell-layout:v1', JSON.stringify(layout)); } catch { /* Panel layout remains usable without local storage. */ } }, [layout]);
   return [layout, setLayout] as const;
 }
+export function editableShortcutTarget(target: EventTarget | null) {
+  return target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], .xterm-host') !== null;
+}
 export function matchesShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>, shortcut: string) {
   const binding = shortcut.toLowerCase().trim();
   // Settings records the literal plus key as '+' or a chord ending in '++'.

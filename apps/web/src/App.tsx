@@ -25,7 +25,7 @@ import { getPreferences, mergePreferences } from '../../../packages/contracts/pr
 import { ShellSidebar, threadStatus } from './ShellSidebar';
 import { ProjectPicker } from './ProjectPicker';
 import { projectColorKey } from './project-colors';
-import { useShellLayout, matchesShortcut } from './shell-layout';
+import { useShellLayout, matchesShortcut, editableShortcutTarget } from './shell-layout';
 import {useSidebarCollapse} from './sidebar-collapse';
 import {sameSplitWorkspaceView,createSplitWorkspaceLayout,applySplitWorkspaceCommand} from '../../../packages/core/split-workspace-layout';
 import { ResizeHandle, WorkspacePanel } from './WorkspacePanel';
@@ -730,6 +730,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const newThreadRef = useRef<() => Promise<void>>(async()=>{}); newThreadRef.current = async()=>{if(composerPending.current||creationPending.current)return;await prepareWorkspace();openProjectSelection();};
   useEffect(() => { if(embeddedThreadId)return;const key = (event: KeyboardEvent) => {
     if (event.defaultPrevented || document.querySelector('dialog[open]')) return;
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && editableShortcutTarget(event.target)) return;
     if (matchesShortcut(event, preferences.keybindings.search)) { event.preventDefault(); setSidebarOpen(true); setLayout(value => ({ ...value, sidebarCollapsed: false })); requestAnimationFrame(() => searchRef.current?.focus()); }
     else if (matchesShortcut(event, preferences.keybindings.newThread)) { event.preventDefault(); if (!composerPending.current) void newThreadRef.current().catch(error => reportError(messageOf(error))); }
     else if (matchesShortcut(event, preferences.keybindings.toggleSidebar)) { event.preventDefault(); if (mobile) setSidebarOpen(value => !value); else setLayout(value => ({ ...value, sidebarCollapsed: !value.sidebarCollapsed })); }

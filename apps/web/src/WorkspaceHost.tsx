@@ -19,7 +19,7 @@ import {LoadingState, PendingStatus} from './LoadingState';
 import {SettingsSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
 import {ShellSidebar} from './ShellSidebar';
 import {getShellNavigationItem} from './shell-read-api';
-import {matchesShortcut, readShellLayout, useShellLayout} from './shell-layout';
+import {matchesShortcut, editableShortcutTarget, readShellLayout, useShellLayout} from './shell-layout';
 import {useSidebarCollapse} from './sidebar-collapse';
 import {useShellNavigation} from './shell-navigation';
 import {useAppearance} from './useAppearance';
@@ -232,6 +232,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.defaultPrevented || document.querySelector('dialog[open]')) return;
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && editableShortcutTarget(event.target)) return;
       if (matchesShortcut(event, preferences.keybindings.openSettings)) {event.preventDefault(); shortcuts.current.openSettings();}
       else if (matchesShortcut(event, preferences.keybindings.newThread)) {event.preventDefault(); shortcuts.current.action('new-thread');}
       else if (matchesShortcut(event, preferences.keybindings.search)) {event.preventDefault(); setOpen(true); setLayout(value => ({...value, sidebarCollapsed: false})); requestAnimationFrame(() => searchRef.current?.focus());}

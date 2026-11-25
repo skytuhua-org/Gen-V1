@@ -5,7 +5,7 @@ import {notifyAccountAuthChanged,onAccountCatalogChanged,mergeAccountModels} fro
 import type {AccountAuthTarget} from '../../../packages/contracts/authentication';
 import { Bell, Boxes, Check, Database, ExternalLink, Folder, GitBranch, Globe, Info, Keyboard, MessageSquare, Palette, Plug, Search, Settings2, type LucideIcon } from 'lucide-react';
 import type { ModelInfo, Snapshot } from '../../../packages/contracts';
-import { getPreferences, type UiPreferences } from '../../../packages/contracts/preferences';
+import { getPreferences, DEFAULT_PREFERENCES, type UiPreferences } from '../../../packages/contracts/preferences';
 import { Select } from '../../../packages/ui-shell/Select';
 import { command, getModels } from './api';
 import type { SettingsInventoryRow } from './settings-inventory';
@@ -85,8 +85,39 @@ function PreferenceControl({ item, preferences, update, busy }: { item: Settings
   if (definition.options) return <Select aria-label={item.title} disabled={busy} value={String(value)} onValueChange={next => void update({ [definition.key]: next })} options={definition.options.map((option, index) => ({ value: option, label: definition.labels?.[index] ?? option }))}/>;
   return <button type="button" role="switch" aria-label={item.title} aria-checked={Boolean(value)} disabled={busy} className="settings-switch" onClick={() => void update({ [definition.key]: !value })}><span/></button>;
 }
-function ShortcutInput({ action, label, value, save, busy }: { action: string; label: string; value: string; save: (key: string, value: string) => void; busy: boolean }) {
-  return <input aria-label={`${label} shortcut`} title="Focus and press a shortcut" readOnly value={value} disabled={busy} onKeyDown={event => { if (event.nativeEvent.isComposing || event.keyCode === 229 || event.key === 'Tab') return; event.preventDefault(); event.stopPropagation(); if (['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return; const key = event.key === ',' ? 'Comma' : event.key.length === 1 ? event.key.toUpperCase() : event.key; save(action, [event.ctrlKey ? 'Ctrl' : '', event.metaKey ? 'Meta' : '', event.altKey ? 'Alt' : '', event.shiftKey ? 'Shift' : '', key].filter(Boolean).join('+')); }}/>;
+function ShortcutInput({ action, label, value, bindings, save, busy }: { action: keyof UiPreferences['keybindings']; label: string; value: string; bindings: UiPreferences['keybindings']; save: (key: string, value: string) => void; busy: boolean }) {
+  const [error, setError] = useState(''), [conflict, setConflict] = useState<{chord: string; label: string} | null>(null);
+  useEffect(() => { if (!error) return; const timer = setTimeout(() => setError(''), 4000); return () => clearTimeout(timer); }, [error]);
+  const defaultValue = DEFAULT_PREFERENCES.keybindings[action];
+  const commit = (chord: string) => {
+    const clash = PREFERENCE_BINDINGS.find(binding => binding.preference !== action && bindings[binding.preference] === chord);
+    if (clash) { setConflict({ chord, label: clash.label }); setError(''); return; }
+    setConflict(null); setError(''); save(action, chord);
+  };
+  const capture = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229 || event.key === 'Tab') return;
+    event.preventDefault(); event.stopPropagation();
+    if (['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return;
+    const key = event.key === ',' ? 'Comma' : event.key.length === 1 ? event.key.toUpperCase() : event.key;
+    const modified = event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
+    const reserved = ['Backspace', 'Delete', 'Enter', 'Escape', ' '].includes(event.key);
+    const reject = (message: string) => { setConflict(null); setError(message); };
+    if (!modified) {
+      if (event.key === 'Escape' && action === 'stop') { commit('Escape'); return; }
+      if (/^F\d{1,2}$/.test(key)) { commit(key); return; }
+      return reject(reserved ? 'That key can\'t be a shortcut.' : 'Add a modifier: shortcuts must use Ctrl, Alt or Shift.');
+    }
+    if (reserved) return reject('That key can\'t be a shortcut.');
+    commit([event.ctrlKey ? 'Ctrl' : '', event.metaKey ? 'Meta' : '', event.altKey ? 'Alt' : '', event.shiftKey ? 'Shift' : '', key].filter(Boolean).join('+'));
+  };
+  return <span className="settings-shortcut-field">
+    <span className="settings-shortcut-input-row">
+      <input aria-label={`${label} shortcut`} title="Focus and press a shortcut" readOnly value={value} disabled={busy} onKeyDown={capture}/>
+      {value !== defaultValue && <button type="button" className="settings-shortcut-reset" aria-label={`Reset ${label} to ${defaultValue}`} disabled={busy} onClick={() => { setConflict(null); setError(''); save(action, defaultValue); }}>Reset</button>}
+    </span>
+    {error && <span className="settings-shortcut-error" role="alert">{error}</span>}
+    {conflict && <span className="settings-shortcut-confirm" role="alert">Already used by {conflict.label}. <button type="button" disabled={busy} onClick={() => { save(action, conflict.chord); setConflict(null); }}>Use anyway</button><button type="button" disabled={busy} onClick={() => setConflict(null)}>Cancel</button></span>}
+  </span>;
 }
 export interface SettingsActions {
   environmentSettings?: ReactNode; openBrowser?: (url: string) => Promise<void>;
@@ -164,7 +195,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const details = (item: SettingsInventoryRow): { description: string; control: ReactNode } => {
     if (item.id === 'thread-notifications') return { description: desktop ? preferenceRows[item.id]!.description : `${preferenceRows[item.id]!.description} System popups and sound are unavailable in this browser build; in-app notices stay active.`, control: <PreferenceControl item={item} preferences={preferences} update={update} busy={busy}/> };
     if (preferenceRows[item.id]) return { description: preferenceRows[item.id]!.description, control: <PreferenceControl item={item} preferences={preferences} update={update} busy={busy}/> };
-    if (item.id.startsWith('harness-keybinding-')) { const action = item.id.slice('harness-keybinding-'.length) as keyof UiPreferences['keybindings']; return { description: 'Focus and press a shortcut.', control: <ShortcutInput action={action} label={item.title} value={preferences.keybindings[action]} busy={busy} save={(key, value) => void persist({ preferences: { keybindings: { [key]: value } } })}/> }; }
+    if (item.id.startsWith('harness-keybinding-')) { const action = item.id.slice('harness-keybinding-'.length) as keyof UiPreferences['keybindings']; return { description: 'Focus and press a shortcut.', control: <ShortcutInput action={action} label={item.title} value={preferences.keybindings[action]} bindings={preferences.keybindings} busy={busy} save={(key, value) => void persist({ preferences: { keybindings: { [key]: value } } })}/> }; }
     if (item.id.startsWith('license-')) { const notice = DEPENDENCY_NOTICES.find(([name]) => name === item.title)!; return { description: `Version ${notice[1]} · ${notice[2]}. Complete LICENSE and NOTICE files remain in the installed package.`, control: <a href={`https://www.npmjs.com/package/${encodeURIComponent(notice[0])}/v/${notice[1]}`} target="_blank" rel="noreferrer">Package notice<ExternalLink size={12}/></a> }; }
     switch (item.id) {
       case 'harness-local-models': return { description: `${newTaskModels.length} ${newTaskModels.length === 1 ? 'model' : 'models'} reported by connected runtimes.`, control: <button type="button" className="secondary" disabled={busy} onClick={() => void refreshModels(true)}>Refresh models</button> };
