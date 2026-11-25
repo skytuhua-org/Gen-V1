@@ -54,6 +54,7 @@ describe('recorded command runner', () => {
     writeFileSync(join(fixture, 'pnpm.cmd'), 'not executed');
     writeFileSync(join(pnpm, 'bin', 'pnpm.cjs'), "if (process.argv[2] === '--version') console.log('10.30.3');");
     vi.stubEnv('PATH', fixture);
+    vi.stubEnv('PNPM_HOME', '');
     try {
       const attempts = await Promise.allSettled([runBaseline(out, fixture), runBaseline(out, fixture)]);
       expect(attempts.filter(attempt => attempt.status === 'fulfilled')).toHaveLength(1);
@@ -179,6 +180,7 @@ describe('executable resolution', () => {
     const bin = dir('resolver');
     copyFileSync(process.execPath, join(bin, process.platform === 'win32' ? 'corepack.exe' : 'corepack'), constants.COPYFILE_FICLONE);
     vi.stubEnv('PATH', bin);
+    vi.stubEnv('PNPM_HOME', '');
     try {
       const pm = resolvePackageManager(process.cwd());
       expect(pm.declaredVersion).toBe('10.30.3');
@@ -201,12 +203,32 @@ describe('executable resolution', () => {
     symlinkSync(join(packageRoot, 'bin', 'pnpm.cjs'), join(bin, 'pnpm'));
     copyFileSync(process.execPath, join(bin, process.platform === 'win32' ? 'corepack.exe' : 'corepack'), constants.COPYFILE_FICLONE);
     vi.stubEnv('PATH', bin);
+    vi.stubEnv('PNPM_HOME', '');
     try {
       const pm = resolvePackageManager(process.cwd());
       expect(pm.declaredVersion).toBe('10.30.3');
       expect(pm.file).toBe(process.execPath);
       expect(`${pm.file} ${pm.prefix.join(' ')}`.toLowerCase()).not.toContain('corepack');
       expect(pm.prefix.at(-1)).toContain(join('pnpm', 'bin', 'pnpm.cjs'));
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('prefers the pinned pnpm/action-setup PNPM_HOME when PATH contains no pnpm shim', () => {
+    const prefix = dir('pnpm-action-setup'), bin = join(prefix, 'node_modules', '.bin');
+    const packageRoot = join(prefix, 'node_modules', 'pnpm');
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(join(packageRoot, 'bin'), { recursive: true });
+    writeFileSync(join(bin, 'pnpm.CMD'), '@echo off');
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: 'pnpm', version: '10.30.3' }));
+    writeFileSync(join(packageRoot, 'bin', 'pnpm.cjs'), "process.stdout.write('10.30.3\\n');");
+    vi.stubEnv('PATH', dir('without-pnpm-on-path'));
+    vi.stubEnv('PNPM_HOME', bin);
+    try {
+      const pm = resolvePackageManager(process.cwd());
+      expect(pm.declaredVersion).toBe('10.30.3');
+      expect(pm.file).toBe(process.execPath);
+      expect(pm.prefix).toHaveLength(1);
+      expect(pm.prefix[0].toLowerCase()).toContain(join('pnpm', 'bin', 'pnpm.cjs').toLowerCase());
     } finally { vi.unstubAllEnvs(); }
   });
 
@@ -222,6 +244,7 @@ describe('executable resolution', () => {
     const node = join(dir('mismatch-node'), process.platform === 'win32' ? 'node.exe' : 'node');
     writeFileSync(node, '');
     vi.stubEnv('PATH', bin);
+    vi.stubEnv('PNPM_HOME', '');
     const execPath = vi.spyOn(process, 'execPath', 'get').mockReturnValue(node);
     try {
       // No corepack here, so the mismatch is reported by the caller as the

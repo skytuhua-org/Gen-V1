@@ -62,7 +62,11 @@ function installedPnpm(declared: string | null): InstalledPnpm | null {
   // caller falls back to only after this search fails to produce a match.
   const shimmed = (path: string) => path.split(/[\\/]/).includes('corepack');
   let fallback: InstalledPnpm | null = null;
-  for (const directory of (process.env.PATH ?? process.env.Path ?? '').split(delimiter).filter(Boolean)) {
+  // pnpm/action-setup supplies PNPM_HOME even when its .CMD shim is absent from PATH.
+  // Check its pinned install first; package metadata must still match the declaration.
+  const searchDirs = [process.env.PNPM_HOME, ...(process.env.PATH ?? process.env.Path ?? '').split(delimiter)]
+    .filter((path): path is string => Boolean(path));
+  for (const directory of new Set(searchDirs)) {
     for (const name of ['pnpm', 'pnpm.exe', 'pnpm.cmd', 'pnpm.CMD']) {
       const target = join(directory, name);
       if (!existsSync(target) || !statSync(target).isFile()) continue;
