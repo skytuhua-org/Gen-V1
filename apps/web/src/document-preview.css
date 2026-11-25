@@ -79,7 +79,7 @@
 .surface-split:has(>.document-preview):has(>.task-steps) { align-items:start; }
 .surface-split:has(>.document-preview):has(>.task-steps)>.document-preview:not([data-failure="compact"]) { min-height:580px; }
 .surface-split:has(>.document-preview)>.task-steps { min-height:0; }
-@container document-pair (width < 620px) { .surface-split:has(>.document-preview):has(>.task-steps)>.document-preview { min-height:380px; } .surface-split:has(>.document-preview)>.task-steps { min-height:0; } }
+@container document-pair (width < 620px) { .surface-split:has(>.document-preview):has(>.task-steps)>.document-preview:not([data-failure="compact"]) { min-height:380px; } .surface-split:has(>.document-preview)>.task-steps { min-height:0; } }
 @media (prefers-reduced-motion:reduce) { .document-preview-page { transition:none; } }
 
 .document-active-field { animation:document-focus-arrival var(--ui-motion-status) var(--ui-ease-enter); }

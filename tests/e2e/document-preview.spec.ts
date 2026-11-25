@@ -598,3 +598,21 @@ test('a failed preview collapses to a compact error row without dead chrome', as
   await expect(page.locator('.document-preview-footer')).toHaveCount(0);
   expect((await failure.boundingBox())!.height).toBeLessThanOrEqual(96);
 });
+
+for (const layout of ['steps', 'centered'] as const) for (const width of [900, 500]) {
+ test(`a failed preview stays compact beside ${layout} at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({width: 1440, height: 1000});
+  const snapshot = workspace(), fields = snapshot.artifacts[0].spec!.elements.fields;
+  if (layout === 'steps') {
+   fields.type = 'Steps'; fields.props = {stateKey: 'currentStep', steps: [{key: 'name', label: 'Name'}, {key: 'email', label: 'Email'}, {key: 'signature', label: 'Signature'}]};
+  } else { fields.type = 'Panel'; fields.props = {align: 'center'}; }
+  await fixtureHost(page, new TextEncoder().encode('not a pdf'), {snapshot}); await page.goto('/');
+  const failure = page.locator('.document-preview-failure'), surface = page.locator('.document-preview'), pair = page.locator('.document-pair-container');
+  await expect(failure).toBeVisible({timeout: 20000});
+  await pair.evaluate((node, size) => {node.style.width = `${size}px`; node.style.maxWidth = 'none';}, width);
+  await expect.poll(async () => Math.round((await pair.boundingBox())!.width)).toBe(width);
+  await expect.poll(() => surface.evaluate(node => getComputedStyle(node).minHeight)).toBe('0px');
+  expect((await surface.boundingBox())!.height).toBeLessThanOrEqual((await failure.boundingBox())!.height + 60);
+  await expect(surface.locator('.document-preview-tools,.document-preview-paging,.document-preview-footer')).toHaveCount(0);
+ });
+}
