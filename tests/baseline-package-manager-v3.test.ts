@@ -36,6 +36,7 @@ function fixture(version = '10.30.3') {
   const calls = join(root, 'calls.jsonl');
   const entry = join(bin, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs');
   mkdirSync(join(bin, 'node_modules', 'pnpm', 'bin'), { recursive: true });
+  writeFileSync(join(bin, 'node_modules', 'pnpm', 'package.json'), JSON.stringify({ name: 'pnpm', version }));
   writeFileSync(entry, `const fs = require('node:fs');
 fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({args: process.argv.slice(2), network: process.env.COREPACK_ENABLE_NETWORK ?? null}) + '\\n');
 if (process.argv[2] === '--version') console.log(${JSON.stringify(version)});
@@ -72,6 +73,16 @@ describe('M01 installed package manager admission', () => {
     } finally { execPath.mockRestore(); vi.unstubAllEnvs(); }
   });
 
+  it('prefers the pnpm installed at PNPM_HOME over an offline Corepack dispatcher', () => {
+    const value = fixture();
+    vi.stubEnv('PNPM_HOME', join(value.root, 'bin'));
+    vi.stubEnv('PATH', value.runtime);
+    try {
+      const resolved = resolvePackageManager(value.root);
+      expect(resolved.file).toBe(process.execPath);
+      expect(resolved.prefix).toEqual([value.entry]);
+    } finally { vi.unstubAllEnvs(); }
+  });
   it('inherits only the configured Corepack cache for offline commands, unless explicitly overridden', async () => {
     const cache = join(directory, 'configured cache'), override = join(directory, 'other cache');
     vi.stubEnv('COREPACK_HOME', cache);
