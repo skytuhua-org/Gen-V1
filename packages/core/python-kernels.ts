@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { HarnessError } from '../contracts/index.ts';
 import type { ToolOwner } from '../contracts/tool-effects.ts';
-import { sameToolOwner } from '../contracts/tool-results.ts';
+import { sameToolOwner, type ToolResultGrantV1 } from '../contracts/tool-results.ts';
 import { pythonKernelIdentitySchema, pythonKernelV1Schema, type PythonKernelIdentity, type PythonKernelV1, type ProgramExecutor } from '../contracts/tool-program.ts';
 import { digest, type Store } from '../storage/store.ts';
 import type { PrepareToolProgram, ToolPrograms, ToolProgramResult } from './tool-programs.ts';
@@ -14,7 +14,7 @@ export interface PythonKernelHooks {
 }
 export type PythonKernelFactory = (generation: number) => ProgramExecutor | Promise<ProgramExecutor>;
 type CellInput = Omit<PrepareToolProgram, 'owner' | 'language'>;
-interface OwnedKernel { executor: ProgramExecutor; factory: PythonKernelFactory; generation: number; stopping?: Promise<void> }
+interface OwnedKernel { executor: ProgramExecutor; factory: PythonKernelFactory; generation: number; retainedGrants: ToolResultGrantV1[]; stopping?: Promise<void> }
 interface KernelSelection { kernelId: string; token: symbol }
 
 /** Persisted kernel identity is not a process checkpoint. Only a live owned
@@ -77,7 +77,7 @@ export class PythonKernels {
     return done;
   }
   private activate(expected: PythonKernelV1, executor: ProgramExecutor, factory: PythonKernelFactory, selection: KernelSelection, event: string): PythonKernelV1 {
-    const process = { executor, factory, generation: expected.generation };
+    const process: OwnedKernel = { executor, factory, generation: expected.generation, retainedGrants: [] };
     const ready = pythonKernelV1Schema.parse({ ...expected, state: 'READY', updatedAt: Date.now() });
     try {
       this.store.internal(event, expected.identity.owner.threadId, () => {
@@ -143,7 +143,7 @@ export class PythonKernels {
       const current = this.get(kernelId, owner);
       if (current.generation !== generation || current.state !== 'RUNNING') throw new HarnessError('KERNEL_RESET_REQUIRED', 'Kernel generation changed before cell dispatch');
       kernel = this.put({ ...current, activeProgramId: program.programId }, 'pythonKernel.cell.started');
-      const result = await this.programs.run(program.programId, owner, process.executor);
+      const result = await this.programs.run(program.programId, owner, process.executor, { pythonState: process });
       const after = this.get(kernelId, owner);
       if (after.generation === generation && after.state === 'RUNNING') {
         if (result.state === 'SUCCEEDED') this.put({ ...after, state: 'READY', activeProgramId: null, retainedState: true, error: null }, 'pythonKernel.cell.finished');

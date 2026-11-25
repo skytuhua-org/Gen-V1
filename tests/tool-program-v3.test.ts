@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../packages/storage/store.ts';
@@ -14,6 +14,8 @@ import {
   programJournalV1Schema, pythonKernelV1Schema, programLimitsSchema,
 } from '../packages/contracts/tool-program.ts';
 import type { ProgramExecutionRequest, ProgramExecutor } from '../packages/contracts/tool-program.ts';
+import { HarnessError, type ResourceGrant } from '../packages/contracts/index.ts';
+import { PythonKernels } from '../packages/core/python-kernels.ts';
 
 const owner = { threadId: 'thread', runId: 'run', epoch: 1, projectId: 'project', workspaceId: 'workspace', accountBinding: 'account' };
 const hash = 'a'.repeat(64);
@@ -75,6 +77,48 @@ describe('M12 non-replaying synthetic host protocol', () => {
     expect(Object.fromEntries(Object.entries(flags).filter(([key]) => key.startsWith('tools.')))).toMatchObject({
       'tools.jsReadProgramV1': false, 'tools.durableReplayExperimentV1': false, 'tools.pythonKernelV1': false,
     });
+  });
+
+  it('carries source grant witnesses into later Python results on the same generation', async () => {
+    const f = fixture(async () => null);
+    const fileDir = mkdtempSync(join(tmpdir(), 'm12-grants-'));
+    cleanups.push(() => rmSync(fileDir, { recursive: true, force: true }));
+    const path = join(fileDir, 'fixture.json');
+    writeFileSync(path, '1');
+    const info = statSync(path, { bigint: true });
+    const grant: ResourceGrant = { id: 'fixture-grant', threadId: owner.threadId, path, label: 'Fixture',
+      kind: 'file', writable: false, createdAt: '', identity: { dev: String(info.dev), ino: String(info.ino) } };
+    f.store.internal('fixture.grant', owner.threadId, () => f.store.put('resource', grant.id, owner.threadId, grant));
+    const witnesses = await f.results.captureGrants(owner, [{ resourceId: grant.id }]);
+    const inputRef = await f.results.save({ owner, programId: 'fixture-input', status: 'SUCCEEDED', value: 1, grants: witnesses });
+    const execute = vi.fn(async () => 1);
+    const fixtureExecutor = syntheticExecutor(execute);
+    const executor: ProgramExecutor = { ...fixtureExecutor, proof: { ...fixtureExecutor.proof, language: 'PYTHON', isolation: 'M03_CONFINED_PROCESS' } };
+    const kernels = new PythonKernels(f.store, f.programs, { currentOwner: () => owner, enabled: () => true });
+    cleanups.unshift(() => kernels.close());
+    const kernel = await kernels.create({ owner, interpreterDigest: hash, configurationDigest: hash,
+      cwdIdentity: 'device:inode', toolRegistryDigest: hash, executionProfileDigest: hash }, () => executor);
+    const cell = { source: 'result = 1', allowedTools: [], requestedAggregate: 'Fixture value' };
+
+    const first = await kernels.cell(kernel.kernelId, owner, { ...cell, inputRefs: [inputRef] });
+    const next = await kernels.cell(kernel.kernelId, owner, cell);
+    expect(first.state).toBe('SUCCEEDED');
+    expect(next.state).toBe('SUCCEEDED');
+    expect((await f.results.read(owner, next.resultRef!, { programId: next.programId })).grants).toEqual(witnesses);
+
+    const grantCheck = vi.spyOn(f.results, 'revalidateGrants')
+      .mockRejectedValueOnce(new HarnessError('RESULT_ACCESS_DENIED', 'Fixture refusal'));
+    try {
+      const denied = await kernels.cell(kernel.kernelId, owner, cell);
+      expect(denied).toMatchObject({ state: 'FAILED', resultRef: null, error: { code: 'RESULT_ACCESS_DENIED' } });
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(kernels.get(kernel.kernelId, owner)).toMatchObject({ state: 'RESET_REQUIRED', retainedState: false });
+    } finally { grantCheck.mockRestore(); }
+
+    const reset = await kernels.reset(kernel.kernelId, owner);
+    expect(reset.generation).toBe(kernel.generation + 1);
+    const afterReset = await kernels.cell(kernel.kernelId, owner, cell);
+    expect((await f.results.read(owner, afterReset.resultRef!, { programId: afterReset.programId })).grants).toEqual([]);
   });
 
   it('persists identity and M02 dispatch before the read and keeps bulk out of snapshots and events', async () => {

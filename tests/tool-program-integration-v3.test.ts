@@ -9,23 +9,26 @@ import type { RuntimeAdapter, Thread, ResourceGrant } from '../packages/contract
 import type { ToolProgramResult } from '../packages/core/tool-programs.ts';
 import * as domain from '../packages/capabilities/index.ts';
 import { buildServer } from '../apps/server/server.ts';
+import { EffectAdmissionPolicy } from '../packages/core/effect-admission-policy.ts';
 import { testEffectAuthenticator } from './fixtures/effect-authenticator.ts';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const cleanup of cleanups.splice(0)) await cleanup(); });
-async function fixture(enabled = true) {
+async function fixture(enabled = true, { audit = true, authority = true, key = true } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'm12-service-')), store = new Store(join(dir, 'state'));
   const executor = await createJavaScriptExecutor();
   const runtime: RuntimeAdapter = { configure() {}, models: async () => [], start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {}, history: async () => [], dispose: async () => {} };
-  const service = new Service(store, runtime, { toolEffectFlags: { 'audit.effectsV1': true, 'security.authorityV1': true },
-    toolEffectAuthenticator: testEffectAuthenticator(),
+  const service = new Service(store, runtime, { toolEffectFlags: { 'audit.effectsV1': audit, 'security.authorityV1': authority },
+    toolEffectAuthenticator: key ? testEffectAuthenticator() : undefined,
     toolPrograms: { flags: { 'tools.jsReadProgramV1': enabled }, javascript: executor } });
   const thread: Thread = { id: 'thread', title: 'M12 integration', projectName: null, status: 'working', epoch: 1, runId: 'run', modelId: null, accountId: 'account', sessionPath: null, createdAt: '', updatedAt: '' };
   const filename = join(dir, 'source.json'); await writeFile(filename, '{"rows":[1,2,3]}'); const info = await stat(filename, { bigint: true });
   const grant: ResourceGrant = { id: 'r', threadId: thread.id, path: filename, label: 'Source', kind: 'file', writable: false, createdAt: '', identity: { dev: String(info.dev), ino: String(info.ino) } };
   store.internal('fixture', thread.id, () => { store.put('thread', thread.id, thread.id, thread); store.put('resource', grant.id, thread.id, grant); });
-  cleanups.push(async () => { await service.dispose(); store.close(); await rm(dir, { recursive: true, force: true }); });
-  return { service, store, thread, ctx: { threadId: thread.id, runId: 'run', epoch: 1 } };
+  let closing: Promise<void> | undefined;
+  const close = () => closing ??= service.dispose().then(() => { store.close(); });
+  cleanups.push(async () => { await close(); await rm(dir, { recursive: true, force: true }); });
+  return { service, store, thread, close, ctx: { threadId: thread.id, runId: 'run', epoch: 1 } };
 }
 
 it('keeps actual JavaScript nested host results private and returns only the explicit aggregate', async () => {
@@ -52,6 +55,43 @@ it('does not advertise or execute a disabled program capability', async () => {
   const f = await fixture(false);
   expect(f.service.programToolMetadata()).toEqual([]);
   await expect(f.service.tool({ name: 'tool_program', args: { commandId: 'disabled', source: 'return 1', allowedTools: [], requestedAggregate: 'one' } }, f.ctx)).rejects.toMatchObject({ code: 'PROGRAM_DISABLED' });
+});
+
+it.each([
+  { audit: false, authority: false, key: true },
+  { audit: true, authority: false, key: false },
+  { audit: false, authority: true, key: false },
+])('requires M02 effect admission and key custody for program discovery (%j)', async options => {
+  const f = await fixture(true, options);
+  expect(f.service.toolProgramView(f.thread.id).available).toEqual({ javascript: false, python: false, replay: false });
+  expect(f.service.programToolMetadata()).toEqual([]);
+  await expect(f.service.tool({ name: 'tool_program_discover', args: {} }, f.ctx)).rejects.toMatchObject({ code: 'PROGRAM_DISABLED' });
+  expect(f.store.all('toolEffect')).toHaveLength(0);
+  expect(f.store.all('toolProgramRequest')).toHaveLength(0);
+});
+
+it('does not change effect admission after reopening a profile that refuses an M12-only program', async () => {
+  const f = await fixture(true, { audit: false, authority: false });
+  const statePath = f.store.dataDir;
+  await expect(f.service.tool({ name: 'tool_program', args: {
+    commandId: 'unavailable-program', source: 'return 1', allowedTools: [], requestedAggregate: 'Fixture value',
+  } }, f.ctx)).rejects.toMatchObject({ code: 'PROGRAM_DISABLED' });
+  expect(f.store.all('toolEffect')).toHaveLength(0);
+  expect(f.store.all('toolProgramRequest')).toHaveLength(0);
+
+  await f.close();
+  const reopened = new Store(statePath);
+  try {
+    const policy = new EffectAdmissionPolicy(reopened, { enabled: () => false });
+    expect(policy.disabled).toBe(false);
+    expect(reopened.all('toolEffect')).toHaveLength(0);
+  } finally { reopened.close(); }
+});
+
+it('advertises program tools with audit admission and a host key', async () => {
+  const f = await fixture(true, { audit: true, authority: false });
+  expect(f.service.toolProgramView(f.thread.id).available).toEqual({ javascript: true, python: false, replay: false });
+  await expect(f.service.tool({ name: 'tool_program_discover', args: {} }, f.ctx)).resolves.toHaveProperty('tools');
 });
 
 it('deduplicates a top-level program command without running its script a second time', async () => {

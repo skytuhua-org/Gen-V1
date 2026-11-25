@@ -129,7 +129,7 @@ export class PrivateToolResults {
       catch { active(signal); throw denied(); }
       active(signal); this.assertOwner(owner); this.grantRecord(owner, witness);
     }
-    active(signal); this.assertOwner(owner);
+    active(signal); this.syncGrants(owner, witnesses);
   }
   prepare(input: SaveToolResult): PreparedToolResult {
     this.assertOwner(input.owner);
@@ -183,9 +183,10 @@ export class PrivateToolResults {
     this.store.put(KIND, record.resultRef, record.owner.threadId, record);
     return record.resultRef;
   }
-  async save(input: SaveToolResult): Promise<string> {
+  async save(input: SaveToolResult, signal?: AbortSignal): Promise<string> {
     const prepared = this.prepare(input), record = this.prepared.get(prepared)!;
-    await this.revalidateGrants(record.owner, record.grants);
+    await this.revalidateGrants(record.owner, record.grants, signal);
+    active(signal);
     this.store.internal('privateToolResult.stored', record.owner.threadId, () => { this.put(prepared); return metadata(record); });
     return prepared.resultRef;
   }

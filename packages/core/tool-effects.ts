@@ -109,6 +109,10 @@ export class ToolEffectLedger {
   admissionsDisabled(): boolean { return this.admissionPolicy.disabled; }
   assertAdmissionsEnabled(): void { this.admissionPolicy.assertEnabled(); }
 
+  authenticatedAdmissionsAvailable(): boolean {
+    return !this.admissionsDisabled() && this.authenticated() && this.authenticator !== undefined;
+  }
+
   private authenticated(): boolean { return this.flags.enabled("audit.effectsV1") || this.flags.enabled("security.authorityV1"); }
   private signer(): EffectAuthenticator {
     if (!this.authenticator) throw new HarnessError("EFFECT_KEY_UNAVAILABLE", "Protected effect authority is unavailable.");

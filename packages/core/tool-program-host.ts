@@ -44,14 +44,19 @@ export class ToolProgramHost {
     this.flags = createToolProgramFlags(options.flags);
     this.results = new PrivateToolResults(store, { currentOwner: hooks.currentOwner, authorizeRetainedOwner: hooks.retainedOwner });
     this.disclosure = new ToolDisclosure(store, hooks.authority, { currentOwner: hooks.currentOwner });
-    this.programs = new ToolPrograms(store, { ...hooks, disclosure: this.disclosure, results: this.results, enabled: key => this.flags.enabled(key) });
-    this.kernels = new PythonKernels(store, this.programs, { currentOwner: hooks.currentOwner, enabled: () => this.flags.enabled('tools.pythonKernelV1') });
+    this.programs = new ToolPrograms(store, { ...hooks, disclosure: this.disclosure, results: this.results, enabled: key => this.enabled(key) });
+    this.kernels = new PythonKernels(store, this.programs, { currentOwner: hooks.currentOwner, enabled: () => this.enabled('tools.pythonKernelV1') });
+  }
+  private enabled(key: M12FlagKey): boolean {
+    // Every admitted program writes through the effect ledger. Reuse its
+    // protected-profile policy before exposing a capability or preparing work.
+    return !this.admissionStopped && this.flags.enabled(key) && this.hooks.effects.authenticatedAdmissionsAvailable();
   }
   available() {
-    if (this.admissionStopped) return { javascript: false, python: false, replay: false };
-    return { javascript: this.flags.enabled('tools.jsReadProgramV1') && !!this.options.javascript,
-      python: this.flags.enabled('tools.pythonKernelV1') && !!this.options.python,
-      replay: this.flags.enabled('tools.jsReadProgramV1') && this.flags.enabled('tools.durableReplayExperimentV1') && !!this.options.javascript };
+    const javascript = this.enabled('tools.jsReadProgramV1') && !!this.options.javascript;
+    return { javascript,
+      python: this.enabled('tools.pythonKernelV1') && !!this.options.python,
+      replay: javascript && this.enabled('tools.durableReplayExperimentV1') };
   }
   metadata() {
     const available = this.available();

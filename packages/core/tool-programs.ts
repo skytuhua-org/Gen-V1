@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { HarnessError, type Thread, type ToolCall } from '../contracts/index.ts';
 import type { ToolEffectRecord, ToolOwner } from '../contracts/tool-effects.ts';
+import type { ToolResultGrantV1 } from '../contracts/tool-results.ts';
 import {
   DEFAULT_PROGRAM_LIMITS, PROGRAM_INPUT_LIMITS, programInputRefsSchema, toolProgramV1Schema, nestedCallV1Schema, programJournalV1Schema,
   type ToolProgramV1, type NestedCallV1, type ProgramJournalV1, type ProgramLimits,
@@ -33,6 +34,7 @@ export interface PrepareToolProgram {
   requestedAggregate: string;
   limits?: Partial<ProgramLimits>;
 }
+interface PythonRetainedState { retainedGrants: ToolResultGrantV1[] }
 interface PrivateProgram {
   source: string;
   requestedAggregate: string;
@@ -184,7 +186,7 @@ export class ToolPrograms {
     return program;
   }
 
-  async run(programId: string, owner: ToolOwner, executor: ProgramExecutor, options: { replay?: boolean } = {}): Promise<ToolProgramResult> {
+  async run(programId: string, owner: ToolOwner, executor: ProgramExecutor, options: { replay?: boolean; pythonState?: PythonRetainedState } = {}): Promise<ToolProgramResult> {
     this.assertOwner(owner);
     const program = this.require(programId, owner);
     if (this.active.has(programId)) throw new HarnessError('PROGRAM_BUSY', 'The program already has an owned executor');
@@ -199,13 +201,14 @@ export class ToolPrograms {
       throw new HarnessError('REPLAY_DISABLED', 'Durable replay is a separate JavaScript experiment; Python cells never replay');
     const controller = new AbortController();
     // Install ownership before execution can yield or a caller can cancel.
-    const done = Promise.resolve().then(() => this.execute(programId, owner, executor, controller, options.replay === true));
+    const pythonState = program.language === 'PYTHON' ? options.pythonState : undefined;
+    const done = Promise.resolve().then(() => this.execute(programId, owner, executor, controller, options.replay === true, pythonState));
     this.active.set(programId, { controller, done });
     try { return await done; }
     finally { if (this.active.get(programId)?.controller === controller) this.active.delete(programId); }
   }
 
-  private async execute(programId: string, owner: ToolOwner, executor: ProgramExecutor, controller: AbortController, replay: boolean): Promise<ToolProgramResult> {
+  private async execute(programId: string, owner: ToolOwner, executor: ProgramExecutor, controller: AbortController, replay: boolean, pythonState?: PythonRetainedState): Promise<ToolProgramResult> {
     let program = this.require(programId, owner);
     // Reject older/corrupted duplicate lists before any write or payload read.
     // They cannot be persisted again under the current strict program schema.
@@ -513,12 +516,16 @@ export class ToolPrograms {
         if (!controller.signal.aborted) controller.abort(error);
         throw error;
       });
+      if (pythonState?.retainedGrants.length) {
+        await this.host.results.revalidateGrants(owner, pythonState.retainedGrants, controller.signal);
+        check();
+      }
+      execution = executor.execute({ source: privateProgram.source, inputValues, limits: program.limits,
+        startSeed: journal.startSeed, startClock: journal.startClock, signal: controller.signal, call, beforeDelivery });
       const aborted = new Promise<never>((_, reject) => {
         if (controller.signal.aborted) reject(controller.signal.reason);
         else controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true });
       });
-      execution = executor.execute({ source: privateProgram.source, inputValues, limits: program.limits,
-        startSeed: journal.startSeed, startClock: journal.startClock, signal: controller.signal, call, beforeDelivery });
       const output = await Promise.race([execution, aborted]);
       check();
       if (reads.size) throw new HarnessError('PROGRAM_PENDING_CALLS', 'Program returned before its nested reads settled');
@@ -528,16 +535,18 @@ export class ToolPrograms {
       const sourceRefs = this.sourceRefs(programId, owner);
       if (Buffer.byteLength(JSON.stringify({ aggregate: output ?? null, sourceRefs })) > program.limits.maxOutputBytes - 1024)
         throw new HarnessError('OUTPUT_LIMIT', 'The explicit aggregate and references exceed the visible output budget');
-      const grants = [] as Awaited<ReturnType<PrivateToolResults['captureGrants']>>;
+      // A Python cell may retain any acknowledged input or source in its globals.
+      const grants = [...(pythonState?.retainedGrants ?? [])];
       for (const ref of [...program.inputRefs, ...sourceRefs]) grants.push(...(await this.host.results.read(owner, ref, { programId, signal: controller.signal })).grants);
       const uniqueGrants = [...new Map(grants.map(grant => [digest(grant), grant])).values()];
-      const resultRef = await this.host.results.save({ owner, programId, status: 'SUCCEEDED', value: output ?? null, grants: uniqueGrants });
+      const resultRef = await this.host.results.save({ owner, programId, status: 'SUCCEEDED', value: output ?? null, grants: uniqueGrants }, controller.signal);
       check();
       program = { ...current(), state: 'SUCCEEDED', resultRef, elapsedMs: now() - journal.startClock, error: null };
       this.write(program, 'toolProgram.succeeded');
       this.boundary('program.result_committed', programId);
       const result = this.response(program, sourceRefs, output ?? null);
       this.host.effects.settle(attemptId, { value: { programId, resultRef, usage: result.usage } }, 'SUCCEEDED', resultRef);
+      if (pythonState) pythonState.retainedGrants = uniqueGrants;
       return result;
     } catch (error) {
       const cause = controller.signal.aborted ? controller.signal.reason : error;
