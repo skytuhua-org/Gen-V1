@@ -17,6 +17,8 @@
     ".github/workflows/m15-evidence.yml",
     ".gitignore",
     ".oxlintrc.json",
+    ".vscode/extensions.json",
+    ".vscode/launch.json",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "DESIGN.md",
