@@ -1,5 +1,5 @@
 import {afterEach,expect,it} from 'vitest';
-import {link,mkdir,mkdtemp,readFile,rm,symlink,writeFile} from 'node:fs/promises';
+import {link,mkdir,mkdtemp,readFile,readdir,rm,symlink,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {IntegrationManager} from '../packages/integrations/index.ts';
@@ -33,6 +33,31 @@ it('runs the genuine Promptfoo CLI MCP evaluation through only the scoped host c
  const session=[...(manager as unknown as {sessions:Map<string,{bridge:{listening:boolean}}>}).sessions.values()][0];
  expect(session.bridge.listening).toBe(true);await manager.releaseOwner(scope);expect(session.bridge.listening).toBe(false);
  await manager.disable('promptfoo',scope);expect((await manager.status('promptfoo',scope)).state).toBe('disabled');
+},90000);
+it('bounds staged evaluation configuration lifetime across success failure and restart',async()=>{
+ const {manager,dataRoot}=await setup();await manager.listTools('promptfoo',scope);
+ type SessionClient={callTool:(request:{name:string;arguments?:Record<string,unknown>},...rest:unknown[])=>Promise<unknown>};
+ const session=[...(manager as unknown as {sessions:Map<string,{key:string;client:SessionClient}>}).sessions.values()][0];
+ const original=session.client.callTool.bind(session.client),staged=join(dataRoot,'integrations','evaluations',session.key),seen:string[]=[];
+ const names=async()=>await readdir(staged).catch(error=>{if((error as NodeJS.ErrnoException).code==='ENOENT')return[];throw error;});
+ let release=()=>{},failNext=false,holdFirst=true;const hold=new Promise<void>(resolve=>{release=resolve;});
+ session.client.callTool=async(request,...rest)=>{
+  if(request.name!=='run_evaluation')return original(request,...rest);
+  const path=String(request.arguments?.configPath);seen.push(path);
+  expect((await readFile(path,'utf8'))).toContain('harness-native-selected-account');
+  if(failNext)throw Error('synthetic evaluator failure');
+  if(holdFirst){holdFirst=false;await hold;}
+  return {content:[],isError:false};
+ };
+ const config={prompts:['fixture lifetime'],tests:[{assert:[{type:'equals',value:'fixture lifetime'}]}]};
+ const first=manager.callTool('promptfoo','run_evaluation',{config},scope);
+ await expect.poll(()=>seen.length,{timeout:10000}).toBe(1);
+ expect(await names()).toEqual([seen[0].split(/[\\/]/).pop()]);
+ release();await first;expect(await names()).toEqual([]);
+ await manager.callTool('promptfoo','run_evaluation',{config},scope);await manager.callTool('promptfoo','run_evaluation',{config},scope);expect(await names()).toEqual([]);
+ failNext=true;await expect(manager.callTool('promptfoo','run_evaluation',{config},scope)).rejects.toThrow(/synthetic evaluator failure/);expect(await names()).toEqual([]);
+ await manager.releaseOwner(scope);await mkdir(staged,{recursive:true});await writeFile(join(staged,'abandoned.json'),'{}',{flag:'wx'});
+ await manager.listTools('promptfoo',scope);expect(await names()).toEqual([]);
 },90000);
 it('builds a real Graphify code graph, queries its stdio server and exports GraphML without a model',async()=>{
  const {manager,completions,dataRoot}=await setup();await writeFile(join(dataRoot,'sample.py'),'def add(first, second):\n    return first + second\n\ndef run():\n    return add(1, 2)\n');
