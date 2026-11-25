@@ -70,9 +70,6 @@ importers:
       '@google/gemini-cli':
         specifier: 0.66.0
         version: 0.66.0
-      '@json-render/core':
-        specifier: 0.21.3
-        version: 0.21.3(zod@4.6.6)
       '@json-render/react':
         specifier: 0.21.3
         version: 0.21.3(react@19.2.3)(zod@4.6.6)
