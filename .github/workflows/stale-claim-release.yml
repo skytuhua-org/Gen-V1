@@ -99,11 +99,15 @@ jobs:
                 if (!Number.isFinite(created)) { diagnose(comment, worker, 'Invalid creation timestamp'); continue; }
                 const fields = {};
                 for (const line of lines) {
-                  // Only wire-format field lines (KEY=value; KEY=value) carry fields;
-                  // a stray OWNER=NONE inside checkpoint prose is not an ownership field.
-                  if (!/^\s*[A-Z][A-Z0-9_]*\s*=/.test(line)) continue;
-                  for (const field of line.matchAll(/(?:^|[;|])\s*(OWNER|SCOPE|TASKS)\s*=\s*(.*?)(?=\s*[;|]\s*[a-z][a-z0-9_]*\s*=|$)/gi)) {
-                    (fields[field[1].toUpperCase()] ||= []).push(field[2].trim());
+                  // Fields are whole `KEY=value` segments between ; or | separators.
+                  // OWNER accepts only a single token, so prose like "; OWNER=NONE
+                  // would be required" never registers as an ownership field.
+                  for (const segment of line.split(/[;|]/)) {
+                    const m = /^\s*(OWNER|SCOPE|TASKS)\s*=\s*(.*?)\s*$/i.exec(segment);
+                    if (!m) continue;
+                    const key = m[1].toUpperCase(), value = m[2];
+                    if (key === 'OWNER' && /\s/.test(value)) continue;
+                    (fields[key] ||= []).push(value);
                   }
                 }
                 records.push({comment, worker, created, fields, header: header[2]});
