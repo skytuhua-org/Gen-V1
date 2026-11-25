@@ -1229,6 +1229,10 @@ export class Service {
     if (command.type === "operation.reconcile") {
       const operation = this.store.get<Operation>("operation", text(p, "operationId", 200));
       if (!operation || operation.threadId !== thread.id || operation.status !== "unknown") throw new HarnessError("INVALID_OPERATION", "Select an uncertain operation to inspect");
+      // An outcome no read-only inspection can resolve stays visible until the
+      // owner dispositions it; only an 'unknown' observation may be overridden.
+      const resolution = p.resolution === undefined ? undefined : text(p, "resolution", 40);
+      if (resolution !== undefined && !["failed", "cancelled"].includes(resolution)) throw new HarnessError("INVALID_INPUT", "Resolve an unobserved outcome as 'failed' or 'cancelled'.");
       const domain = await import("../capabilities/index.ts");
       const observed = await domain.reconcileDomainOperation(operation, this.context(thread.id));
       return this.store.command(command, () => {
@@ -1236,8 +1240,12 @@ export class Service {
         if (this.closed || !currentThread || this.store.get("archivedThread", thread.id)
           || digest(ownerFor(currentThread)) !== digest(ownerFor(thread)) || !current || digest(current) !== digest(operation))
           throw new HarnessError("STALE_OPERATION", "The action or its owner changed while inspecting its outcome. Reload the action before inspecting again.");
-        const next = { ...current, status: observed.status, ...(observed.result !== undefined ? { result: observed.result } : {}), error: observed.status === "unknown" ? observed.message : undefined };
-        this.store.put("operation", operation.id, thread.id, next); this.operationData(next); return observed;
+        const status: Operation["status"] = observed.status === "unknown" && resolution ? resolution as Operation["status"] : observed.status;
+        const dispositioned = status !== observed.status;
+        const next = { ...current, status, ...(dispositioned ? {} : observed.result !== undefined ? { result: observed.result } : {}), error: status === "unknown" || dispositioned ? observed.message : undefined };
+        this.store.put("operation", operation.id, thread.id, next); this.operationData(next);
+        if (dispositioned) this.enqueueInput({ id: randomUUID(), threadId: thread.id, content: "The owner resolved the unobserved outcome of operation " + operation.id + " (" + operation.kind + ") as " + status + ". " + observed.message, status: "persisted", runId: null });
+        return { ...observed, status };
       });
     }
     if (command.type === "run.compact") {
@@ -1276,9 +1284,7 @@ export class Service {
     }
     const receipt = this.store.command(command, () => this.applyCommand(command, this.thread(thread.id)));
     if (["request.respond","request.detail","action.submit","operation.reject"].includes(command.type)) this.background(this.deliverOutbox(thread.id));
-    if (command.type === "operation.approve" || command.type === "action.submit") {
-      for (const op of this.store.all<Operation>("operation", thread.id).filter(o => o.approved && o.status === "prepared")) this.background(this.dispatchOperation(op.id));
-    }
+    if (["request.respond","request.detail","action.submit","operation.approve"].includes(command.type)) this.dispatchApprovedPrepared(thread.id);
     return receipt;
   }
   private async backgroundCommand(command: HostCommand): Promise<CommandReceipt> {
@@ -1592,6 +1598,9 @@ export class Service {
   private async resume(command: HostCommand, thread: Thread) {
     this.assertNoOtherRun(thread.id);
     if (thread.runId) throw new HarnessError("RUN_BUSY", "Thread is already working");
+    // Only an interrupted thread restarts approved work: a deliberate stop
+    // keeps queued effects 'prepared' for the next decision instead.
+    const recovered = thread.status === "interrupted";
     if (this.store.all<Operation>("operation", thread.id).some(o => o.status === "unknown" || o.status === "running")) throw new HarnessError("RECONCILIATION_REQUIRED", "Inspect uncertain operation outcomes before resuming");
     const modelId=command.payload.modelId===undefined?thread.modelId:text(command.payload,'modelId',300);
     if(!modelId)throw new HarnessError('MODEL_UNAVAILABLE','Choose an authenticated model before resuming');
@@ -1613,7 +1622,7 @@ export class Service {
       for (const input of this.store.all<Outbox>("outbox", thread.id).filter(i => i.status !== "handled")) {if(input.requestContextId)this.requestCustody.release(input.requestContextId,'cancelled');this.store.put("outbox", input.id, thread.id, { ...input, requestContextId:undefined, sourceFailure:undefined, ...(input.sourceRecovery?{sourceRecovery:{...input.sourceRecovery,resumeRequired:false}}:{}), status: "persisted", content: history.includes(input.id) ? "Continue the unfinished handling of previously delivered input " + input.id + ". Do not repeat completed operations; inspect their receipts first." : input.content });}
       if (!this.store.all<Outbox>("outbox", thread.id).some(i => i.status === "persisted")) this.store.put("outbox", command.id, thread.id, { id: command.id, threadId: thread.id, content: "Resume this task from saved state and evidence.", status: "persisted", runId: null });
       this.store.put("thread", thread.id, thread.id, { ...thread,accountId:binding.accountId, modelId,thinkingLevel,status: this.hasGate(thread.id) ? "awaiting_input" : "ready", updatedAt: now(), error: null }); return { resumed: true };
-    }); this.backgroundWork.noteForegroundAdmission(thread.id); this.background(this.deliverOutbox(thread.id)); return receipt;
+    }); this.backgroundWork.noteForegroundAdmission(thread.id); this.background(this.deliverOutbox(thread.id)); if (recovered) this.dispatchApprovedPrepared(thread.id); return receipt;
   }
   async deliverOutbox(threadId: string): Promise<void> {
     const previous=this.deliveries.get(threadId),work=previous?previous.catch(()=>{}).then(()=>this.deliverInputs(threadId)):this.deliverInputs(threadId);
@@ -1716,7 +1725,10 @@ export class Service {
     const userPrompt=inputs.map((input,index) => "Input " + input.id + ":\n" + contents[index]).join("\n\n");
     const sourceContext = sourceContexts.map(context => context.text).join(''), deliveredRefs = sourceContexts.flatMap(context => context.refs);
     let input: StartRun = { ...ctx,accountId:binding.accountId, memory: taskMemoryContext(this.store, threadId), modelId, thinkingLevel:thread.thinkingLevel, sessionPath: thread.sessionPath, inputId: inputs[0].id, inputIds: inputs.map(i => i.id), resources: thread.sideParentId?[]:this.store.all("resource", threadId), ...(completedWrites.length?{completedWrites}:{}), ...(deliveredRefs.length ? {sourceRefs: deliveredRefs} : {}), prompt: guidance+userPrompt+sourceContext };
-    if (!this.aborts.has(threadId) || !thread.runId) this.aborts.set(threadId, new AbortController());
+    // A live controller may already serve a queued or in-flight approved
+    // effect; replacing it would orphan that work from Stop.
+    const retainedControl=this.aborts.get(threadId);
+    if (!retainedControl || retainedControl.signal.aborted) this.aborts.set(threadId, new AbortController());
     const control=this.aborts.get(threadId)!;this.retainController(control);
     let dispatched=false;
     try {
@@ -2232,6 +2244,15 @@ export class Service {
     }
     return assessment;
   }
+  // Approved operations interrupted between approval and dispatch never ran.
+  // Restart them through the normal dispatch path once the thread can mutate
+  // again; an ineligible thread keeps them 'prepared' for the next trigger
+  // instead of letting a failed admission mark them 'failed'.
+  private dispatchApprovedPrepared(threadId: string): void {
+    const thread = this.store.get<Thread>("thread", threadId);
+    if (!thread || thread.mode === "plan" || ["stopped", "interrupted"].includes(thread.status) || this.store.get("archivedThread", threadId) || this.hasGate(threadId) || this.effects.admissionsDisabled()) return;
+    for (const op of this.store.all<Operation>("operation", threadId).filter(o => o.approved && o.status === "prepared")) this.background(this.dispatchOperation(op.id));
+  }
   async dispatchOperation(id: string): Promise<unknown> {
     const requested = this.store.get<Operation>('operation', id);
     if (!requested) throw new HarnessError('NOT_FOUND', 'Operation unavailable');
@@ -2396,11 +2417,19 @@ export class Service {
       // Inputs claimed as processing by a dead run would otherwise stay
       // unhandled forever and block isUpdateIdle/freezeForUpdate; mirror the
       // resume path (deliverOutbox) which re-persists anything not handled.
-      for (const input of this.store.all<Outbox>("outbox").filter(i => i.status !== "handled")) {if(input.requestContextId)this.requestCustody.release(input.requestContextId,'cancelled');this.store.put("outbox", input.id, input.threadId, { ...input, requestContextId:undefined, status: "persisted" });}
+      for (const input of this.store.all<Outbox>("outbox").filter(i => i.status !== "handled")) {if(input.requestContextId)this.requestCustody.release(input.requestContextId,'cancelled');
+        // A claimed write hook can only settle through a diagnostic event from
+        // the run that claimed it, and that run is gone. Bound the wait with a
+        // terminal state; the retained claim still blocks replaying the write.
+        const hookDiagnostic=input.hookClaimed&&input.hookDiagnostic?.status==='unknown'?{...input.hookDiagnostic,status:'stale' as const,message:'The run that claimed this write did not survive recovery; the outcome can no longer be observed. The claim is retained so the write is never replayed.'}:input.hookDiagnostic;
+        this.store.put("outbox", input.id, input.threadId, { ...input, requestContextId:undefined, hookDiagnostic, status: "persisted" });}
       return { inferenceCalls: 0 };
     });
     if (this.effects.admissionsDisabled()) disableEffects(this.store);
     else if (this.effectFlags.enabled("audit.effectsV1") || this.effectFlags.enabled("security.authorityV1")) recoverEffects(this.store);
+    // Approved operations interrupted between approval and dispatch never ran;
+    // restart them through the normal dispatch path once admissions resume.
+    if (!this.effects.admissionsDisabled()) for (const threadId of new Set(this.store.all<Operation>("operation").filter(o => o.approved && o.status === "prepared").map(o => o.threadId))) this.dispatchApprovedPrepared(threadId);
     this.backgroundWork.recover();
     this.backgroundWork.start();
     this.intake.start();
