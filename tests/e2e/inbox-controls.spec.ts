@@ -237,3 +237,30 @@ test('reselecting an item observes its held read failure without another write',
   await expect(page.locator('.agent-inbox-error')).toHaveText('Read state could not save.');
   expect(await calls(page)).toEqual([{type:'read',id:'question'}]);
 });
+
+for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+  test(`outgoing Inbox rows leave keyboard focus immediately with ${reducedMotion} motion`, async ({page}) => {
+    await page.clock.install({time: new Date('2026-11-06T12:00:00Z')});
+    await page.emulateMedia({reducedMotion});
+    await fixture(page);
+    await page.clock.pauseAt(new Date('2026-11-06T12:10:00Z'));
+    // Hold the visual exit and fallback timer so the focus check cannot pass after unmount.
+    await page.addStyleTag({content: '.ui-list-row[data-leaving="true"] { animation-play-state: paused !important; }'});
+    await page.getByRole('searchbox').fill('Question');
+    const leaving = page.locator('.ui-list-row[data-leaving="true"]');
+    await expect(leaving).toHaveCount(3);
+    await page.locator('.ui-list-row:not([data-leaving="true"]) button').last().focus();
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => ({
+      leaving: Boolean(document.activeElement?.closest('[data-leaving="true"]')),
+      hidden: Boolean(document.activeElement?.closest('[aria-hidden="true"]')),
+    }))).toEqual({leaving: false, hidden: false});
+    await expect(leaving).toHaveCount(3);
+    expect(await calls(page)).toEqual([]);
+    await page.clock.fastForward(500);
+    await expect(leaving).toHaveCount(0);
+    const survivor = page.getByRole('button', {name: 'Question, Needs your input, unread', exact: true});
+    await survivor.click();
+    await expect(survivor).toHaveAttribute('aria-current', 'page');
+  });
+}

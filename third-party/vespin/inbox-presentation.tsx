@@ -43,7 +43,7 @@ export const InboxItemRow=memo(function InboxItemRow({title,description,lead,met
   </>
  );
  return(
-  <li className="ui-list-row" data-meta="title" data-lead="above" data-current={current?'true':undefined} data-current-look="tint" data-unread={unread?'true':undefined} data-muted={muted?'true':undefined} data-ink="sidebar" data-arrival={arrival!==undefined?'true':undefined} data-leaving={leaving||undefined} aria-hidden={leaving||undefined} style={arrival!==undefined?{'--row-delay':`${Math.min(arrival,5)*30}ms`} as CSSProperties:undefined} onAnimationEnd={leaving?event=>{if(event.target===event.currentTarget)onLeavingEnd?.();}:undefined}>
+  <li className="ui-list-row" data-meta="title" data-lead="above" data-current={current?'true':undefined} data-current-look="tint" data-unread={unread?'true':undefined} data-muted={muted?'true':undefined} data-ink="sidebar" data-arrival={arrival!==undefined?'true':undefined} data-leaving={leaving||undefined} aria-hidden={leaving||undefined} inert={leaving||undefined} style={arrival!==undefined?{'--row-delay':`${Math.min(arrival,5)*30}ms`} as CSSProperties:undefined} onAnimationEnd={leaving?event=>{if(event.target===event.currentTarget)onLeavingEnd?.();}:undefined}>
    <button ref={pressRef} type="button" className="ui-list-row-main" aria-current={current?'page':undefined} aria-label={label} onClick={onPress}>{face}</button>
   </li>
  );
