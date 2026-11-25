@@ -4259,6 +4259,7 @@
     "tests/workspace-canvas-layout.test.ts",
     "tests/workspace-journal-v3.test.ts",
     "tests/workspace-layout.test.ts",
+    "tests/workspace-link-validation.test.ts",
     "tests/workspace-linked-pr.test.ts",
     "tests/workspace-native-browser.test.ts",
     "tests/workspace-native-layout.test.ts",
