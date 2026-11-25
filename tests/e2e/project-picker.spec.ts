@@ -97,6 +97,32 @@ test('invalid custom data and host save failure retain the picker and previous b
   await expect(page.getByRole('button', { name: 'Color for Alpha' })).toBeFocused();
 });
 
+test('color validation error keeps the popover actions inside the fixed bounds', async ({ page }) => {
+  await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
+  await page.getByRole('button', { name: 'Color for Alpha' }).click();
+  const popover = page.locator('.ui-control-popup.project-picker-colors');
+  const grid = popover.locator('.project-picker-color-grid');
+  const footer = popover.locator('.project-picker-color-footer');
+  const input = page.getByRole('textbox', { name: 'Custom color' });
+  expect(await grid.evaluate(node => node.scrollHeight <= node.clientHeight)).toBe(true);
+  await input.fill('url(bad)');
+  await page.getByRole('button', { name: 'Save color', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('Choose a six-digit hex color, such as #4F6EFF.');
+  await expect(input).toHaveAttribute('aria-invalid', 'true');
+  await expect(input).toHaveAttribute('aria-describedby', 'project-picker-color-error');
+  await expect(footer).toHaveAttribute('data-has-error', 'true');
+  const pop = await popover.boundingBox(), foot = await footer.boundingBox();
+  expect(foot!.y).toBeGreaterThanOrEqual(pop!.y);
+  expect(foot!.y + foot!.height).toBeLessThanOrEqual(pop!.y + pop!.height);
+  expect(await grid.evaluate(node => getComputedStyle(node).overflowY)).toBe('auto');
+  await expect(page.getByRole('button', { name: 'Use automatic color', exact: true })).toBeInViewport();
+  await input.fill('#123abc');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(input).toHaveAttribute('aria-invalid', 'false');
+  await expect(footer).not.toHaveAttribute('data-has-error', 'true');
+  await expect.poll(() => grid.evaluate(node => node.scrollHeight <= node.clientHeight)).toBe(true);
+});
+
 test('creation failure does not dismiss or falsely report success', async ({ page }) => {
   await page.goto('/project-picker?fail=1');
   await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
