@@ -306,6 +306,7 @@
     "apps/web/src/project-picker.css",
     "apps/web/src/registry.tsx",
     "apps/web/src/relationship-graph.css",
+    "apps/web/src/run-progress.tsx",
     "apps/web/src/runtime-presentation.ts",
     "apps/web/src/saved-drafts.css",
     "apps/web/src/saved-drafts.ts",
