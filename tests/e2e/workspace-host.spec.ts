@@ -122,6 +122,20 @@ test('native progress never installs the legacy snapshot refresh subscription in
   await expect.poll(() => page.evaluate(() => Reflect.get(window, 'hostFixtureCalls').ready)).toBeGreaterThan(0);
 });
 
+test('workspace segments navigate by arrow keys and respect reduced motion', async ({page}) => {
+ await page.emulateMedia({reducedMotion:'reduce'}); await fixture(page);
+ const segments=page.getByRole('group',{name:'Workspace view',exact:true}),workspace=segments.getByRole('button',{name:'Workspace',exact:true}),agents=segments.getByRole('button',{name:'All Agents',exact:true});
+ await expect(agents).toHaveAttribute('aria-pressed','true');
+ await agents.focus(); await page.keyboard.press('ArrowLeft');
+ await expect(workspace).toHaveAttribute('aria-pressed','true'); await expect(workspace).toBeFocused();
+ await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeVisible();
+ await page.keyboard.press('ArrowRight'); await expect(agents).toHaveAttribute('aria-pressed','true');
+ await expect(page.getByRole('region',{name:'Agent workspace',exact:true})).toBeVisible();
+ expect(await segments.locator('.workspace-segment-indicator').evaluate(node=>getComputedStyle(node).transitionDuration)).toBe('0s');
+ await page.emulateMedia({forcedColors:'active'});
+ expect(await segments.evaluate(node=>getComputedStyle(node).outlineStyle)).toBe('solid');
+});
+
 test('explicit conversation navigation preserves its draft and returns to the project-row monitor', async ({page}) => {
   const h = await fixture(page);
   const input = page.getByRole('textbox', {name: 'Message to Project investigation', exact: true});

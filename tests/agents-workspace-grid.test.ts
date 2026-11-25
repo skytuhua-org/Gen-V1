@@ -44,7 +44,7 @@ describe('agents workspace grid layout', () => {
   }), width);
 
   it('lays out four equal columns at desktop content width and reaches every card vertically without horizontal overflow', async () => {
-    const page = await open(1440);
+    const page = await open(1200);
     try {
       expect(await trackCount(page)).toBe(4);
       const tops = await cards(page).evaluateAll(elements => elements.map(element => Math.round(element.getBoundingClientRect().top)));
@@ -52,14 +52,14 @@ describe('agents workspace grid layout', () => {
       expect(tops.slice(4, 8)).toEqual(new Array(4).fill(tops[4]));
       expect(tops[4]).toBeGreaterThan(tops[0]);
       expect(await projectSlotCoversGrid(page)).toBe(true);
-      expect(await noHorizontalOverflow(page, 1440)).toEqual({page: true, workspace: true});
+      expect(await noHorizontalOverflow(page, 1200)).toEqual({page: true, workspace: true});
       await cards(page).nth(7).scrollIntoViewIfNeeded();
       expect(await cards(page).nth(7).evaluate(element => {
         const card = element.getBoundingClientRect(), view = element.closest('.agents-projects')!.getBoundingClientRect();
         return card.top >= view.top - 1 && card.bottom <= view.bottom + 1;
       })).toBe(true);
       await page.setViewportSize({width: 1920, height: 1000});
-      expect(await trackCount(page)).toBe(4);
+      expect(await trackCount(page)).toBe(6);
       expect(await noHorizontalOverflow(page, 1920)).toEqual({page: true, workspace: true});
     } finally {await page.close();}
   });
@@ -76,11 +76,11 @@ describe('agents workspace grid layout', () => {
     } finally {await page.close();}
   });
 
-  it('collapses to two columns at narrow content width and one below 768', async () => {
-    const page = await open(900);
+  it('fits as many 264px columns as available and collapses to one on small screens', async () => {
+    const page = await open(800);
     try {
       expect(await trackCount(page)).toBe(2);
-      expect(await noHorizontalOverflow(page, 900)).toEqual({page: true, workspace: true});
+      expect(await noHorizontalOverflow(page, 800)).toEqual({page: true, workspace: true});
       await page.setViewportSize({width: 600, height: 1000});
       expect(await trackCount(page)).toBe(1);
       expect(await noHorizontalOverflow(page, 600)).toEqual({page: true, workspace: true});
@@ -88,7 +88,7 @@ describe('agents workspace grid layout', () => {
   });
 
   it('navigates cards with arrow keys in grid order and leaves transcript scrolling alone', async () => {
-    const page = await open(1440);
+    const page = await open(1200);
     try {
       const label = () => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '');
       await page.locator('.agents-agent-grid').focus();
@@ -108,39 +108,91 @@ describe('agents workspace grid layout', () => {
       expect(await label()).toBe('Agent parent-00');
       await page.keyboard.press('ArrowUp');
       expect(await label()).toBe('Agent parent-00');
+      await cards(page).first().getByRole('button', {name: 'Show transcript', exact: true}).click();
       await page.locator('.agents-transcript').first().focus();
       await page.keyboard.press('ArrowDown');
       expect(await label()).toBe('parent-00 messages');
     } finally {await page.close();}
   });
 
-  it('reserves a 420px card, gives the transcript two thirds of the body and keeps the composer at one 72px-capped line', async () => {
+  it('fills desktop cards with complete preview lines and keeps a compact composer that grows', async () => {
     const page = await open(1440);
     try {
       const card = cards(page).nth(3);
-      await visible(card.locator('.agents-message p')).toBeVisible({timeout: 5000});
-      const metrics = await card.evaluate(element => {
-        const height = element.getBoundingClientRect().height;
-        const header = element.querySelector('.agents-agent-header')!.getBoundingClientRect().height;
-        const activity = element.querySelector('.agents-activity')!.getBoundingClientRect().height;
-        const transcript = element.querySelector('.agents-transcript-wrap')!.getBoundingClientRect().height;
-        const composer = element.querySelector('.agents-composer')!.getBoundingClientRect().height;
-        const textarea = element.querySelector('textarea')!;
-        const messageFont = getComputedStyle(element.querySelector('.agents-message p')!).fontSize;
-        return {height, body: height - header - activity, transcript, composer, textareaHeight: textarea.getBoundingClientRect().height, textareaMax: getComputedStyle(textarea).maxHeight, messageFont};
+      await visible(card.locator('.agents-preview')).toContainText('transcript line');
+      await card.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
+      const metrics = await card.evaluate(element => ({
+        height: element.getBoundingClientRect().height,
+        preview: element.querySelector('.agents-preview-text')!.getBoundingClientRect().height,
+        composer: element.querySelector('.agents-composer-entry')!.getBoundingClientRect().height,
+        nestedBorders: [...element.querySelectorAll('.agents-transcript,.agents-composer')].map(node => getComputedStyle(node).borderTopWidth),
+      }));
+      expect(metrics.height).toBeGreaterThanOrEqual(280);
+      expect(metrics.preview).toBeGreaterThan(60);
+      expect(metrics.composer).toBeCloseTo(28, 2);
+      expect(metrics.nestedBorders).toEqual(['0px', '0px']);
+      const lines = await card.locator('.agents-preview-text').evaluate(element => {
+        const bounds = element.getBoundingClientRect(), range = document.createRange();
+        range.selectNodeContents(element.firstElementChild!);
+        const rects = [...range.getClientRects()], visible = rects.filter(rect => rect.bottom > bounds.top && rect.top < bounds.bottom);
+        return {count: new Set(visible.map(rect => Math.round(rect.top * 10))).size, whole: visible.every(rect => rect.top >= bounds.top && rect.bottom <= bounds.bottom), end: rects.at(-1)!.bottom <= bounds.bottom && rects.at(-1)!.top >= bounds.top};
       });
-      expect(metrics.height).toBeGreaterThanOrEqual(416);
-      expect(metrics.height).toBeLessThanOrEqual(430);
-      expect(metrics.messageFont).toBe('14px');
-      expect(metrics.transcript).toBeGreaterThanOrEqual(metrics.body * 2 / 3);
-      expect(metrics.textareaHeight).toBeGreaterThanOrEqual(30);
-      expect(metrics.textareaHeight).toBeLessThanOrEqual(42);
-      expect(metrics.textareaMax).toBe('72px');
+      expect(lines.count).toBeGreaterThan(3);
+      expect(lines.whole).toBe(true); expect(lines.end).toBe(true);
+      expect(metrics.preview).toBeCloseTo(lines.count * 20, 1);
+      await visible(card.getByRole('log')).toHaveCount(0);
+      await card.getByRole('button', {name: 'Show transcript'}).click();
+      await visible(card.getByRole('log')).toContainText('transcript line');
+      expect(await card.getByRole('log').evaluate(node => node.getBoundingClientRect().height)).toBeLessThanOrEqual(280);
       const textarea = card.locator('textarea');
       await textarea.fill('first\nsecond\nthird\nfourth');
-      const grown = await textarea.evaluate(element => ({height: element.getBoundingClientRect().height, scrollable: element.scrollHeight > element.clientHeight}));
-      expect(grown.height).toBeLessThanOrEqual(74);
-      expect(grown.scrollable).toBe(true);
+      expect(await textarea.evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThan(28);
+      expect(await textarea.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(false);
+    } finally {await page.close();}
+  });
+
+  it('keeps minimum-height rows scrollable in short viewports and natural single-column mobile cards', async () => {
+    const page = await open(1200, 480);
+    try {
+      expect(await cards(page).first().evaluate(card => card.getBoundingClientRect().height)).toBeGreaterThanOrEqual(280);
+      expect(await page.locator('.agents-projects').evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
+      await cards(page).last().scrollIntoViewIfNeeded();
+      await visible(cards(page).last()).toBeVisible();
+      await page.setViewportSize({width: 390, height: 844});
+      expect(await trackCount(page)).toBe(1);
+      await cards(page).first().scrollIntoViewIfNeeded();
+      expect(await cards(page).first().evaluate(card => card.getBoundingClientRect().height)).toBeLessThan(350);
+      expect(await noHorizontalOverflow(page, 390)).toEqual({page: true, workspace: true});
+    } finally {await page.close();}
+  });
+
+  it('opens ghost filters by keyboard, restores focus, clears scope and collapses empty search', async () => {
+    const page = await open(1440);
+    try {
+      const project = page.getByRole('combobox', {name:'Project filter'}), status = page.getByRole('combobox', {name:'Status filter'});
+      await project.focus(); await page.keyboard.press('ArrowDown');
+      await visible(page.getByRole('listbox', {name:'Project filter'})).toBeVisible();
+      await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+      await visible(project).toBeFocused();
+      expect(await page.evaluate(() => window.controller.getSnapshot().scope.projectId)).toBe('p');
+      await page.getByRole('button', {name:'Clear project filter'}).click();
+      expect(await page.evaluate(() => window.controller.getSnapshot().scope.projectId)).toBeUndefined();
+      await status.focus(); await page.keyboard.press('Space');
+      await visible(page.getByRole('listbox', {name:'Status filter'})).toBeVisible();
+      await visible(page.getByRole('option', {name:'Ready', exact:true})).toBeVisible();
+      await visible(page.getByRole('option', {name:'Awaiting input', exact:true})).toBeVisible();
+      await visible(page.getByRole('option', {name:'Needs review', exact:true})).toBeVisible();
+      await page.keyboard.press('Escape'); await visible(status).toBeFocused();
+      await status.press('Enter'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+      expect(await page.evaluate(() => window.controller.getSnapshot().scope.statuses?.length)).toBe(1);
+      await page.getByRole('button', {name:'Clear status filter'}).click();
+      expect(await page.evaluate(() => window.controller.getSnapshot().scope.statuses)).toBeUndefined();
+      await page.getByRole('button', {name:'Search agents', exact:true}).click();
+      const input = page.getByRole('searchbox', {name:'Filter agents'});
+      await visible(input).toBeFocused(); await input.fill('parent'); await input.press('Escape');
+      await visible(input).toBeVisible(); await input.fill(''); await input.press('Escape');
+      await visible(input).toHaveCount(0);
+      await visible(page.getByRole('button', {name:'Search agents', exact:true})).toBeFocused();
     } finally {await page.close();}
   });
 
