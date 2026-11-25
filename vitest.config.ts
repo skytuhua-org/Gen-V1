@@ -17,4 +17,18 @@ const forceRerunTriggers = [
   "**/*.{json,yml,yaml,md,py,html,css,txt,toml,sql,sh,ps1}",
 ];
 
-export default defineConfig({ test: { include: ["tests/**/*.test.{ts,tsx,js,jsx,mjs,cjs,mts,cts}"], exclude: ["tests/plugin-api-package.test.mjs"], testTimeout: 60000, hookTimeout: 60000, forceRerunTriggers } });
+export default defineConfig({
+  test: {
+    include: ["tests/**/*.test.{ts,tsx,js,jsx,mjs,cjs,mts,cts}"],
+    exclude: ["tests/plugin-api-package.test.mjs"],
+    testTimeout: 60000,
+    hookTimeout: 60000,
+    forceRerunTriggers,
+    coverage: {
+      provider: "v8",
+      include: ["apps/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "packages/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"],
+      exclude: ["third-party/**", "tests/**", "**/dist/**", "**/*.d.ts", "**/generated/**"],
+      reporter: ["text-summary", "html", "json-summary"],
+    },
+  },
+});
