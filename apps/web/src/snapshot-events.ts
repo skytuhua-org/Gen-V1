@@ -44,8 +44,11 @@ export function applyRuntimeEvent(snapshot: Snapshot, event: WorkspaceEvent): Sn
   return null;
 }
 
+// Compare createdAt only. Ids are random, not chronological: tiebreaking on
+// id would invert the stream order of same-timestamp appends. Ties insert
+// after the existing row, which is the streaming order they arrived in.
 const compareByCreatedAt = (left: Message, right: Message) =>
-  left.createdAt === right.createdAt ? (left.id < right.id ? -1 : left.id > right.id ? 1 : 0) : (left.createdAt < right.createdAt ? -1 : 1);
+  left.createdAt < right.createdAt ? -1 : left.createdAt > right.createdAt ? 1 : 0;
 
 function insertByCreatedAt(messages: Message[], message: Message): Message[] {
   let index = messages.length;

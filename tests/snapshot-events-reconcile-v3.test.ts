@@ -55,3 +55,11 @@ it("keeps appending in-order messages and upserts by id", async () => {
   expect(updated!.messages.map((item) => item.id)).toEqual(["m1", "m2"]);
   expect(updated!.messages[1]!.content).toBe("revised");
 });
+
+it("appends after same-createdAt rows in stream order instead of tiebreaking by id", () => {
+  // Regression: ids are random uuids; a tiebreak inverted same-timestamp
+  // streaming appends (see web-events-recovery).
+  const snapshot = base(10, [message("retained", "a", "")]);
+  const result = applyRuntimeEvent(snapshot, event(11, "a", message("latest", "a", "")));
+  expect(result!.messages.map((item) => item.id)).toEqual(["retained", "latest"]);
+});
