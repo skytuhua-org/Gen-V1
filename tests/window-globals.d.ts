@@ -68,6 +68,7 @@ interface Window {
 	__genWidgetLeaseHeartbeatMs: number;
 	productionReady: boolean;
 	deferEditorChoice: boolean;
+	commandFault?: string;
 	delayReads: boolean;
 	emptyMain: boolean;
 	failReads: boolean;
