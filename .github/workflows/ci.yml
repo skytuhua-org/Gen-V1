@@ -210,7 +210,16 @@ jobs:
         run: pnpm build
 
       - name: Run application regression tests
-        run: pnpm test --maxWorkers=1 --shard=1/4
+        run: pnpm test --maxWorkers=1 --shard=1/4 --reporter=default --reporter=json --outputFile=test-results/durations/shard-1.json
+
+      - name: Preserve per-file test durations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-durations-${{ github.run_id }}-${{ github.run_attempt }}-shard-1
+          retention-days: 7
+          if-no-files-found: ignore
+          path: test-results/durations/**
 
   test-2:
     name: Tests (shard 2/4)
@@ -237,7 +246,16 @@ jobs:
         run: pnpm build
 
       - name: Run application regression tests
-        run: pnpm test --maxWorkers=1 --shard=2/4
+        run: pnpm test --maxWorkers=1 --shard=2/4 --reporter=default --reporter=json --outputFile=test-results/durations/shard-2.json
+
+      - name: Preserve per-file test durations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-durations-${{ github.run_id }}-${{ github.run_attempt }}-shard-2
+          retention-days: 7
+          if-no-files-found: ignore
+          path: test-results/durations/**
 
   test-3:
     name: Tests (shard 3/4)
@@ -264,7 +282,16 @@ jobs:
         run: pnpm build
 
       - name: Run application regression tests
-        run: pnpm test --maxWorkers=1 --shard=3/4
+        run: pnpm test --maxWorkers=1 --shard=3/4 --reporter=default --reporter=json --outputFile=test-results/durations/shard-3.json
+
+      - name: Preserve per-file test durations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-durations-${{ github.run_id }}-${{ github.run_attempt }}-shard-3
+          retention-days: 7
+          if-no-files-found: ignore
+          path: test-results/durations/**
 
   test-4:
     name: Tests (shard 4/4)
@@ -291,7 +318,16 @@ jobs:
         run: pnpm build
 
       - name: Run application regression tests
-        run: pnpm test --maxWorkers=1 --shard=4/4
+        run: pnpm test --maxWorkers=1 --shard=4/4 --reporter=default --reporter=json --outputFile=test-results/durations/shard-4.json
+
+      - name: Preserve per-file test durations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-durations-${{ github.run_id }}-${{ github.run_attempt }}-shard-4
+          retention-days: 7
+          if-no-files-found: ignore
+          path: test-results/durations/**
 
   browser:
     name: Browser tests
