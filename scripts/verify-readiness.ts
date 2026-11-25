@@ -42,7 +42,8 @@ export function childEnvironment(extra:Record<string,string>={}):NodeJS.ProcessE
 
 const SECRET_PATTERNS:Array<[RegExp,string]>=[
   [/(bearer\s+)[A-Za-z0-9._\-\/+=]+/gi,'$1[REDACTED]'],
-  [/((?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|token|secret|password|passwd|authorization)["']?\s*[:=]\s*["']?)[^\s"',;]+/gi,'$1[REDACTED]'],
+  // A named credential can contain spaces or quotes; hide its entire field line.
+  [/((?:aws[_-]?(?:secret[_-]?access[_-]?key|access[_-]?key[_-]?id)|gcp[_-]?service[_-]?account[_-]?key|api[_-]?key|apikey|access[_-]?token|auth[_-]?token|token|secret|password|passwd|authorization)["']?[ \t]*[:=][ \t]*)[^\r\n]*/gi,'$1[REDACTED]'],
   [/((?:postgres|postgresql|mysql|mongodb|redis|amqp|https?):\/\/[^:\s\/]+:)[^@\s]+@/gi,'$1[REDACTED]@'],
   [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,'[REDACTED PRIVATE KEY]'],
 ];
@@ -52,16 +53,145 @@ export function redactSecrets(text:string):string{
   return redacted;
 }
 
-// Line-buffered so a secret split across stream chunks is still redacted whole.
+// Buffer each child pipe separately: stderr cannot terminate a key begun on stdout.
 function redactedLogSink(stream:ReturnType<typeof createWriteStream>){
-  let carry='';
+  type Source='stdout'|'stderr';
+  const carry:Record<Source,string>={stdout:'',stderr:''};
+  const taintedCarry:Record<Source,boolean>={stdout:false,stderr:false};
+  const privateKeyEnd:Record<Source,string|null>={stdout:null,stderr:null};
+  // Any unfinished line can later complete a PEM opener or credential label.
+  // Defer opposite-pipe bytes until that line is classified; release only
+  // ordinary output, and fail closed on unresolved/oversized fragments.
+  const tentativeSensitiveLine:Record<Source,boolean>={stdout:false,stderr:false};
+  // Bound cross-pipe deferral: never persist a value that arrived before
+  // another pipe finished writing a potentially sensitive field name.
+  // A real key or an exhausted bound discards the bytes instead of persisting them.
+  const MAX_TENTATIVE_PIPE_BYTES=16*1024;
+  let pendingOtherPipe:Array<{source:Source;chunk:string}>=[];
+  let pendingOtherPipeBytes=0;
+  const begin=/-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----/;
+  // Recognized SGR color codes are presentation only. An unrecognized terminal
+  // control can conceal a credential start marker; suppress all subsequent
+  // child output rather than risk emitting its following unclassified lines.
+  let unsafeControlOutput=false;
+  // A dangling known credential label may introduce a multiline value on
+  // either child pipe. Without a provable boundary, discard later output.
+  const danglingCredentialLabel=/(?:^|[\s,(])(?:aws[_-]?(?:secret[_-]?access[_-]?key|access[_-]?key[_-]?id)|gcp[_-]?service[_-]?account[_-]?key|api[_-]?key|apikey|access[_-]?token|auth[_-]?token|token|secret|password|passwd|authorization)["']?\s*[:=]\s*["']?\s*$|(?:^|\s)bearer\s*$/i;
+  const normalizeTerminalLine=(line:string):string=>{
+    if(unsafeControlOutput)return '';
+    const uncolored=line.replace(/\x1b\[(?:[0-9]{1,3}(?:;[0-9]{1,3})*)?m/g,'');
+    if(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(uncolored)){
+      unsafeControlOutput=true;
+      return '[REDACTED UNSAFE CONTROL OUTPUT]';
+    }
+    return uncolored;
+  };
+  const scrubLine=(source:Source,line:string):string=>{
+    const normalized=normalizeTerminalLine(line);
+    if(unsafeControlOutput)return normalized;
+    if(danglingCredentialLabel.test(normalized)){
+      unsafeControlOutput=true;
+      return '[REDACTED MULTILINE CREDENTIAL]';
+    }
+    let remaining=normalized,visible='';
+    while(remaining){
+      if(privateKeyEnd[source]!==null){
+        const endAt=remaining.indexOf(privateKeyEnd[source]);
+        if(endAt<0)break;
+        remaining=remaining.slice(endAt+privateKeyEnd[source].length);
+        privateKeyEnd[source]=null;
+      }else{
+        const match=begin.exec(remaining);
+        if(!match){visible+=remaining;break;}
+        visible+=remaining.slice(0,match.index)+'[REDACTED PRIVATE KEY]';
+        privateKeyEnd[source]='-----END '+match[1]+'-----';
+        remaining=remaining.slice(match.index+match[0].length);
+      }
+    }
+    return redactSecrets(visible);
+  };
+  const writeChunk=(source:Source,chunk:string):void=>{
+      const other:Source=source==='stdout'?'stderr':'stdout';
+      if(privateKeyEnd[other]!==null){
+        // Bytes received during an opposite-pipe PEM are untrusted key body.
+        // Discard them instead of buffering a tentative line that could stall
+        // the owning pipe's END marker and hide subsequent ordinary output.
+        carry[source]='';
+        tentativeSensitiveLine[source]=false;
+        taintedCarry[source]=true;
+        return;
+      }
+      if(!unsafeControlOutput&&tentativeSensitiveLine[other]){
+        const size=Buffer.byteLength(chunk,'utf8');
+        if(pendingOtherPipeBytes+size>MAX_TENTATIVE_PIPE_BYTES){
+          // A fragment can remain ambiguous indefinitely. Never spill raw bytes
+          // to disk or allow an unbounded in-memory credential queue.
+          pendingOtherPipe=[];pendingOtherPipeBytes=0;
+          unsafeControlOutput=true;
+          stream.write('[REDACTED UNCLASSIFIED CHILD OUTPUT]\n');
+        }else{
+          pendingOtherPipe.push({source,chunk});pendingOtherPipeBytes+=size;
+        }
+        return;
+      }
+      const wasTentative=tentativeSensitiveLine[source];
+      const completedLine=(carry[source]+chunk).replace(/\x1b\[(?:[0-9]{1,3}(?:;[0-9]{1,3})*)?m/g,'');
+      const completedPemOpener=wasTentative&&begin.test(completedLine);
+      // A redacted inline credential line cannot certify held other-pipe bytes.
+      const completedRedactedField=wasTentative&&redactSecrets(completedLine)!==completedLine;
+      const suppressOther=privateKeyEnd[other]!==null||tentativeSensitiveLine[other];
+      const lines=(carry[source]+chunk).split('\n');carry[source]=lines.pop()!;
+      const carryWasTainted=taintedCarry[source];
+      for(let i=0;i<lines.length;i++){
+        // Suppress other-pipe content while a key is open, even across partial lines.
+        const suppress=suppressOther||(i===0&&carryWasTainted);
+        const safe=scrubLine(source,lines[i]!);
+        if(!suppress&&(safe||(!unsafeControlOutput&&privateKeyEnd[source]===null)))stream.write(safe+'\n');
+      }
+      // A credential label or PEM header can be split anywhere in a line.
+      // Keep opposite-pipe bytes deferred until that line closes, then
+      // replay only if classification proved it ordinary output.
+      tentativeSensitiveLine[source]=false;
+      if(!unsafeControlOutput&&carry[source]){
+        const checked=normalizeTerminalLine(carry[source]);
+        if(unsafeControlOutput)stream.write(checked+'\n');
+        else if(begin.test(checked)){
+          // A complete key header without a newline is already secret-bearing.
+          // Suppress other-pipe output before the header's line can finish.
+          unsafeControlOutput=true;
+          stream.write('[REDACTED PRIVATE KEY]\n');
+        }else if(danglingCredentialLabel.test(checked)){
+          // The label may not have a newline yet; block the other pipe now.
+          unsafeControlOutput=true;
+          stream.write('[REDACTED MULTILINE CREDENTIAL]\n');
+        }else tentativeSensitiveLine[source]=Boolean(checked);
+      }
+      taintedCarry[source]=suppressOther||(lines.length===0&&carryWasTainted);
+      if(wasTentative&&!tentativeSensitiveLine[source]){
+        const queued=pendingOtherPipe;
+        pendingOtherPipe=[];pendingOtherPipeBytes=0;
+        if(!unsafeControlOutput&&!completedPemOpener&&!completedRedactedField){
+          // The opener was ordinary text. Re-process every held chunk through
+          // the same sanitizer, preserving per-pipe carry and source ordering.
+          for(const item of queued)writeChunk(item.source,item.chunk);
+        }
+      }
+  };
   return {
-    write(chunk:Buffer|string){
-      carry+=String(chunk);
-      const lines=carry.split('\n');carry=lines.pop()!;
-      for(const line of lines)stream.write(redactSecrets(line)+'\n');
+    write:writeChunk,
+    end(){
+      // Never release an unresolved opposite-pipe fragment at process exit.
+      pendingOtherPipe=[];pendingOtherPipeBytes=0;
+      for(const source of ['stdout','stderr'] as const){
+        if(carry[source]){
+          const other:Source=source==='stdout'?'stderr':'stdout';
+          const suppress=taintedCarry[source]||privateKeyEnd[other]!==null||tentativeSensitiveLine[other];
+          const safe=scrubLine(source,carry[source]);
+          if(!suppress&&safe)stream.write(safe);
+        }
+      }
+      stream.end();
     },
-    end(){if(carry)stream.write(redactSecrets(carry));stream.end();},
   };
 }
 
@@ -122,8 +252,8 @@ export async function runCheck(spec:CheckSpec):Promise<CheckResult>{
       resolvePromise(finish({status:'FAIL',errorKind:'log-error'}));
     });
     // Decode each byte stream incrementally before merging and redacting lines.
-    child.stdout?.setEncoding('utf8').on('data',chunk=>{if(!settled)sink.write(chunk);});
-    child.stderr?.setEncoding('utf8').on('data',chunk=>{if(!settled)sink.write(chunk);});
+    child.stdout?.setEncoding('utf8').on('data',chunk=>{if(!settled)sink.write('stdout',chunk);});
+    child.stderr?.setEncoding('utf8').on('data',chunk=>{if(!settled)sink.write('stderr',chunk);});
     child.once('error',(error:NodeJS.ErrnoException)=>{
       settle(error.code==='ENOENT'
         ?{status:'BLOCKED',errorKind:'missing-binary'}
