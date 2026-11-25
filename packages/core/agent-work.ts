@@ -90,6 +90,12 @@ const READ_TOOLS = new Set(['repository_files', 'repository_read', 'repository_s
 const QA_TOOLS = new Set(['verification.run', 'verification.observe', 'context.read']);
 const WORKTREE_TOOLS = new Set(['worktree.read', 'worktree.write', 'worktree.git']);
 
+/** Metadata uses the same role allowlists as the effect gate below. */
+export function agentWorkToolNames(role: AgentWorkRole): readonly string[] {
+  const tools = role === 'CODE_WORKTREE' ? WORKTREE_TOOLS : role === 'QA' ? QA_TOOLS : READ_TOOLS;
+  return ['agent_result', 'agent_progress', ...tools];
+}
+
 const EMPTY_LEDGER: BudgetLedger = {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0};
 
 /** M09 typed multi-agent work coordinator. The host stays the sole SQLite
