@@ -25,7 +25,7 @@ export function WorkspaceLauncher({onOpenTool}:{onOpenTool?:(kind:WorkspacePanel
     <button type="button" aria-label="Files" onClick={() => openTool('files')}><Folder size={18} /><span>Files</span><small>Granted resources</small></button>
     <button type="button" aria-label="Diff" onClick={() => openTool('diff')}><GitCompare size={18} /><span>Diff</span><small>Prepared changes</small></button>
     <button type="button" aria-label="Pull request" onClick={()=>openTool('pull-request')} title="Open project pull requests"><GitPullRequest size={18} /><span>Pull request</span><small>Project pull requests</small></button>
-    <button type="button" aria-label="Linked pull requests" onClick={()=>openTool('linked-pull-requests')} title="Open linked pull requests"><Link size={18} /><span>Linked pull requests</span><small>Connected reviews</small></button>
+    <button type="button" aria-label="Project" onClick={()=>openTool('linked-pull-requests')} title="Open project pull requests and overview"><Link size={18} /><span>Project</span><small>Pull requests and overview</small></button>
     <button type="button" aria-label="Device" disabled title="Phone and device automation is not connected."><Smartphone size={18} /><span>Device</span><small>{unavailable}</small></button>
     <button type="button" aria-label="Executor output" onClick={() => openTool('output')}><ScrollText size={18} /><span>Executor output</span><small>Recorded operations</small></button>
     <button type="button" aria-label="Usage" onClick={() => openTool('usage')}><ChartNoAxesCombined size={18} /><span>Usage</span><small>Runtime reports</small></button>

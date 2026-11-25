@@ -10,7 +10,7 @@ test.beforeEach(async({page})=>{
 test('default launcher opens the real tool tabs and keeps browser and device boundaries',async({page})=>{
  const panel=page.getByRole('complementary',{name:'Workspace panel'}),launcher=panel.getByRole('region',{name:'Workspace launcher'});
  await expect(launcher.getByRole('button',{name:'Browser',exact:true})).toHaveCount(0);await expect(launcher.getByRole('button',{name:'Device',exact:true})).toBeDisabled();
- for(const label of ['Terminal','Pull request','Linked pull requests']){
+ for(const label of ['Terminal','Pull request','Project']){
   await panel.getByRole('tab',{name:'Artifact',exact:true}).click();await launcher.getByRole('button',{name:label,exact:true}).click();
   await expect(panel.getByRole('tab',{name:label,exact:true})).toHaveAttribute('aria-selected','true');await expect(panel.getByRole('tabpanel')).toContainText('Connect a project to use '+label.toLowerCase());
  }
@@ -18,7 +18,7 @@ test('default launcher opens the real tool tabs and keeps browser and device bou
 });
 test('canvas launch requests go to the owning canvas callback',async({page})=>{
  const canvas=page.getByRole('region',{name:'Canvas launcher'});
- for(const name of ['Terminal','Files','Diff','Pull request','Linked pull requests','Executor output','Usage'])await canvas.getByRole('button',{name,exact:true}).click();
+ for(const name of ['Terminal','Files','Diff','Pull request','Project','Executor output','Usage'])await canvas.getByRole('button',{name,exact:true}).click();
  expect(await page.evaluate(()=>(window as any).__opened)).toEqual(['terminal','files','diff','pull-request','linked-pull-requests','output','usage']);
  await expect(page.getByRole('tab',{name:'Artifact',exact:true})).toHaveAttribute('aria-selected','true');
 });
@@ -29,7 +29,7 @@ test('browser layout handoff saves every duplicate editor and refuses a failed s
  expect(await page.evaluate(()=>(window as any).__saved)).toEqual(['second:unsaved second','first:unsaved first','second:unsaved second']);
 });
 test('saved terminal and pull request tabs restore through the shared panel',async({page})=>{
- for(const [kind,label] of [['terminal','Terminal'],['pull-request','Pull request'],['linked-pull-requests','Linked pull requests']]){
+ for(const [kind,label] of [['terminal','Terminal'],['pull-request','Pull request'],['linked-pull-requests','Project']]){
   await page.evaluate(tab=>localStorage.setItem('harness:shell-layout:v1',JSON.stringify({activeTab:tab})),kind);await page.reload();await expect(page.getByRole('tab',{name:label,exact:true})).toHaveAttribute('aria-selected','true');
  }
 });
