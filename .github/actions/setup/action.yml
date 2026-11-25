@@ -25,20 +25,6 @@ runs:
         node-version: 24.22.2
         cache: pnpm
 
-    - name: Read the Node.js version for native builds
-      if: runner.os == 'Windows'
-      id: node-version
-      shell: pwsh
-      run: |
-        "version=$(node --version)" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
-
-    - name: Cache the Node.js headers for native builds
-      if: runner.os == 'Windows'
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-      with:
-        path: ~\AppData\Local\node-gyp\Cache
-        key: node-gyp-headers-${{ runner.os }}-${{ runner.arch }}-${{ steps.node-version.outputs.version }}
-
     - name: Install locked dependencies
       shell: pwsh
       run: pnpm install --frozen-lockfile
