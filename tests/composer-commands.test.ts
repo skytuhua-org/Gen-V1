@@ -159,4 +159,36 @@ describe('slash-command palette', () => {
       await palette(page).waitFor();
     } finally { await page.close(); }
   });
+
+  it('forgets an outside dismissal after editing and restoring the same query', async () => {
+    const page = await openPage();
+    try {
+      const area = page.locator('#ta');
+      await area.fill('/mod');
+      await palette(page).waitFor();
+      await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true})));
+      await palette(page).waitFor({state: 'detached'});
+      await area.pressSequentially('x');
+      await palette(page).waitFor();
+      await area.press('Backspace');
+      expect(await area.inputValue()).toBe('/mod');
+      await expect.poll(() => palette(page).count(), {timeout: 1000}).toBe(1);
+    } finally { await page.close(); }
+  });
+
+  it('resets Escape dismissal when selection navigation leaves and returns to the token', async () => {
+    const page = await openPage();
+    try {
+      const area = page.locator('#ta');
+      await area.fill('hello /mod');
+      await palette(page).waitFor();
+      await area.press('Escape');
+      await palette(page).waitFor({state: 'detached'});
+      await area.press('Shift+ArrowLeft');
+      await area.press('Home');
+      await area.press('End');
+      expect(await area.inputValue()).toBe('hello /mod');
+      await expect.poll(() => palette(page).count(), {timeout: 1000}).toBe(1);
+    } finally { await page.close(); }
+  });
 });
