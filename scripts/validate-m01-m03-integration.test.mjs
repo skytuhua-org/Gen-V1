@@ -24,7 +24,7 @@ function fixture(t, wrongTree = false) {
   put(join(root, '.gitattributes'), '* -text\n');
   put(join(root, 'package.json'), '{"type":"module","packageManager":"pnpm@10.30.3"}');
   put(join(root, 'scripts/browser-suites.ts'), 'export const rootBrowserSpecs = ["a.spec.ts"];');
-  put(join(root, 'scripts/research-baseline.ts'), `
+  const baselineWorking = `
     import { mkdirSync, writeFileSync } from 'node:fs';
     import { join, resolve } from 'node:path';
     export const resolvePackageManager = () => ({file:process.execPath,prefix:['fixture-pnpm']});
@@ -57,10 +57,12 @@ function fixture(t, wrongTree = false) {
       const { stdout, stderr, spawnError, truncated, pid, ...receipt } = o;
       return {...receipt,name,status};
     };
-  `);
+  `;
+  put(join(root, 'scripts/research-baseline.ts'), `export const resolvePackageManager = () => { throw new Error('integrated harness snapshot unavailable'); };`);
   const baseSha = commit('base');
   put(join(root, 'tests/a.test.ts'), 'export {};\n');
   const repair = commit('repair'), tree = git('rev-parse', 'HEAD^{tree}');
+  put(join(root, 'scripts/research-baseline.ts'), baselineWorking);
   put(join(root, 'package.json'), '{"type":"module","packageManager":"pnpm@10.30.3","scripts":{"later-control-input":"changed"}}');
   put(join(root, 'pnpm-workspace.yaml'), 'packages: []\n');
   put(join(root, runner), runnerBytes);

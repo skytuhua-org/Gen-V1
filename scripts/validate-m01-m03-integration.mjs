@@ -132,8 +132,17 @@ try {
 }
 
 async function validate() {
-  const { resolvePackageManager, runRecordedCommand, statusFromObservation, writeCommandEvidence } =
-    await import(pathToFileURL(join(root, 'scripts/research-baseline.ts')).href);
+  // The validation harness is pinned by VALIDATION_SHA even though the audited
+  // integration tree intentionally contains older repair snapshots. Keep its
+  // module inside scripts/ so relative imports and node_modules resolution
+  // behave exactly as they do for the pinned source checkout.
+  const baselineCopy = join(root, 'scripts', '.m01-m03-validation-research-baseline.ts');
+  rmSync(baselineCopy, { force: true });
+  writeFileSync(baselineCopy, gitBytes('show', validationSha + ':scripts/research-baseline.ts'), { flag: 'wx' });
+  let baseline;
+  try { baseline = await import(pathToFileURL(baselineCopy).href); }
+  finally { rmSync(baselineCopy, { force: true }); }
+  const { resolvePackageManager, runRecordedCommand, statusFromObservation, writeCommandEvidence } = baseline;
   const pm = resolvePackageManager(root);
   const run = async (name, args, timeoutMs = 15 * 60_000, extraEnvironment = {}) => {
     console.log('M01_M03_COMMAND_START=' + JSON.stringify({ name }));
