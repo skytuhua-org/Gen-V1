@@ -1,13 +1,13 @@
 import {beforeEach, expect, it, vi} from 'vitest';
 import type {DraftTransferReferences} from '../packages/contracts/shell-read-models';
-const journal = vi.hoisted(() => ({entries: vi.fn(), read: vi.fn(), save: vi.fn(), pending: vi.fn()}));
-vi.mock('../apps/web/src/journal', () => ({journalEntries: journal.entries, journalReadRecord: journal.read, journalCompareAndSwap: journal.save}));
+const journal = vi.hoisted(() => ({entries: vi.fn(), read: vi.fn(), save: vi.fn(), saveMany: vi.fn(), pending: vi.fn()}));
+vi.mock('../apps/web/src/journal', () => ({journalEntries: journal.entries, journalReadRecord: journal.read, journalCompareAndSwap: journal.save, journalCompareAndSwapMany: journal.saveMany}));
 vi.mock('../apps/web/src/signature-assets', () => ({hasPendingDocumentAssets: journal.pending}));
 import {exportDraftTransfer, importDraftTransfer} from '../apps/web/src/draft-transfer';
 const entry = (key: string, value: unknown) => ({key, record: {value, generation: 'browser', updatedAt: 1}});
 const backup = (entries: ReturnType<typeof entry>[]) => JSON.stringify({app: 'generative-harness-drafts', version: 1, entries});
 const refs = (): DraftTransferReferences => ({threads: [{id: 'with-draft'}, {id: 'signature-only'}], skills: [{name: 'saved', revision: 4}], userStates: [{id: 'state', revision: 2}], requests: [{id: 'request', revision: 3, responseSchema: {type: 'string'}}]});
-beforeEach(() => {vi.clearAllMocks(); journal.pending.mockReturnValue(false); journal.entries.mockResolvedValue([]); journal.read.mockResolvedValue(undefined); journal.save.mockResolvedValue(true);});
+beforeEach(() => {vi.clearAllMocks(); journal.pending.mockReturnValue(false); journal.entries.mockResolvedValue([]); journal.read.mockResolvedValue(undefined); journal.save.mockResolvedValue(true); journal.saveMany.mockResolvedValue(true);});
 it('checks every visible Personal thread for pending signatures, even without a transferable journal key', async () => {
   journal.entries.mockResolvedValue([entry('draft:with-draft', 'draft')]); journal.pending.mockImplementation(id => id === 'signature-only');
   const source = vi.fn(async () => refs());
@@ -28,7 +28,7 @@ it('blocks exact request-key/schema and state/skill revision mismatches and reta
   expect(journal.save).not.toHaveBeenCalled();
   const good = entry('draft:with-draft', 'preserve'); journal.read.mockResolvedValueOnce({value: 'newer'});
   expect((await importDraftTransfer(backup([good]), source))[0].status).toBe('retained');
-  journal.save.mockResolvedValueOnce(false); expect((await importDraftTransfer(backup([good]), source))[0].status).toBe('retained');
+  journal.saveMany.mockResolvedValueOnce(false); expect((await importDraftTransfer(backup([good]), source))[0].status).toBe('retained');
 });
 it('validates backups before requesting references and aborts before writing', async () => {
   const source = vi.fn(async () => refs());
@@ -44,7 +44,8 @@ it('imports compatible text, planning decisions, state and skill drafts with the
   const source = vi.fn(async () => current);
   expect((await importDraftTransfer(backup(rows), source)).map(row => row.status)).toEqual(rows.map(() => 'imported'));
   expect(source).toHaveBeenCalledWith(rows.map(row => row.key));
-  rows.forEach(row => expect(journal.save).toHaveBeenCalledWith(row.key, undefined, row.record.value));
+  expect(journal.saveMany).toHaveBeenCalledWith([{key: rows[0].key, generation: undefined, value: rows[0].record.value}], [{key: 'draft-pastes:new', generation: undefined}]);
+  rows.slice(1).forEach(row => expect(journal.save).toHaveBeenCalledWith(row.key, undefined, row.record.value));
 });
 it('still checks pending signatures when the journal contains no transferable draft keys', async () => {
   journal.pending.mockImplementation(id => id === 'signature-only'); const source = vi.fn(async () => refs());

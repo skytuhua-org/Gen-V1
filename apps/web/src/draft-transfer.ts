@@ -88,24 +88,27 @@ export async function importDraftTransfer(text:string,input:ReferenceInput,signa
  const snapshot=await references(input,[...seen],signal),rows=value.entries as TransferRow[],results=new Map<string,TransferResult>();
  const localSources=(await journalEntries()).filter(row=>sourceKey(row.key));
  const finish=(group:TransferRow[],status:TransferResult['status'],reason?:string)=>{for(const row of group)results.set(row.key,{key:row.key,status,...(reason?{reason}:{})});};
+ const promptKeys=(threadId:string)=>['draft:'+threadId,'draft-pastes:'+threadId];
+ const missingCompanions=(threadId:string,group:TransferRow[])=>promptKeys(threadId).filter(key=>!group.some(row=>row.key===key)).map(key=>({key,generation:undefined}));
  const groups=new Map<string,TransferRow[]>();
  for(const row of rows.filter(row=>sourceKey(row.key))){
   const threadId=sourceThread(row.key);
-  if(!threadId){finish([row,...rows.filter(row=>row.key.startsWith('draft:'))],'blocked','Source context has an invalid owner; its prompt was not imported');continue;}
+  if(!threadId){finish([row,...rows.filter(row=>/^draft(?:-pastes)?:/.test(row.key))],'blocked','Source context has an invalid owner; its prompt was not imported');continue;}
   const group=groups.get(threadId)??[];group.push(row);groups.set(threadId,group);
  }
  for(const [threadId,companions]of groups){
   signal?.throwIfAborted();
-  const active=rows.find(row=>row.key==='draft:'+threadId),group=active?[active,...companions]:companions;
+  const active=rows.find(row=>row.key==='draft:'+threadId),group=[...rows.filter(row=>promptKeys(threadId).includes(row.key)),...companions];
   if(group.some(row=>results.has(row.key))){finish(group,'blocked','A source context owner could not be validated');continue;}
   const error=!active?'Source context must be paired with its prompt in the backup':group.map(row=>referenceError(row.key,row.record.value,snapshot,true)).find(Boolean);
   if(error){finish(group,'blocked',error);continue;}
-  const existing=await Promise.all(group.map(row=>journalReadRecord(row.key)));
+  const checks=missingCompanions(threadId,group);
+  const existing=await Promise.all([...group,...checks].map(row=>journalReadRecord(row.key)));
   signal?.throwIfAborted();
-  if(existing.some(Boolean)||localSources.some(row=>sourceThread(row.key)===threadId)){finish(group,'retained','A local prompt or source context already exists; both were retained');continue;}
-  // A failed generation or write leaves both text and every full-owner companion
+  if(existing.some(Boolean)||localSources.some(row=>sourceThread(row.key)===threadId)){finish(group,'retained','A local prompt, pasted text or source context already exists; the draft was retained');continue;}
+  // A failed generation or write leaves text, pasted text and every full-owner companion
   // untouched. Source identities remain inert until the host validates them.
-  const saved=await journalCompareAndSwapMany(group.map(row=>({key:row.key,generation:undefined,value:row.record.value})),[],{acknowledgeHandoffRetry:true});
+  const saved=await journalCompareAndSwapMany(group.map(row=>({key:row.key,generation:undefined,value:row.record.value})),checks,{acknowledgeHandoffRetry:true});
   finish(group,saved?'imported':'retained',saved?undefined:'A local edit arrived during import');
  }
  // A prompt's text and pasted-text chips are one draft: import or retain them
@@ -122,10 +125,11 @@ export async function importDraftTransfer(text:string,input:ReferenceInput,signa
   const group=match?(promptGroups.get(match[1])??[row]):[row];
   const error=group.map(member=>referenceError(member.key,member.record.value,snapshot,true)).find(Boolean);
   if(error){finish(group,'blocked',error);continue;}
-  if(group.some(member=>member.key.startsWith('draft:')&&localSources.some(source=>sourceThread(source.key)===member.key.slice(6)))){finish(group,'retained','Local source context already exists; its prompt was not replaced');continue;}
-  const existing=await Promise.all(group.map(member=>journalReadRecord(member.key)));signal?.throwIfAborted();
+  if(match&&localSources.some(source=>sourceThread(source.key)===match[1])){finish(group,'retained','Local source context already exists; its prompt was not replaced');continue;}
+  const checks=match?missingCompanions(match[1],group):[];
+  const existing=await Promise.all([...group,...checks].map(member=>journalReadRecord(member.key)));signal?.throwIfAborted();
   if(existing.some(Boolean)){finish(group,'retained','A local entry already exists; it was not replaced');continue;}
-  const saved=group.length===1?await journalCompareAndSwap(group[0].key,undefined,group[0].record.value):await journalCompareAndSwapMany(group.map(member=>({key:member.key,generation:undefined,value:member.record.value})),[]);
+  const saved=match?await journalCompareAndSwapMany(group.map(member=>({key:member.key,generation:undefined,value:member.record.value})),checks):await journalCompareAndSwap(row.key,undefined,row.record.value);
   finish(group,saved?'imported':'retained',saved?undefined:'A local edit arrived during import');
  }
  return rows.map(row=>results.get(row.key)!);

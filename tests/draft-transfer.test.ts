@@ -56,3 +56,69 @@ it('blocks malformed pasted-text drafts on import and skips ones for unavailable
  journal.entries.mockResolvedValue([entry('draft-pastes:gone',[{version:1,id:'11111111-1111-4111-8111-111111111111',createdAt:'2026-01-01T00:00:00.000Z',text:'t'}])]);
  expect(JSON.parse(await exportDraftTransfer(snap)).entries).toEqual([]);
 });
+
+const sourceEntry=()=>entry('source-context:thread-1::',{draftId:'draft-1',logicalOwner:{threadId:'thread-1',projectId:null,workspaceId:null},revision:0,sourceRefs:[],sendMode:'NOW',conflictState:'NONE'});
+const pasteEntry=()=>entry('draft-pastes:thread-1',[{version:1,id:'11111111-1111-4111-8111-111111111111',createdAt:'2026-01-01T00:00:00.000Z',text:'retained pasted body'}]);
+const threadRefs={threads:[{id:'thread-1'}],userStates:[],requests:[],skills:[]};
+function memoryJournal(initial:ReturnType<typeof entry>[]=[]){
+ const values=new Map(initial.map(row=>[row.key,row.record]));
+ journal.entries.mockImplementation(async()=>[...values].map(([key,record])=>({key,record})));
+ journal.read.mockImplementation(async(key:string)=>values.get(key));
+ journal.saveMany.mockImplementation(async(writes:{key:string;generation?:string;value:unknown}[],guards:{key:string;generation?:string}[])=>{
+  if([...writes,...guards].some(row=>values.get(row.key)?.generation!==row.generation))return false;
+  for(const row of writes)values.set(row.key,{value:row.value,generation:'written-'+row.key,updatedAt:2});
+  return true;
+ });
+ return values;
+}
+it('imports source context, prompt and pasted text as one complete draft',async()=>{
+ const values=memoryJournal(),rows=[entry('draft:thread-1','prompt'),sourceEntry(),pasteEntry()];
+ const result=await importDraftTransfer(backup(rows),threadRefs);
+ expect(result.map(row=>row.status)).toEqual(['imported','imported','imported']);
+ expect(values.get('draft-pastes:thread-1')?.value).toEqual(pasteEntry().record.value);
+ expect(journal.saveMany).toHaveBeenCalledTimes(1);
+ expect(journal.saveMany.mock.calls[0][0].map((row:{key:string})=>row.key).sort()).toEqual(rows.map(row=>row.key).sort());
+});
+it('does not partially import a source bundle with an invalid pasted-text companion',async()=>{
+ const values=memoryJournal(),rows=[entry('draft:thread-1','prompt'),sourceEntry(),entry('draft-pastes:thread-1','invalid')];
+ const result=await importDraftTransfer(backup(rows),threadRefs);
+ expect(result.every(row=>row.status==='blocked')).toBe(true);
+ expect(values.size).toBe(0);
+ expect(journal.saveMany).not.toHaveBeenCalled();
+});
+it.each([false,true])('retains a local paste-only draft when importing text (with source context: %s)',async(withSource)=>{
+ const local=pasteEntry(),values=memoryJournal([local]);
+ const rows=[entry('draft:thread-1','backup prompt'),...(withSource?[sourceEntry()]:[])];
+ const result=await importDraftTransfer(backup(rows),threadRefs);
+ expect(result.every(row=>row.status==='retained')).toBe(true);
+ expect(values.get(local.key)).toEqual(local.record);
+ expect(values.has('draft:thread-1')).toBe(false);
+ expect(journal.save).not.toHaveBeenCalled();
+ expect(journal.saveMany).not.toHaveBeenCalled();
+});
+it('retains a local text-only draft when importing pasted text',async()=>{
+ const local=entry('draft:thread-1','local prompt'),values=memoryJournal([local]);
+ expect((await importDraftTransfer(backup([pasteEntry()]),threadRefs))[0].status).toBe('retained');
+ expect(values.get(local.key)).toEqual(local.record);
+ expect(values.has('draft-pastes:thread-1')).toBe(false);
+ expect(journal.saveMany).not.toHaveBeenCalled();
+});
+it.each([false,true])('retains the whole import when an omitted paste companion arrives during CAS (source context: %s)',async(withSource)=>{
+ const values=memoryJournal(),commit=journal.saveMany.getMockImplementation()!;
+ journal.saveMany.mockImplementationOnce(async(writes,guards)=>{
+  const local=pasteEntry();values.set(local.key,local.record);
+  return commit(writes,guards);
+ });
+ const rows=[entry('draft:thread-1','backup prompt'),...(withSource?[sourceEntry()]:[])];
+ expect((await importDraftTransfer(backup(rows),threadRefs)).every(row=>row.status==='retained')).toBe(true);
+ expect(values.has('draft:thread-1')).toBe(false);
+ expect(values.has(sourceEntry().key)).toBe(false);
+ expect(values.get(pasteEntry().key)).toEqual(pasteEntry().record);
+});
+it('blocks pasted text alongside an invalid source companion without importing any part',async()=>{
+ const values=memoryJournal();
+ const rows=[entry('draft:thread-1','prompt'),entry(sourceEntry().key,{invalid:true}),pasteEntry()];
+ expect((await importDraftTransfer(backup(rows),threadRefs)).every(row=>row.status==='blocked')).toBe(true);
+ expect(values.size).toBe(0);
+ expect(journal.saveMany).not.toHaveBeenCalled();
+});
