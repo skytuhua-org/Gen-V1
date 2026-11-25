@@ -101,6 +101,7 @@ test('verification suppresses hidden polling and resumes once with normal visibl
   expect(reads).toBe(1);
   await setDocumentVisibility(page, 'hidden');
   await page.clock.runFor(12000);
+  await page.waitForTimeout(100);
   expect(reads).toBe(1);
   await setDocumentVisibility(page, 'visible');
   await expect.poll(() => reads, {timeout: 7000}).toBe(2);
@@ -110,6 +111,7 @@ test('verification suppresses hidden polling and resumes once with normal visibl
   await expect.poll(() => reads, {timeout: 7000}).toBe(3);
   await setDocumentVisibility(page, 'hidden');
   await page.clock.runFor(12000);
+  await page.waitForTimeout(100);
   expect(reads).toBe(3);
   await setDocumentVisibility(page, 'visible');
   await expect.poll(() => reads, {timeout: 7000}).toBe(4);
@@ -138,6 +140,7 @@ test('verification preserves current evidence and fences an in-flight read hidde
   await expect(page.getByText('Hidden stale evidence', {exact: true})).toHaveCount(0);
   await expect(verification(page).getByRole('status')).toHaveCount(0);
   await page.clock.runFor(8000);
+  await page.waitForTimeout(100);
   expect(reads).toBe(2);
   await setDocumentVisibility(page, 'visible');
   await expect.poll(() => reads, {timeout: 7000}).toBe(3);
