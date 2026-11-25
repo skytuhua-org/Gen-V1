@@ -4,6 +4,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {DatabaseSync} from "node:sqlite";
 import {Store} from "../packages/storage/store.ts";
+import type {Snapshot} from "../packages/contracts/index.ts";
 
 // Windows holds open database handles: every connection must close before any
 // fixture directory is removed, and one failing cleanup must not skip the rest.
@@ -38,6 +39,107 @@ function setup() {
 }
 
 describe("store transaction consistency", () => {
+  it.each(['snapshot', 'attentionProjection'] as const)("keeps %s coherent across a second writer's archive commit", (method) => {
+    const store = setup(), other = new Store(store.dataDir);
+    trackClose(() => other.close());
+    store.internal('fixture.seed', null, () => {
+      store.put('thread', 't1', null, {id: 't1', status: 'ready', runId: null});
+      store.put('message', 'm1', 't1', {id: 'm1', threadId: 't1', content: 'before'});
+      store.put('request', 'q1', 't1', {id: 'q1', threadId: 't1', basis: []});
+    });
+    const connection = store.db, prepare = connection.prepare.bind(connection);
+    let calls = 0;
+    const spy = vi.spyOn(connection, 'prepare').mockImplementation(sql => {
+      if (++calls === 2) other.internal('fixture.archive', 't1', () => {
+        other.put('archivedThread', 't1', null, true);
+        other.put('message', 'm2', 't1', {id: 'm2', threadId: 't1', content: 'after'});
+        other.put('request', 'q2', 't1', {id: 'q2', threadId: 't1', basis: []});
+      });
+      return prepare(sql);
+    });
+    try {
+      const view = store[method]();
+      expect(view.threads.map(thread => thread.id)).toEqual(['t1']);
+      expect(view.requests.map(request => request.id)).toEqual(['q1']);
+      if ('messages' in view) expect((view as Snapshot).messages.map(message => message.id)).toEqual(['m1']);
+    } finally { spy.mockRestore(); }
+    expect(store[method]().threads).toEqual([]);
+  });
+
+  it.each(['snapshot', 'attentionProjection'] as const)("reconciles an abandoned %s read transaction before later reads", (method) => {
+    const store = setup(), other = new Store(store.dataDir);
+    trackClose(() => other.close());
+    store.internal('fixture.seed', null, () => store.put('sample', 'value', null, 'before'));
+    const connection = store.db, originalExec = connection.exec.bind(connection);
+    let failWrites = true;
+    connection.exec = sql => {
+      if (failWrites && sql === 'COMMIT') throw Error('causal: read commit failed');
+      if (failWrites && sql === 'ROLLBACK') throw Error('injected: read rollback failed');
+      return originalExec(sql);
+    };
+    try {
+      expect(() => store[method]()).toThrowError('causal: read commit failed');
+      other.internal('fixture.after', null, () => other.put('sample', 'value', null, 'after'));
+      expect(() => store.get('sample', 'value')).toThrowError(expect.objectContaining({code: 'STORE_INCONSISTENT'}));
+      failWrites = false;
+      expect(store.get('sample', 'value')).toBe('after');
+      expect(connection.isTransaction).toBe(false);
+    } finally {
+      failWrites = false; connection.exec = originalExec;
+      if (connection.isTransaction) connection.exec('ROLLBACK');
+    }
+  });
+
+  it('reads projections inside an active command without nesting a transaction', () => {
+    const store = setup();
+    store.internal('fixture.active', null, () => {
+      store.put('thread', 't1', null, {id: 't1', status: 'ready', runId: null});
+      expect(store.snapshot().threads.map(thread => thread.id)).toEqual(['t1']);
+      expect(store.attentionProjection().threads.map(thread => thread.id)).toEqual(['t1']);
+    });
+    expect(store.sequence).toBe(1);
+  });
+
+  it("preserves a retention commit failure and reconciles its abandoned deletion", () => {
+    const store = setup();
+    for (let n = 0; n < 6; n++) store.internal("fixture.retained", null, () => ({n}));
+    const connection = store.db, originalExec = connection.exec.bind(connection);
+    let failWrites = true;
+    connection.exec = (sql: string) => {
+      if (failWrites && /COMMIT/i.test(sql)) throw new Error("causal: retention commit failed");
+      if (failWrites && /ROLLBACK/i.test(sql)) throw new Error("injected: retention rollback failed");
+      return originalExec(sql);
+    };
+    try {
+      expect(() => store.retentionSweep({keepEvents: 2})).toThrowError("causal: retention commit failed");
+      expect(() => store.retentionFloor()).toThrowError(expect.objectContaining({code: "STORE_INCONSISTENT"}));
+      failWrites = false;
+      expect(store.eventsAfter(0)).toHaveLength(6);
+      expect(store.retentionFloor()).toBe(1);
+      expect(connection.isTransaction).toBe(false);
+      const other = new Store(store.dataDir);
+      trackClose(() => other.close());
+      expect(other.eventsAfter(0)).toEqual(store.eventsAfter(0));
+    } finally {
+      failWrites = false;
+      connection.exec = originalExec;
+      if (connection.isTransaction) connection.exec("ROLLBACK");
+    }
+  });
+
+  it("maps retention contention to STORE_BUSY and permits a later sweep", () => {
+    const store = setup();
+    for (let n = 0; n < 6; n++) store.internal("fixture.retained", null, () => ({n}));
+    store.db.exec("PRAGMA busy_timeout=50;");
+    const other = new DatabaseSync(join(store.dataDir, "harness.sqlite"));
+    trackClose(() => other.close());
+    other.exec("BEGIN IMMEDIATE");
+    try {
+      expect(() => store.retentionSweep({keepEvents: 2})).toThrowError(expect.objectContaining({code: "STORE_BUSY"}));
+    } finally { other.exec("ROLLBACK"); }
+    expect(store.retentionSweep({keepEvents: 2}).removedEvents).toBe(4);
+  });
+
   it("maps a second writer's lock to STORE_BUSY instead of a raw SQLite error", () => {
     const store = setup();
     const other = new DatabaseSync(join(store.dataDir, "harness.sqlite"));
