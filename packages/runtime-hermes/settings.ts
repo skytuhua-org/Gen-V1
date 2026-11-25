@@ -8,6 +8,22 @@ import {z} from 'zod';
 import {agentResultSchemaFor,type AgentWorkV1} from '../contracts/agent-work.ts';
 import {agentWorkToolNames} from '../core/agent-work.ts';
 
+/** Embedding a standalone schema document inside a larger one breaks its
+ * root-local `$ref`s, which would then resolve against the outer document
+ * root (and dangle). Rewrite them onto the embedded copy's real location so
+ * the advertised contract resolves exactly what the host validates against
+ * the standalone schema. */
+function embedSchema(schema:unknown,prefix:string):unknown{
+ if(Array.isArray(schema))return schema.map(item=>embedSchema(item,prefix));
+ if(!schema||typeof schema!=='object')return schema;
+ const out:Record<string,unknown>={};
+ for(const[key,value]of Object.entries(schema)){
+  if(key==='$ref'&&typeof value==='string'&&(value==='#'||value.startsWith('#/')))out[key]='#'+prefix+value.slice(1);
+  else out[key]=embedSchema(value,prefix);
+ }
+ return out;
+}
+
 /** Capture the app's role and controls; original Hermes owns cadence and tool schemas. */
 export async function hermesSettings(store:Store,input?:StartRun):Promise<HermesSettings>{
  const preferences=getPreferences(store.get<Snapshot['settings']>('settings','global')??{}),thread=input?store.get<Thread>('thread',input.threadId):null;
@@ -21,7 +37,7 @@ export async function hermesSettings(store:Store,input?:StartRun):Promise<Hermes
  const childTools=work?[
   ...hostTools.filter(tool=>allowed!.has(tool.name)),
   {name:'agent_progress',description:'Acknowledge progress on this assigned child work.',parameters:{type:'object',properties:{message:{type:'string',maxLength:2000}},additionalProperties:false}},
-  {name:'agent_result',description:'Submit the assigned work result against both its declared output contract and role schema.',parameters:{type:'object',properties:{output:{allOf:[work.expectedOutputSchema,z.toJSONSchema(agentResultSchemaFor(work.role))]}},required:['output'],additionalProperties:false}},
+  {name:'agent_result',description:'Submit the assigned work result against both its declared output contract and role schema.',parameters:{type:'object',properties:{output:{allOf:[embedSchema(work.expectedOutputSchema,'/properties/output/allOf/0'),embedSchema(z.toJSONSchema(agentResultSchemaFor(work.role)),'/properties/output/allOf/1')]}},required:['output'],additionalProperties:false}},
  ]:hostTools;
  return {
   config:{skills:{creation_nudge_interval:preferences.learningEnabled&&!readOnly?preferences.learningInterval:0,write_approval:preferences.learningApproval,disabled},memory:{memory_enabled:false,user_profile_enabled:false}},

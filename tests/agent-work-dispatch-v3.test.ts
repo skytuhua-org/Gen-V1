@@ -119,6 +119,40 @@ describe('AgentWorkV1 dispatch requires a real runtime', () => {
   // nothing to receive START; the work must never be recorded RUNNING. T03:
   // the coordinator refuses with RUNTIME_FAILURE and leaves a durable FAILED
   // record — honest terminal state, budget reservation released.
+  it('rewrites root-local $refs when the output schema is embedded in the advertised tool', async () => {
+    const f = fixture(false);
+    f.store.internal('fixture.model', f.ctx.threadId, () => {
+      const parent = f.store.get<Thread>('thread', f.ctx.threadId)!;
+      f.store.put('thread', parent.id, parent.id, {...parent, modelId: 'openai/model', accountId: null});
+    });
+    const sources: {options: ConstructorParameters<typeof HermesClient>[0]; start?: Record<string, unknown>}[] = [];
+    const createRuntime = hermes.createHermesRuntime;
+    vi.spyOn(hermes, 'createHermesRuntime').mockImplementationOnce(options => createRuntime(options, {
+      createClient(sourceOptions) {
+        const source: typeof sources[number] = {options: sourceOptions}; sources.push(source);
+        return {
+          async request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+            if (method === 'hello') return {protocolVersion: 1, engineClass: 'run_agent.AIAgent', sourceCommit: 'c627ec84664d43e0b18b95d9d86d8963747d56c7'} as T;
+            if (method === 'agent.start') source.start = params;
+            return {accepted: true} as T;
+          },
+          async dispose() {},
+        };
+      },
+    }));
+    const native: RuntimeAdapter = {configure() {}, models: async () => [], start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {}, history: async () => [], dispose: async () => {}};
+    const service = createHermesService(f.store, native);
+    cleanups.push(() => service.dispose());
+    const refSchema = {type: 'object', properties: {outcome: {$ref: '#/$defs/outcome'}}, $defs: {outcome: {enum: ['COMPLETED']}}};
+    await service.agentWork.admit(f.ctx, {...f.admission(), expectedOutputSchema: refSchema}, new AbortController().signal);
+    const tools = sources.find(item => item.start)!.start!.hostTools as {name: string; parameters: Record<string, unknown>}[];
+    const advertised = JSON.stringify(tools.find(tool => tool.name === 'agent_result')!.parameters);
+    // Inside the composed document the ref must point at the embedded copy,
+    // never at the outer document root, where it would dangle.
+    expect(advertised).toContain('#/properties/output/allOf/0/$defs/outcome');
+    expect(advertised).not.toContain('"$ref":"#/$defs/outcome"');
+  });
+
   it('an admission without a runtime factory cannot record RUNNING', async () => {
     const f = fixture(false);
     const spec = f.admission();
