@@ -86,11 +86,15 @@ export function registerCodeIntelligenceRoutes(app: FastifyInstance, service: Se
     options.adapterFactory ?? ((descriptor, root) => { requireProvenBackend(); return new StdioLspAdapter(descriptor, root); }));
   const previews = new EditPreviewRegistry();
   // A cancelled or failed run discards every preview its thread opened; the
-  // buffers never outlive the run that streamed them.
-  service.onRunEnd(threadId => {
-    const thread = service.store.get<Thread>('thread', threadId);
-    if (thread?.projectId) previews.discardOwner(sha(`${thread.projectId}:${threadId}`));
-  });
+  // buffers never outlive the run that streamed them. Partial-service hosts
+  // (test composition seams without the run lifecycle) never stream previews,
+  // so they have nothing to discard.
+  if (typeof service.onRunEnd === 'function') {
+    service.onRunEnd(threadId => {
+      const thread = service.store.get<Thread>('thread', threadId);
+      if (thread?.projectId) previews.discardOwner(sha(`${thread.projectId}:${threadId}`));
+    });
+  }
   const debug = options.debugAdapterFor
     ? new DebugRegistry(options.backends ?? [], options.approvedBackendId ?? '', options.debugAdapterFor)
     : null;
