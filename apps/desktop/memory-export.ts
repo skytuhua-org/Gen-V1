@@ -24,9 +24,13 @@ interface Pending {
   refusal: Refusal;
   item?: DownloadItem;
   timer: ReturnType<typeof setTimeout>;
+  /** Save-dialog options for the owning policy; `defaultPath` is added from the receipt. */
+  dialog: {title: string; filters: {name: string; extensions: string[]}[]; properties: ('showHiddenFiles' | 'createDirectory' | 'treatPackageAsDirectory' | 'showOverwriteConfirmation' | 'dontAddToRecent')[]};
   finish(error?: Error, status?: DesktopMemoryExportResult['status']): void;
   done(event: unknown, state: string): void;
 }
+/** Permits owned by sibling export policies that share this session listener. */
+export type DownloadPermit = Pick<Pending, 'owner' | 'frame' | 'origin' | 'url' | 'receipt' | 'admitted' | 'refusal' | 'item' | 'timer' | 'dialog' | 'finish' | 'done'>;
 const error = (reason: string) => Error('Project memory export: ' + reason);
 function prepare(serialized: unknown) {
   if (typeof serialized !== 'string' || serialized.length > MAX_BYTES || Buffer.byteLength(serialized) > MAX_BYTES) throw error('the bounded serialized export is required.');
@@ -52,12 +56,13 @@ function current(entry: Pick<Pending, 'owner' | 'frame'>) {
 
 /** The normal trusted-session guard remains deny-by-default, including during an export. */
 export function createMemoryExportDownloads() {
-  const guarded = new WeakSet<Session>(), pending = new Map<WebContents, Pending>();
+  const guarded = new WeakSet<Session>(), pending = new Map<WebContents, Pending>(), foreign = new Array<Map<WebContents, DownloadPermit>>();
+  function attach(source: Map<WebContents, DownloadPermit>) {foreign.push(source);}
   function guard(session: Session) {
     if (guarded.has(session)) return;
     guarded.add(session);
     session.on('will-download', (event, item, contents, frame) => {
-      const entry = pending.get(contents);
+      const entry: DownloadPermit | undefined = pending.get(contents) ?? foreign.map(source => source.get(contents)).find(found => found !== undefined);
       if (!entry || entry.admitted) {event.preventDefault(); return;}
       if (!current(entry)) {event.preventDefault(); entry.finish(error('the owning document changed.')); return;}
       try {
@@ -74,7 +79,7 @@ export function createMemoryExportDownloads() {
         entry.admitted = true; entry.item = item; clearTimeout(entry.timer); entry.url = '';
         item.once('done', entry.done);
         entry.timer = setTimeout(() => entry.finish(error('the native save did not complete within five minutes.')), SAVE_MS);
-        item.setSaveDialogOptions({title: 'Export project memory', defaultPath: entry.receipt.filename, filters: [{name: 'JSON', extensions: ['json']}], properties: ['showOverwriteConfirmation']});
+        item.setSaveDialogOptions({...entry.dialog, defaultPath: entry.receipt.filename});
       } catch {event.preventDefault(); entry.finish(error('native download admission failed.'));}
     });
   }
@@ -94,6 +99,7 @@ export function createMemoryExportDownloads() {
       const entry: Pending = {
         owner, frame, origin, url, admitted: false, refusal: 'NO_OWNED_EVENT',
         receipt: {admitted: true, filename: prepared.filename, bytes: prepared.bytes, sha256: prepared.sha256},
+        dialog: {title: 'Export project memory', filters: [{name: 'JSON', extensions: ['json']}], properties: ['showOverwriteConfirmation']},
         timer: setTimeout(() => entry.finish(error('the native download was not admitted before expiry (refusal=' + entry.refusal + ').')), ADMISSION_MS),
         finish(cause, status) {
           if (settled) return; settled = true;
@@ -121,5 +127,5 @@ export function createMemoryExportDownloads() {
       } catch (cause) {entry.finish(cause instanceof Error ? cause : error('the download could not start.'));}
     });
   }
-  return {guard, export: exportMemory};
+  return {guard, attach, export: exportMemory};
 }

@@ -13,6 +13,7 @@ import { buildSupportedSettings, searchSettings, GROUPS, type SupportedSettingRo
 import { PREFERENCE_BINDINGS, chordFor } from './keyboard-bindings';
 import { matchesShortcut } from './shell-layout';
 import { KeyboardReference } from './KeyboardReference';
+import { SettingsTransfer } from './SettingsTransfer';
 import { DEPENDENCY_NOTICES } from './dependency-notices';
 import { DraftTransfer } from './DraftTransfer';
 import { useDesktop } from './desktop-context';
@@ -73,6 +74,7 @@ export const SETTINGS_ROWS: SettingsInventoryRow[] = [
   row('browser-start-page', 'Start page', 'browser', 'manual browser address website'),
   ...PREFERENCE_BINDINGS.map(({ preference, label }) => row(`harness-keybinding-${preference}`, label, 'keybindings', `keyboard shortcut ${preference}`)),
   row('harness-keyboard-reference', 'Shortcut reference', 'keybindings', 'all shortcuts cheat sheet kbd keys chords bindings list'),
+  row('settings-transfer', 'Settings file', 'maintenance', 'export import backup restore preferences profile transfer move another pc reinstall json'),
   row('harness-draft-transfer', 'Move browser drafts', 'maintenance', 'import export recovery transfer'), row('archive', 'Archived threads', 'maintenance', 'restore recovery'), row('harness-export-diagnostics', 'Workspace diagnostics', 'maintenance', 'snapshot counts uncertain operations refresh'), row('harness-paired-devices', 'Paired devices', 'maintenance', 'remote sync phone tablet pairing revoke read only'),
   row('app-version', 'Version & updates', 'about', 'update'), row('harness-licenses', 'T3 Code', 'about', 'copyright MIT license attribution settings account picker'), row('harness-hermes-license', 'Hermes Agent learning', 'about', 'Nous Research MIT license'), row('harness-dependency-notices', 'Dependency notices', 'about', 'licenses'),
   ...DEPENDENCY_NOTICES.map(([name, installed, license]) => row(`license-${name}`, name, 'about', `dependency ${installed} ${license}`)),
@@ -158,7 +160,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const heading = searching ? `Search results (${rows.length})` : SETTINGS_SECTIONS.find(([id]) => id === section)?.[1];
   const HeadingIcon = searching ? Search : SECTION_ICONS[section] ?? Settings2;
   const showAppearance = !searching && section === 'appearance';
-  const customRows = new Set(['harness-personalization', 'chat-width', 'word-wrap', 'harness-project-colors', 'harness-notification-controls', 'harness-accounts', 'harness-skills', 'harness-integrations', 'harness-keyboard-reference', 'harness-paired-devices', 'browser-start-page', 'app-version', ...APPEARANCE_FIELDS.map(field => field.id), ...SUBSCRIPTION_CONNECTIONS.map(connection => `provider-${connection.id}`)]);
+  const customRows = new Set(['harness-personalization', 'chat-width', 'word-wrap', 'harness-project-colors', 'harness-notification-controls', 'harness-accounts', 'harness-skills', 'harness-integrations', 'harness-keyboard-reference', 'harness-paired-devices', 'browser-start-page', 'app-version', 'settings-transfer', ...APPEARANCE_FIELDS.map(field => field.id), ...SUBSCRIPTION_CONNECTIONS.map(connection => `provider-${connection.id}`)]);
   const chooseSection = (id: string) => { if(id==='providers')setConnectionsOpened(true);setQuery(''); setSection(id); };
   const revealTarget = (item: SupportedSettingRow) => { if(item.targetId.startsWith('provider-'))setConnectionProvider(item.targetId.slice('provider-'.length));chooseSection(item.section); setPendingTarget(item.targetId); };
   const details = (item: SettingsInventoryRow): { description: string; control: ReactNode } => {
@@ -200,6 +202,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
         {rows.length === 0 && <p className="settings-empty">No matching settings.</p>}
       </> : <>
       {showAppearance && <div data-setting-id="harness-personalization"><AppearanceSettings preferences={preferences} theme={data.settings.theme} projects={data.projects} busy={busy} save={(patch, theme) => persist({ preferences: patch, ...(theme ? { theme } : {}) })}/></div>}
+      {matches('settings-transfer') && <section className="settings-row" data-setting-id="settings-transfer"><SettingsTransfer theme={data.settings.theme} preferences={preferences} persist={persist}/></section>}
       {rows.filter(item => !customRows.has(item.id)).map(item => { const { description, control } = details(item); return <section key={item.id} className="settings-row" data-setting-id={item.id==='harness-runtime'?'harness-runtime-summary':item.id}><div className="settings-row-copy"><h2>{item.title}</h2>{description&&<p>{description}</p>}</div><div className="settings-row-control">{control}</div></section>; })}
       {matches('harness-keyboard-reference') && <div data-setting-id="harness-keyboard-reference"><KeyboardReference keybindings={preferences.keybindings}/></div>}
       {matches('harness-notification-controls') && <div data-setting-id="harness-notification-controls"><NotificationSettings preferences={preferences} busy={busy} update={update} desktop={Boolean(desktop)}/></div>}
