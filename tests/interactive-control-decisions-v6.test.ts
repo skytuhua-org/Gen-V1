@@ -171,7 +171,7 @@ it('M16-D05 stop with a hung model drops all queued old-generation input', async
 it('M16-D06 real-platform acceptance stays BLOCKED without an approved installed driver', () => {
   // This machine has no registered M16 driver (D02): the capability verdict
   // is BLOCKED and the acceptance matrix is NOT_RUN, not simulated.
-  expect(controlCapability({ flagEnabled: true, registration: null, platformSupported: process.platform === 'win32' })).toEqual({ state: 'BLOCKED', reason: 'DRIVER_UNAVAILABLE' });
+  expect(controlCapability({ flagEnabled: true, registration: null, platformSupported: process.platform === 'win32' })).toEqual({ state: 'BLOCKED', reason: process.platform === 'win32' ? 'DRIVER_UNAVAILABLE' : 'PLATFORM_UNSUPPORTED' });
   expect(controlCapability({ flagEnabled: false, registration: registration(), platformSupported: true }).state).toBe('BLOCKED');
 });
 
@@ -258,6 +258,7 @@ it.each([
   { change: 'archives the thread', code: 'NOT_FOUND' },
   { change: 'archives and restores the thread', code: 'CAPABILITY_DENIED' },
   { change: 'reattaches the same driver', code: 'CAPABILITY_DENIED' },
+  { change: 'disposes the service', code: 'CANCELLED_RUN' },
 ])('M16 discards an in-flight target list when the user $change', async ({ change, code }) => {
   const { service, thread } = serviceFixture();
   type CandidateList = Awaited<ReturnType<ControlDriverOperations['candidates']>>;
@@ -271,7 +272,9 @@ it.each([
 
   const listing = service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION');
   expect(candidates).toHaveBeenCalledExactlyOnceWith('SELECTED_DESKTOP_APPLICATION');
-  if (change === 'reattaches the same driver') {
+  if (change === 'disposes the service') {
+    await service.dispose();
+  } else if (change === 'reattaches the same driver') {
     service.detachControlDriver();
     service.attachControlDriver(adapter, []);
   } else if (change.startsWith('archives')) {
@@ -454,6 +457,88 @@ it('M16 drops captures and input admitted under a replaced grant', async () => {
   ]);
   expect(store.all('controlCapture', thread.id)).toHaveLength(0);
   expect(driver.dispatch).not.toHaveBeenCalled();
+});
+
+async function grantFixtureControl(service: Service, threadId: string) {
+  const requested = await service.command({
+    id: 'disposal-request', type: 'control.request', threadId,
+    payload: { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true, operations: ['CLICK'] },
+  });
+  const { consent } = requested.result as { consent: { consentId: string } };
+  await service.controlTargets(threadId, 'SELECTED_DESKTOP_APPLICATION');
+  await service.command({
+    id: 'disposal-grant', type: 'control.grant', threadId,
+    payload: { consentId: consent.consentId, target: app },
+  });
+}
+
+it('M16 service disposal cancels input waiting for the dispatch rate limit', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  try {
+    const { service, store, thread } = serviceFixture();
+    const driver = attachTestTargetChooser(service, async () => [{ target: app, title: 'Fixture app' }]);
+    driver.dispatch = vi.fn(async () => ({ receipt: 'sent' }));
+    const release = vi.spyOn(driver, 'cancelInput');
+    await grantFixtureControl(service, thread.id);
+    await expect(service.controlAction(thread.id, { action: 'CLICK' })).resolves.toMatchObject({ outcome: 'DISPATCHED' });
+
+    const queued = service.controlAction(thread.id, { action: 'CLICK' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(driver.dispatch).toHaveBeenCalledTimes(1);
+    const closing = service.dispose();
+    await vi.advanceTimersByTimeAsync(200);
+
+    await expect(queued).resolves.toMatchObject({ outcome: 'CANCELLED' });
+    await closing;
+    expect(driver.dispatch).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledExactlyOnceWith(app);
+    expect(store.all<{ outcome: string }>('controlAction', thread.id).map(row => row.outcome)).toEqual(['DISPATCHED', 'CANCELLED']);
+    expect(service.controlConsent.activeGrant(thread.id)).toBeNull();
+  } finally { vi.useRealTimers(); }
+});
+
+it('M16 service disposal drops a capture that completes during shutdown', async () => {
+  const { service, store, thread } = serviceFixture();
+  const driver = attachTestTargetChooser(service, async () => [{ target: app, title: 'Fixture app' }]);
+  type Capture = Awaited<ReturnType<ControlDriverOperations['capture']>>;
+  let finishCapture!: (result: Capture) => void;
+  driver.capture = vi.fn(() => new Promise<Capture>(resolve => { finishCapture = resolve; }));
+  const release = vi.spyOn(driver, 'cancelInput');
+  await grantFixtureControl(service, thread.id);
+
+  const capturing = Promise.allSettled([service.controlCapture(thread.id)]);
+  const closing = service.dispose();
+  finishCapture({ data: Buffer.from([1, 2, 3]), width: 1, height: 1, mimeType: 'image/png' });
+
+  expect(await capturing).toMatchObject([{ status: 'rejected', reason: { code: 'CAPABILITY_DENIED' } }]);
+  await closing;
+  expect(store.all('controlCapture', thread.id)).toHaveLength(0);
+  expect(release).toHaveBeenCalledExactlyOnceWith(app);
+});
+
+it('M16 service disposal rejects new control admission and driver reattachment', async () => {
+  const { service, thread } = serviceFixture();
+  const candidates = vi.fn<ControlDriverOperations['candidates']>().mockResolvedValue([{ target: app, title: 'Fixture app' }]);
+  const driver = attachTestTargetChooser(service, candidates);
+  await service.command({
+    id: 'disposal-pending-request', type: 'control.request', threadId: thread.id,
+    payload: { mode: 'SELECTED_DESKTOP_APPLICATION', observe: true },
+  });
+  let finishClosing!: () => void;
+  vi.spyOn(service.runtime, 'dispose').mockImplementationOnce(() => new Promise<void>(resolve => { finishClosing = resolve; }));
+  const closing = service.dispose();
+  try {
+    const denied = await Promise.allSettled([
+      service.controlTargets(thread.id, 'SELECTED_DESKTOP_APPLICATION'),
+      service.controlCapture(thread.id),
+      service.controlObserve(thread.id),
+      service.controlAction(thread.id, { action: 'CLICK' }),
+    ]);
+    expect(denied).toMatchObject(Array.from({ length: 4 }, () => ({ status: 'rejected', reason: { code: 'CANCELLED_RUN' } })));
+    expect(candidates).not.toHaveBeenCalled();
+    expect(codeOf(() => service.attachControlDriver(driver, []))).toBe('CANCELLED_RUN');
+    expect(service.controlRuntime.driverAttached()).toBe(false);
+  } finally { finishClosing(); await closing; }
 });
 
 it('M16 honors the consent origin allowlist for new grants and persisted captures', () => {
