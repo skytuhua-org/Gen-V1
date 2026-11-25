@@ -1,8 +1,9 @@
-import {useCallback,useEffect,useMemo,useRef,useState,type ReactNode} from 'react';
+import {useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,type ReactNode} from 'react';
 import type {Snapshot} from '../../../packages/contracts/index.ts';
 import type {PanelBinding,WorkspacePanelKind} from '../../../packages/contracts/workspace.ts';
 import {workspaceActionEnvelopeSchema,workspaceActionPayloadSchemas,createdPullRequestResultSchema} from '../../../packages/contracts/workspace-action-outcomes';
-import type {GitStatus} from '../../../packages/workspace/tools.ts';
+import type {FileReviewIdentity,GitStatus} from '../../../packages/workspace/tools.ts';
+import {type ViewedRowState,type ViewedView,markViewed,mutateViewed,parseViewedRecord,reconcileViewed,unmarkViewed,viewedKey} from './changes-viewed-state.ts';
 import {ApiError,authenticated,csrfToken,read} from './api.ts';
 import {UsageSummary,WorkspaceLauncher,GrantedFiles,RecordedDiffPanel,OutputPanel} from './WorkspacePanelBodies.tsx';
 import {getPreferences,type UiPreferences} from '../../../packages/contracts/preferences.ts';
@@ -11,7 +12,7 @@ import {Artifact} from './Artifact.tsx';
 import {PlanStatus} from './PlanStatus.tsx';
 import {TaskMemory} from './TaskMemory.tsx';
 import {z} from 'zod';
-import {journalRead,journalWrite,journalSubscribe,journalFlush,journalGeneration,journalCompareAndSwap} from './journal.ts';
+import {journalRead,journalReadRecord,journalWrite,journalSubscribe,journalFlush,journalGeneration,journalCompareAndSwap} from './journal.ts';
 import {useDesktopCloseGuard} from './desktop-context.tsx';
 import {GitHubSignIn} from './GitHubSignIn.tsx';
 import {FileCheckpoints} from './FileCheckpoints';
@@ -39,10 +40,57 @@ function FilesBody({base,query,active,fallback}:{base:string;query:URLSearchPara
 }
 function DiffBody({base,query,active,fallback}:{base:string;query:URLSearchParams;active:boolean;fallback:ReactNode}){
  const{value,error,errorCode,load,setError}=useProjectRequest<GitStatus>(base+'/git?'+query,active),[staged,setStaged]=useState(false),[pending,setPending]=useState(false);
+ const[unviewedOnly,setUnviewedOnly]=useState(false),[saving,setSaving]=useState<ReadonlySet<string>>(new Set()),[viewedError,setViewedError]=useState(''),[announce,setAnnounce]=useState('');
+ const view:ViewedView=staged?'staged':'unstaged';
+ interface ViewedChecklist{state:'loading'|'ready'|'error'|'none';states:Map<string,ViewedRowState>;viewed:number;total:number}
+ const[checklist,setChecklist]=useState<ViewedChecklist>({state:'none',states:new Map(),viewed:0,total:0});
+ const members=useMemo(()=>{const map=new Map<string,FileReviewIdentity|undefined>();for(const file of value?.files??[]){const identity=file.untracked?undefined:view==='staged'?file.review?.staged:file.review?.unstaged;if(identity!==undefined)map.set(file.path,identity);}return map;},[value,view]);
+ const owner=value?.review?.owner,generation=useRef(0),focusedPath=useRef<string|null>(null),listRef=useRef<HTMLUListElement>(null),filterRef=useRef<HTMLButtonElement>(null),orderRef=useRef<string[]>([]);
+ useEffect(()=>{
+  const captured=++generation.current;
+  if(!active||!value){setChecklist({state:'none',states:new Map(),viewed:0,total:0});return;}
+  if(!owner){setChecklist({state:'none',states:new Map(),viewed:0,total:members.size});return;}
+  setChecklist(current=>({...current,state:'loading',total:members.size}));
+  const key=viewedKey(owner,view);
+  void journalReadRecord(key).then(async record=>{
+   const stored=parseViewedRecord(record?.value),{record:next,states}=reconcileViewed(stored,members);
+   if(generation.current!==captured)return;
+   if(JSON.stringify(next)!==JSON.stringify(stored)&&!await mutateViewed(key,()=>next))throw new Error('Viewed status could not be saved.');
+   if(generation.current!==captured)return;
+   const reopened=[...states.values()].filter(state=>state==='changed').length;
+   setChecklist({state:'ready',states,viewed:[...states.values()].filter(state=>state==='viewed').length,total:members.size});
+   if(reopened)setAnnounce(reopened===1?'1 file changed since viewed.':`${reopened} files changed since viewed.`);
+  }).catch(()=>{if(generation.current===captured)setChecklist(current=>({...current,state:'error',total:members.size}));});
+ },[value,view,owner,members,active]);
+ const setMark=async(path:string,mark:boolean)=>{
+  const identity=members.get(path);
+  if(!owner||!identity||'unavailable'in identity||saving.has(path))return;
+  setSaving(current=>new Set(current).add(path));setViewedError('');
+  try{
+   const committed=await mutateViewed(viewedKey(owner,view),record=>mark?markViewed(record,path,identity.fingerprint):unmarkViewed(record,path));
+   if(!committed)throw new Error('conflict');
+   setChecklist(current=>{const states=new Map(current.states);states.set(path,mark?'viewed':'unviewed');const next={...current,states,viewed:[...states.values()].filter(state=>state==='viewed').length};setAnnounce(`${next.viewed} of ${next.total} viewed.`);return next;});
+  }catch{setViewedError('Viewed status could not be saved. Retry.');setAnnounce('Viewed status could not be saved.');}
+  finally{setSaving(current=>{const next=new Set(current);next.delete(path);return next;});}
+ };
+ const retry=useCallback(()=>{generation.current++;setChecklist(current=>({...current,state:'loading'}));void load();},[load]);
  const apply=async(type:string,path:string)=>{if(!value||value.gitWrite!==true||pending)return;setPending(true);try{await post(base+'/actions',{id:crypto.randomUUID(),type,payload:{paths:[path],revision:value.revision,expectedHead:value.head},...(query.get('threadId')?{threadId:query.get('threadId')}:{})});await load();}catch(error){setError(message(error));}finally{setPending(false);}};
  if(errorCode==='PROJECT_NOT_CONNECTED')return fallback;
  const legacy=(value as (GitStatus&{mode?:string})|null)?.mode==='legacy';
- return <div className="live-review"><div className="panel-toolbar"><strong>Changes</strong><span>{value?.branch}</span><button onClick={()=>void load()}>Refresh</button><label><input type="checkbox" checked={staged} onChange={event=>setStaged(event.target.checked)}/>Staged</label></div>{error&&<p role="status" className="error-text">{error}</p>}{legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}{value&&<><small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length} changed files</small><ul className="live-change-list">{value.files.map(file=><li key={file.path}><span>{file.oldPath?file.oldPath+' → ':''}{file.path}</span><small>{file.binary?'Binary':file.untracked?'Untracked':`${file.index}${file.worktree} +${file.added??'?'} −${file.removed??'?'}`}</small><button disabled={pending||value.gitWrite!==true} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button></li>)}</ul><pre className="live-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{(staged?value.stagedDiff:value.diff)||'No tracked changes in this view.'}</pre></>}</div>;
+ const rows=(value?.files??[]).map(file=>({file,identity:members.get(file.path),member:members.has(file.path),state:checklist.states.get(file.path)??'unviewed'as ViewedRowState}));
+ const visible=unviewedOnly?rows.filter(row=>!row.file.untracked&&row.member&&row.state!=='viewed'):rows;
+ const visiblePaths=visible.map(row=>row.file.path);
+ useLayoutEffect(()=>{
+  const previous=orderRef.current;orderRef.current=visiblePaths;const path=focusedPath.current;
+  if(!path||document.activeElement!==document.body)return;
+  const index=previous.indexOf(path),ordered=visiblePaths.slice(index).concat(visiblePaths.slice(0,index).reverse());
+  for(const candidate of ordered){const element=listRef.current?.querySelector<HTMLInputElement>(`[data-viewed-path="${CSS.escape(candidate)}"]`);if(element&&!element.disabled){element.focus();return;}}
+  filterRef.current?.focus();
+ });
+ return <div className="live-review"><div className="panel-toolbar"><strong>Changes</strong><span>{value?.branch}</span><button onClick={()=>void load()}>Refresh</button><label><input type="checkbox" checked={staged} onChange={event=>setStaged(event.target.checked)}/>Staged</label><button ref={filterRef} aria-pressed={unviewedOnly} disabled={!owner} title={owner?'Only show files still to review':'Viewed tracking unavailable on this comparison.'} onClick={()=>setUnviewedOnly(current=>!current)}>Unviewed</button></div>{error&&<p role="status" className="error-text">{error}</p>}{viewedError&&<p role="status" className="error-text">{viewedError}</p>}{legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}{value&&<><small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length} changed files</small>{owner&&(checklist.state==='loading'?<small className="viewed-progress">Loading viewed status…</small>:checklist.state==='error'?<small className="viewed-progress">Viewed status unavailable <button className="viewed-retry" onClick={retry}>Retry viewed status</button></small>:<small className="viewed-progress">{checklist.viewed} of {checklist.total} viewed</small>)}<p role="status" aria-live="polite" aria-atomic="true" className="viewed-announce">{announce}</p><ul className="live-change-list" ref={listRef} aria-busy={saving.size>0}>{visible.map(({file,identity,member,state})=>{
+  const reason=file.untracked?'Untracked · not included in viewed tracking':!member?'No change in this view.':identity&&'unavailable'in identity?identity.unavailable:'';
+  const checkable=!!owner&&checklist.state!=='error'&&!file.untracked&&member&&!(identity&&'unavailable'in identity);
+  return <li key={file.path} className={state==='changed'?'viewed-reopened':undefined}><label className="viewed-check"><input type="checkbox" data-viewed-path={file.path} disabled={!checkable||saving.has(file.path)||checklist.state==='loading'} checked={state==='viewed'} aria-label={state==='viewed'?'Mark '+file.path+' as unviewed':'Mark '+file.path+' as viewed'} aria-describedby={reason?'viewed-reason-'+file.path:undefined} onFocus={()=>{focusedPath.current=file.path;}} onChange={event=>void setMark(file.path,event.target.checked)}/><span>Viewed</span></label><span className="viewed-path">{file.oldPath?file.oldPath+' → ':''}{file.path}</span><small>{file.binary?'Binary':file.untracked?'Untracked':`${file.index}${file.worktree} +${file.added??'?'} −${file.removed??'?'}`}</small>{saving.has(file.path)&&<small className="viewed-saving">Saving…</small>}{state==='changed'&&<small className="viewed-reopen">Changed since viewed</small>}{reason&&<small id={'viewed-reason-'+file.path} className="viewed-reason">{reason}</small>}<button disabled={pending||value.gitWrite!==true} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button></li>;})}</ul>{unviewedOnly&&visible.length===0&&<p className="panel-note">{checklist.total?'All tracked changes in this view are viewed.':'No tracked changes in this view.'} <button onClick={()=>setUnviewedOnly(false)}>Show all</button></p>}<pre className="live-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{(staged?value.stagedDiff:value.diff)||'No tracked changes in this view.'}</pre></>}</div>;
 }
 function ChangesBody({base,query,active,recorded,preferences}:{base:string;query:URLSearchParams;active:boolean;recorded:ReactNode;preferences:UiPreferences}){
  // Enable History only with a host adapter and the context's exact workingCopy.id.

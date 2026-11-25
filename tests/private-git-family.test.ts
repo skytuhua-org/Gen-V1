@@ -127,3 +127,57 @@ it('does not turn a rejected side context into project facts after catching Git 
  const f=await fixture(),now=new Date().toISOString();f.store.internal('fixture',null,()=>{f.store.put('thread','hover-side','hover-side',{id:'hover-side',title:'Side',projectId:f.projectId,createdAt:now,updatedAt:now,status:'ready',epoch:0,runId:null,modelId:null,sessionPath:null,kind:'side'});});
  await expect(f.tools.context(f.projectId,'hover-side')).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
 });
+
+it('mints stable per-file review identities that change only with their own endpoints',async()=>{
+ const f=await fixture(),binding=await f.add('review-one');
+ await writeFile(join(binding.path,'one.txt'),'first\n');
+ await writeFile(join(binding.path,'two.txt'),'other\n');f.git('-C',binding.path,'add','two.txt');f.git('-C',binding.path,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','seed two');await writeFile(join(binding.path,'two.txt'),'other-revised\n');
+ const before=await f.tools.gitStatus(f.projectId,'review-one');
+ expect(before.review).toMatchObject({version:1,owner:expect.any(String)});
+ const one=before.files.find(file=>file.path==='one.txt')!,two=before.files.find(file=>file.path==='two.txt')!;
+ expect(one.review?.unstaged).toEqual({fingerprint:expect.stringMatching(/^v1:[0-9a-f]{64}$/)});
+ expect(one.review?.staged).toBeUndefined();expect(two.review?.unstaged).toEqual({fingerprint:expect.any(String)});
+ const stale=(one.review!.unstaged as {fingerprint:string}).fingerprint;
+ await writeFile(join(binding.path,'one.txt'),'second\n');
+ const after=await f.tools.gitStatus(f.projectId,'review-one');
+ const oneAfter=after.files.find(file=>file.path==='one.txt')!,twoAfter=after.files.find(file=>file.path==='two.txt')!;
+ expect((oneAfter.review!.unstaged as {fingerprint:string}).fingerprint).not.toBe(stale);
+ expect((twoAfter.review!.unstaged as {fingerprint:string}).fingerprint).toBe((two.review!.unstaged as {fingerprint:string}).fingerprint);
+ expect(after.review?.owner).toBe(before.review?.owner);
+ // Staging moves the change into a staged fingerprint; an unrelated HEAD move does not touch it.
+ await f.tools.gitAction(f.projectId,'review-one',{type:'stage',paths:['one.txt'],revision:after.revision});
+ const staged=await f.tools.gitStatus(f.projectId,'review-one');
+ const stagedOne=staged.files.find(file=>file.path==='one.txt')!;
+ expect(stagedOne.review?.staged).toEqual({fingerprint:expect.any(String)});
+ f.git('-C',binding.path,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','advance');
+ const committed=await f.tools.gitStatus(f.projectId,'review-one');
+ const committedTwo=committed.files.find(file=>file.path==='two.txt')!;
+ expect((committedTwo.review!.unstaged as {fingerprint:string}).fingerprint).toBe((two.review!.unstaged as {fingerprint:string}).fingerprint);
+},60000);
+
+it('distinguishes same-size binary edits and gives owners that differ per worktree',async()=>{
+ const f=await fixture(),one=await f.add('bin-one'),two=await f.add('bin-two');
+ for(const binding of [one,two]){await writeFile(join(binding.path,'blob.bin'),Buffer.from([1,2,3]));f.git('-C',binding.path,'add','blob.bin');f.git('-C',binding.path,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','seed blob');}
+ // Identical edits share a fingerprint (it hashes the change, not the worktree); distinct edits differ.
+ await writeFile(join(one.path,'blob.bin'),Buffer.from([9,9,9]));await writeFile(join(two.path,'blob.bin'),Buffer.from([9,8,9]));
+ const a=await f.tools.gitStatus(f.projectId,'bin-one'),b=await f.tools.gitStatus(f.projectId,'bin-two');
+ expect(a.review?.owner).not.toBe(b.review?.owner);
+ const first=(a.files[0]!.review!.unstaged as {fingerprint:string}).fingerprint;
+ expect((b.files[0]!.review!.unstaged as {fingerprint:string}).fingerprint).not.toBe(first);
+ await writeFile(join(one.path,'blob.bin'),Buffer.from([1,9,3]));
+ const edited=await f.tools.gitStatus(f.projectId,'bin-one');
+ expect((edited.files[0]!.review!.unstaged as {fingerprint:string}).fingerprint).not.toBe(first);
+},60000);
+
+it('leaves untracked and deleted-side rows without fingerprints and keeps legacy owners stable',async()=>{
+ const f=await fixture(),binding=await f.add('mixed');
+ await writeFile(join(binding.path,'new.txt'),'untracked\n');await rm(join(binding.path,'one.txt'));
+ const managed=await f.tools.gitStatus(f.projectId,'mixed');
+ expect(managed.files.find(file=>file.path==='new.txt')?.review).toBeUndefined();
+ const deleted=managed.files.find(file=>file.path==='one.txt')!;
+ expect(deleted.review?.unstaged).toEqual({fingerprint:expect.any(String)});
+ await writeFile(join(f.path,'one.txt'),'legacy change\n');
+ const legacyA=await f.tools.gitStatus(f.projectId),legacyB=await f.tools.gitStatus(f.projectId);
+ expect(legacyA.review?.owner).toBe(legacyB.review?.owner);
+ expect(legacyA.files[0]?.review?.unstaged).toEqual({fingerprint:expect.any(String)});
+},60000);
