@@ -3358,6 +3358,7 @@
     "tests/cursor-service-receipt.test.ts",
     "tests/cursor-worker.test.ts",
     "tests/dark-default.test.ts",
+    "tests/database-inspection-staging.test.ts",
     "tests/debug-policy-v3.test.ts",
     "tests/dependency-contract-execution-v3.test.ts",
     "tests/dependency-output-parent-race-v3.test.mjs",

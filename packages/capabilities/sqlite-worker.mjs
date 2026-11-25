@@ -1,12 +1,23 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync, constants as C } from "node:sqlite";
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 const { mode, path, table, limit = 100, statements = [], expectedVersion, reservedJournal } = workerData;
 const hash = () => {
   if (!statSync(path).isFile() || statSync(path).size > 256 * 1024 * 1024) throw new Error("Select a SQLite file of at most 256 MiB");
   if (existsSync(`${path}-wal`) || (!reservedJournal && existsSync(`${path}-journal`))) throw new Error("Active WAL/journal database unsupported; checkpoint and close it first");
-  return createHash("sha256").update(readFileSync(path)).digest("hex");
+  const fd = openSync(path, "r"), digest = createHash("sha256"), buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    const size = fstatSync(fd).size;
+    let offset = 0;
+    while (offset < size) {
+      const read = readSync(fd, buffer, 0, Math.min(buffer.length, size - offset), offset);
+      if (!read) throw new Error("Database changed while being inspected");
+      digest.update(buffer.subarray(0, read));
+      offset += read;
+    }
+    return digest.digest("hex");
+  } finally { closeSync(fd); }
 };
 let db, transaction = false, committed = false;
 function integrity() { const rows = db.prepare("PRAGMA integrity_check").all(); if (rows.length !== 1 || Object.values(rows[0])[0] !== "ok") throw new Error("Database integrity check failed"); return "ok"; }
