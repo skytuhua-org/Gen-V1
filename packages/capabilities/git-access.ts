@@ -144,8 +144,10 @@ export async function withGitMetadata<T>(cwd: string, signal: AbortSignal, actio
     // Remove only identities created here, leaves first. Never recursively
     // delete a pathname that a concurrent writer might have substituted. A
     // cleanup failure must not skip the remaining entries or hide the real
-    // operation outcome: it rides as `suppressed` on that outcome's error and
-    // is only thrown itself when the operation succeeded.
+    // operation outcome: it rides as `suppressed` on that outcome's error.
+    // When the operation succeeded, preserve its result and report the residual
+    // cleanup failure through the process diagnostic instead of throwing it in
+    // place of the result.
     const cleanupErrors: unknown[] = [];
     for (const entry of owned.reverse()) {
       try { await removeOwnedFile(entry.path, entry, new AbortController().signal, false, entry.directory); }
@@ -160,7 +162,7 @@ export async function withGitMetadata<T>(cwd: string, signal: AbortSignal, actio
       }
       throw outcome.failure;
     }
-    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "Git snapshot cleanup could not remove every temporary file.");
+    if (cleanupErrors.length) process.stderr.write(`Gen V1 retained ${cleanupErrors.length} Git snapshot temporary ${cleanupErrors.length === 1 ? "entry" : "entries"} because cleanup could not be confirmed.\n`);
     return outcome.value!;
   },()=>controller.abort());
 }
