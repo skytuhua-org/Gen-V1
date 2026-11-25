@@ -16,7 +16,7 @@ initial=applySplitWorkspaceCommand(initial,'view.open',{view:{id:'one',kind:'thr
 initial=applySplitWorkspaceCommand(initial,'pane.split',{paneId:'pane-main',newPaneId:'right',splitId:'columns',axis:'horizontal',view:{id:'two',kind:'thread',binding:{authority:{kind:'local'},threadId:'two'}}});
 window.mounts={};window.commands=[];window.editorChoices=[];window.flushRejected=false;window.deferEditorChoice=false;
 function Editor({id,active}){const[value,setValue]=useState('');useEffect(()=>{window.mounts[id]=(window.mounts[id]||0)+1;},[]);return <div><label>{id}<input aria-label={'Draft '+id} value={value} onChange={e=>setValue(e.target.value)}/></label><iframe title={'Frame '+id} srcDoc='<input value="same renderer"/>'/><span>{active?'visible':'hidden'}</span></div>}
-function Fixture(){const[layout,setLayout]=useState(initial);window.currentLayout=layout;window.issue=(type,payload)=>setLayout(current=>applySplitWorkspaceCommand(current,type,payload));return <WorkspaceSplitLayout layout={layout} showHistory={false} emptyMainPaneId={window.emptyMain?'pane-main':undefined} editorOptions={[{id:'thread',title:'Conversation'},{id:'diff',title:'Diff'}]} onSelectEditor={async(kind,paneId)=>{window.editorChoices.push({kind,paneId});if(window.deferEditorChoice)await new Promise(resolve=>{window.finishEditorChoice=resolve;});}} onDropThread={async()=>{window.threadDrops=(window.threadDrops||0)+1;}} title={view=>view.id} prepare={async()=>{if(window.flushRejected)throw Error('Draft flush failed. Keep this view open.');}} onCommand={async(type,payload)=>{window.commands.push({type,payload});setLayout(current=>applySplitWorkspaceCommand(current,type,payload));}} renderView={(view,active)=><Editor id={view.id} active={active}/>}/>}
+function Fixture(){const[layout,setLayout]=useState(initial);window.currentLayout=layout;window.issue=(type,payload)=>setLayout(current=>applySplitWorkspaceCommand(current,type,payload));return <WorkspaceSplitLayout layout={layout} showHistory={false} emptyMainPaneId={window.emptyMain?'pane-main':undefined} editorOptions={[{id:'thread',title:'Conversation'},{id:'diff',title:'Diff'}]} onSelectEditor={async(kind,paneId)=>{window.editorChoices.push({kind,paneId});if(window.deferEditorChoice)await new Promise(resolve=>{window.finishEditorChoice=resolve;});}} onDropThread={async()=>{window.threadDrops=(window.threadDrops||0)+1;}} title={view=>view.id} prepare={async()=>{if(window.flushRejected)throw Error('Draft flush failed. Keep this view open.');}} onCommand={async(type,payload)=>{window.commands.push({type,payload});if(window.commandFault)throw Error(window.commandFault);setLayout(current=>applySplitWorkspaceCommand(current,type,payload));}} renderView={(view,active)=><Editor id={view.id} active={active}/>}/>}
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 beforeAll(async()=>{
@@ -125,6 +125,50 @@ it('opens the area menu from the corner button and marks the focused pane',async
   await tab.getByRole('menu').waitFor({state:'visible'});
   await tab.keyboard.press('Escape');await tab.getByRole('menu').waitFor({state:'detached'});
   await tab.waitForFunction(()=>document.activeElement?.classList.contains('split-corner'));
+ }finally{await tab.close();}
+});
+it('dedupes identical command errors into one dismissible banner',async()=>{
+ const tab=await page();try{
+  await tab.evaluate(()=>{(window as unknown as {commandFault?:string}).commandFault='Synthetic command fault';});
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();
+  await divider.press('ArrowRight');await tab.getByRole('alert').waitFor({state:'visible'});
+  await divider.press('ArrowRight');await tab.waitForFunction(()=>(window as unknown as {commands:unknown[]}).commands.length>=2);
+  expect(await tab.getByRole('alert').count()).toBe(1);expect(await tab.getByRole('alert').innerText()).toContain('Synthetic command fault');
+  await tab.getByRole('button',{name:'Dismiss'}).click();expect(await tab.getByRole('alert').count()).toBe(0);
+ }finally{await tab.close();}
+});
+it('retries a revision conflict once then shows one friendly banner',async()=>{
+ const tab=await page();try{
+  await tab.evaluate(()=>{(window as unknown as {commandFault?:string}).commandFault='The layout revision changed. Refresh before applying this operation.';});
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');
+  await tab.getByRole('alert').waitFor({state:'visible'});
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(2);
+  expect(await tab.getByRole('alert').count()).toBe(1);
+  const text=await tab.getByRole('alert').innerText();expect(text).toContain("Couldn't apply that change");expect(text).not.toContain('revision changed');
+ }finally{await tab.close();}
+});
+it('accumulates rapid keyboard divider presses into one debounced commit',async()=>{
+ const tab=await page();try{
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();
+  for(let i=0;i<10;i++)await divider.press('ArrowRight');
+  // Optimistic: aria-valuenow and the % tooltip already reflect the preview.
+  expect(await divider.getAttribute('aria-valuenow')).toBe('60');
+  await tab.locator('.split-divider span').waitFor({state:'visible'});expect(await tab.locator('.split-divider span').innerText()).toMatch(/60% width/);
+  await tab.waitForFunction(()=>Math.abs((window as unknown as {currentLayout:{root:{ratio:number}}}).currentLayout.root.ratio-.6)<.001);
+  const resizes=await tab.evaluate(()=>(window as unknown as {commands:{type:string;payload:{ratio:number}}[]}).commands.filter(command=>command.type==='pane.resize'));
+  expect(resizes).toHaveLength(1);expect(resizes[0]!.payload.ratio).toBeCloseTo(.6,3);
+  expect(await divider.getAttribute('aria-valuenow')).toBe('60');
+ }finally{await tab.close();}
+});
+it('cancels a pending keyboard resize preview on Escape without a command',async()=>{
+ const tab=await page();try{
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();
+  const before=await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length);
+  await divider.press('ArrowRight');await divider.press('ArrowRight');
+  await tab.keyboard.press('Escape');
+  expect(await divider.getAttribute('aria-valuenow')).toBe('50');
+  await tab.waitForTimeout(400);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(before);
  }finally{await tab.close();}
 });
 it('retains layout when draft flush fails and restores desktop geometry after narrow mode',async()=>{
