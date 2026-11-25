@@ -778,7 +778,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const onReplyJump = useCallback((top:number)=>{
     const position=conversationMotion.current?.jumpToReadingPosition(top);if(!position)return;
     readingPositions.current.set(thread?.id??'new',position);
-    setLatestAvailable(false);setAnnouncement('');
+    setLatestAvailable(!position.tail);setAnnouncement('');
   },[thread?.id]);
   const archive = async (id: string, discard = false, confirmed = false) => {
     if (!discard && Object.values(dirtyWidgets).includes(id)) { setArchiveThread(id);  return; }
