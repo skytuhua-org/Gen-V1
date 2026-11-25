@@ -3479,6 +3479,7 @@
     "tests/agent-file-policy.test.ts",
     "tests/agent-input-v3.test.ts",
     "tests/agent-work-dispatch-v3.test.ts",
+    "tests/agent-work-join-v1.test.ts",
     "tests/agent-work-v3.test.ts",
     "tests/agents-project-catalog.test.ts",
     "tests/agents-workspace-composer.test.ts",

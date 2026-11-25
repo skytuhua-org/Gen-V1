@@ -247,10 +247,10 @@ export class Service {
     this.research=new PersonalResearchRepository(store,{assertHostActive:()=>{if(this.closed||this.updateClosing)throw new HarnessError('HOST_CLOSING','Gen is closing. Saved work is retained.');}});
     this.predictions=new ComposerPredictions({factory:()=>{if(!options.predictionRuntimeFactory)throw new HarnessError('PREDICTION_UNAVAILABLE','Composer predictions are unavailable in this host.');return options.predictionRuntimeFactory();},current:id=>this.predictionBasis(id)});
     this.planning=new PlanningCoordinator({store,assertRun:ctx=>this.assertRun(ctx),domainContext:(ctx,signal)=>this.context(ctx.threadId,signal,undefined,ctx),runtimeFactory:options.planningRuntimeFactory,canonicalJobs:options.canonicalPlanJobs,observeTool:(call,parent,execute)=>{this.effects.assertAdmissionsEnabled();return this.effectFlags.enabled("audit.effectsV1")||this.effectFlags.enabled("security.authorityV1")?this.effects.invoke({call,ctx:parent,thread:this.thread(parent.threadId),role:"planning_child"},execute):execute();}});
-    // M09: typed multi-agent work. No registered M08 managed-worktree profile
-    // or M06 typed-verification proof exists on this host, so CODE_WORKTREE
-    // and QA expose ROLE_UNAVAILABLE while PLAN_READ/RESEARCH_READ run
-    // read-only through the restricted resolver below.
+    // M09: typed multi-agent work. Native child allocation and exact M02/M03
+    // proof are not registered on this host. Keep CODE_WORKTREE and QA
+    // unavailable; parent workspace identity is not native execution proof.
+    // PLAN_READ/RESEARCH_READ retain the restricted read-only resolver.
     this.planExtensions=new PlanExtensionStore({store});
     this.agentWork=new AgentWorkCoordinator({store,assertRun:ctx=>this.assertRun(ctx),isEnabled:capabilityEnabled,
       resourceResolver:async(_grant,_write,call)=>{const domain=await import('../capabilities/index.ts');return domain.handleDomainTool(call.name,call.args,this.agentReadDomain(_grant.threadId));},
