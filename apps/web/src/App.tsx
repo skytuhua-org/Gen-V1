@@ -1,7 +1,7 @@
-import { memo, useContext, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, useSyncExternalStore, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
+import { useContext, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo, useSyncExternalStore, type CSSProperties } from 'react';
 import { Activity, ArrowUp, Bot, Check, ChevronDown, ChevronRight, CircleHelp, CircleStop, Folder, Laptop, LoaderCircle, Menu, MessageSquare, PanelLeftOpen, PanelRight, PenLine, Plus, SlidersHorizontal, WifiOff, X } from 'lucide-react';
 import type { InputRequest, ModelInfo, Operation, Snapshot, Thread,Message } from '../../../packages/contracts';
-import { ApiError, bootstrap, command, getModels, getSnapshot, getThreadMessages, getToolEffectObservation, searchThreadMessages, subscribe, type ToolEffectObservation } from './api';
+import { ApiError, bootstrap, command, getModels, getSnapshot, getThreadMessages, searchThreadMessages, subscribe } from './api';
 import {onAccountCatalogChanged,notifyAccountCatalogChanged,mergeAccountModels} from './account-api';
 import type {AccountAuthTarget} from '../../../packages/contracts/authentication';
 import {isConnectionProviderId} from '../../../packages/contracts/connections';
@@ -21,7 +21,6 @@ import { display, schemaDefaults, SchemaFields } from './registry';
 import { useModalRegion } from './focus';
 import { validateSchema } from './schema-validator';
 import { matchingThreads, type HistoricalThreadMatches } from './thread-search';
-import { hasPendingDocumentAssets } from './signature-assets';
 import { getPreferences, mergePreferences } from '../../../packages/contracts/preferences';
 import { ShellSidebar, threadStatus } from './ShellSidebar';
 import { ProjectPicker } from './ProjectPicker';
@@ -48,9 +47,8 @@ import {ComposerToolbar,ComposerTaskActions} from './ComposerToolbar';
 import {ComposerView} from './ComposerView';
 import {LoadingState} from './LoadingState';
 import {SurfaceBoundary} from './SurfaceBoundary';
-import {ComposerSkeleton, ConversationSkeleton, SettingsSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
+import {ComposerSkeleton, ConversationSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
 import {ComposerAttachments} from './ComposerAttachments';
-import {Modal} from '../../../packages/ui-shell/Modal';
 import {SessionBranchLineage, SessionBranchMenu, useSessionBranchOverview} from './SessionBranchMenu';
 import {toast,Toaster} from '../../../packages/ui-shell/Toast';
 import {TooltipLayer} from '../../../packages/ui-shell/Tooltip';
@@ -100,12 +98,10 @@ import type {TerminalExcerptComposer} from './TerminalBody';
 import {WorkspaceSurfaceBody, type ReviewRequest} from './WorkspaceSurfaceBody';
 import {ProjectContextSurface} from './ProjectContextSurface';
 import {DesktopBrowserSlot,DesktopBrowserToolbar} from './DesktopBrowser';
-import {ErrorState} from '../../../packages/ui-shell/Feedback';
 import {OperationProjectTrust, OperationProjectTrustStatus, type ProjectTrustReadiness} from './OperationProjectTrust';
 import { OperationExecutionReviewPanel } from './OperationExecutionReview';
 
-type SettingsComponent = typeof import('./Settings').Settings;
-let loadedSettings: SettingsComponent | undefined;
+import {ActionDetails,AssistantProse,Dialog,messageOf,OperationExecutionPolicy,SettingsWindow} from './app-panels';
 
 const readPlacementRaw=(workspaceId:string):string|null=>{try{return localStorage.getItem(conversationPlacementKey(workspaceId));}catch{return null;}};
 const writePlacementRecord=(record:ConversationPlacementRecord)=>{try{localStorage.setItem(conversationPlacementKey(record.workspaceId),JSON.stringify(record));}catch{/* Placement remains usable when storage is unavailable. */}};
@@ -114,39 +110,6 @@ const DEFAULT_FLOAT_RECT:ChatRect={x:48,y:48,width:480,height:680};
 
 const emptySnapshot: Snapshot = { seq: 0, threads: [], messages: [], artifacts: [], userStates: [], data: [], requests: [], operations: [], resources: [], usage: {}, settings: { theme: 'dark', modelId: null }, activeThreadId: null };
 const hasPinnedAccount = (thread: Thread | undefined, snapshot: Snapshot) => Boolean(thread && (thread.accountId !== undefined || thread.modelId || thread.sessionPath || thread.runId || thread.epoch > 0 || snapshot.messages.some(message => message.threadId === thread.id)));
-const messageOf = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.';
-
-function Dialog({ title, children, close }: { title: string; children: ReactNode; close: () => void }) {
-  return <Modal open title={title} onClose={close} className="dialog">{children}</Modal>;
-}
-
-function SettingsWindow(props: ComponentProps<SettingsComponent>) {
-  const desktop = useDesktop();
-  const opener = useRef(document.activeElement as HTMLElement | null);
-  const [Settings, setSettings] = useState(() => loadedSettings);
-  const [error, setError] = useState(''), [reloading, setReloading] = useState(false);
-  useEffect(() => () => { if (opener.current?.isConnected) opener.current.focus({ preventScroll: true }); }, []);
-  useEffect(() => {
-    if (Settings) return;
-    let active = true;
-    void import('./Settings').then(module => { loadedSettings = module.Settings; if (active) setSettings(() => module.Settings); }).catch(() => { if (active) setError('Settings could not load. Try again or close this window.'); });
-    return () => { active = false; };
-  }, [Settings]);
-  const reload = async () => {
-    setReloading(true);
-    try {
-      if (props.snapshot.threads.some(thread => hasPendingDocumentAssets(thread.id))) { setError('Wait for the signature mark to finish saving, or clear it before reloading.'); return; }
-      await desktop?.prepareHandoff(); await journalFlush(); window.location.reload();
-    } catch (cause) { setError(`Drafts could not be saved. ${messageOf(cause)} Keep this window open and retry.`); }
-    finally { setReloading(false); }
-  };
-  return <Modal open title="Settings" onClose={props.close} className="settings-dialog">{Settings ? <Settings {...props} /> : <>{error ? <ErrorState message={error} retryLabel="Reload to retry" busy={reloading} onRetry={() => void reload()}/> : <LoadingState pending hasContent={false} label="Opening settings…" skeleton={<SettingsSkeleton/>} className="view-loading-state"/>}</>}</Modal>;
-}
-
-const AssistantProse = memo(function AssistantProse({message,arrivals,active}:{message:Message;arrivals:Set<string>;active:boolean}){
-  const initial=useRef(arrivals.has(message.id));useEffect(()=>{arrivals.delete(message.id);},[message.id,arrivals]);
-  return <Markdown text={message.content} animate={active||initial.current} initialReveal={initial.current}/>;
-}, (previous, next) => previous.message === next.message && previous.arrivals === next.arrivals && previous.active === next.active);
 function InputDecision({ request, refresh, snapshot }: { request: InputRequest; refresh: () => Promise<void>; snapshot:Snapshot }) {
   const defaults = schemaDefaults(request.responseSchema);
   const [values, setValues] = useState<Record<string, unknown>>(() => defaults && typeof defaults === 'object' ? defaults as Record<string, unknown> : {});
@@ -182,56 +145,18 @@ function InputDecision({ request, refresh, snapshot }: { request: InputRequest; 
   if(request.presentation)return <div className="decision"><PlanningQuestion id={request.id} revision={request.revision} title={request.title} prompt={request.prompt} {...request.presentation} value={typeof text==='string'?text:''} onChange={update} resources={snapshot.resources.filter(item=>item.threadId===request.threadId)} onExplain={(optionId,kind)=>detail(kind,optionId)} onMoreOptions={()=>detail('more-options')} onSubmit={()=>respond()} busy={busy||!ready} error={error||request.detailRequests?.find(detail=>detail.status==="failed")?.error} pending={request.detailRequests?.find(item=>item.status==='pending')} /><button className="quiet" disabled={busy||!ready} onClick={()=>void respond(true)}>Withdraw</button></div>;
   return <section className="decision" aria-label={request.title}><header><span className="pending-dot" />{request.title}<span className="badge">Your input</span></header><Markdown text={request.prompt} /><form onSubmit={event => { event.preventDefault(); void respond(); }}><fieldset disabled={busy || !ready}>{objectSchema ? <SchemaFields schema={request.responseSchema} value={values} onChange={update} /> : <SchemaFields schema={{ type: 'object', properties: { response: { ...request.responseSchema, title: 'Response' } }, required: ['response'] }} value={{ response: text }} onChange={value => update(value.response)} />}</fieldset>{error && <p role="status" className="error-text">{error}</p>}<div className="decision-actions"><button type="button" className="quiet" disabled={busy || !ready} onClick={() => void respond(true)}>Withdraw</button><button className="primary" disabled={busy || !ready}>{busy ? 'Submitting…' : 'Continue'}<ArrowUp size={14} /></button></div></form></section>;
 }
-/** M02 action details drawer: ledger view of one invocation. Uncertain states
- * surface as Inspect outcome / View evidence — never a generic Retry — and the
- * coverage note stays visible while native calls are not host-observed. */
-function ActionDetails({ threadId, invocationId, observationKey }: { threadId: string; invocationId: string; observationKey: string }) {
-  const [open, setOpen] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  const [result, setResult] = useState<{ key: string; data?: ToolEffectObservation; error?: true } | null>(null);
-  const requestKey = JSON.stringify([threadId, invocationId, observationKey, attempt]);
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    getToolEffectObservation(threadId, invocationId)
-      .then(data => { if (live) setResult({ key: requestKey, data }); })
-      .catch(() => { if (live) setResult({ key: requestKey, error: true }); });
-    return () => { live = false; };
-  }, [threadId, invocationId, requestKey, open]);
-  // A previous owner's result must disappear in the same render as its key
-  // changes, before the old request's effect cleanup or the new read completes.
-  const current = result?.key === requestKey ? result : null;
-  const data = current?.data, effect = data?.effect;
-  return <details className="action-details" onToggle={event => {
-    const next = event.currentTarget.open;
-    setOpen(next);
-    if (next) setAttempt(value => value + 1);
-  }}><summary>Action details</summary>
-    {!current && <p role="status" className="muted">Loading execution evidence…</p>}
-    {current?.error && <p role="status" className="error-text">Execution evidence could not be loaded.</p>}
-    {data && (effect
-      ? <pre>{JSON.stringify({ action: effect.publicRedactedSummary, tool: effect.toolId, targets: effect.targetPreconditions, owner: effect.owner, approval: data.approval ? { id: data.approval.approvalId, issuer: data.approval.issuer, expiresAt: data.approval.expiresAt, remainingUses: data.approval.remainingUses } : effect.approvalId, state: effect.state, receipt: effect.providerReceiptRef, freshness: data.freshness, transitions: effect.transitions, outcome: effect.outcome }, null, 2)}</pre>
-      : <p className="muted">No execution-ledger record for this action yet.</p>)}
-    {effect?.state === 'UNKNOWN_EXTERNAL_OUTCOME' && <p className="muted">Inspect outcome: view evidence before deciding; this effect has no generic retry.</p>}
-    {(data?.coverage ?? []).map(note => <p key={note} className="muted coverage-note">{note}</p>)}
-    <button type="button" className="quiet" disabled={!current} onClick={() => setAttempt(value => value + 1)}>Reload evidence</button>
-  </details>;
-}
-function OperationExecutionPolicy({ kind }: { kind: string }) {
-  if (kind !== 'repository.test' && kind !== 'integration.context7') return null;
-  return <p className="muted" role="note" aria-label="Execution policy"><strong>Unrestricted host</strong>. Uses your local user privileges, including your account's file and network access. This operation has no isolated execution backend.</p>;
-}
 export function OperationDecision({ operation, refresh, owner }: { operation: Operation; refresh: () => Promise<void>; owner?: Thread }) {
   const observationKey = JSON.stringify([operation.status, operation.approved, owner?.id, owner?.runId ?? null, owner?.epoch, owner?.status, owner?.accountId ?? null, owner?.modelId ?? null, owner?.projectId ?? null, owner?.workspaceId ?? null]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [unresolved, setUnresolved] = useState(false);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustReadiness>();
   const trustKey = JSON.stringify([operation.threadId, operation.id, operation.revision, observationKey, owner?.mode, owner?.kind, owner?.sideParentId ?? null]);
   const trustReady = operation.kind !== 'repository.test' || projectTrust?.key === trustKey && projectTrust.allowed;
   const caption = operation.description.replace(/\s+(?:and\s+)?(?:resource\s+)?version\s+[a-f0-9]{64}\b/gi, '').replace(/\bSHA-256\s+[a-f0-9]{64}\b/gi, 'its recorded SHA-256').replace(/\b[a-f0-9]{64}\b/gi, 'its recorded hash').replace(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b/gi, 'the recorded operation');
   const approve = operation.status === 'prepared' && !operation.approved;
   const reconcile = operation.status === 'unknown';
-  const execute = async (type: string) => { if (type === 'operation.approve' && !trustReady) return; setBusy(true); setError(''); try { await command(type, { operationId: operation.id, revision: operation.revision }, operation.threadId); await refresh(); } catch (error) { setError(messageOf(error)); } finally { setBusy(false); } };
+  const execute = async (type: string, resolution?: 'failed' | 'cancelled') => { if (type === 'operation.approve' && !trustReady) return; setBusy(true); setError(''); try { const observed = await command(type, { operationId: operation.id, revision: operation.revision, ...(resolution ? { resolution } : {}) }, operation.threadId) as { status?: string } | undefined; if (type === 'operation.reconcile' && !resolution) setUnresolved(observed?.status === 'unknown'); await refresh(); } catch (error) { setError(messageOf(error)); } finally { setBusy(false); } };
   if (operation.status === 'succeeded' || operation.status === 'failed' || operation.status === 'cancelled') {
     const status = operation.status === 'succeeded' ? 'Succeeded' : operation.status === 'failed' ? 'Failed' : 'Cancelled';
     return <section className="decision operation-outcome" data-operation-id={operation.id} data-operation-status={operation.status} aria-label="Operation outcome"><details className="operation-receipt"><summary>
@@ -239,7 +164,7 @@ export function OperationDecision({ operation, refresh, owner }: { operation: Op
       <span className="operation-outcome-status">{status}</span><span className="operation-outcome-caption">{caption}</span><ChevronDown size={14} className="operation-outcome-chevron" aria-hidden="true" />
     </summary><div className="operation-receipt-evidence"><p>{caption}</p><OperationExecutionPolicy kind={operation.kind}/><details><summary>Changes and preconditions</summary><pre>{JSON.stringify({ description: operation.description, kind: operation.kind, args: operation.args, resources: operation.resourceIds, preconditions: operation.preconditions }, null, 2)}</pre></details>{operation.result !== undefined && <details><summary>Executor result</summary><pre>{display(operation.result)}</pre></details>}{operation.error && <p className="error-text">{operation.error}</p>}<ActionDetails threadId={operation.threadId} invocationId={`operation:${operation.id}@${operation.revision}`} observationKey={observationKey} /><OperationExecutionReviewPanel operation={operation} owner={owner} lazy /></div></details></section>;
   }
-  return <section className="decision" data-operation-id={operation.id} aria-label={approve ? 'Operation approval' : 'Operation outcome'}><header><span className="pending-dot" />{reconcile ? 'Inspect uncertain outcome' : approve ? 'Review operation' : 'Operation receipt'}<span className="badge">{approve ? 'Approval needed' : operation.status}</span></header><p>{caption}</p><OperationExecutionPolicy kind={operation.kind}/><details><summary>Changes and preconditions</summary><pre>{JSON.stringify({ description: operation.description, kind: operation.kind, args: operation.args, resources: operation.resourceIds, preconditions: operation.preconditions }, null, 2)}</pre></details>{operation.result !== undefined && <details><summary>Executor result</summary><pre>{display(operation.result)}</pre></details>}{operation.error && <p className="error-text">{operation.error}</p>}<ActionDetails threadId={operation.threadId} invocationId={`operation:${operation.id}@${operation.revision}`} observationKey={observationKey} />{approve && operation.kind === 'repository.test' && <OperationProjectTrust key={trustKey} operation={operation} owner={owner} ownerKey={trustKey} onReady={setProjectTrust}/>}{operation.kind === 'repository.test' && (operation.status === 'running' || operation.status === 'prepared' && operation.approved) && <OperationProjectTrustStatus key={trustKey} operation={operation} owner={owner} ownerKey={trustKey}/>}<OperationExecutionReviewPanel operation={operation} owner={owner} refreshToken={projectTrust}/>{reconcile && <p className="muted">Inspect the actual outcome before resuming. Reconciliation reads evidence without repeating this operation.</p>}{error && <p role="status" className="error-text">{error}</p>}{(approve || reconcile) && <div className="decision-actions">{approve && <button className="quiet" disabled={busy} onClick={() => void execute('operation.reject')}>Decline operation</button>}<button className={approve ? 'primary' : 'secondary'} disabled={busy || approve && !trustReady} onClick={() => void execute(reconcile ? 'operation.reconcile' : 'operation.approve')}>{busy ? 'Checking…' : reconcile ? 'Inspect outcome' : 'Approve operation'}{approve && <Check size={14} />}</button></div>}</section>;
+  return <section className="decision" data-operation-id={operation.id} aria-label={approve ? 'Operation approval' : 'Operation outcome'}><header><span className="pending-dot" />{reconcile ? 'Inspect uncertain outcome' : approve ? 'Review operation' : 'Operation receipt'}<span className="badge">{approve ? 'Approval needed' : operation.status}</span></header><p>{caption}</p><OperationExecutionPolicy kind={operation.kind}/><details><summary>Changes and preconditions</summary><pre>{JSON.stringify({ description: operation.description, kind: operation.kind, args: operation.args, resources: operation.resourceIds, preconditions: operation.preconditions }, null, 2)}</pre></details>{operation.result !== undefined && <details><summary>Executor result</summary><pre>{display(operation.result)}</pre></details>}{operation.error && <p className="error-text">{operation.error}</p>}<ActionDetails threadId={operation.threadId} invocationId={`operation:${operation.id}@${operation.revision}`} observationKey={observationKey} />{approve && operation.kind === 'repository.test' && <OperationProjectTrust key={trustKey} operation={operation} owner={owner} ownerKey={trustKey} onReady={setProjectTrust}/>}{operation.kind === 'repository.test' && (operation.status === 'running' || operation.status === 'prepared' && operation.approved) && <OperationProjectTrustStatus key={trustKey} operation={operation} owner={owner} ownerKey={trustKey}/>}<OperationExecutionReviewPanel operation={operation} owner={owner} refreshToken={projectTrust}/>{reconcile && <p className="muted">{unresolved ? 'The outcome could not be observed. Mark it failed or cancelled to release this task, or inspect again.' : 'Inspect the actual outcome before resuming. Reconciliation reads evidence without repeating this operation.'}</p>}{error && <p role="status" className="error-text">{error}</p>}{(approve || reconcile) && <div className="decision-actions">{approve && <button className="quiet" disabled={busy} onClick={() => void execute('operation.reject')}>Decline operation</button>}<button className={approve ? 'primary' : 'secondary'} disabled={busy || approve && !trustReady} onClick={() => void execute(reconcile ? 'operation.reconcile' : 'operation.approve')}>{busy ? 'Checking…' : reconcile ? 'Inspect outcome' : 'Approve operation'}{approve && <Check size={14} />}</button>{reconcile && unresolved && <><button className="quiet" disabled={busy} onClick={() => void execute('operation.reconcile', 'cancelled')}>Mark outcome cancelled</button><button className="quiet" disabled={busy} onClick={() => void execute('operation.reconcile', 'failed')}>Mark outcome failed</button></>}</div>}</section>;
 }
 
 function ResourcePicker({ threadId, close, refresh, opener }: { threadId: string; close: () => void; refresh: () => Promise<void>; opener: HTMLElement | null }) {
@@ -427,7 +352,7 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
       <WorkbenchComposer title={thread?.title??'New conversation'} working={working} disabled={busy||!ready||retry}/>
       <ComposerAttachments resources={resources} excerpts={excerpts} disabled={busy||!ready||retry} onEditExcerpt={(id,text)=>updateExcerpt(id,text)} onRemoveExcerpt={id=>updateExcerpt(id)} timeFormat={getPreferences(snapshot.settings).timeFormat}/>
       <ComposerSkillBindings bindings={skills} retry={retry} onRemove={id=>{void (sharedComposers&&sharedTarget?sharedComposers.removeSkill(sharedTarget,id):localSkills.remove(id)).catch(cause=>fail(cause));}}/>
-      <ComposerCommands ref={commands} input={input} draft={draft} threadId={thread?.id} projectId={thread?.projectId} disabled={!ready||!skillsReady||busy||predictionBlocked} onDraft={updateDraft} onModel={()=>modelPicker.current?.open()} onMode={chooseMode}/>
+      <ComposerCommands ref={commands} input={input} draft={draft} threadId={thread?.id} projectId={thread?.projectId} disabled={!ready||!skillsReady||busy||predictionBlocked} mode={thread?.mode??draftMode} onDraft={updateDraft} onModel={()=>modelPicker.current?.open()} onMode={chooseMode}/>
       <div className="composer-entry-row">
       <div className="composer-input">
         <textarea ref={input} aria-label="Message" placeholder={prediction.candidate ? '' : dragging ? 'Drop files to attach' : 'Ask anything…'} value={draft} disabled={!ready} onChange={event => updateDraft(event.target.value)} onPaste={prediction.dismiss} onCompositionStart={prediction.dismiss} onKeyDown={event => {
@@ -1167,7 +1092,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   return <WorkspaceNotificationContext.Provider value={notifications}><WorkspaceProvider value={hostWorkspaceContext ?? workspaceContext}><div className={`app-shell ${embeddedThreadId?'embedded-thread-app':''} ${navigationOnly?'desktop-navigation-only':''} ${pinnedThreadId?'desktop-thread-only':''} ${!hostWorkspaceContext&&layout.rightPanelOpen ? 'has-right-panel' : ''} `} inert={desktop?.closing||Boolean(embeddedThreadId&&!embeddedActive)} style={shellStyle} data-document-docked={documentWindow?.placement==='docked'} data-sidebar-collapsed={layout.sidebarCollapsed} data-chat-width={preferences.chatWidth} data-contrast={preferences.contrast} data-word-wrap={preferences.wordWrap} data-panel-animations={preferences.panelAnimations} data-live-usage={preferences.showUsageFooter}>
     {sidebarOpen && <button ref={sidebarScrim} className="sidebar-scrim" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
     {!pinnedThreadId&&!detachedNavigation&&<ShellSidebar onPlaceThread={splitEnabled&&!customDock?item=>{setSelectedPluginId(null);setSelectedPluginWorkspace(null);void placeSplitThread(item.id).catch(cause=>reportError(messageOf(cause)));}:undefined} detachThread={desktop&&desktopSurface?.kind==='main'?item=>{void desktop.detachSurface({kind:'thread',threadId:item.id}).catch(cause=>reportError(messageOf(cause)));}:undefined} navigation={plugins.length>0&&<nav className="plugin-navigation" aria-label="Installed plug-ins">{plugins.map(plugin=><button key={plugin.id} aria-current={selectedPluginId===plugin.id?'page':undefined} onClick={()=>{void selectPlugin(plugin.id).then(()=>setSidebarOpen(false)).catch(cause=>reportError(messageOf(cause)));}}>{plugin.name}</button>)}</nav>} elementRef={sidebar} searchRef={searchRef} mobile={mobile} open={sidebarOpen} layout={layout} preferences={preferences} matching={matching} hoverBlocked={Boolean(settingsOpen||usageOpen||projectPicker||projectConnectOpen||resourcePicker||rename)} onOpenThreadPR={host?.openReview?(target,scope)=>{void host.openReview!(target,scope).catch(cause=>reportError(messageOf(cause)));}:undefined} selectedId={thread?.id} loaded={loaded} creating={composerBusy || threadCreating} search={search} setSearch={setSearch} close={() => setSidebarOpen(false)} toggleCollapsed={event => {if (navigationOnly) void desktop?.bridge.reattach(); else {prepareSidebarToggle(event); setLayout(value => ({ ...value, sidebarCollapsed: !value.sidebarCollapsed }));}}} setFolded={(key, folded) => setLayout(value => ({ ...value, folded: { ...value.folded, [key]: folded } }))} select={select} create={() => void newThreadRef.current().catch(error => reportError(messageOf(error)))} settings={() => { setSettingsSection('general'); setSettingsOpen(true); }} onConnectProject={()=>openProjectConnect({})} onOpenPullRequests={()=>openSidebarTool('linked-pull-requests')} onOpenUsage={()=>openSidebarTool('usage')} rename={item => { void prepareSourceJournal().then(()=>{selectNow(item.id);setTitle(item.title);setRename(true);}).catch(cause=>reportError(messageOf(cause))); }} archive={id => void archive(id)} presentation={async (item, patch) => { if (patch.pinned === false && preferences.unpinConfirmation && !window.confirm('Unpin this thread?')) return false; try { await command('thread.presentation', patch, item.id); void refresh().catch(error => reportError(messageOf(error))); return true; } catch (error) { reportError(messageOf(error)); return false; } }} ensureManualOrder={async () => { try { await command('settings.update', { preferences: { projectOrder: 'manual' } }); await refresh(); return true; } catch (error) { reportError(messageOf(error)); return false; } }} />}
-    {!navigationOnly&&!pinnedThreadId&&!detachedNavigation&&!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={200} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({ ...value, sidebarWidth }))} />}
+    {!navigationOnly&&!pinnedThreadId&&!detachedNavigation&&!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={232} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({ ...value, sidebarWidth }))} />}
     {!navigationOnly&&<div className="workspace-layout-workarea">{!pinnedThreadId&&!detachedNavigation&&(layout.sidebarCollapsed||mobile)&&<button type="button" className="icon-button sidebar-recovery" aria-label={mobile?"Open navigation":"Open sidebar"} aria-expanded={mobile?sidebarOpen:false} onClick={event=>{prepareSidebarToggle(event);setLayout(value=>({...value,sidebarCollapsed:false}));if(mobile)setSidebarOpen(true);requestAnimationFrame(()=>searchRef.current?.focus());}}>{mobile?<Menu size={18}/>:<PanelLeftOpen size={17}/>}</button>}{!pinnedThreadId&&<WorkspaceControls onChoosePreset={host?.choosePreset} pluginWorkspaces={pluginWorkspaces} selectedPluginWorkspace={selectedPluginWorkspace} onSelectPluginWorkspace={(pluginId,id)=>void selectPluginWorkspace(pluginId,id).catch(cause=>reportError(messageOf(cause)))} pluginCatalogError={pluginCatalog.error||(pluginCatalog.failed?'Plug-ins could not be loaded.':'')} onRetryPluginCatalog={pluginCatalog.retry} extensions={pluginCatalog.extensions??[]} onSelectBuiltin={()=>{setSelectedPluginId(null);setSelectedPluginWorkspace(null);setWorkspaceMode('chat');}} panelToggle={panelToggle} workspaceMode={workspaceMode} onWorkspaceMode={setWorkspaceMode} retainedWorkspace={retainedWorkspace} retainedAvailable={activeCanvas?.preset==='workspace'&&activeCanvas.panels.length>0} onLayoutOpenChange={setLayoutChooserOpen} splitProfiles={splitProfiles.profiles} splitLayout={layoutSplitState.layout} splitProfilesLoading={splitProfiles.loading} splitProfilesError={splitProfiles.error} refreshSplitProfiles={splitProfiles.refresh} saveSplitProfile={savedLayoutActions.save} applySplitProfile={savedLayoutActions.apply} renameSplitProfile={savedLayoutActions.rename} removeSplitProfile={savedLayoutActions.remove} splitWorkspace={splitEnabled} activeBinding={thread?{authority:{kind:'local'},threadId:thread.id,...(thread.projectId?{projectId:thread.projectId}:{})}:undefined} envelope={workspaceEnvelope} error={workspaceState.error} onActionError={reportError} send={workspaceState.send} prepare={prepareWorkspace} panels={canvasPanels} title={panelTitle} addPanel={customDock?kind=>openSplitTool(kind):addCanvasPanel} updatePanel={updateCanvasPanel}/>} {!parentNotifications&&<WorkspaceNotifications store={notifications}/>} <div className="personal-workarea" hidden={Boolean(selectedPluginId)}> {Object.values(dirtyWidgets).some(id => id !== thread?.id) && <div className="workspace-error retained-widget-notice"><span>Widget edits remain open in another conversation.</span><button className="quiet" onClick={() => void discardHiddenWidgets()}>Discard hidden widget edits</button></div>}{widgetDiscardError && <div className="workspace-error" role="status">{widgetDiscardError}<button className="icon-button" aria-label="Dismiss error" onClick={() => setWidgetDiscardError('')}><X size={15} /></button></div>}{canvasActive?renderWorkspaceCanvas():<div className="shell-workarea" ref={setPanelOwner} data-tool-layout={panelBounds.stacked?'stacked':'side'}>{splitRoot?renderSplitRoot():
     <SummaryLayout active={!embeddedThreadId&&!rightWindowOpen&&(!detachedPlan||(preferences.showUsageFooter&&liveUsageOpen))} summaries={!embeddedThreadId&&<SummaryDock><DockedSummary id="plan" title="Project overview" className="summary-overview" open={!detachedPlan&&!rightWindowOpen}
       defaultCollapsed focusOnOpen={planFocusOnOpen} expandRequest={planExpandRequest||undefined}><SurfaceBoundary resetKey={candidateThread?.id??'new'}><ProjectContextSurface composerChangesAvailable={composerChangesAvailable} key={candidateThread?.id??'new'} thread={candidateThread} snapshot={snapshot} planOpen={planOpen} fullPlanVisible={Boolean(detachedPlan)} onOpenDetailedPlan={()=>revealWorkspaceTool('plan')} onTogglePlan={()=>{if(planOpen)dismissPlan();else{planVisibility.show(candidateThread);setPlanFocusOnOpen(false);setPlanExpandRequest(value=>value+1);setPlanOpen(true);}}} onSelectThread={select} onShowChanges={()=>revealWorkspaceTool('diff')} onConnect={()=>openProjectConnect({threadId:candidateThread?.id,projectId:candidateThread?.projectId})}/></SurfaceBoundary></DockedSummary><UsageFooter open={liveUsageOpen} threadId={thread?.id} usage={thread?snapshot.usage[thread.id]:undefined} visible={preferences.showUsageFooter&&!rightWindowOpen} onOpenUsage={openUsage}/></SummaryDock>}>

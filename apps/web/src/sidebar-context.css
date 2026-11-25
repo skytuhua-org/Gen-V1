@@ -545,15 +545,16 @@
   color: var(--muted);
 }
 
-.sidebar .sidebar-footer > button:hover:not(:disabled),
+.sidebar .sidebar-footer > button:hover:not(:disabled):not([aria-disabled="true"]),
 .sidebar .sidebar-footer > button:focus-visible {
   color: var(--text);
   background: var(--hover);
 }
 
-.sidebar .sidebar-footer > button:disabled {
+.sidebar .sidebar-footer > button:disabled,
+.sidebar .sidebar-footer > button[aria-disabled="true"] {
   opacity: 0.45;
-  cursor: default;
+  cursor: not-allowed;
 }
 
 /* --- Row actions: quiet at rest, revealed on hover/focus/touch, aligned to the metadata line --- */

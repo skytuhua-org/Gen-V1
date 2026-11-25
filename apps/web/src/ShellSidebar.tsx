@@ -35,6 +35,7 @@ import {GenMark} from './GenMark';
 import {loadPersonalThreadHover,type ThreadHoverPRTarget} from './thread-hover/host';
 import { projectColor, threadDragPayload } from './project-colors';
 import { ActionMenu } from '../../../packages/ui-shell/ActionMenu';
+import { isComposing } from '../../../packages/ui-shell/list-navigation';
 import { toast } from '../../../packages/ui-shell/Toast';
 import { useThreadMove } from './sidebar-thread-move';
 import { useThreadReorder, type SidebarSection } from './sidebar-reorder';
@@ -260,6 +261,7 @@ export function ShellSidebar({
           blocked={hoverBlocked||Boolean(menuId)||Boolean(reorder.dragging)||(!mobile&&layout.sidebarCollapsed)||(mobile&&!open)}>{trigger=><button {...trigger}
           type="button"
           className="thread-item"
+          data-escape-scope
           draggable={!locked}
           onDragStart={event => {
             event.dataTransfer.effectAllowed = 'copyMove';
@@ -269,6 +271,11 @@ export function ShellSidebar({
           onDragEnd={reorder.end}
           aria-keyshortcuts={ariaKeyShortcuts(onPlaceThread ? ['thread-place', 'thread-reorder-up', 'thread-reorder-down'] : ['thread-reorder-up', 'thread-reorder-down'])}
           onKeyDown={event => {
+            if (event.defaultPrevented || document.querySelector('dialog[open]')) return;
+            if (isComposing(event)) {
+              event.stopPropagation();
+              return;
+            }
             if (onPlaceThread && event.altKey && event.key === 'Enter') {
               event.preventDefault();
               onPlaceThread(item);
@@ -406,13 +413,34 @@ export function ShellSidebar({
           type="button"
           className="icon-button sidebar-close"
           aria-label={mobile ? 'Close navigation' : 'Collapse sidebar'}
+          aria-expanded={mobile ? open : !layout.sidebarCollapsed}
+          aria-controls="threads-nav"
           onClick={mobile ? close : toggleCollapsed}
         >
           <PanelLeftClose size={16} />
         </button>
       </div>
       <div className="navigation-actions">
-        <div className={`search-field${search.length > 0 ? ' has-clear' : ''}`}>
+        <div
+          className={`search-field${search.length > 0 ? ' has-clear' : ''}`}
+          data-escape-scope
+          onKeyDown={event => {
+            if (event.defaultPrevented || document.querySelector('dialog[open]')) return;
+            if (isComposing(event)) {
+              event.stopPropagation();
+              return;
+            }
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (search.length > 0) {
+              setSearch('');
+              searchRef.current?.focus();
+            } else if (event.target === searchRef.current) {
+              searchRef.current.blur();
+            }
+          }}
+        >
           <Search size={13} />
           <input
             ref={searchRef}
@@ -423,6 +451,7 @@ export function ShellSidebar({
             value={search}
             onChange={event => setSearch(event.target.value)}
             onKeyDown={event => {
+              if (event.defaultPrevented || isComposing(event) || document.querySelector('dialog[open]')) return;
               if (event.key === 'Enter') {
                 const first = navigable[0];
                 if (first) {
@@ -437,12 +466,6 @@ export function ShellSidebar({
                 event.preventDefault();
                 focusThreadRow(event.key === 'ArrowDown' ? 0 : navigable.length - 1);
                 return;
-              }
-              if (event.key === 'Escape') {
-                event.preventDefault();
-                event.stopPropagation();
-                if (search.length > 0) setSearch('');
-                else event.currentTarget.blur();
               }
             }}
           />
@@ -463,9 +486,8 @@ export function ShellSidebar({
         <button
           type="button"
           className={`icon-button sidebar-action-btn sidebar-filter ${filter !== 'all' ? 'selected' : ''}`}
-          aria-label="Filter threads"
-          title={`Filter: ${filter}. Click for ${filter === 'all' ? 'working' : filter === 'working' ? 'waiting' : 'all'} threads`}
-          aria-pressed={filter !== 'all'}
+          aria-label={`Thread filter: ${filter}`}
+          title={`Filter threads — currently ${filter}`}
           onClick={() => setFilter(value => (value === 'all' ? 'working' : value === 'working' ? 'waiting' : 'all'))}
         >
           <ListFilter size={15} />
@@ -492,17 +514,24 @@ export function ShellSidebar({
           <SquarePen size={15} />
         </button>
       </div>
+      {/* Persistent live region: announcements must update an existing
+          element — mounting a status region is missed by some screen readers. */}
+      <div className="sr-only" role="status" aria-atomic="true">
+        {loaded && !visibleMatching.length
+          ? (search ? (filter === 'all' ? 'No matching threads.' : `No matching ${filter} threads.`) : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.')
+          : filter === 'all' ? 'Showing all threads' : `Showing ${filter} threads`}
+      </div>
       {filter !== 'all' && (
         <div className="sidebar-filter-chip">
           <span>Showing {filter} threads</span>
           <button type="button" className="icon-button" aria-label="Clear thread filter" title="Show all threads" onClick={() => setFilter('all')}><X size={12} /></button>
         </div>
       )}
-      <nav className="thread-list" aria-label="Threads" tabIndex={0} ref={navRef}>
+      <nav id="threads-nav" className="thread-list" aria-label="Threads" tabIndex={0} ref={navRef}>
         {group('pinned', 'Pinned', pinned, {
           list: 'pinned',
           keepVisible: !locked,
-          empty: <div className="sidebar-pinned-empty">Drag a thread here to pin it.</div>,
+          empty: <div className="sidebar-pinned-empty" role="note">Pin a thread from its ⋯ menu, or drag it here.</div>,
         })}
         {group('working', 'Working', working, { list: 'working' })}
         {orderedRemaining.length > 0 && <div className="thread-flat-list" data-thread-list="flat">{orderedRemaining.map((item, index) => {

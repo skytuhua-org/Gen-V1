@@ -1010,7 +1010,7 @@ test('closed mobile navigation is inert and expansion contains and restores focu
   await page.setViewportSize({ width: 390, height: 844 }); await host(page, populated()); await page.goto('/');
   await expect(page.locator('.sidebar')).toHaveAttribute('inert', '');
   await page.getByRole('button', { name: 'Open navigation' }).click(); await expect(page.getByRole('textbox', { name: 'Search threads' })).toBeFocused();
-  await expect.poll(()=>page.locator('main.workspace').evaluate(element=>Boolean(element.closest('[inert]')))).toBe(true); await page.keyboard.press('Escape');
+  await expect.poll(()=>page.locator('main.workspace').evaluate(element=>Boolean(element.closest('[inert]')))).toBe(true); await page.locator('.sidebar').getByRole('button', { name: 'Close navigation', exact: true }).focus(); await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: 'Open navigation' })).toBeFocused();
   await page.getByRole('button', { name: 'Expand artifact', exact: true }).click();
   await expect.poll(() => page.locator('.composer-dock').evaluate(node => Boolean(node.closest('[inert]')))).toBe(true);
@@ -1416,4 +1416,76 @@ test('sidebar thread search completes a keyboard loop without leaking Escape', a
   await clear.click();
   await expect(input).toHaveValue('');
   await expect(input).toBeFocused();
+});
+
+
+test('sidebar search Clear consumes Escape while a conversation is running', async ({ page }) => {
+  const initial = populated(); initial.threads[0]!.runId = 'sidebar-keyboard-run'; initial.threads[0]!.status = 'working';
+  const state = await host(page, initial); await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Stop agent', exact: true })).toBeVisible();
+  const input = page.getByRole('textbox', { name: 'Search threads' });
+  await input.fill('task'); await input.press('Tab');
+  const clear = page.getByRole('button', { name: 'Clear search', exact: true }); await expect(clear).toBeFocused();
+  await clear.press('Escape');
+  await expect(input).toHaveValue(''); await expect(input).toBeFocused();
+  expect(state.commands.filter(command => command.type === 'run.stop' || command.type === 'conversation.stop')).toHaveLength(0);
+  // The same active conversation still accepts its explicit stop action.
+  await page.getByRole('button', { name: 'Stop agent', exact: true }).click();
+  await expect.poll(() => state.commands.filter(command => command.type === 'run.stop' || command.type === 'conversation.stop').length).toBe(1);
+});
+
+test('sidebar search keeps narrow input, result and Clear Escape inside the drawer', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const initial = populated(); initial.threads[0]!.runId = 'sidebar-keyboard-run'; initial.threads[0]!.status = 'working';
+  const state = await host(page, initial); await page.goto('/');
+  await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
+  const input = page.getByRole('textbox', { name: 'Search threads' }), sidebar = page.locator('.sidebar');
+  await input.fill('task'); await input.press('Escape');
+  await expect(input).toHaveValue(''); await expect(input).toBeFocused(); await expect(sidebar).toHaveClass(/sidebar-open/);
+  await input.fill('task'); await input.press('ArrowDown');
+  await expect(page.locator('.thread-item', { hasText: 'First task' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(input).toHaveValue('task'); await expect(input).toBeFocused(); await expect(sidebar).toHaveClass(/sidebar-open/);
+  await input.press('Tab'); await expect(page.getByRole('button', { name: 'Clear search', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(input).toHaveValue(''); await expect(input).toBeFocused(); await expect(sidebar).toHaveClass(/sidebar-open/);
+  // Pointer activation dismisses the shortcut tooltip before this separate empty-query action.
+  await input.click(); await input.press('Escape'); await expect(input).not.toBeFocused(); await expect(sidebar).toHaveClass(/sidebar-open/);
+  expect(state.commands.filter(command => command.type === 'run.stop' || command.type === 'conversation.stop')).toHaveLength(0);
+  // Escape elsewhere in the drawer still dismisses it and restores the opener.
+  await page.locator('.sidebar').getByRole('button', { name: 'Close navigation', exact: true }).focus(); await page.keyboard.press('Escape');
+  await expect(sidebar).toHaveAttribute('inert', '');
+  await expect(page.getByRole('button', { name: 'Open navigation', exact: true })).toBeFocused();
+});
+
+for (const composition of ['native', 'keyCode229'] as const) for (const key of ['Enter', 'ArrowDown', 'ArrowUp', 'Escape']) {
+  test(`sidebar search leaves composing ${key} to the input method (${composition})`, async ({ page }) => {
+    const initial = populated(); initial.threads[0]!.runId = 'sidebar-keyboard-run'; initial.threads[0]!.status = 'working';
+    const state = await host(page, initial); await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Stop agent', exact: true })).toBeVisible();
+    const input = page.getByRole('textbox', { name: 'Search threads' }); await input.fill('Second');
+    const prevented = await input.evaluate((element, {key, composition}) => {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, isComposing: composition === 'native', keyCode: composition === 'keyCode229' ? 229 : 0 });
+      element.dispatchEvent(event); return event.defaultPrevented;
+    }, {key, composition});
+    expect(prevented).toBe(false);
+    await expect(input).toHaveValue('Second'); await expect(input).toBeFocused();
+    await expect(page.locator('.thread-item', { hasText: 'Second task' })).not.toHaveAttribute('aria-current', 'page');
+    expect(state.commands.filter(command => command.type === 'run.stop' || command.type === 'conversation.stop')).toHaveLength(0);
+  });
+}
+
+test('sidebar search does not act on keys while a dialog owns keyboard input', async ({ page }) => {
+  await host(page, populated()); await page.goto('/');
+  const input = page.getByRole('textbox', { name: 'Search threads' }); await input.fill('Second');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true }); await expect(settings).toBeVisible();
+  for (const key of ['Enter', 'ArrowDown', 'ArrowUp', 'Escape']) {
+    const prevented = await input.evaluate((element, key) => {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }); element.dispatchEvent(event); return event.defaultPrevented;
+    }, key);
+    expect(prevented).toBe(false);
+    await expect(input).toHaveValue('Second'); await expect(settings).toBeVisible();
+    await expect(page.locator('.thread-item', { hasText: 'Second task' })).not.toHaveAttribute('aria-current', 'page');
+  }
 });
