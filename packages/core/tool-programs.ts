@@ -186,7 +186,7 @@ export class ToolPrograms {
     return program;
   }
 
-  async run(programId: string, owner: ToolOwner, executor: ProgramExecutor, options: { replay?: boolean; pythonState?: PythonRetainedState } = {}): Promise<ToolProgramResult> {
+  async run(programId: string, owner: ToolOwner, executor: ProgramExecutor, options: { replay?: boolean; pythonState?: PythonRetainedState; onExecutionStarted?: () => void } = {}): Promise<ToolProgramResult> {
     this.assertOwner(owner);
     const program = this.require(programId, owner);
     if (this.active.has(programId)) throw new HarnessError('PROGRAM_BUSY', 'The program already has an owned executor');
@@ -202,13 +202,13 @@ export class ToolPrograms {
     const controller = new AbortController();
     // Install ownership before execution can yield or a caller can cancel.
     const pythonState = program.language === 'PYTHON' ? options.pythonState : undefined;
-    const done = Promise.resolve().then(() => this.execute(programId, owner, executor, controller, options.replay === true, pythonState));
+    const done = Promise.resolve().then(() => this.execute(programId, owner, executor, controller, options.replay === true, pythonState, options.onExecutionStarted));
     this.active.set(programId, { controller, done });
     try { return await done; }
     finally { if (this.active.get(programId)?.controller === controller) this.active.delete(programId); }
   }
 
-  private async execute(programId: string, owner: ToolOwner, executor: ProgramExecutor, controller: AbortController, replay: boolean, pythonState?: PythonRetainedState): Promise<ToolProgramResult> {
+  private async execute(programId: string, owner: ToolOwner, executor: ProgramExecutor, controller: AbortController, replay: boolean, pythonState?: PythonRetainedState, onExecutionStarted?: () => void): Promise<ToolProgramResult> {
     let program = this.require(programId, owner);
     // Reject older/corrupted duplicate lists before any write or payload read.
     // They cannot be persisted again under the current strict program schema.
@@ -531,6 +531,8 @@ export class ToolPrograms {
           check();
         }
       }
+      // Host-only notification before invoking the backend, including a synchronous start failure.
+      onExecutionStarted?.();
       execution = executor.execute({ source: privateProgram.source, inputValues, limits: program.limits,
         startSeed: journal.startSeed, startClock: journal.startClock, signal: controller.signal, call, beforeDelivery });
       const aborted = new Promise<never>((_, reject) => {

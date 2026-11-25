@@ -122,36 +122,75 @@ describe('M12 non-replaying synthetic host protocol', () => {
     expect((await f.results.read(owner, afterReset.resultRef!, { programId: afterReset.programId })).grants).toEqual([]);
   });
 
-  it.each(['input', 'nested read'] as const)('refuses a Python cell whose %s would exceed the retained grant budget before dispatch', async additional => {
+  it.each(['input', 'nested read', 'default read budget'] as const)('preserves the Python kernel when %s exceeds the retained grant budget before dispatch', async additional => {
     const f = fixture(async () => null);
     const grant: ResourceGrant = { id: 'fixture-directory', threadId: owner.threadId, path: tmpdir(),
       label: 'Synthetic project directory', kind: 'project', writable: false, createdAt: '', identity: { dev: '0', ino: '1' } };
     f.store.internal('fixture.grant', owner.threadId, () => f.store.put('resource', grant.id, owner.threadId, grant));
     const checkPaths = vi.spyOn(f.results, 'revalidateGrants').mockResolvedValue(undefined);
     const witness = (index: number) => ({ resourceId: grant.id, grantDigest: digest(grant), path: 'fixture-'+index });
-    const tracked = Array.from({ length: TOOL_RESULT_LIMITS.maxGrants }, (_, index) => witness(index));
+    const count = additional === 'default read budget' ? TOOL_RESULT_LIMITS.maxGrants - DEFAULT_PROGRAM_LIMITS.maxCalls + 1 : TOOL_RESULT_LIMITS.maxGrants;
+    const tracked = Array.from({ length: count }, (_, index) => witness(index));
     const base = await f.results.save({ owner, programId: 'fixture-base', status: 'SUCCEEDED', value: 1, grants: tracked });
     const extra = await f.results.save({ owner, programId: 'fixture-extra', status: 'SUCCEEDED', value: 1, grants: [witness(tracked.length)] });
-    const execute = vi.fn(async () => 1);
+    let retained = 0;
+    const execute = vi.fn(async (request: ProgramExecutionRequest) => {
+      if (request.source === 'retained = 42') retained = 42;
+      return retained;
+    });
+    const stop = vi.fn(async () => { retained = 0; });
     const fixtureExecutor = syntheticExecutor(execute);
-    const executor: ProgramExecutor = { ...fixtureExecutor, proof: { ...fixtureExecutor.proof, language: 'PYTHON', isolation: 'M03_CONFINED_PROCESS' } };
+    const executor: ProgramExecutor = { ...fixtureExecutor, stop, proof: { ...fixtureExecutor.proof, language: 'PYTHON', isolation: 'M03_CONFINED_PROCESS' } };
     const kernels = new PythonKernels(f.store, f.programs, { currentOwner: () => owner, enabled: () => true });
     cleanups.unshift(() => kernels.close());
     const kernel = await kernels.create({ owner, interpreterDigest: hash, configurationDigest: hash,
       cwdIdentity: 'device:inode', toolRegistryDigest: hash, executionProfileDigest: hash }, () => executor);
-    const cell = { source: 'result = 1', allowedTools: [], requestedAggregate: 'Fixture value' };
+    const cell = { source: 'retained = 42', allowedTools: [], requestedAggregate: 'Fixture value' };
 
     try {
-      expect((await kernels.cell(kernel.kernelId, owner, { ...cell, inputRefs: [base] })).state).toBe('SUCCEEDED');
-      expect((await kernels.cell(kernel.kernelId, owner, { ...cell, inputRefs: [base] })).state).toBe('SUCCEEDED');
+      expect((await kernels.cell(kernel.kernelId, owner, { ...cell, inputRefs: [base] })).aggregate).toBe(42);
+      expect((await kernels.cell(kernel.kernelId, owner, { ...cell, inputRefs: [base] })).aggregate).toBe(42);
       const additionalDependencies = additional === 'input'
         ? { inputRefs: [extra] }
-        : { allowedTools: ['repository_read'], limits: { maxCalls: 1, maxConcurrentCalls: 1 } };
-      const denied = await kernels.cell(kernel.kernelId, owner, { ...cell, ...additionalDependencies });
+        : { allowedTools: ['repository_read'], ...(additional === 'nested read' ? { limits: { maxCalls: 1, maxConcurrentCalls: 1 } } : {}) };
+      const denied = await kernels.cell(kernel.kernelId, owner, { ...cell, ...additionalDependencies, source: 'result = retained' });
       expect(denied).toMatchObject({ state: 'FAILED', resultRef: null, error: { code: 'KERNEL_GRANT_LIMIT' } });
       expect(execute).toHaveBeenCalledTimes(2);
-      expect(kernels.get(kernel.kernelId, owner)).toMatchObject({ state: 'RESET_REQUIRED', retainedState: false });
+      expect(kernels.get(kernel.kernelId, owner)).toMatchObject({ generation: kernel.generation, state: 'READY', retainedState: true, activeProgramId: null, error: null });
+      expect(stop).not.toHaveBeenCalled();
+      const retry = await kernels.cell(kernel.kernelId, owner, { ...cell, source: 'result = retained' });
+      expect(retry).toMatchObject({ state: 'SUCCEEDED', aggregate: 42 });
+      expect((await f.results.read(owner, retry.resultRef!, { programId: retry.programId })).grants).toEqual(tracked);
+      expect(execute).toHaveBeenCalledTimes(3);
     } finally { checkPaths.mockRestore(); }
+  });
+
+  it.each(['synchronous start', 'asynchronous execution'] as const)('invalidates the kernel for a grant-limit error from %s', async failure => {
+    const f = fixture(async () => null);
+    let retained = 0;
+    const execute = vi.fn((request: ProgramExecutionRequest) => {
+      if (request.source === 'retained = 42') { retained = 42; return Promise.resolve(retained); }
+      retained = 99;
+      const error = new HarnessError('KERNEL_GRANT_LIMIT', 'Synthetic executor failure, not a host preflight refusal');
+      if (failure === 'synchronous start') throw error;
+      return Promise.reject(error);
+    });
+    const stop = vi.fn(async () => { retained = 0; });
+    const fixtureExecutor = syntheticExecutor(execute);
+    const executor: ProgramExecutor = { ...fixtureExecutor, stop, proof: { ...fixtureExecutor.proof, language: 'PYTHON', isolation: 'M03_CONFINED_PROCESS' } };
+    const kernels = new PythonKernels(f.store, f.programs, { currentOwner: () => owner, enabled: () => true });
+    cleanups.unshift(() => kernels.close());
+    const kernel = await kernels.create({ owner, interpreterDigest: hash, configurationDigest: hash,
+      cwdIdentity: 'device:inode', toolRegistryDigest: hash, executionProfileDigest: hash }, () => executor);
+    const cell = { source: 'retained = 42', allowedTools: [], requestedAggregate: 'Fixture value' };
+    expect((await kernels.cell(kernel.kernelId, owner, cell)).aggregate).toBe(42);
+    const failed = await kernels.cell(kernel.kernelId, owner, { ...cell, source: 'retained = 99; fail()' });
+    expect(failed).toMatchObject({ state: 'FAILED', error: { code: 'KERNEL_GRANT_LIMIT' } });
+    expect(kernels.get(kernel.kernelId, owner)).toMatchObject({ state: 'RESET_REQUIRED', retainedState: false });
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(retained).toBe(0);
+    await expect(kernels.cell(kernel.kernelId, owner, cell)).rejects.toMatchObject({ code: 'KERNEL_RESET_REQUIRED' });
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it('persists identity and M02 dispatch before the read and keeps bulk out of snapshots and events', async () => {

@@ -135,7 +135,7 @@ export class PythonKernels {
     if (kernel.state === 'RUNNING') throw new HarnessError('KERNEL_BUSY', 'One cell is already running in this kernel');
     if (kernel.state !== 'READY' || !process || process.generation !== kernel.generation || this.selections.get(digest(owner))?.kernelId !== kernelId) throw new HarnessError('KERNEL_RESET_REQUIRED', 'Kernel reset required; no retained variables are available');
     const generation = kernel.generation;
-    let preparedProgramId: string | undefined;
+    let preparedProgramId: string | undefined, executionStarted = false;
     kernel = this.put({ ...kernel, state: 'RUNNING', activeProgramId: null }, 'pythonKernel.cell.admitted');
     try {
       const program = await this.programs.prepare({ ...input, owner, language: 'PYTHON' }, process.executor);
@@ -143,11 +143,15 @@ export class PythonKernels {
       const current = this.get(kernelId, owner);
       if (current.generation !== generation || current.state !== 'RUNNING') throw new HarnessError('KERNEL_RESET_REQUIRED', 'Kernel generation changed before cell dispatch');
       kernel = this.put({ ...current, activeProgramId: program.programId }, 'pythonKernel.cell.started');
-      const result = await this.programs.run(program.programId, owner, process.executor, { pythonState: process });
+      const result = await this.programs.run(program.programId, owner, process.executor, { pythonState: process, onExecutionStarted: () => { executionStarted = true; } });
       const after = this.get(kernelId, owner);
       if (after.generation === generation && after.state === 'RUNNING') {
         if (result.state === 'SUCCEEDED') this.put({ ...after, state: 'READY', activeProgramId: null, retainedState: true, error: null }, 'pythonKernel.cell.finished');
-        else {
+        else if (!executionStarted && result.error?.code === 'KERNEL_GRANT_LIMIT') {
+          // The host refused this cell before touching the process. Its prior
+          // variables and witnesses remain valid; the refused inputs add none.
+          this.put({ ...after, state: 'READY', activeProgramId: null, error: null }, 'pythonKernel.cell.refused');
+        } else {
           this.owned.delete(kernelId);
           const cleanup = this.teardown(after, process);
           this.put({ ...after, state: 'RESET_REQUIRED', activeProgramId: null, retainedState: false,
