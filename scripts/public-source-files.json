@@ -295,6 +295,7 @@
     "apps/web/src/plugin-tools-dock.css",
     "apps/web/src/plugin-validation-policy.ts",
     "apps/web/src/plugins.css",
+    "apps/web/src/popover-boundary.ts",
     "apps/web/src/project-api.ts",
     "apps/web/src/project-colors.ts",
     "apps/web/src/project-context-summary.ts",
