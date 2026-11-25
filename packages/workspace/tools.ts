@@ -1,7 +1,7 @@
 import {randomUUID,createHash} from 'node:crypto';
 import {hostname} from 'node:os';
 import {lstat,mkdir,readFile,realpath,open,rm} from 'node:fs/promises';
-import {dirname,join,relative,resolve} from 'node:path';
+import {dirname,join,relative,resolve,sep} from 'node:path';
 import {z} from 'zod';
 import {Store} from '../storage/store.ts';
 import {HarnessError,type HostCommand,type ResourceGrant,type Thread} from '../contracts/index.ts';
@@ -11,8 +11,10 @@ import {WorkspaceRepository} from '../core/workspace-layout.ts';
 import {assertNotStorage,canonical,inside} from '../core/security.ts';
 import {gitExecutable} from '../capabilities/process.ts';
 import {readBoundFile,withPathGuard} from '../core/file-access.ts';
-import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
+import {directoryIdentity,importGitFamily,nativeGit,nativeGitBytes,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead,type GitHistoryCommitDetail,type GitHistoryPage,type GitHistoryPatch} from '../contracts/code-review.ts';
+import {LINE_ATTRIBUTION_LIMITS,lineAttributionIsoUtc,lineAttributionLines,sanitizeCommitText,type LineAttributionPreview,type LineAttributionRequest,type LineAttributionResult} from '../contracts/file-line-attribution.ts';
+import {mintLineAttributionProof,mintLineAttributionSecret,parseLinePorcelain,parseLsTreeEntry,verifyLineAttributionProof,type LineAttributionProofInput} from './file-line-attribution.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
 import {GitHistorySnapshots,readHistoryCommit,readHistoryFile,readHistoryPage} from './git-history.ts';
 
@@ -48,6 +50,8 @@ export async function discardUnboundWorktree(executable:string,commonDirectory:s
 export class ProjectTools{
  readonly workspace:WorkspaceRepository;private readonly queues=new Map<string,Promise<unknown>>();
  private readonly reviewComparisons=new ComparisonSnapshots();
+ private readonly attributionSecret=mintLineAttributionSecret();
+ private readonly attributionBusy=new Set<string>();
  private readonly historySnapshots=new GitHistorySnapshots();
  constructor(readonly store:Store,readonly options:ProjectToolOptions={}){this.workspace=new WorkspaceRepository(store);}
  private exclusive<T>(key:string,action:()=>Promise<T>):Promise<T>{const next=(this.queues.get(key)??Promise.resolve()).catch(()=>{}).then(action);this.queues.set(key,next);void next.finally(()=>{if(this.queues.get(key)===next)this.queues.delete(key);}).catch(()=>{});return next;}
@@ -132,8 +136,8 @@ export class ProjectTools{
    }
   });
  }
- private async withGitOperation<T>(projectId:string,threadId:string|undefined,write:boolean,action:(metadata:string,path:string,signal:AbortSignal,managed:boolean)=>Promise<T>):Promise<T>{
-  const binding=await this.binding(projectId,threadId),family=binding.workspace?privateFamilyForBinding(this.store,binding.workspace):undefined,signal=new AbortController().signal;
+ private async withGitOperation<T>(projectId:string,threadId:string|undefined,write:boolean,action:(metadata:string,path:string,signal:AbortSignal,managed:boolean)=>Promise<T>,requestSignal?:AbortSignal):Promise<T>{
+  const binding=await this.binding(projectId,threadId),family=binding.workspace?privateFamilyForBinding(this.store,binding.workspace):undefined,signal=requestSignal??new AbortController().signal;
   if(family)return withPrivateGitFamily(family,signal,(metadata,path,active)=>action(metadata,path,active,true));
   if(write)throw new HarnessError('CAPABILITY_DENIED','This project is a plain local folder — Git changes need a managed working copy. Choose "Prepare workspace" or reconnect the project as a managed copy.');
   const imported=await importGitFamily(this.store,projectId,binding.path,binding.workspace,this.gitExecutable(),signal);
@@ -225,6 +229,92 @@ export class ProjectTools{
   const{path}=await this.binding(projectId,threadId),target=relativePath?join(path,pathName.parse(relativePath)):path,resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Files stay inside the selected worktree.');
   return withPathGuard([{path:target,leaf:false}],new AbortController().signal,async()=>{const{readdir}=await import('node:fs/promises'),entries=[];for(const item of(await readdir(target,{withFileTypes:true})).slice(0,500)){if(item.name.toLowerCase()==='.git'||item.name==='.harness-directory-guard'||item.isSymbolicLink())continue;entries.push({name:item.name,path:relativePath?relativePath+'/'+item.name:item.name,kind:item.isDirectory()?'directory':'file'});}return{path:relativePath,entries};});
  }
- async file(projectId:string,threadId:string|undefined,relativePath:string){const{path}=await this.binding(projectId,threadId),target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data)};});}
+ async file(projectId:string,threadId:string|undefined,relativePath:string){const{path}=await this.binding(projectId,threadId),target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async manifest=>{const entry=manifest.find(item=>item.path===target),data=await readBoundFile(target,1024*1024,entry?{dev:entry.dev,ino:entry.ino,size:entry.size}:undefined);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data),lineAttribution:this.attributionPreview(projectId,threadId,relative(path,resolved),entry,data)};});}
+ /** Preview metadata: text shape only. The proof binds the guarded read's identity and bytes. */
+ private attributionPreview(projectId:string,threadId:string|undefined,relativePath:string,entry:{dev:string;ino:string;size:number}|undefined,data:Buffer):LineAttributionPreview{
+  const lines=lineAttributionLines(data);if(lines.kind==='ineligible')return{kind:'unavailable',reason:lines.reason};
+  if(!entry)return{kind:'unavailable',reason:'unavailable'};
+  const canonical=relativePath.split(sep).join('/'),root=this.store.get<{identity:Identity}>('workspaceProjectRoot',projectId),workspace=threadId?this.store.get<Thread>('thread',threadId)?.workspaceId:undefined,binding=workspace?this.store.get<WorkspaceBinding>('workspaceBinding',workspace):undefined;
+  const identity=binding?.identity??root?.identity;if(!identity)return{kind:'unavailable',reason:'unavailable'};
+  const previewProof=mintLineAttributionProof(this.attributionSecret,{projectId,threadId:threadId??null,workspaceId:binding?.id??null,rootDev:identity.dev,rootIno:identity.ino,fileDev:entry.dev,fileIno:entry.ino,fileSize:entry.size,path:canonical,previewSha256:hash(data)});
+  return{kind:'eligible',previewProof,lineCount:lines.lineCount};
+ }
+ private async guardedSourceRead(target:string,signal:AbortSignal){
+  return withPathGuard([{path:target,leaf:true,readOnly:true}],signal,async manifest=>{
+   const entry=manifest.find(item=>item.path===target);if(!entry)throw new HarnessError('CAPABILITY_DENIED','The source file is unavailable.');
+   return{entry,data:await readBoundFile(target,1024*1024,{dev:entry.dev,ino:entry.ino,size:entry.size})};
+  });
+ }
+ /** One admitted line attribution at a time per project; others read busy. */
+ async fileLineAttribution(projectId:string,input:LineAttributionRequest,requestSignal?:AbortSignal):Promise<LineAttributionResult>{
+  if(this.attributionBusy.has(projectId))return{kind:'unavailable',reason:'busy'};
+  this.attributionBusy.add(projectId);
+  try{
+   const signal=requestSignal??new AbortController().signal;
+   const bound=await this.binding(projectId,input.threadId),target=join(bound.path,pathName.parse(input.path)),resolved=await realpath(target);
+   if(!inside(bound.path,resolved)||gitSegment(relative(bound.path,resolved))||gitSegment(input.path))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');
+   const canonical=relative(bound.path,resolved).split(sep).join('/'),source=await this.guardedSourceRead(target,signal),sourceSha=hash(source.data);
+   if(sourceSha!==input.previewSha256)return{kind:'unavailable',reason:'stale'};
+   const root=this.store.get<{identity:Identity}>('workspaceProjectRoot',projectId),rootIdentity=bound.workspace?.identity??root?.identity;
+   if(!rootIdentity)throw new HarnessError('CAPABILITY_DENIED','Project identity is unavailable.');
+   const tuple:LineAttributionProofInput={projectId,threadId:input.threadId??null,workspaceId:bound.workspace?.id??null,rootDev:rootIdentity.dev,rootIno:rootIdentity.ino,fileDev:source.entry.dev,fileIno:source.entry.ino,fileSize:source.data.length,path:canonical,previewSha256:sourceSha};
+   if(!verifyLineAttributionProof(this.attributionSecret,input.previewProof,tuple))return{kind:'unavailable',reason:'stale'};
+   // A plain-folder source can still be shallow; the copied view would not carry it.
+   if(!bound.workspace){
+    const shallow=await withPathGuard([{path:join(bound.path,'.git'),leaf:false}],signal,async()=>{try{await lstat(join(bound.path,'.git','shallow'));return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}});
+    if(shallow)return{kind:'unavailable',reason:'history_unavailable'};
+   }
+   let outcome:{value:LineAttributionResult;pin:string;managed:boolean};
+   try{
+    outcome=await this.exclusive(projectId,()=>this.withGitOperation(projectId,input.threadId,false,(metadata,path,sig,managed)=>this.attributeInGit(metadata,path,sig,managed,input,source.data,canonical),signal));
+   }catch(error){
+    if(error instanceof HarnessError){
+     if(error.code==='CANCELLED')throw error;
+     const details=(error.details as {timedOut?:boolean}|undefined);if(error.code==='GIT_ERROR'&&details?.timedOut)return{kind:'unavailable',reason:'timeout'};
+     if(error.code==='RESOURCE_LIMIT')return{kind:'unavailable',reason:'preview_limit'};
+     if(error.code==='GIT_ERROR')return{kind:'unavailable',reason:'unavailable'};
+    }
+    throw error;
+   }
+   if(outcome.value.kind!=='attributed')return outcome.value;
+   // Post-read fence: binding, guarded source identity/bytes, proof and pinned HEAD
+   // must all still match before the result is accepted.
+   const fence=await this.binding(projectId,input.threadId);
+   if(fence.path!==bound.path||fence.workspace?.id!==bound.workspace?.id)return{kind:'unavailable',reason:'stale'};
+   const re=await this.guardedSourceRead(target,signal);
+   if(re.entry.dev!==source.entry.dev||re.entry.ino!==source.entry.ino||re.entry.size!==source.entry.size||!re.data.equals(source.data))return{kind:'unavailable',reason:'stale'};
+   if(!verifyLineAttributionProof(this.attributionSecret,input.previewProof,tuple))return{kind:'unavailable',reason:'stale'};
+   if(!outcome.managed){
+    const head=await this.exclusive(projectId,()=>this.withGitOperation(projectId,input.threadId,false,async(metadata,path,sig)=>(await nativeGit(this.gitExecutable(),metadata,path,['rev-parse','HEAD'],sig)).trim(),signal));
+    if(head!==outcome.pin)return{kind:'unavailable',reason:'stale'};
+   }
+   return outcome.value;
+  }finally{this.attributionBusy.delete(projectId);}
+ }
+ private async attributeInGit(metadata:string,path:string,signal:AbortSignal,managed:boolean,input:LineAttributionRequest,sourceBytes:Buffer,canonical:string):Promise<{value:LineAttributionResult;pin:string;managed:boolean}>{
+  const git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
+  const pin=(await git(['rev-parse','--verify','HEAD^{commit}'])).trim();
+  if(!/^[0-9a-f]{40}$/.test(pin))return{value:{kind:'unavailable',reason:'history_unavailable'},pin,managed};
+  if(managed&&(await git(['rev-parse','--is-shallow-repository'])).trim()==='true')return{value:{kind:'unavailable',reason:'history_unavailable'},pin,managed};
+  const entry=parseLsTreeEntry(await git(['--literal-pathspecs','ls-tree','-z','--full-tree',pin,'--',canonical]),canonical);
+  if(!entry)return{value:{kind:'unavailable',reason:'untracked'},pin,managed};
+  const size=Number((await git(['cat-file','-s',entry.oid])).trim());
+  if(!Number.isSafeInteger(size))return{value:{kind:'unavailable',reason:'unavailable'},pin,managed};
+  if(size===0)return{value:{kind:'unavailable',reason:'empty'},pin,managed};
+  if(size>LINE_ATTRIBUTION_LIMITS.previewBytes)return{value:{kind:'unavailable',reason:'preview_limit'},pin,managed};
+  let blob:Buffer;try{blob=await nativeGitBytes(this.gitExecutable(),metadata,path,['cat-file','blob',entry.oid],signal,{},LINE_ATTRIBUTION_LIMITS.previewBytes+1);}catch(error){if(error instanceof HarnessError&&error.code==='RESOURCE_LIMIT')return{value:{kind:'unavailable',reason:'preview_limit'},pin,managed};throw error;}
+  if(!blob.equals(sourceBytes))return{value:{kind:'unavailable',reason:'changed'},pin,managed};
+  const lines=lineAttributionLines(blob);
+  if(lines.kind==='ineligible')return{value:{kind:'unavailable',reason:lines.reason},pin,managed};
+  if(input.line>lines.lineCount)return{value:{kind:'unavailable',reason:'line_unavailable'},pin,managed};
+  // Protocols are hard-disabled for this read; blame stays local and read-only.
+  const porcelain=await nativeGit(this.gitExecutable(),metadata,path,['--literal-pathspecs','blame','--root','--line-porcelain','--encoding=UTF-8','--no-textconv','--ignore-revs-file','','-L',`${input.line},${input.line}`,pin,'--',canonical],signal,{GIT_PROTOCOL_FROM_USER:'0'});
+  const parsed=parseLinePorcelain(porcelain,input.line);
+  if(!parsed)return{value:{kind:'unavailable',reason:'line_unavailable'},pin,managed};
+  const authorDateUtc=lineAttributionIsoUtc(parsed.authorTime);
+  if(!authorDateUtc)return{value:{kind:'unavailable',reason:'unavailable'},pin,managed};
+  if(managed&&(await git(['rev-parse','HEAD'])).trim()!==pin)return{value:{kind:'unavailable',reason:'stale'},pin,managed};
+  return{value:{kind:'attributed',sha:parsed.sha,author:sanitizeCommitText(parsed.author,LINE_ATTRIBUTION_LIMITS.authorCodePoints,'Unknown author'),authorDateUtc,subject:sanitizeCommitText(parsed.subject,LINE_ATTRIBUTION_LIMITS.subjectCodePoints,'No commit subject')},pin,managed};
+ }
  async dispose(){await Promise.allSettled([...this.queues.values()]);}
 }

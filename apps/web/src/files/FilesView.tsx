@@ -48,6 +48,7 @@ export function FilesView({
 	preview,
 	selector,
 	download,
+	lineAttribution,
 	limitNote,
 	projectSearch,
 	onDirectory,
@@ -64,6 +65,7 @@ export function FilesView({
 	preview: FilesRead<unknown> & { body: ReactNode };
 	selector?: ReactNode;
 	download?: string;
+	lineAttribution?: { action: ReactNode; inspector: ReactNode };
 	limitNote?: string;
 	projectSearch?: {
 		available: boolean;
@@ -308,12 +310,14 @@ export function FilesView({
 								<strong title={displayFilePath(selected.path)}>
 									{displayFilePath(selected.name)}
 								</strong>
+								{lineAttribution?.action}
 								{download && (
 									<a href={download} download={selected.name}>
 										Download
 									</a>
 								)}
 							</header>
+							{lineAttribution?.inspector}
 							<div
 								className="files-preview-content"
 								tabIndex={0}

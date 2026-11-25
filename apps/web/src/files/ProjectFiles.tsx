@@ -4,6 +4,7 @@ import {
 	useEffect,
 	useRef,
 	useState,
+	type MouseEvent,
 	type ReactNode,
 } from "react";
 import { authenticated, read } from "../api";
@@ -14,12 +15,19 @@ import {
 	type ProjectSearchAdapter,
 	type ProjectSearchMatch,
 } from "./project-search-api";
+import {
+	lookupLineAttribution,
+	previewLineFromPointer,
+	useLineAttribution,
+	type FileLineAttribution,
+} from "./line-attribution";
 import { useFilesRead } from "./useFilesRead";
 
 interface ProjectFile {
 	text: string | null;
 	binary: boolean;
 	sha256: string;
+	lineAttribution?: FileLineAttribution;
 }
 interface ProjectFilesProps {
 	base: string;
@@ -43,7 +51,8 @@ function ProjectFilesReader({
 		[selectedMatch, setSelectedMatch] = useState<ProjectSearchMatch | null>(
 			null,
 		),
-		[searchRefresh, setSearchRefresh] = useState(0);
+		[searchRefresh, setSearchRefresh] = useState(0),
+		[attributionLine, setAttributionLine] = useState<number | null>(null);
 	const matchLine = useRef<HTMLElement>(null);
 	const owner = {
 		projectId: decodeURIComponent(base.split("/").at(-1) ?? ""),
@@ -89,6 +98,34 @@ function ProjectFilesReader({
 		file &&
 		file.sha256.toLowerCase() !== selectedMatch.sha256.toLowerCase()
 	);
+	const line =
+		selectedMatch?.kind === "text" && !stale ? selectedMatch.line : undefined;
+	const attribution = file?.lineAttribution;
+	// Same LF source model as the host; a disagreement refuses the picker.
+	const modelLines = file?.text != null ? file.text.split("\n").length - (file.text.endsWith("\n") ? 1 : 0) : 0;
+	const attributionEligible = attribution?.kind === "eligible" && attribution.lineCount === modelLines;
+	const attributionControl = useLineAttribution({
+		eligible: attributionEligible,
+		reason: attribution?.kind === "unavailable" ? attribution.reason : "unavailable",
+		lineCount: attribution?.kind === "eligible" ? attribution.lineCount : 0,
+		fence: `${selected?.path ?? ""}#${file?.sha256 ?? ""}#${preview.pending}#${active}`,
+		preferredLine: line ?? undefined,
+		lookup: (selectedLine, signal) =>
+			lookupLineAttribution(
+				base,
+				owner.threadId,
+				{
+					path: selected!.path,
+					previewSha256: file!.sha256,
+					previewProof:
+						attribution?.kind === "eligible" ? attribution.previewProof : "",
+					line: selectedLine,
+				},
+				signal,
+			),
+		onLine: setAttributionLine,
+		onRefreshPreview: preview.refresh,
+	});
 	useEffect(() => {
 		if (!stale && !preview.pending)
 			matchLine.current?.scrollIntoView({
@@ -97,11 +134,42 @@ function ProjectFilesReader({
 			});
 	}, [file, selectedMatch, stale, preview.pending]);
 	if (folder.errorCode === "PROJECT_NOT_CONNECTED") return fallback;
-	const line =
-		selectedMatch?.kind === "text" && !stale ? selectedMatch.line : undefined;
-	const lines =
-		line && file?.text ? file.text.split(/(\r\n|\r|\n)/) : undefined;
+	const lines = file?.text ? file.text.split(/(\r\n|\r|\n)/) : undefined;
 	const lineIndex = line ? (line - 1) * 2 : -1;
+	const attributionIndex =
+		attributionControl.open && attributionLine !== null
+			? (attributionLine - 1) * 2
+			: -1;
+	const marks = new Map<number, { cls: string; ref?: typeof matchLine }>();
+	if (line && lines && lineIndex < lines.length)
+		marks.set(lineIndex, { cls: "files-matching-line", ref: matchLine });
+	if (attributionIndex >= 0 && lines && attributionIndex < lines.length) {
+		const overlap = marks.get(attributionIndex);
+		marks.set(attributionIndex, {
+			cls: `${overlap?.cls ?? ""} files-attribution-line`.trim(),
+			ref: overlap?.ref,
+		});
+	}
+	// Pick mode maps pointer Y to a logical row of the unwrapped pre; drags,
+	// secondary buttons and rows outside the text area are ignored.
+	const pickFromPreview = (event: MouseEvent<HTMLElement>) => {
+		if (event.button !== 0 || !window.getSelection()?.isCollapsed) return;
+		const pre = event.currentTarget,
+			rect = pre.getBoundingClientRect(),
+			style = getComputedStyle(pre);
+		const paddingTop = parseFloat(style.paddingTop) || 0;
+		let lineHeight = parseFloat(style.lineHeight);
+		if (!Number.isFinite(lineHeight))
+			lineHeight = (parseFloat(style.fontSize) || 13) * 1.4;
+		const row = previewLineFromPointer(
+			event.clientY,
+			rect.top,
+			paddingTop,
+			lineHeight,
+			modelLines,
+		);
+		if (row !== null) attributionControl.pick(row);
+	};
 	// DOM carriage returns need an explicit visual break; retain the source text.
 	const renderParts = (parts: string[]) =>
 		parts.map((part, index) =>
@@ -169,24 +237,51 @@ function ProjectFilesReader({
 						) : file.text === "" ? (
 							<p className="files-message">Empty text file</p>
 						) : (
-							<pre>
-								{lines && line && lineIndex < lines.length ? (
-									<>
-										{renderParts(lines.slice(0, lineIndex))}
-										<mark className="files-matching-line" ref={matchLine}>
-											{lines[lineIndex]}
-										</mark>
-										{renderParts(lines.slice(lineIndex + 1))}
-									</>
-								) : (
-									file.text
-								)}
+							<pre
+								onClick={
+									attributionControl.open && attributionEligible
+										? pickFromPreview
+										: undefined
+								}
+							>
+								{marks.size
+									? lines!.map((part, index) =>
+											marks.has(index) ? (
+												<mark
+													key={index}
+													className={marks.get(index)!.cls}
+													ref={marks.get(index)!.ref}
+												>
+													{part}
+												</mark>
+											) : (
+												<Fragment key={index}>
+													{part === "\r" ? (
+														<>
+															{part}
+															<br aria-hidden="true" />
+														</>
+													) : (
+														part
+													)}
+												</Fragment>
+											),
+									  )
+									: renderParts(lines ?? (file.text ? [file.text] : []))}
 							</pre>
 						)}
 						<small className="files-checksum">SHA-256 {file.sha256}</small>
 					</>
 				) : null,
 			}}
+			lineAttribution={
+				attribution && selected
+					? {
+							action: attributionControl.action,
+							inspector: attributionControl.inspector,
+						}
+					: undefined
+			}
 			limitNote={
 				(folder.value?.entries.length ?? 0) >= 500
 					? "Showing up to 500 entries; more files may exist."
