@@ -35,16 +35,19 @@ jobs:
               ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char]));
             const liveLines = (body) => {
               const lines = [];
-              let fence = null;
+              let fence = null, quote = false;
               for (const line of String(body || '').split(/\r?\n/)) {
-                if (/^\s*>/.test(line)) continue;
+                if (/^\s*>/.test(line)) { quote = true; continue; }
+                if (!line.trim()) { quote = false; continue; }
                 const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
                 if (marker) {
                   if (!fence) fence = marker;
                   else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
                   continue;
                 }
-                if (!fence && !/^(?: {4}|\t)/.test(line) && line.trim()) lines.push(line.trim());
+                // Blockquotes continue through un-prefixed paragraph lines until a
+                // blank line; a quoted older record must never read as live fields.
+                if (!fence && !quote && !/^(?: {4}|\t)/.test(line)) lines.push(line.trim());
               }
               return lines;
             };
@@ -96,6 +99,9 @@ jobs:
                 if (!Number.isFinite(created)) { diagnose(comment, worker, 'Invalid creation timestamp'); continue; }
                 const fields = {};
                 for (const line of lines) {
+                  // Only wire-format field lines (KEY=value; KEY=value) carry fields;
+                  // a stray OWNER=NONE inside checkpoint prose is not an ownership field.
+                  if (!/^\s*[A-Z][A-Z0-9_]*\s*=/.test(line)) continue;
                   for (const field of line.matchAll(/(?:^|[;|])\s*(OWNER|SCOPE|TASKS)\s*=\s*(.*?)(?=\s*[;|]\s*[a-z][a-z0-9_]*\s*=|$)/gi)) {
                     (fields[field[1].toUpperCase()] ||= []).push(field[2].trim());
                   }
