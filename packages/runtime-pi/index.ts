@@ -25,7 +25,7 @@ interface RunAuthority { ctx: RunContext; revoked: boolean; settled?: boolean; w
 const failedTransport = () => new HarnessError("PI_WORKER_TRANSPORT_FAILED", "Pi worker transport failed before completing the request.");
 
 export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }: { dataDir: string;modelOnly?:boolean;purpose?:ModelPurpose }): RuntimeAdapter {
-  const modelOnly=requestedModelOnly||purpose==='prediction'||purpose==='memory-extraction';
+  const modelOnly=requestedModelOnly||purpose==='prediction'||purpose==='memory-extraction'||purpose==='composer-enhance';
   const storage = resolve(dataDir);
   let callbacks: RuntimeCallbacks | undefined;
   let disposed = false;
@@ -268,7 +268,7 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       modelCache = options?.providerId?modelCache?.filter(model=>model.provider!==options.providerId):undefined;
     },
     start(input) { return queueRun(input, "start"); },
-    followUp(input) { if(purpose==='memory-extraction')return Promise.reject(new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot continue a conversation.'));if(purpose==='prediction')return Promise.reject(new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot continue a conversation.'));return serial(input.threadId, async () => {
+    followUp(input) { if(purpose==='memory-extraction')return Promise.reject(new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot continue a conversation.'));if(purpose==='prediction')return Promise.reject(new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot continue a conversation.'));if(purpose==='composer-enhance')return Promise.reject(new HarnessError('ENHANCE_SESSION_UNSUPPORTED','Composer enhancement cannot continue a conversation.'));return serial(input.threadId, async () => {
       assertContext(input);
       const worker = runs.get(input.threadId);
       if (!worker || !sameContext(worker.ctx, input) || !current(worker) || !worker.active) throw new HarnessError("PI_STALE_RUN", "No matching active Pi run for this follow-up. Start or resume the task first.");
@@ -290,12 +290,14 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
     compact(ctx, sessionPath, modelId,accountId,memoryCheckpoint) {
       if(purpose==='memory-extraction')return Promise.reject(new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot compact conversations.'));
       if(purpose==='prediction')return Promise.reject(new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot compact conversations.'));
+      if(purpose==='composer-enhance')return Promise.reject(new HarnessError('ENHANCE_SESSION_UNSUPPORTED','Composer enhancement cannot compact conversations.'));
       const input: StartRun = { ...ctx, sessionPath, modelId,accountId,memoryCheckpoint, prompt: "", inputId: "", resources: [] };
       return queueRun(input, "compact", 180_000);
     },
     async history(sessionPath) {
       if(purpose==='memory-extraction')throw new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot read conversations.');
       if(purpose==='prediction')throw new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot read conversations.');
+      if(purpose==='composer-enhance')throw new HarnessError('ENHANCE_SESSION_UNSUPPORTED','Composer enhancement cannot read conversations.');
       const file = await validateSessionPath(storage, sessionPath);
       const absent = (error: unknown): never => { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new HarnessError("PI_SESSION_MISSING", "Pi session history is missing or moved. Restore the session file or start a new session."); throw error; };
       // Stream line by line: memory stays bounded on arbitrarily large
