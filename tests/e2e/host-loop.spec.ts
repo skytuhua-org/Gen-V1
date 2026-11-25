@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { connect } from 'node:net';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import type { Frame, Page, TestInfo } from '@playwright/test';
@@ -156,6 +158,23 @@ test('durable decision validation and acceptance continue the same owning runtim
   expect(host.snapshot().requests[0]?.response).toEqual({ choice: 'Keep', reason: 'Verified source evidence.' });
   await evidence(page, info, 'durable-decision');
   await performanceEvidence(info, { decisionAcceptanceToFollowUpVisibleMs: followUpMs });
+});
+
+test('host fixture restart releases an unused connection', async ({ host }) => {
+  const accepted = once(host.host.server, 'connection');
+  const client = connect({ host: '127.0.0.1', port: Number(new URL(HOST_URL).port) });
+  const closed = once(client, 'close');
+  void closed.catch(() => {});
+  let restart: Promise<void> | undefined;
+  try {
+    await Promise.all([accepted, once(client, 'connect')]);
+    restart = host.restart();
+    await bounded(Promise.all([restart, closed]), 'Host restart with an unused connection', 5000);
+    expect(host.generations).toHaveLength(2);
+  } finally {
+    client.destroy();
+    await restart;
+  }
 });
 
 test('generated operation button requires native approval; restart restores without repeating effects', async ({ page, host }, info) => {
