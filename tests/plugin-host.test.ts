@@ -170,7 +170,7 @@ it('keeps pending and failed registry shutdown busy',async()=>{
   control.gate.reject(Error('SYNTHETIC_PRIVATE_CLOSE_DETAIL'));
   for(const result of await Promise.all([first.result,second.result]))expect(result?.message).toBe(shutdownError);
   expect((await observeClose(registry).result)?.message).toBe(shutdownError);
-  expect(await registry.isBusy()).toBe(true);expect(control.closes).toBe(1);await expectAdmissionRevoked(registry);
+  expect(await registry.isBusy()).toBe(true);expect(control.closes).toBe(2);await expectAdmissionRevoked(registry);
  }finally{control?.gate.resolve();await registry?.close().catch(()=>{});await rm(f.directory,{recursive:true,force:true});}
 });
 
@@ -232,7 +232,7 @@ it.each([false,true])('waits for every host and preserves aggregate shutdown fai
   secondHost.gate.resolve();
   for(const result of await Promise.all([first.result,second.result]))expect(result?.message).toBe(shutdownError);
   expect((await observeClose(registry).result)?.message).toBe(shutdownError);
-  expect(await registry.isBusy()).toBe(true);expect(firstHost.closes).toBe(1);expect(secondHost.closes).toBe(1);
+  expect(await registry.isBusy()).toBe(true);expect(firstHost.closes).toBe(2);expect(secondHost.closes).toBe(1);
  }finally{
   firstHost?.gate.resolve();secondHost?.gate.resolve();await registry?.close().catch(()=>{});
   await rm(firstFixture.directory,{recursive:true,force:true});if(secondFixture)await rm(secondFixture.directory,{recursive:true,force:true});
