@@ -27,8 +27,8 @@ test('search matches exact supplied location and name, preserves caret keys and 
   await search.fill('Synthetic/Beta');
   await expect(page.getByRole('option', { name: 'Beta', exact: true })).toBeVisible();
   await expect(page.getByRole('option', { name: 'Alpha', exact: true })).toHaveCount(0);
-  await search.press('Home'); await search.press('ArrowRight');
-  expect(await search.evaluate(node => (node as HTMLInputElement).selectionStart)).toBe(1);
+  await search.press('ArrowLeft');
+  expect(await search.evaluate(node => (node as HTMLInputElement).selectionStart)).toBe('Synthetic/Beta'.length - 1);
   await search.dispatchEvent('keydown', { key: 'Enter', isComposing: true });
   await search.dispatchEvent('keydown', { key: 'Escape', keyCode: 229 });
   await expect(page.getByRole('dialog')).toBeVisible();
@@ -46,6 +46,27 @@ test('hover does not select; arrows announce an active row and explicit selectio
   await search.press('ArrowDown');
   await expect(search).toHaveAttribute('aria-activedescendant', await beta.getAttribute('id') ?? '');
   await search.press('Enter'); await search.press('Enter');
+  await expect(page.getByLabel('Created threads')).toHaveText('1');
+});
+
+test('Home, End and Page keys jump, clamp and scroll the active option', async ({ page }) => {
+  await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
+  const search = page.getByRole('combobox', { name: 'Search projects' }), options = page.getByRole('option'), count = await options.count();
+  await search.press('End');
+  await expect(options.nth(count - 1)).toHaveAttribute('data-active', 'true');
+  await expect(options.nth(count - 1)).toBeInViewport();
+  await search.press('PageUp');
+  await expect(options.nth(count - 1 - 10)).toHaveAttribute('data-active', 'true');
+  await search.press('Home');
+  await expect(options.first()).toHaveAttribute('data-active', 'true');
+  await search.press('PageUp');
+  await expect(options.first()).toHaveAttribute('data-active', 'true');
+  await search.press('PageDown');
+  await expect(options.nth(10)).toHaveAttribute('data-active', 'true');
+  await search.press('End'); await search.press('PageDown');
+  await expect(options.nth(count - 1)).toHaveAttribute('data-active', 'true');
+  await search.press('Enter');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByLabel('Created threads')).toHaveText('1');
 });
 
@@ -95,6 +116,32 @@ test('invalid custom data and host save failure retain the picker and previous b
   await expect(badge).toHaveCSS('color', before);
   await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Color for Alpha' })).toBeFocused();
+});
+
+test('color validation error keeps the popover actions inside the fixed bounds', async ({ page }) => {
+  await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
+  await page.getByRole('button', { name: 'Color for Alpha' }).click();
+  const popover = page.locator('.ui-control-popup.project-picker-colors');
+  const grid = popover.locator('.project-picker-color-grid');
+  const footer = popover.locator('.project-picker-color-footer');
+  const input = page.getByRole('textbox', { name: 'Custom color' });
+  expect(await grid.evaluate(node => node.scrollHeight <= node.clientHeight)).toBe(true);
+  await input.fill('url(bad)');
+  await page.getByRole('button', { name: 'Save color', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('Choose a six-digit hex color, such as #4F6EFF.');
+  await expect(input).toHaveAttribute('aria-invalid', 'true');
+  await expect(input).toHaveAttribute('aria-describedby', 'project-picker-color-error');
+  await expect(footer).toHaveAttribute('data-has-error', 'true');
+  const pop = await popover.boundingBox(), foot = await footer.boundingBox();
+  expect(foot!.y).toBeGreaterThanOrEqual(pop!.y);
+  expect(foot!.y + foot!.height).toBeLessThanOrEqual(pop!.y + pop!.height);
+  expect(await grid.evaluate(node => getComputedStyle(node).overflowY)).toBe('auto');
+  await expect(page.getByRole('button', { name: 'Use automatic color', exact: true })).toBeInViewport();
+  await input.fill('#123abc');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(input).toHaveAttribute('aria-invalid', 'false');
+  await expect(footer).not.toHaveAttribute('data-has-error', 'true');
+  await expect.poll(() => grid.evaluate(node => node.scrollHeight <= node.clientHeight)).toBe(true);
 });
 
 test('creation failure does not dismiss or falsely report success', async ({ page }) => {
