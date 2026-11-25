@@ -30,6 +30,7 @@ const runtime: RuntimeAdapter = {
 };
 
 const dirs: string[] = [];
+const cleanups: Array<() => Promise<void>> = [];
 const fixture = async () => {
   const dir = await mkdtemp(join(tmpdir(), 'harness-previews-'));
   dirs.push(dir);
@@ -46,6 +47,13 @@ const fixture = async () => {
     for (const id of ['thread-a', 'thread-b'])
       store.put('thread', id, id, { id, title: id, projectName: 'p', projectId, kind: 'main', status: 'idle', epoch: 0, runId: null, modelId: null, sessionPath: null, createdAt: stamp, updatedAt: stamp });
   });
+  cleanups.push(async () => {
+    let failure: unknown;
+    try { await app.close(); } catch (error) { failure ??= error; }
+    try { await service.dispose(); } catch (error) { failure ??= error; }
+    try { store.close(); } catch (error) { failure ??= error; }
+    if (failure) throw failure;
+  });
   registerCodeIntelligenceRoutes(app, service, { env: { HARNESS_FLAG_CODING_INTELLIGENCE_V1: '1' } });
   const post = (body: Record<string, unknown>) =>
     app.inject({ method: 'POST', url, payload: body });
@@ -53,6 +61,7 @@ const fixture = async () => {
 };
 
 afterEach(async () => {
+  while (cleanups.length) await cleanups.pop()!();
   while (dirs.length) await rm(dirs.pop()!, { recursive: true, force: true });
 });
 
