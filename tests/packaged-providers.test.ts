@@ -20,6 +20,23 @@ async function cursorFixture(directory:string){
 async function syntheticStdout(script:string){const chunks:Buffer[]=[],child=spawn(process.execPath,['-e',script],{stdio:['ignore','pipe','ignore']});await new Promise<void>((accept,reject)=>{child.stdout.on('data',chunk=>chunks.push(chunk));child.once('error',reject);child.once('close',code=>code===0?accept():reject(Error('Synthetic stdout spawn exited '+code)));});return chunks;}
 
 describe('packaged provider custody',()=>{
+ it('rejects malformed probe stdout through the caller instead of an uncaught close callback',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'harness-probe-decode-'));
+  try{
+   await cursorFixture(directory);
+   const loader=join(directory,'node_modules/tsx/dist/loader.mjs'),runner=join(directory,'caller.mjs');
+   await mkdir(join(loader,'..'),{recursive:true});
+   await writeFile(runner,`import {probeCursorBootstrap} from ${JSON.stringify(new URL('../scripts/verify-packaged-providers.ts',import.meta.url).href)};try{await probeCursorBootstrap(process.argv[2],process.execPath,process.argv[2]);process.exitCode=2;}catch(error){console.log(JSON.stringify({caught:error.message}));}`);
+   for(const bytes of [[0xff,0x21],[0xe4,0xbd]]){
+    await writeFile(loader,`process.stdout.write(Buffer.from(${JSON.stringify(bytes)}));process.exit(0);`);
+    const result=await new Promise<{code:number|null;stdout:string;stderr:string}>((accept,reject)=>{
+     const child=spawn(process.execPath,['--import',new URL('../node_modules/tsx/dist/loader.mjs',import.meta.url).href,runner,directory],{stdio:['ignore','pipe','pipe']});let stdout='',stderr='';
+     child.stdout.on('data',chunk=>{stdout+=String(chunk);});child.stderr.on('data',chunk=>{stderr+=String(chunk);});child.once('error',reject);child.once('close',code=>accept({code,stdout,stderr}));
+    });
+    expect(result.stderr).toBe('');expect(result.code).toBe(0);expect(JSON.parse(result.stdout)).toEqual({caught:'Probe stdout is not well-formed UTF-8.'});
+   }
+  }finally{await rm(directory,{recursive:true,force:true});}
+ },15000);
  it('rejects malformed UTF-8 in version evidence but keeps valid Unicode including literal U+FFFD',async()=>{
   expect(decodeProbeStdout(await syntheticStdout("process.stdout.write('1.0.38\\n')"))).toBe('1.0.38');
   expect(decodeProbeStdout(await syntheticStdout("process.stdout.write('v\\uFFFD\\n')"))).toBe('v�');
