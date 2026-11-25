@@ -1,19 +1,25 @@
 import {createRoot} from 'react-dom/client';
 import {DesktopProvider} from '../../../apps/web/src/desktop-context';
 import {DesktopBrowserDock,DesktopBrowserSurface,DesktopBrowserToolbar} from '../../../apps/web/src/DesktopBrowser';
-import type {DesktopBridge,DesktopBrowserCommand,DesktopBrowserState,DesktopContext,DesktopState} from '../../../packages/desktop-contract';
+import type {DesktopBridge,DesktopBrowserBookmark,DesktopBrowserCommand,DesktopBrowserState,DesktopContext,DesktopState} from '../../../packages/desktop-contract';
+import {Toaster} from '../../../packages/ui-shell/Toast';
 import '../../../apps/web/src/styles.css';
 import '../../../apps/web/src/desktop.css';
 
 type Action={command:DesktopBrowserCommand;resolve:()=>void;reject:(cause:unknown)=>void;settled:boolean};
 const mode=new URLSearchParams(location.search).get('mode')??'docked';
 const initial:DesktopBrowserState={url:'https://reading.example/one',title:'Synthetic reading page',canGoBack:false,canGoForward:false,loading:false};
-let state:DesktopContext={windowId:'synthetic-browser-owner',surface:mode==='detached'?{kind:'browser',browserId:'synthetic-browser'}:{kind:'main'},windows:[],...(mode==='detached'?{browser:initial}:{dockedBrowser:{browserId:'synthetic-browser',state:initial}})};
+let bookmarkRevision=0;
+let state:DesktopContext={windowId:'synthetic-browser-owner',surface:mode==='detached'?{kind:'browser',browserId:'synthetic-browser'}:{kind:'main'},windows:[],browserBookmarks:{revision:0,items:[],limit:200},...(mode==='detached'?{browser:initial}:{dockedBrowser:{browserId:'synthetic-browser',state:initial}})};
 const listeners=new Set<(state:DesktopState)=>void>(),actions:Action[]=[];
 const fixture={
  actions,subscribed:false,
  page(patch:Partial<DesktopBrowserState>){
   state=mode==='detached'?{...state,browser:{...state.browser!,...patch}}:{...state,dockedBrowser:{...state.dockedBrowser!,state:{...state.dockedBrowser!.state,...patch}}};
+  listeners.forEach(listener=>listener(state));
+ },
+ bookmarks(items:DesktopBrowserBookmark[],notice?:string){
+  bookmarkRevision++;state={...state,browserBookmarks:{revision:bookmarkRevision,items,limit:200,...(notice?{notice}:{})}};
   listeners.forEach(listener=>listener(state));
  },
  finish(index:number,result:'success'|'error'|'value',message='Synthetic bridge rejection'){
@@ -31,4 +37,4 @@ const bridge={
  onCloseRequested:()=>()=>{},
 } as unknown as DesktopBridge;
 const content=mode==='detached'?<DesktopBrowserSurface/>:<DesktopBrowserDock/>;
-createRoot(document.getElementById('root')!).render(<><p>Synthetic Browser fixture. No native content or live navigation.</p>{mode==='no-host'?<><DesktopBrowserToolbar/><DesktopBrowserDock/></>:<DesktopProvider bridge={bridge} context={state}><div style={{display:'flex',height:320}}>{content}</div></DesktopProvider>}</>);
+createRoot(document.getElementById('root')!).render(<><p>Synthetic Browser fixture. No native content or live navigation.</p>{mode==='no-host'?<><DesktopBrowserToolbar/><DesktopBrowserDock/></>:<DesktopProvider bridge={bridge} context={state}><div style={{display:'flex',height:320}}>{content}</div><Toaster/></DesktopProvider>}</>);

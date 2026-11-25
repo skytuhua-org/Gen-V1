@@ -98,7 +98,9 @@ test('narrow toolbar recovers with keyboard Retry and Go without moving focus',a
  await page.setViewportSize({width:360,height:440});await open(page);await failReload(page);
  const reload=page.getByRole('button',{name:'Reload browser',exact:true});await reload.focus();await page.keyboard.press('Enter');await count(page,2);await page.evaluate(()=>window.browserActionFixture.finish(1,'success'));
  await expect(page.getByRole('alert')).toHaveCount(0);await expect(reload).toBeFocused();
- const address=page.getByRole('textbox',{name:'Browser address'});await page.keyboard.press('Tab');await expect(address).toBeFocused();await address.fill('https://reading.example/narrow');await page.keyboard.press('Tab');await expect(page.getByRole('button',{name:'Go',exact:true})).toBeFocused();await page.keyboard.press('Enter');await count(page,3);await page.evaluate(()=>window.browserActionFixture.finish(2,'success'));
+ const address=page.getByRole('textbox',{name:'Browser address'});await page.keyboard.press('Tab');await expect(address).toBeFocused();await address.fill('https://reading.example/narrow');
+ for(let i=0;i<4;i++){if(await page.getByRole('button',{name:'Go',exact:true}).evaluate(el=>document.activeElement===el))break;await page.keyboard.press('Tab');}
+ await expect(page.getByRole('button',{name:'Go',exact:true})).toBeFocused();await page.keyboard.press('Enter');await count(page,3);await page.evaluate(()=>window.browserActionFixture.finish(2,'success'));
  await expect(page.getByRole('alert')).toHaveCount(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

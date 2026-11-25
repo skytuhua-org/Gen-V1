@@ -167,6 +167,33 @@ describe('isolated built-in browser',()=>{
   expect(parseBrowserCommand({type:'bounds',bounds:{x:0,y:96,width:400,height:0}})).toEqual({type:'bounds',bounds:{x:0,y:96,width:400,height:0}});
   for(const value of [{type:'executeJavaScript',code:'process.exit()'},{type:'back',url:'file:///'},{type:'bounds',bounds:{x:Infinity,y:0,width:1,height:1}},{type:'navigate',url:'https://example.org',extra:true}])expect(()=>parseBrowserCommand(value)).toThrow();
  });
+ it('parses bookmark and overlay commands strictly',()=>{
+  const id='1c9a3f2e-4b5d-4e6f-8a0b-1c2d3e4f5a6b',bookmark={id,url:'https://example.org/guide',title:'Guide',createdAt:'2026-11-21T22:00:00.000Z',updatedAt:'2026-11-21T22:00:00.000Z'};
+  expect(parseBrowserCommand({type:'bookmark-add'})).toEqual({type:'bookmark-add'});
+  expect(parseBrowserCommand({type:'bookmark-add',keepQuery:true})).toEqual({type:'bookmark-add',keepQuery:true});
+  expect(parseBrowserCommand({type:'bookmark-update',id,title:'  New name  '})).toEqual({type:'bookmark-update',id,title:'New name'});
+  expect(parseBrowserCommand({type:'bookmark-update',id,keepQuery:true})).toEqual({type:'bookmark-update',id,keepQuery:true});
+  expect(parseBrowserCommand({type:'bookmark-remove',id})).toEqual({type:'bookmark-remove',id});
+  expect(parseBrowserCommand({type:'bookmark-open',id})).toEqual({type:'bookmark-open',id});
+  expect(parseBrowserCommand({type:'bookmark-restore',bookmark})).toEqual({type:'bookmark-restore',bookmark});
+  expect(parseBrowserCommand({type:'bookmark-notice-dismiss'})).toEqual({type:'bookmark-notice-dismiss'});
+  expect(parseBrowserCommand({type:'overlay',open:true})).toEqual({type:'overlay',open:true});
+  for(const value of [
+   {type:'bookmark-add',url:'https://example.org'},
+   {type:'bookmark-add',keepQuery:'yes'},
+   {type:'bookmark-update',id:'not-a-uuid',title:'x'},
+   {type:'bookmark-update',id,title:''},
+   {type:'bookmark-update',id,title:'x'.repeat(121)},
+   {type:'bookmark-remove',id:'not-a-uuid'},
+   {type:'bookmark-open',id,extra:true},
+   {type:'bookmark-restore',bookmark:{...bookmark,url:'http://127.0.0.1/admin'}},
+   {type:'bookmark-restore',bookmark:{...bookmark,id:'x'}},
+   {type:'bookmark-restore',bookmark:{...bookmark,extra:true}},
+   {type:'bookmark-notice-dismiss',id},
+   {type:'overlay',open:'yes'},
+   {type:'overlay'},
+  ])expect(()=>parseBrowserCommand(value)).toThrow();
+ });
 });
 
 

@@ -17,10 +17,12 @@ export interface DesktopLayout {version:1;windows:DesktopLayoutEntry[]}
 export type DesktopWindowControl={windowId:string;type:'visibility';visible:boolean}|{windowId:string;type:'always-on-top';enabled:boolean};
 export interface DesktopWindowInfo {id:string;surface:DesktopSurface;ready:boolean;minimized:boolean;visible?:boolean;alwaysOnTop?:boolean;bounds?:DesktopBounds;displayId?:string}
 interface DesktopUpdateStatus {state:'unavailable'|'idle'|'checking'|'current'|'downloading'|'ready'|'deferred'|'failed'|'installing';message:string;version?:string;percent?:number}
-export interface DesktopState {windows:DesktopWindowInfo[];browser?:DesktopBrowserState;dockedBrowser?:{browserId:string;state:DesktopBrowserState};focusSurface?:DesktopSurface;backendError?:string;layoutError?:string;closeCancelled?:boolean;update?:DesktopUpdateStatus;nativeTitleBar?:boolean}
+export interface DesktopBrowserBookmark {id:string;url:string;title:string;createdAt:string;updatedAt:string}
+export interface DesktopBrowserBookmarks {revision:number;items:DesktopBrowserBookmark[];limit:number;notice?:string}
+export interface DesktopState {windows:DesktopWindowInfo[];browser?:DesktopBrowserState;dockedBrowser?:{browserId:string;state:DesktopBrowserState};browserBookmarks?:DesktopBrowserBookmarks;focusSurface?:DesktopSurface;backendError?:string;layoutError?:string;closeCancelled?:boolean;update?:DesktopUpdateStatus;nativeTitleBar?:boolean}
 export interface DesktopContext extends DesktopState {windowId:string;surface:DesktopSurface}
 export interface DesktopWorkspaceChange {connected:boolean;sequence:number}
-export type DesktopBrowserCommand = {type:'open'}|{type:'close'}|{type:'navigate';url:string}|{type:'back'|'forward'|'reload'|'stop'}|{type:'bounds';bounds:{x:number;y:number;width:number;height:number}};
+export type DesktopBrowserCommand = {type:'open'}|{type:'close'}|{type:'navigate';url:string}|{type:'back'|'forward'|'reload'|'stop'}|{type:'bounds';bounds:{x:number;y:number;width:number;height:number}}|{type:'bookmark-add';keepQuery?:boolean}|{type:'bookmark-update';id:string;title?:string;keepQuery?:boolean}|{type:'bookmark-remove';id:string}|{type:'bookmark-restore';bookmark:DesktopBrowserBookmark}|{type:'bookmark-open';id:string}|{type:'bookmark-notice-dismiss'}|{type:'overlay';open:boolean};
 export interface DesktopMemoryExportResult {status:'saved'|'cancelled';admitted:true;filename:string;bytes:number;sha256:string}
 export interface DesktopBridge {
   exportProjectMemory?(serializedExport:string):Promise<DesktopMemoryExportResult>;
