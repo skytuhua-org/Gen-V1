@@ -12,16 +12,22 @@ import {agentWorkToolNames} from '../core/agent-work.ts';
  * root-local `$ref`s, which would then resolve against the outer document
  * root (and dangle). Rewrite them onto the embedded copy's real location so
  * the advertised contract resolves exactly what the host validates against
- * the standalone schema. */
+ * the standalone schema. A schema carrying its own `$id` is a separate
+ * resource whose refs already resolve inside itself, so it — and any
+ * `$id`-scoped subtree — passes through unchanged. */
 function embedSchema(schema:unknown,prefix:string):unknown{
- if(Array.isArray(schema))return schema.map(item=>embedSchema(item,prefix));
- if(!schema||typeof schema!=='object')return schema;
- const out:Record<string,unknown>={};
- for(const[key,value]of Object.entries(schema)){
-  if(key==='$ref'&&typeof value==='string'&&(value==='#'||value.startsWith('#/')))out[key]='#'+prefix+value.slice(1);
-  else out[key]=embedSchema(value,prefix);
- }
- return out;
+ const walk=(node:unknown,scoped:boolean):unknown=>{
+  if(Array.isArray(node))return node.map(item=>walk(item,scoped));
+  if(!node||typeof node!=='object')return node;
+  const own=typeof(node as Record<string,unknown>).$id==='string'||scoped;
+  const out:Record<string,unknown>={};
+  for(const[key,value]of Object.entries(node)){
+   if(key==='$ref'&&!own&&typeof value==='string'&&(value==='#'||value.startsWith('#/')))out[key]='#'+prefix+value.slice(1);
+   else out[key]=walk(value,own);
+  }
+  return out;
+ };
+ return walk(schema,false);
 }
 
 /** Capture the app's role and controls; original Hermes owns cadence and tool schemas. */
