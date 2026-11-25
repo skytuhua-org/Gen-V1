@@ -2,6 +2,7 @@
   "version": 1,
   "baseline": "6d32290f4d0e4c820e6ed0c3eb56a4bd14f7891c",
   "source": [
+    ".editorconfig",
     ".gitattributes",
     ".github/ISSUE_TEMPLATE/bug_report.yml",
     ".github/ISSUE_TEMPLATE/config.yml",
