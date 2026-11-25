@@ -3,6 +3,8 @@ import {ApiError,authenticated,csrfToken,read} from './api.ts';
 import './terminal-read.css';
 import {captureTerminalExcerpt,type TerminalExcerpt} from './terminal-excerpts';
 import './terminal-excerpts.css';
+import {captureTerminalOutputBarrier,saveTerminalOutput,type TerminalOutputSnapshot} from './terminal-output-export';
+import {TerminalOutputReview} from './TerminalOutputReview';
 export interface TerminalExcerptComposer {projectId:string;threadId:string;readOnly?:boolean;addExcerpt:(excerpt:TerminalExcerpt)=>Promise<void>}
 
 interface TerminalRead{id:string;projectId:string;threadId?:string;output:string;start:number;cursor:number;exited:boolean;exitCode:number|null}
@@ -15,6 +17,7 @@ const post=<T,>(url:string,body:unknown,isCurrent:()=>boolean)=>authenticated(()
 
 export function TerminalBody({projectId,threadId,terminalId,active,openAnother,isCurrent,excerptComposer}:{projectId:string;threadId?:string;terminalId?:string;active:boolean;openAnother?:()=>void|Promise<void>;isCurrent?:()=>boolean;excerptComposer?:TerminalExcerptComposer}){
  const [selection,setSelection]=useState<TerminalExcerpt|null>(null),[adding,setAdding]=useState(false);
+ const [snapshot,setSnapshot]=useState<TerminalOutputSnapshot|null>(null),[saving,setSaving]=useState(false),[saveError,setSaveError]=useState(''),[saveNotice,setSaveNotice]=useState(''),[capturing,setCapturing]=useState(false),[altBuffer,setAltBuffer]=useState(false),[captureReady,setCaptureReady]=useState(false);
  const element=useRef<HTMLDivElement>(null);
  const [phase,setPhase]=useState<Phase>('starting'),[error,setError]=useState(''),[acknowledged,setAcknowledged]=useState(false),[retrying,setRetrying]=useState(false),[stopping,setStopping]=useState(false),[generation,setGeneration]=useState(0);
  const key=`gen-terminal:${projectId}:${threadId??'project'}:${terminalId??'default'}`;
@@ -23,11 +26,11 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
  // must never lend its isCurrent guard to in-flight terminal work.
  useLayoutEffect(()=>{latest.current={projectId,threadId,terminalId,active,generation,isCurrent,excerptComposer};});
  const pendingId=useRef<{key:string;id:string}|null>(null);
- const actions=useRef<{current:()=>boolean;retry:()=>void;stop:()=>Promise<void>}|null>(null);
+ const actions=useRef<{current:()=>boolean;retry:()=>void;stop:()=>Promise<void>;capture:()=>Promise<void>}|null>(null);
 
  useEffect(()=>{
   if(!active||!element.current)return;
-  let disposed=false,confirmedId:string|undefined,cursor=0,ended=false,interrupted=false,reading=false,stopPending=false,readSequence=0;
+  let disposed=false,confirmedId:string|undefined,cursor=0,ended=false,interrupted=false,reading=false,stopPending=false,readSequence=0,capturePending=false;
   let timer:ReturnType<typeof setTimeout>|undefined,observer:ResizeObserver|undefined,instance:import('@xterm/xterm').Terminal|undefined;
   const controller=new AbortController();
   const ownerCurrent=()=>!disposed&&latest.current.active&&latest.current.projectId===projectId&&latest.current.threadId===threadId&&latest.current.terminalId===terminalId&&latest.current.generation===generation&&(!latest.current.isCurrent||latest.current.isCurrent());
@@ -76,7 +79,7 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
     readSequence++;clearTimeout(timer);controller.abort();append(next);interrupted=false;setRetrying(false);setError('');
    }catch(error){fail(error);if(ownerCurrent()&&!ended&&!interrupted&&!reading)timer=setTimeout(()=>void poll(),500);}
    finally{stopPending=false;if(ownerCurrent())setStopping(false);}
-  }};
+  },capture:async()=>{}};
   actions.current=ownedActions;
   setSelection(null);setAdding(false);setPhase('starting');setError('');setAcknowledged(false);setRetrying(false);setStopping(false);
   void(async()=>{
@@ -104,6 +107,17 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
     return true;
    });
    instance.onData(data=>{if(ownerCurrent()&&!ended&&!stopPending)void command({type:'input',data}).catch(fail);});
+   ownedActions.capture=async()=>{
+    if(!ownerCurrent()||capturePending)return;
+    capturePending=true;setCapturing(true);
+    try{
+     const captured=await captureTerminalOutputBarrier(instance!);
+     if(!ownerCurrent())return;
+     setSaveError('');setSaveNotice('');setSnapshot(captured);
+    }catch(error){if(ownerCurrent())setSaveError(message(error));}
+    finally{capturePending=false;if(ownerCurrent())setCapturing(false);}
+   };
+   if(ownerCurrent()){setCaptureReady(true);setAltBuffer(instance.buffer.active.type!=='normal');instance.buffer.onBufferChange(buffer=>{if(ownerCurrent())setAltBuffer(buffer.type!=='normal');});}
    observer=new ResizeObserver(()=>{
     if(!ownerCurrent()||!instance||ended||stopPending)return;
     fit.fit();void command({type:'resize',cols:instance.cols,rows:instance.rows}).catch(fail);
@@ -111,7 +125,7 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
    observer.observe(element.current!);
    if(!ended)timer=setTimeout(()=>void poll(),250);
   })().catch(error=>{if(ownerCurrent()){setPhase(error instanceof ApiError&&error.code==='TERMINAL_ENDED'?'ended':'unconfirmed');setError(message(error));}});
-  return()=>{disposed=true;readSequence++;clearTimeout(timer);controller.abort();observer?.disconnect();instance?.dispose();if(actions.current===ownedActions)actions.current=null;};
+  return()=>{disposed=true;readSequence++;clearTimeout(timer);controller.abort();observer?.disconnect();instance?.dispose();if(actions.current===ownedActions)actions.current=null;setSnapshot(null);setSaveError('');setSaveNotice('');setAltBuffer(false);setCaptureReady(false);};
  },[projectId,threadId,terminalId,active,generation,key]);
 
  const restart=async()=>{
@@ -123,6 +137,20 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
  const canAdd=active&&excerptComposer&&!excerptComposer.readOnly&&excerptComposer.projectId===projectId&&excerptComposer.threadId===threadId;
  const addSelection=async()=>{const owner=actions.current,composer=excerptComposer;if(!selection||!canAdd||!owner?.current()||adding||!composer)return;setAdding(true);try{await composer.addExcerpt(selection);if(owner.current())setError('');}catch(cause){if(owner.current())setError(message(cause));}finally{if(owner.current())setAdding(false);}};
  const canStop=active&&acknowledged&&phase!=='ended'&&!stopping&&!!actions.current?.current();
+ const canSave=active&&captureReady&&!altBuffer&&!capturing&&!!actions.current?.current();
+ const confirmSave=async()=>{
+  const owner=actions.current,current=snapshot;
+  if(!current||!owner?.current()||saving)return;
+  setSaving(true);setSaveError('');
+  try{
+   const outcome=await saveTerminalOutput(current,window.harnessDesktop);
+   if(!owner.current())return;
+   if(outcome==='saved'){setSnapshot(null);setSaveNotice('Saved.');}
+   else if(outcome==='started'){setSnapshot(null);setSaveNotice('Download started. Your browser controls where the file is saved.');}
+   else setSaveNotice('Save cancelled.');
+  }catch(error){if(owner.current())setSaveError(message(error));}
+  finally{if(owner.current())setSaving(false);}
+ };
  const label=stopping?'Stopping':({starting:'Starting',running:'Running','read-interrupted':'Read interrupted',ended:'Ended',unconfirmed:'Start unconfirmed'} as const)[phase];
- return <div className="live-terminal terminal-read"><div className="panel-toolbar"><strong>Terminal</strong><span role="status">{label}</span><button disabled={!canStop} onClick={()=>void actions.current?.stop()}>Stop</button>{phase==='read-interrupted'&&<button disabled={!active||retrying||stopping||!actions.current?.current()} aria-busy={retrying} onClick={()=>actions.current?.retry()}>Retry</button>}{(phase==='ended'||(error&&acknowledged))&&(!terminalId||openAnother?<button disabled={!active||stopping||!actions.current?.current()} onClick={()=>void restart()}>New terminal</button>:<span>Open a new terminal from the workspace.</span>)}</div>{error&&<p className="error-text" role="alert">{error}</p>}<div className="xterm-host" ref={element} aria-label="Terminal output"/>{canAdd&&<div className="terminal-selection-actions"><button type="button" className="secondary" disabled={!selection||adding} onPointerDown={event=>event.preventDefault()} onClick={()=>void addSelection()}>Add selection to prompt</button><p>{selection?.truncated?`Selection truncated from ${selection.originalBytes} bytes. Review before sending.`:'Selection stays editable before sending. Ctrl+Shift+A selects output.'}</p></div>}</div>;
+ return <div className="live-terminal terminal-read"><div className="panel-toolbar"><strong>Terminal</strong><span role="status">{label}</span><button disabled={!canStop} onClick={()=>void actions.current?.stop()}>Stop</button><button className="secondary" disabled={!canSave} aria-busy={capturing} onClick={()=>void actions.current?.capture()}>{capturing?'Preparing…':'Save output…'}</button>{altBuffer&&<small className="terminal-buffer-note">Leave the full-screen terminal application to save primary-buffer output.</small>}{phase==='read-interrupted'&&<button disabled={!active||retrying||stopping||!actions.current?.current()} aria-busy={retrying} onClick={()=>actions.current?.retry()}>Retry</button>}{(phase==='ended'||(error&&acknowledged))&&(!terminalId||openAnother?<button disabled={!active||stopping||!actions.current?.current()} onClick={()=>void restart()}>New terminal</button>:<span>Open a new terminal from the workspace.</span>)}</div>{error&&<p className="error-text" role="alert">{error}</p>}<div className="xterm-host" ref={element} aria-label="Terminal output"/>{canAdd&&<div className="terminal-selection-actions"><button type="button" className="secondary" disabled={!selection||adding} onPointerDown={event=>event.preventDefault()} onClick={()=>void addSelection()}>Add selection to prompt</button><p>{selection?.truncated?`Selection truncated from ${selection.originalBytes} bytes. Review before sending.`:'Selection stays editable before sending. Ctrl+Shift+A selects output.'}</p></div>}{snapshot&&<TerminalOutputReview snapshot={snapshot} busy={saving} confirmLabel={window.harnessDesktop!==undefined?'Save text…':'Download text'} error={saveError} notice={saveNotice} onCancel={()=>{if(!saving){setSnapshot(null);setSaveError('');setSaveNotice('');}}} onConfirm={()=>void confirmSave()}/>}{!snapshot&&saveNotice&&<p className="terminal-output-meta" role="status">{saveNotice}</p>}{!snapshot&&saveError&&<p className="error-text" role="alert">{saveError}</p>}</div>;
 }
