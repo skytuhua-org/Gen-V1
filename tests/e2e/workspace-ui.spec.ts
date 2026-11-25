@@ -42,12 +42,12 @@ async function pendingReads(page:Page,kind:'models'|'context'){
  return()=>page.evaluate(()=>(window as any).__pendingWorkspaceReads.map(({id,url,hasSignal,aborted,completed}:any)=>({id,url,hasSignal,aborted,completed})) as {id:number;url:string;hasSignal:boolean;aborted:boolean;completed:boolean}[]);
 }
 const panel=(id:string,threadId:string,x:number,kind:PanelPlacement['kind']='thread'):PanelPlacement=>({id,kind,canvasId:'canvas',binding:{authority:{kind:'local'},threadId,...(kind==='agent'?{agentId:'agent-one'}:{})},placement:'canvas',visible:true,collapsed:false,bounds:{x,y:56,width:480,height:600},order:0,alwaysOnTop:false});
-async function fixture(page:Page,panels:PanelPlacement[],beforeCommand?:(type:string,envelope:WorkspaceEnvelope)=>void|{code:string;message:string},preset:'custom'|'workspace'='custom'){
+async function fixture(page:Page,panels:PanelPlacement[],beforeCommand?:(type:string,envelope:WorkspaceEnvelope)=>void|{code:string;message:string},preset:'custom'|'workspace'='custom',projectId?:string){
  // This suite exercises explicit retained canvas recovery; normal Custom is covered by workspace-host.
  if(preset==='custom')await page.addInitScript(()=>localStorage.setItem('harness:workspace-mode:v3','retained-canvas'));
  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Unused artifact fixture'}}}});
  snapshot.artifacts=[];snapshot.userStates=[];snapshot.settings.theme='dark';
- snapshot.threads[0]={...snapshot.threads[0],title:'Main investigation'};
+ snapshot.threads[0]={...snapshot.threads[0],title:'Main investigation',...(projectId?{projectId}:{})};
  snapshot.threads.push({...snapshot.threads[0],id:'side',title:'Side investigation',sideParentId:'task-thread'}, {...snapshot.threads[0],id:'child',title:'Delegated investigation',kind:'delegate',parentThreadId:'task-thread'});
  snapshot.messages=[{id:'parent-message',threadId:'task-thread',role:'assistant',content:'Parent transcript only',runId:null,createdAt:stamp},...Array.from({length:105},(_,index)=>({id:'child-'+index,threadId:'child',role:'assistant' as const,content:'Actual child message '+index,runId:null,createdAt:stamp}))];
  snapshot.data.push({id:planDataId('task-thread'),threadId:'task-thread',revision:1,provenance:PLANNING_PROVENANCE,createdAt:stamp,value:{version:1,title:'Parent plan',steps:[],agents:[{id:'agent-one',name:'Delegated investigation',commandId:'delegate-command',taskId:'delegate-task',createdAt:stamp,updatedAt:stamp,completedRequirementIds:[],reportedPercent:null,status:'working',task:'Inspect the child source',childThreadId:'child',requirements:[]}]}});
@@ -63,6 +63,51 @@ async function fixture(page:Page,panels:PanelPlacement[],beforeCommand?:(type:st
  else await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeVisible();
  return {...host,envelope};
 }
+
+test('Project overview is inside the composer project picker',async({page})=>{
+ await fixture(page,[],undefined,'workspace','selected-project');
+ const trigger=page.getByRole('button',{name:'Select project',exact:true}),dialog=page.getByRole('dialog',{name:'Select project',exact:true});
+ await expect(page.locator('.summary-overview')).toHaveCount(0);await expect(dialog).toBeHidden();
+ await expect(page.getByRole('button',{name:'Project overview',exact:true})).toHaveCount(0);
+ await trigger.press('Enter');await expect(dialog).toBeVisible();await expect(dialog.getByRole('combobox',{name:'Search projects'})).toBeFocused();
+ const overview=dialog.getByRole('region',{name:'Project overview',exact:true});await expect(overview).toBeVisible();
+ expect((await overview.boundingBox())!.y).toBeLessThan((await dialog.getByRole('listbox',{name:'Projects',exact:true}).boundingBox())!.y);
+ await page.keyboard.press('Escape');await expect(dialog).toBeHidden();await expect(trigger).toBeFocused();
+ await trigger.click();await dialog.getByRole('button',{name:'Close dialog',exact:true}).click();await expect(dialog).toBeHidden();await expect(trigger).toBeFocused();
+});
+test('picker remains unchanged without a project',async({page})=>{
+ await fixture(page,[],undefined,'workspace');
+ await page.getByRole('button',{name:'Select project',exact:true}).click();
+ const picker=page.getByRole('dialog',{name:'Select project',exact:true});
+ await expect(picker.getByRole('region',{name:'Project overview',exact:true})).toHaveCount(0);
+ await expect(picker.getByRole('option',{name:'No project',exact:true})).toBeVisible();await expect(picker.getByRole('button',{name:'Add project',exact:true})).toBeEnabled();
+});
+test('overview exposes context read errors for its bound project',async({page})=>{
+ await fixture(page,[],undefined,'workspace','unreachable-project');
+ await page.route('**/api/projects/*/context*',route=>route.fulfill({status:500,json:{error:{code:'INTERNAL',message:'Synthetic context read failed'}}}));
+ await page.reload();
+ await page.getByRole('button',{name:'Select project',exact:true}).click();
+ await expect(page.getByRole('region',{name:'Project overview',exact:true})).toContainText('Synthetic context read failed');
+ await expect(page.getByRole('combobox',{name:'Search projects'})).toBeFocused();await expect(page.getByRole('option',{name:'No project',exact:true})).toBeEnabled();
+ await page.getByRole('region',{name:'Project overview',exact:true}).getByRole('button',{name:'Connect project',exact:true}).click();
+ await page.getByRole('dialog',{name:'Connect project',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'Select project',exact:true})).toBeVisible();await expect(page.getByRole('combobox',{name:'Search projects'})).toBeFocused();
+ await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Select project',exact:true})).toBeFocused();
+});
+
+test('picker context follows the composer owner rather than the selected main thread',async({page})=>{
+ const host=await fixture(page,[panel('main-panel','task-thread',24),panel('side-panel','side',528)],undefined,'custom','shared-project');
+ delete host.snapshot.threads.find(value=>value.id==='side')!.sideParentId;
+ host.snapshot.data.push({...host.snapshot.data[0],id:planDataId('side'),threadId:'side',value:{version:1,title:'Other owner plan',steps:[],agents:[]}});await page.reload();
+ let requested='';await page.route('**/api/projects/*/context*',async route=>{requested=new URL(route.request().url()).searchParams.get('threadId')??'';await route.fulfill({json:{project:{id:'shared-project',name:'Shared project',rootPath:'C:/fixture',authority:{kind:'local'}},threadId:requested,machineName:'Context for '+requested,editor:{available:false,label:'Editor'},branch:'side-branch',head:null,revision:'one',changes:{added:0,removed:0,files:0},lineage:[],scripts:[],capabilities:{git:true,terminal:false,pullRequests:false}}});});
+ await page.locator('[data-panel-id="side-panel"]').getByRole('button',{name:'Select project',exact:true}).click();
+ const overview=page.getByRole('region',{name:'Project overview',exact:true});await expect(overview.getByRole('button',{name:'side-branch',exact:true})).toBeEnabled();expect(requested).toBe('side');
+ await expect(overview.getByText('Project tools',{exact:true})).toHaveCount(0);await expect(overview).toContainText('Context for side');
+ await page.keyboard.press('Escape');await expect(page.locator('[data-panel-id="side-panel"]').getByRole('button',{name:'Select project',exact:true})).toBeFocused();
+ await page.locator('[data-panel-id="side-panel"]').getByRole('button',{name:'Select project',exact:true}).click();
+ await overview.getByRole('button',{name:'Open full plan',exact:true}).click();await expect(page.getByRole('dialog',{name:'Select project',exact:true})).toBeHidden();
+ await expect.poll(()=>host.envelope.state.canvases[0].panels.filter(value=>value.kind==='plan').map(value=>value.binding.threadId)).toEqual(['side']);
+});
 
 test('primary Workspace keeps tools fixed and preserves its anchored draft through close reopen and reload',async({page})=>{
  const host=await fixture(page,[],undefined,'workspace'),draft=page.getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep the primary draft');
@@ -250,7 +295,7 @@ test('canvas project selection targets its owner and cancellation restores indep
  const first=page.locator('[data-panel-id="selected-main"]').getByRole('textbox',{name:'Message',exact:true}),owner=page.locator('[data-panel-id="other-main"]'),second=owner.getByRole('textbox',{name:'Message',exact:true}),opener=owner.getByRole('button',{name:'Select project',exact:true});
  await first.fill('Selected draft');await second.fill('Other owner draft');await opener.click();
  const dialog=page.getByRole('dialog',{name:'Select project',exact:true});await expect(dialog).toBeVisible();
- await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await expect(opener).toBeFocused();
+ await dialog.getByRole('button',{name:'Close dialog',exact:true}).click();await expect(opener).toBeFocused();
  let submitted:Record<string,any>|undefined;
  await page.route('**/api/workspace/commands',async route=>{const input=route.request().postDataJSON();if(input.type!=='workspace.project.connect')return route.fallback();submitted=input;return route.fulfill({json:{commandId:input.id,seq:host.snapshot.seq,result:host.envelope}});});
  await opener.click();await dialog.getByRole('option',{name:'Other local project',exact:true}).click();await expect(dialog).toHaveCount(0);

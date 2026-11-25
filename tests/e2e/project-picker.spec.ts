@@ -11,6 +11,10 @@ test('cancel creates no thread, retains draft and restores the opener; Add proje
   const opener = page.getByRole('button', { name: 'Open project picker', exact: true });
   await opener.click();
   await expect(page.getByRole('combobox', { name: 'Search projects' })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'Switch project', exact: true })).toBeVisible();
+  await expect(page.getByRole('option', { name: 'Alpha', exact: true })).toContainText('Current');
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Change color for Alpha', exact: true })).toContainText('Change color');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(opener).toBeFocused();
@@ -65,17 +69,17 @@ test('custom and palette overrides update the actual sidebar badge, survive relo
   const badge = page.locator('.thread-project-monogram').first();
   const fallback = await badge.evaluate(node => getComputedStyle(node).color);
   await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
-  await page.getByRole('button', { name: 'Color for Alpha' }).click();
+  await page.getByRole('button', { name: 'Change color for Alpha' }).click();
   await page.getByRole('button', { name: 'rose', exact: true }).click();
   await expect(badge).toHaveCSS('color', 'rgb(232, 72, 118)');
-  await page.getByRole('button', { name: 'Color for Alpha' }).click();
+  await page.getByRole('button', { name: 'Change color for Alpha' }).click();
   await page.getByRole('textbox', { name: 'Custom color' }).fill('#12ab34');
   await page.getByRole('button', { name: 'Save color', exact: true }).click();
   await expect(badge).toHaveCSS('color', 'rgb(18, 171, 52)');
   await page.keyboard.press('Escape'); await page.reload();
   await expect(badge).toHaveCSS('color', 'rgb(18, 171, 52)');
   await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
-  await page.getByRole('button', { name: 'Color for Alpha' }).click();
+  await page.getByRole('button', { name: 'Change color for Alpha' }).click();
   await page.getByRole('button', { name: 'Use automatic color' }).click();
   await expect(badge).toHaveCSS('color', fallback);
   await expect(page.getByLabel('Created threads')).toHaveText('0');
@@ -85,7 +89,7 @@ test('invalid custom data and host save failure retain the picker and previous b
   await page.goto('/project-picker?fail-color=1');
   const badge = page.locator('.thread-project-monogram').first(), before = await badge.evaluate(node => getComputedStyle(node).color);
   await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
-  await page.getByRole('button', { name: 'Color for Alpha' }).click();
+  await page.getByRole('button', { name: 'Change color for Alpha' }).click();
   await page.getByRole('textbox', { name: 'Custom color' }).fill('url(bad)');
   await page.getByRole('button', { name: 'Save color', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('six-digit');
@@ -94,7 +98,7 @@ test('invalid custom data and host save failure retain the picker and previous b
   await expect(page.getByRole('alert')).toContainText('Synthetic save failed');
   await expect(badge).toHaveCSS('color', before);
   await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Color for Alpha' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Change color for Alpha' })).toBeFocused();
 });
 
 test('creation failure does not dismiss or falsely report success', async ({ page }) => {
@@ -117,7 +121,7 @@ for (const theme of ['dark', 'light']) test(`first-open selected row, scrolling 
   expect(box!.x + box!.width).toBeLessThanOrEqual(392); expect(box!.y + box!.height).toBeLessThanOrEqual(332);
   await expect(page.getByRole('button', { name: 'Add project', exact: true })).toBeInViewport();
   await page.screenshot({ path: info.outputPath(`project-picker-list-${theme}.png`) });
-  await page.getByRole('button', { name: 'Color for Project 59' }).click();
+  await page.getByRole('button', { name: 'Change color for Project 59' }).click();
   const popup = page.getByRole('group', { name: 'Project color' });
   const pop = await popup.boundingBox(); expect(pop!.x).toBeGreaterThanOrEqual(8); expect(pop!.y).toBeGreaterThanOrEqual(50);
   expect(pop!.x + pop!.width).toBeLessThanOrEqual(392); expect(pop!.y + pop!.height).toBeLessThanOrEqual(332);
@@ -136,8 +140,8 @@ test('compact rows and actions remain reachable in a 320 by 280 window', async (
   await expect(page.getByRole('button', { name: 'Add project', exact: true })).toBeInViewport();
   await search.fill('Alpha');
   await expect(page.getByRole('option', { name: 'Alpha', exact: true })).toBeInViewport();
-  const cancel = page.getByRole('button', { name: 'Cancel', exact: true });
-  const box = await cancel.boundingBox();
+  const color = page.getByRole('button', { name: 'Change color for Alpha', exact: true });
+  const box = await color.boundingBox();
   expect(box!.y + box!.height).toBeLessThanOrEqual(272);
 });
 
