@@ -688,7 +688,7 @@ for (const theme of ["dark", "light"])
 			});
 			await file.focus();
 			await page.keyboard.press("Enter");
-			await expect(preview.locator("pre")).toBeVisible();
+			await expect(preview.locator(".files-text-lines")).toBeVisible();
 			if (width <= 560) {
 				await expect(list).toBeHidden();
 				await toggle.focus();
@@ -701,7 +701,7 @@ for (const theme of ["dark", "light"])
 				.evaluate((owner) => {
 					const list = owner.querySelector(".files-list")!,
 						preview = owner.querySelector(".files-preview-content")!,
-						pre = preview.querySelector("pre")!,
+						pre = preview.querySelector(".files-text-lines")!,
 						rect = owner.getBoundingClientRect();
 					return {
 						owner: rect.toJSON(),
