@@ -257,6 +257,44 @@ export class ToolEffectLedger {
     return this.authenticated() ? this.stampApproval(approval) : approval;
   }
 
+  /** Only host-authenticated dispatch identity can bind an interrupted effect to a committed operation.
+   * A legacy or drifted record is evidence to inspect, never permission to inherit a result. */
+  matchesRecoveredOperationDispatch(effect: ToolEffectRecord, operation: Operation, thread: Thread | null): boolean {
+    try {
+      if (!thread || !this.authenticated() || operation.threadId !== thread.id || effect.threadId !== thread.id
+      || effect.invocationId !== "operation:" + operation.id + "@" + operation.revision
+      || ["commandId", "invocationId", "operationId"].some(key => Object.hasOwn(operation.args, key))) return false;
+    const owner = ownerFor(thread);
+    if (effect.owner.threadId !== owner.threadId || effect.owner.runId !== owner.runId || effect.owner.epoch !== owner.epoch
+      || effect.owner.accountBinding !== owner.accountBinding || effect.owner.projectId !== owner.projectId
+      || effect.owner.workspaceId !== owner.workspaceId) return false;
+    const preconditions = Object.entries(operation.preconditions).map(([key, value]) => key + "=" + value);
+    if (effect.targetPreconditions.length !== preconditions.length
+      || !effect.targetPreconditions.every((entry, index) => entry === preconditions[index]
+        && entry.indexOf("=") === entry.lastIndexOf("="))) return false;
+      const binding = { kind: operation.kind, args: operation.args, resourceIds: operation.resourceIds, preconditions: operation.preconditions };
+      if (effect.toolId !== "operation:" + operation.kind
+        || effect.definitionDigest !== this.signer().commit("operation-definition", binding)) return false;
+      const call: ToolCall = { name: "operation:" + operation.kind, args: { invocationId: effect.invocationId, operationId: operation.id, ...operation.args } };
+      if (effect.privateArgumentCommitment !== this.privateArgumentCommitment(call)) return false;
+      if (this.flags.enabled("security.authorityV1")) {
+        const grant = effect.approvalId ? this.store.get<ApprovalV1>("approval", effect.approvalId) : null;
+        const parsed = authenticatedApprovalSchema.safeParse(grant);
+        if (!parsed.success) return false;
+        const { hostAuthenticator, ...fields } = parsed.data;
+        if (fields.approvalId !== effect.approvalId || fields.remainingUses !== 0 || fields.operationId !== operation.id
+          || digest(fields.owner) !== digest(owner) || fields.actionCommitment !== this.actionCommitment(operation, thread)
+          || digest(fields.targetPreconditions) !== digest(preconditions)
+          || hostAuthenticator.keyId !== this.signer().keyId
+          || !this.signer().verify("grant", fields, hostAuthenticator.tag)) return false;
+      } else if (effect.approvalId) return false;
+      return true;
+    } catch {
+      // Missing/revoked host custody and malformed legacy records fail closed.
+      return false;
+    }
+  }
+
   /** Admission for a prepared Operation: consume its single-use approval and
    * persist DISPATCHED in the same synchronous transaction that marks the
    * operation running. Any post-approval drift (args/cwd/account/workspace/
