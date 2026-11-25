@@ -1,4 +1,15 @@
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
+const cleanupControl = vi.hoisted(() => ({ failures: 0 }));
+// Inject one cleanup removal failure per armed snapshot: the read-only guard
+// deliberately blocks in-place substitution inside the action, so a post-hoc
+// corrupted removal cannot be simulated through the filesystem on Windows.
+vi.mock('../packages/core/file-access.ts', async importOriginal => {
+  const original = await importOriginal<typeof import('../packages/core/file-access.ts')>();
+  return { ...original, removeOwnedFile: async (...args: Parameters<typeof original.removeOwnedFile>) => {
+    if (cleanupControl.failures > 0 && args[4] === false) { cleanupControl.failures -= 1; throw new Error('injected cleanup failure'); }
+    return original.removeOwnedFile(...args);
+  } };
+});
 import {execFileSync} from 'node:child_process';
 import {lstat,mkdir,mkdtemp,readFile,rename,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -90,9 +101,13 @@ it.each(['identity','common identity','git identity','pointer','backref','common
 });
 
 it('keeps cleaning a snapshot when one removal fails, without hiding the real outcome',async()=>{
- const f=await fixture(),substitute=async(worktree:string)=>{const config=join(worktree,'.git','config');await rename(config,config+'.moved');await writeFile(config,'swapped\n');};
- // A substituted file fails its ownership check; remaining removals still run.
- await expect(snapshot(f.base,undefined,async(_metadata,worktree)=>{await substitute(worktree);return 'done';})).rejects.toMatchObject({name:'AggregateError'});
+ const f=await fixture();
+ // One injected removal failure per snapshot: remaining removals still run.
+ cleanupControl.failures=1;
+ await expect(snapshot(f.base,undefined,async()=> 'done')).rejects.toMatchObject({name:'AggregateError'});
+ expect(cleanupControl.failures).toBe(0);
  // The operation's own failure wins; cleanup errors ride as `suppressed`.
- await expect(snapshot(f.base,undefined,async(_metadata,worktree)=>{await substitute(worktree);throw Error('primary failure');})).rejects.toMatchObject({message:'primary failure',suppressed:expect.objectContaining({name:'AggregateError'})});
+ cleanupControl.failures=1;
+ await expect(snapshot(f.base,undefined,async()=>{throw Error('primary failure');})).rejects.toMatchObject({message:'primary failure',suppressed:expect.objectContaining({name:'AggregateError'})});
+ expect(cleanupControl.failures).toBe(0);
 });
