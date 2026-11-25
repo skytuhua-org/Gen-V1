@@ -10,6 +10,8 @@ export interface ConversationFindProps {
  /** Includes the owner's composer so Ctrl+F never changes another conversation. */
  scope:RefObject<HTMLElement|null>;
  active?:boolean;
+ /** Runs before a match scroll so pending prompt movement can yield first. */
+ onBeforeNavigate?:()=>void;
  onNavigate?:()=>void;
  onLoadEarlier?:()=>void;
  historyPending?:boolean;
@@ -17,13 +19,15 @@ export interface ConversationFindProps {
  historyError?:string|null;
 }
 /** Reusable by ordinary, canvas and scoped transcript owners. No command/draft authority. */
-export function ConversationFind({ownerKey,transcript,scope,active=true,onNavigate,onLoadEarlier,historyPending,historyLimited,historyError}:ConversationFindProps){
+export function ConversationFind({ownerKey,transcript,scope,active=true,onBeforeNavigate,onNavigate,onLoadEarlier,historyPending,historyLimited,historyError}:ConversationFindProps){
  const id=useId(),input=useRef<HTMLInputElement>(null),trigger=useRef<HTMLButtonElement>(null),restoreFocus=useRef(false),opener=useRef<HTMLElement|null>(null);
  const [open,setOpen]=useState(false),[query,setQuery]=useState(''),[count,setCount]=useState(0),[index,setIndex]=useState(-1);
  const matches=useRef<ConversationMatch[]>([]),selected=useRef<string|null>(null),lastQuery=useRef('');
  const navigateRef=useRef(onNavigate);navigateRef.current=onNavigate;
+ const beforeNavigateRef=useRef(onBeforeNavigate);beforeNavigateRef.current=onBeforeNavigate;
  const jump=useCallback((value:number)=>{
   const match=matches.current[value],root=transcript.current;if(!match||!root)return;
+  beforeNavigateRef.current?.();
   const rect=match.range.getBoundingClientRect(),bounds=root.getBoundingClientRect();
   root.scrollTop+=rect.top-bounds.top-root.clientHeight/2+rect.height/2;
   selected.current=match.key;setIndex(value);highlightConversation(root.ownerDocument,id,matches.current,value);navigateRef.current?.();

@@ -26,6 +26,17 @@
       "disposition": "retained-geometry"
     },
     {
+      "file": "apps/web/src/chat-scroll-indicator.css",
+      "line": 11,
+      "column": 1,
+      "rule": "ad-hoc-overlay",
+      "message": "Overlay CSS geometry/backdrop: styles belong to named shared primitives; legacy rules require an individually reviewed migration entry.",
+      "fingerprint": "4e4c558c64813d240764f22a884f40e11f25a48b9bfe576012a39ba3675feedb",
+      "reason": "Retained geometry: bounded prompt-navigation button group anchored beside the conversation scrollbar; not a popup.",
+      "evidence": ".prompt-navigation{position:absolute;top:8px;left:4px;display:flex;flex-direction:column;gap:4px;z-index:3}",
+      "disposition": "retained-geometry"
+    },
+    {
       "file": "apps/web/src/document-preview.css",
       "line": 2,
       "column": 1,

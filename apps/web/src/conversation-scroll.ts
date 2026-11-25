@@ -21,6 +21,16 @@ export function createHistoryAnchor() {
  };
 }
 
+/** cubic-bezier(0.2, 0, 0, 1) as y(x): prompt navigation's only movement curve. */
+const promptEase=(x:number)=>{
+ const X=(t:number)=>((1.6*t-1.2)*t+0.6)*t,Y=(t:number)=>((-2*t+3)*t)*t;
+ let t=x;
+ for(let i=0;i<6;i++){const dx=X(t)-x;if(Math.abs(dx)<1e-6)return Y(t);const slope=4.8*t*t-2.4*t+0.6;if(Math.abs(slope)<1e-6)break;t-=dx/slope;}
+ let lo=0,hi=1;t=x;
+ while(hi-lo>1e-5){if(X(t)<x)lo=t;else hi=t;t=(lo+hi)/2;}
+ return Y(t);
+};
+
 /** Own only tail-following scrolls. Reading history and user intent always win. */
 export function createConversationScroll(element:HTMLElement){
  let thread='',following=false,disposed=false,ownedTop:number|undefined,dragging=false,nativePointer:number|undefined;
@@ -28,7 +38,9 @@ export function createConversationScroll(element:HTMLElement){
  const nearTail=()=>maximum()-element.scrollTop<80;
  const write=(value:number)=>{element.scrollTop=Math.min(maximum(),Math.max(0,value));ownedTop=element.scrollTop;};
  let spring=createSpringValue(element.scrollTop,write);
- const interrupt=()=>{spring.dispose();spring=createSpringValue(element.scrollTop,write);ownedTop=undefined;following=false;};
+ let navFrame=0,navSettle:(()=>void)|null=null;
+ const cancelNavigation=()=>{if(navFrame)cancelAnimationFrame(navFrame);navFrame=0;navSettle=null;};
+ const interrupt=()=>{cancelNavigation();spring.dispose();spring=createSpringValue(element.scrollTop,write);ownedTop=undefined;following=false;};
  const follow=()=>{if(!disposed&&!dragging&&following)spring.to(maximum(),readMotionPolicy()!=='full'||document.visibilityState==='hidden'||!element.getClientRects().length);};
  const observed=new Set<Element>();
  const observer=new ResizeObserver(follow);
@@ -56,8 +68,8 @@ export function createConversationScroll(element:HTMLElement){
   const towardTail=['ArrowDown','PageDown','End'].includes(event.key)||(event.key===' '&&!event.shiftKey);
   if(towardTail&&nearTail())following=true;
  };
- const settleHidden=()=>{if(document.visibilityState==='hidden'&&following)spring.to(maximum(),true);};
- const stopObservingMotion=observeMotionPolicy(policy=>{if(policy!=='full'&&following&&!dragging)spring.to(maximum(),true);});
+ const settleHidden=()=>{if(document.visibilityState!=='hidden')return;navSettle?.();if(following)spring.to(maximum(),true);};
+ const stopObservingMotion=observeMotionPolicy(policy=>{if(policy==='full')return;navSettle?.();if(following&&!dragging)spring.to(maximum(),true);});
  element.addEventListener('wheel',wheel,{passive:true});
  element.addEventListener('touchstart',touchStart,{passive:true});
  element.addEventListener('touchend',touchEnd,{passive:true});
@@ -94,8 +106,28 @@ export function createConversationScroll(element:HTMLElement){
   jump():ConversationPosition{
    following=true;follow();return {top:maximum(),tail:true};
   },
+  /** Prompt navigation: one cancellable controller-owned 220ms move. The caller
+   * keeps the returned handle; every existing interrupt path also cancels it. */
+  navigateTo(top:number,landed?:()=>void):{cancel:()=>void}|null{
+   if(disposed||!Number.isFinite(top))return null;
+   interrupt();
+   const target=Math.max(0,Math.min(maximum(),top)),start=element.scrollTop,began=performance.now();
+   const settle=()=>{if(navSettle!==settle)return;navSettle=null;if(navFrame){cancelAnimationFrame(navFrame);navFrame=0;}write(target);landed?.();};
+   const step=(now:number)=>{
+    navFrame=0;
+    if(disposed)return;
+    if(document.visibilityState==='hidden'||readMotionPolicy()!=='full'){settle();return;}
+    const progress=Math.min(1,(now-began)/220);
+    write(start+(target-start)*promptEase(progress));
+    if(progress>=1){navSettle=null;landed?.();}
+    else navFrame=requestAnimationFrame(step);
+   };
+   if(Math.abs(target-start)<1||document.visibilityState==='hidden'||readMotionPolicy()!=='full'){write(target);landed?.();return {cancel:()=>{}};}
+   navSettle=settle;navFrame=requestAnimationFrame(step);
+   return {cancel(){if(navSettle===settle)cancelNavigation();}};
+  },
   dispose(){
-   if(disposed)return;disposed=true;spring.dispose();observer.disconnect();observed.clear();
+   if(disposed)return;disposed=true;cancelNavigation();spring.dispose();observer.disconnect();observed.clear();
    element.removeEventListener('wheel',wheel);element.removeEventListener('touchstart',touchStart);element.removeEventListener('touchend',touchEnd);element.removeEventListener('touchcancel',touchEnd);element.removeEventListener('pointerdown',pointerDown);element.removeEventListener('keydown',key);
    document.removeEventListener('pointerup',pointerEnd);document.removeEventListener('pointercancel',pointerEnd);document.removeEventListener('visibilitychange',settleHidden);stopObservingMotion();
   },

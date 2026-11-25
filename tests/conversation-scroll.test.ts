@@ -188,3 +188,70 @@ it('captures earlier-message geometry at insertion and consumes it only for the 
  expect(anchor.consume('two',owner)).toBeUndefined();
  expect(anchor.consume('one',owner)).toBeUndefined();
 });
+
+it('animates prompt navigation once and reports the landing',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});expect(f.element.scrollTop).toBe(600);
+ const landed=vi.fn();f.scroll.navigateTo(200,landed);
+ expect(f.element.scrollTop).toBe(600);expect(f.frames.size).toBe(1);
+ f.tick(14);expect(f.element.scrollTop).toBe(200);expect(f.frames.size).toBe(0);
+ expect(landed).toHaveBeenCalledTimes(1);expect(f.scroll.position().tail).toBe(false);f.scroll.dispose();
+});
+
+it('retargets prompt navigation from the live position and only the latest intent lands',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});
+ const first=vi.fn(),second=vi.fn();
+ f.scroll.navigateTo(100,first);f.tick(3);const midway=f.element.scrollTop;
+ expect(midway).toBeGreaterThan(100);expect(midway).toBeLessThan(600);
+ f.scroll.navigateTo(400,second);f.tick(14);
+ expect(f.element.scrollTop).toBe(400);expect(first).not.toHaveBeenCalled();expect(second).toHaveBeenCalledTimes(1);f.scroll.dispose();
+});
+
+it('settles prompt navigation immediately for reduced motion, hidden documents and negligible moves',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});
+ const landed=vi.fn();f.preference.matches=true;f.scroll.navigateTo(300,landed);
+ expect(f.element.scrollTop).toBe(300);expect(f.frames.size).toBe(0);expect(landed).toHaveBeenCalledTimes(1);
+ f.preference.matches=false;f.page.visibilityState='hidden';f.scroll.navigateTo(100,landed);
+ expect(f.element.scrollTop).toBe(100);expect(f.frames.size).toBe(0);expect(landed).toHaveBeenCalledTimes(2);
+ f.page.visibilityState='visible';f.element.scrollTop=99.5;f.scroll.navigateTo(100,landed);
+ expect(f.element.scrollTop).toBe(100);expect(landed).toHaveBeenCalledTimes(3);f.scroll.dispose();
+});
+
+it('settles an in-flight prompt move when the document hides or motion policy drops',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});
+ const landed=vi.fn();f.scroll.navigateTo(400,landed);f.tick(2);
+ f.page.visibilityState='hidden';f.page.dispatchEvent(new Event('visibilitychange'));
+ expect(f.element.scrollTop).toBe(400);expect(landed).toHaveBeenCalledTimes(1);expect(f.frames.size).toBe(0);
+ f.page.visibilityState='visible';f.element.scrollTop=0;const again=vi.fn();
+ f.scroll.navigateTo(400,again);f.tick(2);f.motion('off');
+ expect(f.element.scrollTop).toBe(400);expect(again).toHaveBeenCalledTimes(1);expect(f.frames.size).toBe(0);f.scroll.dispose();
+});
+
+it('cancels prompt navigation on wheel, explicit scroll, thread switch, dispose and its own handle',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});
+ const landed=vi.fn();
+ const handle=f.scroll.navigateTo(300,landed);f.tick(2);handle!.cancel();
+ expect(f.frames.size).toBe(0);expect(landed).not.toHaveBeenCalled();
+ f.scroll.navigateTo(300,landed);f.tick(2);f.intent('wheel',{deltaY:-120});
+ expect(f.frames.size).toBe(0);expect(landed).not.toHaveBeenCalled();
+ f.scroll.navigateTo(300,landed);f.tick(2);f.scroll.scrollTo(50);
+ expect(f.element.scrollTop).toBe(50);expect(f.frames.size).toBe(0);expect(landed).not.toHaveBeenCalled();
+ f.scroll.navigateTo(300,landed);f.tick(2);f.scroll.update('two',{top:0,tail:true});
+ expect(f.frames.size).toBe(0);expect(landed).not.toHaveBeenCalled();
+ f.scroll.navigateTo(300,landed);f.tick(2);f.scroll.dispose();
+ f.tick(5);expect(landed).not.toHaveBeenCalled();
+});
+
+it('does not treat prompt-owned frames as manual intent and never leaves the tail following mid-move',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});
+ const landed=vi.fn();f.scroll.navigateTo(200,landed);f.tick(4);
+ expect(f.scroll.remember()).toBeNull();expect(f.scroll.position().tail).toBe(false);
+ f.tick(10);expect(f.element.scrollTop).toBe(200);expect(f.scroll.remember()).toBeNull();
+ // A detached reader stays detached when new content streams in afterwards.
+ f.element.scrollHeight=1600;f.resize();f.tick(30);expect(f.element.scrollTop).toBe(200);f.scroll.dispose();
+});
+
+it('rejects invalid or disposed prompt navigation requests',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});
+ expect(f.scroll.navigateTo(Number.NaN)).toBeNull();
+ f.scroll.dispose();expect(f.scroll.navigateTo(100)).toBeNull();f.tick(5);expect(f.element.scrollTop).toBe(600);
+});

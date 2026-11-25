@@ -33,6 +33,8 @@ export const KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
   {id: 'find-next-match', label: 'Next match', scope: 'Conversation', chords: ['Enter'], handlers: [module('ConversationFind.tsx')]},
   {id: 'find-previous-match', label: 'Previous match', scope: 'Conversation', chords: ['Shift+Enter'], handlers: [module('ConversationFind.tsx')]},
   {id: 'close-find', label: 'Close find', scope: 'Conversation', chords: ['Escape'], handlers: [module('ConversationFind.tsx')]},
+  {id: 'previous-prompt', label: 'Previous prompt', scope: 'Conversation', chords: ['Alt+ArrowUp'], hint: 'Focused conversation; not while editing. Loaded prompts only.', handlers: [module('usePromptNavigation.ts')]},
+  {id: 'next-prompt', label: 'Next prompt', scope: 'Conversation', chords: ['Alt+ArrowDown'], hint: 'Focused conversation; not while editing. Loaded prompts only.', handlers: [module('usePromptNavigation.ts')]},
   {id: 'terminal-select-all', label: 'Select all terminal text', scope: 'Terminal', chords: ['Ctrl+Shift+A'], handlers: [module('TerminalBody.tsx')]},
   {id: 'thread-place', label: 'Place a focused thread in the workspace', scope: 'Sidebar', chords: ['Alt+Enter'], handlers: [module('ShellSidebar.tsx')]},
   {id: 'thread-reorder-up', label: 'Move a focused thread up', scope: 'Sidebar', chords: ['Alt+ArrowUp'], handlers: [module('sidebar-reorder.ts')]},

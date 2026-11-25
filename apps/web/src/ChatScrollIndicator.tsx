@@ -1,15 +1,20 @@
 import {useEffect,useId,useRef,useState,type KeyboardEvent,type PointerEvent,type RefObject} from 'react';
+import {ArrowDown,ArrowUp} from 'lucide-react';
 import {observeConversationExtent,type createConversationScroll} from './conversation-scroll';
+import {ariaShortcut,chordFor,shortcutKeys} from './keyboard-bindings';
+import type {PromptNavigation} from './usePromptNavigation';
 import './chat-scroll-indicator.css';
 
 export interface ChatScrollIndicatorProps {
  scrollRef:RefObject<HTMLElement|null>;
  controllerRef:RefObject<ReturnType<typeof createConversationScroll>|null>;
  contentKey?:string;
+ /** Conversation prompt jump controls; omitted leaves the rail unchanged. */
+ prompts?:PromptNavigation;
 }
 
 /** A view of the existing transcript scroll position; it never owns message state. */
-export function ChatScrollIndicator({scrollRef,controllerRef,contentKey}:ChatScrollIndicatorProps){
+export function ChatScrollIndicator({scrollRef,controllerRef,contentKey,prompts}:ChatScrollIndicatorProps){
  const id=useId(),track=useRef<HTMLDivElement>(null),drag=useRef<{pointerId:number;offset:number}|null>(null);
  const [metrics,setMetrics]=useState({top:0,maximum:0,ratio:1,height:0});
  const finish=()=>{if(!drag.current)return;drag.current=null;controllerRef.current?.endManualScroll();};
@@ -34,9 +39,11 @@ export function ChatScrollIndicator({scrollRef,controllerRef,contentKey}:ChatScr
   drag.current={pointerId:event.pointerId,offset:onThumb?event.clientY-rect.top-top:height/2};controllerRef.current?.beginManualScroll();event.currentTarget.setPointerCapture(event.pointerId);move(event);
  };
  const key=(event:KeyboardEvent<HTMLDivElement>)=>{
+  // Modified arrows belong to other scoped owners (prompt navigation, window moves).
+  if(event.altKey||event.ctrlKey||event.metaKey)return;
   const element=scrollRef.current;if(!element)return;
   const page=element.clientHeight*.85,delta=event.key==='ArrowUp'?-40:event.key==='ArrowDown'?40:event.key==='PageUp'?-page:event.key==='PageDown'?page:event.key===' '?(event.shiftKey?-page:page):undefined;
   if(delta===undefined&&event.key!=='Home'&&event.key!=='End')return;event.preventDefault();event.stopPropagation();finish();scroll(event.key==='Home'?0:event.key==='End'?metrics.maximum:element.scrollTop+delta!);
  };
- return <div ref={track} className="chat-scroll-indicator" role="scrollbar" aria-label="Scroll conversation" aria-controls={scrollRef.current?.id} aria-orientation="vertical" aria-valuemin={0} aria-valuemax={Math.round(metrics.maximum)} aria-valuenow={Math.round(Math.min(metrics.maximum,metrics.top))} tabIndex={metrics.maximum>1?0:-1} data-scrollable={metrics.maximum>1} onPointerDown={begin} onPointerMove={move} onPointerUp={finishPointer} onPointerCancel={finishPointer} onLostPointerCapture={finishPointer} onKeyDown={key}><span className="chat-scroll-track" aria-hidden="true"/><span className="chat-scroll-thumb" aria-hidden="true" style={{height,transform:`translateY(${top}px)`}}/></div>;
+ return <>{prompts?.visible&&<div className="prompt-navigation" role="group" aria-label="Prompt navigation">{([['previous-prompt','Previous prompt',-1,prompts.previous],['next-prompt','Next prompt',1,prompts.next]] as const).map(([id,label,direction,available])=><button key={id} type="button" className="prompt-nav-button" aria-label={label} aria-description="Loaded prompts only" aria-keyshortcuts={ariaShortcut(chordFor(id))} title={`${label} (${shortcutKeys(chordFor(id))})`} disabled={!available} onClick={()=>prompts.navigate(direction)}>{direction<0?<ArrowUp size={14}/>:<ArrowDown size={14}/>}</button>)}</div>}<div ref={track} className="chat-scroll-indicator" role="scrollbar" aria-label="Scroll conversation" aria-controls={scrollRef.current?.id} aria-orientation="vertical" aria-valuemin={0} aria-valuemax={Math.round(metrics.maximum)} aria-valuenow={Math.round(Math.min(metrics.maximum,metrics.top))} tabIndex={metrics.maximum>1?0:-1} data-scrollable={metrics.maximum>1} onPointerDown={begin} onPointerMove={move} onPointerUp={finishPointer} onPointerCancel={finishPointer} onLostPointerCapture={finishPointer} onKeyDown={key}><span className="chat-scroll-track" aria-hidden="true"/><span className="chat-scroll-thumb" aria-hidden="true" style={{height,transform:`translateY(${top}px)`}}/></div></>;
 }
