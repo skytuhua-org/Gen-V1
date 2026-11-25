@@ -10,6 +10,7 @@ import {Store} from '../packages/storage/store.ts';
 import type {PlanRecord, PlanStep} from '../packages/contracts/planning.ts';
 import {planDataId, PLANNING_PROVENANCE} from '../packages/contracts/planning.ts';
 import {PlanExtensionStore} from '../packages/core/plan-extension.ts';
+import type {AgentWorkV1} from '../packages/contracts/agent-work.ts';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -229,4 +230,51 @@ it('returns no plan extension when the canonical record is stale, missing, or no
     expect(response.statusCode, name).toBe(200);
     expect(response.json(), name).toEqual({extension: false, planId: f.planId});
   }
+});
+
+it('agent work rows and output evidence expose reported outcome and per-ref freshness without calling it acceptance', async () => {
+  const f = fixture();
+  const now = new Date().toISOString(), workId = 'work-evidence-detail', outputRef = {id: `out:${workId}`, revision: 1};
+  const thread: Thread = {id: f.threadId, title: 'Task', createdAt: now, updatedAt: now, kind: 'main', projectName: null, status: 'working', epoch: 1, runId: 'run', modelId: null, sessionPath: null};
+  const work: AgentWorkV1 = {
+    version: 1, workId,
+    parentOwner: {threadId: f.threadId, runId: 'run', epoch: 1},
+    childOwner: {threadId: 'child-evidence', runId: 'child-run', epoch: 1},
+    role: 'QA', inputContractDigest: 'a'.repeat(64), expectedOutputSchema: {type: 'object'}, grantSubset: [], budget: {tokens: 10, ms: 1000},
+    state: 'COMPLETED_REPORTED', outputRef, repairAttempts: 0, createdSeq: 1, createdAt: now, updatedAt: now, revision: 2,
+  };
+  const output = {outcome: 'BLOCKED', summary: 'Blocked by the missing proof.', requirementIds: ['r1'], observations: [],
+    evidenceRefs: [{id: 'ev-current', revision: 1}, {id: 'ev-stale', revision: 1}, {id: 'ev-missing', revision: 1}, {id: 'ev-foreign', revision: 1}]};
+  f.store.internal('agent evidence fixture', f.threadId, () => {
+    f.store.put('thread', f.threadId, f.threadId, thread);
+    f.store.put('agentWork', workId, f.threadId, work);
+    f.store.put('data', outputRef.id, f.threadId, {id: outputRef.id, threadId: f.threadId, revision: 1, value: output, provenance: 'harness:agent-output', createdAt: now});
+    f.store.put('data', 'ev-current', f.threadId, {id: 'ev-current', threadId: f.threadId, revision: 1, value: {outcome: 'PASS', requirementId: 'r1'}, provenance: 'harness:verification', createdAt: now});
+    f.store.put('data', 'ev-stale', f.threadId, {id: 'ev-stale', threadId: f.threadId, revision: 2, value: {outcome: 'PASS', requirementId: 'r1'}, provenance: 'harness:verification', createdAt: now});
+    f.store.put('data', 'ev-foreign', 'other-thread', {id: 'ev-foreign', threadId: 'other-thread', revision: 1, value: {outcome: 'PASS', requirementId: 'r1'}, provenance: 'harness:verification', createdAt: now});
+  });
+  const app = Fastify();
+  cleanups.push(() => app.close());
+  registerAgentWorkRoutes(app, {
+    store: f.store,
+    planExtensions: f.extensions,
+    agentWork: {
+      listForParent: () => [work], inspect: () => work, lateArtifacts: () => [], dispatchedGrants: () => [], supportsLiveSteer: () => false,
+      roleAvailability: () => ({available: true}), budgetLedger: () => ({reservedTokens: 0, spentTokens: 0, admitted: 1, completed: 0, failed: 0, cancelled: 0, interrupted: 0}),
+      inbox: {text: () => null, messages: () => []},
+    },
+  } as unknown as Service);
+
+  const list = await app.inject({url: '/api/agent-work?taskId=' + f.threadId});
+  expect(list.statusCode).toBe(200);
+  expect(list.json().works[0]).toMatchObject({workId, state: 'COMPLETED_REPORTED', reportedOutcome: 'BLOCKED', verification: 'REPORTED_BLOCKED'});
+  const detail = await app.inject({url: `/api/agent-work/output?taskId=${f.threadId}&workId=${workId}`});
+  expect(detail.statusCode).toBe(200);
+  expect(detail.json()).toMatchObject({workId, reportedOutcome: 'BLOCKED', verification: 'REPORTED_BLOCKED', outputStatus: 'current'});
+  expect(detail.json().evidence).toEqual([
+    expect.objectContaining({id: 'ev-current', revision: 1, currentRevision: 1, status: 'current', outcome: 'PASS', requirementIds: ['r1'], reason: null}),
+    expect.objectContaining({id: 'ev-stale', revision: 1, currentRevision: 2, status: 'stale', reason: 'durable revision is 2, not claimed revision 1'}),
+    expect.objectContaining({id: 'ev-missing', revision: 1, currentRevision: null, status: 'missing', reason: 'no durable evidence record exists at the claimed reference'}),
+    expect.objectContaining({id: 'ev-foreign', revision: 1, currentRevision: 1, status: 'wrong-owner', reason: 'evidence belongs outside the parent task'}),
+  ]);
 });

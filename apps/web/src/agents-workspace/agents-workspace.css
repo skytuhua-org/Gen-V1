@@ -89,6 +89,12 @@
 .agents-input-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .agents-input-delivery { font-size: 11px; color: var(--muted); }
 .agents-work-output { max-height: 240px; overflow: auto; font-size: 11px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.agents-work-output-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.agents-work-output pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agents-work-evidence-list { display: flex; flex-direction: column; gap: 6px; padding: 0; list-style: none; }
+.agents-work-evidence-list li { display: flex; flex-wrap: wrap; gap: 6px; border-left: 2px solid var(--border); padding-left: 8px; }
+.agents-work-evidence-list li[data-status='stale'], .agents-work-evidence-list li[data-status='missing'], .agents-work-evidence-list li[data-status='wrong-owner'] { border-left-color: var(--warning-fg); }
+.agents-work-evidence-list li p { flex-basis: 100%; margin: 0; }
 .agents-work-board { font-size: 12px; }
 .agents-board-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--border); }
 .agents-board-post { display: flex; gap: 4px; padding-top: 6px; }

@@ -1,9 +1,15 @@
 import {authenticated, command, read} from './api.ts';
 
 type WorkState = 'QUEUED' | 'RUNNING' | 'WAITING_HUMAN' | 'COMPLETED_REPORTED' | 'VERIFIED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED';
+export type AgentWorkVerification = 'NOT_REPORTED' | 'REPORTED_UNVERIFIED' | 'REPORTED_INCOMPLETE' | 'REPORTED_BLOCKED' | 'VERIFIED';
+export interface AgentWorkEvidenceDetail {
+  id: string; revision: number; currentRevision: number | null; status: 'current' | 'stale' | 'missing' | 'wrong-owner';
+  provenance: string | null; outcome: string | null; requirementIds: string[]; reason: string | null;
+}
 export interface AgentWorkRow {
   workId: string; role: 'PLAN_READ' | 'RESEARCH_READ' | 'CODE_WORKTREE' | 'QA'; state: WorkState;
   failureReason: string | null; blockedReason: string | null; steerSupported: boolean;
+  reportedOutcome: 'COMPLETED' | 'INCOMPLETE' | 'BLOCKED' | null; verification: AgentWorkVerification; outputStatus: 'none' | 'missing' | 'changed' | 'current';
   owner: {threadId: string; runId: string | null; epoch: number};
   worktree: string | null; grants: {id: string; label: string; writable: boolean}[];
   budget: {tokens: number | null; ms: number | null}; outputRef: {id: string; revision: number} | null;
@@ -32,7 +38,7 @@ const get = <T>(path: string) => authenticated(() => fetch(path, {credentials: '
 export const getAgentWork = (taskId: string) => get<AgentWorkList>(`/api/agent-work?taskId=${encodeURIComponent(taskId)}`);
 export const getAgentWorkInputs = (taskId: string, targetThreadId: string) => get<{inputs: AgentInputRow[]}>(`/api/agent-work/inputs?taskId=${encodeURIComponent(taskId)}&targetThreadId=${encodeURIComponent(targetThreadId)}`);
 export const getAgentWorkMessages = (taskId: string) => get<{messages: AgentMessageRow[]}>(`/api/agent-work/messages?taskId=${encodeURIComponent(taskId)}`);
-export const getAgentWorkOutput = (taskId: string, workId: string) => get<{workId: string; output: unknown; lateArtifacts: number}>(`/api/agent-work/output?taskId=${encodeURIComponent(taskId)}&workId=${encodeURIComponent(workId)}`);
+export const getAgentWorkOutput = (taskId: string, workId: string) => get<{workId: string; output: unknown; lateArtifacts: number; reportedOutcome: AgentWorkRow['reportedOutcome']; verification: AgentWorkVerification; outputStatus: AgentWorkRow['outputStatus']; evidence: AgentWorkEvidenceDetail[]}>(`/api/agent-work/output?taskId=${encodeURIComponent(taskId)}&workId=${encodeURIComponent(workId)}`);
 export const getAgentWorkPlan = (taskId: string) => get<PlanProgress>(`/api/agent-work/plan?taskId=${encodeURIComponent(taskId)}`);
 
 export const sendAgentInput = (threadId: string, args: {workId: string; kind: 'STEER' | 'FOLLOW_UP'; text: string; inputId?: string; dedupeKey?: string}) =>
