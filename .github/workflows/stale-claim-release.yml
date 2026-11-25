@@ -99,7 +99,7 @@ jobs:
                   for (const segment of line.split(/\||;\s*(?=[A-Za-z][A-Za-z0-9_]*\s*=)/)) {
                     const m = /^\s*(OWNER|SCOPE|TASKS)\s*=\s*(.*?)\s*$/i.exec(segment);
                     if (!m) continue;
-                    const key = m[1].toUpperCase(), value = m[2];
+                    const key = m[1].toUpperCase(), value = m[2].replace(/[;|]+$/, '');
                     if (key === 'OWNER' && /\s/.test(value)) continue;
                     (fields[key] ||= []).push(value);
                   }

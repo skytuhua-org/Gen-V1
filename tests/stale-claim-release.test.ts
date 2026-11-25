@@ -99,6 +99,8 @@ it('keeps semicolon scope lists whole and lets a sole-scope TASKS release run',a
   expect(semi.overdue).toEqual([]);expect(semi.diagnostics).toEqual([]);
   const sole=await execute([comment(1,claim(a,'T01')),comment(2,`[${a}] RELEASE | TASKS=T01:DONE | OWNER=NONE`,5)]);
   expect(sole.overdue).toEqual([]);expect(sole.diagnostics).toEqual([]);
+  const trailing=await execute([comment(1,claim(a,'T01')),comment(2,`[${a}] CHECKPOINT | SCOPE=T01 | OWNER=NONE;`,5)]);
+  expect(trailing.overdue).toEqual([]);expect(trailing.diagnostics).toEqual([]);
 });
 it('does not turn unmatched checkpoints or invalid timestamps into ownership decisions',async()=>{
   const result=await execute([comment(1,claim(a,'T01')),{...comment(2,release(a,'T01'),5),created_at:'invalid'},comment(3,`[${b}] CHECKPOINT | SCOPE=T02 | OWNER=${b}`,90)]);
