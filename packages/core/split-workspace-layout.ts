@@ -69,15 +69,17 @@ export function applySplitWorkspaceCommand(input:SplitWorkspaceLayout,type:strin
   target!.ratio=Math.min(high,Math.max(low,z.number().finite().gt(0).lt(1).parse(payload.ratio)));
  }else invalid('Unknown split workspace command.');
  if(preserveFocus&&Object.hasOwn(layout.panes,original.focusedPaneId))layout.focusedPaneId=original.focusedPaneId;
+ // Recovery invariant: a lone pane always becomes the root so it fills the container.
+ if(Object.keys(layout.panes).length===1&&layout.root.kind!=='pane')layout.root={kind:'pane',paneId:splitPaneIds(layout.root)[0]!};
  return splitWorkspaceLayoutSchema.parse({...layout,revision:original.revision+1});
 }
 
 export function minimumViewSize(view?:SurfaceRef):{width:number;height:number}{
- if(!view)return{width:240,height:180};
+ if(!view)return{width:320,height:180};
  if(view.kind==='thread')return{width:320,height:220};
  if(view.kind==='diff'||view.kind==='pull-request'||view.kind==='linked-pull-requests')return{width:360,height:220};
  if(view.kind==='browser')return{width:320,height:180};
- return{width:240,height:180};
+ return{width:320,height:180};
 }
 export function minimumSplitSize(layout:SplitWorkspaceLayout,node:SplitWorkspaceNode=layout.root):{width:number;height:number}{
  if(node.kind==='pane'){const pane=layout.panes[node.paneId];if(pane?.collapsed)return{width:36,height:36};return minimumViewSize(pane?.activeViewId?layout.views[pane.activeViewId]:undefined);}
