@@ -1,6 +1,22 @@
 import { afterEach, expect, it, vi } from "vitest";
 
 const sourceReads = vi.hoisted(() => [] as { path: string; bytes: number }[]);
+const hostSourceReadChunks = vi.hoisted(() => [] as number[]);
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, open: async (...args: Parameters<typeof actual.open>) => {
+    const handle = await actual.open(...args);
+    if (!String(args[0]).endsWith("data.sqlite")) return handle;
+    return new Proxy(handle, { get(target, property, receiver) {
+      if (property !== "read") return Reflect.get(target, property, receiver);
+      return async (...readArgs: unknown[]) => {
+        const result = await (target.read as (...args: unknown[]) => Promise<{ bytesRead: number }>).call(target, ...readArgs);
+        hostSourceReadChunks.push(result.bytesRead);
+        return result;
+      };
+    } });
+  } };
+});
 vi.mock("../packages/core/file-access.ts", async importOriginal => {
   const actual = await importOriginal<typeof import("../packages/core/file-access.ts")>();
   return { ...actual, readBoundFile: async (...args: Parameters<typeof actual.readBoundFile>) => {
@@ -43,9 +59,10 @@ function context(signal = new AbortController().signal) {
 
 async function inspect(path: string, signal?: AbortSignal) {
   sourceReads.length = 0;
+  hostSourceReadChunks.length = 0;
   const before = process.resourceUsage().maxRSS;
   const result = await databaseJob({ mode: "inspect", path, table: "items" }, context(signal));
-  return { result, reads: sourceReads.map(read => ({ ...read })), maxRssBefore: before, maxRssAfter: process.resourceUsage().maxRSS };
+  return { result, reads: sourceReads.map(read => ({ ...read })), chunks: [...hostSourceReadChunks], maxRssBefore: before, maxRssAfter: process.resourceUsage().maxRSS };
 }
 
 async function sha256(path: string) {
@@ -85,6 +102,9 @@ it("stages ordinary read-only inspections without whole-file source reads and pr
   expect(largeRun.result.resourceVersion).toBe(await sha256(large.path));
   expect(smallRun.reads).toEqual([]);
   expect(largeRun.reads).toEqual([]);
+  expect(smallRun.chunks.length).toBeGreaterThan(0);
+  expect(largeRun.chunks.length).toBeGreaterThan(0);
+  expect(Math.max(...smallRun.chunks, ...largeRun.chunks)).toBeLessThanOrEqual(1024 * 1024);
 });
 
 it("rejects an ordinary fixture record mutation without returning partial inspection output", async () => {

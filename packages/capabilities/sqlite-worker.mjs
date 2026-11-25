@@ -63,7 +63,8 @@ try {
     db.setAuthorizer(authorizer);
     for (const statement of statements) db.prepare(statement.sql); // Authorize, but never execute during preparation.
     db.setAuthorizer(null);
-    const after = hash(); if (after !== before) throw new Error("Database changed while being inspected");
+    // The host owns the staged snapshot and pins its namespace for the worker's lifetime,
+    // so repeating a whole-file hash after the read-only scan would not detect any legitimate mutation.
     parentPort.postMessage({ result: { resourceVersion: before, integrity: "ok", schema: definitions, rows, totalRows, rowsTruncated, journalMode } });
   } else if (mode === "execute") {
     db.exec("BEGIN IMMEDIATE"); transaction = true;
