@@ -10,6 +10,7 @@ import { deferred } from './fixtures/deferred.ts';
 const desktop = vi.hoisted(() => ({
   appOn: vi.fn(), appExit: vi.fn(), handle: vi.fn(), loaded: vi.fn(),
   spawn: vi.fn(), events: vi.fn(), proxy: vi.fn(),
+  blockers: new Set<number>(), powerStarts: 0,
 }));
 vi.mock('node:child_process', async original => ({
   ...await original<typeof import('node:child_process')>(), spawn: desktop.spawn,
@@ -71,6 +72,10 @@ vi.mock('electron', () => {
       on: desktop.appOn, whenReady: async () => {}, exit: desktop.appExit,
     },
     BrowserWindow: FixtureWindow, ipcMain: { handle: desktop.handle }, powerMonitor: { on() {} },
+    powerSaveBlocker: {
+      start: (type: string) => { expect(type).toBe('prevent-app-suspension');const id=++desktop.powerStarts;desktop.blockers.add(id);return id; },
+      isStarted: (id: number) => desktop.blockers.has(id), stop: (id: number) => { desktop.blockers.delete(id); },
+    },
     screen: { getAllDisplays: () => [display], getPrimaryDisplay: () => display, on() {} },
     Menu: { setApplicationMenu() {}, buildFromTemplate() {} },
     nativeImage: { createFromDataURL: () => ({ addRepresentation() {} }) },
@@ -88,7 +93,7 @@ class Sidecar extends EventEmitter {
   send(message: { type: string; token: string; requestId?: string }) {
     if (message.type === 'harness.shutdown') { this.shutdown.resolve(); return; }
     const type = message.type === 'harness.layout.save' ? 'harness.layout.saved' : message.type + '.result';
-    queueMicrotask(() => this.emit('message', { ...message, type, idle: true }));
+    queueMicrotask(() => this.emit('message', { ...message, type, idle: true, ...(message.type === 'harness.power.read' ? { tasks: 1, schedules: 0, keepAwakeTasks: true, keepAwakeSchedules: false } : {}) }));
   }
   finishShutdown() {
     this.emit('message', { type: 'harness.stopped', token: this.token });
@@ -100,6 +105,7 @@ class Sidecar extends EventEmitter {
 let directory: string | undefined;
 afterEach(async () => {
   vi.useRealTimers(); vi.unstubAllEnvs(); vi.resetModules(); vi.resetAllMocks();
+  desktop.blockers.clear(); desktop.powerStarts=0;
   if (directory) await rm(directory, { recursive: true, force: true });
   directory = undefined;
 });
@@ -162,8 +168,11 @@ async function launch() {
 it('does not leave a scheduled replacement running after desktop quit', async () => {
   const fixture = await launch();
   await fixture.openBrowser();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(desktop.blockers.size).toBe(1);
   fixture.closeRelay();
   fixture.sidecars[0]!.stop(1);
+  expect(desktop.blockers.size).toBe(0);
   await fixture.beginQuit();
   // Proxy cleanup runs after sidecar shutdown has selected and settled its child.
   await fixture.proxyClosing;
@@ -177,6 +186,10 @@ it('does not leave a scheduled replacement running after desktop quit', async ()
 
 it('stops an in-flight replacement without activating its relay during quit', async () => {
   const fixture = await launch();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(desktop.blockers.size).toBe(1);
+  fixture.sidecars[0]!.emit('disconnect');
+  expect(desktop.blockers.size).toBe(0);
   fixture.sidecars[0]!.stop(1);
   await vi.advanceTimersByTimeAsync(700);
   await fixture.relayClosing;
