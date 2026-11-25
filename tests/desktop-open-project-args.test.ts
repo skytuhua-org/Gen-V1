@@ -36,6 +36,12 @@ describe('parseOpenProjectArgs',()=>{
  it('rejects the inline = form so a malformed verb fails visibly',()=>{
   expect(parseOpenProjectArgs(['--open-project=C:\\a']).kind).toBe('invalid');
  });
+ it.each([
+  ['--open-project','C:\\a','--open-project=C:\\b'],
+  ['--open-project=C:\\b','--open-project','C:\\a'],
+ ])('rejects a mixed separate and inline request: %j',(...argv)=>{
+  expect(parseOpenProjectArgs(argv).kind).toBe('invalid');
+ });
  it('rejects relative, root-relative and drive-relative paths',()=>{
   for(const path of ['Projects\\App','.\\App','..\\App','\\Projects\\App','C:Projects\\App','C:'])expect(parseOpenProjectArgs(['--open-project',path]).kind).toBe('invalid');
  });
