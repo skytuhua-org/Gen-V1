@@ -69,6 +69,8 @@ export function applySplitWorkspaceCommand(input:SplitWorkspaceLayout,type:strin
   target!.ratio=Math.min(high,Math.max(low,z.number().finite().gt(0).lt(1).parse(payload.ratio)));
  }else invalid('Unknown split workspace command.');
  if(preserveFocus&&Object.hasOwn(layout.panes,original.focusedPaneId))layout.focusedPaneId=original.focusedPaneId;
+ // Recovery invariant: a lone pane always becomes the root so it fills the container.
+ if(Object.keys(layout.panes).length===1&&layout.root.kind!=='pane')layout.root={kind:'pane',paneId:splitPaneIds(layout.root)[0]!};
  return splitWorkspaceLayoutSchema.parse({...layout,revision:original.revision+1});
 }
 
