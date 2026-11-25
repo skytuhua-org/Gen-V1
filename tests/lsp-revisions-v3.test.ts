@@ -287,3 +287,77 @@ it('idle servers shut down and profile revocation drops owned resources',async()
  await (pool as unknown as {reap():Promise<void>}).reap();
  expect(pool.size).toBe(0);
 });
+
+// Issue #2020 / M07-01: boundary reproductions for the diagnostics generation
+// fence and per-owner baseline provenance. `it.fails` entries are the plan's
+// failing focused regressions — T03 flips them to `it` once repaired.
+
+it.fails('a superseded observation never reports CURRENT or clobbers the newer baseline',async()=>{
+ const root=fixture();
+ const adapter=new FakeAdapter();
+ const pending:{resolve:(diags:LspDiagnostic[])=>void}[]=[];
+ adapter.pullDiagnostics=()=>new Promise<LspDiagnostic[]>(resolve=>pending.push({resolve}));
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const textA='const a=1;\n',textB='const a=1;\nconst b=2;\n';
+ const inputA=observeInput(root,textA),inputB=observeInput(root,textB,{beforeDigest:sha(textA),afterDigest:sha(textB)});
+ const obsA=ci.observe(inputA);
+ await expect.poll(()=>pending.length,{timeout:10_000}).toBe(1);
+ const obsB=ci.observe(inputB);
+ await expect.poll(()=>pending.length,{timeout:10_000}).toBe(2);
+ // B (newer generation) resolves first and is the authoritative result.
+ pending[1]!.resolve([]);
+ const B=await obsB;
+ expect(B.state).toBe('CURRENT');
+ expect(B.documentVersion).toBe(2);
+ // A resolves after the document moved on: it must not claim CURRENT.
+ pending[0]!.resolve([]);
+ const A=await obsA;
+ expect(A.state).not.toBe('CURRENT');
+ // And it must not clobber B's baseline: B stays current afterwards.
+ const still=await ci.markStale(inputB,B);
+ expect(still.state).toBe('CURRENT');
+});
+
+it.fails('a baseline recorded under another workspace identity is never compared against',async()=>{
+ const root=fixture();
+ const adapter=new FakeAdapter();
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const text='const alpha = 1;\nconst beta = alpha + 1;\n';
+ const first=await ci.observe(observeInput(root,text));
+ expect(first.baselineStatus).toBe('UNAVAILABLE');
+ // Same document path under a different workspace identity: the ws-1 baseline
+ // is keyed by path alone and must not bind to ws-2.
+ const next=await ci.observe(observeInput(root,text,{workspaceIdentity:'ws-2',beforeDigest:first.afterDigest}));
+ expect(next.baselineStatus).toBe('UNAVAILABLE');
+});
+
+it('introduced and existing diagnostics are classified separately',async()=>{
+ const root=fixture();
+ const adapter=new FakeAdapter();
+ adapter.diagnostics=[{range:{start:{line:0,character:0},end:{line:0,character:1}},severity:1,message:'old'}];
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const text='const x=1;\n';
+ const before=await ci.observe(observeInput(root,text));
+ adapter.diagnostics=[...adapter.diagnostics,{range:{start:{line:0,character:2},end:{line:0,character:3}},severity:1,message:'new'}];
+ const after=await ci.observe(observeInput(root,text+'z\n',{beforeDigest:sha(text),afterDigest:sha(text+'z\n')}));
+ const diff=ci.diffDiagnostics(before,after);
+ expect(diff.baselineStatus).toBe('AVAILABLE');
+ expect(diff.existing).toHaveLength(1);
+ expect(diff.introduced).toHaveLength(1);
+ expect(diff.introduced[0]!.message).toBe('new');
+});
+
+it('the host path launches and tears down servers only through the pooled factory',async()=>{
+ const root=fixture();
+ const launches:LanguageServerDescriptor[]=[],disposed:string[]=[];
+ const ci=new CodeIntelligence(d=>{launches.push(d);const a=new FakeAdapter();const orig=a.dispose.bind(a);a.dispose=async()=>{disposed.push(a.serverIdentity);await orig();};return a;});
+ disposables.push(ci);
+ const text='const x=1;\n';
+ await ci.observe(observeInput(root,text));
+ expect(launches).toHaveLength(1);
+ await ci.dispose();
+ expect(disposed).toHaveLength(1);
+});
