@@ -3473,6 +3473,7 @@
     "tests/side-runtime-cleanup.test.ts",
     "tests/sidebar-project-order.test.ts",
     "tests/sidebar-reorder.test.ts",
+    "tests/sidebar-unread-label.test.ts",
     "tests/signature-approval.test.ts",
     "tests/signature-pdf.test.ts",
     "tests/skills-http.test.ts",
