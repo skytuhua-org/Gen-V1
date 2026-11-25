@@ -112,6 +112,7 @@ it('recovers memory availability when only the profile deletion mirror is corrup
   expect(memory.read(access).tombstones[0].sourceExclusions.map(ref => ref.digest)).toContain(f.ref.digest);
   expect(() => memory.source(access, item.id, item.revision, f.ref.digest)).toThrow();
   expect(readFileSync(mirror, 'utf8')).toContain(item.id);
+  expect(readFileSync(mirror, 'utf8')).toBe(readFileSync(projectMemoryDeletionLedgerPath(dataDir), 'utf8'));
   const damaged = readdirSync(dataDir).find(name => name.startsWith('project-memory-deletions.jsonl.damaged-'));
   expect(damaged).toBeTruthy();
   expect(readFileSync(join(dataDir, damaged!), 'utf8')).toBe('invalid tombstone\n');

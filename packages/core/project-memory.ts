@@ -173,7 +173,7 @@ export class ProjectMemory {
       } else mirrorEntries = mirror.entries;
     }
     for (const entry of [...mirrorEntries, ...fence.entries]) this.mergeDeletion(entry);
-    if (recoverMirror) for (const entry of this.deletions.values()) this.writeDeletion(this.deletionPath, entry);
+    if (recoverMirror) for (const entry of fence.entries) this.writeDeletion(this.deletionPath, entry);
     // The sibling fence survives SQLite-only and in-place whole-profile restoration.
     const missing = [...this.deletions.values()].filter(entry => entry.profileId === this.profileId).map(entry => this.reconcileArtifacts(entry));
     if (missing.length) this.store.internal('project.memory.deletions.reconciled', null, () => {
