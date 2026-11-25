@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       installed_single_install:
-        description: Compare the candidate single-install Windows acceptance lane on this ref
+        description: Use one install for Windows acceptance (false selects the two-install control)
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
@@ -421,7 +421,7 @@ jobs:
 
       - name: Verify installed default-off retention and separate enabled opt-in
         env:
-          INSTALLED_SINGLE_INSTALL: ${{ inputs.installed_single_install == true }}
+          INSTALLED_SINGLE_INSTALL: ${{ github.event_name != 'workflow_dispatch' || inputs.installed_single_install == true }}
         run: |
           $ErrorActionPreference = 'Stop'
           $version = (Get-Content -Raw -LiteralPath package.json | ConvertFrom-Json).version
@@ -440,7 +440,7 @@ jobs:
       # acceptance. It reuses this job's already pinned and packaged artifacts —
       # packaging is not duplicated, and no production flag is changed.
       - name: Verify installed default-off acceptance
-        if: ${{ inputs.installed_single_install != true }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.installed_single_install == false }}
         run: |
           $ErrorActionPreference = 'Stop'
           $version = (Get-Content -Raw -LiteralPath package.json | ConvertFrom-Json).version

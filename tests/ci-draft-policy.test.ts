@@ -17,10 +17,10 @@ const pullRequestJobs=['checks','select','selected'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
 type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number;queueProof?:'true'|'false'};
 function context(event:CiEvent){return {workflow:'CI',ref:event.ref??'refs/pull/42/merge',event_name:event.name,event:event.name==='pull_request'?{action:event.action,pull_request:{number:42,draft:event.draft}}:{}};}
-function evaluate(expression:string,event:CiEvent):unknown {
+function evaluate(expression:string,event:CiEvent,inputs:Record<string,boolean>={}):unknown {
   // The policy uses boolean/string comparisons and property access, whose
   // JavaScript and Actions semantics agree for these boolean/string fixtures.
-  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),cancelled:()=>false,needs:{select:{outputs:{total:String(event.selectedShards??1)}},proof:{outputs:{verified:event.queueProof??''}}}},{timeout:100});
+  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),inputs,cancelled:()=>false,needs:{select:{outputs:{total:String(event.selectedShards??1)}},proof:{outputs:{verified:event.queueProof??''}}}},{timeout:100});
 }
 function scheduledJobs(event:CiEvent):string[]|null {
   if(event.name==='pull_request'&&!types.includes(event.action??''))return null;
@@ -169,6 +169,24 @@ it('selects pull-request tests from the merge commit diff and keeps the full sui
 });
 it('books no Windows test runner when the diff reaches no test',()=>{
   expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual(['checks','select']);
+});
+it('uses single-install verification by default and retains the manual two-install control',()=>{
+  const installed=jobSource.split(/^  installed-memory:\n/m)[1]??'';
+  const single=/^          INSTALLED_SINGLE_INSTALL: (.+)$/m.exec(installed)?.[1]??'';
+  const control=/^      - name: Verify installed default-off acceptance\n        if: (.+)$/m.exec(installed)?.[1]??'';
+  const dispatchDefault=/^      installed_single_install:\n(?:^        .*\n)*?^        default: (true|false)$/m.exec(workflow)?.[1];
+  expect(dispatchDefault).toBe('true');
+  expect(installed).toContain("if ($env:INSTALLED_SINGLE_INSTALL -eq 'true') { $verifyArgs += '--single-install-acceptance' }");
+  for(const name of ['merge_group','push'] as const){
+    expect(evaluate(single,{name})).toBe(true);
+    expect(evaluate(control,{name})).toBe(false);
+  }
+  for(const input of [dispatchDefault==='true',false]){
+    const event={name:'workflow_dispatch'} as const;
+    const inputs={installed_single_install:input};
+    expect(evaluate(single,event,inputs)).toBe(input);
+    expect(evaluate(control,event,inputs)).toBe(!input);
+  }
 });
 it('fails any job that exceeds its time budget',()=>{
   const budgets=Object.fromEntries(starts.map((match,index)=>[match[1],Number(/^    timeout-minutes: (\d+)$/m.exec(jobSource.slice(match.index,starts[index+1]?.index))?.[1])]));
