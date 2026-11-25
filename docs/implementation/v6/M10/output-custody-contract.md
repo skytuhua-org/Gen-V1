@@ -69,7 +69,7 @@ reported in the same unit.
 ## 4. Output-read owner revalidation
 
 - **Live session** (process still owned): full `revalidateOwner`
-  (runId/epoch, project, accountBinding, authority) → `CAPABILITY_DENIED`
+  (runId/epoch, workspace, project, accountBinding, authority) → `CAPABILITY_DENIED`
   on `OWNER_REVOKED`/`ACCOUNT_MISMATCH`/`SCOPE_CHANGED`. A run that moved on
   cannot peek at another epoch's in-flight command.
 - **Settled/retained output**: owner-identity continuity — thread exists,
@@ -86,9 +86,10 @@ Publication happens only after **stream close**, not process `exit`:
    once: immutable bytes + digest are fixed at that point. Late bytes
    arriving after publication cannot exist — `close` is the last stream
    event — so no published digest can ever lag retained content.
-3. `resolveProcessExit` (post-loss reconciliation) mints the handle after
-   the same close-flush has already run; if output was already published at
-   exit it is not re-minted.
+3. `resolveProcessExit` (post-loss reconciliation) records proven process
+   termination but does not mint a handle: an exit receipt does not prove
+   stream close or that the retained snapshot includes the final tail.
+   The owner may still inspect that retained evidence through the drawer.
 4. A work that ends with `close` never observed publishes nothing: the
    `backgroundOutput` row stays as partial/unknown evidence and `outputRef`
    stays `null` rather than publishing a false "final" digest.
@@ -105,7 +106,7 @@ Publication happens only after **stream close**, not process `exit`:
 | Missing bytes | Storage `get` returns undefined or file absent → `UNAVAILABLE`; drawer falls back to `backgroundOutput`/`(no output yet)`. |
 | Old `bw-result:` rows | Schema `z.uuid()` + custody `handlePattern` reject → `UNAVAILABLE`; drawer reads legacy `backgroundOutput` row unchanged; rows are **not** rewritten or deleted; a reissue mints only from verified retained bytes under current authority. |
 | New run after settle | Old handle `UNAVAILABLE` (prefix/authority); fresh handle minted through the seam under the new run's authority. |
-| Pending close | `exited:false`, `close` pending → `outputRef` stays `null`; interim `backgroundOutput` snapshots keep serving the drawer; nothing is published as final. |
+| Pending close | `close` pending, including after `exited:true` → `outputRef` stays `null`; interim `backgroundOutput` snapshots keep serving the drawer; nothing is published as final. |
 | Oversized ranges | `context_result_read` enforces `length ≤ 1 MiB` (`INVALID_RANGE`); total retained ≤ `RESULT_CAP_BYTES`; authority map capped at `MAX_TRACKED_RESULTS`. |
 
 ## 7. Rollback
