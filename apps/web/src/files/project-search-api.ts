@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+	parseSearchPathFilter,
+	SEARCH_PATH_FILTER_LENGTH_MESSAGE,
+	SEARCH_PATH_FILTER_MESSAGE,
+} from "../../../../packages/contracts/search-path-filter";
 
 const id = z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/);
 const sha256 = z.string().regex(/^[a-f\d]{64}$/);
@@ -102,6 +107,9 @@ export interface ProjectSearchRequest {
 	q: string;
 	cursor?: string;
 	limit: 100;
+	// Optional canonical include/exclude path globs (blank must be absent).
+	include?: string;
+	exclude?: string;
 }
 export interface ProjectSearchAdapter {
 	available: boolean;
@@ -127,6 +135,18 @@ export function projectSearchQueryError(q: string): string {
 		: "";
 }
 
+// UI-side validation for a single filter draft. Blank is valid (absent);
+// every nonblank draft must parse and already equal its canonical form.
+export function projectSearchFilterError(draft: string): string {
+	if (!draft.trim()) return "";
+	const parsed = parseSearchPathFilter(draft);
+	if (!parsed.ok)
+		return parsed.failure === "length"
+			? SEARCH_PATH_FILTER_LENGTH_MESSAGE
+			: SEARCH_PATH_FILTER_MESSAGE;
+	return "";
+}
+
 export async function readProjectSearch(
 	adapter: ProjectSearchAdapter,
 	request: ProjectSearchRequest,
@@ -145,6 +165,14 @@ export async function readProjectSearch(
 		request.limit !== 100
 	)
 		throw new Error("The project search request is invalid.");
+	// The pair must arrive in canonical form; anything else means the
+	// caller skipped the shared grammar and would desync the snapshot key.
+	for (const value of [request.include, request.exclude])
+		if (value !== undefined) {
+			const parsed = parseSearchPathFilter(value);
+			if (!parsed.ok || parsed.filter?.canonical !== value)
+				throw new Error("The project search request is invalid.");
+		}
 	signal.throwIfAborted();
 	const response: unknown = await adapter.search({ ...request, q }, signal);
 	signal.throwIfAborted();
