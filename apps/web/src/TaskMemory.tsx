@@ -6,6 +6,21 @@ import { journalRead, journalWrite, journalCompareAndSwap, journalGeneration } f
 import './task-memory.css';
 
 type Draft = { key: string; content: string; baseRevision: number };
+
+/** Relative age for a saved-note header (static per render — no ticking).
+ * Buckets: <60 s "just now"; <60 min "{m}m ago"; <24 h "{h}h ago";
+ * <30 d "{d}d ago"; else the note's local-calendar YYYY-MM-DD. */
+export function formatNoteAge(iso: string, now: number = Date.now()): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return '';
+  const seconds = Math.floor((now - then) / 1000);
+  if (seconds < 60) return 'just now'; // future stamps read as fresh, never negative
+  const minutes = Math.floor(seconds / 60); if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24); if (days < 30) return `${days}d ago`;
+  const date = new Date(then);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
 function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpandedChange }: { note: Note; threadId: string; fresh?: boolean; expanded?: boolean; onExpandedChange?: (value: boolean) => void }) {
   const [key, setKey] = useState(note.key), [content, setContent] = useState(note.content), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [recovery, setRecovery] = useState<'pending' | 'failed' | 'ready'>('pending'), [attempt, setAttempt] = useState(0), [conflictOpen, setConflictOpen] = useState(false), [armUseSaved, setArmUseSaved] = useState(false);
@@ -84,7 +99,7 @@ function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpanded
   const recoveryMessage = recovery === 'pending' ? <p className="memory-recovery muted" role="status">Checking for an unsaved note…</p> : recovery === 'failed' ? <div className="memory-recovery"><p role="status" className="error-text">Note recovery is unavailable. Retry before editing.</p><button type="button" className="secondary" onClick={() => setAttempt(value => value + 1)}>Retry</button></div> : null;
   if (fresh && !expanded) return <>{recoveryMessage}{dirty.current && <button type="button" className="secondary memory-resume" onClick={() => onExpandedChange?.(true)}>Resume unsaved note</button>}</>;
   return <form className="memory-note" onSubmit={event => { event.preventDefault(); void act(); }} onKeyDown={event => { if (fresh && event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); onExpandedChange?.(false); } }}>
-    {fresh ? <label>Note key<input ref={keyInput} required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}" maxLength={64} placeholder="e.g. date-format" value={key} disabled={blocked || inFlight.current === 'delete'} onChange={e => edit(e.target.value, content)} /></label> : <header><strong>{note.key}</strong><small>{note.author === 'agent' ? 'Agent note' : 'Your note'}</small></header>}
+    {fresh ? <label>Note key<input ref={keyInput} required pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}" maxLength={64} placeholder="e.g. date-format" value={key} disabled={blocked || inFlight.current === 'delete'} onChange={e => edit(e.target.value, content)} /></label> : <header><strong>{note.key}</strong><small>{note.author === 'agent' ? 'Agent note' : 'Your note'}{note.updatedAt && formatNoteAge(note.updatedAt) ? <> · <span title={note.updatedAt}>{formatNoteAge(note.updatedAt)}</span></> : null}</small></header>}
     <label><span className="sr-only">{fresh ? 'New thread note' : `Note ${note.key}`}</span><textarea ref={bodyInput} required rows={3} maxLength={768} disabled={blocked || inFlight.current === 'delete'} placeholder="A decision or constraint to remember…" value={content} onChange={e => edit(key, e.target.value)} /></label>
     {recoveryMessage}
     {error && <p role="status" className="error-text">{error}</p>}
