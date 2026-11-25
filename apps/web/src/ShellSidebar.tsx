@@ -56,6 +56,30 @@ export const threadStatus = (thread: Thread) =>
         ? 'Ready'
         : thread.status.charAt(0).toUpperCase() + thread.status.slice(1);
 
+export type SidebarGroups = { pinned: Thread[]; working: Thread[]; settled: Thread[]; remaining: Thread[] };
+
+export const sidebarThreadGroups = (
+  matching: Thread[],
+  filter: 'all' | 'working' | 'waiting',
+  showWorkingSection: boolean,
+): SidebarGroups => {
+  const visibleMatching = matching.filter(
+    item =>
+      filter === 'all' ||
+      (filter === 'working' && (Boolean(item.runId) || item.status === 'working')) ||
+      (filter === 'waiting' && item.status === 'awaiting_input'),
+  );
+  const pinned = matching.filter(item => item.presentation?.pinned);
+  const working = showWorkingSection
+    ? visibleMatching.filter(
+        item => !item.presentation?.pinned && (Boolean(item.runId) || item.status === 'working' || item.status === 'awaiting_input'),
+      )
+    : [];
+  const settled = visibleMatching.filter(item => !pinned.includes(item) && !working.includes(item) && item.presentation?.settled);
+  const remaining = visibleMatching.filter(item => !pinned.includes(item) && !working.includes(item) && !settled.includes(item));
+  return { pinned, working, settled, remaining };
+};
+
 export function projectMonogram(name?: string | null): string {
   const cleaned = (name ?? '').trim();
   if (!cleaned) return 'CV';
@@ -177,14 +201,7 @@ export function ShellSidebar({
     if ((mobile && !open) || (!mobile && layout.sidebarCollapsed)) setMenuId(null);
   }, [mobile, open, layout.sidebarCollapsed]);
 
-  const pinned = visibleMatching.filter(item => item.presentation?.pinned);
-  const working = preferences.showWorkingSection
-    ? visibleMatching.filter(
-        item => !item.presentation?.pinned && (Boolean(item.runId) || item.status === 'working' || item.status === 'awaiting_input'),
-      )
-    : [];
-  const settled = visibleMatching.filter(item => !pinned.includes(item) && !working.includes(item) && item.presentation?.settled);
-  const remaining = visibleMatching.filter(item => !pinned.includes(item) && !working.includes(item) && !settled.includes(item));
+  const { pinned, working, settled, remaining } = sidebarThreadGroups(matching, filter, preferences.showWorkingSection);
 
   const orderedRemaining = orderSidebarProjects(remaining, preferences.projectGrouping, preferences.projectOrder);
   const settledFolded = layout.folded['settled'] ?? false;
