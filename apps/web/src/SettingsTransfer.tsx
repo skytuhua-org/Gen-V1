@@ -1,7 +1,7 @@
 import {Fragment,useRef,useState,type CSSProperties} from 'react';
 import {AlertTriangle,Download,Upload,Undo2} from 'lucide-react';
 import {version} from '../../../package.json';
-import type {UiPreferences} from '../../../packages/contracts/preferences.ts';
+import type {PreferencePatch,UiPreferences} from '../../../packages/contracts/preferences.ts';
 import {SETTINGS_FILE_LIMIT,buildSettingsFile,diffSettings,patchFromChanges,parseSettingsFile,type ImportIssue,type ParsedSettingsFile,type SettingChange,type Theme} from '../../../packages/contracts/settings-transfer.ts';
 import {settingLabel,formatSettingValue,isColorValue} from './settings-transfer-labels';
 import {useDesktop} from './desktop-context';
@@ -11,7 +11,7 @@ import {toast} from '../../../packages/ui-shell/Toast';
 const same = (left: unknown, right: unknown) => left === right || JSON.stringify(left) === JSON.stringify(right);
 const issueReason = (issue: ImportIssue) => issue.reason === 'not-portable' ? 'Not a portable setting' : issue.reason === 'unknown' ? 'Unknown setting' : issue.reason === 'invalid' ? 'Invalid value' : `Shortcut conflicts with ${settingLabel('keybindings.' + issue.conflictWith)}`;
 
-interface PendingImport { fileName: string; parsed: Extract<ParsedSettingsFile, { ok: true }>; changes: SettingChange[]; unchanged: number }
+interface PendingImport { fileName: string; parsed: Extract<ParsedSettingsFile, { ok: true }>; changes: SettingChange[]; unchanged: number; issues: ImportIssue[] }
 
 export function SettingsTransfer({theme, preferences, persist}: {theme: Theme; preferences: UiPreferences; persist: (payload: Record<string, unknown>) => Promise<boolean>}) {
   const desktop = useDesktop(), file = useRef<HTMLInputElement>(null);
@@ -49,11 +49,17 @@ export function SettingsTransfer({theme, preferences, persist}: {theme: Theme; p
       return;
     }
     const diff = diffSettings(latest.current, parsed);
-    setPending({fileName: selected.name, parsed: {...parsed, issues: diff.issues}, changes: diff.changes, unchanged: diff.unchanged});
+    setPending({fileName: selected.name, parsed, ...diff});
   };
 
   const apply = async () => {
     if (!pending) return;
+    const diff = diffSettings(latest.current, pending.parsed);
+    if (!same(diff.changes, pending.changes) || !same(diff.issues, pending.issues) || diff.unchanged !== pending.unchanged) {
+      setPending({...pending, ...diff});
+      setApplyError('Settings changed while this preview was open. Review the updated changes before applying.');
+      return;
+    }
     const before = patchFromChanges(pending.changes, 'before'), after = patchFromChanges(pending.changes, 'after');
     setBusy(true); setApplyError('');
     const ok = await persist({...(after.theme !== undefined ? {theme: after.theme} : {}), preferences: after.preferences});
@@ -78,13 +84,18 @@ export function SettingsTransfer({theme, preferences, persist}: {theme: Theme; p
     const themeRestore = record.after.theme !== undefined && same(current.theme, record.after.theme) ? record.before.theme : undefined;
     if (themeRestore !== undefined) restored++;
     const kept = record.count - restored;
+    const qualified = diffSettings(current, {ok: true, patch: restore as PreferencePatch, theme: themeRestore, issues: []});
+    const after = patchFromChanges(qualified.changes, 'after');
+    const conflicts = qualified.issues.filter(issue => issue.reason === 'conflict').length;
     setBusy(true);
-    const ok = await persist({...(themeRestore !== undefined ? {theme: themeRestore} : {}), ...(Object.keys(restore).length ? {preferences: restore} : {})});
+    const ok = await persist({...(after.theme !== undefined ? {theme: after.theme} : {}), ...(Object.keys(after.preferences).length ? {preferences: after.preferences} : {})});
     setBusy(false);
     if (!ok) { setError('Couldn\'t undo the import.'); return; }
     setLastImport(null); toast('Import undone');
-    if (kept > 0) setStatus(`Kept ${kept} ${kept === 1 ? 'setting' : 'settings'} you changed after importing.`);
-    else setStatus('');
+    setStatus([
+      ...(kept > 0 ? [`Kept ${kept} ${kept === 1 ? 'setting' : 'settings'} you changed after importing.`] : []),
+      ...(conflicts > 0 ? [`Kept ${conflicts} ${conflicts === 1 ? 'shortcut' : 'shortcuts'} to avoid conflicts with current settings.`] : []),
+    ].join(' '));
   };
 
   const subtitle = pending ? 'From ' + [pending.fileName, pending.parsed.exportedAt ? `exported ${new Date(pending.parsed.exportedAt).toLocaleDateString()}` : '', pending.parsed.appVersion ? `Gen ${pending.parsed.appVersion}` : ''].filter(Boolean).join(' · ') : '';
@@ -102,8 +113,9 @@ export function SettingsTransfer({theme, preferences, persist}: {theme: Theme; p
     <Modal open={pending !== null} title="Import settings" className="settings-transfer-modal" onClose={() => { setPending(null); setApplyError(''); }}>
       {pending && (pending.changes.length === 0
         ? <><p className="settings-transfer-subtitle">{subtitle}</p><p>Your settings already match this file.</p>
-            {pending.parsed.issues.length > 0 && <h3>Ignored ({pending.parsed.issues.length})</h3>}
-            {pending.parsed.issues.length > 0 && <ul className="settings-transfer-ignored">{pending.parsed.issues.map((issue, index) => <li key={index}><AlertTriangle size={14} aria-hidden="true"/>{settingLabel(issue.key)} — {issueReason(issue)}</li>)}</ul>}
+            {pending.issues.length > 0 && <h3>Ignored ({pending.issues.length})</h3>}
+            {pending.issues.length > 0 && <ul className="settings-transfer-ignored">{pending.issues.map((issue, index) => <li key={index}><AlertTriangle size={14} aria-hidden="true"/>{settingLabel(issue.key)} — {issueReason(issue)}</li>)}</ul>}
+            {applyError && <p role="alert" className="error-text">{applyError}</p>}
             <div className="settings-transfer-footer"><button type="button" className="primary" onClick={() => setPending(null)}>Close</button></div></>
         : <>
             <p className="settings-transfer-subtitle">{subtitle}</p>
@@ -117,7 +129,7 @@ export function SettingsTransfer({theme, preferences, persist}: {theme: Theme; p
                 </tr>)}</Fragment>)}
             </tbody></table>
             {pending.unchanged > 0 && <details className="settings-transfer-same"><summary>Already the same ({pending.unchanged})</summary></details>}
-            {pending.parsed.issues.length > 0 && <><h3>Ignored ({pending.parsed.issues.length})</h3><ul className="settings-transfer-ignored">{pending.parsed.issues.map((issue, index) => <li key={index}><AlertTriangle size={14} aria-hidden="true"/>{settingLabel(issue.key)} — {issueReason(issue)}</li>)}</ul></>}
+            {pending.issues.length > 0 && <><h3>Ignored ({pending.issues.length})</h3><ul className="settings-transfer-ignored">{pending.issues.map((issue, index) => <li key={index}><AlertTriangle size={14} aria-hidden="true"/>{settingLabel(issue.key)} — {issueReason(issue)}</li>)}</ul></>}
             {applyError && <p role="alert" className="error-text" title={applyError}>{applyError}</p>}
             <div className="settings-transfer-footer"><button type="button" className="secondary" disabled={busy} onClick={() => setPending(null)}>Cancel</button><button type="button" className="primary" disabled={busy} onClick={() => void apply()}>Apply {pending.changes.length} {pending.changes.length === 1 ? 'change' : 'changes'}</button></div>
           </>)}

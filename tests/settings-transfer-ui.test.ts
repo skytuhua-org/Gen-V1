@@ -135,6 +135,32 @@ describe('SettingsTransfer', () => {
     expect(await page.evaluate(() => window.settingsTransferCalls.persist[0])).toEqual({preferences: {showWorkingSection: false}});
   });
 
+  it('refreshes a preview when current shortcuts change before confirmation', async () => {
+    const page = await open();
+    await page.locator('input[type=file]').setInputFiles(file(settingsFile({showWorkingSection: false, keybindings: {newThread: 'Ctrl+Alt+M'}})));
+    await expect.poll(async()=>page.getByRole('button', {name: 'Apply 2 changes', exact: true}).isVisible()).toBe(true);
+    await page.evaluate(() => window.setSettingsTransferPrefs(prefs => ({...prefs, keybindings: {...prefs.keybindings, search: 'Ctrl+Alt+M'}})));
+    await page.getByRole('button', {name: 'Apply 2 changes', exact: true}).click();
+    expect(await page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(0);
+    await expect.poll(async()=>page.getByText('Ignored (1)').isVisible()).toBe(true);
+    expect(await page.getByRole('alert').textContent()).toBe('Settings changed while this preview was open. Review the updated changes before applying.');
+    await page.getByRole('button', {name: 'Apply 1 change', exact: true}).click();
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(1);
+    expect(await page.evaluate(() => window.settingsTransferCalls.persist[0])).toEqual({preferences: {showWorkingSection: false}});
+  });
+
+  it('keeps current shortcuts when an inverse import would create a new conflict', async () => {
+    const page = await open();
+    await page.locator('input[type=file]').setInputFiles(file(settingsFile({showWorkingSection: false, keybindings: {search: 'Ctrl+Alt+M'}})));
+    await page.getByRole('button', {name: 'Apply 2 changes', exact: true}).click();
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(1);
+    await page.evaluate(() => window.setSettingsTransferPrefs(prefs => ({...prefs, keybindings: {...prefs.keybindings, newThread: 'Ctrl+K'}})));
+    await page.getByRole('button', {name: 'Undo import', exact: true}).click();
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(2);
+    expect(await page.evaluate(() => window.settingsTransferCalls.persist[1])).toEqual({preferences: {showWorkingSection: true}});
+    await expect.poll(async()=>page.getByText('Kept 1 shortcut to avoid conflicts with current settings.').isVisible()).toBe(true);
+  });
+
   it('lists ignored entries and shows Close only for a zero-change file', async () => {
     const page = await open();
     await page.locator('input[type=file]').setInputFiles(file(settingsFile({projectColors: {p: '#4F6EFF'}, zzz: 1})));
