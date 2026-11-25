@@ -56,19 +56,31 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   }, [tokenKey, position.caret, position.end, input, threadId, projectId]);
   useLayoutEffect(() => {
     const element = input.current; if (!element) return;
-    const update = () => setPosition(previous => {
+    // Invalidation must run in the native listener, not only in a keyed effect:
+    // when caret leaps out and back within one render batch (Home then End in
+    // quick succession), the intermediate commit can be skipped, and an effect
+    // would never observe the exit. Functional updates still execute in order.
+    const invalidate = () => setDismissed(previous => {
+      if (!previous) return previous;
+      const live = commandToken(element.value, element.selectionStart, element.selectionEnd) ?? commandToken(element.value, element.selectionStart);
+      return previous !== keyFor(live) ? '' : previous;
+    });
+    const track = () => setPosition(previous => {
       const next = {...previous, caret: element.selectionStart, end: element.selectionEnd, focused: element.ownerDocument.activeElement === element};
       return Object.keys(next).every(key => next[key as keyof typeof next] === previous[key as keyof typeof next]) ? previous : next;
     });
+    const update = () => {invalidate(); track();};
     const start = () => setPosition(previous => ({...previous, composing: true}));
     const finish = () => {setPosition(previous => ({...previous, composing: false})); update();};
     // On refocus, re-dismiss only when the caret is already inside a token:
     // keep the dismissal when it is the same token, drop it for a different
     // token so that one can open. Outside any token there is nothing to open,
     // so the dismissal is preserved for the next edit in place.
+    // Invalidation is skipped here: at focus time the browser has not yet
+    // restored the selection, which transiently reads as caret zero.
     const focus = () => {
       const key = keyFor(commandToken(element.value, element.selectionStart, element.selectionEnd));
-      setDismissed(previous => key && key !== previous ? '' : previous); setClosedAt(''); update();
+      setDismissed(previous => key && key !== previous ? '' : previous); setClosedAt(''); track();
     };
     for (const name of ['select', 'click', 'keyup', 'input']) element.addEventListener(name, update);
     element.addEventListener('focus', focus);
