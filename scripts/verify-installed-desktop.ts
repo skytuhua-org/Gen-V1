@@ -21,12 +21,13 @@ type FileIdentity={dev:string;ino:string;sha256:string};
 type OwnedCache={path:string;dev:string;ino:string;file:FileIdentity}|null;
 type MemoryRetention={seed:InstalledMemorySeed;observations:InstalledMemoryObservation[];mode:InstalledMemoryMode};
 type InstalledVerificationOwner={setup:string;setupSha256:string;installDirectory:string;guid:string};
+type InstalledVerificationOptions={memoryRetention?:boolean;memoryEnabled?:boolean;singleInstallAcceptance?:boolean};
 
-/** Each separately launched memory phase owns a new evidence directory. */
-export async function prepareInstalledMemoryPhaseDirectory(ownedDirectory:string,owner:InstalledVerificationOwner):Promise<string>{
+/** Each additional installed scenario owns a new evidence directory. */
+export async function prepareInstalledMemoryPhaseDirectory(ownedDirectory:string,owner:InstalledVerificationOwner,phase:'enabled-memory'|'flag-free'='enabled-memory'):Promise<string>{
  const parent=await lstat(ownedDirectory,{bigint:true});
  if(!isAbsolute(ownedDirectory)||!parent.isDirectory()||parent.isSymbolicLink()||await realpath(ownedDirectory)!==ownedDirectory)throw Error('Installed memory evidence parent must be ordinary and canonical.');
- const directory=join(ownedDirectory,'enabled-memory');await mkdir(directory);
+ const directory=join(ownedDirectory,phase);await mkdir(directory);
  // The native Save helper pins this existing ordinary receipt while it holds
  // the root lease. Each phase must supply its own file, never a hard link.
  await writeFile(join(directory,'owner.json'),JSON.stringify(owner,null,2),{flag:'wx',mode:0o600});
@@ -118,9 +119,9 @@ export function parseInstallPreflightProgress(stderr:string):PreflightProgress[]
 }
 
 export function readInstalledVerificationArguments(args:string[]){
- const [setup,unpacked,...options]=args,memoryRetention=options.includes('--project-memory-retention'),memoryEnabled=options.includes('--project-memory-enabled');
- if(!setup||!unpacked||new Set(options).size!==options.length||options.some(option=>!['--project-memory-retention','--project-memory-enabled'].includes(option))||memoryEnabled&&!memoryRetention)throw Error('Usage: verify-installed-desktop <absolute Setup.exe> <absolute win-unpacked> [--project-memory-retention [--project-memory-enabled]]');
- return {setup,unpacked,memoryRetention,memoryEnabled};
+ const [setup,unpacked,...options]=args,memoryRetention=options.includes('--project-memory-retention'),memoryEnabled=options.includes('--project-memory-enabled'),singleInstallAcceptance=options.includes('--single-install-acceptance');
+ if(!setup||!unpacked||new Set(options).size!==options.length||options.some(option=>!['--project-memory-retention','--project-memory-enabled','--single-install-acceptance'].includes(option))||memoryEnabled&&!memoryRetention||singleInstallAcceptance&&!memoryEnabled)throw Error('Usage: verify-installed-desktop <absolute Setup.exe> <absolute win-unpacked> [--project-memory-retention [--project-memory-enabled [--single-install-acceptance]]]');
+ return {setup,unpacked,memoryRetention,memoryEnabled,...(singleInstallAcceptance?{singleInstallAcceptance:true}:{})};
 }
 
 export function nsisApplicationGuid(appId:string){
@@ -431,8 +432,44 @@ async function launchInstalled(executable:string,directory:string,iteration:numb
  }
 }
 
-export async function verifyInstalledDesktop(setupPath:string,expectedUnpackedPath:string,options:{memoryRetention?:boolean;memoryEnabled?:boolean}={}){
+async function scenarioDirectoryIdentity(directory:string){
+ const stat=await lstat(directory,{bigint:true});
+ if(!stat.isDirectory()||stat.isSymbolicLink()||await realpath(directory)!==directory)throw Error('Installed acceptance evidence directory is not ordinary and canonical.');
+ return {dev:stat.dev,ino:stat.ino};
+}
+
+export async function runInstalledAcceptanceLaunches({directory,executable,executableIdentity,usedPorts,launch}:{
+ directory:string;executable:string;executableIdentity:FileIdentity;usedPorts:Set<number>;
+ launch:(iteration:number,ports:readonly[number,number,number])=>Promise<unknown>;
+}){
+ const expectedDirectory=await scenarioDirectoryIdentity(directory);
+ let ports:readonly[number,number,number]|undefined;
+ for(let attempt=0;attempt<5&&!ports;attempt++){
+  const candidate=await verificationPorts();
+  if(candidate.every(port=>!usedPorts.has(port)))ports=candidate;
+ }
+ if(!ports)throw Error('Could not allocate distinct installed acceptance ports.');
+ for(const port of ports)usedPorts.add(port);
+ const assertExecutable=async()=>{
+  const resolved=await realpath(executable);
+  if((process.platform==='win32'?!sameWindowsPath(resolved,executable):resolved!==executable)||!sameIdentity(await identity(executable),executableIdentity))throw Error('Installed acceptance executable identity changed.');
+ };
+ const assertDirectory=async()=>{
+  const currentDirectory=await scenarioDirectoryIdentity(directory);
+  if(currentDirectory.dev!==expectedDirectory.dev||currentDirectory.ino!==expectedDirectory.ino)throw Error('Installed acceptance evidence directory identity changed.');
+ };
+ for(const iteration of [1,2]){
+  await assertDirectory();
+  await assertExecutable();
+  await launch(iteration,ports);
+ }
+ await assertDirectory();
+ await assertExecutable();
+}
+
+export async function verifyInstalledDesktop(setupPath:string,expectedUnpackedPath:string,options:InstalledVerificationOptions={}){
  if(options.memoryEnabled&&!options.memoryRetention)throw Error('Enabled memory verification requires the separate default-off retention phase.');
+ if(options.singleInstallAcceptance&&!options.memoryEnabled)throw Error('Single-install acceptance requires both memory phases.');
  if(process.platform!=='win32'||process.arch!=='x64')throw Error('This verification requires Windows x64.');
  if(!isAbsolute(setupPath)||!isAbsolute(expectedUnpackedPath))throw Error('Pass absolute installer and expected unpacked-directory paths.');
  const setup=await realpath(setupPath),expectedUnpacked=await realpath(expectedUnpackedPath),setupIdentity=await identity(setup);
@@ -464,23 +501,46 @@ export async function verifyInstalledDesktop(setupPath:string,expectedUnpackedPa
   ownedCache=await captureOwnedCache(after.updaterCache.path,setupIdentity.sha256);
   const actual=await packageContentManifest(installDirectory,{installed:true});assertMatchingContents(expected,actual);receipt.payloadCustody={matches:true,files:actual.files.length,bytes:actual.bytes,sha256:actual.sha256};
   const providers=await verifyPackagedProviders(installDirectory);receipt.providerVerification={passed:providers.receipt.passed,receipt:join(providers.directory,'verification.json')};
-  // Native journals are origin-scoped: restart must use the same application ports.
-  // A new nonce still proves ownership of each launched process independently.
+  const executable=join(installDirectory,APP_FILE),executableIdentity=options.singleInstallAcceptance?await identity(executable):undefined;
+  if(executableIdentity&&executableIdentity.sha256!==expected.files.find(file=>file.path===APP_FILE)?.sha256)throw Error('Installed acceptance executable differs from the expected payload.');
+  const usedPorts=new Set<number>();
+  let legacyPorts:readonly[number,number,number]|undefined;
+  const runScenario=async(scenario:'retention'|'enabled'|'flag-free',directory:string,memory?:MemoryRetention)=>{
+   if(!executableIdentity){
+    const ports=legacyPorts??=await verificationPorts();
+    await launchInstalled(executable,directory,1,receipt,ports,memory);
+    await launchInstalled(executable,directory,2,receipt,ports,memory);
+    return;
+   }
+   const launches:unknown[]=[],launchDiagnostics:unknown[]=[],launchReadiness:unknown[]=[];
+   const evidence={scenario,directory,installDirectory,setupSha256:setupIdentity.sha256,executableSha256:executableIdentity.sha256,launches,launchDiagnostics,launchReadiness,memoryObservations:memory?.observations,passed:false};
+   try{
+    await runInstalledAcceptanceLaunches({directory,executable,executableIdentity,usedPorts,launch:(iteration,ports)=>launchInstalled(executable,directory,iteration,evidence,ports,memory)});
+    evidence.passed=true;
+   }finally{
+    (receipt.launches as unknown[]).push(...launches);
+    ((receipt.launchDiagnostics??=[]) as unknown[]).push(...launchDiagnostics);
+    ((receipt.launchReadiness??=[]) as unknown[]).push(...launchReadiness);
+    ((receipt.scenarios??=[]) as unknown[]).push({scenario,passed:evidence.passed,directory});
+    await writeFile(join(ownedDirectory,'scenario-'+scenario+'.json'),JSON.stringify(evidence,null,2),{flag:'wx'});
+   }
+  };
   let memory:MemoryRetention|undefined;
   if(options.memoryRetention){
    const seed=await (await import('./installed-memory-retention.ts')).seedInstalledMemoryProfile(ownedDirectory);
    memory={seed,observations:[],mode:'default-off'};
    receipt.memoryRetention={version:1,scope:'Seeded disposable retained records reviewed through the exact installed application with production memory flags off. No enabled recall, automatic extraction, native checkpoint or live-provider evaluation.',seed,hostDefaultOff:true,seedEnablement:'Constructor-local fixture creation only; project disabled before installed launch.',providerNetworkCalls:null,observations:memory.observations};
   }
-  const executable=join(installDirectory,APP_FILE),ports=await verificationPorts();await launchInstalled(executable,ownedDirectory,1,receipt,ports,memory);await launchInstalled(executable,ownedDirectory,2,receipt,ports,memory);
+  await runScenario(memory?'retention':'flag-free',ownedDirectory,memory);
   if(options.memoryEnabled){
    // Keep the default-off receipt and profile intact. The enabled phase owns
    // a separate, new profile and uses the production host environment path.
    const enabledDirectory=await prepareInstalledMemoryPhaseDirectory(ownedDirectory,owner);
    const seed=await (await import('./installed-memory-retention.ts')).seedInstalledMemoryProfile(enabledDirectory),enabled:MemoryRetention={seed,observations:[],mode:'enabled'};
    receipt.memoryEnabled={version:1,scope:'Seeded disposable retained records in a separate installed profile with explicit production host activation and UI source opt-in. Proves review, pinned sources, deterministic consolidation, redacted native export, Forget and restart. No foreground recall/exclusion/send, automatic extraction, native checkpoint, live-provider evaluation or elapsed-retention purge proof.',seed,activation:{HARNESS_FLAG_MEMORY_PROJECT_V1:'true'},sourceConsent:'Disabled before launch; enabled only through the project-memory UI.',providerNetworkCalls:null,observations:enabled.observations};
-   await launchInstalled(executable,enabledDirectory,1,receipt,ports,enabled);await launchInstalled(executable,enabledDirectory,2,receipt,ports,enabled);
+   await runScenario('enabled',enabledDirectory,enabled);
   }
+  if(options.singleInstallAcceptance)await runScenario('flag-free',await prepareInstalledMemoryPhaseDirectory(ownedDirectory,owner,'flag-free'));
  }catch(error){mainError=error;receipt.error=error instanceof Error?error.message:'Installed verification failed.';}
  finally{
   if(installedUninstaller){
@@ -501,6 +561,6 @@ export async function verifyInstalledDesktop(setupPath:string,expectedUnpackedPa
  if(mainError)throw mainError;return {directory:ownedDirectory,receipt};
 }
 if(process.argv[1]&&pathToFileURL(resolve(process.argv[1])).href===import.meta.url){
- const {setup,unpacked,memoryRetention,memoryEnabled}=readInstalledVerificationArguments(process.argv.slice(2));
- await verifyInstalledDesktop(setup,unpacked,{memoryRetention,memoryEnabled});
+ const {setup,unpacked,...options}=readInstalledVerificationArguments(process.argv.slice(2));
+ await verifyInstalledDesktop(setup,unpacked,options);
 }
