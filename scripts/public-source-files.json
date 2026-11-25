@@ -3304,6 +3304,7 @@
     "tests/external-intake-v3.test.ts",
     "tests/file-access-startup.test.ts",
     "tests/file-checkpoints.test.ts",
+    "tests/fixtures/axe-violations-4.14.json",
     "tests/fixtures/deferred.ts",
     "tests/fixtures/effect-authenticator.ts",
     "tests/fixtures/hermes-protocol-worker.mjs",
