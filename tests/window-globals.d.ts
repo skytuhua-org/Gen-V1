@@ -47,7 +47,7 @@ interface Window {
 	escaped: number;
 	failures: unknown[];
 	bridge: { payload?: { actionId?: unknown; payload?: unknown }; type?: string }[];
-	posts: { type?: string; inputs?: { value?: unknown } }[];
+	posts: { type: string; inputs?: { value?: unknown }; mountId?: string; state?: Record<string, unknown>; payload?: { stateRevision?: number; requestId?: string } }[];
 	widgetActions: unknown[];
 	widgetDirty: boolean;
 	widgetHandle: { current: { releaseLease(): void } };
@@ -81,6 +81,20 @@ interface Window {
 	compositionKeys: { isTrusted?: boolean; key?: string; isComposing?: boolean; keyCode?: number }[];
 	__readyOwners: unknown[];
 	fixtureJournal: { reads: number; rejects: number; resolves: number };
+
+	// Widget checkpoint-revision fixture probes.
+	canonicalRev: number;
+	artifactRevision: number;
+	mountCalls: number;
+	lastTicket: { url: string; token: string; mountId: string; revision: number };
+	acceptedCalls: [Record<string, unknown>, number][];
+	beginResolvers: ((value: unknown) => void)[];
+	checkpointCalls: Record<string, unknown>[];
+	cmdCalls: { type: string; payload: Record<string, unknown> }[];
+	forceReceiptRevision: number | null;
+	sendWidget(type: string, payload?: Record<string, unknown>): void;
+	pushState(values: Record<string, unknown>, revision: number): void;
+	setArtifactRev(revision: number): void;
 
 	// Personal-visuals harness.
 	__PV_READY: unknown;

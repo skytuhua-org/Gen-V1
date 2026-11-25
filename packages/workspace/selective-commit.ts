@@ -51,6 +51,18 @@ export interface SelectiveCommitResult {
 }
 
 const SELECTIVE_COMMIT_KIND = "workspaceSelectiveCommit" as const;
+const SELECTIVE_PREVIEW_KIND = "workspaceSelectivePreview" as const;
+
+// The preview a commit is approved against. Stored at preview time so a
+// commit refuses to run when the reviewed branch has since been abandoned —
+// an identical HEAD on a different branch is not the approval the user took.
+interface SelectivePreviewBinding {
+  version: 1;
+  managedWorktreeId: string;
+  branch: string;
+  expectedHead: string;
+  createdAt: string;
+}
 
 interface FileSection {
   path: string;
@@ -201,6 +213,15 @@ export class SelectiveCommitService {
           candidates.push({ path: section.path, index, digest: sha256hex(section.header + patch), patch: section.header + patch, ...this.attributionFor(scope, section.path, section.postBytes ?? null, section.headBytes ?? null, patch, claims, reservedRemoved) });
         });
       }
+      // Bind any later approval to this exact branch and head: a checkout
+      // elsewhere at the same commit must not redirect the commit.
+      this.storePreview(binding, {
+        version: 1,
+        managedWorktreeId: binding.id,
+        branch,
+        expectedHead: head,
+        createdAt: new Date().toISOString(),
+      });
       return { repositoryIdentity: repositoryIdentity(binding), managedWorktreeId: binding.id, branch, expectedHead: head, candidates };
     });
   }
@@ -218,6 +239,9 @@ export class SelectiveCommitService {
       const head = (await git(["rev-parse", "HEAD"])).trim();
       const branch = (await git(["branch", "--show-current"])).trim();
       if (head !== input.expectedHead || !branch) throw new HarnessError("REVISION_CHANGED", "The reviewed head changed. Refresh the selection before committing.");
+      const previewed = this.projects.store.get<SelectivePreviewBinding>(SELECTIVE_PREVIEW_KIND, binding.id);
+      if (!previewed || previewed.expectedHead !== input.expectedHead || previewed.branch !== branch)
+        throw new HarnessError("REVISION_CHANGED", "The approved selection is not bound to the current branch. Refresh the preview before committing.");
 
       // Rebuild the candidate set from live proven images and match the approved selection exactly.
       const sections = await this.candidates(git, binding.path, input.scope);
@@ -276,10 +300,11 @@ export class SelectiveCommitService {
         // Compare-and-swap the branch reference; a stale ref refuses the update.
         await git(["update-ref", `refs/heads/${branch}`, commitOid, input.expectedHead]);
         applied = true;
-        // Reconcile only the managed worktree index to the new head. The
-        // worktree bytes already equal the committed postimage for the selected
-        // hunks; unselected changes stay unstaged.
-        await git(["read-tree", "HEAD"]);
+        // Reconcile the managed worktree index only for the selected paths:
+        // their bytes already equal the committed postimage, so their index
+        // entries become HEAD. Unrelated staged content for other paths must
+        // survive; a whole-index read-tree would silently unstage it.
+        await git(["reset", "-q", "HEAD", "--", ...new Set(selected.map((hunk) => hunk.path))]);
         record = selectiveCommitV1Schema.parse({
           version: 1,
           repositoryIdentity: repositoryIdentity(binding),
@@ -323,6 +348,12 @@ export class SelectiveCommitService {
 
   records(bindingId: string): (SelectiveCommitV1 & { uncertain?: boolean; observedHead?: string })[] {
     return this.projects.store.all<SelectiveCommitV1 & { managedWorktreeId: string; uncertain?: boolean; observedHead?: string }>(SELECTIVE_COMMIT_KIND).filter((entry) => entry.managedWorktreeId === bindingId);
+  }
+
+  private storePreview(binding: WorkspaceBinding, record: SelectivePreviewBinding): void {
+    this.projects.store.internal("workspace.selective-commit.previewed", binding.threadId, () => {
+      this.projects.store.put(SELECTIVE_PREVIEW_KIND, binding.id, binding.threadId, record);
+    });
   }
 
   private storeRecord(binding: WorkspaceBinding, commitOid: string, record: SelectiveCommitV1 & { uncertain?: boolean; observedHead?: string }): void {
