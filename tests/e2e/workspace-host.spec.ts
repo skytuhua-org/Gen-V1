@@ -887,3 +887,62 @@ test('closing Settings with a gone invoker falls back to the sidebar Settings bu
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('button', {name: 'Settings', exact: true})).toBeFocused();
 });
+
+for (const closePath of ['Escape', 'Close button'] as const) test(`Settings restores focus before delayed refresh and preserves later focus (${closePath})`, async ({page}) => {
+  const h = await fixture(page, {working: false});
+  const search = page.getByRole('textbox', {name: 'Search threads', exact: true});
+  await search.focus(); await page.keyboard.press('Control+,');
+  const dialog = page.getByRole('dialog', {name: 'Settings', exact: true}); await expect(dialog).toBeVisible();
+  let release!: () => void, requested = false;
+  const gate = new Promise<void>(resolve => {release = resolve;});
+  await page.route('**/api/shell-settings', async route => {requested = true; await gate; await route.fallback();});
+  try {
+    if (closePath === 'Escape') await page.keyboard.press('Escape');
+    else await dialog.getByRole('button', {name: 'Close dialog', exact: true}).click();
+    await expect(dialog).toBeHidden(); await expect(search).toBeFocused();
+    await expect.poll(() => requested).toBe(true);
+    const next = page.locator('.sidebar-filter'); await next.click(); await expect(next).toBeFocused();
+    const response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/shell-settings');
+    release(); await response;
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(next).toBeFocused();
+    expect(h.requests.some(path => path.startsWith('/api/shell/navigation?'))).toBe(true);
+  } finally {release();}
+});
+
+for (const narrow of [false, true]) test(`Settings uses visible recovery when the invoker disappears and navigation is inert (${narrow ? 'narrow' : 'collapsed'})`, async ({page}) => {
+  if (narrow) await page.setViewportSize({width: 390, height: 844});
+  await page.addInitScript(() => localStorage.setItem('harness:shell-layout:v1', JSON.stringify({sidebarCollapsed: true})));
+  await fixture(page);
+  const invoker = page.getByRole('button', {name: 'Stop Project investigation', exact: true});
+  await invoker.focus(); await page.keyboard.press('Control+,');
+  const dialog = page.getByRole('dialog', {name: 'Settings', exact: true}); await expect(dialog).toBeVisible();
+  await invoker.evaluate(element => element.remove());
+  await page.keyboard.press('Escape'); await expect(dialog).toBeHidden();
+  const recovery = page.getByRole('button', {name: narrow ? 'Open navigation' : 'Open sidebar', exact: true});
+  await expect(recovery).toBeFocused();
+  expect(await recovery.evaluate(element => Boolean(element.closest('[inert], [hidden]')))).toBe(false);
+});
+
+
+test('reopening Settings keeps the new invoker after the earlier close refresh completes', async ({page}) => {
+  await fixture(page);
+  const search = page.getByRole('textbox', {name: 'Search threads', exact: true});
+  await search.focus(); await page.keyboard.press('Control+,');
+  const dialog = page.getByRole('dialog', {name: 'Settings', exact: true}); await expect(dialog).toBeVisible();
+  let release!: () => void, requested = false, hold = true;
+  const gate = new Promise<void>(resolve => {release = resolve;});
+  await page.route('**/api/shell-settings', async route => {if (hold) {requested = true; await gate;} await route.fallback();});
+  try {
+    await page.keyboard.press('Escape'); await expect(dialog).toBeHidden();
+    await expect.poll(() => requested).toBe(true);
+    const nextInvoker = page.getByRole('button', {name: 'Stop Project investigation', exact: true});
+    await nextInvoker.focus(); await page.keyboard.press('Control+,'); await expect(dialog).toBeVisible();
+    const response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/shell-settings');
+    hold = false; release(); await response;
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
+    await dialog.getByRole('button', {name: 'Close dialog', exact: true}).click(); await expect(dialog).toBeHidden();
+    await expect(nextInvoker).toBeFocused();
+  } finally {release();}
+});

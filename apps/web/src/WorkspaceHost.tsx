@@ -12,7 +12,7 @@ import {bootstrap, command, getShellSettings} from './api';
 import {AgentsWorkspace, AgentsWorkspaceController, createPersonalAgentComposers, createPersonalChildFollowUp, type SharedAgentComposers} from './agents-workspace';
 import {detachedSurface, pendingSurface, useDesktop, useDesktopCloseGuard, useDesktopReady} from './desktop-context';
 import {prepareEditorHandoff} from './editor-handoff';
-import {useModalRegion} from './focus';
+import {restoreSettingsFocus, useModalRegion} from './focus';
 import {journalFlush} from './journal';
 import {hasPendingDocumentAssets} from './signature-assets';
 import {LoadingState, PendingStatus} from './LoadingState';
@@ -226,6 +226,12 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   }, [settings.theme]);
   const action = (kind: ConversationIntent) => fail(() => openConversation(undefined, kind));
   const settingsInvoker = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (settingsOpen) return;
+    const invoker = settingsInvoker.current;
+    settingsInvoker.current = null;
+    if (invoker) restoreSettingsFocus(invoker);
+  }, [settingsOpen]);
   const openSettings = () => fail(async () => {settingsInvoker.current = document.activeElement as HTMLElement | null; await prepare(); setSettingsOpen(true);});
   const stopFocused = () => {const card=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('[data-agent-id]');const agent=card?controller.getSnapshot().agents.find(item=>item.agentId===card.dataset.agentId):undefined;if(agent&&agent.status==='working')void composers.stop(agent);};
   const shortcuts = useRef({action, openSettings, stopFocused}); shortcuts.current = {action, openSettings, stopFocused};
@@ -241,13 +247,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
     };
     window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key);
   }, [keybindings, mobile]);
-  const restoreSettingsFocus = () => {
-    const invoker = settingsInvoker.current;
-    settingsInvoker.current = null;
-    if (invoker && invoker !== document.body && invoker !== document.documentElement && invoker.isConnected && invoker.getClientRects().length) { invoker.focus({preventScroll: true}); return; }
-    (sidebar.current?.querySelector<HTMLElement>('button[aria-label="Settings"]') ?? searchRef.current)?.focus({preventScroll: true});
-  };
-  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]); requestAnimationFrame(restoreSettingsFocus);});
+  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]);});
   const openBrowser = desktop?.context.surface.kind === 'main' ? async (url: string) => {
     const owner = desktop.context.windowId;
     await prepare();
@@ -290,7 +290,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
         <PendingStatus pending={navigation.pending} label="Loading threads…"/>
         {navigation.page?.nextCursor && <button disabled={navigation.pending} onClick={() => fail(navigation.more)}>Load more threads ({navigation.page.items.length} of {navigation.page.total})</button>}
       </div>}/>
-    {!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={200} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({...value, sidebarWidth}))}/>}
+    {!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={232} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({...value, sidebarWidth}))}/>}
     <div className="workspace-layout-workarea workspace-host-main">
       {(layout.sidebarCollapsed || mobile) && <button className="icon-button sidebar-recovery" aria-label={mobile ? 'Open navigation' : 'Open sidebar'} onClick={event => {prepareSidebarToggle(event); setLayout(value => ({...value, sidebarCollapsed: false})); if (mobile) setOpen(true); requestAnimationFrame(() => searchRef.current?.focus());}}>{mobile ? <Menu size={18}/> : <PanelLeftOpen size={17}/>}</button>}
       <WorkspaceControls envelope={workspace.envelope} send={workspace.send} prepare={prepare} panels={[]} title={panel => panel.kind}

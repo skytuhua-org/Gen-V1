@@ -1367,3 +1367,21 @@ test('keyboard, narrow layout and reduced motion remain usable', async ({ page }
   const duration = await page.locator('.sidebar').evaluate(element => getComputedStyle(element).transitionDuration);
   expect(parseFloat(duration)).toBeLessThan(.01);
 });
+
+
+for (const narrow of [false, true]) test(`conversation Settings restores visible focus after its running invoker disappears (${narrow ? 'narrow' : 'collapsed'})`, async ({page}) => {
+  if (narrow) await page.setViewportSize({width: 390, height: 844});
+  const initial = populated(); initial.threads[0]!.runId = 'settings-focus-run'; initial.threads[0]!.status = 'working';
+  const state = await host(page, initial); await page.goto('/');
+  if (!narrow) await page.getByRole('button', {name: 'Collapse sidebar', exact: true}).click();
+  await expect(page.locator('.sidebar:not([data-collapse-visual])')).toHaveAttribute('inert', '');
+  const invoker = page.getByRole('button', {name: 'Stop agent', exact: true});
+  await invoker.focus(); await page.keyboard.press('Control+,');
+  const dialog = page.getByRole('dialog', {name: 'Settings', exact: true}); await expect(dialog).toBeVisible();
+  state.snapshot.threads[0]!.runId = null; state.snapshot.threads[0]!.status = 'ready'; state.snapshot.seq += 10;
+  await emit(page, state.snapshot.seq); await expect(invoker).toHaveCount(0);
+  await dialog.getByRole('button', {name: 'Close dialog', exact: true}).click(); await expect(dialog).toBeHidden();
+  const recovery = page.getByRole('button', {name: narrow ? 'Open navigation' : 'Open sidebar', exact: true});
+  await expect(recovery).toBeFocused();
+  expect(await recovery.evaluate(element => Boolean(element.closest('[inert], [hidden]')))).toBe(false);
+});

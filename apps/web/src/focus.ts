@@ -6,6 +6,23 @@ const focusable = 'button:not(:disabled), input:not(:disabled), textarea:not(:di
 // else follows in DOM order (Array.prototype.sort is stable).
 const tabOrder = (element: HTMLElement) => { const index = Number.parseInt(element.getAttribute('tabindex') ?? '', 10); return index > 0 ? index : Number.MAX_SAFE_INTEGER; };
 
+export function restoreSettingsFocus(invoker: HTMLElement | null) {
+  const owner = invoker?.ownerDocument ?? document;
+  if (owner.querySelector('dialog:modal')) return;
+  const candidates = [invoker,
+    ...owner.querySelectorAll<HTMLElement>('aside[aria-label="Thread navigation"] button[aria-label="Settings"]'),
+    ...owner.querySelectorAll<HTMLElement>('input[aria-label="Search threads"]'),
+    ...owner.querySelectorAll<HTMLElement>('.sidebar-recovery'),
+  ];
+  for (const target of candidates) {
+    if (!target || target === owner.body || target === owner.documentElement || !target.isConnected || !target.getClientRects().length || target.matches(':disabled') || target.closest('[inert], [hidden], [aria-hidden="true"]')) continue;
+    const visibility = owner.defaultView?.getComputedStyle(target).visibility;
+    if (visibility === 'hidden' || visibility === 'collapse') continue;
+    target.focus({preventScroll: true});
+    if (owner.activeElement === target) return;
+  }
+}
+
 // Apply modal behavior to the existing DOM branch, preserving artifact identity.
 export function useModalRegion(ref: RefObject<HTMLElement | null>, active: boolean, close: () => void, initial: string, companion?: RefObject<HTMLElement | null>) {
   const closeRef = useRef(close); closeRef.current = close;

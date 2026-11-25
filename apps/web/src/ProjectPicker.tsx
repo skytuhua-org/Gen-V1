@@ -83,9 +83,20 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
       placeholder="Search projects" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => {
         if (isComposing(event)) { if (event.key === 'Escape') event.preventDefault(); return; }
         if (event.altKey || event.ctrlKey || event.metaKey || locked) return;
-        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        // Home/End stay caret and selection keys mid-text; they navigate the list only when a collapsed caret is already at that edge.
+        if ((event.key === 'Home' || event.key === 'End') && (event.shiftKey
+          || event.currentTarget.selectionStart !== event.currentTarget.selectionEnd
+          || event.currentTarget.selectionStart !== (event.key === 'Home' ? 0 : event.currentTarget.value.length))) return;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End' || event.key === 'PageUp' || event.key === 'PageDown') {
           event.preventDefault();
-          if (choices.length) setActiveKey(keyOf(choices[(activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length]));
+          if (choices.length) {
+            const count = choices.length, next = event.key === 'ArrowDown' ? (activeIndex + 1) % count
+              : event.key === 'ArrowUp' ? (activeIndex - 1 + count) % count
+              : event.key === 'Home' ? 0
+              : event.key === 'End' ? count - 1
+              : event.key === 'PageUp' ? Math.max(0, activeIndex - 10) : Math.min(count - 1, activeIndex + 10);
+            setActiveKey(keyOf(choices[next]));
+          }
         } else if (event.key === 'Enter') {
           event.preventDefault(); if (choices.length) void run(() => onSelect(active));
         }
@@ -118,14 +129,19 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
         if (isComposing(event) && event.key === 'Escape') { event.preventDefault(); return; }
         if (event.key === 'Escape' && locked) { event.preventDefault(); event.stopPropagation(); }
       }}>
-      <div className="project-picker-swatches">{Object.entries(PROJECT_PALETTE).map(([name, value]) => <button type="button" key={name} disabled={locked} aria-label={name}
-        aria-pressed={Boolean(editing && colors[projectColorKey(editing.authority, editing.id)]?.toLowerCase() === value.toLowerCase())} onClick={() => saveColor(value)}>
-        <span style={{ backgroundColor: value }} aria-hidden="true" /></button>)}</div>
-      <form onSubmit={event => { event.preventDefault(); saveColor(custom); }}><label>Custom color<input ref={colorInput} aria-label="Custom color" value={custom} maxLength={80} disabled={locked}
-        onChange={event => { setCustom(event.target.value); setColorError(''); }} onKeyDown={event => { if (isComposing(event) && event.key === 'Enter') event.preventDefault(); }} placeholder="#4F6EFF" spellCheck={false} /></label>
-        <button type="submit" disabled={locked}>Save color</button></form>
-      {colorError && <ErrorState className="project-picker-error" message={colorError}/>}
-      <button type="button" disabled={locked} onClick={() => saveColor(null)}>Use automatic color</button>
+      <div className="project-picker-color-grid">
+        <div className="project-picker-swatches">{Object.entries(PROJECT_PALETTE).map(([name, value]) => <button type="button" key={name} disabled={locked} aria-label={name}
+          aria-pressed={Boolean(editing && colors[projectColorKey(editing.authority, editing.id)]?.toLowerCase() === value.toLowerCase())} onClick={() => saveColor(value)}>
+          <span style={{ backgroundColor: value }} aria-hidden="true" /></button>)}</div>
+        <form id="project-picker-color-form" onSubmit={event => { event.preventDefault(); saveColor(custom); }}><label>Custom color<input ref={colorInput} aria-label="Custom color" value={custom} maxLength={80} disabled={locked}
+          aria-invalid={Boolean(colorError)} aria-describedby={colorError ? 'project-picker-color-error' : undefined}
+          onChange={event => { setCustom(event.target.value); setColorError(''); }} onKeyDown={event => { if (isComposing(event) && event.key === 'Enter') event.preventDefault(); }} placeholder="#4F6EFF" spellCheck={false} /></label></form>
+      </div>
+      {colorError && <p role="alert" id="project-picker-color-error" className="project-picker-color-error">{colorError}</p>}
+      <div className="project-picker-color-footer" data-has-error={Boolean(colorError) || undefined}>
+        <button type="submit" form="project-picker-color-form" disabled={locked}>Save color</button>
+        <button type="button" disabled={locked} onClick={() => saveColor(null)}>Use automatic color</button>
+      </div>
     </Popover>
   </Modal>;
 }
