@@ -95,6 +95,42 @@ it('keeps an authoritative deletion fence outside an in-place full-profile backu
   expect(() => memory.source(access, item.id, item.revision, f.ref.digest)).toThrow();
 });
 
+it('recovers memory availability when only the profile deletion mirror is corrupt', async () => {
+  const f = await fixture(), item = f.accept('Recovered deletion history');
+  f.act({ action: 'forget', itemId: item.id, baseRevision: item.revision });
+  expect(f.memory.accepted(f.access)).toEqual([]);
+  const dataDir = f.store.dataDir, mirror = join(dataDir, 'project-memory-deletions.jsonl');
+  f.store.close(); f.store = new Store(dataDir);
+  const healthy = new ProjectMemory(f.store, { enabled: () => true }), healthyAccess = await healthy.access('project', 'thread');
+  expect(healthy.accepted(healthyAccess)).toEqual([]);
+  expect(healthy.read(healthyAccess).tombstones[0].sourceExclusions.map(ref => ref.digest)).toContain(f.ref.digest);
+  writeFileSync(mirror, 'invalid tombstone\n', { mode: 0o600 });
+  f.store.close(); f.store = new Store(dataDir);
+  const memory = new ProjectMemory(f.store, { enabled: () => true }), access = await memory.access('project', 'thread');
+  expect(memory.accepted(access)).toEqual([]);
+  expect(memory.read(access).tombstones.map(t => t.itemId)).toContain(item.id);
+  expect(memory.read(access).tombstones[0].sourceExclusions.map(ref => ref.digest)).toContain(f.ref.digest);
+  expect(() => memory.source(access, item.id, item.revision, f.ref.digest)).toThrow();
+  expect(readFileSync(mirror, 'utf8')).toContain(item.id);
+  const damaged = readdirSync(dataDir).find(name => name.startsWith('project-memory-deletions.jsonl.damaged-'));
+  expect(damaged).toBeTruthy();
+  expect(readFileSync(join(dataDir, damaged!), 'utf8')).toBe('invalid tombstone\n');
+  f.store.close(); f.store = new Store(dataDir);
+  const restarted = new ProjectMemory(f.store, { enabled: () => true }), restartedAccess = await restarted.access('project', 'thread');
+  expect(restarted.accepted(restartedAccess)).toEqual([]);
+  expect(() => restarted.source(restartedAccess, item.id, item.revision, f.ref.digest)).toThrow();
+  expect(readdirSync(dataDir).filter(name => name.startsWith('project-memory-deletions.jsonl.damaged-'))).toHaveLength(1);
+});
+
+it('fails closed when the authoritative deletion fence is corrupt even if the profile mirror is valid', async () => {
+  const f = await fixture(), item = f.accept('Uncertain deletion history');
+  f.act({ action: 'forget', itemId: item.id, baseRevision: item.revision });
+  writeFileSync(projectMemoryDeletionLedgerPath(f.store.dataDir), 'invalid tombstone\n', { mode: 0o600 });
+  const dataDir = f.store.dataDir;
+  f.store.close(); f.store = new Store(dataDir);
+  expect(() => new ProjectMemory(f.store, { enabled: () => true })).toThrow(/deletion ledger needs recovery/);
+});
+
 it.each(['missing', 'replaced', 'corrupt'] as const)('fails memory closed when its enrolled deletion ledger is %s', async damage => {
   const f = await fixture(); f.accept('An enrolled claim');
   const ledger = projectMemoryDeletionLedgerPath(f.store.dataDir);
