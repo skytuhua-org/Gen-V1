@@ -42,10 +42,14 @@ function fixture(t, wrongTree = false) {
         mkdirSync(dir,{recursive:true});
         writeFileSync(join(dir,'results.json'), JSON.stringify({errors:[],stats:{expected:1,unexpected:fault==='browser-report'?1:0,flaky:0,skipped:0},suites:[{file:'a.spec.ts'}]}));
       }
-      return {stdout:task==='--version'?'10.30.3':'', stderr:'', termination:'NONE', exitCode, argv:[file,pnpm,task]};
+      const secretOutput = fault === 'secret-output';
+      return {stdout:task==='--version'?'10.30.3':secretOutput?'password=integration-stdout-secret-20261125':'', stderr:secretOutput?'Authorization: Bearer integration-stderr-secret-20261125':'', termination:'NONE', exitCode, argv:[file,pnpm,task]};
     }
     export const statusFromObservation = o => o.exitCode === 0 ? 'PASS' : 'FAIL';
-    export const writeCommandEvidence = (o, dir, name, status) => ({...o,name,status});
+    export const writeCommandEvidence = (o, dir, name, status) => {
+      const { stdout, stderr, spawnError, truncated, pid, ...receipt } = o;
+      return {...receipt,name,status};
+    };
   `);
   const baseSha = commit('base');
   put(join(root, 'tests/a.test.ts'), 'export {};\n');
@@ -90,12 +94,12 @@ test('a later control checkout cannot add merged main inputs to the original sna
 test('a tree mismatch blocks setup; a changed HEAD blocks command execution', t => {
   const wrong = fixture(t, true);
   assert.equal(wrong.assemble().status, 1);
-  assert.match(wrong.receipt('assembly').issues[0].message, /Expected tree/);
+  assert.equal(wrong.receipt('assembly').issues[0].message, 'Expected tree mismatch.');
   const changed = fixture(t);
   assert.equal(changed.assemble().status, 0);
   changed.git('checkout', '--detach', changed.validationSha);
   assert.equal(changed.validate('').status, 1);
-  assert.match(changed.receipt('validation').issues[0].message, /HEAD changed/);
+  assert.equal(changed.receipt('validation').issues[0].message, 'Integrated HEAD changed after assembly.');
   assert.deepEqual(changed.receipt('validation').commands, []);
 });
 
@@ -114,4 +118,15 @@ test('a zero browser exit cannot override a failed Playwright report', t => {
   assert.equal(f.validate('browser-report').status, 1);
   assert.equal(f.receipt('validation').browserReport.stats.unexpected, 1);
   assert.equal(f.receipt('validation').status, 'FAIL');
+});
+
+test('the integration controller does not mirror raw confidential command output', t => {
+  const f = fixture(t);
+  assert.equal(f.assemble().status, 0);
+  const run = f.validate('secret-output');
+  const publicOutput = run.stdout + '\n' + run.stderr;
+  assert.equal(run.status, 0, publicOutput);
+  assert.equal(f.receipt('validation').status, 'PASS');
+  assert.equal(publicOutput.includes('integration-stdout-secret-20261125'), false);
+  assert.equal(publicOutput.includes('integration-stderr-secret-20261125'), false);
 });

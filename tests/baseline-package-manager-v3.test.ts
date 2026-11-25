@@ -134,4 +134,15 @@ describe('M01 installed package manager admission', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(value.observed().map(call => call.network)).toEqual(['0', '0', '0', '0', '0']);
   });
+
+  it('does not leak invalid package-manager output through the mismatch projection', () => {
+    const secret = 'password=package-manager-secret-20261125';
+    const value = fixture('10.29.0\n' + secret);
+    const result = value.execute();
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('INCOMPATIBLE_TOOLCHAIN');
+    expect(result.stderr).not.toContain(secret);
+    expect(result.stderr).not.toContain('package-manager-secret-20261125');
+  });
 });

@@ -149,7 +149,7 @@ export function buildChildEnvironment(
 /* It is not a universal scrubber and never claims to be.               */
 /* ------------------------------------------------------------------ */
 
-const MIN_TRACKED_SECRET_LENGTH = 8;
+export const MIN_TRACKED_SECRET_LENGTH = 8;
 const REDACTED = '[REDACTED]';
 const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()#][0-9A-Za-z]|\x1b[=>]/g;
 
@@ -158,7 +158,7 @@ export interface SecretRedactor {
   readonly tracked: number;
 }
 
-export function createSecretRedactor(secrets: Iterable<string>, options?: { fields?: readonly string[] }): SecretRedactor {
+export function createSecretRedactor(secrets: Iterable<string>, options?: { fields?: readonly string[]; structuredText?: boolean }): SecretRedactor {
   const variants = new Set<string>();
   for (const secret of secrets) {
     if (typeof secret !== 'string' || secret.length < MIN_TRACKED_SECRET_LENGTH) continue;
@@ -171,6 +171,11 @@ export function createSecretRedactor(secrets: Iterable<string>, options?: { fiel
   // Match complete JSON string values, including escaped quotes and backslashes.
   const fieldPatterns = (options?.fields ?? []).map(field =>
     new RegExp(`("${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\s*:\\s*")((?:\\\\.|[^"\\\\])*)(")`, 'g'));
+  const structuredFieldPatterns = options?.structuredText ? (options?.fields ?? []).map(field =>
+    new RegExp(`(^|[^A-Za-z0-9_])(["']?${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']?\\s*[:=]\\s*)(?:"((?:\\\\.|[^"\\\\])*)"|'((?:\\\\.|[^'\\\\])*)'|([^\\s"',;\\]}]+))`, 'gi')) : [];
+  const bearerPattern = options?.structuredText ? /\b(Bearer\s+)([^\s"',;\]}]{8,})/gi : null;
+  const credentialUrlPattern = options?.structuredText ? /\b([a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]+:)([^\s@/?#]+)(?=@)/gi : null;
+  const privateKeyPattern = options?.structuredText ? /-----BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,32}PRIVATE KEY-----|$)/gi : null;
 
   function redact(text: string): { text: string; redactions: number } {
     // Match on an ANSI-stripped view so escape-split secrets still redact,
@@ -200,6 +205,29 @@ export function createSecretRedactor(secrets: Iterable<string>, options?: { fiel
       for (const match of cleanText.matchAll(pattern)) {
         const start = match.index + match[1]!.length;
         ranges.push([start, start + match[2]!.length]);
+      }
+    }
+    for (const pattern of structuredFieldPatterns) {
+      pattern.lastIndex = 0;
+      for (const match of cleanText.matchAll(pattern)) {
+        const value = match[3] ?? match[4] ?? match[5] ?? '';
+        const quoted = match[3] !== undefined || match[4] !== undefined ? 1 : 0;
+        const start = match.index + match[1]!.length + match[2]!.length + quoted;
+        ranges.push([start, start + value.length]);
+      }
+    }
+    for (const pattern of [bearerPattern, credentialUrlPattern]) {
+      if (!pattern) continue;
+      pattern.lastIndex = 0;
+      for (const match of cleanText.matchAll(pattern)) {
+        const start = match.index + match[1]!.length;
+        ranges.push([start, start + match[2]!.length]);
+      }
+    }
+    if (privateKeyPattern) {
+      privateKeyPattern.lastIndex = 0;
+      for (const match of cleanText.matchAll(privateKeyPattern)) {
+        ranges.push([match.index, match.index + match[0].length]);
       }
     }
     ranges.sort((a, b) => a[0] - b[0]);

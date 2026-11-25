@@ -205,7 +205,7 @@ describe('M01 current dependency compatibility execution', () => {
     const receipt = await value.run();
     expect(receipt.status).toBe('BLOCKED');
     expect(receipt.commands).toEqual([]);
-    expect(receipt.issues.some(issue => issue.message.includes('Working source differs from locked source'))).toBe(true);
+    expect(receipt.issues.some(issue => issue.code === 'COMPATIBILITY_SETUP_BLOCKED')).toBe(true);
   });
 
   it('blocks an external-looking output junction that resolves into the checkout', async () => {
@@ -239,5 +239,19 @@ describe('M01 current dependency compatibility execution', () => {
       issues: [{ code: 'COMPATIBILITY_SETUP_BLOCKED', message: expect.any(String) }],
     });
     expect(readFileSync(join(value.out, 'compatibility.json'), 'utf8')).toBe('immutable earlier evidence\n');
+  });
+
+  it('projects output setup failure without raw private path text', async () => {
+    const value = fixture();
+    const secret = 'password=dependency-setup-secret-20261125';
+    const missingParent = join(value.directory, 'missing-' + secret);
+    const receipt = await runDependencyContracts(value.lockPath, join(missingParent, 'out'), value.root);
+    expect(receipt.status).toBe('BLOCKED');
+    expect(receipt.issues[0]).toMatchObject({
+      code: 'COMPATIBILITY_SETUP_BLOCKED',
+      message: 'Evidence output setup failed.',
+    });
+    expect(JSON.stringify(receipt)).not.toContain(secret);
+    expect(JSON.stringify(receipt)).not.toContain('dependency-setup-secret-20261125');
   });
 });

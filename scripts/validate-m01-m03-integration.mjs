@@ -12,6 +12,12 @@ const runnerPath = 'scripts/validate-m01-m03-integration.mjs';
 const isSha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 function requireValue(condition, message) { if (!condition) throw new Error(message); }
+function setupFailureMessage(error) {
+  const message = error instanceof Error ? error.message : '';
+  if (message.startsWith('Expected tree ')) return 'Expected tree mismatch.';
+  if (message.startsWith('Integrated HEAD changed')) return 'Integrated HEAD changed after assembly.';
+  return 'Integration validation setup failed.';
+}
 function gitBytes(...args) {
   return execFileSync('git', ['-C', root, ...args], {
     windowsHide: true, timeout: 120_000, maxBuffer: 16 * 1024 * 1024,
@@ -100,14 +106,14 @@ try {
     appendFileSync(process.env.GITHUB_OUTPUT, 'integrated_head=' + integratedHead + '\n');
   } else await validate();
 } catch (error) {
-  receipt.issues.push({ phase: mode, message: String(error), stderr: String(error?.stderr ?? '').slice(0, 8000) });
+  receipt.issues.push({ phase: mode, message: setupFailureMessage(error), stderr: '[suppressed diagnostic]' });
 } finally {
   if (integratedHead) {
     try {
       requireValue(git('rev-parse', 'HEAD') === integratedHead
         && git('status', '--porcelain', '--untracked-files=no') === '', 'Integrated source changed during validation.');
       if (generatedConfig) requireValue(readFileSync(generatedConfig, 'utf8') === generatedConfigBytes, 'Test selection changed.');
-    } catch (error) { receipt.issues.push({ phase: 'source-custody', message: String(error) }); }
+    } catch (error) { receipt.issues.push({ phase: 'source-custody', message: 'Integrated source custody validation failed.' }); }
   }
   receipt.endedAt = new Date().toISOString();
   if (mode === 'assemble') {
@@ -130,7 +136,7 @@ async function validate() {
     await import(pathToFileURL(join(root, 'scripts/research-baseline.ts')).href);
   const pm = resolvePackageManager(root);
   const run = async (name, args, timeoutMs = 15 * 60_000) => {
-    console.log('M01_M03_COMMAND_START=' + JSON.stringify({ name, argv: [pm.file, ...pm.prefix, ...args] }));
+    console.log('M01_M03_COMMAND_START=' + JSON.stringify({ name }));
     const observation = await runRecordedCommand(pm.file, [...pm.prefix, ...args],
       { cwd: root, timeoutMs, outputLimit: 4 * 1024 * 1024, environment: {
         COREPACK_ENABLE_NETWORK: '0', CI: 'true', HARNESS_HERMES_PYTHON: process.env.HARNESS_HERMES_PYTHON,
@@ -138,8 +144,6 @@ async function validate() {
       } });
     const command = await writeCommandEvidence(observation, evidence, name, statusFromObservation(observation));
     receipt.commands.push(command);
-    console.log(observation.stdout);
-    if (observation.stderr) console.error(observation.stderr);
     console.log('M01_M03_COMMAND_RESULT=' + JSON.stringify(command));
     return observation;
   };
@@ -178,13 +182,12 @@ async function validate() {
       receipt.tests.push(result);
       console.log('M01_M03_TEST_FILE=' + JSON.stringify(result));
       for (const assertion of assertions.filter(test => test.status === 'failed'))
-        console.log('M01_M03_TEST_FAILURE=' + JSON.stringify({ path, name: assertion.fullName,
-          messages: (assertion.failureMessages ?? []).map(message => String(message).slice(0, 5000)) }));
+        console.log('M01_M03_TEST_FAILURE=' + JSON.stringify({ path, name: assertion.fullName }));
     }
     requireValue(found.size === expected.size, 'At least one declared test file did not execute.');
     requireValue(report.success === true && receipt.tests.every(test => test.status === 'passed' && test.passed > 0
       && test.failed === 0 && test.unexecuted === 0), 'Required assertions failed or remain unexecuted.');
-  } catch (error) { receipt.issues.push({ phase: 'unit-results', message: String(error) }); }
+  } catch (error) { receipt.issues.push({ phase: 'unit-results', message: 'Targeted test report is unavailable or invalid.' }); }
   // A unit failure does not suppress the independent browser observations.
   const browserDir = join(root, 'test-results/browser');
   const before = new Set(existsSync(browserDir) ? readdirSync(browserDir) : []);

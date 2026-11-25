@@ -12,11 +12,26 @@ import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HarnessError } from '../packages/contracts/index.ts';
 import { runProcess } from '../packages/capabilities/process.ts';
+import { createSecretRedactor, MIN_TRACKED_SECRET_LENGTH } from '../packages/core/secret-references.ts';
 import type { BenchmarkRecord, CommandEvidence, CommandStatus, CommandTermination, ExpectedNegative, EvidenceIssue, SourceLockV3 } from '../packages/contracts/implementation-evidence.ts';
 import { sourceLockV3Schema } from '../packages/contracts/implementation-evidence.ts';
 
 const OUTPUT_LIMIT = 256 * 1024;
+export const COMMAND_EVIDENCE_FINAL_LOG_BYTES = 544 * 1024;
+export const COMMAND_EVIDENCE_EXACT_METADATA_BYTES = 16 * 1024;
+export const COMMAND_EVIDENCE_SPAWN_DIAGNOSTIC_BYTES = 8 * 1024;
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+const EXACT_IDENTITY_DENIED = 'Evidence admission denied: exact command identity cannot be represented safely.';
+const UNSUPPORTED_SENSITIVE_VALUE = 'Evidence admission denied: sensitive value is outside supported redaction scope.';
+const FINAL_TRUNCATION_MARKER = '\n[evidence truncated to final byte budget]\n';
+const DIAGNOSTIC_TRUNCATION_MARKER = '\n[diagnostic truncated to metadata budget]\n';
+const COMMAND_EVIDENCE_SECRET_FIELDS = Object.freeze([
+  'api_key', 'apikey', 'api-key', 'access_token', 'access-token', 'auth_token', 'auth-token',
+  'token', 'secret', 'password', 'passwd', 'private_key', 'private-key', 'authorization',
+  'client_secret', 'client-secret', 'refresh_token', 'refresh-token', 'bearer_token', 'bearer-token',
+  'apiKey', 'accessToken', 'authToken', 'privateKey', 'clientSecret', 'refreshToken', 'bearerToken',
+]);
+const SECRET_ENVIRONMENT_NAME = /(?:^|_)(?:api[-_]?key|token|secret|password|passwd|access[-_]?key|private[-_]?key|auth[-_]?token|client[-_]?secret|refresh[-_]?token|credential|authorization)(?:_|$)/i;
 const sha256 = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -134,21 +149,52 @@ export interface RunRecordedOptions {
   signal?: AbortSignal;
   environment?: NodeJS.ProcessEnv;
   outputLimit?: number;
+  sensitiveValues?: readonly string[];
+}
+export interface WriteCommandEvidenceOptions {
+  sensitiveValues?: readonly string[];
+}
+
+const observationSensitiveValues = new WeakMap<RecordedObservation, readonly string[]>();
+function secretEnvironmentValues(environment: NodeJS.ProcessEnv | undefined): string[] {
+  if (!environment) return [];
+  return Object.entries(environment).flatMap(([name, value]) =>
+    typeof value === 'string' && value !== '' && SECRET_ENVIRONMENT_NAME.test(name) ? [value] : []);
+}
+function sensitiveValues(environment: NodeJS.ProcessEnv | undefined, explicit: readonly string[] = []): readonly string[] {
+  return Object.freeze([...new Set([...explicit.filter(value => value !== ''), ...secretEnvironmentValues(environment)])]);
+}
+function unsupportedSensitiveValue(value: string): boolean {
+  return value.length < MIN_TRACKED_SECRET_LENGTH || value.includes('\0') || Buffer.byteLength(value, 'utf8') > 8192;
 }
 
 export async function runRecordedCommand(file: string, args: string[], options: RunRecordedOptions): Promise<RecordedObservation> {
   const startedAt = new Date().toISOString();
   const finish = (partial: Omit<RecordedObservation, 'argv' | 'startedAt' | 'endedAt'>): RecordedObservation =>
     ({ argv: [file, ...args], startedAt, endedAt: new Date().toISOString(), ...partial });
+  const admittedValues = sensitiveValues(options.environment, options.sensitiveValues);
+  const finishObserved = (partial: Omit<RecordedObservation, 'argv' | 'startedAt' | 'endedAt'>): RecordedObservation => {
+    const value = finish(partial);
+    const redactableValues = Object.freeze(admittedValues.filter(secret => !unsupportedSensitiveValue(secret)));
+    if (redactableValues.length) observationSensitiveValues.set(value, redactableValues);
+    return value;
+  };
   let resolved: ResolvedExecutable, cwdIdentity: string;
   try { resolved = resolveExecutable(file); } catch (error) {
-    return finish({ cwdIdentity: options.cwd, executableIdentity: file, exitCode: null, termination: 'SPAWN_ERROR', stdout: '', stderr: '', truncated: false, spawnError: error instanceof Error ? error.message : String(error) });
+    return finishObserved({ cwdIdentity: options.cwd, executableIdentity: file, exitCode: null, termination: 'SPAWN_ERROR', stdout: '', stderr: '', truncated: false, spawnError: error instanceof Error ? error.message : String(error) });
   }
   try { cwdIdentity = realpathSync(resolve(options.cwd)); } catch (error) {
-    return finish({ cwdIdentity: options.cwd, executableIdentity: resolved.identity, exitCode: null, termination: 'SPAWN_ERROR', stdout: '', stderr: '', truncated: false, spawnError: `Invalid working directory: ${error instanceof Error ? error.message : String(error)}` });
+    return finishObserved({ cwdIdentity: options.cwd, executableIdentity: resolved.identity, exitCode: null, termination: 'SPAWN_ERROR', stdout: '', stderr: '', truncated: false, spawnError: `Invalid working directory: ${error instanceof Error ? error.message : String(error)}` });
   }
   if (!statSync(cwdIdentity).isDirectory())
-    return finish({ cwdIdentity, executableIdentity: resolved.identity, exitCode: null, termination: 'SPAWN_ERROR', stdout: '', stderr: '', truncated: false, spawnError: 'Working directory is not a directory' });
+    return finishObserved({ cwdIdentity, executableIdentity: resolved.identity, exitCode: null, termination: 'SPAWN_ERROR', stdout: '', stderr: '', truncated: false, spawnError: 'Working directory is not a directory' });
+  if (admittedValues.some(unsupportedSensitiveValue))
+    return finishObserved({ cwdIdentity, executableIdentity: resolved.identity, exitCode: null, termination: 'SPAWN_ERROR', stdout: '', stderr: '', truncated: false, spawnError: UNSUPPORTED_SENSITIVE_VALUE });
+  const admissionRedactor = createSecretRedactor(admittedValues.filter(secret => !unsupportedSensitiveValue(secret)), { fields: COMMAND_EVIDENCE_SECRET_FIELDS, structuredText: true });
+  const exactIdentity = [file, ...args, cwdIdentity, resolved.identity];
+  const exactMetadataBytes = Buffer.byteLength(JSON.stringify([file, ...args]), 'utf8') + Buffer.byteLength(cwdIdentity, 'utf8') + Buffer.byteLength(resolved.identity, 'utf8');
+  if (exactIdentity.some(value => admissionRedactor.redact(value).redactions !== 0) || exactMetadataBytes > COMMAND_EVIDENCE_EXACT_METADATA_BYTES)
+    return finishObserved({ cwdIdentity, executableIdentity: resolved.identity, exitCode: null, termination: 'SPAWN_ERROR', stdout: '', stderr: '', truncated: false, spawnError: EXACT_IDENTITY_DENIED });
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   options.signal?.addEventListener('abort', onAbort, { once: true });
@@ -157,11 +203,11 @@ export async function runRecordedCommand(file: string, args: string[], options: 
     const environment = options.environment?.COREPACK_ENABLE_NETWORK === '0' && process.env.COREPACK_HOME
       ? { COREPACK_HOME: process.env.COREPACK_HOME, ...options.environment } : options.environment;
     const result = await runProcess(resolved.file, args, cwdIdentity, controller.signal, () => {}, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, environment, options.outputLimit ?? OUTPUT_LIMIT);
-    return finish({ cwdIdentity, executableIdentity: resolved.identity, exitCode: result.exitCode, termination: result.cancelled ? 'CANCELLED' : result.timedOut ? 'TIMEOUT' : 'NONE', stdout: result.stdout, stderr: result.stderr, truncated: result.truncated, pid: result.pid });
+    return finishObserved({ cwdIdentity, executableIdentity: resolved.identity, exitCode: result.exitCode, termination: result.cancelled ? 'CANCELLED' : result.timedOut ? 'TIMEOUT' : 'NONE', stdout: result.stdout, stderr: result.stderr, truncated: result.truncated, pid: result.pid });
   } catch (error) {
     if (error instanceof HarnessError && error.code === 'CANCELLED')
-      return finish({ cwdIdentity, executableIdentity: resolved.identity, exitCode: null, termination: 'CANCELLED', stdout: '', stderr: '', truncated: false, spawnError: error.message });
-    return finish({ cwdIdentity, executableIdentity: resolved.identity, exitCode: null, termination: 'SPAWN_ERROR', stdout: '', stderr: '', truncated: false, spawnError: error instanceof Error ? error.message : String(error) });
+      return finishObserved({ cwdIdentity, executableIdentity: resolved.identity, exitCode: null, termination: 'CANCELLED', stdout: '', stderr: '', truncated: false, spawnError: error.message });
+    return finishObserved({ cwdIdentity, executableIdentity: resolved.identity, exitCode: null, termination: 'SPAWN_ERROR', stdout: '', stderr: '', truncated: false, spawnError: error instanceof Error ? error.message : String(error) });
   } finally { options.signal?.removeEventListener('abort', onAbort); }
 }
 
@@ -177,20 +223,61 @@ export function statusFromObservation(observation: RecordedObservation, options:
   return (typeof marker === 'string' ? output.includes(marker) : new RegExp(marker.source, marker.flags).test(output)) ? 'EXPECTED_NEGATIVE' : 'FAIL';
 }
 
-export async function writeCommandEvidence(observation: RecordedObservation, outDir: string, id: string, status: CommandStatus, expectedNegative?: ExpectedNegative): Promise<CommandEvidence> {
-  await mkdir(outDir, { recursive: true });
-  const boundedLogRef = join(outDir, `${id}.log`);
-  const log = [
+function utf8PrefixWithin(text: string, byteBudget: number): string {
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= byteBudget) return text;
+  let end = byteBudget;
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
+  return new TextDecoder('utf-8').decode(bytes.subarray(0, end));
+}
+function capUtf8(text: string, byteBudget: number, marker: string): string {
+  if (Buffer.byteLength(text, 'utf8') <= byteBudget) return text;
+  const prefixBudget = Math.max(0, byteBudget - Buffer.byteLength(marker, 'utf8'));
+  return utf8PrefixWithin(text, prefixBudget) + marker;
+}
+function evidenceRedactor(observation: RecordedObservation, explicit: readonly string[]): ReturnType<typeof createSecretRedactor> {
+  const values = [...new Set([...explicit.filter(value => value !== ''), ...(observationSensitiveValues.get(observation) ?? [])])];
+  if (values.some(unsupportedSensitiveValue)) throw new HarnessError('EVIDENCE_ADMISSION_DENIED', UNSUPPORTED_SENSITIVE_VALUE);
+  return createSecretRedactor(values, { fields: COMMAND_EVIDENCE_SECRET_FIELDS, structuredText: true });
+}
+function requireExactSafeIdentity(redactor: ReturnType<typeof createSecretRedactor>, value: string): void {
+  if (redactor.redact(value).redactions !== 0) throw new HarnessError('EVIDENCE_ADMISSION_DENIED', EXACT_IDENTITY_DENIED);
+}
+
+export async function writeCommandEvidence(observation: RecordedObservation, outDir: string, id: string, status: CommandStatus, expectedNegative?: ExpectedNegative, options: WriteCommandEvidenceOptions = {}): Promise<CommandEvidence> {
+  const redactor = evidenceRedactor(observation, options.sensitiveValues ?? []);
+  for (const value of observation.argv) requireExactSafeIdentity(redactor, value);
+  requireExactSafeIdentity(redactor, observation.cwdIdentity);
+  requireExactSafeIdentity(redactor, observation.executableIdentity);
+  const exactMetadataBytes = Buffer.byteLength(JSON.stringify(observation.argv), 'utf8')
+    + Buffer.byteLength(observation.cwdIdentity, 'utf8') + Buffer.byteLength(observation.executableIdentity, 'utf8');
+  if (exactMetadataBytes > COMMAND_EVIDENCE_EXACT_METADATA_BYTES)
+    throw new HarnessError('EVIDENCE_ADMISSION_DENIED', EXACT_IDENTITY_DENIED);
+  const stdout = redactor.redact(observation.stdout).text;
+  const stderr = redactor.redact(observation.stderr).text;
+  const spawnError = observation.spawnError
+    ? capUtf8(redactor.redact(observation.spawnError).text, COMMAND_EVIDENCE_SPAWN_DIAGNOSTIC_BYTES, DIAGNOSTIC_TRUNCATION_MARKER)
+    : undefined;
+  const serialized = [
     `argv: ${JSON.stringify(observation.argv)}`,
     `cwd: ${observation.cwdIdentity}`,
+    `executable: ${observation.executableIdentity}`,
+    `status: ${status}`,
     `termination: ${observation.termination}`,
     `exitCode: ${observation.exitCode === null ? 'null' : observation.exitCode}`,
-    ...(observation.spawnError ? [`spawnError: ${observation.spawnError}`] : []),
+    ...(spawnError ? [`spawnError: ${spawnError}`] : []),
     ...(observation.truncated ? ['[output truncated at bound]'] : []),
-    '--- stdout ---', observation.stdout,
-    '--- stderr ---', observation.stderr,
+    '--- stdout ---', stdout,
+    '--- stderr ---', stderr,
   ].join('\n');
-  await writeFile(boundedLogRef, log, 'utf8');
+  const log = capUtf8(serialized, COMMAND_EVIDENCE_FINAL_LOG_BYTES, FINAL_TRUNCATION_MARKER);
+  const boundedLogRef = join(outDir, `${id}.log`);
+  try {
+    await mkdir(outDir, { recursive: true });
+    await writeFile(boundedLogRef, log, { encoding: 'utf8', flag: 'wx' });
+  } catch {
+    throw new HarnessError('EVIDENCE_WRITE_FAILED', 'Command evidence could not be written safely.');
+  }
   return {
     argv: observation.argv, cwdIdentity: observation.cwdIdentity, executableIdentity: observation.executableIdentity,
     startedAt: observation.startedAt, endedAt: observation.endedAt, exitCode: observation.exitCode,
@@ -308,7 +395,7 @@ function baselineCommandTimeout(value: unknown): number {
 
 export async function runBaseline(outDir: string, repoRoot = root, options: BaselineOptions = {}): Promise<{ commands: CommandEvidence[]; platform: string; nodeVersion: string; packageManagerVersion: string; commandTimeoutMs: number }> {
   const commandTimeoutMs = baselineCommandTimeout(options.commandTimeoutMs === undefined ? DEFAULT_TIMEOUT_MS : options.commandTimeoutMs);
-  if (existsSync(outDir)) throw new HarnessError('INVALID_INPUT', `Output directory must be new: ${outDir}`);
+  if (existsSync(outDir)) throw new HarnessError('INVALID_INPUT', 'Output directory must be new.');
   const pm = resolvePackageManager(repoRoot);
   // Take exclusive custody before starting a command; a concurrent run must
   // not write overlapping receipts even when both saw an absent directory.
@@ -316,14 +403,18 @@ export async function runBaseline(outDir: string, repoRoot = root, options: Base
   try { await mkdir(outDir); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST')
-      throw new HarnessError('INVALID_INPUT', `Output directory must be new: ${outDir}`);
+      throw new HarnessError('INVALID_INPUT', 'Output directory must be new.');
     throw error;
   }
   const commands: CommandEvidence[] = [];
   const environment = { COREPACK_ENABLE_NETWORK: '0' };
   const versionObs = await runRecordedCommand(pm.file, [...pm.prefix, '--version'], { cwd: repoRoot, timeoutMs: 60_000, environment });
-  const packageManagerVersion = statusFromObservation(versionObs) !== 'PASS' ? 'unavailable' : versionObs.stdout.trim().split('\n').at(-1) ?? 'unavailable';
+  const observedVersion = versionObs.stdout.trim();
+  const validObservedVersion = /^\d+\.\d+\.\d+$/.test(observedVersion);
+  const packageManagerVersion = statusFromObservation(versionObs) !== 'PASS' || !validObservedVersion ? 'unavailable' : observedVersion;
   commands.push(await writeCommandEvidence(versionObs, outDir, '00-package-manager', statusFromObservation(versionObs)));
+  if (statusFromObservation(versionObs) === 'PASS' && !validObservedVersion)
+    throw new HarnessError('INCOMPATIBLE_TOOLCHAIN', 'Installed package manager version output is not an exact semantic version.');
   if (!pm.declaredVersion || packageManagerVersion !== pm.declaredVersion)
     throw new HarnessError('INCOMPATIBLE_TOOLCHAIN', `Installed pnpm ${packageManagerVersion} does not match the declared version ${pm.declaredVersion ?? 'unavailable'}.`);
   for (const item of baselineCommands(pm)) {
@@ -357,5 +448,9 @@ export function baselineMain(args: string[]): Promise<number> {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  baselineMain(process.argv.slice(2)).then(code => { process.exitCode = code; }).catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });
+  baselineMain(process.argv.slice(2)).then(code => { process.exitCode = code; }).catch(error => {
+    const code = error instanceof HarnessError ? error.code : 'BASELINE_FAILED';
+    console.error(code + ': baseline evidence command failed safely.');
+    process.exitCode = 1;
+  });
 }

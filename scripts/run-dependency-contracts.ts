@@ -125,7 +125,7 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
     const outputPath = resolve(outputDirectory);
     out = join(realpathSync(dirname(outputPath)), basename(outputPath));
   } catch (error) {
-    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: error instanceof Error ? error.message : String(error) });
+    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: 'Evidence output setup failed.' });
     receipt.endedAt = new Date().toISOString();
     return receipt;
   }
@@ -140,7 +140,7 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
     await mkdir(out);
     requireValue(realpathSync(out) === out, 'Evidence output changed during directory creation.');
   } catch (error) {
-    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: error instanceof Error ? error.message : String(error) });
+    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: 'Evidence output setup failed.' });
     receipt.endedAt = new Date().toISOString();
     return receipt;
   }
@@ -164,7 +164,8 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
     const environment = { COREPACK_ENABLE_NETWORK: '0', CI: 'true' };
     const version = await runRecordedCommand(pm.file, [...pm.prefix, '--version'], { cwd: root, timeoutMs: 30_000, environment });
     receipt.commands.push(await writeCommandEvidence(version, out, '00-package-manager', statusFromObservation(version)));
-    receipt.packageManagerVersion = version.stdout.trim();
+    const observedVersion = version.stdout.trim();
+    receipt.packageManagerVersion = /^\d+\.\d+\.\d+$/.test(observedVersion) ? observedVersion : null;
     requireValue(statusFromObservation(version) === 'PASS' && receipt.packageManagerVersion === pkg.packageManager.slice(5),
       'Pinned pnpm is unavailable offline or its version does not match.');
     const reportPath = join(out, 'vitest.json');
@@ -192,7 +193,7 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
       if (receipt.tests.some(test => test.status === 'BLOCKED'))
         receipt.issues.push({ code: 'CONTRACT_TEST_NOT_EXECUTED', message: 'Every declared file needs at least one passed assertion, with no skipped, pending, or todo cases.' });
     } catch (error) {
-      receipt.issues.push({ code: 'CURRENT_TEST_RECEIPTS_MISSING', message: error instanceof Error ? error.message : String(error) });
+      receipt.issues.push({ code: 'CURRENT_TEST_RECEIPTS_MISSING', message: 'Current dependency test report is unavailable or invalid.' });
     }
     try {
       requireValue(readFileSync(sourceLockPath, 'utf8') === lockBytes, 'Source-lock bytes changed during execution.');
@@ -200,12 +201,12 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
       const after = sourceReceipt(root, lock, lockBytes, testIds);
       requireValue(JSON.stringify(after) === JSON.stringify(receipt.source), 'Source custody changed during execution.');
     } catch (error) {
-      receipt.issues.push({ code: 'SOURCE_CHANGED_DURING_EXECUTION', message: error instanceof Error ? error.message : String(error) });
+      receipt.issues.push({ code: 'SOURCE_CHANGED_DURING_EXECUTION', message: 'Source custody changed during execution.' });
     }
     receipt.status = receipt.tests.some(test => test.status === 'FAIL') ? 'FAIL'
       : receipt.issues.length === 0 && receipt.tests.length === testIds.length ? 'PASS' : 'BLOCKED';
   } catch (error) {
-    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: error instanceof Error ? error.message : String(error) });
+    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: 'Evidence output setup failed.' });
   }
   receipt.contracts = (lock?.publicContracts ?? []).map<DependencyExecutionReceipt['contracts'][number]>(contract => ({
     ...contract, status: contract.testIds.some(id => receipt.tests.some(test => test.testId === id && test.status === 'FAIL')) ? 'FAIL'
@@ -227,5 +228,5 @@ async function dependencyContractsMain(args: string[]): Promise<number> {
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   dependencyContractsMain(process.argv.slice(2)).then(code => { process.exitCode = code; })
-    .catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 2; });
+    .catch(() => { console.error('Dependency contract execution failed safely.'); process.exitCode = 2; });
 }
