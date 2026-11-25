@@ -1,22 +1,22 @@
-name: Stale claim release
+name: Stale claim audit
 
 on:
   schedule:
-    # Sweep open issues every 15 minutes for claims older than the stale threshold.
+    # Advisory only: inactivity never releases a worker's ownership.
     - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "List issues that would be released without writing"
+        description: "Compatibility input; every run is read-only, including false"
         type: boolean
         required: true
         default: true
 
 permissions:
-  issues: write
+  issues: read
 
 jobs:
-  sweep:
+  audit:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     concurrency:
       group: stale-claim-release
@@ -24,115 +24,138 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Release stale claims on open issues
+      - name: Report overdue scopes without changing ownership
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
-            // Manual runs default to a dry run; scheduled runs always release.
-            const dryRun = context.eventName === 'workflow_dispatch'
-              ? (context.payload.inputs?.dry_run === 'true' || context.payload.inputs?.dry_run === true)
-              : false;
             const STALE_MINUTES = 60;
-            const RELEASE_LABELS = /in.?progress|claimed|wip|assigned|active/i;
-            // Only markers from bots and repo members/collaborators count: a forged
-            // CLAIM from anyone else must never clear assignments or labels.
-            const trustedAuthor = (c) =>
-              c.user.type === 'Bot' ||
-              ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(c.author_association);
-
-            // Latest CLAIM/CHECKPOINT/RELEASE marker comment from a trusted author.
-            const latestMarker = async (issueNumber) => {
-              const comments = await github.paginate(github.rest.issues.listComments, {
-                ...context.repo,
-                issue_number: issueNumber,
-                per_page: 100,
-              });
-              let latest = null;
-              for (const c of comments) {
-                if (!trustedAuthor(c)) continue;
-                const marker = (c.body || '').slice(0, 300).match(/\b(CLAIM|CHECKPOINT|RELEASE)\b/);
-                if (!marker) continue;
-                if (!latest || new Date(c.created_at) > new Date(latest.comment.created_at)) {
-                  latest = { comment: c, kind: marker[1] };
+            const trustedAuthor = (comment) => comment.user?.type === 'Bot' ||
+              ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(comment.author_association);
+            const escape = (value) => String(value).replace(/[&<>"']/g, (char) =>
+              ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[char]));
+            const liveLines = (body) => {
+              const lines = [];
+              let fence = null;
+              for (const line of String(body || '').split(/\r?\n/)) {
+                if (/^\s*>/.test(line)) continue;
+                const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+                if (marker) {
+                  if (!fence) fence = marker;
+                  else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+                  continue;
+                }
+                if (!fence && !/^(?: {4}|\t)/.test(line) && line.trim()) lines.push(line.trim());
+              }
+              return lines;
+            };
+            const parseScopes = (fields) => {
+              const scopes = new Set();
+              for (const value of fields.SCOPE || []) {
+                for (const part of value.split(/[,;]/).map((scope) => scope.trim()).filter(Boolean)) {
+                  const range = /^T(\d+)\s*-\s*T(\d+)$/i.exec(part);
+                  if (range) {
+                    const start = Number(range[1]), end = Number(range[2]);
+                    if (!Number.isSafeInteger(end) || start > end || end - start > 99) return null;
+                    for (let task = start; task <= end; task++) scopes.add('T' + String(task).padStart(range[1].length, '0'));
+                  } else scopes.add(/^T\d+(?:[._-][a-z0-9]+)*$/i.test(part) || /^ALL$/i.test(part) ? part.toUpperCase() : part);
                 }
               }
-              return latest;
+              // SCOPE is explicit custody metadata; TASKS is a fallback for journals
+              // that identify scoped work only through their task matrix.
+              if (!fields.SCOPE?.length) {
+                for (const value of fields.TASKS || []) {
+                  const tasks = [...value.matchAll(/\b(T\d+(?:[._-][a-z0-9]+)*)\s*:/gi)];
+                  if (!tasks.length && value.trim()) return null;
+                  for (const task of tasks) scopes.add(task[1].toUpperCase());
+                }
+              }
+              return scopes.has('ALL') && scopes.size > 1 ? null : [...scopes];
             };
-
+            const overdue = [], review = [];
             const issues = await github.paginate(github.rest.issues.listForRepo, {
-              ...context.repo,
-              state: 'open',
-              per_page: 100,
+              ...context.repo, state: 'open', per_page: 100,
             });
-            core.info(`Scanning ${issues.length} open issues (dryRun=${dryRun}).`);
-
-            const stale = [];
+            core.info('Read-only claim audit: no release, assignment, label or comment writes. Legacy dry_run does not change this.');
             for (const issue of issues) {
               if (issue.pull_request) continue;
-              const latest = await latestMarker(issue.number);
-              if (!latest) continue;
-              const released =
-                latest.kind === 'RELEASE' || /OWNER\s*=\s*NONE/i.test(latest.comment.body);
-              if (released) continue;
-              const ageMinutes = Math.floor(
-                (Date.now() - new Date(latest.comment.created_at).getTime()) / 60000,
-              );
-              if (ageMinutes <= STALE_MINUTES) continue;
-              stale.push({ issue, latest, ageMinutes });
-            }
-
-            core.info(`Found ${stale.length} stale claim(s).`);
-            for (const { issue, latest, ageMinutes } of stale) {
-              core.info(
-                `#${issue.number} ${issue.title} — latest ${latest.kind} ${ageMinutes}m old: ${latest.comment.html_url}`,
-              );
-              if (dryRun) continue;
-
-              // Re-check right before writing: a claim posted during the scan must
-              // not be released, and a RELEASE posted during the scan must win.
-              const recheck = await latestMarker(issue.number);
-              if (
-                !recheck ||
-                recheck.comment.id !== latest.comment.id ||
-                recheck.kind === 'RELEASE' ||
-                /OWNER\s*=\s*NONE/i.test(recheck.comment.body)
-              ) {
-                core.info(`#${issue.number} claim state changed during scan; skipping.`);
-                continue;
+              const owners = new Map();
+              const diagnose = (comment, worker, reason) => review.push({issue, comment, worker, reason});
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo, issue_number: issue.number, per_page: 100,
+              });
+              const records = [];
+              for (const comment of comments) {
+                if (!trustedAuthor(comment)) continue;
+                const lines = liveLines(comment.body);
+                const header = /^\[?([a-z0-9]+(?:-[a-z0-9]+){2,})\]?\s+((?:CLAIM|CHECKPOINT|RELEASED?)\b[^|]*)/i.exec(lines[0] || '');
+                if (!header) {
+                  if (/^(?:\[[^\]]+\]\s+)?(?:CLAIM|CHECKPOINT|RELEASED?)\b/i.test(lines[0] || '')) diagnose(comment, 'UNKNOWN', 'Unparseable worker header');
+                  continue;
+                }
+                const worker = header[1], created = Date.parse(comment.created_at);
+                if (!Number.isFinite(created)) { diagnose(comment, worker, 'Invalid creation timestamp'); continue; }
+                const fields = {};
+                for (const line of lines) {
+                  for (const field of line.matchAll(/(?:^|[;|])\s*(OWNER|SCOPE|TASKS)\s*=\s*(.*?)(?=\s*[;|]\s*[a-z][a-z0-9_]*\s*=|$)/gi)) {
+                    (fields[field[1].toUpperCase()] ||= []).push(field[2].trim());
+                  }
+                }
+                records.push({comment, worker, created, fields, header: header[2]});
               }
-
-              // Clean up first, then post RELEASE last: if cleanup fails, the issue
-              // still reads claimed and the next sweep retries the whole release.
-              if (issue.assignees.length > 0) {
-                await github.rest.issues.removeAssignees({
-                  ...context.repo,
-                  issue_number: issue.number,
-                  assignees: issue.assignees.map((a) => a.login),
-                });
-              }
-              for (const label of issue.labels) {
-                const name = typeof label === 'string' ? label : label.name;
-                if (!RELEASE_LABELS.test(name)) continue;
-                try {
-                  await github.rest.issues.removeLabel({
-                    ...context.repo,
-                    issue_number: issue.number,
-                    name,
-                  });
-                } catch (err) {
-                  if (err.status !== 404) throw err;
+              records.sort((left, right) => left.created - right.created || left.comment.id - right.comment.id);
+              for (const record of records) {
+                const {comment, worker, fields, header} = record;
+                const ownerFields = fields.OWNER || [];
+                if (new Set(ownerFields).size > 1 || ownerFields.some((owner) => owner !== worker && owner.toUpperCase() !== 'NONE')) {
+                  diagnose(comment, worker, 'OWNER conflict; existing scopes preserved'); continue;
+                }
+                let scopes = parseScopes(fields);
+                if (!scopes) { diagnose(comment, worker, 'Invalid or ambiguous scope fields'); continue; }
+                const active = owners.get(worker) || new Map();
+                owners.set(worker, active);
+                const released = /(?:^|[+/])\s*RELEASED?\b/i.test(header) || ownerFields.some((owner) => owner.toUpperCase() === 'NONE');
+                const claimed = /(?:^|[+/])\s*CLAIM\b/i.test(header) && !released;
+                if (scopes.includes('ALL')) {
+                  if (!released) { diagnose(comment, worker, 'SCOPE=ALL requires an explicit release'); continue; }
+                  scopes = [...active.keys()];
+                } else if (!scopes.length) {
+                  if (active.size === 1) scopes = [...active.keys()];
+                  else if (claimed && active.size === 0) {
+                    scopes = ['UNSPECIFIED'];
+                    diagnose(comment, worker, 'Claim has no structured scope; manual review required');
+                  } else {
+                    diagnose(comment, worker, 'Ambiguous scope-less record; existing scopes preserved'); continue;
+                  }
+                }
+                for (const scope of scopes) {
+                  if (claimed) active.set(scope, record);
+                  else if (!active.has(scope)) diagnose(comment, worker, 'Unmatched scope ' + scope + '; existing scopes preserved');
+                  else if (released) active.delete(scope);
+                  else active.set(scope, record);
                 }
               }
-              const utc = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: issue.number,
-                body: [
-                  `[stale-claim-sweeper] RELEASE | UTC=${utc} | STATUS=RELEASED`,
-                  `ISSUE=${issue.html_url}; OWNER=NONE; RECIPIENT=NONE`,
-                  `DELTA=auto-released stale claim: latest ${latest.kind} was ${ageMinutes} minutes old with no RELEASE (threshold ${STALE_MINUTES} min)`,
-                  `HISTORY=${latest.comment.html_url}`,
-                  `NEXT=unclaimed; any worker may claim per AGENTS.md`,
-                ].join('\n'),
-              });
+              for (const [worker, scopes] of owners) {
+                for (const [scope, record] of scopes) {
+                  const ageMinutes = (Date.now() - record.created) / 60000;
+                  if (ageMinutes > STALE_MINUTES) overdue.push({issue, worker, scope, comment: record.comment, ageMinutes});
+                }
+              }
             }
+            const issueLink = (issue) => `<a href="${escape(issue.html_url)}">#${issue.number} ${escape(issue.title)}</a>`;
+            const commentLink = (comment) => `<a href="${escape(comment.html_url)}">comment ${escape(comment.id)}</a>`;
+            core.info(`Found ${overdue.length} overdue scope record(s) and ${review.length} record(s) requiring manual review. Ownership is unchanged.`);
+            for (const {issue, worker, scope, ageMinutes, comment} of overdue) core.info('Overdue: ' + JSON.stringify({issue: issue.number, worker, scope, ageMinutes, evidence: comment.html_url}));
+            for (const {issue, worker, reason, comment} of review) core.info('Manual review: ' + JSON.stringify({issue: issue.number, worker, reason, evidence: comment.html_url}));
+            core.summary.addHeading('Stale claim audit');
+            core.summary.addRaw('Advisory only. More than 60 minutes without a matching record does not release ownership or authorize takeover. Explicit owner release or maintainer reassignment is still required.\n');
+            core.summary.addHeading('Overdue scope records', 2);
+            core.summary.addTable([
+              ['Issue', 'Worker', 'Scope', 'Age in minutes', 'Last matching record'],
+              ...overdue.map(({issue, worker, scope, ageMinutes, comment}) => [issueLink(issue), escape(worker), escape(scope), ageMinutes.toFixed(1), commentLink(comment)]),
+            ]);
+            core.summary.addHeading('Records requiring manual review', 2);
+            core.summary.addTable([
+              ['Issue', 'Worker', 'Reason', 'Record'],
+              ...review.map(({issue, worker, reason, comment}) => [issueLink(issue), escape(worker), escape(reason), commentLink(comment)]),
+            ]);
+            await core.summary.write();
