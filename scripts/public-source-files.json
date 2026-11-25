@@ -2855,6 +2855,8 @@
     "tests/appearance-draft.test.ts",
     "tests/artifact-inputs.test.ts",
     "tests/attention-boundaries.test.ts",
+    "tests/attention-completion-mute.test.ts",
+    "tests/attention-delivery-mute.test.ts",
     "tests/attention-popups.test.ts",
     "tests/attention.test.ts",
     "tests/backend-pdf.test.ts",
