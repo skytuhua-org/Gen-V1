@@ -148,7 +148,12 @@ function inkTiming(series: Awaited<ReturnType<typeof inkExtent>>) {
 }
 await mkdir(output, { recursive: true });
 const manifestPath = join(folder, 'manifest.json');
-const manifest = await readJson<{ captures: Capture[] }>(manifestPath).catch(() => ({ captures: [] }));
+// A missing or unreadable manifest must fail: an empty analysis written as if it
+// measured real captures would report success on invalid input.
+const manifest = await readJson<{ captures: Capture[] }>(manifestPath).catch(cause => {
+  throw new Error(`Capture manifest is missing or unreadable: ${manifestPath} (${cause instanceof Error ? cause.message : cause})`);
+});
+if (!Array.isArray(manifest.captures)) throw new Error(`Capture manifest has no captures array: ${manifestPath}`);
 const sources = await readJson<Source[]>(resolve('docs/evidence/frontend-review/fidelity-20261030/analysis/originals-metadata.json'));
 const evidence: Record<string, unknown> = { capturedAt: new Date().toISOString(), fps, toleranceFrames: 2, scope: 'Offline analysis of actual renderer recordings, DOM observations and original encoded frames. Not backend provenance.', sources: [], recordings: [], observations: [], sheets: [], limits: ['Two-frame agreement is assessed only for isolatable effects with both onset and settle measurable.', 'Source video includes global camera zoom/smear; pixel changes alone do not identify app motion.', 'The horizontal original is supplementary; both PR demonstrations follow the vertical source.'] };
 let signingProbe: MotionProbe | undefined;
