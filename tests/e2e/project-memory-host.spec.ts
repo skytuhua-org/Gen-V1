@@ -166,7 +166,10 @@ test.describe('compaction cancellation through the real App and host', () => {
     const compact = inspector(page).getByRole('button', {name: 'Compact now', exact: true});
     await compact.focus(); await expect(compact).toBeFocused();
     let release!: () => void;
-    memoryHost.holdCompaction = new Promise(resolve => { release = resolve; setTimeout(resolve, 10_000); });
+    memoryHost.holdCompaction = new Promise(resolve => {
+      const timeout = setTimeout(resolve, 10_000);
+      release = () => { clearTimeout(timeout); resolve(); };
+    });
     const compactCommands: unknown[] = [];
     page.on('request', request => {
       if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/commands' && request.postDataJSON()?.type === 'run.compact') compactCommands.push(request.postDataJSON());
