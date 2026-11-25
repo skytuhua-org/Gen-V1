@@ -163,16 +163,25 @@ export async function withGitMetadata<T>(cwd: string, signal: AbortSignal, actio
       try { await removeOwnedFile(entry.path, entry, new AbortController().signal, false, entry.directory); }
       catch (cause) { cleanupErrors.push(cause); failedPaths.push(entry.path); }
     }
+    const reportCleanupFailure = () => {
+      // Diagnostics are best effort: neither a frozen primary error nor an
+      // unavailable output stream may replace the operation's own outcome.
+      try { process.stderr.write(`Gen V1 retained ${cleanupErrors.length} Git snapshot temporary ${cleanupErrors.length === 1 ? "entry" : "entries"} because cleanup could not be confirmed.\n`); }
+      catch { /* Preserve the original operation outcome. */ }
+    };
     if (outcome.failed) {
       const failure = outcome.failure;
       if (cleanupErrors.length) {
         const suppressed = new AggregateError(cleanupErrors, "Git snapshot cleanup could not remove every temporary file.");
-        if ((typeof failure === 'object' && failure !== null) || typeof failure === 'function') (failure as { suppressed?: unknown }).suppressed = suppressed;
+        if ((typeof failure === 'object' && failure !== null) || typeof failure === 'function') {
+          try { (failure as { suppressed?: unknown }).suppressed = suppressed; }
+          catch { reportCleanupFailure(); }
+        }
         else outcome.failure = Object.assign(new Error("Git snapshot action failed", { cause: failure }), { suppressed });
       }
       throw outcome.failure;
     }
-    if (cleanupErrors.length) process.stderr.write(`Gen V1 retained ${cleanupErrors.length} Git snapshot temporary ${cleanupErrors.length === 1 ? "entry" : "entries"} because cleanup could not be confirmed.\n`);
+    if (cleanupErrors.length) reportCleanupFailure();
     return outcome.value!;
   },()=>controller.abort());
 }
