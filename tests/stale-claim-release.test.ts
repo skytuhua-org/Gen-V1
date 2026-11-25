@@ -38,6 +38,11 @@ it('uses read-only issue permissions and preserves its scheduled/manual inspecti
   expect(workflow).toMatch(/permissions:\n  issues: read\n/);expect(workflow).not.toMatch(/issues: write/);
   expect(workflow).toContain('cron: "*/15 * * * *"');expect(workflow).toContain('workflow_dispatch:');
 });
+it.each(['RESUME CLAIM','SCOPE CLAIM'])('opens qualified %s scopes after an explicit release',async marker=>{
+  const body=`[${b}] ${marker} | UTC=2026-11-25T20:00:00Z | PLAN_REV=review-r2 | STATUS=IN_PROGRESS\nPREV=https://github.com/owner/repo/issues/42#issuecomment-3; ISSUE=https://github.com/owner/repo/issues/42; OWNER=${b}; RECIPIENT=lead; ROLE=verifier; SCOPE=T02,T03`;
+  const result=await execute([comment(1,claim(a,'T01'),200),comment(2,claim(b,'T01'),180),comment(3,release(b,'T01'),150),comment(4,body),comment(5,release(b,'T03'),90)]);
+  expect(result.overdue).toEqual([{worker:a,scope:'T01'},{worker:b,scope:'T02'}]);expect(result.diagnostics).toEqual([]);expect(result.writes).toEqual([]);
+});
 it('keeps worker A visible after the newer worker B release',async()=>{
   const result=await execute([comment(1,claim(a,'T01')),comment(2,claim(b,'T02'),100),comment(3,release(b,'T02'),10)]);
   expect(result.overdue).toEqual([{worker:a,scope:'T01'}]);expect(result.writes).toEqual([]);
