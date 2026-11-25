@@ -19,7 +19,7 @@ import {LoadingState, PendingStatus} from './LoadingState';
 import {SettingsSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
 import {ShellSidebar} from './ShellSidebar';
 import {getShellNavigationItem} from './shell-read-api';
-import {matchesShortcut, readShellLayout, useShellLayout} from './shell-layout';
+import {focusSidebarSearch, matchesShortcut, readShellLayout, useShellLayout} from './shell-layout';
 import {useSidebarCollapse} from './sidebar-collapse';
 import {useShellNavigation} from './shell-navigation';
 import {useAppearance} from './useAppearance';
@@ -207,6 +207,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   const pluginCatalogError = pluginCatalog.error || (pluginCatalog.failed ? 'Plug-ins could not be loaded.' : '');
   const [search, setSearch] = useState(''), navigation = useShellNavigation(search), [open, setOpen] = useState(false);
   const [mobile, setMobile] = useState(() => matchMedia('(max-width: 700px)').matches);
+  const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const [rename, setRename] = useState<ThreadNavigationRow>(), [title, setTitle] = useState('');
   const [archive, setArchive] = useState<ThreadNavigationRow>();
   const [unpin, setUnpin] = useState<{ row: ThreadNavigationRow; patch: NonNullable<ThreadNavigationRow['presentation']>; decide: (accepted: boolean) => void }>();
@@ -224,6 +225,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
     const query = matchMedia('(prefers-color-scheme: dark)'), update = () => {document.documentElement.dataset.theme = settings.theme === 'system' ? query.matches ? 'dark' : 'light' : settings.theme;};
     update(); query.addEventListener('change', update); return () => query.removeEventListener('change', update);
   }, [settings.theme]);
+  useLayoutEffect(() => {if (searchFocusRequest) focusSidebarSearch(searchRef.current);}, [searchFocusRequest]);
   const action = (kind: ConversationIntent) => fail(() => openConversation(undefined, kind));
   const openSettings = () => fail(async () => {await prepare(); setSettingsOpen(true);});
   const stopFocused = () => {const card=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('[data-agent-id]');const agent=card?controller.getSnapshot().agents.find(item=>item.agentId===card.dataset.agentId):undefined;if(agent&&agent.status==='working')void composers.stop(agent);};
@@ -234,7 +236,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
       if (event.defaultPrevented || document.querySelector('dialog[open]')) return;
       if (matchesShortcut(event, preferences.keybindings.openSettings)) {event.preventDefault(); shortcuts.current.openSettings();}
       else if (matchesShortcut(event, preferences.keybindings.newThread)) {event.preventDefault(); shortcuts.current.action('new-thread');}
-      else if (matchesShortcut(event, preferences.keybindings.search)) {event.preventDefault(); setOpen(true); setLayout(value => ({...value, sidebarCollapsed: false})); requestAnimationFrame(() => searchRef.current?.focus());}
+      else if (matchesShortcut(event, preferences.keybindings.search)) {event.preventDefault(); setOpen(true); setLayout(value => ({...value, sidebarCollapsed: false})); setSearchFocusRequest(value => value + 1);}
       else if (matchesShortcut(event, preferences.keybindings.toggleSidebar)) {event.preventDefault(); if (mobile) setOpen(value => !value); else setLayout(value => ({...value, sidebarCollapsed: !value.sidebarCollapsed}));}
       else if (matchesShortcut(event, preferences.keybindings.stop)) {event.preventDefault(); shortcuts.current.stopFocused();}
     };
