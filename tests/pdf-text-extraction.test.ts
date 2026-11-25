@@ -44,6 +44,19 @@ describe('pdf text extraction', () => {
     expect(await inspectStream('[(x(y)z) 20 <6465>] TJ')).toBe('x(y)z de');
   });
 
+  it('extracts large TJ arrays without exceeding the JavaScript argument limit', async () => {
+    const count = 130_000;
+    const text = await inspectStream('[' + '(a) '.repeat(count) + '] TJ');
+    expect(text.length).toBe(count * 2 - 1);
+    expect(/^a(?: a)*$/.test(text)).toBe(true);
+  });
+
+  it('recovers standalone literal and hex text after an unclosed array', async () => {
+    expect(await inspectStream('[(lost)\nBT (invoice) Tj ET')).toBe('invoice');
+    expect(await inspectStream('[(lost)\nBT <696e766f696365> Tj ET')).toBe('invoice');
+    expect(await inspectStream('(before) Tj [(lost) (after) Tj')).toBe('before after');
+  });
+
   it('recovers from malformed operands', async () => {
     expect(await inspectStream('(unterminated (ok) Tj')).toBe('ok');
     expect(await inspectStream('<zz> (still) Tj')).toBe('still');

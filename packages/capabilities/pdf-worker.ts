@@ -22,8 +22,11 @@ function pdfText(bytes: Uint8Array): string {
     return ok;
   };
   const hexString = () => {
-    const end = source.indexOf(">", position + 1);
-    if (end === -1) return null;
+    let end = position + 1;
+    // Stop at the first invalid character so malformed openers cannot each
+    // search the entire remaining stream before recovery advances.
+    while (end < source.length && /[0-9a-fA-F\s]/.test(source[end])) end++;
+    if (source[end] !== ">") return null;
     const digits = source.slice(position + 1, end).replace(/\s/g, "");
     if (!/^[0-9a-fA-F]*$/.test(digits)) return null;
     position = end + 1;
@@ -33,6 +36,13 @@ function pdfText(bytes: Uint8Array): string {
   // an operand commits only when a Tj/TJ/'/" operator follows its closing token.
   const openers: number[] = [];
   let inArray = false, recovering = false; const items: string[] = [];
+  const appendOperand = (value: string) => {
+    if (isTextOperator()) {
+      // Standalone text operators cannot belong to a TJ array. Recover from
+      // an unmatched opener without buffering later page text until EOF.
+      inArray = false; items.length = 0; parts.push(value);
+    } else if (inArray) items.push(value);
+  };
   const scan = () => {
     while (position < source.length) {
       const c = source[position];
@@ -46,10 +56,7 @@ function pdfText(bytes: Uint8Array): string {
       if (c === ")") {
         if (openers.length) {
           const raw = source.slice(openers.pop()! + 1, position++);
-          if (!openers.length) {
-            if (inArray) items.push(decode(raw));
-            else if (isTextOperator()) parts.push(decode(raw));
-          }
+          if (!openers.length) appendOperand(decode(raw));
         } else position++;
         continue;
       }
@@ -57,14 +64,14 @@ function pdfText(bytes: Uint8Array): string {
       if (c === "<" && source[position + 1] !== "<") {
         const value = hexString();
         if (value === null) { position++; continue; }
-        if (inArray) items.push(value);
-        else if (isTextOperator()) parts.push(value);
+        appendOperand(value);
         continue;
       }
       if (c === "[") { inArray = true; items.length = 0; position++; continue; }
       if (c === "]" && inArray) {
         inArray = false; position++;
-        if (isTextOperator()) parts.push(...items);
+        if (isTextOperator()) for (const item of items) parts.push(item);
+        items.length = 0;
         continue;
       }
       position++;

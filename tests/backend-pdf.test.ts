@@ -24,5 +24,13 @@ describe('bounded backend PDF processing',()=>{
  it('honors an already revoked context before processing',async()=>{const controller=new AbortController();controller.abort();await expect(inspectPdf(await fixture(),controller.signal)).rejects.toMatchObject({code:'CANCELLED'});});
  it('aborts active processing and retains responsive host timers',async()=>{const source=await expensiveText(),controller=new AbortController(),started=performance.now(),timer=new Promise<number>(accept=>setTimeout(()=>accept(performance.now()-started),25));const pending=inspectPdf(source,controller.signal);setTimeout(()=>controller.abort(),1000);await expect(pending).rejects.toMatchObject({code:'CANCELLED'});expect(performance.now()-started).toBeLessThan(5000);expect(await timer).toBeLessThan(500);},8000);
  it('terminates a genuinely over-budget text parser at the fixed deadline',async()=>{const source=await expensiveText(),started=performance.now();await expect(inspectPdf(source)).rejects.toMatchObject({code:'PDF_TIMEOUT'});expect(performance.now()-started).toBeLessThan(18000);},20000);
+ it('recovers later text after many invalid hex prefixes within the worker deadline',async()=>{
+  const doc=await PDFDocument.create(),page=doc.addPage();
+  const stream=doc.context.flateStream('< '.repeat(1_600_000)+'(ok) Tj <796573> Tj');
+  page.node.set(PDFName.of('Contents'),doc.context.register(stream));
+  const result=await inspectPdf(await doc.save());
+  expect(result.pages[0].text).toBe('ok yes');
+  expect(result.pages[0].textError).toBeUndefined();
+ },20000);
  it('keeps rendering field failures actionable',async()=>{await expect(renderPdf(await fixture(),{...args,fields:{Name:true}})).rejects.toMatchObject({code:'UNSUPPORTED_PDF_FIELD'});});
 });
