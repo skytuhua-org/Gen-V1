@@ -3,7 +3,7 @@ onlyBuiltDependencies:
   - bun
   - electron
   - esbuild
-  - node-pty
+  - node-pty@1.1.0
 patchedDependencies:
   node-pty@1.1.0: patches/node-pty-1.1.0.patch
 supportedArchitectures:

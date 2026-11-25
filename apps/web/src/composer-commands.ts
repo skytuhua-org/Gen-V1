@@ -16,6 +16,14 @@ export function replaceCommandToken(text: string, token: CommandToken) {
   if (token.start < 0 || token.end > text.length || !/^\/[^\s/\\]*$/u.test(text.slice(token.start, token.end))) throw Error('The command token changed.');
   return {text: text.slice(0, token.start) + text.slice(token.end), caret: token.start};
 }
+export type CommandMode = 'plan' | 'build';
+export interface BuiltinCommand {id: 'model' | 'plan' | 'default'; description: string}
+export const builtinCommands: BuiltinCommand[] = [{id: 'model', description: 'Choose a model'}, {id: 'plan', description: 'Switch to Plan'}, {id: 'default', description: 'Switch to Build'}];
+/** The already-active mode's command is a no-op: /plan maps to 'plan', /default to Build. */
+export function builtinOptions(query: string, mode?: CommandMode): BuiltinCommand[] {
+  const activeModeId = mode === 'plan' ? 'plan' : mode === 'build' ? 'default' : null;
+  return builtinCommands.filter(item => item.id.includes(query.toLowerCase()) && item.id !== activeModeId);
+}
 export const skillBindingSchema = z.strictObject({
   id: z.string().uuid(), name: z.string().min(1).max(240), source: z.string().min(1).max(240),
   ref: skillReferenceSchema.refine(ref => ref.scope.kind === 'personal'),
