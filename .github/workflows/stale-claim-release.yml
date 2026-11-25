@@ -96,7 +96,7 @@ jobs:
                   // Fields are whole `KEY=value` segments between ; or | separators.
                   // OWNER accepts only a single token, so prose like "; OWNER=NONE
                   // would be required" never registers as an ownership field.
-                  for (const segment of line.split(/[;|]/)) {
+                  for (const segment of line.split(/\||;\s*(?=[A-Za-z][A-Za-z0-9_]*\s*=)/)) {
                     const m = /^\s*(OWNER|SCOPE|TASKS)\s*=\s*(.*?)\s*$/i.exec(segment);
                     if (!m) continue;
                     const key = m[1].toUpperCase(), value = m[2];
@@ -115,14 +115,17 @@ jobs:
                 }
                 let scopes = parseScopes(fields);
                 if (!scopes) { diagnose(comment, worker, 'Invalid or ambiguous scope fields'); continue; }
-                if (!fields.SCOPE?.length && fields.TASKS?.length) {
-                  diagnose(comment, worker, 'TASKS is a work journal, not custody; SCOPE= required to refresh claim scope');
-                  continue;
-                }
                 const active = owners.get(worker) || new Map();
                 owners.set(worker, active);
                 const released = /(?:^|[+/])\s*RELEASED?\b/i.test(header) || ownerFields.some((owner) => owner.toUpperCase() === 'NONE');
                 const claimed = /(?:^|[+/])\s*(?:(?:RESUME|SCOPE)\s+)?CLAIM\b/i.test(header) && !released;
+                if (
+                  !fields.SCOPE?.length && fields.TASKS?.length &&
+                  !(released && active.size === 1)
+                ) {
+                  diagnose(comment, worker, 'TASKS is a work journal, not custody; SCOPE= required to refresh claim scope');
+                  continue;
+                }
                 if (scopes.includes('ALL')) {
                   if (!released) { diagnose(comment, worker, 'SCOPE=ALL requires an explicit release'); continue; }
                   scopes = [...active.keys()];
