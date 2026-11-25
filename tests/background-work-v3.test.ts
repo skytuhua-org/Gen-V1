@@ -292,6 +292,9 @@ describe("M10-S02/S03/T02 owned RUN-lifetime commands", () => {
     expect(started.processIdentity?.pid).toBeGreaterThan(0);
     if (process.platform === "linux") expect(started.processIdentity?.creationToken).toBeTruthy();
     await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    // Publication into canonical custody is asynchronous after stream close
+    // (contract §5); wait for outputRef rather than racing it against settle.
+    await waitFor(() => !!f.coordinator.work(work.workId).outputRef);
     const settled = f.coordinator.work(work.workId);
     expect(settled.outcome).toBe("SUCCEEDED");
     const output = f.coordinator.readOutput(work.workId, "thread-1", 0);
@@ -924,6 +927,7 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "custody", command: spec(f, ["-e", "console.log('custody bytes')"]) });
     await f.coordinator.startCommand(work.workId);
     await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    await waitFor(() => !!f.coordinator.work(work.workId).outputRef);
     const handle = f.coordinator.work(work.workId).outputRef;
     // Canonical contract: outputRef is a UUID that context_result_read's
     // z.uuid() schema accepts and private custody at the service's location
