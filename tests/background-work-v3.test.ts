@@ -984,7 +984,7 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     // The child hands its stdout to a grandchild that writes the tail only
     // after the owned process exits: 'exit' publishes the handle, then
     // 'close' persists the tail — so the minted digest predates final bytes.
-    const script = `const g=require("child_process").spawn(process.execPath,["-e","setTimeout(()=>process.stdout.write('tail-after-exit'),150)"],{stdio:["ignore","inherit","inherit"]});g.unref();process.stdout.write("head\\n");`;
+    const script = `const g=require("child_process").spawn(process.execPath,["-e","setTimeout(()=>process.stdout.write('tail-after-exit'),150)"],{stdio:["ignore","inherit","inherit"],detached:true});g.unref();process.stdout.write("head\\n");`;
     const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "tail", command: spec(f, ["-e", script]) });
     await f.coordinator.startCommand(work.workId);
     // Publication happens at close — after the grandchild's tail lands — so
