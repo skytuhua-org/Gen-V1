@@ -182,6 +182,24 @@ test('profile sign-in works without a project and leaves the Terminal project ga
  await panel.getByRole('button',{name:'Copy code',exact:true}).click();expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe('ABCD-EFGH');await expect(panel.getByRole('status')).toContainText('Copied');await panel.getByRole('button',{name:'Cancel sign-in',exact:true}).click();await expect.poll(()=>actions.some(item=>item.action==='cancel')).toBe(true);await expect(panel).toContainText('Sign-in cancelled');
  await openSurface(page,panel,'Terminal');await expect(panel).toContainText('Connect a project to use terminal');
 });
+test('opens the GitHub device page through the desktop bridge with no request payload',async({page,context})=>{
+ const calls:unknown[][]=[];
+ await page.exposeFunction('recordDeviceOpen',(...args:unknown[])=>{calls.push(args);});
+ await page.addInitScript(()=>{
+  const desktop=window as unknown as {harnessDesktop:{openGitHubDevice:(...args:unknown[])=>Promise<void>};recordDeviceOpen:(...args:unknown[])=>Promise<void>};
+  desktop.harnessDesktop={openGitHubDevice:(...args)=>desktop.recordDeviceOpen(...args)};
+ });
+ // Even on the pinned baseline, keep the ordinary device link click offline.
+ await context.route('https://github.com/login/device',route=>route.fulfill({body:'Synthetic device page'}));
+ const {panel}=await profileAuthFixture(page);
+ await panel.getByRole('button',{name:'Sign in to GitHub',exact:true}).click();
+ const link=panel.getByRole('link',{name:'https://github.com/login/device',exact:true});
+ await expect(link).toHaveAttribute('referrerpolicy','no-referrer');
+ await link.focus();
+ await page.keyboard.press('Enter');
+ await expect.poll(()=>calls).toEqual([[]]);
+ expect(context.pages()).toHaveLength(1);
+});
 test('cancelled profile sign-in ignores an authenticated stale poll response',async({page})=>{
  const host=await profileAuthFixture(page);host.holdPoll();await host.panel.getByRole('button',{name:'Sign in to GitHub',exact:true}).click();await expect.poll(()=>host.actions.some(item=>item.action==='poll')).toBe(true);await host.panel.getByRole('button',{name:'Cancel sign-in',exact:true}).click();await host.releasePoll();await expect(host.panel).toContainText('Sign-in cancelled');await expect(host.panel).not.toContainText('stale-user');
 });

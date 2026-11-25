@@ -1,4 +1,4 @@
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useRef,useState,type MouseEvent} from 'react';
 import {z} from 'zod';
 import {authenticated,csrfToken,read} from './api.ts';
 import {formatLocalClock,type TimeFormat} from './time-format';
@@ -77,12 +77,19 @@ export function GitHubSignIn({active=true,onAuthenticated,timeFormat='system'}:{
   return()=>{stopped=true;clearTimeout(timer);clearTimeout(deadline);};
  },[flow,active]);
  const copy=async()=>{if(!flow)return;const generation=epoch.current;try{await navigator.clipboard.writeText(flow.userCode);if(current(generation))setCopied(true);}catch{if(current(generation))setError('Copy failed. Select and copy the code below.');}};
+ const openDevicePage=(event:MouseEvent<HTMLAnchorElement>)=>{
+  const desktop=window.harnessDesktop;
+  if(!desktop?.openGitHubDevice)return;
+  event.preventDefault();
+  const generation=epoch.current;
+  setError('');
+  void desktop.openGitHubDevice().catch(()=>{if(current(generation))setError('Could not open GitHub in your browser. Try again.');});
+ };
  return <section className="github-sign-in" aria-label="GitHub sign-in">
   <div className="github-sign-in-actions"><button disabled={!active||starting||cancelling||!!cancelId} onClick={()=>void start()}>{flow?'Start new sign-in':'Sign in to GitHub'}</button>{(flow||starting)&&<button onClick={()=>stop()}>Cancel sign-in</button>}{cancelId&&<button disabled={cancelling} onClick={()=>void cancel(cancelId,'Sign-in cancelled',epoch.current)}>Retry cancellation</button>}</div>
   {status&&<p role="status">{copied?'Copied code. ':''}{cancelling?'Cancelling sign-in…':status}</p>}
   {error&&<p className="error-text" role="status">{error}</p>}
   {flow&&<><p>Enter this code on GitHub to sign in to this Gen V1 profile.</p><div className="github-device-code"><code>{flow.userCode}</code><button onClick={()=>void copy()}>Copy code</button></div>
-   {/* The native policy requires this exact initiating app URL; the opener must not leak our URL back to github.com. */}
-   <a href={deviceUrl} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{deviceUrl}</a><p className="github-sign-in-expiry">Expires at {formatLocalClock(flow.expiresAt,timeFormat)}.</p></>}
+   <a href={deviceUrl} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" onClick={openDevicePage}>{deviceUrl}</a><p className="github-sign-in-expiry">Expires at {formatLocalClock(flow.expiresAt,timeFormat)}.</p></>}
  </section>;
 }

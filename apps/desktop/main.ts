@@ -4,7 +4,7 @@ import {randomBytes,randomUUID} from 'node:crypto';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {mkdirSync,existsSync,writeSync} from 'node:fs';
 import {createRequire} from 'node:module';
-import {GITHUB_DEVICE_URL,githubDevicePopup} from './github-device-policy.ts';
+import {GITHUB_DEVICE_URL,githubDeviceAllowed} from './github-device-policy.ts';
 import {createDesktopUpdater,type DesktopUpdater,type DesktopUpdateDriver,type UpdateStatus} from './updater.ts';
 import {checkInstalledCompatibility} from '../../packages/plugins/installation.ts';
 import {resolve,join,dirname} from 'node:path';
@@ -166,8 +166,45 @@ async function openSurface(raw:unknown,sourceBounds?:DesktopBounds):Promise<Desk
  const readyPromise=new Promise<DesktopWindowInfo>((resolve,reject)=>{resolveReady=resolve;rejectReady=reject;});void readyPromise.catch(()=>{});
  const record:WindowRecord={id,surface,window:native,url,ready:false,settled:false,visible:previous?.visible!==false,normalBounds:createNormalBounds(bounds),placement:placement??captureDesktopPlacement(bounds,all),appliedBounds:bounds,monitorRescued:!!placement&&!all.some(display=>display.id===placement.displayId),resolveReady,rejectReady,readyPromise,readyTimer:setTimeout(()=>{if(record.ready)return;if(surface.kind==='main')startupDiagnostic('main-deadline');record.settled=true;record.rejectReady(Error('The detached window did not become ready. Your original view remains available.'));loseBrowserOwner(record);native.destroy();},20000)};
  windows.set(id,record);broadcast();
- native.webContents.setWindowOpenHandler(details=>githubDevicePopup(details,{surface,expectedUrl:url.split('#')[0]!,currentUrl:native.webContents.mainFrame.url.split('#')[0]!},()=>shell.openExternal(GITHUB_DEVICE_URL,{activate:true})));native.webContents.on('will-attach-webview',event=>event.preventDefault());
- native.webContents.on('will-navigate',(event,next)=>{if(next!==url)event.preventDefault();});native.webContents.on('will-redirect',(event,next)=>{if(next!==url)event.preventDefault();});
+ native.webContents.setWindowOpenHandler(()=>({action:'deny'}));native.webContents.on('will-attach-webview',event=>event.preventDefault());
+ let restoringLaunchDocument=false;
+ const restoreLaunchDocument=(next:string)=>{
+  if(restoringLaunchDocument||next!==record.url||next===url||quitting||native.isDestroyed())return;
+  restoringLaunchDocument=true;
+  // A new document needs the original launch fragment. Use the URL owned
+  // by this window and keep fragment navigation within the current document.
+  setImmediate(()=>{
+   // Starting another navigation inside Electron's commit handler can
+   // interfere with the previous navigation completing.
+   if(quitting||native.isDestroyed()||record.url!==next||native.webContents.getURL()!==next){restoringLaunchDocument=false;return;}
+   record.url=url;
+   void native.loadURL(url).catch(error=>{
+    restoringLaunchDocument=false;
+    if(native.isDestroyed())return;
+    if(record.url===url&&native.webContents.getURL()===next)record.url=next;
+    if(surface.kind==='main')startupDiagnostic('main-load-failed',startupErrorDiagnostic(error));
+   });
+  });
+ };
+ native.webContents.on('will-navigate',(event,next)=>{
+  // A reload of the current anchored document remains on the exact owned URL.
+  if(next!==url&&next!==record.url)event.preventDefault();
+ });
+ native.webContents.on('will-redirect',(event,next)=>{if(next!==url)event.preventDefault();});
+ native.webContents.on('did-navigate-in-page',(_event,next,isMainFrame)=>{
+  if(!isMainFrame||next.split('#',1)[0]!==url.split('#',1)[0])return;
+  record.url=next;
+  if(restoringLaunchDocument&&next===url){
+   restoringLaunchDocument=false;
+   // Chromium can restore the fragment without creating a new document.
+   // Reload only after the canonical fragment has committed.
+   setImmediate(()=>{if(!quitting&&!native.isDestroyed()&&native.webContents.getURL()===url)native.webContents.reload();});
+  }
+ });
+ native.webContents.on('did-navigate',(_event,next)=>{
+  if(next===url){restoringLaunchDocument=false;record.url=url;}
+  else restoreLaunchDocument(next);
+ });
  native.webContents.on('will-frame-navigate',event=>{if(!event.isMainFrame&&!trustedDesktopSubframe(event.url,backendOrigin,`http://localhost:${widgetPort}`))event.preventDefault();});
  native.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));native.webContents.session.setPermissionCheckHandler(()=>false);secureSessionDownloads(native.webContents.session);
  native.on('close',event=>{if(!quitting){event.preventDefault();void requestClose(record).then(allow=>{if(allow)destroyWindow(record);else cancelClose(record);}).catch(()=>cancelClose(record));}});
@@ -265,6 +302,10 @@ function registerIpc(){
   try{if(!await requestClose(record))throw Error('Save the window edits before attaching it');if(main.window.isDestroyed())throw Error('The main window closed before attachment. Your detached view is still available.');if(record.browser)moveBrowser(record.browser,main,true);const surface=record.surface;destroyWindow(record);broadcast(surface);}catch(error){cancelClose(record);throw error;}
  }));
  handle(channels.minimize,record=>record.window.minimize());
+ handle(channels.openGitHubDevice,(record,value)=>{
+  if(value!==undefined||!record.ready||quitting||quitPending||!githubDeviceAllowed(record.surface))throw Error('GitHub device action denied.');
+  return shell.openExternal(GITHUB_DEVICE_URL,{activate:true});
+ });
  handle(channels.signIn,(_record,value)=>{const target=parseDesktopSignInTarget(value);return beginSignIn(target.provider,target.accountId);});
  handle(channels.signInStatus,(_record,value)=>{if(!desktopId(value))throw Error('Invalid sign-in flow.');return signInFlows.status(value);});
  handle(channels.activeSignIn,()=>signInFlows.current());

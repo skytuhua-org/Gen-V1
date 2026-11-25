@@ -8,6 +8,12 @@ const ipc = vi.hoisted(() => ({ invoke: vi.fn(async (..._args: unknown[]) => {})
 vi.mock('electron', () => ({ contextBridge: { exposeInMainWorld: ipc.expose }, ipcRenderer: { invoke: ipc.invoke, on: ipc.on, removeListener: ipc.remove } }));
 let bridge: DesktopBridge;
 beforeAll(async () => { await import('../apps/desktop/preload.ts'); bridge = ipc.expose.mock.calls[0][1] as DesktopBridge; });
+it('requests the fixed GitHub device page without passing a URL through preload', async () => {
+  expect(bridge.openGitHubDevice).toBeTypeOf('function');
+  await bridge.openGitHubDevice!();
+  expect(ipc.invoke).toHaveBeenLastCalledWith(DESKTOP_CHANNELS.openGitHubDevice);
+  expect(pluginDesktopChannelAllowed(DESKTOP_CHANNELS.openGitHubDevice)).toBe(false);
+});
 it('recovers active sign-in metadata without payload and denies it to plugin windows', async () => {
   expect(DESKTOP_CHANNELS.activeSignIn).toBe('harness-desktop:active-sign-in');
   await bridge.activeSignIn!();

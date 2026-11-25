@@ -7,6 +7,31 @@ const envelope = {authority: 'personal', threadId: 'main', scopeKey: context.sco
 beforeEach(() => vi.resetModules());
 afterEach(() => vi.unstubAllGlobals());
 
+it('renews a desktop session after a same-document plan link changes the fragment', async () => {
+  const launchToken = 'a'.repeat(64);
+  const location = {hash: '#launch=' + launchToken};
+  vi.stubGlobal('location', location);
+  let expired = false;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+    if (url === '/api/bootstrap') {
+      return new Headers(options?.headers).get('x-harness-launch') === launchToken
+        ? Response.json({csrfToken: 'fixture-session'})
+        : Response.json({error: {code: 'LAUNCH_TOKEN_REQUIRED'}}, {status: 403});
+    }
+    if (expired) {
+      expired = false;
+      return Response.json({error: {code: 'AUTH_REQUIRED'}}, {status: 401});
+    }
+    return Response.json(context);
+  }));
+  const api = await import('../apps/web/src/conversation-read-api.ts');
+  const owner = {authority: 'personal', threadId: 'main'} as const;
+  await expect(api.getConversationContext(owner)).resolves.toEqual(context);
+  location.hash = '#step-inspect';
+  expired = true;
+  await expect(api.getConversationContext(owner)).resolves.toEqual(context);
+});
+
 it('uses authenticated no-store GETs for the exact owner, bounded pages, content and scoped updates', async () => {
   const calls: {url: string; options?: RequestInit}[] = []; let expired = true;
   const signal = new AbortController().signal;
