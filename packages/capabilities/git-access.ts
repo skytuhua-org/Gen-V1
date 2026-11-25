@@ -149,9 +149,19 @@ export async function withGitMetadata<T>(cwd: string, signal: AbortSignal, actio
     // cleanup failure through the process diagnostic instead of throwing it in
     // place of the result.
     const cleanupErrors: unknown[] = [];
+    const failedPaths: string[] = [];
+    const containsFailedEntry = (directory: string) => failedPaths.some(path => {
+      const nested = relative(directory, path);
+      return nested && !isAbsolute(nested) && nested !== ".." && !nested.startsWith(".." + sep);
+    });
     for (const entry of owned.reverse()) {
+      // An ancestor cannot be removed after one of its descendants failed.
+      // Attempting it faults the native custody guard; that dependent removal
+      // is not an independent cleanup operation. All other owned entries still
+      // receive their deterministic removal attempt.
+      if (entry.directory && containsFailedEntry(entry.path)) continue;
       try { await removeOwnedFile(entry.path, entry, new AbortController().signal, false, entry.directory); }
-      catch (cause) { cleanupErrors.push(cause); }
+      catch (cause) { cleanupErrors.push(cause); failedPaths.push(entry.path); }
     }
     if (outcome.failed) {
       const failure = outcome.failure;
