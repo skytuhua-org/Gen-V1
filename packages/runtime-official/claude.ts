@@ -53,8 +53,8 @@ export async function openClaude(context: DriverContext, sdk: ClaudeSdk, modelId
     failed = error;
     rejectDriverFailure(error); input.close(); compact?.reject(error); compact = undefined;
     // A throwing observer must still allow settlement and teardown.
-    try { context.event('error', { message: error.message }); } catch {}
-    try { context.event('settled', { aborted: false }); } catch {}
+    try { context.event('error', { message: error.message }); } catch { /* Reporting the failure must not throw inside the error path. */ }
+    try { context.event('settled', { aborted: false }); } catch { /* Reporting settlement must not throw inside the error path. */ }
   };
   const permit = (name: string) => context.current() && !closed && !failed && allowed.has(name);
   const options: Options = {
