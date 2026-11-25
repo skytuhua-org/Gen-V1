@@ -101,7 +101,12 @@ function snapshot() {
     const attrs: Record<string, string> = {};
     for (const attr of Array.from(node.attributes) as { name: string; value: string }[]) {
       if (attr.name === 'style') { attrs.style = safeDeclarations(attr.value); continue; }
-      if (validateRender({ tree: [{ id, tag, attrs: { [attr.name]: attr.value }, children: [] }], css: '' })) attrs[attr.name] = attr.value;
+      attrs[attr.name] = attr.value;
+    }
+    // Fast path checks the whole attribute bag in one call; only a rejection
+    // pays the per-attribute pass that keeps the valid names and drops the rest.
+    if (!validateRender({ tree: [{ id, tag, attrs, children: [] }], css: '' })) {
+      for (const name of Object.keys(attrs)) if (name !== 'style' && !validateRender({ tree: [{ id, tag, attrs: { [name]: attrs[name]! }, children: [] }], css: '' })) delete attrs[name];
     }
     const result: RenderNode = { id, tag, attrs, children: Array.from(node.childNodes).flatMap(child => visit(child, depth + 1)) };
     if (['input', 'textarea', 'select', 'option'].includes(tag)) result.value = String(node.value ?? '');
