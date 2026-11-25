@@ -2,9 +2,11 @@
 
 ## META
 
-`skytuhua-org/Gen-V1`; parent [#2230](https://github.com/skytuhua-org/Gen-V1/issues/2230) under [#2212](https://github.com/skytuhua-org/Gen-V1/issues/2212). Revision `PARALLEL-RENDERERS-R1/DIA09`, 2026-11-25. Kind: implementation. Start: **BLOCKED**. Dependencies: [DIA01 #2293](https://github.com/skytuhua-org/Gen-V1/issues/2293), [DIA02 #2294](https://github.com/skytuhua-org/Gen-V1/issues/2294).
+`skytuhua-org/Gen-V1`; parent [#2230](https://github.com/skytuhua-org/Gen-V1/issues/2230) under [#2212](https://github.com/skytuhua-org/Gen-V1/issues/2212). Revision `PARALLEL-RENDERERS-R2/DIA09`, 2026-11-25. Kind: implementation. Start: **BLOCKED**. Dependencies: [DIA01 #2293](https://github.com/skytuhua-org/Gen-V1/issues/2293), [DIA02 #2294](https://github.com/skytuhua-org/Gen-V1/issues/2294).
 
 Verified baseline `main@defe9884530145e9c109b8ed98f80efac8beeb17`. [Complete AI-DIAGRAM-R1 source](https://github.com/skytuhua-org/Gen-V1/blob/d03d7155e0dc93b790dad014becccfee4eedc1c0/docs/agent-plans/ai-diagram-rendering-adoption.md), historical baseline `96ca4c3bd0664fca53775fbe31915c209641986c`; [docs PR2231](https://github.com/skytuhua-org/Gen-V1/pull/2231) open/unmerged at `d03d7155e0dc93b790dad014becccfee4eedc1c0`. Product work/tests NOT_STARTED/NOT_RUN; no install by this plan.
+
+Revision history: [complete R1/DIA09](https://github.com/skytuhua-org/Gen-V1/blob/cdb703b94d73fd41abbe2d26aa5e88010700d976/docs/agent-plans/parallel-renderer-diagram-engine-worker-entry.md), SHA-256 `cc39c9b3c7a1b2466c24777bcc14adf884fed7a2ceffee7a2225b63a9ed968f7`. R2 resolves [R-F02](https://github.com/skytuhua-org/Gen-V1/issues/2212#issuecomment-7174421781): DIA03 accepts entry/isolated-client evidence; DIA07 after DIA06 verifies the actual-App production graph/loading. No dependency, engine/protocol, budget, default-off or adoption constraint changes.
 
 ## OBJECTIVE
 
@@ -20,6 +22,8 @@ Coverage: Diagram T03 engine/package portion; R02/R05/R06/R10; A02/A03/A07/A12. 
 
 New diagram-engine.ts isolates public parseMermaid/renderMermaidSVG use; new diagram-worker.ts imports it as a real module Worker. Node tests cover the real adapter; DIA01 supplies an entry-only Worker build command. DIA01 gives actual Vite/CSP/package paths and DIA02 the complete certificate. Shared package/lock/notices/manifest hunks are short reservations, preserving #1530's unreleased overlapping claim.
 
+An entry-only build establishes the reviewed Worker artifact and local dependencies before App callers exist. DIA03 then proves isolated browser client startup/cancellation using its allocated fixture. The actual App path is not integrated until DIA06; DIA07 owns positive production emitted graph/loading and initial-entry exclusion, with DIA08 retaining packaged Windows/offline proof. Ordinary `pnpm build` here is a regression check, not evidence of an unreferenced entry's production reachability.
+
 Existing narrow hunks: `package.json`, `pnpm-lock.yaml`, `THIRD_PARTY_NOTICES.md`, `apps/web/src/dependency-notices.ts`, `scripts/public-source-files.json`.
 
 Proposed outputs: `apps/web/src/diagram-engine.ts`, `apps/web/src/diagram-worker.ts`, `tests/diagram-engine.test.ts`.
@@ -34,7 +38,7 @@ Export renderCertifiedDiagram(job:DiagramJob):DiagramReply from diagram-engine.t
 
 Render with trusted app constants only, never model config/styles/options. Output cap256KiB applies before posting; DIA03 rechecks on receipt and DIA04 validates nodes/depth/dimensions/styles/resources before connection. Catch exceptions as fixed reason strings with no raw source/error telemetry. The async alias is not offloading; only this real Worker execution counts. DIA03 owns2,000ms startup/750ms layout termination externally, not a timeout after synchronous work.
 
-Audit installed package files/license/font/style imports and add exact dependency/lock/notices/source entries through the package workflow. Retain required EPL/BSD/MIT distribution notices and source handling as reviewed; no fabricated integrity. Build path is same-origin packaged Worker chunks, engine absent from initial entry. CSP or production loading failure stays source. Real packaged behavior is verified later; no relaxation.
+Audit installed package files/license/font/style imports and add exact dependency/lock/notices/source entries through the package workflow. Retain required EPL/BSD/MIT distribution notices and source handling as reviewed; no fabricated integrity. The required final build path is same-origin packaged Worker chunks with engine absent from the initial entry. This task records its entry-only output paths/hashes and exact installed source/dependency/notice inventory; DIA07 later reconciles them with the actual-App emitted graph and CSP/loading after DIA06. CSP or production loading failure stays source. Real packaged behavior remains DIA08; no relaxation.
 
 ## EXECUTION_DAG
 
@@ -44,13 +48,13 @@ Audit installed package files/license/font/style imports and add exact dependenc
 
 **T03.** Implement the minimal module Worker entry and ready/job/reply protocol without host authority or main-thread fallback. Register source paths and compile the entry using DIA01's explicit entry-only build.
 
-**T04.** Inspect the built Worker entry and local dependency graph, retain complete notices and hand exact protocol/output fixtures to [DIA03 #2295](https://github.com/skytuhua-org/Gen-V1/issues/2295)/[DIA04 #2296](https://github.com/skytuhua-org/Gen-V1/issues/2296). Release dependency and Worker-entry hunks.
+**T04.** Inspect the built Worker entry and local dependency graph, retain complete notices and hand exact protocol/output fixtures to [DIA03 #2295](https://github.com/skytuhua-org/Gen-V1/issues/2295)/[DIA04 #2296](https://github.com/skytuhua-org/Gen-V1/issues/2296). Include the exact entry-only command, output/source/package hashes and dependency/notice inventory for [DIA07 #2299](https://github.com/skytuhua-org/Gen-V1/issues/2299); actual-App graph/loading and initial-entry exclusion remain NOT_RUN until that task after DIA06. Release dependency and Worker-entry hunks.
 
-**Done when:** Exact reviewed artifact/closure/notices and a minimal certified Worker entry are independently reviewable; public protocol and real output fixtures are frozen for client/validator workers. Handoff: exact SHA, contract/source, actual tests, remaining gates and recipient/ACK.
+**Done when:** Exact reviewed artifact/closure/notices and a minimal certified Worker entry are independently reviewable; public protocol and real output fixtures are frozen for client/validator workers, with actual-App and packaged proof explicitly handed to DIA07/DIA08. Handoff: exact SHA, contract/source, actual tests, remaining gates and recipient/ACK.
 
 ## VALIDATION
 
-Run pnpm build:widgets; pnpm exec vitest run tests/diagram-policy.test.ts tests/diagram-engine.test.ts --maxWorkers=1; pnpm typecheck; pnpm build; public-source.test.ts. Positive real-engine fixtures must match complete certificates. Negative: valid-prefix/junk, missing/extra/renamed node or edge, repeated-edge count/direction/label mismatch, oversize source/output and exceptions return source with bounded fixed errors. Compile the Worker entry with DIA01's command. DIA03 proves the integrated production import graph, initial-entry exclusion and interruption; DIA08 proves packaged/offline behavior.
+Run pnpm build:widgets; pnpm exec vitest run tests/diagram-policy.test.ts tests/diagram-engine.test.ts --maxWorkers=1; pnpm typecheck; pnpm build; public-source.test.ts. Positive real-engine fixtures must match complete certificates. Negative: valid-prefix/junk, missing/extra/renamed node or edge, repeated-edge count/direction/label mismatch, oversize source/output and exceptions return source with bounded fixed errors. Compile the Worker entry with DIA01's exact entry-only command and record its artifact/graph identity. DIA03 proves isolated client/Worker startup and actual interruption. DIA07 after DIA06 proves the positive actual-App production import graph, initial-entry exclusion and same-origin/CSP loading; an empty no-consumer build cannot pass those gates. DIA08 proves packaged Windows/offline behavior.
 
 Planned, not executed here. Use documented Node>=24.10.0/pnpm10.30.3 and widget/browser setup at repository root. Record actual results; unit/browser/native/assistive proof and PR/merge/main states remain distinct.
 
