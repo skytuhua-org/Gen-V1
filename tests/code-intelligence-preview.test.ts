@@ -30,11 +30,20 @@ const runtime: RuntimeAdapter = {
 };
 
 const dirs: string[] = [];
+const cleanups: Array<() => Promise<void>> = [];
 const fixture = async () => {
   const dir = await mkdtemp(join(tmpdir(), 'harness-previews-'));
   dirs.push(dir);
   const app = Fastify();
-  const service = new Service(new Store(dir), runtime);
+  const store = new Store(dir);
+  const service = new Service(store, runtime);
+  cleanups.push(async () => {
+    let failure: unknown;
+    try { await app.close(); } catch (error) { failure ??= error; }
+    try { await service.dispose(); } catch (error) { failure ??= error; }
+    try { store.close(); } catch (error) { failure ??= error; }
+    if (failure) throw failure;
+  });
   registerCodeIntelligenceRoutes(app, service, { env: { HARNESS_FLAG_CODING_INTELLIGENCE_V1: '1' } });
   const post = (body: Record<string, unknown>) =>
     app.inject({ method: 'POST', url, payload: body });
@@ -42,6 +51,7 @@ const fixture = async () => {
 };
 
 afterEach(async () => {
+  while (cleanups.length) await cleanups.pop()!();
   while (dirs.length) await rm(dirs.pop()!, { recursive: true, force: true });
 });
 
