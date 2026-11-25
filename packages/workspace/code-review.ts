@@ -58,7 +58,7 @@ export class ComparisonSnapshots {
     return structuredClone(entry);
   }
 }
-const localPath = (value: string) =>
+export const localPath = (value: string) =>
   value.length <= 1024 &&
   !/[\\:\0]/.test(value) &&
   !value.startsWith("/") &&
