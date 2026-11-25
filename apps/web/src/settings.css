@@ -39,6 +39,10 @@
 .settings-switch>span { width:16px;height:16px;flex:none;border-radius:50%;background:var(--muted);transition:transform var(--ui-motion-hover) var(--ui-ease-enter); }
 .settings-switch[aria-checked=true] { background:var(--accent-solid,var(--accent));border-color:var(--accent-solid,var(--accent)); }
 .settings-switch[aria-checked=true]>span { background:var(--accent-ink,#fff);transform:translateX(12px); }
+/* The dark-shell accent solid is a deep ink that sits under 3:1 on the settings surface;
+   the on-dark accent keeps the checked track legible there. */
+:root[data-theme="dark"] .settings-switch[aria-checked=true] { background:var(--accent);border-color:var(--accent); }
+:root[data-theme="dark"] .settings-switch[aria-checked=true]>span { background:var(--canvas); }
 .settings-empty,.settings-version { font-size:13px;line-height:1.5;color:var(--muted);padding:16px 0; }
 .settings-card { min-width:0;margin:0 0 16px;padding:0;border:0;background:transparent; }
 .settings-card>h2,.settings-card>legend { padding:12px 0 8px;font-size:16px;font-weight:600;color:var(--text); }
