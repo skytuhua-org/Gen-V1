@@ -259,7 +259,7 @@ export async function reconcileDomainOperation(operation: Operation, ctx: Domain
     default: return unknown(`No read-only reconciliation is defined for ${operation.kind}`);
   } } catch (error) {
     const code = error instanceof HarnessError ? error.code : (error as NodeJS.ErrnoException).code;
-    if (["ENOENT", "INVALID_RESOURCE", "DATABASE_ERROR", "DATABASE_TIMEOUT"].includes(code ?? "")) return unknown(`Resource observation is unavailable: ${error instanceof Error ? error.message : String(error)}. Outcome remains unknown; no automatic retry.`);
+    if (["ENOENT", "INVALID_RESOURCE", "CAPABILITY_DENIED", "DATABASE_ERROR", "DATABASE_TIMEOUT"].includes(code ?? "")) return unknown(`Resource observation is unavailable: ${error instanceof Error ? error.message : String(error)}. Outcome remains unknown; no automatic retry.`);
     throw error;
   }
 }
