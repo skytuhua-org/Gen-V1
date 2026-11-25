@@ -116,8 +116,9 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const desktop = useDesktop();
   useLayoutEffect(() => registerEditorHandoff('settings-writes', settleSettingsOperations), []);
   const navigation = useRef<HTMLElement>(null), content = useRef<HTMLElement>(null);
+  const visibleSections = SETTINGS_SECTIONS.filter(([id]) => desktop || id !== 'browser');
   const target = legacySections[initialSection] ?? initialSection;
-  const [section, setSection] = useState(SETTINGS_SECTIONS.some(([id]) => id === target) ? target : 'general');
+  const [section, setSection] = useState(visibleSections.some(([id]) => id === target) ? target : 'general');
   const [query, setQuery] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [saved, setSaved] = useState(false);
   const [pendingTarget, setPendingTarget] = useState<string | null>(null);
   const [connectionProvider,setConnectionProvider]=useState('openai');
@@ -139,6 +140,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const refreshModels = async (force = false) => { await Promise.all([loadModels(force), loadNewTaskModels(force)]); };
   const preferences = getPreferences(data.settings);
   const [browserUrl, setBrowserUrl] = useState(preferences.browserStartUrl);
+  useEffect(() => { if (!desktop && section === 'browser') setSection('general'); }, [desktop, section]);
   useLayoutEffect(() => { navigation.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView({ block: 'nearest' }); content.current?.scrollTo(0, 0); }, [section]);
   // A selected search result scrolls to its real target and focuses its control (T06).
   useLayoutEffect(() => {
@@ -169,9 +171,10 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
     await persist({ preferences: value });
   };
   const searching = query.trim().length > 0;
-  const rows = searching ? searchSettings(query, SUPPORTED_SETTINGS, desktop ? 'desktop' : 'browser') : SUPPORTED_SETTINGS.filter(item => item.section === section);
+  const platform = desktop ? 'desktop' : 'browser';
+  const rows = searching ? searchSettings(query, SUPPORTED_SETTINGS, platform) : SUPPORTED_SETTINGS.filter(item => item.section === section && (item.platform === 'all' || item.platform === platform));
   const matches = (id: string) => rows.some(item => item.id === id);
-  const heading = searching ? `Search results (${rows.length})` : SETTINGS_SECTIONS.find(([id]) => id === section)?.[1];
+  const heading = searching ? `Search results (${rows.length})` : visibleSections.find(([id]) => id === section)?.[1];
   const HeadingIcon = searching ? Search : SECTION_ICONS[section] ?? Settings2;
   const showAppearance = !searching && section === 'appearance';
   const customRows = new Set(['harness-personalization', 'chat-width', 'word-wrap', 'harness-project-colors', 'harness-notification-controls', 'harness-accounts', 'harness-skills', 'harness-integrations', 'harness-keyboard-reference', 'harness-paired-devices', 'browser-start-page', 'app-version', ...APPEARANCE_FIELDS.map(field => field.id), ...SUBSCRIPTION_CONNECTIONS.map(connection => `provider-${connection.id}`)]);
@@ -198,10 +201,10 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   };
   return <div className={matches('harness-skills') ? 'settings-layout settings-skills' : 'settings-layout'} onKeyDown={event => { if (searching && !event.nativeEvent.isComposing && matchesShortcut(event, chordFor('settings-clear-search'))) { event.preventDefault(); event.stopPropagation(); setQuery(''); } }}>
     <aside className="settings-navigation"><label className="settings-search"><Search size={14}/><input type="search" aria-label="Search all settings" placeholder="Search settings" value={query} onChange={event => setQuery(event.target.value)}/></label>
-      <div className="settings-section-select"><Select aria-label="Settings section" value={section} options={SETTINGS_SECTIONS.map(([value, label]) => ({value, label}))} onValueChange={chooseSection}/></div>
+      <div className="settings-section-select"><Select aria-label="Settings section" value={section} options={visibleSections.map(([value, label]) => ({value, label}))} onValueChange={chooseSection}/></div>
       <nav ref={navigation} aria-label="Settings sections" onKeyDown={event => { if (event.nativeEvent.isComposing) return; const intent = matchesShortcut(event, chordFor('settings-next-section')) ? 'next' : matchesShortcut(event, chordFor('settings-previous-section')) ? 'previous' : matchesShortcut(event, chordFor('settings-first-section')) ? 'first' : matchesShortcut(event, chordFor('settings-last-section')) ? 'last' : null; if (!intent) return; const buttons = [...event.currentTarget.querySelectorAll('button')], index = buttons.indexOf(document.activeElement as HTMLButtonElement); event.preventDefault(); buttons[intent === 'first' ? 0 : intent === 'last' ? buttons.length - 1 : (index + (intent === 'next' ? 1 : -1) + buttons.length) % buttons.length]?.focus(); }}>
-        {[...new Set(SETTINGS_SECTIONS.map(([id]) => GROUPS[id] ?? id))].map(group => {
-          const sections = SETTINGS_SECTIONS.filter(([id]) => (GROUPS[id] ?? id) === group);
+        {[...new Set(visibleSections.map(([id]) => GROUPS[id] ?? id))].map(group => {
+          const sections = visibleSections.filter(([id]) => (GROUPS[id] ?? id) === group);
           return <div className="settings-nav-group" key={group}>{sections.length > 1 && <h2>{group}</h2>}{sections.map(([id, label]) => {const Icon = SECTION_ICONS[id] ?? Settings2;return <button type="button" key={id} className={!searching && section === id ? 'selected' : ''} onClick={() => chooseSection(id)} aria-current={!searching && section === id ? 'page' : undefined}><Icon size={17} aria-hidden="true"/><span>{label}</span></button>;})}</div>;
         })}
       </nav>
