@@ -376,7 +376,8 @@ function startUpdater(){
 async function closeApplication(){
  let activeWorkAtClose=true,savedStateFlushed=false;
  try{activeWorkAtClose=signInFlows.isBusy()||(await backendRequest('harness.update.readiness')).idle!==true;}catch{}
- for(const record of windows.values())if(!await requestClose(record)){for(const entry of windows.values())cancelClose(entry);restartForUpdate=false;return;}
+ const closeAttempts=[...windows.values()].map(record=>requestClose(record));
+ if((await Promise.all(closeAttempts)).some(allow=>!allow)){for(const entry of windows.values())cancelClose(entry);restartForUpdate=false;return;}
  await signInFlows.close();
  clearTimeout(saveTimer);try{await persistence.flush();}catch{layoutError='Workspace layout could not be saved.';}
  savedStateFlushed=!layoutError;
