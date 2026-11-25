@@ -3,7 +3,7 @@ Second swarm audit, building on #1848 (round 1) and #1886 (remediation). READ-ON
 # November audit follow-up plan
 
 ## META
-- Repository `skytuhua-org/Gen-V1`. Follow-up plan revision `audit-index-r4`, 2026-11-24 Pacific time.
+- Repository `skytuhua-org/Gen-V1`. Follow-up plan revision `audit-index-r5`, 2026-11-25 Pacific time. This revision corrects the source-handoff status; prior r4 remains pinned below.
 - GitHub main at triage: `a64e9e2d03ce09c843bff0480d81311f2012c812`. Original audit coordination #1848 records its planned pinned main baseline. The round-one executive summary describes a separate historical working tree at `fix/audit-r08-chatview@6b9d1b0ba`. Round two used `chore/deletion-sweep@152cb5e1bdd652fd7dadf240b167e9ee5d37a578`. Compare these baselines before claiming current reachability.
 - Sources: reports 00–15. Worker attribution and verification quality are recorded in the reports. Use this issue's workstream links as the public follow-up ledger.
 - T05 source reconciliation sampled `main@20da5f2ef7830fbcdee419c3e5f8c8b9cfcc5645`. The publication rules for this revision were checked at `main@ddacaf847fe332a0c6c515770284e0cd99cfd4d0`. The latter is a rules check. Use each finding’s ledger for its underlying source and evidence.
@@ -56,7 +56,7 @@ The implementing agent must independently reproduce the reported bug on a pinned
 Each issue maps its scope to a specific baseline case and completion criteria. Preserve historical verification bounds. For an in-flight PR re-read its latest base, head, review and check state before starting changes.
 
 ## STATE
-All 16 reports have workstream tracking. T05 completed the assigned reconciliation of 707 records and 92 candidate matches. The [current finding-level dispositions](https://github.com/skytuhua-org/Gen-V1/blob/a20434f1e821a5825dfb39694cf1db12fd73e50b/docs/review-evidence/nov-2026-audit-coverage/pass-04-summary.md) give each of those 799 locators an exact disposition, with 12 new issues for missing scopes. The prior census and its original evidence below remain the baseline for this pass.
+All 16 reports have workstream tracking. T05 previously recorded reconciliation of 707 records and 92 candidate matches, but the current handoff is **HANDOFF_INCOMPLETE**: 37 generic #1973 rows do not preserve their historical PR identity or failure description. Recoverable source context is a required acceptance input, not a completed criterion. The [current finding-level dispositions](https://github.com/skytuhua-org/Gen-V1/blob/a20434f1e821a5825dfb39694cf1db12fd73e50b/docs/review-evidence/nov-2026-audit-coverage/pass-04-summary.md) record the historical 799 locator dispositions and 12 new issues for missing scopes; the r5 source-recovery holds below supersede the affected completion claims. The prior census and its original evidence below remain the baseline for this pass.
 
 T01–T04 continue in the applicable child issue or PR. Defects require current reproduction and acceptance as specified. Historical source and PR evidence retain the limits in the ledger. Private reporting is pending wherever a verified private receipt is absent. The next implementer action is to pick up the matching issue, read its current claims and plan, and run its named baseline case.
 
@@ -119,12 +119,13 @@ For a named issue verify the exact accepted behavior before claiming the finding
 
 ## T05 current reconciliation
 
-The 707 outstanding records and 92 candidate matches now have 799 individually checked tracking dispositions. All 16 frozen report fingerprints matched. Issue copies, pinned plans and labels were read back, and the 799 locators were checked for completeness and uniqueness. [Current reconciliation and source limits](https://github.com/skytuhua-org/Gen-V1/blob/a20434f1e821a5825dfb39694cf1db12fd73e50b/docs/review-evidence/nov-2026-audit-coverage/pass-04-summary.md).
+The previous r4 pass reported 799 individually checked tracking dispositions for 707 outstanding records and 92 candidate matches, and reported that all 16 frozen report fingerprints matched. This review preserves that historical report without claiming the original corpus was recovered. The current source-recovery audit identifies 37 rows that cannot yet be executed from their published context. Issue copies, pinned plans and labels were read back, and the 799 locators were checked for completeness and uniqueness. [Current reconciliation and source limits](https://github.com/skytuhua-org/Gen-V1/blob/a20434f1e821a5825dfb39694cf1db12fd73e50b/docs/review-evidence/nov-2026-audit-coverage/pass-04-summary.md).
 
 | Disposition | Records |
 | --- | ---: |
 | Existing issue scope | 548 |
-| Existing PR scope | 44 |
+| Existing PR scope | 7 |
+| Source recovery required | 37 |
 | Covered by new issues | 23 |
 | Changed or refuted on current evidence | 10 |
 | Historical or repeated evidence | 37 |
@@ -138,8 +139,22 @@ T05 filed 12 missing issues with labels, complete plans, and an independent repr
 
 ### State and next checks
 
-T05 publication is verified for the assigned 799 records. The supporting files give the known cases, exact trackers and evidence boundaries for each disposition. The 65 decision or fixture cases require their listed owners and evidence before a new issue is justified. The 72 restricted records require private triage and a receipt under [SECURITY.md](https://github.com/skytuhua-org/Gen-V1/blob/main/SECURITY.md). Historical PR tests and recoverable source evidence still have their recorded gates. Source and tracker comparisons were executed. Product tests and runtime reproduction remain pending in the child workstreams.
+T05 publication is **HANDOFF_INCOMPLETE** for 37 of the assigned 799 records. Their published context omits the exact historical PR and redacted failure description. The remaining 762 records retain the earlier disposition and evidence limits; they were not independently re-certified by this repair. The 65 decision or fixture cases require their listed owners and evidence before a new issue is justified. The 72 restricted records require private triage and a receipt under [SECURITY.md](https://github.com/skytuhua-org/Gen-V1/blob/main/SECURITY.md). Historical PR tests and recoverable source evidence still have their recorded gates. Source and tracker comparisons were executed. Product tests and runtime reproduction remain pending in the child workstreams.
 
 [Previous canonical revision](https://github.com/skytuhua-org/Gen-V1/blob/a20434f1e821a5825dfb39694cf1db12fd73e50b/docs/agent-plans/nov-2026-audit-follow-up-index.md).
 
 [Prior plan revision](https://github.com/skytuhua-org/Gen-V1/blob/949222a9dbf8dc3095df3c8d5dbbc1bb22838bb5/docs/agent-plans/nov-2026-audit-follow-up-index.md).
+
+## R5 source recovery gate for T05
+
+Review baseline: `main@104217fe3fabfe41e0ea5071ef8398d9c8f8403d`; queued candidate #1952 at `2fc5627d4d361bef0796a9a88ab26aa1681e4e83`. Coordination: #2307. The original T05 completion check remains unchanged: every unique finding must have a verified, retrievable disposition. The current missing inputs make that criterion incomplete.
+
+- pass-04-stability-02.md: `02:L670`, `02:L677`, `02:L684`, `02:L691`, `02:L698`, `02:L705`, `02:L717`, `02:L723`, `02:L730`, `02:L737`, `02:L743`, `02:L750`, `02:L757`, `02:L764`, `02:L917`, `02:L918`, `02:L919`, `02:L921`, `02:L923`, `02:L924`, `02:L926`, `02:L927`, `02:L928`, `02:L929`, `02:L930`, `02:L931`, `02:L932`, `02:L933`, `02:L935`.
+- pass-04-performance-and-cleanup-03-04.md: `03:L228`, `03:L229`, `03:L230`, `03:L231`, `03:L232`, `03:L233`.
+- pass-04-coverage-frontend-and-docs-06-09.md: `06:L118`, `06:L119`.
+
+**T05-SOURCE, source recovery owner:** obtain the original reports from their custodian, compare their bytes with the frozen SHA-256 ledger, and recover each affected locator. Publish a reviewed redacted description, exact historical PR, applicable head/base, expected versus observed behavior and the disposition evidence, either in the existing row or a durable linked source. Preserve sensitive details through the private route in SECURITY.md. A generic batch tracker or digest alone is insufficient. Do not infer historical findings from unrelated present-day code.
+
+**Verification and done-when:** read back all 37 mappings and linked artifacts; each must be reproducible by a fresh worker with the canonical issue and its durable sources. Preserve all 799 unique locators and the previous revision. Only then update the complete canonical body and versioned Markdown copy, increment revision and remove the relevant source-recovery holds. Current source recovery is BLOCKED on the original corpus or reviewed equivalent descriptions. Product reproduction, current-head CI, private receipts and native acceptance retain their independent gates.
+
+[Previous r4 canonical source](https://github.com/skytuhua-org/Gen-V1/blob/2fc5627d4d361bef0796a9a88ab26aa1681e4e83/docs/agent-plans/nov-2026-audit-follow-up-index.md).

@@ -1,5 +1,7 @@
 # T05 dispositions for report 06, 07, 08, 09
 
+Current handoff, 2026-11-25 (`audit-index-r5`): rows marked **Source recovery required** preserve historical locators only. Their generic #1973 route does not identify the original PR or failure. Recover the matching original report or publish a reviewed redacted description and exact PR/source mapping before treating those rows as executable. Other dispositions retain their recorded evidence limits.
+
 Source checked at `main@20da5f2ef7830fbcdee419c3e5f8c8b9cfcc5645`. Locators refer to the SHA-256 frozen corpus in the preceding audit ledger. The listed scope is a tracking disposition. Product behavior requires the cited fixture and acceptance. Process evidence, scope boundaries and disposition meanings are in [the pass summary](pass-04-summary.md).
 
 | Locator | Report line | Disposition | Tracking | Review evidence |
@@ -168,8 +170,8 @@ Source checked at `main@20da5f2ef7830fbcdee419c3e5f8c8b9cfcc5645`. Locators refe
 | `06:L113` | 113 | Existing tracking | #1860, #1866 | Duplicate of active agent-work failed dispatch custody tracking. |
 | `06:L115` | 115 | Existing tracking | #1977, #2049 | Retained scheduling replay and cancellation plus M10 delivery ownership require the approved fixture. |
 | `06:L117` | 117 | Existing tracking | #1860, #1868 | Existing R08 contract normalization and regression gate owns repeated type identity. |
-| `06:L118` | 118 | Existing PR scope | #1973 | Existing PR audit owns historical batch coverage and restacked hook-runner scope. |
-| `06:L119` | 119 | Existing PR scope | #1973 | Existing PR audit owns historical batch coverage and restacked hook-runner scope. |
+| `06:L118` | 118 | Source recovery required | #1973 | **HANDOFF_INCOMPLETE:** exact historical PR and redacted failure description are missing. Prior r4 note: Existing PR audit owns historical batch coverage and restacked hook-runner scope. |
+| `06:L119` | 119 | Source recovery required | #1973 | **HANDOFF_INCOMPLETE:** exact historical PR and redacted failure description are missing. Prior r4 note: Existing PR audit owns historical batch coverage and restacked hook-runner scope. |
 | `06:L120` | 120 | Existing tracking | #1978 | Windows incompatible shell-helper invocation is explicit tooling scope. |
 | `09:F33` | 50 | Existing tracking | #1973, #1803 | Shared source manifest bottleneck belongs to existing PR topology/conflict work. Regenerate against the exact selected repository base. |
 

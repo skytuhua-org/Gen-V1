@@ -1,5 +1,19 @@
 # T05 reconciliation of the 707 outstanding rows and 92 candidate matches
 
+## Current handoff correction, 2026-11-25
+
+**HANDOFF_INCOMPLETE, audit-index-r5.** The earlier pass recorded 799 dispositions, but 37 rows link only to generic tracker #1973 and do not retain the historical PR identity or failure description. The current review could not recover the original reports from the accessible repository/project sources or targeted connected-file searches. A fingerprint and line number locate bytes only when those bytes remain retrievable. No source text or PR mapping has been reconstructed by inference.
+
+The affected rows are enumerated below. Recover each matching source report, verify its frozen SHA-256 in the existing report ledger, and preserve a redacted failure description, named historical PR, applicable head/base and expected behavior in the row or a durable linked source. Restricted details remain private with an appropriate receipt. Read back every mapping before promoting it to a verified disposition. The remaining 762 rows retain their earlier limited disposition; this review does not newly certify them.
+
+- [pass-04-stability-02.md](pass-04-stability-02.md): `02:L670`, `02:L677`, `02:L684`, `02:L691`, `02:L698`, `02:L705`, `02:L717`, `02:L723`, `02:L730`, `02:L737`, `02:L743`, `02:L750`, `02:L757`, `02:L764`, `02:L917`, `02:L918`, `02:L919`, `02:L921`, `02:L923`, `02:L924`, `02:L926`, `02:L927`, `02:L928`, `02:L929`, `02:L930`, `02:L931`, `02:L932`, `02:L933`, `02:L935`.
+- [pass-04-performance-and-cleanup-03-04.md](pass-04-performance-and-cleanup-03-04.md): `03:L228`, `03:L229`, `03:L230`, `03:L231`, `03:L232`, `03:L233`.
+- [pass-04-coverage-frontend-and-docs-06-09.md](pass-04-coverage-frontend-and-docs-06-09.md): `06:L118`, `06:L119`.
+
+Prior r4 source: [immutable publication](https://github.com/skytuhua-org/Gen-V1/tree/2fc5627d4d361bef0796a9a88ab26aa1681e4e83/docs/review-evidence/nov-2026-audit-coverage). The earlier 44 Existing PR scope rows are now 7 retained rows plus 37 source-recovery holds; the total remains 799. Historical work and failed recovery attempts remain visible.
+
+## Earlier reconciliation evidence
+
 GitHub main sampled at `20da5f2ef7830fbcdee419c3e5f8c8b9cfcc5645`, 2026-11-24 Pacific time. The source hashes of all 16 reports matched the prior frozen ledger. The 799 exact requested locators are covered once in the four disposition tables. Existing issue bodies remain at their prior revisions. Scope was compared against 77 refreshed issue/PR bodies and the prior full public backlog, with additional targeted owner reads and exact-title/marker duplicate checks for each filed issue.
 
 [Audit index #1946](https://github.com/skytuhua-org/Gen-V1/issues/1946).
@@ -20,7 +34,8 @@ GitHub main sampled at `20da5f2ef7830fbcdee419c3e5f8c8b9cfcc5645`, 2026-11-24 Pa
 | Changed or refuted on current evidence | 10 | Pinned source or a benign live comparison contradicts the historical mechanism. |
 | Historical or repeated evidence | 37 | Intentional/staged behavior, repeated support row, report correction or different owner is recorded. |
 | Owner decision or fixture gate | 65 | Confirm an intended production contract, supported reachability, or actual impact in the owner’s scope before opening a separate defect. |
-| Existing PR scope | 44 | Historical in-diff observation remains in its linked PR or existing PR reconciliation work. Verify the exact current head. |
+| Existing PR scope | 7 | Historical in-diff observation retains a named PR or more specific route. Verify the exact current head and failure. |
+| Source recovery required | 37 | HANDOFF_INCOMPLETE: generic #1973 routing does not preserve the exact historical PR and failure description. |
 
 ## Earlier candidate match verification
 
@@ -52,7 +67,7 @@ GitHub main sampled at `20da5f2ef7830fbcdee419c3e5f8c8b9cfcc5645`, 2026-11-24 Pa
 
 ## Open acceptance and evidence boundaries
 
-This pass gives a disposition to the 799 requested ledger rows. Some rows describe repeat sightings of the same mechanism or supporting inventories. No runtime test, fix merge, or native acceptance was performed. The private channel, owner decisions, fixture gates, and current-head acceptance of historical PR-only findings still require the listed authorities or tests. The earlier ledger also records evidence gaps from truncated historical worker output.
+The historical pass recorded dispositions for the 799 requested ledger rows; current source recoverability remains incomplete for the 37 rows above. Some rows describe repeat sightings of the same mechanism or supporting inventories. No runtime test, fix merge, or native acceptance was performed. The private channel, owner decisions, fixture gates, and current-head acceptance of historical PR-only findings still require the listed authorities or tests. The earlier ledger also records evidence gaps from truncated historical worker output.
 
 ## Handoff
 

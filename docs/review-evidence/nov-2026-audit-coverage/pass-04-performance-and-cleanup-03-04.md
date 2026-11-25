@@ -1,5 +1,7 @@
 # T05 dispositions for report 03, 04
 
+Current handoff, 2026-11-25 (`audit-index-r5`): rows marked **Source recovery required** preserve historical locators only. Their generic #1973 route does not identify the original PR or failure. Recover the matching original report or publish a reviewed redacted description and exact PR/source mapping before treating those rows as executable. Other dispositions retain their recorded evidence limits.
+
 Source checked at `main@20da5f2ef7830fbcdee419c3e5f8c8b9cfcc5645`. Locators refer to the SHA-256 frozen corpus in the preceding audit ledger. The listed scope is a tracking disposition. Product behavior requires the cited fixture and acceptance. Process evidence, scope boundaries and disposition meanings are in [the pass summary](pass-04-summary.md).
 
 | Locator | Report line | Disposition | Tracking | Review evidence |
@@ -84,12 +86,12 @@ Source checked at `main@20da5f2ef7830fbcdee419c3e5f8c8b9cfcc5645`. Locators refe
 | `03:L227` | 227 | Existing tracking | #1977 | Retained Hermes upstream performance observations need a reachable supported path and bounded fixture. |
 | `03:L337` | 337 | Existing tracking | #1977 | Retained Hermes upstream performance observations need a reachable supported path and bounded fixture. |
 | `03:L222` | 222 | Existing tracking | #1978, #2123 | Closed #2123 covers repeat main CI after a verified merge group. Per-shard rebuild cost is separate tooling scope. |
-| `03:L228` | 228 | Existing PR scope | #1973 | This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
-| `03:L229` | 229 | Existing PR scope | #1973 | This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
-| `03:L230` | 230 | Existing PR scope | #1973 | This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
-| `03:L231` | 231 | Existing PR scope | #1973 | This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
-| `03:L232` | 232 | Existing PR scope | #1973 | This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
-| `03:L233` | 233 | Existing PR scope | #1973 | This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
+| `03:L228` | 228 | Source recovery required | #1973 | **HANDOFF_INCOMPLETE:** exact historical PR and redacted failure description are missing. Prior r4 note: This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
+| `03:L229` | 229 | Source recovery required | #1973 | **HANDOFF_INCOMPLETE:** exact historical PR and redacted failure description are missing. Prior r4 note: This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
+| `03:L230` | 230 | Source recovery required | #1973 | **HANDOFF_INCOMPLETE:** exact historical PR and redacted failure description are missing. Prior r4 note: This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
+| `03:L231` | 231 | Source recovery required | #1973 | **HANDOFF_INCOMPLETE:** exact historical PR and redacted failure description are missing. Prior r4 note: This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
+| `03:L232` | 232 | Source recovery required | #1973 | **HANDOFF_INCOMPLETE:** exact historical PR and redacted failure description are missing. Prior r4 note: This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
+| `03:L233` | 233 | Source recovery required | #1973 | **HANDOFF_INCOMPLETE:** exact historical PR and redacted failure description are missing. Prior r4 note: This is a named branch-level cost or contract discrepancy. Validate the same patch and workload at the current PR head before opening a main issue. |
 | `03:L237` | 237 | Existing tracking | #1978, #1069 | Worker timeout hygiene belongs to existing test and tooling lifecycle scope. |
 | `03:L344` | 344 | Existing tracking | #1963 | Existing skill catalog plan explicitly covers provider inventory rewalk and rehash/N+1 calls. |
 | `03:L351` | 351 | Existing tracking | #1963 | Existing skill catalog plan explicitly covers provider inventory rewalk and rehash/N+1 calls. |
