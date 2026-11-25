@@ -285,6 +285,7 @@ export class Service {
     });
     this.controlDevice = { deviceId: 'device:' + createHash('sha256').update(hostname() + '|' + store.dataDir).digest('hex').slice(0, 32), sessionId: 'session-' + randomUUID() };
     this.controlRuntime = new ControlRuntime(store, this.controlConsent, { registry: hostControlDriverRegistry, device: this.controlDevice, artifactRoot: store.dataDir, currentOwner: threadId => {
+      if (this.closed) return null;
       const thread = store.get<Thread>('thread', threadId);
       return thread && !store.get('archivedThread', threadId) ? this.controlOwner(thread) : null;
     } });
@@ -576,6 +577,7 @@ export class Service {
   /** M16 C3/C4: the single approved driver attaches through host composition
    * (the private desktop sidecar channel), never through a command or tool. */
   attachControlDriver(driver: ControlDriverOperations, registrations: readonly ControlDriverRegistrationV1[]): void {
+    this.assertControlOpen();
     for (const registration of registrations) {
       try { hostControlDriverRegistry.register(registration); }
       catch (error) {
@@ -587,12 +589,17 @@ export class Service {
   }
   detachControlDriver(): void { this.controlRuntime.detachDriver(); }
 
+  private assertControlOpen(): void {
+    if (this.closed) throw new HarnessError('CANCELLED_RUN', 'The workspace has closed.');
+  }
+
   private controlOwner(thread: Thread): ToolOwner {
     return { ...ownerFor(thread), runId: null };
   }
 
   /** S02/U02: approved-driver candidate targets for a pending consent. */
   async controlTargets(threadId: string, mode: unknown) {
+    this.assertControlOpen();
     const parsed = controlModeSchema.parse(mode);
     const owner = this.controlOwner(this.thread(threadId));
     const pending = this.controlConsent.surfaceModel(threadId).pendingConsent;
@@ -601,6 +608,7 @@ export class Service {
     }
     const offer = await this.controlRuntime.targets(parsed, threadId, pending.consentId);
     try {
+      this.assertControlOpen();
       const currentOwner = this.controlOwner(this.thread(threadId));
       const control = this.controlConsent.surfaceModel(threadId);
       if (control.state !== 'consent' || control.pendingConsent?.consentId !== pending.consentId ||
@@ -618,12 +626,14 @@ export class Service {
   /** S05: a consented observation only — bytes stay under the host artifact
    * root and the store keeps the digest (S08). */
   async controlCapture(threadId: string) {
+    this.assertControlOpen();
     this.thread(threadId);
     return this.controlRuntime.capture(threadId);
   }
 
   /** Fresh observation straight from the driver for pre-dispatch binding. */
   async controlObserve(threadId: string) {
+    this.assertControlOpen();
     this.thread(threadId);
     const { observation } = await this.controlRuntime.observe(threadId);
     return { observation };
@@ -634,6 +644,7 @@ export class Service {
    * observation is re-taken from the driver here — client-supplied
    * observations are never dispatch authority (S06). */
   async controlAction(threadId: string, input: { action?: unknown; parameters?: unknown }) {
+    this.assertControlOpen();
     const thread = this.thread(threadId);
     const owner = this.controlOwner(thread);
     const { grantId, observation } = await this.controlRuntime.observe(threadId);
@@ -2547,7 +2558,7 @@ export class Service {
   }
   async dispose(): Promise<void> {
     for(const key of [...this.deltaBuffers.keys()])this.flushDelta(key);
-    this.closed=true;this.projectTrustHostInstance?.dispose();this.requestCustody.dispose();this.relevanceObserver.clear();this.repositoryMaps.clear();this.inferenceOwners.clear();this.nativeCompactionAdmissions.clear();this.contextResultAuthorities.clear();clearInterval(this.curatorTimer);for(const controller of this.aborts.values())controller.abort();
+    this.closed=true;this.controlRuntime.detachDriver();this.projectTrustHostInstance?.dispose();this.requestCustody.dispose();this.relevanceObserver.clear();this.repositoryMaps.clear();this.inferenceOwners.clear();this.nativeCompactionAdmissions.clear();this.contextResultAuthorities.clear();clearInterval(this.curatorTimer);for(const controller of this.aborts.values())controller.abort();
     const settled=await Promise.allSettled([this.backgroundWork.drain(),this.intake.drain(),this.agentWork.dispose(),this.memoryHostInstance?.dispose(),this.predictions.dispose(),this.learning.dispose(),this.planning.dispose(),this.sideRuntime.dispose(),this.runtime.dispose()]);
     this.backgroundWork.dispose();
     await Promise.allSettled([...this.pending]);
