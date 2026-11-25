@@ -69,60 +69,6 @@ export class ProjectTools{
    return action({git:(args,environment)=>nativeGit(this.gitExecutable(),metadata,path,args,signal,environment??{}),worktree:path,binding:workspace,signal});
   }));
  }
- private delegateProfile(workspace:WorkspaceBinding):string{return hash(JSON.stringify({id:workspace.id,path:workspace.path,branch:workspace.branch,identity:workspace.identity,gitDirectoryIdentity:workspace.gitDirectoryIdentity,commonDirectoryIdentity:workspace.commonDirectoryIdentity}));}
- /** Typed managed-child allocation: a delegate thread binds to its parent's
-  *  managed working copy. It never opens a sibling path, a plain folder or a
-  *  worktree of its own; ownership stays with the parent's binding. */
- async delegateWorktree(parentThreadId:string,delegateThreadId:string):Promise<{worktreeId:string;path:string;branch:string;projectId:string;profileDigest:string}>{
-  const parent=this.store.get<Thread>('thread',id.parse(parentThreadId));
-  if(!parent||parent.kind==='delegate'||parent.kind==='side'||parent.sideParentId||!parent.projectId||!parent.workspaceId)throw new HarnessError('CAPABILITY_DENIED','The parent thread holds no managed working copy.');
-  const delegate=this.store.get<Thread>('thread',id.parse(delegateThreadId));
-  if(!delegate||delegate.kind!=='delegate'||delegate.parentThreadId!==parent.id||delegate.projectId!==parent.projectId)throw new HarnessError('CAPABILITY_DENIED','The child thread is not a delegate of this parent.');
-  const bound=await this.binding(parent.projectId,parent.id),workspace=bound.workspace;
-  if(!workspace||workspace.threadId!==parent.id)throw new HarnessError('CAPABILITY_DENIED','The parent working copy binding is unavailable.');
-  return{worktreeId:workspace.id,path:workspace.path,branch:workspace.branch,projectId:parent.projectId,profileDigest:this.delegateProfile(workspace)};
- }
- /** Host proof for the CODE_WORKTREE role: the delegating parent's managed
-  *  working copy. Null when the parent holds none — the role then reports
-  *  unavailable instead of running unbound. */
- async delegateProof(parentThreadId:string):Promise<{worktreeId:string;path:string;profileDigest:string}|null>{
-  const parent=this.store.get<Thread>('thread',parentThreadId);
-  if(!parent||parent.kind==='delegate'||parent.kind==='side'||parent.sideParentId||!parent.projectId||!parent.workspaceId)return null;
-  const bound=await this.binding(parent.projectId,parent.id),workspace=bound.workspace;
-  if(!workspace||workspace.threadId!==parent.id)return null;
-  return{worktreeId:workspace.id,path:workspace.path,profileDigest:this.delegateProfile(workspace)};
- }
- /** Effect entry for CODE_WORKTREE worktree.* calls against the parent's
-  *  managed working copy. The coordinator has already clamped writability to
-  *  the admitted grants; here paths and git invocations must stay inside the
-  *  bound worktree. */
- async delegateCall(call:{name:string;args:Record<string,unknown>},work:{parentOwner:{threadId:string};childOwner:{threadId:string}}):Promise<unknown>{
-  const bound=await this.delegateWorktree(work.parentOwner.threadId,work.childOwner.threadId);
-  if(call.name==='worktree.git'){
-   const args=z.array(z.string().min(1).max(4096)).max(64).parse(call.args.args);
-   const relocated=(arg:string)=>arg==='-C'||arg==='--git-dir'||arg==='--work-tree'||arg==='--separate-git-dir'||arg==='--exec-path'||arg.startsWith('--git-dir=')||arg.startsWith('--work-tree=')||arg.startsWith('--separate-git-dir=');
-   if(!args.length||args.some(relocated))throw new HarnessError('CAPABILITY_DENIED','Git calls stay inside the delegate worktree.');
-   return this.managedWorktree(bound.projectId,work.parentOwner.threadId,({git})=>git(args));
-  }
-  const relativePath=z.string().min(1).max(4096).parse(call.args.path),target=resolve(bound.path,relativePath);
-  if(!inside(bound.path,target)||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Worktree paths stay inside the managed working copy.');
-  if(call.name==='worktree.read'){
-   const resolved=await realpath(target);
-   if(!inside(bound.path,resolved))throw new HarnessError('CAPABILITY_DENIED','Worktree paths stay inside the managed working copy.');
-   return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data)};});
-  }
-  if(call.name==='worktree.write'){
-   const content=z.string().max(1024*1024).parse(call.args.content),directory=await realpath(dirname(target)).catch(()=>null);
-   if(directory!==null&&!inside(bound.path,directory))throw new HarnessError('CAPABILITY_DENIED','Worktree paths stay inside the managed working copy.');
-   return withPathGuard([{path:bound.path,leaf:false,allowChildWrites:true},{path:target,leaf:true,allowChildWrites:true,childWriteRoot:bound.path}],new AbortController().signal,async()=>{
-    await mkdir(dirname(target),{recursive:true});
-    const handle=await open(target,'w');
-    try{await handle.writeFile(content);}finally{await handle.close();}
-    return{written:true,path:relativePath};
-   });
-  }
-  throw new HarnessError('AGENT_TOOL_DENIED',`Tool ${call.name} is outside the CODE_WORKTREE allowlist`);
- }
  private project(projectId:string){const project=this.store.get<ProjectSummary>('workspaceProject',id.parse(projectId));if(!project)throw new HarnessError('NOT_FOUND','Project is unavailable.');if(project.authority.kind!=='local')throw new HarnessError('CAPABILITY_DENIED','Company authority cannot use personal project tools.');return project;}
  async binding(projectId:string,threadId?:string):Promise<{project:ProjectSummary;path:string;workspace?:WorkspaceBinding}>{
   const project=this.project(projectId);let workspace:WorkspaceBinding|undefined;

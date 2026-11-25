@@ -12,7 +12,6 @@ import { withApprovedProjectContext } from './approved-project-context.ts';
 import { createRepositoryMapReader } from './repository-map-host.ts';
 import type {AccountAuthTarget} from '../contracts/authentication.ts';
 import {privateFamilyForBinding} from '../workspace/git-storage.ts';
-import {ProjectTools} from '../workspace/tools.ts';
 import { mkdir, readFile, writeFile, stat, open } from "node:fs/promises";
 import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from "node:path";
@@ -76,7 +75,7 @@ import {cancelImport,commitImport,prepareImport,stageImport} from './history-imp
 import type {MemoryExtractionAdmission,MemoryExtractionJob} from './memory-extraction.ts';
 import type {MemoryAccess,MemoryAction,MemoryScope} from '../contracts/project-memory.ts';
 import {BackgroundWorkCoordinator,type BackgroundWorkOptions} from './background-work.ts';
-import {ExternalIntakeCoordinator,type IntakeAuth} from './external-intake.ts';
+import {ExternalIntakeCoordinator,type IntakeAuth,type IntakeRecord} from './external-intake.ts';
 import type {ModelRequestGate} from '../runtime/model-capacity.ts';
 import type {BackgroundWorkKind} from '../contracts/background-work.ts';
 
@@ -289,17 +288,12 @@ export class Service {
     this.research=new PersonalResearchRepository(store,{assertHostActive:()=>{if(this.closed||this.updateClosing)throw new HarnessError('HOST_CLOSING','Gen is closing. Saved work is retained.');}});
     this.predictions=new ComposerPredictions({factory:()=>{if(!options.predictionRuntimeFactory)throw new HarnessError('PREDICTION_UNAVAILABLE','Composer predictions are unavailable in this host.');return options.predictionRuntimeFactory();},current:id=>this.predictionBasis(id)});
     this.planning=new PlanningCoordinator({store,assertRun:ctx=>this.assertRun(ctx),domainContext:(ctx,signal)=>this.context(ctx.threadId,signal,undefined,ctx),runtimeFactory:options.planningRuntimeFactory,canonicalJobs:options.canonicalPlanJobs,observeTool:(call,parent,execute)=>{this.effects.assertAdmissionsEnabled();return this.effectFlags.enabled("audit.effectsV1")||this.effectFlags.enabled("security.authorityV1")?this.effects.invoke({call,ctx:parent,thread:this.thread(parent.threadId),role:"planning_child"},execute):execute();}});
-    // M09: typed multi-agent work. CODE_WORKTREE joins the delegating
-    // parent's managed working copy through the workspace owner: the role
-    // proof binds the parent's WorkspaceBinding and every worktree.* call is
-    // confined to it. No M06 typed-verification proof exists on this host, so
-    // QA still reports ROLE_UNAVAILABLE; PLAN_READ/RESEARCH_READ run
-    // read-only through the restricted resolver below.
+    // M09: typed multi-agent work. Native child allocation and exact M02/M03
+    // proof are not registered on this host. Keep CODE_WORKTREE and QA
+    // unavailable; parent workspace identity is not native execution proof.
+    // PLAN_READ/RESEARCH_READ retain the restricted read-only resolver.
     this.planExtensions=new PlanExtensionStore({store});
-    const agentWorkProjects=new ProjectTools(store);
     this.agentWork=new AgentWorkCoordinator({store,assertRun:ctx=>this.assertRun(ctx),isEnabled:capabilityEnabled,
-      roleProofs:{codeWorktree:ctx=>agentWorkProjects.delegateProof(ctx.threadId)},
-      roleHandlers:{codeWorktree:(call,work)=>agentWorkProjects.delegateCall(call,work)},
       resourceResolver:async(_grant,_write,call)=>{const domain=await import('../capabilities/index.ts');return domain.handleDomainTool(call.name,call.args,this.agentReadDomain(_grant.threadId));},
       runtimeFactory:options.agentWorkRuntimeFactory});
     runtime.configure({ onEvent: event => {this.recordCompactionModelObservation(event);this.onRuntimeEvent(event);}, onTool: (call, ctx) => this.tool(call, ctx), onMemoryCheckpoint: request => this.memoryHost().checkpoint(request,()=>{this.assertRun(request.ctx);}), onBeforeInference: request => this.beforeInference(request), onCompactionCommit: request => this.commitNativeCompaction(request) });
@@ -315,9 +309,9 @@ export class Service {
       createTask:async request=>{
         // S10: the approved external task enters the same project, role and
         // execution gates as a manual task; external text carries no authority.
-        const created=await this.command({id:randomUUID(),type:'thread.create',payload:{title:request.title.slice(0,140),...(request.projectId?{projectId:request.projectId}:{})}});
+        const created=await this.command({id:request.threadCommandId,type:'thread.create',payload:{title:request.title.slice(0,140),...(request.projectId?{projectId:request.projectId}:{})}});
         const thread=created.result as Thread;
-        await this.command({id:randomUUID(),type:'message.send',threadId:thread.id,payload:{content:request.content,modelId:request.modelId}});
+        await this.command({id:request.messageCommandId,type:'message.send',threadId:thread.id,payload:{content:request.content,modelId:request.modelId}});
         return {threadId:thread.id};
       }});
     this.curatorTimer=setInterval(()=>{if(!this.closed&&!this.updateClosing)this.curateIdle();},60_000);this.curatorTimer.unref();
@@ -2439,6 +2433,13 @@ export class Service {
     this.backgroundWork.recover();
     this.backgroundWork.start();
     this.intake.start();
+    // An approved external task whose host died between admission and dispatch
+    // still holds a persisted input, and replaying the approval is rejected as
+    // a duplicate, so recovery re-delivers it rather than stranding the task.
+    for (const record of this.store.all<IntakeRecord>('intakeRecord')) {
+      const threadId = record.disposition === 'APPROVED' ? record.decision?.threadId : null;
+      if (threadId && this.store.all<Outbox>('outbox', threadId).some(i => i.status !== 'handled')) this.background(this.deliverOutbox(threadId));
+    }
     // M09 recovery runs after the listeners bind (service.recover is called
     // post-listen in launchHost) so a failed launch never mutates saved work.
     this.agentWork.recover();
