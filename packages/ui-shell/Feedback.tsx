@@ -9,11 +9,12 @@ const withoutRetryHint = (message: string) => message.replace(/([.!?])\s*(?:Retr
 export function Spinner({ size = 14 }: { size?: number }) { return <LoaderCircle className="ui-spinner" size={size} aria-hidden="true" />; }
 
 
-export function ErrorState({ message, onRetry, retryLabel = 'Retry', busy, live = 'alert', className = '', children, retryRef }: {
-  message: string; onRetry?: () => void; retryLabel?: string; busy?: boolean; live?: 'alert' | 'status'; className?: string; children?: ReactNode; retryRef?: Ref<HTMLButtonElement>;
+export function ErrorState({ message, title, onRetry, retryLabel = 'Retry', busy, live = 'alert', className = '', children, retryRef }: {
+  message: string; title?: string; onRetry?: () => void; retryLabel?: string; busy?: boolean; live?: 'alert' | 'status'; className?: string; children?: ReactNode; retryRef?: Ref<HTMLButtonElement>;
 }) {
+  const detail = onRetry ? withoutRetryHint(message) : message;
   return <div className={`ui-error ${className}`.trim()} role={live}>
-    <AlertCircle size={14} aria-hidden="true" /><p>{onRetry ? withoutRetryHint(message) : message}</p>
+    <AlertCircle size={14} aria-hidden="true" /><p>{title && <><strong className="ui-error-title">{title}</strong><span className="ui-error-detail">{detail}</span></>}{!title && detail}</p>
     {onRetry && <BusyButton ref={retryRef} className="ui-error-retry" busy={busy} onClick={onRetry}>{retryLabel}</BusyButton>}{children}
   </div>;
 }
