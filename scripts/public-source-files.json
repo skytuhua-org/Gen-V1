@@ -3399,6 +3399,7 @@
     "tests/attention-boundaries.test.ts",
     "tests/attention-popups.test.ts",
     "tests/attention.test.ts",
+    "tests/audit-1081-pi.test.ts",
     "tests/backend-pdf.test.ts",
     "tests/background-contract-decisions-v6.test.ts",
     "tests/background-work-v3.test.ts",
