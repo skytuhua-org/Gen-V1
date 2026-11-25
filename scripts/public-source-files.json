@@ -3460,6 +3460,7 @@
     "tests/qa-delegation-v3.test.ts",
     "tests/rc-review.test.ts",
     "tests/read-aloud-playback.test.ts",
+    "tests/read-aloud-settings-search.test.ts",
     "tests/read-aloud-text.test.ts",
     "tests/read-sync-decisions-v6.test.ts",
     "tests/read-sync-v3.test.ts",
