@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { HarnessError, type Thread, type ToolCall } from '../contracts/index.ts';
 import type { ToolEffectRecord, ToolOwner } from '../contracts/tool-effects.ts';
-import type { ToolResultGrantV1 } from '../contracts/tool-results.ts';
+import { TOOL_RESULT_LIMITS, type ToolResultGrantV1 } from '../contracts/tool-results.ts';
 import {
   DEFAULT_PROGRAM_LIMITS, PROGRAM_INPUT_LIMITS, programInputRefsSchema, toolProgramV1Schema, nestedCallV1Schema, programJournalV1Schema,
   type ToolProgramV1, type NestedCallV1, type ProgramJournalV1, type ProgramLimits,
@@ -342,6 +342,9 @@ export class ToolPrograms {
       timer = setTimeout(() => controller.abort(new HarnessError('PROGRAM_DEADLINE', 'The original program deadline expired')), Math.max(1, journal.deadlineAt - now()));
       timer.unref();
       const inputValues: unknown[] = [];
+      const pythonGrants = pythonState
+        ? new Map(pythonState.retainedGrants.map(grant => [digest(grant), grant]))
+        : undefined;
       let inputBytes = 2, inputNodes = 1; // The serialized inputs array itself.
       const inputLimit = () => new HarnessError('INPUT_LIMIT', 'Combined program inputs exceed 4 MiB of JSON, 100000 nodes or depth 64');
       const inspectInput = (value: unknown, depth: number, ancestors: Set<object>): void => {
@@ -369,6 +372,7 @@ export class ToolPrograms {
         if (inputNodes >= PROGRAM_INPUT_LIMITS.maxNodes) throw inputLimit();
         const input = await this.host.results.read(owner, ref, { programId, signal: controller.signal });
         if (input.status === 'FAILED') throw new HarnessError('INPUT_FAILED', 'A failed source handle cannot be used as a successful input');
+        if (pythonGrants) for (const grant of input.grants) pythonGrants.set(digest(grant), grant);
         inspectInput(input.value, 1, new Set());
         const serialized = JSON.stringify(input.value);
         if (serialized === undefined) throw inputLimit();
@@ -516,9 +520,16 @@ export class ToolPrograms {
         if (!controller.signal.aborted) controller.abort(error);
         throw error;
       });
-      if (pythonState?.retainedGrants.length) {
-        await this.host.results.revalidateGrants(owner, pythonState.retainedGrants, controller.signal);
-        check();
+      if (pythonGrants) {
+        // A nested read can add at most one path witness. Reserve its full
+        // budget up front so an over-budget cell never executes Python code.
+        const potentialReadGrants = program.allowedTools.length ? program.limits.maxCalls : 0;
+        if (pythonGrants.size + potentialReadGrants > TOOL_RESULT_LIMITS.maxGrants)
+          throw new HarnessError('KERNEL_GRANT_LIMIT', 'This Python cell would exceed the retained source-grant budget. Reset the kernel or use fewer inputs or reads.');
+        if (pythonGrants.size) {
+          await this.host.results.revalidateGrants(owner, [...pythonGrants.values()], controller.signal);
+          check();
+        }
       }
       execution = executor.execute({ source: privateProgram.source, inputValues, limits: program.limits,
         startSeed: journal.startSeed, startClock: journal.startClock, signal: controller.signal, call, beforeDelivery });

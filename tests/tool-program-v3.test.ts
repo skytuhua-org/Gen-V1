@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Store } from '../packages/storage/store.ts';
+import { Store, digest } from '../packages/storage/store.ts';
 import { ToolAuthority, buildToolRegistry } from '../packages/core/tool-authority.ts';
 import { ToolEffectLedger } from '../packages/core/tool-effects.ts';
 import { ToolDisclosure } from '../packages/core/tool-disclosure.ts';
@@ -15,6 +15,7 @@ import {
 } from '../packages/contracts/tool-program.ts';
 import type { ProgramExecutionRequest, ProgramExecutor } from '../packages/contracts/tool-program.ts';
 import { HarnessError, type ResourceGrant } from '../packages/contracts/index.ts';
+import { TOOL_RESULT_LIMITS } from '../packages/contracts/tool-results.ts';
 import { PythonKernels } from '../packages/core/python-kernels.ts';
 
 const owner = { threadId: 'thread', runId: 'run', epoch: 1, projectId: 'project', workspaceId: 'workspace', accountBinding: 'account' };
@@ -119,6 +120,38 @@ describe('M12 non-replaying synthetic host protocol', () => {
     expect(reset.generation).toBe(kernel.generation + 1);
     const afterReset = await kernels.cell(kernel.kernelId, owner, cell);
     expect((await f.results.read(owner, afterReset.resultRef!, { programId: afterReset.programId })).grants).toEqual([]);
+  });
+
+  it.each(['input', 'nested read'] as const)('refuses a Python cell whose %s would exceed the retained grant budget before dispatch', async additional => {
+    const f = fixture(async () => null);
+    const grant: ResourceGrant = { id: 'fixture-directory', threadId: owner.threadId, path: tmpdir(),
+      label: 'Synthetic project directory', kind: 'project', writable: false, createdAt: '', identity: { dev: '0', ino: '1' } };
+    f.store.internal('fixture.grant', owner.threadId, () => f.store.put('resource', grant.id, owner.threadId, grant));
+    const checkPaths = vi.spyOn(f.results, 'revalidateGrants').mockResolvedValue(undefined);
+    const witness = (index: number) => ({ resourceId: grant.id, grantDigest: digest(grant), path: 'fixture-'+index });
+    const tracked = Array.from({ length: TOOL_RESULT_LIMITS.maxGrants }, (_, index) => witness(index));
+    const base = await f.results.save({ owner, programId: 'fixture-base', status: 'SUCCEEDED', value: 1, grants: tracked });
+    const extra = await f.results.save({ owner, programId: 'fixture-extra', status: 'SUCCEEDED', value: 1, grants: [witness(tracked.length)] });
+    const execute = vi.fn(async () => 1);
+    const fixtureExecutor = syntheticExecutor(execute);
+    const executor: ProgramExecutor = { ...fixtureExecutor, proof: { ...fixtureExecutor.proof, language: 'PYTHON', isolation: 'M03_CONFINED_PROCESS' } };
+    const kernels = new PythonKernels(f.store, f.programs, { currentOwner: () => owner, enabled: () => true });
+    cleanups.unshift(() => kernels.close());
+    const kernel = await kernels.create({ owner, interpreterDigest: hash, configurationDigest: hash,
+      cwdIdentity: 'device:inode', toolRegistryDigest: hash, executionProfileDigest: hash }, () => executor);
+    const cell = { source: 'result = 1', allowedTools: [], requestedAggregate: 'Fixture value' };
+
+    try {
+      expect((await kernels.cell(kernel.kernelId, owner, { ...cell, inputRefs: [base] })).state).toBe('SUCCEEDED');
+      expect((await kernels.cell(kernel.kernelId, owner, { ...cell, inputRefs: [base] })).state).toBe('SUCCEEDED');
+      const additionalDependencies = additional === 'input'
+        ? { inputRefs: [extra] }
+        : { allowedTools: ['repository_read'], limits: { maxCalls: 1, maxConcurrentCalls: 1 } };
+      const denied = await kernels.cell(kernel.kernelId, owner, { ...cell, ...additionalDependencies });
+      expect(denied).toMatchObject({ state: 'FAILED', resultRef: null, error: { code: 'KERNEL_GRANT_LIMIT' } });
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(kernels.get(kernel.kernelId, owner)).toMatchObject({ state: 'RESET_REQUIRED', retainedState: false });
+    } finally { checkPaths.mockRestore(); }
   });
 
   it('persists identity and M02 dispatch before the read and keeps bulk out of snapshots and events', async () => {
