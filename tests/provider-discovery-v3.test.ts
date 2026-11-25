@@ -14,7 +14,7 @@ const officialCatalog: ModelInfo[] = [{ id: "claude-code/m", provider: "claude-c
 
 const fakeAdapter = (catalog: ModelInfo[]): RuntimeAdapter & { models: ReturnType<typeof vi.fn> } => ({
   configure: vi.fn(),
-  models: vi.fn(async () => structuredClone(catalog)),
+  models: vi.fn(async (query) => structuredClone(query?.providerId ? catalog.filter(model => model.provider === query.providerId) : catalog)),
   start: vi.fn(async () => {}),
   followUp: vi.fn(async () => {}),
   cancel: vi.fn(async () => {}),
@@ -46,7 +46,20 @@ it("keeps a healthy sibling while another provider on the adapter signs in", asy
   expect(models.map((model) => model.id)).toContain(`${HEALTHY}/m`);
   expect(models.map((model) => model.id)).not.toContain(`${BUSY}/m`);
   expect(models.map((model) => model.id)).toContain("claude-code/m");
-  expect(pi.models).toHaveBeenCalledOnce();
+  expect(pi.models.mock.calls.every(([query]) => query?.providerId && query.providerId !== BUSY)).toBe(true);
+});
+
+it.each([undefined, false, true])("does not discover a busy native provider with refresh=%s", async (refresh) => {
+  const { runtime, official, accounts } = fixture(id => id === "gemini-cli");
+  try {
+    const models = await runtime.models(refresh === undefined ? undefined : { refresh });
+    expect(models.map(model => model.id)).toContain("claude-code/m");
+    // An unscoped official discovery starts every native provider when its
+    // catalog is cold, before result filtering can hide the busy provider.
+    expect(official.models).toHaveBeenCalled();
+    expect(official.models.mock.calls.every(([query]) => query?.providerId && query.providerId !== "gemini-cli")).toBe(true);
+    expect(accounts.releaseUse).toHaveBeenCalled();
+  } finally { await runtime.dispose(); }
 });
 
 it("still returns the healthy provider for an explicit query", async () => {
