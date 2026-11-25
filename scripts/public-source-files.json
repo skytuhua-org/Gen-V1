@@ -253,6 +253,7 @@
     "apps/web/src/frontend-fidelity.css",
     "apps/web/src/git-history.css",
     "apps/web/src/github-sign-in.css",
+    "apps/web/src/granted-resources.ts",
     "apps/web/src/image-compare.css",
     "apps/web/src/interaction-tools.css",
     "apps/web/src/journal.ts",

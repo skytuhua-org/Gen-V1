@@ -1,5 +1,5 @@
 import type {ShellPage, ShellResourceRow, ThreadNavigationRow} from '../../../packages/contracts/shell-read-models';
-import {getShellArchive, getShellResources, getShellSettingsReadModel} from './shell-read-api';
+import {getShellArchive, getShellNavigationItem, getShellResources, getShellSettingsReadModel} from './shell-read-api';
 import type {SettingsData} from './settings-data';
 
 async function complete<T extends {id: string}>(first: ShellPage<T>, next: (cursor: string) => Promise<ShellPage<T>>, signal: AbortSignal): Promise<T[]> {
@@ -33,5 +33,9 @@ export async function loadCompactSettings(signal: AbortSignal): Promise<Settings
   ]);
   signal.throwIfAborted();
   if (resources.length !== model.counts.resources || archivedThreads.length !== model.counts.archivedThreads) throw Error('Settings metadata changed while loading. Refresh to retry.');
-  return {sequence: model.sequence, settings: model.settings, accounts: model.accounts, skills: model.skills, skillProposals: model.skillProposals, learning: model.learning, projects: model.projects, resources, archivedThreads, counts: model.counts};
+  const threadTitles: Record<string, string> = Object.fromEntries(archivedThreads.map(thread => [thread.id, thread.title]));
+  const missing = [...new Set(resources.map(grant => grant.threadId).filter(id => !threadTitles[id]))];
+  await Promise.all(missing.map(async id => { try { threadTitles[id] = (await getShellNavigationItem(id, signal)).title; } catch { /* title falls back to the thread count */ } }));
+  signal.throwIfAborted();
+  return {sequence: model.sequence, settings: model.settings, accounts: model.accounts, skills: model.skills, skillProposals: model.skillProposals, learning: model.learning, projects: model.projects, resources, archivedThreads, threadTitles, counts: model.counts};
 }

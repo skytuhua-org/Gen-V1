@@ -167,7 +167,7 @@ describe('keyboard binding registry', () => {
   it('is reachable from the Settings shortcut section', () => {
     const data: SettingsData = {
       sequence: 1, settings: {theme: 'dark', modelId: null, preferences: {keybindings: {search: 'Alt+K'}}},
-      accounts: [], skills: [], skillProposals: [], learning: {supported: true, status: 'idle', lastReview: null}, projects: [], resources: [], archivedThreads: [],
+      accounts: [], skills: [], skillProposals: [], learning: {supported: true, status: 'idle', lastReview: null}, projects: [], resources: [], archivedThreads: [], threadTitles: {},
       counts: {threads: 0, archivedThreads: 0, artifacts: 0, resources: 0, uncertainOperations: 0},
     };
     const html = renderToStaticMarkup(createElement(SettingsView, {data, draftReferences: async () => ({threads: [], skills: [], requests: [], userStates: []}), initialSection: 'keybindings', modelError: '', refresh: async () => {}, loadModels: async () => {}, close: () => {}, addResource: () => {}}));

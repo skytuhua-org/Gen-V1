@@ -116,3 +116,11 @@
 .settings-shortcuts-keys { display:flex;flex:0 0 auto;gap:4px; }
 .settings-shortcuts-keys kbd { padding:1px 5px;border:1px solid var(--border);border-radius:4px;font-size:11px;color:var(--muted);white-space:nowrap; }
 .settings-shortcuts-label small { display:block;margin-top:1px;font-size:12px;line-height:1.4;color:var(--muted); }
+
+.settings-records>div.settings-grant-row { display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);font-size:12px;max-height:200px;overflow:hidden;transition:opacity var(--ui-motion-popup-exit) var(--ui-ease-move),max-height var(--ui-motion-popup-exit) var(--ui-ease-move),padding var(--ui-motion-popup-exit) var(--ui-ease-move),border-width var(--ui-motion-popup-exit) var(--ui-ease-move); }
+.settings-records>div.settings-grant-row.settings-grant-removing { opacity:0;max-height:0;padding-block:0;border-width:0; }
+.settings-grant-copy { display:flex;flex-direction:column;gap:4px;flex:1;min-width:0; }
+.settings-grant-name { font-size:14px;font-weight:500;color:var(--text); }
+.settings-grant-meta,.settings-grant-scope { font-size:13px;color:var(--muted); }
+.settings-grant-revoke { flex:none;font-size:12px;min-height:32px;padding:4px 10px; }
+@media (prefers-reduced-motion: reduce) { .settings-records>div.settings-grant-row { transition:none; } }
