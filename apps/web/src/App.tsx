@@ -25,7 +25,7 @@ import { getPreferences, mergePreferences } from '../../../packages/contracts/pr
 import { ShellSidebar, threadStatus } from './ShellSidebar';
 import { ProjectPicker } from './ProjectPicker';
 import { projectColorKey } from './project-colors';
-import { useShellLayout, matchesShortcut } from './shell-layout';
+import { useShellLayout, matchesShortcut, focusSidebarSearch } from './shell-layout';
 import {useSidebarCollapse} from './sidebar-collapse';
 import {sameSplitWorkspaceView,createSplitWorkspaceLayout,applySplitWorkspaceCommand} from '../../../packages/core/split-workspace-layout';
 import { ResizeHandle, WorkspacePanel } from './WorkspacePanel';
@@ -444,11 +444,13 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const [search, setSearch] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const sidebar = useRef<HTMLElement>(null);
   const sidebarScrim = useRef<HTMLButtonElement>(null);
   const [mobile, setMobile] = useState(() => matchMedia('(max-width: 700px)').matches);
   useEffect(() => { const query = matchMedia('(max-width: 700px)'); const change = () => setMobile(query.matches); query.addEventListener('change', change); return () => query.removeEventListener('change', change); }, []);
   useModalRegion(sidebar, mobile && sidebarOpen, () => setSidebarOpen(false), 'input', sidebarScrim);
+  useLayoutEffect(() => { if (searchFocusRequest) focusSidebarSearch(searchRef.current); }, [searchFocusRequest]);
   const [focusedResource,setFocusedResource]=useState<string|undefined>(undefined);
   const [liveUsageOpen,setLiveUsageOpen]=useState(false);
   const [liveUsageViews,setLiveUsageViews]=useState<{workspaceId:string;viewIds:string[]}>({workspaceId:'',viewIds:[]});
@@ -730,7 +732,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const newThreadRef = useRef<() => Promise<void>>(async()=>{}); newThreadRef.current = async()=>{if(composerPending.current||creationPending.current)return;await prepareWorkspace();openProjectSelection();};
   useEffect(() => { if(embeddedThreadId)return;const key = (event: KeyboardEvent) => {
     if (event.defaultPrevented || document.querySelector('dialog[open]')) return;
-    if (matchesShortcut(event, preferences.keybindings.search)) { event.preventDefault(); setSidebarOpen(true); setLayout(value => ({ ...value, sidebarCollapsed: false })); requestAnimationFrame(() => searchRef.current?.focus()); }
+    if (matchesShortcut(event, preferences.keybindings.search)) { event.preventDefault(); setSidebarOpen(true); setLayout(value => ({ ...value, sidebarCollapsed: false })); setSearchFocusRequest(value => value + 1); }
     else if (matchesShortcut(event, preferences.keybindings.newThread)) { event.preventDefault(); if (!composerPending.current) void newThreadRef.current().catch(error => reportError(messageOf(error))); }
     else if (matchesShortcut(event, preferences.keybindings.toggleSidebar)) { event.preventDefault(); if (mobile) setSidebarOpen(value => !value); else setLayout(value => ({ ...value, sidebarCollapsed: !value.sidebarCollapsed })); }
     else if (matchesShortcut(event, preferences.keybindings.toggleRightPanel)) { event.preventDefault(); setLayout(value => ({ ...value, rightPanelOpen: !value.rightPanelOpen })); }
