@@ -13,3 +13,17 @@ export async function settleSettingsOperations(): Promise<void> {
  // guard only needs every pending write to reach a settled state.
  while (pending.size) await Promise.allSettled([...pending]);
 }
+
+/** A settled write whose post-save view refresh failed — the value persisted. */
+export class SettingsRefreshError extends Error {
+ constructor(readonly cause: unknown) { super('The setting was saved, but the settings view could not refresh.'); this.name = 'SettingsRefreshError'; }
+}
+
+/** The write is the save acknowledgment: it alone holds the handoff guard and
+ * alone decides failure. A pending or failed refresh neither reports a saved
+ * value as failed nor keeps navigation/close waiting. */
+export async function persistSettingsChange(write: () => Promise<unknown>, refresh: () => Promise<unknown>): Promise<void> {
+ await settingsOperation(write);
+ try { await refresh(); }
+ catch (cause) { throw new SettingsRefreshError(cause); }
+}
