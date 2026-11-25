@@ -4207,6 +4207,7 @@
     "tests/split-workspace-repository.test.ts",
     "tests/startup-feedback.test.ts",
     "tests/store-backed-helpers.test.ts",
+    "tests/store-transactions.test.ts",
     "tests/store.test.ts",
     "tests/subscription-connections.test.ts",
     "tests/task-composition.test.ts",
