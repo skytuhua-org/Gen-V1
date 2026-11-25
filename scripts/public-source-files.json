@@ -3311,6 +3311,7 @@
     "tests/generated-ui-endurance-v3.test.ts",
     "tests/gesture-cleanup.test.ts",
     "tests/git-metadata-guard.test.ts",
+    "tests/git-snapshot-cleanup.test.ts",
     "tests/github-workspace.test.ts",
     "tests/hermes-acp-server.test.ts",
     "tests/hermes-broker.test.ts",
