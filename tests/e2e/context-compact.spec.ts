@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test';
+import {test,expect,type Page} from '@playwright/test';
 import {resolve} from 'node:path';
 const fixture='/@fs/'+resolve('tests/e2e/context-compact-fixture.tsx').replaceAll('\\','/');
 test.beforeEach(async({page})=>{
@@ -27,11 +27,36 @@ test('unsupported compaction remains disabled and sends no command',async({page}
  await page.goto('/context-compact-check?unavailable=1');await page.getByRole('button',{name:'Inspect context usage'}).click();const compact=page.getByRole('button',{name:'Compact now',exact:true});
  await expect(compact).toBeDisabled();await expect(compact).toHaveAttribute('title',/Gemini.*does not support/);await compact.evaluate(node=>(node as HTMLButtonElement).click());expect(commands).toEqual([]);
 });
-test('available compaction keeps its existing owning-thread command',async({page})=>{
+test('available compaction keeps its owning-thread command without treating acknowledgement as completion',async({page})=>{
  const commands:{type:string;threadId?:string}[]=[];await page.route('**/api/commands',route=>{commands.push(route.request().postDataJSON());return route.fulfill({json:{commandId:'fixture',seq:1,result:{runId:'compaction-run'}}});});
  await page.goto('/context-compact-check');await page.getByRole('button',{name:'Inspect context usage'}).click();await page.getByRole('button',{name:'Compact now',exact:true}).click();
  await expect.poll(()=>commands.map(value=>[value.type,value.threadId])).toEqual([['run.compact','owning-thread']]);
- await expect(page.locator('.ui-toast').filter({hasText:'Context compacted'})).toBeVisible();
+ await expect(page.getByRole('dialog',{name:'Context inspector'})).toContainText('Result not reported');
+ await expect(page.locator('.ui-toast').filter({hasText:'Context compacted'})).toHaveCount(0);
+});
+
+async function reportCompaction(page:Page,status:'accepted'|'failed'|'cancelled'){
+ await page.evaluate(status=>{
+  const owner={threadId:'owning-thread',sessionPath:'/fixture/pi/tasks/owning-thread/sessions/session.jsonl',runId:'compaction-run',epoch:1};
+  window.dispatchEvent(new CustomEvent('fixture-compaction',{detail:{...owner,status,...(status==='accepted'?{receipt:{...owner,id:'accepted-compaction',beforeTokens:10000,afterTokens:8000,contextWindow:272000}}:{})}}));
+ },status);
+}
+for(const status of ['failed','cancelled'] as const)test(`${status} compaction does not announce success`,async({page})=>{
+ await page.route('**/api/commands',route=>route.fulfill({json:{commandId:'fixture',seq:1,result:{runId:'compaction-run'}}}));
+ await page.goto('/context-compact-check');await page.getByRole('button',{name:'Inspect context usage'}).click();
+ await page.getByRole('button',{name:'Compact now',exact:true}).click();await reportCompaction(page,status);
+ await expect(page.getByRole('dialog',{name:'Context inspector'})).toContainText(status==='failed'?'Compaction failed':'Compaction stopped');
+ await expect(page.locator('.ui-toast').filter({hasText:'Context compacted'})).toHaveCount(0);
+});
+test('one owner-validated accepted receipt announces successful compaction once',async({page})=>{
+ await page.route('**/api/commands',route=>route.fulfill({json:{commandId:'fixture',seq:1,result:{runId:'compaction-run'}}}));
+ await page.goto('/context-compact-check');await page.getByRole('button',{name:'Inspect context usage'}).click();
+ await page.getByRole('button',{name:'Compact now',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'Context inspector'})).toContainText('Result not reported');
+ await expect(page.locator('.ui-toast').filter({hasText:'Context compacted'})).toHaveCount(0);
+ await reportCompaction(page,'accepted');await expect(page.getByRole('dialog',{name:'Context inspector'})).toContainText('Freed 2K tokens');
+ await expect(page.locator('.ui-toast').filter({hasText:'Context compacted'})).toHaveCount(1);
+ await reportCompaction(page,'accepted');await expect(page.locator('.ui-toast').filter({hasText:'Context compacted'})).toHaveCount(1);
 });
 
 test('an unreported session disables Compact now with a reason instead of a dead control',async({page})=>{
