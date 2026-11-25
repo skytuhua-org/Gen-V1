@@ -73,6 +73,33 @@ describe('parseSettingsFile issues',()=>{
 });
 
 describe('round trip and diff',()=>{
+ it('ignores an imported shortcut that collides with an unchanged current binding',()=>{
+  const parsed = parseSettingsFile(file({density:'compact',keybindings:{newThread:'ctrl+k'}} as never));
+  if(!parsed.ok)throw Error('parse failed');
+  const diff = diffSettings({theme:'dark',preferences:DEFAULT_PREFERENCES},parsed);
+  expect(diff.changes.map(change=>change.key)).toEqual(['density']);
+  expect(diff.issues).toContainEqual({key:'keybindings.newThread',reason:'conflict',conflictWith:'search'});
+  expect(mergePreferences(DEFAULT_PREFERENCES,patchFromChanges(diff.changes,'after').preferences).keybindings).toEqual(DEFAULT_PREFERENCES.keybindings);
+  expect(parsed.patch.keybindings).toEqual({newThread:'ctrl+k'});
+ });
+ it('allows a complete shortcut swap without treating vacated chords as conflicts',()=>{
+  const parsed = parseSettingsFile(file({keybindings:{search:DEFAULT_PREFERENCES.keybindings.newThread,newThread:DEFAULT_PREFERENCES.keybindings.search}} as never));
+  if(!parsed.ok)throw Error('parse failed');
+  const diff = diffSettings({theme:'dark',preferences:DEFAULT_PREFERENCES},parsed);
+  expect(diff.changes.map(change=>change.key)).toEqual(['keybindings.search','keybindings.newThread']);
+  expect(diff.issues ?? parsed.issues).toEqual([]);
+ });
+ it('rechecks collisions when rejecting one import restores its current chord',()=>{
+  const parsed = parseSettingsFile(file({wordWrap:false,keybindings:{search:DEFAULT_PREFERENCES.keybindings.newThread,newThread:DEFAULT_PREFERENCES.keybindings.stop}} as never));
+  if(!parsed.ok)throw Error('parse failed');
+  const diff = diffSettings({theme:'dark',preferences:DEFAULT_PREFERENCES},parsed);
+  expect(diff.changes.map(change=>change.key)).toEqual(['wordWrap']);
+  expect(diff.issues).toEqual(expect.arrayContaining([
+   {key:'keybindings.newThread',reason:'conflict',conflictWith:'stop'},
+   {key:'keybindings.search',reason:'conflict',conflictWith:'newThread'},
+  ]));
+  expect(diff.issues).toHaveLength(2);
+ });
  it('build → parse → diff reproduces every changed key; patch restores portable keys',()=>{
   const source = {...DEFAULT_PREFERENCES,density:'compact' as const,uiFontSize:16,wordWrap:false,keybindings:{...DEFAULT_PREFERENCES.keybindings,search:'Ctrl+Alt+K'}};
   const text = buildSettingsFile({theme:'light',preferences:source,now:new Date('2026-11-22T00:00:00Z')});

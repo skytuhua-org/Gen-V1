@@ -119,8 +119,27 @@ function equal(left: unknown, right: unknown): boolean {
  return JSON.stringify(left) === JSON.stringify(right);
 }
 
-export function diffSettings(current: { theme: Theme; preferences: UiPreferences }, parsed: Extract<ParsedSettingsFile, { ok: true }>): { changes: SettingChange[]; unchanged: number } {
+export function diffSettings(current: { theme: Theme; preferences: UiPreferences }, parsed: Extract<ParsedSettingsFile, { ok: true }>): { changes: SettingChange[]; unchanged: number; issues: ImportIssue[] } {
  const changes: SettingChange[] = [];
+ const issues = [...parsed.issues], bindings = {...parsed.patch.keybindings};
+ // Qualify the resulting bindings, so complete swaps remain valid. Removing
+ // an import restores its current chord and can reveal another collision.
+ // Each pass removes at least one imported member, so this is bounded by
+ // the fixed set of keybinding members and never modifies current settings.
+ for (;;) {
+  const merged = {...current.preferences.keybindings, ...bindings};
+  const rejected: (keyof UiPreferences['keybindings'])[] = [];
+  for (const member of keybindingMembers) {
+   if (!Object.hasOwn(bindings, member)) continue;
+   const conflictWith = keybindingMembers.find(other => other !== member && normalizeChord(merged[other]) === normalizeChord(merged[member]));
+   if (conflictWith) {
+    issues.push({key: `keybindings.${member}`, reason: 'conflict', conflictWith});
+    rejected.push(member);
+   }
+  }
+  if (!rejected.length) break;
+  for (const member of rejected) delete bindings[member];
+ }
  let unchanged = 0;
  const push = (key: string, before: unknown, after: unknown) => {
   if (equal(before, after)) unchanged++;
@@ -128,13 +147,13 @@ export function diffSettings(current: { theme: Theme; preferences: UiPreferences
  };
  if (parsed.theme !== undefined) push('theme', current.theme, parsed.theme);
  for (const key of PORTABLE_PREFERENCE_KEYS) {
-  const value = (parsed.patch as Record<string, unknown>)[key];
+  const value = key === 'keybindings' ? bindings : (parsed.patch as Record<string, unknown>)[key];
   if (value === undefined) continue;
   if (key === 'keybindings') {
    for (const member of Object.keys(value as object)) push(`keybindings.${member}`, current.preferences.keybindings[member as keyof UiPreferences['keybindings']], (value as Record<string, unknown>)[member]);
   } else push(key, current.preferences[key], value);
  }
- return { changes, unchanged };
+ return { changes, unchanged, issues };
 }
 
 export function patchFromChanges(changes: SettingChange[], side: 'before' | 'after'): { theme?: Theme; preferences: PreferencePatch } {

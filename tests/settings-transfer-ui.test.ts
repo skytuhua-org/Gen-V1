@@ -125,6 +125,16 @@ describe('SettingsTransfer', () => {
     await expect.poll(async()=>page.getByText('Kept 1 setting you changed after importing.').isVisible()).toBe(true);
   });
 
+  it('explains current-shortcut conflicts and applies only the remaining valid changes', async () => {
+    const page = await open();
+    await page.locator('input[type=file]').setInputFiles(file(settingsFile({showWorkingSection: false, keybindings: {newThread: 'Ctrl+K'}})));
+    await expect.poll(async()=>page.getByText('Ignored (1)').isVisible()).toBe(true);
+    expect(await page.getByText('Shortcut conflicts with Search', {exact: false}).isVisible()).toBe(true);
+    await page.getByRole('button', {name: 'Apply 1 change', exact: true}).click();
+    await expect.poll(() => page.evaluate(() => window.settingsTransferCalls.persist.length)).toBe(1);
+    expect(await page.evaluate(() => window.settingsTransferCalls.persist[0])).toEqual({preferences: {showWorkingSection: false}});
+  });
+
   it('lists ignored entries and shows Close only for a zero-change file', async () => {
     const page = await open();
     await page.locator('input[type=file]').setInputFiles(file(settingsFile({projectColors: {p: '#4F6EFF'}, zzz: 1})));

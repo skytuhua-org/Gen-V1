@@ -49,7 +49,7 @@ export function SettingsTransfer({theme, preferences, persist}: {theme: Theme; p
       return;
     }
     const diff = diffSettings(latest.current, parsed);
-    setPending({fileName: selected.name, parsed, changes: diff.changes, unchanged: diff.unchanged});
+    setPending({fileName: selected.name, parsed: {...parsed, issues: diff.issues}, changes: diff.changes, unchanged: diff.unchanged});
   };
 
   const apply = async () => {
