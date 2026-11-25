@@ -12,10 +12,11 @@ import {assertNotStorage,canonical,inside} from '../core/security.ts';
 import {gitExecutable} from '../capabilities/process.ts';
 import {readBoundFile,withPathGuard} from '../core/file-access.ts';
 import {directoryIdentity,importGitFamily,nativeGit,nativeGitBytes,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
-import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead} from '../contracts/code-review.ts';
+import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead,type GitHistoryCommitDetail,type GitHistoryPage,type GitHistoryPatch} from '../contracts/code-review.ts';
 import {LINE_ATTRIBUTION_LIMITS,lineAttributionIsoUtc,lineAttributionLines,sanitizeCommitText,type LineAttributionPreview,type LineAttributionRequest,type LineAttributionResult} from '../contracts/file-line-attribution.ts';
 import {mintLineAttributionProof,mintLineAttributionSecret,parseLinePorcelain,parseLsTreeEntry,verifyLineAttributionProof,type LineAttributionProofInput} from './file-line-attribution.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
+import {GitHistorySnapshots,readHistoryCommit,readHistoryFile,readHistoryPage} from './git-history.ts';
 
 interface Identity{dev:string;ino:string}
 export interface WorkspaceBinding {id:string;threadId:string;projectId:string;familyId?:string;path:string;branch:string;gitDirectory:string;commonDirectory:string;identity:Identity;gitDirectoryIdentity:Identity;commonDirectoryIdentity:Identity}
@@ -51,6 +52,7 @@ export class ProjectTools{
  private readonly reviewComparisons=new ComparisonSnapshots();
  private readonly attributionSecret=mintLineAttributionSecret();
  private readonly attributionBusy=new Set<string>();
+ private readonly historySnapshots=new GitHistorySnapshots();
  constructor(readonly store:Store,readonly options:ProjectToolOptions={}){this.workspace=new WorkspaceRepository(store);}
  private exclusive<T>(key:string,action:()=>Promise<T>):Promise<T>{const next=(this.queues.get(key)??Promise.resolve()).catch(()=>{}).then(action);this.queues.set(key,next);void next.finally(()=>{if(this.queues.get(key)===next)this.queues.delete(key);}).catch(()=>{});return next;}
  private gitExecutable(){return this.options.git??gitExecutable();}
@@ -181,6 +183,28 @@ export class ProjectTools{
   return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,async(metadata,path,signal,managed)=>{
    const owner=JSON.stringify([projectId,threadId??null,binding.path]),entry=this.reviewComparisons.get(owner,request.comparisonId);
    return readLocalComparisonFile({git:args=>nativeGit(this.gitExecutable(),metadata,path,args,signal),path,signal,managed,owner},entry.value,request.path);
+  }));
+ }
+ /** Read-only commit history through the same attested managed/legacy Git boundary. */
+ async gitHistory(projectId:string,threadId:string|undefined,input:{cursor?:string}):Promise<GitHistoryPage>{
+  const binding=await this.binding(projectId,threadId);
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal)=>{
+   const owner=JSON.stringify([projectId,threadId??null,binding.path]);
+   return readHistoryPage({git:args=>nativeGit(this.gitExecutable(),metadata,path,args,signal),signal,owner},this.historySnapshots,input.cursor);
+  }));
+ }
+ async gitHistoryCommit(projectId:string,threadId:string|undefined,input:{snapshotId:string;oid:string}):Promise<GitHistoryCommitDetail>{
+  const binding=await this.binding(projectId,threadId);
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal)=>{
+   const owner=JSON.stringify([projectId,threadId??null,binding.path]);
+   return readHistoryCommit({git:args=>nativeGit(this.gitExecutable(),metadata,path,args,signal),signal,owner},this.historySnapshots,input.snapshotId,input.oid);
+  }));
+ }
+ async gitHistoryFile(projectId:string,threadId:string|undefined,input:{comparisonId:string;path:string}):Promise<GitHistoryPatch>{
+  const binding=await this.binding(projectId,threadId);
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal)=>{
+   const owner=JSON.stringify([projectId,threadId??null,binding.path]);
+   return readHistoryFile({git:args=>nativeGit(this.gitExecutable(),metadata,path,args,signal),signal,owner},this.historySnapshots,input.comparisonId,input.path);
   }));
  }
  async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string}){
