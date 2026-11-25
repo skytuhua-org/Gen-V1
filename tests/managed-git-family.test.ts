@@ -11,7 +11,7 @@ vi.mock('../packages/core/file-access.ts', async importOriginal => {
   } };
 });
 import {execFileSync} from 'node:child_process';
-import {lstat,mkdir,mkdtemp,readFile,rename,rm,writeFile} from 'node:fs/promises';
+import {lstat,mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {withGitMetadata,type ManagedGitFamily} from '../packages/capabilities/git-access.ts';
