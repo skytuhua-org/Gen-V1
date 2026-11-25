@@ -862,3 +862,14 @@ test('an unavailable main layout gives the user a retry without reloading the pa
   expect(reads).toBeGreaterThan(failedReads);
   expect(navigations).toBe(0);
 });
+
+test('Workspace artifact picker is disabled with an explanatory empty state when no artifacts exist',async({page})=>{
+ await fixture(page,{working:false});await page.getByRole('button',{name:'Open conversation Project investigation',exact:true}).click();
+ await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();
+ const chooser=page.getByRole('combobox',{name:'Workspace artifact',exact:true});
+ await expect(chooser).toBeDisabled();
+ await expect(chooser).toContainText('Choose an artifact');
+ await expect(page.locator('.panel-artifact-empty')).toHaveText('Artifacts the agent creates appear here.');
+ await expect(page.getByRole('listbox',{name:'Workspace artifact'})).toHaveCount(0);
+ await expect(page.getByTitle('No artifacts yet', {exact:true})).toBeVisible();
+});
