@@ -8,6 +8,17 @@ import {
 } from "react";
 import { authenticated, read } from "../api";
 import { FilesView, type FilesEntry } from "./FilesView";
+import {
+	FilesModeToggle,
+	imageModeOptions,
+	ProjectImagePreview,
+	type FilesMode,
+} from "./ImagePreview";
+import {
+	imageKindFor,
+	readProjectImage,
+	type ProjectImage,
+} from "./project-image";
 import { ProjectSearch } from "./ProjectSearch";
 import {
 	unavailableProjectSearch,
@@ -21,6 +32,9 @@ interface ProjectFile {
 	binary: boolean;
 	sha256: string;
 }
+type ProjectPreview =
+	| { kind: "text"; file: ProjectFile }
+	| { kind: "image"; image: ProjectImage };
 interface ProjectFilesProps {
 	base: string;
 	query: string;
@@ -43,7 +57,10 @@ function ProjectFilesReader({
 		[selectedMatch, setSelectedMatch] = useState<ProjectSearchMatch | null>(
 			null,
 		),
+		[imageMode, setImageMode] = useState<FilesMode>("fit"),
 		[searchRefresh, setSearchRefresh] = useState(0);
+	const imageKind = selected ? imageKindFor(selected.name) : null,
+		useImage = imageKind !== null && imageMode !== "source";
 	const matchLine = useRef<HTMLElement>(null);
 	const owner = {
 		projectId: decodeURIComponent(base.split("/").at(-1) ?? ""),
@@ -73,17 +90,27 @@ function ProjectFilesReader({
 					cache: "no-store",
 					signal,
 				}),
-			).then(read<ProjectFile>);
+			)
+				.then(read<ProjectFile>)
+				.then((file): ProjectPreview => ({ kind: "text", file }));
 		},
 		[base, query, selected?.path],
 	);
+	const readImage = useCallback(
+		(signal: AbortSignal): Promise<ProjectPreview> =>
+			readProjectImage(base, query, selected!.path, signal).then(
+				(image) => ({ kind: "image", image }),
+			),
+		[base, query, selected?.path],
+	);
 	const folder = useFilesRead(path, active, readFolder),
-		preview = useFilesRead(
-			selected?.path ?? "",
+		preview = useFilesRead<ProjectPreview>(
+			selected ? selected.path + (useImage ? "#image" : "#text") : "",
 			active && !!selected,
-			readFile,
+			useImage ? readImage : readFile,
 		);
-	const file = preview.value;
+	const previewValue = preview.value,
+		file = previewValue?.kind === "text" ? previewValue.file : null;
 	const stale = !!(
 		selectedMatch &&
 		file &&
@@ -132,6 +159,12 @@ function ProjectFilesReader({
 						selected={selectedMatch}
 						onSelect={(match) => {
 							setSelectedMatch(match);
+							setImageMode(
+								match.kind === "text" &&
+									imageKindFor(match.path) === "svg"
+									? "source"
+									: "fit",
+							);
 							if (selected?.path === match.path) preview.refresh();
 							else
 								setSelected({
@@ -146,8 +179,33 @@ function ProjectFilesReader({
 			}}
 			preview={{
 				...preview,
-				body: file ? (
+				body:
+					previewValue?.kind === "image" ? (
+						<>
+							<ProjectImagePreview
+								name={selected!.name}
+								image={previewValue.image}
+								svg={imageKind === "svg"}
+								mode={imageMode}
+								onMode={setImageMode}
+							/>
+							<small className="files-checksum">
+								SHA-256 {previewValue.image.sha256}
+							</small>
+						</>
+					) : file ? (
 					<>
+						{imageKind === "svg" && imageMode === "source" && (
+							<div className="files-image">
+								<div className="files-image-bar">
+									<FilesModeToggle
+										options={imageModeOptions(true)}
+										value="source"
+										onChange={setImageMode}
+									/>
+								</div>
+							</div>
+						)}
 						{stale && (
 							<p className="files-message" role="status">
 								This file changed since the search. Showing current content;
@@ -194,13 +252,17 @@ function ProjectFilesReader({
 			}
 			onDirectory={(next) => {
 				setSelectedMatch(null);
+				setImageMode("fit");
 				setPath(next);
 				setSelected(null);
 			}}
 			onSelect={(entry) => {
 				setSelectedMatch(null);
 				if (selected?.path === entry.path) preview.refresh();
-				else setSelected(entry);
+				else {
+					setImageMode("fit");
+					setSelected(entry);
+				}
 			}}
 			onRefresh={() => {
 				setSearchRefresh((value) => value + 1);
