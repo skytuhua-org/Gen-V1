@@ -357,16 +357,21 @@ describe.runIf(enabled)('actual App split workspace',()=>{
    const surface=page.locator('[data-split-view="thread:thread-a"]'),draft=surface.getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep stale preflight draft');
    if(action!=='detach'){await page.locator('[data-split-pane="pane-main"]').getByLabel('Area actions',{exact:true}).click();await page.getByRole('menuitem',{name:'Detach conversation',exact:true}).click();await pw(surface).toHaveAttribute('data-floating','true');}
    await page.evaluate('import("/src/editor-handoff.ts").then(handoff=>{handoff.registerEditorHandoff("held-placement-revision",()=>new Promise(resolve=>{window.placementPreflightHeld=true;window.releasePlacementPreflight=resolve;}));})');
-   const revision=host.layout.revision,type=action==='detach'?'split-workspace.view.park':action==='return'?'split-workspace.view.open':'split-workspace.pane.split';
+   const type=action==='detach'?'split-workspace.view.park':action==='return'?'split-workspace.view.open':'split-workspace.pane.split';
    if(action==='detach'){await page.locator('[data-split-pane="pane-main"]').getByLabel('Area actions',{exact:true}).click();await page.getByRole('menuitem',{name:'Detach conversation',exact:true}).click();}
    else if(action==='return'){await surface.locator('.split-float-grip').click();await page.getByRole('menuitem',{name:'Return to main',exact:true}).click();}
    else{const pane=(await page.locator('[data-split-pane="pane-main"]').boundingBox())!,grip=(await surface.locator('.split-float-grip').boundingBox())!;await page.mouse.move(grip.x+grip.width/2,grip.y+grip.height/2);await page.mouse.down();await page.mouse.move(pane.x+6,pane.y+pane.height/2);await page.mouse.up();}
    await page.waitForFunction(()=>(window as any).placementPreflightHeld===true);await host.issue('view.move',{viewId:'thread:thread-a',paneId:'right'});
    await pw(page.locator('[data-split-pane="right"]').getByRole('tab',{name:'First investigation',exact:true})).toHaveCount(1);const concurrent=structuredClone(host.layout);
    await page.evaluate(()=>(window as any).releasePlacementPreflight());
-   await pw.poll(()=>host.splitCommands.filter(command=>command.type===type).at(-1)?.payload.baseRevision).toBe(revision);
-   await pw(page.getByRole('alert').filter({hasText:'The layout revision changed.'})).toHaveCount(1);await page.getByRole('alert').filter({hasText:'The layout revision changed.'}).getByRole('button',{name:/^Dismiss /}).click();await pw(page.getByRole('alert').filter({hasText:'The layout revision changed.'})).toHaveCount(0);
-   expect(host.layout).toEqual(concurrent);expect(host.layout.panes.right.viewIds).toContain('thread:thread-a');expect(host.layout.parkedViewIds).not.toContain('thread:thread-a');await pw(draft).toHaveValue('Keep stale preflight draft');expect(host.errors).toEqual([]);
+   // The held placement lands against the freshest committed revision (or
+   // retries once onto it), never the revision captured before the race.
+   await pw.poll(()=>host.splitCommands.filter(command=>command.type===type).at(-1)?.payload.baseRevision).toBe(concurrent.revision);
+   const sent=host.splitCommands.filter(command=>command.type===type).at(-1)!,{baseRevision:_dropped,...rest}=sent.payload;
+   await pw.poll(()=>host.layout.revision).toBe(concurrent.revision+1);
+   expect(host.layout).toEqual(applySplitWorkspaceCommand(concurrent,type,rest));
+   await pw(page.getByRole('alert')).toHaveCount(0);
+   await pw(draft).toHaveValue('Keep stale preflight draft');expect(host.errors).toEqual([]);
   }finally{await page.evaluate(()=>(window as any).releasePlacementPreflight?.()).catch(()=>{});await page.close();}
  },30000);
 

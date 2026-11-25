@@ -78,7 +78,7 @@ import {liveThreadPanels,delegatedThread,threadParent,threadProject,findCanvasPa
 import {panelDesktopSurface,panelsForDesktopSurface,panelNativeWindow} from './workspace-native';
 import type {PanelBinding,PanelPlacement,WorkspacePanelKind,SurfaceRef} from '../../../packages/contracts/workspace.ts';
 import type {SplitDropEdge,SplitWorkspaceLayout} from '../../../packages/contracts/split-workspace.ts';
-import {WorkspaceSplitLayout} from './WorkspaceSplitLayout';
+import {WorkspaceSplitLayout,PaneCompactContext} from './WorkspaceSplitLayout';
 import {getSplitWorkspace,sendSplitWorkspaceCommand,useSplitWorkspaceState} from './split-workspace-api';
 import {readConversationPlacement,capturePlacementExpectation,expectationHolds,resolveMainPaneId,planVisible,conversationPlacementKey,type ConversationPlacementRecord,type PendingPlacementIntent,type MainBasis} from './conversation-placement';
 import {clampChatRect,type ChatRect} from '../../../packages/ui-shell/chat-layout.ts';
@@ -182,6 +182,7 @@ type ComposerChangesAvailability=(threadId:string,available:boolean)=>void;
 const emptyComposerState: ComposerState = {draft: '', ready: false, busy: false, stopping: false, error: '', retry: false};
 function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, onComposerChangesAvailability, thread, models, modelId, setModelId, snapshot, ensureThread, busy: externalBusy, runAction, refresh, setup, openResource, inspectChanges, reportError,onSide, predictionBlocked, selectProject, usageOpen=false, onShowUsage, onNewTask }: { usageOpen?:boolean; onShowUsage?:()=>void; modelPickerRequest?:number; onModelPickerOpened?:(request:number)=>void; sharedComposers?: SharedAgentComposers; onComposerChangesAvailability?:ComposerChangesAvailability; selectProject?:(id:string|undefined,opener?:HTMLElement|null,prepare?:PrepareThread)=>void; predictionBlocked: boolean; thread: Thread | undefined; models: ModelInfo[]; modelId: string; setModelId: (id: string) => void; snapshot: Snapshot; ensureThread: (prepare: PrepareThread) => Promise<string>; busy: boolean; runAction: (action: () => Promise<void>) => Promise<void>; refresh: () => Promise<void>; setup: () => void; openResource: (id: string, opener?: HTMLElement | null) => void; browseProject:(id:string)=>void;inspectChanges:()=>void; reportError: (error: string) => void;onSide:(content:string)=>Promise<void>; onNewTask?:(modelId:string)=>void }) {
   const key = thread?.id ?? 'new';
+  const compact = useContext(PaneCompactContext);
   const workbench = useSourceWorkbench();
   const draftProject=useProjectContext(thread?.projectId,thread?.id,thread?.workspaceId);
   // The journal is browser-profile/origin local; project context supplies the actual working copy.
@@ -355,7 +356,7 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
       <ComposerCommands ref={commands} input={input} draft={draft} threadId={thread?.id} projectId={thread?.projectId} disabled={!ready||!skillsReady||busy||predictionBlocked} mode={thread?.mode??draftMode} onDraft={updateDraft} onModel={()=>modelPicker.current?.open()} onMode={chooseMode}/>
       <div className="composer-entry-row">
       <div className="composer-input">
-        <textarea ref={input} aria-label="Message" placeholder={prediction.candidate ? '' : dragging ? 'Drop files to attach' : 'Ask anything…'} value={draft} disabled={!ready} onChange={event => updateDraft(event.target.value)} onPaste={prediction.dismiss} onCompositionStart={prediction.dismiss} onKeyDown={event => {
+        <textarea ref={input} aria-label="Message" placeholder={prediction.candidate ? '' : dragging ? 'Drop files to attach' : compact ? 'Ask…' : 'Ask anything…'} value={draft} disabled={!ready} onChange={event => updateDraft(event.target.value)} onPaste={prediction.dismiss} onCompositionStart={prediction.dismiss} onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
           const submitKey = event.key === 'Enter' && !event.shiftKey && (preferences.sendShortcut === 'enter' || event.ctrlKey || event.metaKey);
           if (submitKey && /^\/(?:btw|side)$/i.test(draft.trim())) { event.preventDefault(); void send(); return; }
