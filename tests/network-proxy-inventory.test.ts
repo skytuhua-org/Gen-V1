@@ -67,6 +67,16 @@ function probe(env: NodeJS.ProcessEnv, args: string[] = []): Promise<{ code: num
   });
 }
 
+function fixtureEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  // A developer's lowercase proxy or loopback bypass must not choose the route
+  // of this owned fixture. Keep the parent environment unchanged.
+  for (const key of Object.keys(env)) {
+    if (/^(?:(?:https?|all|no)_proxy|node_use_env_proxy)$/i.test(key)) delete env[key];
+  }
+  return { ...env, HTTP_PROXY: proxyUrl, ...overrides };
+}
+
 describe('network proxy inventory — env honored vs copied', () => {
   it('global fetch ignores HTTP_PROXY (undici default dispatcher)', async () => {
     const hitsBefore = proxyHits + connectHits;
@@ -77,13 +87,13 @@ describe('network proxy inventory — env honored vs copied', () => {
   });
 
   it('child with copied proxy env still goes direct (copy != honored)', async () => {
-    const r = await probe({ ...process.env, HTTP_PROXY: proxyUrl, http_proxy: proxyUrl });
+    const r = await probe(fixtureEnvironment());
     expect(r.code).toBe(0);
     expect(r.out).toBe('direct');
   });
 
   it('--use-env-proxy makes the same fetch cross the proxy (CONNECT tunnel)', async () => {
-    const r = await probe({ ...process.env, HTTP_PROXY: proxyUrl }, ['--use-env-proxy']);
+    const r = await probe(fixtureEnvironment(), ['--use-env-proxy']);
     expect(r.code).toBe(0);
     expect(r.out).toBe('direct'); // tunneled to target returns its own payload
     expect(connectHits).toBeGreaterThan(0); // the CONNECT hop proves it crossed the proxy
@@ -91,7 +101,7 @@ describe('network proxy inventory — env honored vs copied', () => {
 
   it('NO_PROXY keeps loopback direct even under --use-env-proxy', async () => {
     const before = connectHits;
-    const r = await probe({ ...process.env, HTTP_PROXY: proxyUrl, NO_PROXY: '127.0.0.1' }, ['--use-env-proxy']);
+    const r = await probe(fixtureEnvironment({ NO_PROXY: '127.0.0.1' }), ['--use-env-proxy']);
     expect(r.code).toBe(0);
     expect(r.out).toBe('direct');
     expect(connectHits).toBe(before);
