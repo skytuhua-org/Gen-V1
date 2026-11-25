@@ -527,7 +527,7 @@ export class CodeIntelligence {
         const superseded = (entry.documents.get(document.uri)?.version ?? document.version) > document.version;
         const lines = splitLines(input.text);
         const diagnostics = raw.slice(0, CODE_INTELLIGENCE_LIMITS.diagnostics).map(item => this.normalize(item, input.path, lines, entry.adapter.encoding));
-        const baselineKey = `${entry.key}\0${input.path}`;
+        const baselineKey = `${entry.key}\0${input.workspaceIdentity}\0${input.path}`;
         const baseline = this.baselines.get(baselineKey);
         const baselineStatus = baseline && baseline.seq === entry.seq && input.beforeDigest !== null && baseline.digest === input.beforeDigest ? "AVAILABLE" : "UNAVAILABLE";
         if (!superseded)
@@ -585,7 +585,7 @@ export class CodeIntelligence {
 
   /** Mark an observation stale when the document moved on after it. */
   async markStale(input: ObserveInput, observation: DiagnosticObservationV1): Promise<DiagnosticObservationV1> {
-    const key = `${this.pool.keyFor(input.root, input.descriptor, input.profileDigest)}\0${input.path}`;
+    const key = `${this.pool.keyFor(input.root, input.descriptor, input.profileDigest)}\0${input.workspaceIdentity}\0${input.path}`;
     const current = this.baselines.get(key);
     if (current && current.digest !== observation.afterDigest)
       return { ...observation, state: "STALE" };

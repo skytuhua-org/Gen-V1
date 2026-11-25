@@ -289,10 +289,10 @@ it('idle servers shut down and profile revocation drops owned resources',async()
 });
 
 // Issue #2020 / M07-01: boundary reproductions for the diagnostics generation
-// fence and per-owner baseline provenance. `it.fails` entries are the plan's
-// failing focused regressions — T03 flips them to `it` once repaired.
+// fence and per-owner baseline provenance. The regressions below were the plan's failing reproducers; the generation
+// fence and per-owner baseline provenance repair flipped them green in T03.
 
-it.fails('a superseded observation never reports CURRENT or clobbers the newer baseline',async()=>{
+it('a superseded observation never reports CURRENT or clobbers the newer baseline',async()=>{
  const root=fixture();
  const adapter=new FakeAdapter();
  const pending:{resolve:(diags:LspDiagnostic[])=>void}[]=[];
@@ -319,7 +319,7 @@ it.fails('a superseded observation never reports CURRENT or clobbers the newer b
  expect(still.state).toBe('CURRENT');
 });
 
-it.fails('a baseline recorded under another workspace identity is never compared against',async()=>{
+it('a baseline recorded under another workspace identity is never compared against',async()=>{
  const root=fixture();
  const adapter=new FakeAdapter();
  const ci=new CodeIntelligence(()=>adapter);
