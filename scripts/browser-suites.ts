@@ -102,6 +102,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('ui-shell-controls'),
   suite('usage-context'),
   suite('wo8'),
+  suite('publish-thread'),
 ];
 
 export function validateBrowserSuites(specs:string[], suites=browserSuites):void {
