@@ -29,6 +29,11 @@ it('runs the genuine Promptfoo CLI MCP evaluation through only the scoped host c
  expect(tools.map(tool=>tool.name)).not.toContain('test_provider');expect(completions).toEqual([]);
  const result=await manager.callTool('promptfoo','run_evaluation',{config:{prompts:['fixture native callback transport'],tests:[{assert:[{type:'equals',value:'fixture native callback transport'}]}]}},scope);
  expect(result.isError).not.toBe(true);expect(completions).toEqual([{scope,prompt:'fixture native callback transport'}]);
+ const text=(response:unknown)=>(response as {content:{text:string}[]}).content[0].text;
+ const receipt=JSON.parse(text(result)) as {data:{eval:{id:string}}},listed=JSON.parse(text(await manager.callTool('promptfoo','list_evaluations',{},scope))) as {data:{evaluations:{evalId:string}[]}};
+ expect(listed.data.evaluations.map(item=>item.evalId)).toContain(receipt.data.eval.id);
+ const details=JSON.parse(text(await manager.callTool('promptfoo','get_evaluation_details',{id:receipt.data.eval.id},scope))) as {data:{summary:{totalTests:number;passedTests:number}}};
+ expect(details.data.summary).toMatchObject({totalTests:1,passedTests:1});
  await expect(manager.callTool('promptfoo','run_evaluation',{config:{prompts:['x'],tests:[{assert:[{type:'javascript',value:'return true'}]}]}},scope)).rejects.toThrow(/assertion/);
  const session=[...(manager as unknown as {sessions:Map<string,{bridge:{listening:boolean}}>}).sessions.values()][0];
  expect(session.bridge.listening).toBe(true);await manager.releaseOwner(scope);expect(session.bridge.listening).toBe(false);
