@@ -191,4 +191,23 @@ describe('slash-command palette', () => {
       await expect.poll(() => palette(page).count(), {timeout: 1000}).toBe(1);
     } finally { await page.close(); }
   });
+
+  it('captures selection exits before React batches the native listener updates', async () => {
+    const page = await openPage();
+    try {
+      const area = page.locator('#ta');
+      await area.fill('hello /mod');
+      await palette(page).waitFor();
+      await area.press('Escape');
+      await palette(page).waitFor({state: 'detached'});
+      await area.evaluate(element => {
+        const input = element as HTMLTextAreaElement;
+        input.setSelectionRange(9, 10); input.dispatchEvent(new Event('select'));
+        input.setSelectionRange(0, 0); input.dispatchEvent(new Event('select'));
+        input.setSelectionRange(10, 10); input.dispatchEvent(new Event('select'));
+      });
+      expect(await area.inputValue()).toBe('hello /mod');
+      await expect.poll(() => palette(page).count(), {timeout: 1000}).toBe(1);
+    } finally { await page.close(); }
+  });
 });

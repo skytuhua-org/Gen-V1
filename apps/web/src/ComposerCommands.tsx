@@ -60,11 +60,12 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
     // when caret leaps out and back within one render batch (Home then End in
     // quick succession), the intermediate commit can be skipped, and an effect
     // would never observe the exit. Functional updates still execute in order.
-    const invalidate = () => setDismissed(previous => {
-      if (!previous) return previous;
+    const invalidate = () => {
+      // Snapshot this event's selection before React can defer the updater.
       const live = commandToken(element.value, element.selectionStart, element.selectionEnd) ?? commandToken(element.value, element.selectionStart);
-      return previous !== keyFor(live) ? '' : previous;
-    });
+      const key = keyFor(live);
+      setDismissed(previous => previous && previous !== key ? '' : previous);
+    };
     const track = () => setPosition(previous => {
       const next = {...previous, caret: element.selectionStart, end: element.selectionEnd, focused: element.ownerDocument.activeElement === element};
       return Object.keys(next).every(key => next[key as keyof typeof next] === previous[key as keyof typeof next]) ? previous : next;
