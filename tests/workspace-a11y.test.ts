@@ -21,8 +21,7 @@ describe('workbench dock tab semantics',()=>{
   for(const key of ['ArrowLeft','ArrowRight','Home','End'])expect(workbench).toContain(`'${key}'`);
   expect(workbench).toContain('role="tabpanel" id={`wb-panel-${tab}`} aria-labelledby={`wb-tab-${tab}`} tabIndex={0}');
  });
- it('focuses the selected tab on mount and persists source/evidence views on activation',()=>{
-  expect(workbench).toContain('autoFocus={tab===id}');
+ it('persists source/evidence views on activation',()=>{
   expect(workbench).toContain("persistView('SOURCES')");
   expect(workbench).toContain("persistView('EVIDENCE')");
  });

@@ -178,6 +178,10 @@ export function WorkbenchComposer({title,working=false,disabled=false}:{title:st
 
 function WorkbenchDialog({initialTab,snapshot,owner,enabled,candidates,capabilities,selected,evidence,error,api,view,persistView,close,onSelect,attach,open,report}:{initialTab:PanelTab;snapshot?:Snapshot;owner:LogicalOwnerV1;enabled:boolean;candidates:SourceCandidateV1[];capabilities:SourceCapabilityV1[];selected?:SourceDescriptorV1|SourceOpenV1;evidence?:{items:WorkbenchEvidenceItemV1[];modules:WorkbenchModuleV1[]};error:string;api:WorkbenchApi;view?:WorkbenchViewV1;persistView:(type:'SOURCES'|'EVIDENCE',selectedItem?:string|null,anchor?:WorkbenchViewV1['scrollAnchor'])=>void;close:()=>void;onSelect:(candidate:SourceCandidateV1)=>Promise<void>;attach:(source:SelectedSourceV1,action:SourceSelectionAction)=>Promise<void>;open:(ref:SourceRefV1)=>Promise<void>;report:(cause:unknown)=>void}) {
  const [tab,setTab]=useState<PanelTab>(initialTab);
+ const tabs=useRef<HTMLDivElement>(null);
+ // The child Modal captures its opener before this parent layout effect.
+ // Focus only on mount so loading and later tab changes cannot steal focus.
+ useLayoutEffect(()=>{tabs.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();},[]);
  const [Content,setContent]=useState<ComponentType<WorkbenchPanelContentProps>>(),[loadError,setLoadError]=useState('');
  const thread=snapshot?.threads.find(value=>value.id===owner.threadId&&value.projectId===owner.projectId&&(value.workspaceId??null)===owner.workspaceId&&(!value.kind||value.kind==='main')&&!value.parentThreadId&&!value.sideParentId&&!value.jobId);
  const memoryOwner:MemoryOwner|undefined=owner.projectId&&thread?{projectId:owner.projectId,threadId:owner.threadId,accountId:thread.accountId??null}:undefined;
@@ -200,7 +204,7 @@ function WorkbenchDialog({initialTab,snapshot,owner,enabled,candidates,capabilit
  const activate=(next:PanelTab)=>{setTab(next);if(next==='sources')persistView('SOURCES');else if(next==='evidence')persistView('EVIDENCE');};
  return <><Modal open title="Sources and evidence" onClose={close} className="workbench-panel">
   <p>Task {owner.threadId} · Workspace {owner.workspaceId??'none'}</p>
-  <div role="tablist" aria-label="Workbench views">{WB_TABS.map(([id,label],index)=><button key={id} type="button" role="tab" id={`wb-tab-${id}`} aria-selected={tab===id} aria-controls={tab===id?`wb-panel-${id}`:undefined} tabIndex={tab===id?0:-1} autoFocus={tab===id} onClick={()=>activate(id)} onKeyDown={event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?WB_TABS.length-1:(index+(event.key==='ArrowRight'?1:-1)+WB_TABS.length)%WB_TABS.length;activate(WB_TABS[next][0]);(event.currentTarget.parentElement?.children[next] as HTMLButtonElement|undefined)?.focus();}}>{label}</button>)}</div>
+  <div ref={tabs} role="tablist" aria-label="Workbench views">{WB_TABS.map(([id,label],index)=><button key={id} type="button" role="tab" id={`wb-tab-${id}`} aria-selected={tab===id} aria-controls={tab===id?`wb-panel-${id}`:undefined} tabIndex={tab===id?0:-1} onClick={()=>activate(id)} onKeyDown={event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?WB_TABS.length-1:(index+(event.key==='ArrowRight'?1:-1)+WB_TABS.length)%WB_TABS.length;activate(WB_TABS[next][0]);(event.currentTarget.parentElement?.children[next] as HTMLButtonElement|undefined)?.focus();}}>{label}</button>)}</div>
   <div role="tabpanel" id={`wb-panel-${tab}`} aria-labelledby={`wb-tab-${tab}`} tabIndex={0}>
    {error&&<p role="alert">{error}</p>}
    {memoryOpen&&memoryError?<p role="alert">{memoryError}</p>:memoryOpen&&!MemoryReview&&<p role="status">Loading memory review.</p>}

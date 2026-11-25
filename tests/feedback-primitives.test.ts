@@ -27,7 +27,7 @@ describe('feedback primitives', () => {
   beforeAll(async () => {
     script = (await build({stdin:{contents:fixture,resolveDir:process.cwd(),loader:'tsx'},loader:{'.css':'empty'},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'}})).outputFiles[0]!.text;
     css = await readFile('packages/ui-shell/tokens.css','utf8') + await readFile('packages/ui-shell/feedback.css','utf8');
-    browser = await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{})});
+    browser = await chromium.launch({headless:true,...(process.env.GEN_TEST_CHROMIUM_EXECUTABLE?{executablePath:process.env.GEN_TEST_CHROMIUM_EXECUTABLE}:process.platform==='win32'?{channel:'msedge'}:{})});
   });
   afterAll(async () => { await browser?.close(); });
   async function open(): Promise<Page> {
@@ -81,6 +81,13 @@ describe('feedback primitives', () => {
       expect(await short.count()).toBe(1);
       await dismiss.press('Enter');
       await first.waitFor({state:'detached'});
+      // Per #1921 the removed toast's focus lands on the remaining toast's
+      // close button — the stack still holds focus, so the timer stays paused.
+      await expect.poll(() => page.evaluate(() => document.activeElement?.className)).toContain('ui-toast-close');
+      await page.clock.runFor(500);
+      expect(await short.count()).toBe(1);
+      // Once focus leaves the stack the sibling timer resumes and expires.
+      await page.locator('#tip').focus();
       await page.clock.runFor(1500);
       await short.waitFor({state:'detached', timeout:1000});
     } finally { await page.close(); }
@@ -135,6 +142,49 @@ describe('feedback primitives', () => {
     await item.waitFor();
     const duration = await item.evaluate(el => getComputedStyle(el).animationDuration);
     expect(duration).toBe('0.08s');
+    await page.close();
+  });
+
+  // Issue #1921: Escape dismisses the toast holding focus inside the stack.
+  it('dismisses the focused toast on Escape and moves focus to the newest remaining toast', async () => {
+    const page = await open();
+    await page.evaluate(`window.toast('First'); window.toast('Second')`);
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(2);
+    // Focus the first toast's close button and press Escape.
+    const first = page.locator('.ui-toast', {hasText: 'First'}).locator('.ui-toast-close');
+    await first.focus();
+    await page.keyboard.press('Escape');
+    // Focus must land on the remaining toast's close button, not body.
+    await expect.poll(() => page.evaluate(() => document.activeElement?.className)).toContain('ui-toast-close');
+    await expect.poll(() => page.locator('.ui-toast:not([data-state="closed"])').count()).toBe(1);
+    await page.close();
+  });
+
+  it('dismisses the newest toast on Escape when the stack container holds focus', async () => {
+    const page = await open();
+    await page.evaluate(`window.toast('Older'); window.toast('Newest')`);
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(2);
+    await page.locator('.ui-toaster').evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})));
+    await expect.poll(() => page.locator('.ui-toast', {hasText: 'Newest'}).count()).toBe(0);
+    await expect.poll(() => page.locator('.ui-toast', {hasText: 'Older'}).count()).toBe(1);
+    await page.close();
+  });
+
+  it('does not dismiss toasts on Escape outside the stack, and registers no global listener', async () => {
+    const page = await open();
+    // The stack must not add a global keydown listener: count document-level
+    // listeners is not directly observable, so assert behavior — Escape with
+    // focus outside the stack leaves every toast open.
+    await page.evaluate(`window.toast('Stay')`);
+    await page.locator('.ui-toast').waitFor();
+    await page.locator('#tip').focus();
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.ui-toast:not([data-state="closed"])').count()).toBe(1);
+    // Escape on the last focused toast drops focus to body when none remain.
+    await page.locator('.ui-toast .ui-toast-close').focus();
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(0);
+    await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
     await page.close();
   });
 });

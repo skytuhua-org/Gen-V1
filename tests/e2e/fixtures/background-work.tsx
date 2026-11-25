@@ -5,7 +5,7 @@ import '../../../apps/web/src/styles.css';
 
 type Mode = 'success' | 'reject' | 'stale';
 type Call = { type: string; id?: string; revision?: number; response?: unknown; modelId?: string; cursor?: number };
-declare global { interface Window { backgroundWork: { calls: Call[]; respondMode: Mode; declineMode: Mode; approveMode: Mode; refreshMode: 'success' | 'error' | 'empty' | 'loading'; outputMode: 'success' | 'reject' } } }
+declare global { interface Window { backgroundWork: { calls: Call[]; respondMode: Mode; declineMode: Mode; approveMode: Mode; refreshMode: 'success' | 'error' | 'empty' | 'loading' | 'deferred'; finishRefresh?: (outcome: 'success' | 'error') => void; outputMode: 'success' | 'reject' } } }
 window.backgroundWork = { calls: [], respondMode: 'success', declineMode: 'success', approveMode: 'success', refreshMode: 'success', outputMode: 'success' };
 
 const owner = (threadId: string) => ({ threadId, runId: null, epoch: 0, projectId: null, workspaceId: null, accountBinding: null });
@@ -59,6 +59,16 @@ function Fixture() {
       onRefresh={() => {
         window.backgroundWork.calls.push({ type: 'refresh' });
         const mode = window.backgroundWork.refreshMode;
+        if (mode === 'deferred') {
+          setLoading(true);
+          window.backgroundWork.finishRefresh = outcome => {
+            setLoading(false);
+            setError(outcome === 'error' ? 'Background work is reconnecting…' : '');
+            if (outcome === 'success') setData(current => current && { ...current, sequence: current.sequence + 1 });
+            window.backgroundWork.finishRefresh = undefined;
+          };
+          return;
+        }
         if (mode === 'error') { setError('Background work is reconnecting…'); return; }
         setError('');
         if (mode === 'empty') { setData(empty); return; }

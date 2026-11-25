@@ -239,12 +239,18 @@ function IntakeSection({ intake, models, defaultModelId, props }: { intake: Back
       </li>)}
     </ul>
     {rejected.length > 0 && <p className="background-muted">Rejected or duplicate deliveries: {String(rejected.length)}{rejected[0]?.rejectionReason ? ` (${rejected[0].rejectionReason})` : ''}</p>}
+    {rejected.some(record => record.decision?.threadId) && <ul data-intake-list="rejected">
+      {rejected.filter(record => record.decision?.threadId).map(record => <li key={record.intakeId} tabIndex={-1} className="background-intake-row" data-intake-id={record.intakeId}>
+        <div><strong>{record.proposedTask.title}</strong><span className="background-muted">rejected · {record.sourceInstallation}</span></div>
+        <button type="button" className="quiet" onClick={() => props.onOpenThread(record.decision!.threadId!)}>Open child task</button>
+      </li>)}
+    </ul>}
   </section>;
 }
 
 export function BackgroundWorkView(props: BackgroundWorkViewProps) {
   const { data, loading, error } = props;
-  const announce = loading && !data ? '' : data ? `Background work updated: ${data.works.length} work item(s), ${data.schedules.length} schedule(s), ${data.intake.records.length} intake record(s).` : '';
+  const announce = loading || error ? '' : data ? `Background work updated: ${data.works.length} work item(s), ${data.schedules.length} schedule(s), ${data.intake.records.length} intake record(s).` : '';
   return <div className="background-work">
     <header className="background-toolbar">
       <h2>Background work</h2>

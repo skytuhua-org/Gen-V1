@@ -17,6 +17,30 @@ async function fixture(page: Page) {
 const calls = (page: Page) => page.evaluate(() => window.backgroundWork.calls);
 const card = (page: Page, workId: string) => page.locator(`.background-card[data-work-id="${workId}"]`);
 
+test('refresh announces unchanged counts again and never announces a failed refresh as success', async ({ page }) => {
+  const { requests, errors } = await fixture(page);
+  const announcement = page.locator('.background-work > .sr-only[role="status"]');
+  const summary = 'Background work updated: 9 work item(s), 2 schedule(s), 3 intake record(s).';
+  await expect(announcement).toHaveText(summary);
+  await page.evaluate(() => { window.backgroundWork.refreshMode = 'deferred'; });
+  for (let refresh = 0; refresh < 2; refresh++) {
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+    await expect(announcement).toHaveText('');
+    await expect(page.locator('.background-card')).toHaveCount(9);
+    await page.evaluate(() => window.backgroundWork.finishRefresh?.('success'));
+    await expect(announcement).toHaveText(summary);
+  }
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(announcement).toHaveText('');
+  await page.evaluate(() => window.backgroundWork.finishRefresh?.('error'));
+  await expect(page.getByRole('alert')).toContainText('reconnecting');
+  await expect(announcement).toHaveText('');
+  await page.getByRole('alert').getByRole('button', { name: 'Retry' }).click();
+  await page.evaluate(() => window.backgroundWork.finishRefresh?.('success'));
+  await expect(announcement).toHaveText(summary);
+  expect(requests).toEqual([]); expect(errors).toEqual([]);
+});
+
 test('drawer shows every required state with command, owner, elapsed and Open child task', async ({ page }) => {
   const { requests, errors } = await fixture(page);
   await expect(card(page, 'w-queued').locator('.background-state')).toHaveText('Waiting');
@@ -124,7 +148,7 @@ test('external inbox separates proposed from approved and gates approval on a mo
   const proposed = inbox.locator('.background-intake-row[data-intake-id="i-proposed"]');
   await expect(proposed).toContainText('Repair the export path');
   await expect(proposed.getByRole('button', { name: 'Approve' })).toBeDisabled();
-  await proposed.getByRole('combobox', { name: 'Approval model' }).click();
+  await proposed.getByRole('combobox', { name: 'Model for approved task: Repair the export path' }).click();
   await page.getByRole('option', { name: 'Test model' }).click();
   await expect(proposed.getByRole('button', { name: 'Approve' })).toBeEnabled();
   await proposed.getByRole('button', { name: 'Approve' }).click();
@@ -149,7 +173,7 @@ test('loading, empty, offline and retry states stay distinct from success', asyn
   const { requests, errors } = await fixture(page);
   await page.evaluate(() => { window.backgroundWork.refreshMode = 'loading'; });
   await page.getByRole('button', { name: 'Refresh' }).click();
-  await expect(page.getByRole('status')).toContainText('Loading background work');
+  await expect(page.getByRole('status').filter({ hasText: 'Loading background work' })).toBeVisible();
   await page.evaluate(() => { window.backgroundWork.refreshMode = 'empty'; });
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.locator('.background-empty')).toContainText('No background work yet');
@@ -200,7 +224,7 @@ test('keyboard actions keep focus in the acted-on unit and the output disclosure
   await expect.poll(() => actedOn(page)).toBe('s-interval');
 
   const proposed = page.locator('[data-intake-id="i-proposed"]');
-  await proposed.getByRole('combobox', { name: 'Approval model' }).focus();
+  await proposed.getByRole('combobox', { name: 'Model for approved task: Repair the export path' }).focus();
   await page.keyboard.press('Enter');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
@@ -209,7 +233,7 @@ test('keyboard actions keep focus in the acted-on unit and the output disclosure
   await expect(page.locator('[data-intake-list="approved"]')).toContainText('Repair the export path');
   await expect.poll(() => actedOn(page)).toBe('External task inbox');
 
-  const queued = card(page, 'w-queued'), toggle = queued.getByRole('button', { name: 'Output', exact: true });
+  const queued = card(page, 'w-queued'), toggle = queued.getByRole('button', { name: 'Output for Nightly verification', exact: true });
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await toggle.focus();
   await page.keyboard.press('Enter');

@@ -283,7 +283,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
         <PendingStatus pending={navigation.pending} label="Loading threads…"/>
         {navigation.page?.nextCursor && <button disabled={navigation.pending} onClick={() => fail(navigation.more)}>Load more threads ({navigation.page.items.length} of {navigation.page.total})</button>}
       </div>}/>
-    {!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={200} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({...value, sidebarWidth}))}/>}
+    {!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={232} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({...value, sidebarWidth}))}/>}
     <div className="workspace-layout-workarea workspace-host-main">
       {(layout.sidebarCollapsed || mobile) && <button className="icon-button sidebar-recovery" aria-label={mobile ? 'Open navigation' : 'Open sidebar'} onClick={event => {prepareSidebarToggle(event); setLayout(value => ({...value, sidebarCollapsed: false})); if (mobile) setOpen(true); requestAnimationFrame(() => searchRef.current?.focus());}}>{mobile ? <Menu size={18}/> : <PanelLeftOpen size={17}/>}</button>}
       <WorkspaceControls envelope={workspace.envelope} send={workspace.send} prepare={prepare} panels={[]} title={panel => panel.kind}
