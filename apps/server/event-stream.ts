@@ -23,7 +23,7 @@ export function destroyEventStreams(streams: Map<ServerResponse, () => void>): v
 export function registerEventStream(
   streams: Map<ServerResponse, () => void>,
   response: ServerResponse,
-  store: Pick<Store, 'eventsAfter' | 'subscribe' | 'sequence'>,
+  store: Pick<Store, 'eventsAfter' | 'subscribe' | 'sequence' | 'retentionFloor'>,
   after: number,
 ): void {
   if (closedRegistries.has(streams)) { response.destroy(); return; }
@@ -47,11 +47,13 @@ function chunkFor(event: WorkspaceEvent): string {
   return chunk;
 }
 
-/** The durable ledger is the queue. Retain only one event while a reader drains. */
-export function streamEvents(response: ServerResponse, store: Pick<Store, 'eventsAfter' | 'subscribe' | 'sequence'>, after: number, onClose: () => void): () => void {
+/** The durable ledger backs bounded live and replay buffers while a reader drains. */
+export function streamEvents(response: ServerResponse, store: Pick<Store, 'eventsAfter' | 'subscribe' | 'sequence' | 'retentionFloor'>, after: number, onClose: () => void): () => void {
   if (response.destroyed || response.writableEnded) { onClose(); return () => {}; }
   const controller = new AbortController();
-  let cursor = after, pumping = false, closed = false, comment = ': connected\n\n';
+  const floor = store.retentionFloor();
+  let cursor = after, pumping = false, closed = false, comment = ': connected\n\n', gap: string | null = null;
+  if (cursor < floor) { gap = `event: retention-gap\ndata: ${JSON.stringify({ floor })}\n\n`; cursor = floor - 1; }
   // subscribe() already delivers each parsed commit once, in order, to every
   // listener. Buffer live pushes and reuse them once the backlog is drained so
   // a caught-up reader costs no store read or re-parse per event. The ledger
@@ -76,12 +78,13 @@ export function streamEvents(response: ServerResponse, store: Pick<Store, 'event
         // Every post-subscribe commit lands in pending (and only a pre-subscribe
         // backlog, seq <= liveCut, can precede it), so pending is the ordered
         // suffix once the store has been drained up to liveCut.
-        if (cursor < liveCut && !backlog.length) backlog.push(...store.eventsAfter(cursor, 64));
-        const event = cursor >= liveCut ? pending.shift() : backlog.shift();
-        if (!event && !comment) break;
+        if (!gap && cursor < liveCut && !backlog.length) backlog.push(...store.eventsAfter(cursor, 64));
+        // The gap marker does not consume the first event of a replay page.
+        const event = gap ? undefined : cursor >= liveCut ? pending.shift() : backlog.shift();
+        if (!event && !comment && !gap) break;
         if (event && event.seq <= cursor) continue; // already written via store replay
-        const chunk = event ? chunkFor(event) : comment;
-        if (event) cursor = event.seq; else comment = '';
+        const chunk = gap ?? (event ? chunkFor(event) : comment);
+        if (gap) gap = null; else if (event) cursor = event.seq; else comment = '';
         if (!response.write(chunk)) {
           await once(response, 'drain', { signal: controller.signal });
           written = 0;

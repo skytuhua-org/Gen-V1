@@ -130,12 +130,19 @@ function WidgetOwner({ ref: widgetRef, artifact, inputs, values, stateRevision, 
       checkpointing = true;
       leaseSuspended.current = false;
       const checkpointGeneration = editGeneration.current;
-      checkpointPending.current = lease().then(() => command('widget.checkpoint', { artifactId: artifact.id, revision: artifact.revision, clientId: clientId.current, baseStateRevision: latest.current.stateRevision, stateSchemaVersion: payload.stateSchemaVersion, values: payload.values }, artifact.threadId)).then(async receipt => {
+      // The draft was authored against the state the editor observed now, not
+      // the revision current when a delayed lease resolves.
+      const baseStateRevision = latest.current.stateRevision;
+      checkpointPending.current = lease().then(() => command('widget.checkpoint', { artifactId: artifact.id, revision: artifact.revision, clientId: clientId.current, baseStateRevision, stateSchemaVersion: payload.stateSchemaVersion, values: payload.values }, artifact.threadId)).then(async receipt => {
         const state = receipt.result as UserStateRecord;
         if (state?.id !== artifact.stateId || !Number.isSafeInteger(state.revision)) throw new Error('The accepted checkpoint was not returned by the host.');
         if (!sameOwner()) return;
-        latest.current.onAccepted(state.values, state.revision);
-        latest.current.stateRevision = state.revision;
+        // A receipt older than the canonical state already mounted is stale:
+        // keep the newer values instead of regressing them.
+        if (state.revision > latest.current.stateRevision) {
+          latest.current.onAccepted(state.values, state.revision);
+          latest.current.stateRevision = state.revision;
+        }
         const stillDirty = editGeneration.current !== checkpointGeneration;
         leaseDirty.current = stillDirty;
         latest.current.onDirty(stillDirty);
@@ -158,7 +165,7 @@ function WidgetOwner({ ref: widgetRef, artifact, inputs, values, stateRevision, 
 
   useEffect(() => {
     if (!mount || !ready) return;
-    if (!validators.input(inputs)) { setError('Updated inputs do not match this widget’s schema.'); return; }
+    if (!validators.input(inputs) || !validators.state(values)) { setError('Updated inputs or saved state do not match this widget’s schema.'); return; }
     runtime.current?.post({ channel: 'harness-widget', token: mount.token, mountId: mount.mountId, artifactId: artifact.id, type: 'init', inputs, state: values, stateRevision, theme: themeTokens(theme) });
   }, [mount, ready, artifact.id, updateKey, validators]);
   return <div className="widget-container">{error && <ErrorState className="notice widget-mount-error" message={error} retryLabel="Retry widget" onRetry={() => setAttempt(value => value + 1)}/>}{actionError && <div className="notice widget-action-error" role="alert">{actionError}<button type="button" className="quiet" aria-label="Dismiss widget action error" onClick={() => setActionError('')}>Dismiss</button></div>}{!ready && !error && <p className="muted widget-loading" role="status">Opening secure widget…</p>}{mount && <iframe ref={iframe} title={artifact.title} src={mount.url} sandbox="allow-scripts" referrerPolicy="no-referrer" className="widget-frame" />}</div>;

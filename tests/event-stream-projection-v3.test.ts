@@ -6,11 +6,12 @@ import type { WorkspaceEvent } from "../packages/contracts/index.ts";
 
 // Cost audit for #1960: a live commit must not need a store read+parse per
 // subscriber — subscribe() already delivers the parsed event.
-function fixture(backlog: WorkspaceEvent[] = []) {
+function fixture(backlog: WorkspaceEvent[] = [], retentionFloor = 0) {
   const listeners = new Set<(event: WorkspaceEvent) => void>();
   const events = [...backlog];
   let queries = 0, parses = 0;
   const store = {
+    retentionFloor: () => retentionFloor,
     sequence: events.length ? events[events.length - 1].seq : 0,
     eventsAfter(after: number, limit = events.length) {
       queries += 1;
@@ -87,6 +88,20 @@ it("keeps writing in seq order when live pushes overlap a backlog drain", async 
   f.stream(0);
   for (const seq of [41, 42]) f.store.commit(f.event(seq));
   await expect.poll(() => f.writes).toEqual(Array.from({ length: 42 }, (_, i) => i + 1));
+});
+
+it("announces a retention gap before the complete first retained page", async () => {
+  const f = fixture([f0(4), f0(5), f0(6)], 4), chunks: string[] = [];
+  const response = Object.assign(new EventEmitter(), {
+    write(chunk: string) { chunks.push(chunk); return true; },
+    destroy() {},
+  });
+  const shutdown = streamEvents(response as unknown as ServerResponse, f.store, 0, () => {});
+  try {
+    await expect.poll(() => chunks.filter(chunk => chunk.startsWith("id: ")).length).toBe(3);
+    expect(chunks[0]).toBe('event: retention-gap\ndata: {"floor":4}\n\n');
+    expect(chunks.flatMap(chunk => /^id: (\d+)/.exec(chunk)?.slice(1).map(Number) ?? [])).toEqual([4, 5, 6]);
+  } finally { shutdown(); }
 });
 function f0(seq: number): WorkspaceEvent {
   return { seq, id: String(seq), type: "x", threadId: null, payload: null, occurredAt: "2026-01-01T00:00:00.000Z" };

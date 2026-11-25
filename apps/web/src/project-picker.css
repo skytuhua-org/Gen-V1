@@ -27,12 +27,17 @@ html[data-native-titlebar="true"] .ui-modal.project-picker { height: min(520px, 
 .project-picker-empty, .project-picker-error { margin: 0; overflow-wrap: anywhere; }
 .project-picker-error { color: var(--danger); font-size: 13px; }
 .project-picker-colors { gap: 12px; }
+.project-picker-color-grid { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.project-picker-color-error { margin: 0; font-size: 11px; line-height: 14px; color: var(--danger); }
+.project-picker-color-footer { flex: none; display: flex; gap: 8px; }
+.project-picker-color-footer button { flex: 1; }
+.project-picker-color-footer[data-has-error] { padding-top: 8px; border-top: 1px solid var(--border); }
 .project-picker-swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
 .project-picker-swatches button { display: grid; place-items: center; min-width: 0; min-height: 32px; padding: 4px; }
 .project-picker-swatches button[aria-pressed="true"] { outline:2px solid var(--ui-focus-ring,#808080); outline-offset: -2px; }
 .project-picker-swatches span { width: 18px; height: 18px; border-radius: 50%; }
 .project-picker-colors form, .project-picker-colors label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.project-picker-colors input, .project-picker-colors form button, .project-picker-colors > button { min-height: 32px; padding: 6px 8px; font: inherit; }
+.project-picker-colors input, .project-picker-color-footer button { min-height: 32px; padding: 6px 8px; font: inherit; }
 .project-picker-colors input { width: 100%; min-width: 0; box-sizing: border-box; }
 .project-picker button:focus-visible { outline:2px solid var(--ui-focus-ring,#808080); outline-offset: -2px; }
 @media (max-height: 360px) {
