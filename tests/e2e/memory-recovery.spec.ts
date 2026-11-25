@@ -259,3 +259,33 @@ for (const view of [
   await page.screenshot({ path: info.outputPath(`${view.number}-${view.name}.png`), fullPage: true });
   if (view.failed) { const retry = page.getByRole('button', { name: 'Retry', exact: true }); await retry.scrollIntoViewIfNeeded(); await retry.focus(); await retry.press('Enter'); await expect(editor(page)).toHaveValue(draft.content); }
 });
+
+test('a deleted note hands keyboard focus to the next, previous or add control', async ({ page }) => {
+  const keyed = (key: string, revision = 3): Note => ({ id: `thread-a:${key}`, threadId: 'thread-a', key, content: `Saved ${key}.`, revision, author: 'user', updatedAt: '2026-11-07T00:00:00Z' });
+  let failNext = false;
+  const commands = await mount(page, { notes: [keyed('alpha'), keyed('beta'), keyed('gamma')] }, async (route, command) => {
+    if (command.type === 'memory.delete' && failNext) { failNext = false; await route.fulfill({ status: 503, json: { error: { code: 'SYNTHETIC_FAILURE', message: 'Synthetic delete failed.' } } }); return; }
+    await route.fulfill({ json: { commandId: command.id, seq: 2, result: {} } });
+  });
+  const publish = (keys: string[]) => page.evaluate(list => window.memoryFixture.publish(list), keys.map(keyed));
+  const acked = async (key: string, count: number) => { await expect.poll(() => commands.length).toBe(count); await expect(page.getByRole('button', { name: `Forget ${key}` })).toBeEnabled(); };
+  const active = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.getAttribute('aria-label') ?? document.activeElement?.tagName);
+  // Rejected delete never moves focus.
+  failNext = true;
+  await page.getByRole('button', { name: 'Forget alpha' }).click();
+  await expect(page.getByRole('button', { name: 'Forget alpha' })).toBeVisible();
+  await expect.poll(active).toBe('Forget alpha');
+  // Middle delete moves focus to the next note's Forget button (keyboard path).
+  const forgetAlpha = page.getByRole('button', { name: 'Forget alpha' });
+  await forgetAlpha.focus(); await forgetAlpha.press('Enter'); await acked('alpha', 2);
+  await publish(['beta', 'gamma']);
+  await expect.poll(active).toBe('Forget beta');
+  // Last delete falls back to the previous note's Forget button.
+  await page.getByRole('button', { name: 'Forget gamma' }).click(); await acked('gamma', 3);
+  await publish(['beta']);
+  await expect.poll(active).toBe('Forget beta');
+  // Deleting the only remaining note lands on Add memory note.
+  await page.getByRole('button', { name: 'Forget beta' }).click(); await acked('beta', 4);
+  await publish([]);
+  await expect.poll(active).toBe('Add memory note');
+});

@@ -21,10 +21,10 @@ export function formatNoteAge(iso: string, now: number = Date.now()): string {
   const date = new Date(then);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
-function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpandedChange }: { note: Note; threadId: string; fresh?: boolean; expanded?: boolean; onExpandedChange?: (value: boolean) => void }) {
-  const [key, setKey] = useState(note.key), [content, setContent] = useState(note.content), [busy, setBusy] = useState(false), [error, setError] = useState('');
+function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpandedChange, onDeleted, forgetRef }: { note: Note; threadId: string; fresh?: boolean; expanded?: boolean; onExpandedChange?: (value: boolean) => void; onDeleted?: (key: string) => void; forgetRef?: (node: HTMLButtonElement | null) => void }) {
+  const [key, setKey] = useState(note.key), [content, setContent] = useState(note.content), [busy, setBusy] = useState(false), [error, setError] = useState(''), [focusForget, setFocusForget] = useState(false);
   const [recovery, setRecovery] = useState<'pending' | 'failed' | 'ready'>('pending'), [attempt, setAttempt] = useState(0);
-  const generation = useRef(''), dirty = useRef(false), baseRevision = useRef(note.revision), draft = useRef<Draft | null>(null), inFlight = useRef<'save' | 'delete' | null>(null), alive = useRef(false), keyInput = useRef<HTMLInputElement>(null);
+  const generation = useRef(''), dirty = useRef(false), baseRevision = useRef(note.revision), draft = useRef<Draft | null>(null), inFlight = useRef<'save' | 'delete' | null>(null), alive = useRef(false), keyInput = useRef<HTMLInputElement>(null), forgetButton = useRef<HTMLButtonElement | null>(null);
   const journalKey = `memory-draft:${threadId}:${fresh ? 'create' : 'saved:' + note.key}`;
   useEffect(() => {
     let current = true; alive.current = true; setRecovery('pending');
@@ -58,6 +58,7 @@ function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpanded
     const submitted = generation.current, submittedRevision = baseRevision.current; inFlight.current = remove ? 'delete' : 'save'; setBusy(true); setError('');
     try {
       const receipt = await command(remove ? 'memory.delete' : 'memory.save', remove ? { key: note.key, baseRevision: submittedRevision } : { key, content, baseRevision: submittedRevision }, threadId);
+      if (remove) onDeleted?.(note.key);
       if (submitted) await journalCompareAndSwap(journalKey, submitted, null);
       if (alive.current && generation.current === submitted) { dirty.current = false; baseRevision.current = fresh ? 0 : (receipt.result as Note)?.revision ?? note.revision; if (fresh) { setKey(''); setContent(''); } }
       else if (alive.current && !remove && draft.current?.key === key && draft.current.baseRevision === submittedRevision) {
@@ -69,9 +70,11 @@ function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpanded
           if (await journalCompareAndSwap(journalKey, edited, retained) && alive.current && generation.current === edited) generation.current = journalGeneration(journalKey) ?? '';
         }
       }
-    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'The note could not be saved. Your draft is retained.'); }
+    } catch (cause) { if (alive.current) { setError(cause instanceof Error ? cause.message : 'The note could not be saved. Your draft is retained.'); if (remove) setFocusForget(true); } }
     finally { inFlight.current = null; if (alive.current) setBusy(false); }
   };
+  // A failed delete returns focus to Forget once it is re-enabled (Chrome drops focus to body when the focused control is disabled in-flight).
+  useEffect(() => { if (focusForget && !busy) { setFocusForget(false); forgetButton.current?.focus(); } }, [focusForget, busy]);
   const recoveryMessage = recovery === 'pending' ? <p className="memory-recovery muted" role="status">Checking for an unsaved note…</p> : recovery === 'failed' ? <div className="memory-recovery"><p role="status" className="error-text">Note recovery is unavailable. Retry before editing.</p><button type="button" className="secondary" onClick={() => setAttempt(value => value + 1)}>Retry</button></div> : null;
   if (fresh && !expanded) return <>{recoveryMessage}{dirty.current && <button type="button" className="secondary memory-resume" onClick={() => onExpandedChange?.(true)}>Resume unsaved note</button>}</>;
   return <form className="memory-note" onSubmit={event => { event.preventDefault(); void act(); }} onKeyDown={event => { if (fresh && event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); onExpandedChange?.(false); } }}>
@@ -80,14 +83,27 @@ function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpanded
     {recoveryMessage}
     {error && <p role="status" className="error-text">{error}</p>}
     {!fresh && dirty.current && note.revision !== baseRevision.current && <details><summary>A newer saved note is available</summary><p>{note.content}</p><button type="button" className="secondary" disabled={blocked || busy} onClick={() => { const version = generation.current; dirty.current = false; baseRevision.current = note.revision; setContent(note.content); setError(''); if (version) void journalCompareAndSwap(journalKey, version, null).catch(() => { if (alive.current) setError('Draft recovery could not be cleared.'); }); }}>Use saved note</button></details>}
-    <footer>{!fresh && <button type="button" className="icon-button" aria-label={`Forget ${note.key}`} disabled={blocked || busy} onClick={() => void act(true)}><Trash2 size={14} /></button>}{fresh && <button type="button" className="secondary" onClick={() => onExpandedChange?.(false)}>Cancel</button>}<button className="secondary" disabled={blocked || busy || !content.trim() || !key.trim()}>{busy ? 'Saving…' : fresh ? 'Add note' : 'Save note'}</button></footer>
+    <footer>{!fresh && <button ref={node => { forgetButton.current = node; forgetRef?.(node); }} type="button" className="icon-button" aria-label={`Forget ${note.key}`} disabled={blocked || busy} onClick={() => void act(true)}><Trash2 size={14} /></button>}{fresh && <button type="button" className="secondary" onClick={() => onExpandedChange?.(false)}>Cancel</button>}<button className="secondary" disabled={blocked || busy || !content.trim() || !key.trim()}>{busy ? 'Saving…' : fresh ? 'Add note' : 'Save note'}</button></footer>
   </form>;
 }
 export function TaskMemory({ snapshot, threadId }: { snapshot: Snapshot; threadId?: string }) {
   const [addingThread, setAddingThread] = useState<string>();
   const addButton = useRef<HTMLButtonElement>(null);
+  const forgetButtons = useRef(new Map<string, HTMLButtonElement>());
+  const pendingFocus = useRef<{ thread: string; candidates: string[] } | null>(null);
   const setExpanded = useCallback((value: boolean) => { setAddingThread(value ? threadId : undefined); if (!value) addButton.current?.focus(); }, [threadId]);
   const adding = Boolean(threadId && addingThread === threadId);
   const notes = (snapshot.memory ?? []).filter(note => note.threadId === threadId);
-  return <section className="task-memory" aria-label="Thread memory"><header><BookOpen size={16} /><h3>Thread memory</h3>{notes.length >= 10 && <span>{notes.length}/12</span>}<button ref={addButton} className="icon-button" aria-label="Add memory note" aria-expanded={adding} disabled={!threadId || notes.length >= 12} onClick={() => setExpanded(!adding)}><Plus size={15} /></button></header>{!notes.length && !adding && <p className="muted">No saved notes.</p>}{threadId && notes.map(note => <MemoryNote key={`${threadId}:saved:${note.key}`} note={note} threadId={threadId} />)}{threadId && <MemoryNote key={`${threadId}:create`} fresh expanded={adding} onExpandedChange={setExpanded} threadId={threadId} note={{ id: '', threadId, key: '', content: '', revision: 0, author: 'user', updatedAt: '' }} />}</section>;
+  // Record the fallback focus order from the pre-delete list: next Forget, previous Forget, Add.
+  const deleted = (key: string) => { const order = notes.map(item => item.key); const index = order.indexOf(key); pendingFocus.current = { thread: threadId ?? '', candidates: [order[index + 1], order[index - 1], 'add'].filter((item): item is string => Boolean(item)) }; };
+  // Apply it once the post-delete snapshot renders; only focus a live node.
+  useEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending) return;
+    if (pending.thread !== threadId) { pendingFocus.current = null; return; }
+    let target: HTMLButtonElement | null = null;
+    for (const candidate of pending.candidates) { target = candidate === 'add' ? addButton.current : forgetButtons.current.get(candidate) ?? null; if (target) break; }
+    if (target) { pendingFocus.current = null; requestAnimationFrame(() => target!.focus()); }
+  }, [notes, threadId]);
+  return <section className="task-memory" aria-label="Thread memory"><header><BookOpen size={16} /><h3>Thread memory</h3>{notes.length >= 10 && <span>{notes.length}/12</span>}<button ref={addButton} className="icon-button" aria-label="Add memory note" aria-expanded={adding} disabled={!threadId || notes.length >= 12} onClick={() => setExpanded(!adding)}><Plus size={15} /></button></header>{!notes.length && !adding && <p className="muted">No saved notes.</p>}{threadId && notes.map(note => <MemoryNote key={`${threadId}:saved:${note.key}`} note={note} threadId={threadId} onDeleted={deleted} forgetRef={node => { if (node) forgetButtons.current.set(note.key, node); else forgetButtons.current.delete(note.key); }} />)}{threadId && <MemoryNote key={`${threadId}:create`} fresh expanded={adding} onExpandedChange={setExpanded} threadId={threadId} note={{ id: '', threadId, key: '', content: '', revision: 0, author: 'user', updatedAt: '' }} />}</section>;
 }
