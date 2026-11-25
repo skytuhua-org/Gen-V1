@@ -62,9 +62,13 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
   if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close(true);return;}
   if(event.key==='Tab'&&!combined){close(true);return;}
   if(event.key==='Enter'){event.preventDefault();if(active)choose(active);return;}
-  if(!['ArrowDown','ArrowUp'].includes(event.key))return;
+  if(!['ArrowDown','ArrowUp','Home','End','PageUp','PageDown'].includes(event.key))return;
+  // Home/End stay caret and selection keys mid-text; they navigate the list only when a collapsed caret is already at that edge.
+  const caret=(key:'Home'|'End')=>!event.shiftKey&&event.currentTarget.selectionStart===event.currentTarget.selectionEnd&&event.currentTarget.selectionStart===(key==='Home'?0:event.currentTarget.value.length);
+  if((event.key==='Home'||event.key==='End')&&!caret(event.key))return;
   event.preventDefault();const index=visible.findIndex(model=>model.id===active?.id),count=visible.length;if(!count)return;
-  const next=(index+(event.key==='ArrowDown'?1:-1)+count)%count;setActiveId(visible[next].id);setKeyboard(true);
+  const next=event.key==='ArrowDown'?(index+1)%count:event.key==='ArrowUp'?(index-1+count)%count:event.key==='Home'?0:event.key==='End'?count-1:event.key==='PageUp'?Math.max(0,index-10):Math.min(count-1,index+10);
+  setActiveId(visible[next].id);setKeyboard(true);
  }
  function effortNavigate(event:KeyboardEvent<HTMLDivElement>){
   if(isComposing(event)||event.altKey||event.ctrlKey||event.metaKey)return;
