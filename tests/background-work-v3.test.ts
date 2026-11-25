@@ -1002,7 +1002,7 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     const f = fixture({ executionGate: async () => ({ allowed: true }) });
     enable("jobs.backgroundV1");
     const owner = { ...f.owner, runId: "run-1", epoch: 1, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-1" };
-    f.store.internal("fixture.owner", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-1", epoch: 1, projectId: "proj-1", accountId: "acct-1" } as Thread));
+    f.store.internal("fixture.owner", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-1", epoch: 1, projectId: "proj-1", workspaceId: "ws-1", accountId: "acct-1" } as Thread));
     const work = f.coordinator.admit(command("background.work.admit"), { owner, kind: "COMMAND", title: "drift", command: spec(f, ["-e", "console.log('x');setTimeout(()=>{},30000)"]) });
     const started = await f.coordinator.startCommand(work.workId);
     // Positive control: the authorized same-owner read succeeds while the
@@ -1010,7 +1010,7 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     await waitFor(() => f.coordinator.readOutput(work.workId, f.thread.id, 0).output.includes("x"));
     // Owner revision drift: a new run/epoch under a different account makes
     // the prior binding stale; canonical custody must deny the read.
-    f.store.internal("fixture.drift", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-2", epoch: 2, projectId: "proj-1", accountId: "acct-2" } as Thread));
+    f.store.internal("fixture.drift", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-2", epoch: 2, projectId: "proj-1", workspaceId: "ws-1", accountId: "acct-2" } as Thread));
     expect(() => f.coordinator.readOutput(work.workId, f.thread.id)).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED" }));
     killOwnedProcess(started.processIdentity!.pid);
     await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED" || f.coordinator.work(work.workId).state === "UNKNOWN");
@@ -1070,6 +1070,25 @@ describe("M10-T04 composed verification (#2014)", () => {
   };
   const vaultOf = (service: Service) => (service as unknown as { contextResultVault: () => { read: (i: { owner: { threadId: string; workspaceId: string; accountId: string | null }; handle: string; offset: number; length: number }) => Promise<{ status: string; bytes?: Uint8Array }> } }).contextResultVault();
 
+  it("denies live output after workspace-only drift through the production Service", async () => {
+    enable("jobs.backgroundV1");
+    const { store, service, root } = serviceFixture();
+    await service.recover();
+    const thread = await liveThread(service, store, "M10 workspace continuity");
+    const work = (await service.command(command("background.work.admit", { kind: "COMMAND", title: "workspace", command: spec(root, ["-e", "console.log('live bytes');setTimeout(()=>{},30000)"]) }, thread.id))).result as BackgroundWorkRecord;
+    const started = await service.backgroundWork.startCommand(work.workId);
+    try {
+      await waitFor(() => service.backgroundWork.readOutput(work.workId, thread.id).output.includes("live bytes"));
+      store.internal("t04.workspace-drift", thread.id, () => store.put("thread", thread.id, thread.id, { ...thread, workspaceId: "ws-2" }));
+      expect(() => service.backgroundWork.readOutput(work.workId, thread.id)).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED", message: expect.stringContaining("SCOPE_CHANGED") }));
+      store.internal("t04.workspace-restored", thread.id, () => store.put("thread", thread.id, thread.id, thread));
+      expect(service.backgroundWork.readOutput(work.workId, thread.id).output).toContain("live bytes");
+    } finally {
+      killOwnedProcess(started.processIdentity!.pid);
+      await waitFor(() => service.backgroundWork.work(work.workId).state === "SETTLED" || service.backgroundWork.work(work.workId).state === "UNKNOWN");
+    }
+  });
+
   it("approved process → bounded byte drawer window → canonical handle → context_result_read range", async () => {
     enable("jobs.backgroundV1");
     __setCapabilityFlagForTests("context.compilerV1", true); __setCapabilityFlagForTests("tools.deferredV1", true);
@@ -1121,6 +1140,12 @@ describe("M10-T04 composed verification (#2014)", () => {
     // the mint-time invocation, but the owner's drawer still reads history.
     store.internal("t04.new-run", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, runId: "run-2", epoch: 3 } as Thread));
     await expect(vault.read({ owner, handle, offset: 0, length: 4 })).resolves.toMatchObject({ status: "UNAVAILABLE" });
+    expect(service.backgroundWork.readOutput(work.workId, thread.id, 0).output).toContain("settled bytes");
+    // Workspace drift alone also revokes the settled drawer read; restoring
+    // the original scope keeps the authorized historical window inspectable.
+    store.internal("t04.new-workspace", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, workspaceId: "ws-2" }));
+    expect(() => service.backgroundWork.readOutput(work.workId, thread.id, 0)).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED" }));
+    store.internal("t04.restore-workspace", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, workspaceId: "ws-1" }));
     expect(service.backgroundWork.readOutput(work.workId, thread.id, 0).output).toContain("settled bytes");
     // Account drift: both readers deny.
     store.internal("t04.new-account", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, accountId: "acct-2" } as Thread));

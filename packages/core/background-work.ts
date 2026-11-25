@@ -591,7 +591,7 @@ export class BackgroundWorkCoordinator {
     const thread = this.currentThread(work.owner.threadId);
     if (!thread || this.store.get("archivedThread", work.owner.threadId)) return { ok: false, blockedReason: "OWNER_REVOKED" };
     if (work.owner.runId !== null && (thread.runId !== work.owner.runId || thread.epoch !== work.owner.epoch)) return { ok: false, blockedReason: "OWNER_REVOKED" };
-    if (work.owner.projectId !== (thread.projectId ?? null)) return { ok: false, blockedReason: "SCOPE_CHANGED" };
+    if (work.owner.projectId !== (thread.projectId ?? null) || work.owner.workspaceId !== (thread.workspaceId ?? null)) return { ok: false, blockedReason: "SCOPE_CHANGED" };
     if (work.owner.accountBinding !== (thread.accountId ?? null)) return { ok: false, blockedReason: "ACCOUNT_MISMATCH" };
     const authority = this.revalidateAuthority?.(work);
     if (authority && !authority.ok) return { ok: false, blockedReason: authority.blockedReason };
