@@ -10,7 +10,8 @@ export type DesktopSurface =
   | {kind:'artifact';threadId:string;artifactId:string}
   | {kind:'agent';threadId:string;agentId:string}
   | {kind:'browser';browserId:string};
-export interface DesktopBrowserState {url:string;title:string;canGoBack:boolean;canGoForward:boolean;loading:boolean;error?:string}
+export interface DesktopBrowserFindState {open:boolean;openRequest:number;query:string;ordinal:number;matches:number;searching:boolean;error?:string}
+export interface DesktopBrowserState {url:string;title:string;canGoBack:boolean;canGoForward:boolean;loading:boolean;error?:string;find?:DesktopBrowserFindState}
 export interface DesktopBounds {x:number;y:number;width:number;height:number}
 export interface DesktopLayoutEntry {surface:DesktopSurface;bounds:DesktopBounds;visible:boolean;alwaysOnTop:boolean;dockedBrowserId?:string;displayId?:string;placement?:{displayId:string;workArea:DesktopBounds;bounds:DesktopBounds}}
 export interface DesktopLayout {version:1;windows:DesktopLayoutEntry[]}
@@ -20,7 +21,8 @@ interface DesktopUpdateStatus {state:'unavailable'|'idle'|'checking'|'current'|'
 export interface DesktopState {windows:DesktopWindowInfo[];browser?:DesktopBrowserState;dockedBrowser?:{browserId:string;state:DesktopBrowserState};focusSurface?:DesktopSurface;backendError?:string;layoutError?:string;closeCancelled?:boolean;update?:DesktopUpdateStatus;nativeTitleBar?:boolean}
 export interface DesktopContext extends DesktopState {windowId:string;surface:DesktopSurface}
 export interface DesktopWorkspaceChange {connected:boolean;sequence:number}
-export type DesktopBrowserCommand = {type:'open'}|{type:'close'}|{type:'navigate';url:string}|{type:'back'|'forward'|'reload'|'stop'}|{type:'bounds';bounds:{x:number;y:number;width:number;height:number}};
+export type DesktopBrowserCommand = {type:'open'}|{type:'close'}|{type:'navigate';url:string}|{type:'back'|'forward'|'reload'|'stop'}|{type:'bounds';bounds:{x:number;y:number;width:number;height:number}}|{type:'find-open'}|{type:'find-query';query:string}|{type:'find-next'}|{type:'find-prev'}|{type:'find-close'};
+export const DESKTOP_BROWSER_FIND_QUERY_LIMIT=1024;
 export interface DesktopMemoryExportResult {status:'saved'|'cancelled';admitted:true;filename:string;bytes:number;sha256:string}
 export interface DesktopBridge {
   exportProjectMemory?(serializedExport:string):Promise<DesktopMemoryExportResult>;
