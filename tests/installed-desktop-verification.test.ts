@@ -26,6 +26,23 @@ describe('installed subscription readiness',()=>{
  });
 });
 
+describe('installed app exit wait',()=>{
+ it('recognizes process exit without requiring diagnostic pipes to close',async()=>{
+  const child=Object.assign(new EventEmitter(),{exitCode:null as number|null,signalCode:null as NodeJS.Signals|null});
+  const result=installedVerification.waitForOwnedExit(child,20);
+  child.exitCode=0;
+  child.emit('exit',0,null);
+  await expect(result).resolves.toBeUndefined();
+  expect(child.listenerCount('exit')).toBe(0);
+  expect(child.listenerCount('close')).toBe(0);
+ });
+ it('retains the timeout and detaches its waiter when the process does not exit',async()=>{
+  const child=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null});
+  await expect(installedVerification.waitForOwnedExit(child,10)).rejects.toThrow('Installed application did not exit');
+  expect(child.listenerCount('exit')).toBe(0);
+  expect(child.listenerCount('close')).toBe(0);
+ });
+});
 describe('installed desktop verification custody',()=>{
  it('creates a separate ordinary ownership receipt for the enabled phase before its native Save lease',async()=>{
   const root=await realpath(await mkdtemp(join(tmpdir(),'installed-memory-phase-owner-')));
