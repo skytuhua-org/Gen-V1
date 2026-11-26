@@ -34,7 +34,7 @@ export const KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
   {id: 'find-previous-match', label: 'Previous match', scope: 'Conversation', chords: ['Shift+Enter'], handlers: [module('ConversationFind.tsx')]},
   {id: 'close-find', label: 'Close find', scope: 'Conversation', chords: ['Escape'], handlers: [module('ConversationFind.tsx')]},
   {id: 'terminal-select-all', label: 'Select all terminal text', scope: 'Terminal', chords: ['Ctrl+Shift+A'], handlers: [module('TerminalBody.tsx')]},
-  {id: 'terminal-find', label: 'Find in terminal output', scope: 'Terminal', chords: ['Ctrl+F'], handlers: [module('TerminalBody.tsx')]},
+  {id: 'terminal-find', label: 'Find in terminal output', scope: 'Terminal', chords: ['Ctrl+F'], handlers: [module('TerminalBody.tsx'), module('TerminalFind.tsx')]},
   {id: 'terminal-find-next', label: 'Next terminal match', scope: 'Terminal', chords: ['Enter'], handlers: [module('TerminalFind.tsx')]},
   {id: 'terminal-find-previous', label: 'Previous terminal match', scope: 'Terminal', chords: ['Shift+Enter'], handlers: [module('TerminalFind.tsx')]},
   {id: 'terminal-find-close', label: 'Close terminal find', scope: 'Terminal', chords: ['Escape'], handlers: [module('TerminalFind.tsx')]},

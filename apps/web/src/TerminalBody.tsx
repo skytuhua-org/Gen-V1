@@ -5,6 +5,7 @@ import './terminal-read.css';
 import {ariaKeyShortcuts} from './keyboard-bindings';
 import {TerminalFind} from './TerminalFind';
 import {captureTerminalExcerpt,type TerminalExcerpt} from './terminal-excerpts';
+import {throttleLatest} from './coalesced-updates';
 import './terminal-excerpts.css';
 export interface TerminalExcerptComposer {projectId:string;threadId:string;readOnly?:boolean;addExcerpt:(excerpt:TerminalExcerpt)=>Promise<void>}
 
@@ -47,6 +48,7 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
   let disposed=false,confirmedId:string|undefined,cursor=0,ended=false,interrupted=false,reading=false,stopPending=false,readSequence=0;
   let timer:ReturnType<typeof setTimeout>|undefined,observer:ResizeObserver|undefined,instance:import('@xterm/xterm').Terminal|undefined;
   let search:import('@xterm/addon-search').SearchAddon|undefined;
+  let resizeThrottle:{queue():void;cancel():void}|undefined,sentCols=-1,sentRows=-1;
   const controller=new AbortController();
   const ownerCurrent=()=>!disposed&&latest.current.active&&latest.current.projectId===projectId&&latest.current.threadId===threadId&&latest.current.terminalId===terminalId&&latest.current.generation===generation&&(!latest.current.isCurrent||latest.current.isCurrent());
   const matches=(value:TerminalRead,id:string)=>{
@@ -127,7 +129,10 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
    if(!ownerCurrent())return;
    matches(first,requestedId);confirmedId=first.id;setAcknowledged(true);
    try{localStorage.setItem(key,first.id);localStorage.removeItem(key+':pending');}catch{}
-   append(first);
+   append(first);sentCols=instance.cols;sentRows=instance.rows;
+   // fit runs per ResizeObserver tick; the resize command is latest-wins
+   // with a trailing send so a drag cannot issue a request per frame.
+   resizeThrottle=throttleLatest(150,()=>{if(!instance)return;const c=instance.cols,r=instance.rows;if(c===sentCols&&r===sentRows)return;sentCols=c;sentRows=r;void command({type:'resize',cols:c,rows:r}).catch(fail);});
    const canCapture=()=>ownerCurrent()&&latest.current.excerptComposer&&!latest.current.excerptComposer.readOnly&&latest.current.excerptComposer.projectId===projectId&&latest.current.excerptComposer.threadId===threadId;
    instance.onSelectionChange(()=>{if(!canCapture()||!confirmedId||!threadId)return;const text=instance!.getSelection();setSelection(text?captureTerminalExcerpt({terminalId:confirmedId,projectId,threadId,selection:text}):null);});
    instance.attachCustomKeyEventHandler(event=>{
@@ -140,12 +145,12 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
    instance.onData(data=>{if(ownerCurrent()&&!ended&&!stopPending)void command({type:'input',data}).catch(fail);});
    observer=new ResizeObserver(()=>{
     if(!ownerCurrent()||!instance||ended||stopPending)return;
-    fit.fit();void command({type:'resize',cols:instance.cols,rows:instance.rows}).catch(fail);
+    fit.fit();resizeThrottle?.queue();
    });
    observer.observe(element.current!);
    if(!ended)timer=setTimeout(()=>void poll(),250);
   })().catch(error=>{if(ownerCurrent()){setPhase(error instanceof ApiError&&error.code==='TERMINAL_ENDED'?'ended':'unconfirmed');setError(message(error));}});
-  return()=>{disposed=true;readSequence++;clearTimeout(timer);controller.abort();observer?.disconnect();instance?.dispose();if(actions.current===ownedActions)actions.current=null;};
+  return()=>{disposed=true;readSequence++;clearTimeout(timer);controller.abort();observer?.disconnect();resizeThrottle?.cancel();instance?.dispose();if(actions.current===ownedActions)actions.current=null;};
  },[projectId,threadId,terminalId,active,generation,key]);
 
  const restart=async()=>{

@@ -1,5 +1,7 @@
 import {useLayoutEffect, type RefObject} from 'react';
 import {ArrowDown, ArrowUp, X} from 'lucide-react';
+import {chordFor} from './keyboard-bindings';
+import {matchesShortcut} from './shell-layout';
 import './terminal-find.css';
 
 export interface TerminalFindProps {
@@ -27,7 +29,10 @@ export function TerminalFind({id, query, caseSensitive, result, limit, onQuery, 
   useLayoutEffect(() => {inputRef.current?.focus(); inputRef.current?.select();}, [inputRef]);
   const empty = !result || result.count === 0;
   const noResults = query !== '' && result?.count === 0;
-  return <div className="terminal-find" id={id} role="search" aria-label="Find in terminal">
+  return <div className="terminal-find" id={id} role="search" aria-label="Find in terminal" onKeyDown={event => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229 || !matchesShortcut(event, chordFor('terminal-find'))) return;
+    event.preventDefault(); event.stopPropagation(); inputRef.current?.focus(); inputRef.current?.select();
+  }}>
     <input ref={inputRef} className={noResults ? 'no-results' : ''} aria-label="Find in terminal" placeholder="Find in output" value={query} onChange={event => onQuery(event.target.value)}
       onKeyDown={event => {
         if (!event.nativeEvent.isComposing && event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {event.preventDefault(); event.stopPropagation(); onNext(); return;}

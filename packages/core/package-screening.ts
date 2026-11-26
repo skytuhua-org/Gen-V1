@@ -112,6 +112,21 @@ export async function screenPackage(identity: PackageIdentity, advisory: Advisor
   const snapshotAge = Date.parse(checkedAt) - snapshotTime;
   const freshSnapshot = Number.isSafeInteger(snapshotAge) && snapshotAge >= 0 &&
     snapshotAge <= DEFAULT_MAX_CACHE_AGE_MS;
+  // A concurrent refresh may have published a newer denial while this query
+  // was awaiting the provider. Re-read the same cache before deciding or
+  // writing; only a strictly newer fresh clean snapshot may clear a denial.
+  const latest = options.cache?.get(key) ?? options.cache?.get(legacyCacheKey(pkg));
+  if (latest) {
+    const parsed = packageScreeningV1Schema.parse(latest);
+    const sameIdentity = parsed.pkg.name === pkg.name && parsed.pkg.version === pkg.version &&
+      parsed.pkg.digest === pkg.digest && parsed.advisory.database === advisory.database;
+    if (sameIdentity && parsed.status === 'KNOWN_BAD' && parsed.decision === 'DENY' &&
+        (!previousKnownBad || Date.parse(parsed.advisory.asOf) > Date.parse(previousKnownBad.advisory.asOf))) {
+      previousKnownBad = parsed;
+      const age = Date.parse(checkedAt) - Date.parse(parsed.checkedAt);
+      previousCacheAgeMs = Number.isSafeInteger(age) && age >= 0 ? age : 0;
+    }
+  }
   if (previousKnownBad) {
     const previousSnapshotTime = Date.parse(previousKnownBad.advisory.asOf);
     // Only a fresh, strictly newer snapshot can clear a denial. An older

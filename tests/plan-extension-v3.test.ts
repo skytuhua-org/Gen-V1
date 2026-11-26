@@ -65,7 +65,24 @@ describe('PlanExtensionV1 integrity', () => {
     expect(() => f.extensions.put(f.extension({weights: [{nodeId: 's1', units: 1.5}, {nodeId: 's2', units: 1}, {nodeId: 's3', units: 1}, {nodeId: 'ag1', units: 1}]}))).toThrow(/weight/i);
     expect(() => f.extensions.put(f.extension({weights: [{nodeId: 's1', units: 1}, {nodeId: 's2', units: 1}, {nodeId: 's3', units: 1}, {nodeId: 'ag1', units: 1}, {nodeId: 'ghost', units: 1}]}))).toThrow(/unknown|weight/i);
   });
-  it('requires conservation: child units may not exceed the parent allocation', () => {
+  it('rejects a later extension revision that grows the total root allocation', () => {
+  const f = fixture();
+  const saved = f.extensions.put(f.extension());
+  // Roots s1+s2+s3 hold 4 units. Revision 2 may not create extra work by
+  // raising any root's allocation, even while child sums stay in-budget.
+  expect(() => f.extensions.put(f.extension({
+    extensionRevision: 2,
+    weights: [{nodeId: 's1', units: 10}, {nodeId: 's2', units: 1}, {nodeId: 's3', units: 1}, {nodeId: 'ag1', units: 2}],
+  }))).toThrow(/conservation|allocation|root|extra work/i);
+  // Same total, redistributed between roots, stays valid.
+  const rebalanced = f.extensions.put(f.extension({
+    extensionRevision: 2,
+    weights: [{nodeId: 's1', units: 1}, {nodeId: 's2', units: 2}, {nodeId: 's3', units: 1}, {nodeId: 'ag1', units: 1}],
+  }));
+  expect(rebalanced.extensionRevision).toBe(2);
+  void saved;
+ });
+ it('requires conservation: child units may not exceed the parent allocation', () => {
     const f = fixture();
     // ag1 claims 2 units under s1 but s1 only holds 1 unit here -> over-budget.
     expect(() => f.extensions.put(f.extension({weights: [{nodeId: 's1', units: 1}, {nodeId: 's2', units: 1}, {nodeId: 's3', units: 1}, {nodeId: 'ag1', units: 2}]}))).toThrow(/conservation|allocation|budget/i);
@@ -92,7 +109,7 @@ describe('PlanExtensionV1 integrity', () => {
     const second = f.extensions.split(saved.planId, 's2', 'ag3', 2);
     expect(second.parentRelationships).toContainEqual({parentId: 's2', childId: 'ag3'});
     // Residual s2 = 1; leaves: ag1(2), ag2(1), ag3(2), s3(1) -> total 7.
-    const progress = f.extensions.progress(saved.planId, {s2: 'completed', ag1: 'completed'});
+    const progress = f.extensions.progress(saved.planId, {s2: 'completed', ag1: 'completed', ag2: 'pending', ag3: 'pending', s3: 'pending'});
     expect(progress).toEqual({completed: 3, pending: 4, unknown: 0, total: 7});
   });
 });
@@ -102,15 +119,16 @@ describe('progress and report watermark', () => {
     const f = fixture();
     const planId = f.extensions.put(f.extension()).planId;
     // ag1 partitions s1's 2 units; leaves are ag1(2), s2(1), s3(1) — total 4.
-    const partial = f.extensions.progress(planId, {s1: 'completed', ag1: 'completed'});
+    const partial = f.extensions.progress(planId, {s1: 'completed', ag1: 'completed', s2: 'pending', s3: 'pending'});
     expect(partial).toEqual({completed: 2, pending: 2, unknown: 0, total: 4});
-    const unsure = f.extensions.progress(planId, {ag1: 'unknown'});
+    const unsure = f.extensions.progress(planId, {ag1: 'unknown', s2: 'pending', s3: 'pending'});
     expect(unsure).toEqual({completed: 0, pending: 2, unknown: 2, total: 4});
     const allDone = f.extensions.progress(planId, {s1: 'completed', ag1: 'completed', s2: 'completed', s3: 'completed'});
     expect(allDone).toEqual({completed: 4, pending: 0, unknown: 0, total: 4});
     // No fabricated endpoints: units are exact integers, progress is a ratio of them.
+    // A node with no reported status is unknown work, not assumed pending.
     const none = f.extensions.progress(planId, {});
-    expect(none).toEqual({completed: 0, total: 4, pending: 4, unknown: 0});
+    expect(none).toEqual({completed: 0, total: 4, pending: 0, unknown: 4});
   });
   it('does not calculate current progress with weights pinned to an older plan', () => {
     const f = fixture();

@@ -198,13 +198,38 @@ test('find searches the retained buffer, moves between matches and sends nothing
  expect(api.blocked).toEqual([]);expect(api.errors).toEqual([]);
 });
 
-test('Ctrl+F inside the terminal opens find without reaching the document or the shell',async({page})=>{
+for(const modifier of ['Control','Meta'])test(`${modifier}+F opens and refocuses terminal find without reaching the document or the shell`,async({page})=>{
  const api=await mount(page);
  await expect(page.getByRole('button',{name:'Find in terminal',exact:true})).toBeVisible();
  await page.evaluate(()=>{(window as unknown as {findKeys:boolean[]}).findKeys=[];document.addEventListener('keydown',event=>{if(event.key.toLowerCase()==='f'&&(event.ctrlKey||event.metaKey))(window as unknown as {findKeys:boolean[]}).findKeys.push(event.defaultPrevented);});});
- await page.locator('.xterm-helper-textarea').focus();await page.locator('.xterm-helper-textarea').press('Control+f');
- await expect(page.locator('.terminal-find input')).toBeFocused();
+ await page.locator('.xterm-helper-textarea').focus();await page.locator('.xterm-helper-textarea').press(`${modifier}+f`);
+ const input=page.locator('.terminal-find input');await expect(input).toBeFocused();
+ await input.fill('before');await input.evaluate(node=>(node as HTMLInputElement).setSelectionRange(3,3));
+ await input.press(`${modifier}+f`);
+ await expect(input).toBeFocused();
+ expect(await input.evaluate(node=>[(node as HTMLInputElement).selectionStart,(node as HTMLInputElement).selectionEnd])).toEqual([0,6]);
+ await input.evaluate(node=>(node as HTMLInputElement).setSelectionRange(3,3));
+ await page.getByRole('button',{name:'Match case',exact:true}).focus();
+ await page.getByRole('button',{name:'Match case',exact:true}).press(`${modifier}+f`);
+ await expect(input).toBeFocused();
+ expect(await input.evaluate(node=>[(node as HTMLInputElement).selectionStart,(node as HTMLInputElement).selectionEnd])).toEqual([0,6]);
  expect(await page.evaluate(()=>(window as unknown as {findKeys:boolean[]}).findKeys)).toEqual([]);
+ expect(api.requests.filter(item=>item.body?.type==='input')).toEqual([]);
+});
+
+test('terminal find leaves composing and extra-modifier find keys unhandled',async({page})=>{
+ const api=await mount(page);
+ await page.getByRole('button',{name:'Find in terminal',exact:true}).click();
+ const input=page.locator('.terminal-find input');await expect(input).toBeFocused();await input.fill('before');
+ const observed=await input.evaluate(node=>{
+  const input=node as HTMLInputElement;
+  return [{ctrlKey:true,isComposing:true},{ctrlKey:true,keyCode:229},{ctrlKey:true,shiftKey:true},{ctrlKey:true,altKey:true},{ctrlKey:true,metaKey:true}].map(modifiers=>{
+   input.setSelectionRange(3,3);
+   const event=new KeyboardEvent('keydown',{key:'f',bubbles:true,cancelable:true,...modifiers});input.dispatchEvent(event);
+   return {prevented:event.defaultPrevented,selection:[input.selectionStart,input.selectionEnd]};
+  });
+ });
+ expect(observed).toEqual(Array.from({length:5},()=>({prevented:false,selection:[3,3]})));
  expect(api.requests.filter(item=>item.body?.type==='input')).toEqual([]);
 });
 
@@ -242,13 +267,17 @@ test('find works on an ended terminal over its retained output',async({page})=>{
 });
 
 test('new output refreshes the find counter without moving the active match',async({page})=>{
- const api=await mount(page,{create:route=>json(route,result('terminal-a','ready\r\n',{cursor:6})),read:route=>json(route,result('terminal-a','ready\r\n',{start:6,cursor:12}))});
+ const gate=deferred();
+ const api=await mount(page,{create:route=>json(route,result('terminal-a','ready\r\n',{cursor:6})),read:async route=>{await gate.promise;await json(route,result('terminal-a','ready\r\n',{start:6,cursor:12}));}});
  await expect(page.getByRole('button',{name:'Find in terminal',exact:true})).toBeVisible();
  await page.locator('.xterm-helper-textarea').focus();await page.locator('.xterm-helper-textarea').press('Control+f');
  const input=page.locator('.terminal-find input');await input.fill('ready');
  const counter=page.locator('.terminal-find .terminal-find-counter');
  await expect(counter).toHaveText('1 of 1');
+ const selected=await page.evaluate(()=>window.terminalFixture.instances[0].getSelectionPosition());expect(selected).toBeTruthy();
+ await expect.poll(()=>api.reads().length).toBe(1);gate.resolve();
  await expect(counter).toHaveText('1 of 2',{timeout:3000});
+ expect(await page.evaluate(()=>window.terminalFixture.instances[0].getSelectionPosition())).toEqual(selected);
  expect(api.requests.filter(item=>item.body?.type==='input')).toEqual([]);
 });
 
