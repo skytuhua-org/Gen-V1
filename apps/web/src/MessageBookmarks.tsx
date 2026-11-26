@@ -1,4 +1,4 @@
-import {useEffect, useId, useRef, useState} from 'react';
+import {useEffect, useId, useLayoutEffect, useRef, useState} from 'react';
 import {Bookmark, X} from 'lucide-react';
 import {Popover} from '../../../packages/ui-shell/Popover';
 import {readBookmarks, subscribeBookmarks, type BookmarkList} from './message-bookmarks';
@@ -43,11 +43,20 @@ interface BookmarksControlProps {
 export function BookmarksControl({list, loading, onJump, onReveal, onRemove, onRetry}: BookmarksControlProps) {
   const [open, setOpen] = useState(false);
   const [jumping, setJumping] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<string | null>(null);
   const [missing, setMissing] = useState<ReadonlySet<string>>(new Set());
   const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null);
   const panelId = useId();
   const items = list.kind === 'ready' ? list.items : [];
   const navigating = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (open || !reveal) return;
+    // The fetched transcript and closed panel must commit before focus moves.
+    // A frame callback can run before React commits the newly fetched rows.
+    onReveal(reveal);
+    navigating.current = null;
+    setReveal(null);
+  }, [open, reveal, onReveal]);
   const close = () => { setOpen(false); if (!navigating.current) trigger.current?.focus(); };
   const jump = async (messageId: string) => {
     if (jumping) return;
@@ -63,7 +72,7 @@ export function BookmarksControl({list, loading, onJump, onReveal, onRemove, onR
         if (landed) next.delete(messageId); else next.add(messageId);
         return next;
       });
-      if (landed) { setOpen(false); requestAnimationFrame(() => { onReveal(messageId); navigating.current = null; }); }
+      if (landed) { setReveal(messageId); setOpen(false); }
       else navigating.current = null;
     } finally { setJumping(null); }
   };
