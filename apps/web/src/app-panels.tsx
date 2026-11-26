@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
 import type { Message } from '../../../packages/contracts';
 import { getToolEffectObservation, type ToolEffectObservation } from './api';
 import { hasPendingDocumentAssets } from './signature-assets';
@@ -16,8 +16,8 @@ export const messageOf = (error: unknown) => error instanceof Error ? error.mess
 type SettingsComponent = typeof import('./Settings').Settings;
 let loadedSettings: SettingsComponent | undefined;
 
-export function Dialog({ title, children, close }: { title: string; children: ReactNode; close: () => void }) {
-  return <Modal open title={title} onClose={close} className="dialog">{children}</Modal>;
+export function Dialog({ title, children, close, initialFocusRef }: { title: string; children: ReactNode; close: () => void; initialFocusRef?: RefObject<HTMLElement | null> }) {
+  return <Modal open title={title} onClose={close} className="dialog" initialFocusRef={initialFocusRef}>{children}</Modal>;
 }
 
 export function SettingsWindow(props: ComponentProps<SettingsComponent>) {

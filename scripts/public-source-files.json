@@ -4140,6 +4140,7 @@
     "tests/reduced-motion-coverage.test.ts",
     "tests/redundant-ui.test.ts",
     "tests/remote-transport-v3.test.ts",
+    "tests/rename-dialog-focus.test.ts",
     "tests/rename-recovery-v3.test.ts",
     "tests/reply-sections.test.ts",
     "tests/repo-map.test.ts",
