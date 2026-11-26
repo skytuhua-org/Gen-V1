@@ -1,3 +1,5 @@
+import { HarnessError } from '../contracts/index.ts';
+
 /** The shared finite registry of host-owned security flags. Only these keys
  * exist; default is false for every key. Flags are host process configuration —
  * never strict UI preferences and never writable by agents, tools or plug-ins.
@@ -54,7 +56,13 @@ export function hostFlagEnvName(name: RegisteredHostFlag): string {
     .toUpperCase();
 }
 
+function assertRegisteredHostFlag(name: unknown): asserts name is RegisteredHostFlag {
+  if (typeof name !== 'string' || !Object.hasOwn(HOST_FLAG_REGISTRY, name))
+    throw new HarnessError('UNKNOWN_CAPABILITY_FLAG', 'Unknown host capability flag.');
+}
+
 export function hostFlagEnabled(name: RegisteredHostFlag, env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+  assertRegisteredHostFlag(name);
   const value = env[hostFlagEnvName(name)];
   return value === '1' || value === 'true';
 }

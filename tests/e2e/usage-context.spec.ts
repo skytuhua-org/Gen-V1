@@ -80,6 +80,72 @@ test('verification does not overlap polling reads or replace newer evidence with
   await release!();
   await expect(verification(page)).toContainText('Refreshed evidence');
 });
+
+const setDocumentVisibility = async (page: Page, state: 'visible' | 'hidden') => {
+  await page.evaluate(value => {
+    Object.defineProperty(document, 'visibilityState', {configurable: true, get: () => value});
+    Object.defineProperty(document, 'hidden', {configurable: true, get: () => value === 'hidden'});
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, state);
+};
+
+test('verification suppresses hidden polling and resumes once with normal visible pacing', async ({page}) => {
+  let reads = 0;
+  await page.clock.install();
+  await page.route('**/api/threads/thread-one/verification', route => {
+    reads++;
+    return route.fulfill({json: verificationResult('Visible evidence')});
+  });
+  await page.goto('/usage-context?verification');
+  await expect(verification(page)).toContainText('Visible evidence');
+  expect(reads).toBe(1);
+  await setDocumentVisibility(page, 'hidden');
+  await page.clock.runFor(12000);
+  await page.waitForTimeout(100);
+  expect(reads).toBe(1);
+  await setDocumentVisibility(page, 'visible');
+  await expect.poll(() => reads, {timeout: 7000}).toBe(2);
+  await page.clock.runFor(3500);
+  expect(reads).toBe(2);
+  await page.clock.runFor(600);
+  await expect.poll(() => reads, {timeout: 7000}).toBe(3);
+  await setDocumentVisibility(page, 'hidden');
+  await page.clock.runFor(12000);
+  await page.waitForTimeout(100);
+  expect(reads).toBe(3);
+  await setDocumentVisibility(page, 'visible');
+  await expect.poll(() => reads, {timeout: 7000}).toBe(4);
+});
+
+test('verification preserves current evidence and fences an in-flight read hidden before it settles', async ({page}) => {
+  let reads = 0, releaseHiddenRead: (() => Promise<void>) | undefined;
+  await page.clock.install();
+  await page.route('**/api/threads/thread-one/verification', route => {
+    reads++;
+    if (reads === 1) return route.fulfill({json: verificationResult('Current visible evidence')});
+    if (reads === 2) {
+      releaseHiddenRead = () => route.fulfill({json: verificationResult('Hidden stale evidence')}).catch(() => {});
+      return;
+    }
+    return route.fulfill({json: verificationResult('Fresh restored evidence')});
+  });
+  await page.goto('/usage-context?verification');
+  await expect(verification(page)).toContainText('Current visible evidence');
+  await page.clock.runFor(4000);
+  await expect.poll(() => reads, {timeout: 7000}).toBe(2);
+  await setDocumentVisibility(page, 'hidden');
+  await releaseHiddenRead!();
+  await page.waitForTimeout(50);
+  await expect(verification(page)).toContainText('Current visible evidence');
+  await expect(page.getByText('Hidden stale evidence', {exact: true})).toHaveCount(0);
+  await expect(verification(page).getByRole('status')).toHaveCount(0);
+  await page.clock.runFor(8000);
+  await page.waitForTimeout(100);
+  expect(reads).toBe(2);
+  await setDocumentVisibility(page, 'visible');
+  await expect.poll(() => reads, {timeout: 7000}).toBe(3);
+  await expect(verification(page)).toContainText('Fresh restored evidence');
+});
 test('verification does not color a historical pass green when freshness is indeterminate', async ({page}) => {
   await page.route('**/api/threads/thread-one/verification', route => route.fulfill({json: {
     verification: {...verificationResult('Unavailable source', 'INDETERMINATE').verification, label: 'COMPLETED_UNVERIFIED'},
