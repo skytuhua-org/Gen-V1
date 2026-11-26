@@ -177,3 +177,40 @@ test('an unbound start fails closed when its pending caller ID cannot be retaine
  const api=await mount(page,{unbound:true});await expect(phase(page)).toHaveText('Start unconfirmed');await expect(errorText(page)).toContainText('retain');await expect(page.getByRole('button',{name:'Stop',exact:true})).toBeDisabled();
  expect(api.creates()).toEqual([]);await page.evaluate(()=>window.terminalFixture.show(false));await expect(page.locator('.xterm')).toHaveCount(0);await page.evaluate(()=>window.terminalFixture.show(true));await expect(phase(page)).toHaveText('Start unconfirmed');expect(api.creates()).toEqual([]);
 });
+
+test('capture busy state belongs to the active terminal view, including late old completions',async({page})=>{
+ await mount(page,{create:(route,body)=>json(route,result(String(body.terminalId),'retained output',{cursor:15,exited:true}))});
+ const capture=page.getByRole('button',{name:'Save output…',exact:true});await expect(capture).toBeEnabled();
+ await page.evaluate(()=>window.terminalFixture.holdCaptures());await capture.click();
+ await expect.poll(()=>page.evaluate(()=>window.terminalFixture.captureCount())).toBe(1);
+ await expect(page.getByRole('button',{name:'Preparing…',exact:true})).toBeDisabled();
+ await page.evaluate(()=>window.terminalFixture.update({active:false}));await expect(page.locator('.xterm')).toHaveCount(0);
+ await page.evaluate(()=>window.terminalFixture.update({active:true}));await expect(page.locator('.xterm')).toHaveCount(1);
+ await expect(capture).toBeEnabled();await capture.click();
+ await expect.poll(()=>page.evaluate(()=>window.terminalFixture.captureCount())).toBe(2);
+ await page.evaluate(()=>window.terminalFixture.releaseCapture(0));await tick(page);
+ await expect(page.getByRole('button',{name:'Preparing…',exact:true})).toBeDisabled();
+ await expect(page.getByRole('dialog',{name:'Save terminal output'})).toHaveCount(0);
+ await page.evaluate(()=>window.terminalFixture.releaseCapture(1));
+ await expect(page.getByRole('dialog',{name:'Save terminal output'})).toBeVisible();
+ await expect(page.getByRole('textbox',{name:'Retained terminal output'})).toHaveValue('retained output');
+});
+
+test('save busy state belongs to the active terminal view, including late old completions',async({page})=>{
+ await mount(page,{create:(route,body)=>json(route,result(String(body.terminalId),'retained output',{cursor:15,exited:true}))});
+ const capture=page.getByRole('button',{name:'Save output…',exact:true});await expect(capture).toBeEnabled();
+ await page.evaluate(()=>window.terminalFixture.holdSaves());await capture.click();
+ const confirm=page.getByRole('button',{name:'Save text…',exact:true});await expect(confirm).toBeEnabled();await confirm.click();
+ await expect.poll(()=>page.evaluate(()=>window.terminalFixture.saveCount())).toBe(1);
+ await page.evaluate(()=>window.terminalFixture.update({active:false}));await expect(page.locator('.xterm')).toHaveCount(0);
+ await expect(page.getByRole('dialog',{name:'Save terminal output'})).toHaveCount(0);
+ await page.evaluate(()=>window.terminalFixture.update({active:true}));await expect(capture).toBeEnabled();await capture.click();
+ await expect(confirm).toBeEnabled();await confirm.click();
+ await expect.poll(()=>page.evaluate(()=>window.terminalFixture.saveCount())).toBe(2);
+ await page.evaluate(()=>window.terminalFixture.releaseSave(0,'saved'));await tick(page);
+ await expect(page.getByRole('button',{name:'Saving…',exact:true})).toBeDisabled();
+ await expect(page.getByRole('dialog',{name:'Save terminal output'})).toBeVisible();
+ await expect(page.getByText('Saved.',{exact:true})).toHaveCount(0);
+ await page.evaluate(()=>window.terminalFixture.releaseSave(1,'cancelled'));
+ await expect(confirm).toBeEnabled();await expect(page.getByText('Save cancelled.',{exact:true})).toBeVisible();
+});

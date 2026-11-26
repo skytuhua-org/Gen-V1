@@ -125,7 +125,7 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
    observer.observe(element.current!);
    if(!ended)timer=setTimeout(()=>void poll(),250);
   })().catch(error=>{if(ownerCurrent()){setPhase(error instanceof ApiError&&error.code==='TERMINAL_ENDED'?'ended':'unconfirmed');setError(message(error));}});
-  return()=>{disposed=true;readSequence++;clearTimeout(timer);controller.abort();observer?.disconnect();instance?.dispose();if(actions.current===ownedActions)actions.current=null;setSnapshot(null);setSaveError('');setSaveNotice('');setAltBuffer(false);setCaptureReady(false);};
+  return()=>{disposed=true;readSequence++;clearTimeout(timer);controller.abort();observer?.disconnect();instance?.dispose();if(actions.current===ownedActions)actions.current=null;setSnapshot(null);setCapturing(false);setSaving(false);setSaveError('');setSaveNotice('');setAltBuffer(false);setCaptureReady(false);};
  },[projectId,threadId,terminalId,active,generation,key]);
 
  const restart=async()=>{
