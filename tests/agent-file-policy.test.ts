@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { Worker } from 'node:worker_threads';
 import {
 	AGENT_FILE_POLICY_DEFAULTS,
 	agentFileRuleSchema,
@@ -52,14 +53,41 @@ describe('rule matching semantics', () => {
 		expect(m.deniesPath('Src/.env')).toBe(true);
 		expect(compileFilePolicy(['Sécret/**'.normalize('NFD')]).deniesPath('sécret/x'.normalize('NFC'))).toBe(true);
 	});
-	it('requires whole-segment ** and complete matches', () => {
-		const m = compileFilePolicy(['sec**ts']);
+	it('matches in-segment * completely while keeping whole-segment ** distinct', () => {
+		const m = compileFilePolicy(['sec*ts']);
 		expect(m.deniesPath('secxts')).toBe(true);
 		expect(m.deniesPath('a/secretss')).toBe(false);
+		expect(compileFilePolicy(['a*b*c']).deniesPath('a12b34c')).toBe(true);
 	});
+	it('bounds repeated double-star states for a nonmatching path', async () => {
+		const worker = new Worker(`
+			const {parentPort, workerData} = require('node:worker_threads');
+			import(workerData.module).then(({compileFilePolicy}) => {
+				parentPort.postMessage(compileFilePolicy([workerData.rule]).deniesPath(workerData.path));
+			}).catch(error => { throw error; });
+		`, { eval: true, execArgv: [], workerData: {
+			module: new URL('../packages/core/file-policy.ts', import.meta.url).href,
+			rule: '**/'.repeat(32) + 'absent', path: 'a/'.repeat(64) + 'leaf',
+		} });
+		let deadline: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const result = await new Promise<boolean>((resolve, reject) => {
+				worker.once('message', resolve);
+				worker.once('error', reject);
+				deadline = setTimeout(() => reject(new Error('Bounded policy matching did not finish.')), 5000);
+			});
+			expect(result).toBe(false);
+		} finally {
+			clearTimeout(deadline);
+			await worker.terminate();
+		}
+	}, 15000);
 });
 
 describe('grammar rejection', () => {
+	for (const rule of ['a**b', 'a/**b', '***']) it(`rejects a non-segment double star: ${rule}`, () => {
+		expect(agentFileRuleSchema.safeParse(rule).success).toBe(false);
+	});
 	const bad = ['/etc/passwd', 'C:\\win\\k', '..\\up', 'src/../x', 'a//b', 'a/', '!not', '{a,b}', '[ab].ts', '#comment', '  spaced', ''];
 	for (const rule of bad) it(`rejects ${JSON.stringify(rule)}`, () => {
 		expect(agentFileRuleSchema.safeParse(rule).success).toBe(false);
@@ -67,6 +95,11 @@ describe('grammar rejection', () => {
 	it('rejects over-long rules and oversized rule sets', () => {
 		expect(agentFileRuleSchema.safeParse('a'.repeat(257)).success).toBe(false);
 		expect(agentFilePolicySchema.safeParse({ revision: 0, rules: Array(101).fill('x') }).success).toBe(false);
+	});
+	it('accepts ordinary hyphenated names and rejects every ASCII control character', () => {
+		expect(agentFileRuleSchema.safeParse('ordinary-name.txt').success).toBe(true);
+		for (const code of [...Array.from({ length: 32 }, (_, index) => index), 127])
+			expect(agentFileRuleSchema.safeParse(`a${String.fromCharCode(code)}b`).success, `control ${code}`).toBe(false);
 	});
 	it('parses editor text with blank lines, duplicates and line-numbered errors', () => {
 		const { rules, errors } = parseAgentFilePolicyRules('.env\n\n.env\n/etc/x\n*.pem\n');

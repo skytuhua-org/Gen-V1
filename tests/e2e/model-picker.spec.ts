@@ -35,6 +35,25 @@ test('model search groups the advertised catalog and keyboard selection reaches 
   await expect.poll(() => host.commands.find(command => command.type === 'message.send')?.payload.modelId).toBe('openai/terra');
 });
 
+test('Home, End and Page keys move and clamp the active model row', async ({ page }) => {
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await trigger.click();
+  const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
+  const options = page.getByRole('listbox', { name: 'Available models', exact: true }).getByRole('option');
+  await search.press('End');
+  await expect(options.last()).toHaveAttribute('data-active', 'true');
+  await expect(options.last()).toBeInViewport();
+  await search.press('Home');
+  await expect(options.first()).toHaveAttribute('data-active', 'true');
+  await search.press('End'); await search.press('PageDown');
+  await expect(options.last()).toHaveAttribute('data-active', 'true');
+  await search.press('PageUp');
+  await expect(options.first()).toHaveAttribute('data-active', 'true');
+  await search.press('Escape');
+  await expect(trigger).toBeFocused();
+});
+
 test('model search has an empty state, Escape and outside click dismiss, and Tab stays in the combined dialog', async ({ page }) => {
   const host = await mount(page), trigger = page.getByRole('combobox', { name: 'Model', exact: true });
   await trigger.click(); const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
@@ -51,6 +70,30 @@ test('model search has an empty state, Escape and outside click dismiss, and Tab
   await page.keyboard.press('Escape');await expect(trigger).toBeFocused();
   await expect(trigger).toHaveAttribute('aria-expanded', 'false'); await expect(search).not.toBeVisible();
   await expect(trigger).toContainText('GPT-6.1 Sol'); expect(host.commands).toHaveLength(0);
+});
+
+test('model picker empty states render inside the results list before the scope hint and CTA', async ({ page }) => {
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await trigger.click();
+  const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
+  const list = page.getByRole('listbox', { name: 'Available models', exact: true });
+  const checkOrder = () => page.evaluate(() => {
+    const empty = document.querySelector('.model-picker-empty'), scope = document.querySelector('.model-picker-scope'), cta = document.querySelector('.model-picker-new-task'), listEl = document.querySelector('.model-picker-list');
+    if (!empty || !listEl?.contains(empty)) return 'empty state is not inside the results list';
+    for (const [label, node] of [['scope hint', scope], ['new-task CTA', cta]] as const)
+      if (node && !(empty.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) return `empty state does not precede the ${label}`;
+    return 'ok';
+  });
+  await search.fill('zz');
+  await expect(list.getByRole('status')).toContainText('No models found');
+  await expect(list.getByRole('status')).toContainText('Try another model or provider name.');
+  expect(await checkOrder()).toBe('ok');
+  await page.getByRole('button', { name: 'Favorites' }).click();
+  await expect(list.getByRole('status')).toContainText('No favorites yet');
+  await expect(list.getByRole('status')).toContainText('Star a model to keep it here.');
+  expect(await checkOrder()).toBe('ok');
+  await search.press('Escape');
 });
 
 test('a first send keeps a usable model when the account pin lands before the bound model id', async ({ page }) => {

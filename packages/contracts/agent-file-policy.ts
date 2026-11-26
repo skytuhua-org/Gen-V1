@@ -8,10 +8,11 @@ export const FILE_POLICY_DENIED = 'FILE_POLICY_DENIED';
 export const FILE_POLICY_DENIED_MESSAGE = 'This file is blocked by your agent file rules.';
 
 const metachars = /[{}[\]!#]/;
-const control = /[-]/;
+const control = /[\u0000-\u001f\u007f]/;
 const segment = z.string()
   .refine(value => value.length > 0, 'Empty rule segment.')
   .refine(value => value !== '.' && value !== '..', 'Relative tokens are not allowed in rules.')
+  .refine(value => !value.includes('**'), 'Use ** only as a whole segment.')
   .refine(value => !control.test(value), 'Control characters are not allowed in rules.')
   .refine(value => !metachars.test(value), 'Only *, ? and whole-segment ** wildcards are allowed.');
 

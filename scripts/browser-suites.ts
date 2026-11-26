@@ -1,3 +1,9 @@
+import {readFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
+
+const repoRoot = resolve(fileURLToPath(new URL('../', import.meta.url)));
+
 export interface BrowserSuite { name:string; config:string; specs:string[]; project?:string; env?:Record<string,string> }
 
 export const rootBrowserSpecs = [
@@ -45,7 +51,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('terminal-read'),
   suite('thread-hover'),
   suite('thread-move', ['thread-move.spec.ts']),
-  suite('usage-app-integration', ['mobile-navigation.spec.ts', 'shell-error-ownership.spec.ts', 'usage-app-integration.spec.ts']),
+  suite('usage-app-integration', ['mobile-navigation.spec.ts', 'shell-error-ownership.spec.ts', 'workspace-notifications.spec.ts', 'usage-app-integration.spec.ts']),
   suite('workspace-host'),
   suite('memory-recovery-app', undefined, {config:'tests/e2e/memory-recovery.playwright.config.ts', env:{GEN_MEMORY_MODE:'app'}}),
   suite('memory-recovery-journal', undefined, {config:'tests/e2e/memory-recovery.playwright.config.ts', env:{GEN_MEMORY_MODE:'journal'}}),
@@ -66,6 +72,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('composer-commands'),
   suite('composer-prediction'),
   suite('composer-press', ['composer-press.spec.ts']),
+  suite('connect-project'),
   suite('context-connections'),
   suite('desktop-surfaces'),
   suite('everyday', ['everyday-ui.spec.ts']),
@@ -107,4 +114,23 @@ export function validateBrowserSuites(specs:string[], suites=browserSuites):void
   const missing=specs.filter(spec=>!counts.has(spec)), unknown=assigned.filter(spec=>!specs.includes(spec));
   if(new Set(suites.map(value=>value.name)).size!==suites.length)throw Error('Duplicate browser suite name.');
   if(duplicates.length||missing.length||unknown.length)throw Error(`Browser spec coverage: missing [${missing.join(', ')}]; duplicate [${duplicates.join(', ')}]; unknown [${unknown.join(', ')}].`);
+  // Every fixture must own its loopback port exclusively: a shared claim lets a
+  // lingering or foreign server answer a later suite's probes, so the runner
+  // fails fast here rather than testing an unintended host. A suite's
+  // globalSetup can own a port its config never names (e.g. a vite server it
+  // builds itself), so setup files are scanned for `port:` claims as well.
+  const claims=new Map<string,string>();
+  for(const config of new Set(suites.map(value=>value.config))){
+    const text=readFileSync(resolve(repoRoot,config),'utf8');
+    const scan=(source:string,pattern:RegExp)=>{
+      for(const match of source.matchAll(pattern)){
+        const port=match[1]!,claimed=claims.get(port);
+        if(claimed&&claimed!==config)throw Error(`Browser fixture port ${port} is claimed by both ${claimed} and ${config}.`);
+        claims.set(port,config);
+      }
+    };
+    scan(text,/(?:baseURL|url)\s*:\s*[^,}]*?127\.0\.0\.1:(\d+)/g);
+    const setup=text.match(/globalSetup\s*:\s*['"](\.\/[^'"]+)['"]/);
+    if(setup)scan(readFileSync(resolve(repoRoot,config,'..',setup[1]!),'utf8'),/\bport\s*:\s*(\d+)/g);
+  }
 }

@@ -33,7 +33,7 @@
   flex: 1;
   min-width: 0;
   height: 31px;
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
   padding: 0 8px;
@@ -43,7 +43,7 @@
 
 .app-shell .sidebar .search-field:focus-within,
 .sidebar .search-field:focus-within {
-  border-color: var(--ui-focus-ring, #808080);
+  border-color: var(--composer-focus-border);
 }
 
 .sidebar .search-field kbd {
@@ -84,8 +84,8 @@
 
 .app-shell .sidebar .sidebar-action-btn.selected,
 .sidebar .sidebar-action-btn.selected {
-  background: var(--selection-bg);
-  border-color: var(--text);
+  background: var(--hover);
+  border-color: transparent;
   color: var(--accent);
 }
 
@@ -172,13 +172,13 @@
 
 .app-shell .sidebar .sidebar-thread-row:hover:not(.active),
 .sidebar .sidebar-thread-row:hover:not(.active) {
-  background: color-mix(in srgb, var(--hover) 62%, transparent);
+  background: var(--subtle);
 }
 
 .app-shell .sidebar .sidebar-thread-row.active,
 .sidebar .sidebar-thread-row.active {
-  background: var(--selection-bg);
-  border-color: var(--text);
+  background: var(--hover);
+  border-color: transparent;
 }
 
 .app-shell .sidebar .sidebar-thread-row .thread-item,
@@ -212,21 +212,52 @@
   cursor: grabbing;
 }
 
-.sidebar .thread-item-header {
+.sidebar .thread-project-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 7px 8px;
+  font-size: 11px;
+  font-weight: 450;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+.sidebar .thread-project-header .thread-project-monogram {
+  width: 17px;
+  height: 17px;
+  flex-basis: 17px;
+  border-radius: 50%;
+  border: 0;
+  font-size: 8px;
+}
+
+.sidebar .thread-project-header-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar .sidebar-filter-chip {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-  line-height: 16px;
+  gap: 5px;
+  margin: 0 8px 8px;
+  padding: 7px 10px;
+  min-height: 30px;
+  background: var(--subtle);
+  border-radius: 18px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
-.sidebar .thread-project-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
+.sidebar .sidebar-filter-chip .icon-button {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
 }
 
 .sidebar .thread-project-monogram {
@@ -252,19 +283,6 @@
   color: var(--text);
 }
 
-.sidebar .thread-pin-icon {
-  flex: 0 0 auto;
-  color: var(--muted);
-}
-
-.sidebar .thread-project-label {
-  font-size: 11.5px;
-  line-height: 16px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .app-shell .sidebar .sidebar-thread-row .thread-item-title,
 .sidebar .sidebar-thread-row .thread-item-title {
@@ -275,11 +293,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.app-shell .sidebar .sidebar-thread-row.active .thread-item-title,
-.sidebar .sidebar-thread-row.active .thread-item-title {
-  font-weight: 600;
 }
 
 .app-shell .sidebar .thread-item-meta,
@@ -486,7 +499,6 @@
   flex: 0 0 auto;
   margin-top: 6px;
   padding: 7px 2px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
 
 .sidebar .sidebar-footer > button {
@@ -501,15 +513,16 @@
   color: var(--muted);
 }
 
-.sidebar .sidebar-footer > button:hover:not(:disabled),
+.sidebar .sidebar-footer > button:hover:not(:disabled):not([aria-disabled="true"]),
 .sidebar .sidebar-footer > button:focus-visible {
   color: var(--text);
   background: var(--hover);
 }
 
-.sidebar .sidebar-footer > button:disabled {
+.sidebar .sidebar-footer > button:disabled,
+.sidebar .sidebar-footer > button[aria-disabled="true"] {
   opacity: 0.45;
-  cursor: default;
+  cursor: not-allowed;
 }
 
 /* --- Row actions: quiet at rest, revealed on hover/focus/touch, aligned to the metadata line --- */

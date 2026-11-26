@@ -5,19 +5,24 @@ const fixtureRoot = encodeURI("/@fs/" + process.cwd().replaceAll("\\", "/"));
 
 interface ScopeState { revision: number; rules: string[] }
 
-async function fixture(page: Page, options: { conflictOnce?: boolean } = {}) {
+async function fixture(page: Page, options: { conflictOnce?: boolean; strict?: boolean; failFirstRead?: boolean; beforeRead?: (scope: string, attempt: number) => Promise<void> } = {}) {
 	const policies: Record<string, ScopeState> = {
 		global: { revision: 1, rules: [".env", "secrets/**"] },
 		"project:alpha": { revision: 3, rules: ["alpha/**"] },
 	};
 	let conflictOnce = options.conflictOnce ?? false;
+	let reads = 0;
 	await page.route("**/api/bootstrap", (route) =>
 		route.fulfill({ contentType: "application/json", body: JSON.stringify({ csrfToken: "fixture" }) }));
-	await page.route("**/api/agent-file-policy*", (route) => {
+	await page.route("**/api/agent-file-policy*", async (route) => {
 		const request = route.request();
 		if (request.method() === "GET") {
 			const scope = new URL(request.url()).searchParams.get("scope") ?? "global";
 			const state = policies[scope] ?? { revision: 0, rules: [] };
+			const attempt = ++reads;
+			await options.beforeRead?.(scope, attempt);
+			if (options.failFirstRead && attempt === 1)
+				return route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: { code: "FILE_POLICY_DENIED", message: "The policy is unavailable." } }) });
 			return route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...state, explicit: true }) });
 		}
 		const body = request.postDataJSON() as { scope: string; baseRevision: number; rulesText: string };
@@ -37,7 +42,7 @@ async function fixture(page: Page, options: { conflictOnce?: boolean } = {}) {
 			contentType: "text/html",
 			body: `<html><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${fixtureRoot}/tests/e2e/settings-file-policy-fixture.tsx');</script></body></html>`,
 		}));
-	await page.goto("/settings-policy-check");
+	await page.goto(`/settings-policy-check${options.strict ? '?strict' : ''}`);
 	await expect(page.getByText("Agent file protection")).toBeVisible();
 	return policies;
 }
@@ -80,13 +85,73 @@ test("conflict keeps the draft and reload adopts the newer revision", async ({ p
 	await expect(editor(page)).toHaveValue("latest/**");
 });
 
-test("invalid lines report errors; reset defaults restores shipped rules", async ({ page }) => {
-	await fixture(page);
+test("invalid lines report errors; reset defaults stages shipped rules until Save", async ({ page }) => {
+	const policies = await fixture(page);
 	await editor(page).fill("..");
 	await page.getByRole("button", { name: "Save rules" }).click();
 	await expect(editor(page)).toHaveAttribute("aria-invalid", "true");
 	await expect(page.locator(".afp-errors li").first()).toContainText("Line 1");
 	await page.getByRole("button", { name: "Reset defaults" }).click();
 	await expect(editor(page)).toHaveValue(AGENT_FILE_POLICY_DEFAULTS.join("\n"));
+	await expect(page.getByRole("button", { name: "Save rules" })).toBeEnabled();
+	await expect(editor(page)).toHaveAttribute("aria-invalid", "false");
+	await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+	expect(policies.global).toEqual({ revision: 1, rules: [".env", "secrets/**"] });
+	await page.getByRole("button", { name: "Save rules" }).click();
 	await expect(page.locator(".afp-status")).toContainText("Rules saved.");
+	expect(policies.global).toEqual({ revision: 2, rules: [...AGENT_FILE_POLICY_DEFAULTS] });
+});
+
+test("initial policy loading keeps editing and scope selection unavailable", async ({ page }) => {
+	let release!: () => void;
+	const held = new Promise<void>(resolve => { release = resolve; });
+	try {
+		await fixture(page, { beforeRead: () => held });
+		await expect(editor(page)).toBeDisabled();
+		await expect(page.getByLabel("Rules scope")).toBeDisabled();
+		release();
+		await expect(editor(page)).toHaveValue(".env\nsecrets/**");
+		await expect(editor(page)).toBeEnabled();
+	} finally { release(); }
+});
+
+test("scope loading cannot accept a draft against the preceding scope", async ({ page }) => {
+	let release!: () => void;
+	const held = new Promise<void>(resolve => { release = resolve; });
+	let requested = false;
+	try {
+		await fixture(page, { beforeRead: async scope => { if (scope === 'project:alpha') { requested = true; await held; } } });
+		await expect(editor(page)).toHaveValue(".env\nsecrets/**");
+		await pickScope(page, "Alpha project");
+		await expect.poll(() => requested).toBe(true);
+		await expect(editor(page)).toBeDisabled();
+		release();
+		await expect(editor(page)).toHaveValue("alpha/**");
+		await expect(editor(page)).toBeEnabled();
+	} finally { release(); }
+});
+
+test("an unavailable policy remains read-only until Reload succeeds", async ({ page }) => {
+	await fixture(page, { failFirstRead: true });
+	await expect(page.locator('.afp-status')).toContainText('The policy is unavailable.');
+	await expect(editor(page)).toBeDisabled();
+	await page.getByRole('button', { name: 'Reload' }).click();
+	await expect(editor(page)).toHaveValue('.env\nsecrets/**');
+	await expect(editor(page)).toBeEnabled();
+});
+
+test("a disposed StrictMode load cannot replace the current draft", async ({ page }) => {
+	let release!: () => void;
+	const held = new Promise<void>(resolve => { release = resolve; });
+	try {
+		await fixture(page, { strict: true, beforeRead: async (_scope, attempt) => { if (attempt === 1) await held; } });
+		await expect(editor(page)).toHaveValue('.env\nsecrets/**');
+		await editor(page).fill('retained/**');
+		const oldResponse = page.waitForResponse(response => response.request().method() === 'GET' && response.url().includes('/api/agent-file-policy?'));
+		release();
+		await (await oldResponse).finished();
+		await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+		await expect(editor(page)).toHaveValue('retained/**');
+		await expect(page.getByRole('button', { name: 'Save rules' })).toBeEnabled();
+	} finally { release(); }
 });

@@ -57,7 +57,7 @@ export class ComparisonSnapshots {
     return structuredClone(entry);
   }
 }
-const localPath = (value: string) =>
+export const localPath = (value: string) =>
   value.length <= 1024 &&
   !/[\\:\0]/.test(value) &&
   !value.startsWith("/") &&
@@ -172,6 +172,25 @@ async function localSnapshot(context: LocalReviewContext) {
     files,
   };
 }
+function localIdentity(
+  owner: LocalReviewContext["owner"],
+  scope: "staged" | "worktree",
+  snapshot: Awaited<ReturnType<typeof localSnapshot>>,
+): LocalComparisonIdentity {
+  const identity: LocalComparisonIdentity = {
+    kind: "local",
+    id: "",
+    scope,
+    headOid: snapshot.head,
+    branch: snapshot.branch,
+    revision: snapshot.revision,
+    base: scope === "staged" ? { kind: "commit", revision: snapshot.head } : { kind: "index", revision: snapshot.index },
+    head:
+      scope === "staged" ? { kind: "index", revision: snapshot.index } : { kind: "worktree", revision: snapshot.revision },
+  };
+  identity.id = reviewHash([owner, identity]);
+  return identity;
+}
 export async function readLocalComparison(
   context: LocalReviewContext,
   scope: "staged" | "worktree",
@@ -180,20 +199,8 @@ export async function readLocalComparison(
     after = await localSnapshot(context);
   if (before.revision !== after.revision)
     throw new HarnessError("REVISION_CHANGED", "The working copy changed. Refresh the comparison.");
-  const identity: LocalComparisonIdentity = {
-    kind: "local",
-    id: "",
-    scope,
-    headOid: before.head,
-    branch: before.branch,
-    revision: before.revision,
-    base: scope === "staged" ? { kind: "commit", revision: before.head } : { kind: "index", revision: before.index },
-    head:
-      scope === "staged" ? { kind: "index", revision: before.index } : { kind: "worktree", revision: before.revision },
-  };
-  identity.id = reviewHash([context.owner, identity]);
   return {
-    identity,
+    identity: localIdentity(context.owner, scope, before),
     files: before.files.filter((file) =>
       scope === "staged" ? file.index !== " " && !file.untracked : file.worktree !== " ",
     ),
@@ -217,8 +224,9 @@ export async function readLocalComparisonFile(
 ): Promise<ComparisonPatch> {
   const identity = comparison.identity;
   if (identity.kind !== "local") throw new HarnessError("INVALID_INPUT", "Choose a local comparison.");
-  const current = await readLocalComparison(context, identity.scope);
-  if (identity.id !== current.identity.id)
+  const before = await localSnapshot(context);
+  const current = localIdentity(context.owner, identity.scope, before);
+  if (identity.id !== current.id)
     throw new HarnessError("REVISION_CHANGED", "The working copy changed. Refresh the comparison.");
   const file = comparison.files.find((file) => file.path === name);
   if (!file) throw new HarnessError("NOT_FOUND", "The selected file is not in this comparison.");

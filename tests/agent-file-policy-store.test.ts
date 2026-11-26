@@ -7,8 +7,8 @@ import { Store } from '../packages/storage/store.ts';
 import { Service } from '../packages/core/service.ts';
 import { buildServer } from '../apps/server/server.ts';
 import { workspaceHost } from '../apps/server/workspace-host.ts';
-import { readAgentFilePolicy, resolvedAgentFilePolicy, saveAgentFilePolicy } from '../packages/core/agent-file-policy-store.ts';
-import { AGENT_FILE_POLICY_DEFAULTS } from '../packages/contracts/agent-file-policy.ts';
+import { agentFilePolicyMatchers, readAgentFilePolicy, resolvedAgentFilePolicy, saveAgentFilePolicy } from '../packages/core/agent-file-policy-store.ts';
+import { AGENT_FILE_POLICY_DEFAULTS, FILE_POLICY_DENIED, FILE_POLICY_DENIED_MESSAGE } from '../packages/contracts/agent-file-policy.ts';
 
 vi.mock('node-pty', () => ({ spawn: () => { throw new Error('Policy tests must not spawn a terminal.'); } }));
 const cleanup: (() => Promise<void>)[] = [];
@@ -89,6 +89,40 @@ describe('agent file policy store', () => {
 		const events = f.store.eventsAfter(0).filter(event => event.type === 'agentFilePolicy.save');
 		expect(events).toHaveLength(1);
 		expect(events[0]!.payload).toEqual({ result: { scope: 'global', revision: 1 } });
+	});
+	for (const project of [false, true]) {
+		it.each([null, false, 0, {}, { revision: 2, rules: ['../private'] }, { revision: '2', rules: [] }])(
+			`fails closed for corrupt ${project ? 'project' : 'global'} records: %j`, async value => {
+				const f = await fixture(false);
+				const scope = project ? `project:${f.projectId}` : 'global';
+				f.store.internal('fixture.corrupt-policy', null, () => f.store.put('agentFilePolicy', scope, null, value));
+				const raw = () => f.store.db.prepare('SELECT body FROM entities WHERE kind=? AND id=?').get('agentFilePolicy', scope);
+				const before = raw();
+				const denied = expect.objectContaining({ code: FILE_POLICY_DENIED, message: FILE_POLICY_DENIED_MESSAGE });
+				expect(() => readAgentFilePolicy(f.store, scope)).toThrowError(denied);
+				expect(() => resolvedAgentFilePolicy(f.store, f.projectId)).toThrowError(denied);
+				expect(() => agentFilePolicyMatchers(f.store, f.projectId)).toThrowError(denied);
+				expect(() => saveAgentFilePolicy(f.store, scope, 0, '')).toThrowError(denied);
+				expect(raw()).toEqual(before);
+			});
+	}
+	it('keeps unreadable persisted bytes and returns only the safe denial', async () => {
+		const f = await fixture(false);
+		saveAgentFilePolicy(f.store, 'global', 0, 'private/**');
+		const damaged = '{private fixture rule bytes';
+		f.store.db.prepare('UPDATE entities SET body=? WHERE kind=? AND id=?').run(damaged, 'agentFilePolicy', 'global');
+		const denied = expect.objectContaining({ code: FILE_POLICY_DENIED, message: FILE_POLICY_DENIED_MESSAGE });
+		expect(() => readAgentFilePolicy(f.store, 'global')).toThrowError(denied);
+		expect(() => agentFilePolicyMatchers(f.store, f.projectId)).toThrowError(denied);
+		expect(() => saveAgentFilePolicy(f.store, 'global', 0, '')).toThrowError(denied);
+		expect(f.store.db.prepare('SELECT body FROM entities WHERE kind=? AND id=?').get('agentFilePolicy', 'global')).toMatchObject({ body: damaged });
+	});
+	it('does not write an unrepresentable next revision', async () => {
+		const f = await fixture(false);
+		const policy = { revision: Number.MAX_SAFE_INTEGER, rules: ['private/**'] };
+		f.store.internal('fixture.max-policy', null, () => f.store.put('agentFilePolicy', 'global', null, policy));
+		expect(() => saveAgentFilePolicy(f.store, 'global', policy.revision, '')).toThrow();
+		expect(readAgentFilePolicy(f.store, 'global')).toMatchObject(policy);
 	});
 });
 

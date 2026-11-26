@@ -30,15 +30,22 @@ function matchSegment(pattern: string, value: string): boolean {
 	return p === pattern.length;
 }
 
-/** `**` matches zero or more whole segments. */
+/** `**` matches zero or more whole segments; each pattern/path state is visited once. */
 function matchPath(segments: string[], parts: string[]): boolean {
-	if (segments.length === 0) return parts.length === 0;
-	const [head, ...rest] = segments;
-	if (head === '**') {
-		if (matchPath(rest, parts)) return true;
-		return parts.length > 0 && matchPath(segments, parts.slice(1));
+	let reachable = new Uint8Array(parts.length + 1);
+	reachable[0] = 1;
+	for (const segment of segments) {
+		const next = new Uint8Array(parts.length + 1);
+		if (segment === '**') {
+			next[0] = reachable[0];
+			for (let index = 1; index <= parts.length; index++) next[index] = reachable[index] || next[index - 1];
+		} else {
+			for (let index = 0; index < parts.length; index++)
+				if (reachable[index] && matchSegment(segment, parts[index])) next[index + 1] = 1;
+		}
+		reachable = next;
 	}
-	return parts.length > 0 && matchSegment(head, parts[0]) && matchPath(rest, parts.slice(1));
+	return reachable[parts.length] === 1;
 }
 
 export interface AgentFilePolicyMatcher {
@@ -49,7 +56,7 @@ export interface AgentFilePolicyMatcher {
 	deniesPath(rootRelativePath: string): boolean;
 }
 
-/** Bounded matcher over already-validated rules; invalid entries are skipped so a corrupt store never weakens policy silently — callers validate persisted records on save. */
+/** Bounded matcher over already-validated rules; callers must reject corrupt persisted records before compiling. */
 export function compileFilePolicy(rules: readonly string[]): AgentFilePolicyMatcher {
 	const compiled = rules.map(compileRule).filter((rule): rule is CompiledRule => rule !== undefined);
 	const basenames = compiled.map(rule => rule.basename).filter((name): name is string => name !== undefined);

@@ -2,6 +2,8 @@ import { HarnessError } from '../contracts/index.ts';
 import {
 	AGENT_FILE_POLICY_DEFAULTS,
 	AGENT_FILE_POLICY_LIMITS,
+	FILE_POLICY_DENIED,
+	FILE_POLICY_DENIED_MESSAGE,
 	agentFilePolicySchema,
 	parseAgentFilePolicyRules,
 	type AgentFilePolicy,
@@ -21,11 +23,16 @@ export interface ResolvedAgentFilePolicy extends AgentFilePolicy {
 /** An absent global record resolves to the shipped defaults at revision zero; an absent project record is empty. */
 export function readAgentFilePolicy(store: Store, scope: string): ResolvedAgentFilePolicy {
 	if (!agentFilePolicyScopeSchema(scope)) throw new HarnessError('INVALID_INPUT', 'Choose a global or project scope.');
-	const stored = store.get<AgentFilePolicy>(kind, scope);
-	if (!stored) return { revision: 0, rules: scope === 'global' ? [...AGENT_FILE_POLICY_DEFAULTS] : [], explicit: false };
-	// A corrupt record must not weaken policy silently: validate, then fall back to the virtual default on failure.
+	let stored: unknown;
+	try {
+		// Store.get uses null for both an absent row and persisted JSON null.
+		// Only a genuinely absent row may resolve to the virtual policy.
+		const row = store.db.prepare('SELECT body FROM entities WHERE kind=? AND id=?').get(kind, scope) as { body: string } | undefined;
+		if (!row) return { revision: 0, rules: scope === 'global' ? [...AGENT_FILE_POLICY_DEFAULTS] : [], explicit: false };
+		stored = JSON.parse(row.body);
+	} catch { throw new HarnessError(FILE_POLICY_DENIED, FILE_POLICY_DENIED_MESSAGE); }
 	const parsed = agentFilePolicySchema.safeParse(stored);
-	if (!parsed.success) return { revision: 0, rules: scope === 'global' ? [...AGENT_FILE_POLICY_DEFAULTS] : [], explicit: false };
+	if (!parsed.success) throw new HarnessError(FILE_POLICY_DENIED, FILE_POLICY_DENIED_MESSAGE);
 	return { ...parsed.data, explicit: true };
 }
 
@@ -44,9 +51,9 @@ export function saveAgentFilePolicy(store: Store, scope: string, baseRevision: n
 	const { rules, errors } = parseAgentFilePolicyRules(rulesText);
 	if (errors.length > 0) throw new HarnessError('INVALID_INPUT', 'Fix the highlighted rules before saving.', errors);
 	return store.internal('agentFilePolicy.save', null, (): { scope: string; revision: number } => {
-		const current = store.get<AgentFilePolicy>(kind, scope);
-		const revision = current?.revision ?? 0;
+		const { revision } = readAgentFilePolicy(store, scope);
 		if (revision !== baseRevision) throw new HarnessError('AGENT_FILE_POLICY_CHANGED', 'File rules changed. Reload before saving.');
+		if (revision === Number.MAX_SAFE_INTEGER) throw new HarnessError('INVALID_INPUT', 'File rule revision cannot be advanced.');
 		const next: AgentFilePolicy = { revision: revision + 1, rules };
 		store.put(kind, scope, null, next);
 		return { scope, revision: next.revision };
