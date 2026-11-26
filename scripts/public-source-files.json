@@ -3925,6 +3925,7 @@
     "tests/project-search.test.ts",
     "tests/project-tools.test.ts",
     "tests/project-trust-v3.test.ts",
+    "tests/provider-discovery-v3.test.ts",
     "tests/public-source.test.ts",
     "tests/pull-requests-body.test.ts",
     "tests/python-dependency-locks.test.ts",
