@@ -11,7 +11,6 @@ import {
   GitBranch,
   GitPullRequest,
   ListFilter,
-  LoaderCircle,
   MoreHorizontal,
   PanelLeftClose,
   Pin,
@@ -55,6 +54,9 @@ export const threadStatus = (thread: Thread) =>
       : thread.status === 'ready'
         ? 'Ready'
         : thread.status.charAt(0).toUpperCase() + thread.status.slice(1);
+
+export const threadRowLabel = (thread: Thread) =>
+  `${thread.title} ${threadStatus(thread)}${thread.presentation?.unread ? ' Unread' : ''}`;
 
 export function projectMonogram(name?: string | null): string {
   const cleaned = (name ?? '').trim();
@@ -259,7 +261,7 @@ export function ShellSidebar({
             if (reorder.key(item, event)) return;
             trigger.onKeyDown?.(event);
           }}
-          aria-label={`${item.title} ${threadStatus(item)}`}
+          aria-label={threadRowLabel(item)}
           aria-current={item.id === selectedId ? 'page' : undefined}
           onClick={() => {
             select(item.id);
@@ -272,24 +274,25 @@ export function ShellSidebar({
                 {projectMonogram(item.projectName)}
               </span>
               <span className="thread-item-title">
-                {item.presentation?.unread && <span className="unread-dot" />}
+                {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
                 {item.title}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
+                {isWorking && <span className="thread-run-badge" aria-hidden="true" />}
                 <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
               </span>
             </span>
           ) : (
             <>
               <span className="thread-item-title">
-                {item.presentation?.unread && <span className="unread-dot" />}
+                {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
                 {item.title}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
                 {showStatus && (
                   <span className="thread-item-status">
                     {isWorking ? (
-                      <LoaderCircle size={11} className="spinning" />
+                      <span className="thread-run-badge" aria-hidden="true" />
                     ) : item.status === 'awaiting_input' ? (
                       <span className="pending-dot" />
                     ) : null}
@@ -370,6 +373,8 @@ export function ShellSidebar({
           type="button"
           className="icon-button sidebar-close"
           aria-label={mobile ? 'Close navigation' : 'Collapse sidebar'}
+          aria-expanded={mobile ? open : !layout.sidebarCollapsed}
+          aria-controls="threads-nav"
           onClick={mobile ? close : toggleCollapsed}
         >
           <PanelLeftClose size={16} />
@@ -389,9 +394,8 @@ export function ShellSidebar({
         <button
           type="button"
           className={`icon-button sidebar-action-btn sidebar-filter ${filter !== 'all' ? 'selected' : ''}`}
-          aria-label="Filter threads"
-          title={`Filter: ${filter}. Click for ${filter === 'all' ? 'working' : filter === 'working' ? 'waiting' : 'all'} threads`}
-          aria-pressed={filter !== 'all'}
+          aria-label={`Thread filter: ${filter}`}
+          title={`Filter threads — currently ${filter}`}
           onClick={() => setFilter(value => (value === 'all' ? 'working' : value === 'working' ? 'waiting' : 'all'))}
         >
           <ListFilter size={15} />
@@ -418,17 +422,24 @@ export function ShellSidebar({
           <SquarePen size={15} />
         </button>
       </div>
+      {/* Persistent live region: announcements must update an existing
+          element — mounting a status region is missed by some screen readers. */}
+      <div className="sr-only" role="status" aria-atomic="true">
+        {loaded && !visibleMatching.length
+          ? (search ? (filter === 'all' ? 'No matching threads.' : `No matching ${filter} threads.`) : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.')
+          : filter === 'all' ? 'Showing all threads' : `Showing ${filter} threads`}
+      </div>
       {filter !== 'all' && (
         <div className="sidebar-filter-chip">
           <span>Showing {filter} threads</span>
           <button type="button" className="icon-button" aria-label="Clear thread filter" title="Show all threads" onClick={() => setFilter('all')}><X size={12} /></button>
         </div>
       )}
-      <nav className="thread-list" aria-label="Threads" tabIndex={0} ref={navRef}>
+      <nav id="threads-nav" className="thread-list" aria-label="Threads" tabIndex={0} ref={navRef}>
         {group('pinned', 'Pinned', pinned, {
           list: 'pinned',
           keepVisible: !locked,
-          empty: <div className="sidebar-pinned-empty">Drag a thread here to pin it.</div>,
+          empty: <div className="sidebar-pinned-empty" role="note">Pin a thread from its ⋯ menu, or drag it here.</div>,
         })}
         {group('working', 'Working', working, { list: 'working' })}
         {orderedRemaining.length > 0 && <div className="thread-flat-list" data-thread-list="flat">{orderedRemaining.map((item, index) => {

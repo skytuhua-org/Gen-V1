@@ -7,7 +7,7 @@ import {
 	type ReactNode,
 } from "react";
 import { authenticated, read } from "../api";
-import { FilesView, type FilesEntry } from "./FilesView";
+import { FilesView, displayFilePath, type FilesEntry } from "./FilesView";
 import { ProjectSearch } from "./ProjectSearch";
 import {
 	unavailableProjectSearch,
@@ -15,11 +15,22 @@ import {
 	type ProjectSearchMatch,
 } from "./project-search-api";
 import { useFilesRead } from "./useFilesRead";
+import {
+	emptySlots,
+	transitionSlots,
+	PIN_LIMIT,
+	type PreviewSlots,
+} from "./pinned-previews";
 
 interface ProjectFile {
 	text: string | null;
 	binary: boolean;
 	sha256: string;
+	bindingId?: string;
+}
+interface ProjectFolder {
+	entries: FilesEntry[];
+	bindingId?: string;
 }
 interface ProjectFilesProps {
 	base: string;
@@ -39,11 +50,40 @@ function ProjectFilesReader({
 	searchAdapter = unavailableProjectSearch,
 }: ProjectFilesProps) {
 	const [path, setPath] = useState(""),
-		[selected, setSelected] = useState<FilesEntry | null>(null),
+		[slots, setSlots] = useState<PreviewSlots>(emptySlots),
+		[bindingId, setBindingId] = useState<string | undefined>(),
 		[selectedMatch, setSelectedMatch] = useState<ProjectSearchMatch | null>(
 			null,
 		),
+		[capReason, setCapReason] = useState(false),
+		[slotStatus, setSlotStatus] = useState(""),
 		[searchRefresh, setSearchRefresh] = useState(0);
+	const activeEntry =
+		slots.transient?.path === slots.activePath
+			? slots.transient
+			: (slots.pins.find((entry) => entry.path === slots.activePath) ?? null);
+	const selected = activeEntry;
+	const bindingRef = useRef(bindingId);
+	const adoptBinding = useCallback(
+		(observed: string | undefined, folderResponse: boolean) => {
+			if (typeof observed !== "string" || !observed)
+				throw new Error("Checkout binding is unavailable.");
+			if (bindingRef.current === undefined) {
+				bindingRef.current = observed;
+				setBindingId(observed);
+				return;
+			}
+			if (bindingRef.current !== observed) {
+				bindingRef.current = observed;
+				setBindingId(observed);
+				setSlots(emptySlots());
+				setSelectedMatch(null);
+				if (!folderResponse)
+					throw new Error("Checkout binding changed.");
+			}
+		},
+			[],
+	);
 	const matchLine = useRef<HTMLElement>(null);
 	const owner = {
 		projectId: decodeURIComponent(base.split("/").at(-1) ?? ""),
@@ -59,7 +99,12 @@ function ProjectFilesReader({
 					cache: "no-store",
 					signal,
 				}),
-			).then(read<{ entries: FilesEntry[] }>);
+			)
+				.then(read<ProjectFolder>)
+				.then((data) => {
+					adoptBinding(data.bindingId, true);
+					return data;
+				});
 		},
 		[base, query, path],
 	);
@@ -73,16 +118,48 @@ function ProjectFilesReader({
 					cache: "no-store",
 					signal,
 				}),
-			).then(read<ProjectFile>);
+			)
+				.then(read<ProjectFile>)
+				.then((data) => {
+					adoptBinding(data.bindingId, false);
+					return data;
+				});
 		},
 		[base, query, selected?.path],
 	);
-	const folder = useFilesRead(path, active, readFolder),
+	const folder = useFilesRead(
+			(bindingId ?? "") + "|" + path,
+			active,
+			readFolder,
+		),
 		preview = useFilesRead(
-			selected?.path ?? "",
+			(bindingId ?? "") + "|" + (selected?.path ?? ""),
 			active && !!selected,
 			readFile,
 		);
+	const apply = useCallback(
+		(transition: Parameters<typeof transitionSlots>[1]) => {
+			const result = transitionSlots(slots, transition);
+			setSlots(result.state);
+			setCapReason(result.capped);
+			if (result.refresh && result.state.activePath === slots.activePath)
+				preview.refresh();
+			return result;
+		},
+		[slots, preview],
+	);
+	const announce = useCallback(
+		(transition: Parameters<typeof transitionSlots>[1], verb: string, path: string) => {
+			const result = apply(transition);
+			setSlotStatus(
+				result.capped
+					? "Six files are pinned. Unpin or close one to pin another."
+					: verb + " " + displayFilePath(path),
+			);
+			return result;
+		},
+		[apply],
+	);
 	const file = preview.value;
 	const stale = !!(
 		selectedMatch &&
@@ -132,13 +209,14 @@ function ProjectFilesReader({
 						selected={selectedMatch}
 						onSelect={(match) => {
 							setSelectedMatch(match);
-							if (selected?.path === match.path) preview.refresh();
-							else
-								setSelected({
+							apply({
+								kind: "open",
+								entry: {
 									name: match.path.split("/").at(-1)!,
 									path: match.path,
 									kind: "file",
-								});
+								},
+							});
 							openPreview();
 						}}
 					/>
@@ -195,12 +273,32 @@ function ProjectFilesReader({
 			onDirectory={(next) => {
 				setSelectedMatch(null);
 				setPath(next);
-				setSelected(null);
+				apply({ kind: "directory" });
 			}}
 			onSelect={(entry) => {
 				setSelectedMatch(null);
-				if (selected?.path === entry.path) preview.refresh();
-				else setSelected(entry);
+				apply({ kind: "open", entry });
+			}}
+			projectPreviews={{
+				slots,
+				busy: preview.pending,
+				failed: !!preview.error,
+				status: slotStatus,
+				capped: capReason,
+				capLimit: PIN_LIMIT,
+				onActivate: (entry) => {
+					setSelectedMatch(null);
+					apply({ kind: "open", entry });
+				},
+				onPinActive: (entry) => {
+					announce({ kind: "pin", entry }, "Pinned", entry.path);
+				},
+				onUnpinActive: (entry) => {
+					announce({ kind: "unpin", path: entry.path }, "Unpinned", entry.path);
+				},
+				onClose: (entry) =>
+					announce({ kind: "close", path: entry.path }, "Closed", entry.path)
+						.focus,
 			}}
 			onRefresh={() => {
 				setSearchRefresh((value) => value + 1);

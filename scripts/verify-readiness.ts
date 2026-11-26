@@ -61,7 +61,8 @@ function redactedLogSink(stream:ReturnType<typeof createWriteStream>){
       const lines=carry.split('\n');carry=lines.pop()!;
       for(const line of lines)stream.write(redactSecrets(line)+'\n');
     },
-    end(){if(carry)stream.write(redactSecrets(carry));stream.end();},
+    // Flushes only: the caller owns the stream so independent per-stream sinks can share it.
+    end(){if(carry)stream.write(redactSecrets(carry));},
   };
 }
 
@@ -91,7 +92,8 @@ export async function runCheck(spec:CheckSpec):Promise<CheckResult>{
   try{mkdirSync(dirname(spec.logPath),{recursive:true});}catch{return finish({status:'FAIL',errorKind:'log-error'});}
   const logStream=createWriteStream(spec.logPath);
   try{await once(logStream,'open');}catch{return finish({status:'FAIL',errorKind:'log-error'});}
-  const sink=redactedLogSink(logStream);
+  // Independent per-stream partial lines: a complete stderr line between two stdout fragments stays its own record.
+  const stdoutSink=redactedLogSink(logStream),stderrSink=redactedLogSink(logStream);
   let child:ChildProcess;
   try{
     child=spawn(spec.command,spec.args,{shell:false,cwd:spec.cwd,env:childEnvironment(spec.env),
@@ -99,7 +101,7 @@ export async function runCheck(spec:CheckSpec):Promise<CheckResult>{
   }catch{
     // Argument validation can throw before a child exists or emits 'error'.
     const drained=finished(logStream,{cleanup:true});
-    sink.end();
+    stdoutSink.end();stderrSink.end();logStream.end();
     try{await drained;}catch{return finish({status:'FAIL',errorKind:'log-error'});}
     return finish({status:'FAIL',errorKind:'spawn-error'});
   }
@@ -110,7 +112,7 @@ export async function runCheck(spec:CheckSpec):Promise<CheckResult>{
       if(settled)return;settled=true;
       clearTimeout(timeoutTimer);if(killTimer!==undefined)clearTimeout(killTimer);
       logStream.once('finish',()=>resolvePromise(finish(partial)));
-      sink.end();
+      stdoutSink.end();stderrSink.end();logStream.end();
     };
     const timeoutTimer=setTimeout(()=>{
       timedOut=true;killProcessTree(child);
@@ -122,8 +124,8 @@ export async function runCheck(spec:CheckSpec):Promise<CheckResult>{
       resolvePromise(finish({status:'FAIL',errorKind:'log-error'}));
     });
     // Decode each byte stream incrementally before merging and redacting lines.
-    child.stdout?.setEncoding('utf8').on('data',chunk=>{if(!settled)sink.write(chunk);});
-    child.stderr?.setEncoding('utf8').on('data',chunk=>{if(!settled)sink.write(chunk);});
+    child.stdout?.setEncoding('utf8').on('data',chunk=>{if(!settled)stdoutSink.write(chunk);});
+    child.stderr?.setEncoding('utf8').on('data',chunk=>{if(!settled)stderrSink.write(chunk);});
     child.once('error',(error:NodeJS.ErrnoException)=>{
       settle(error.code==='ENOENT'
         ?{status:'BLOCKED',errorKind:'missing-binary'}

@@ -1,5 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
-import {lstat,mkdir,open,readFile,readdir,rename,unlink,writeFile} from 'node:fs/promises';
+import {lstat,mkdir,open,readFile,readdir,rename,rm,unlink,writeFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {existsSync} from 'node:fs';
 import {dirname,isAbsolute,join,parse,relative,resolve,sep} from 'node:path';
@@ -19,14 +19,23 @@ const MAX_FILE_BYTES=16*1024*1024,VERIFY_CHUNK_BYTES=64*1024;
 const digestSchema=z.string().regex(/^[a-f0-9]{64}$/);
 const inventorySchema=z.strictObject({version:z.literal(1),files:z.array(z.strictObject({path:pluginPathSchema,bytes:z.number().int().min(0).max(MAX_FILE_BYTES),sha256:digestSchema})).min(3).max(4096)});
 const indexSchema=z.strictObject({version:z.literal(1),plugins:z.array(z.strictObject({id:pluginIdSchema,version:pluginVersionSchema,digest:digestSchema})).max(100)});
+/** One row of `active.json`: plug-in id, installed version and the trusted
+ * SHA-256 digest of its raw `plugin-files.json` inventory. */
 export type ActivePlugin=z.infer<typeof indexSchema>['plugins'][number];
+/** A package whose inventory digest, per-file hashes and manifest all
+ * verified: the parsed manifest, its digest, directory and every declared
+ * file's bytes, plus `plugin-files.json` itself. */
 export interface VerifiedPackage {manifest:PluginManifest;digest:string;directory:string;files:Map<string,Buffer>}
 const hash=(bytes:Uint8Array)=>createHash('sha256').update(bytes).digest('hex');
 const missing=(error:unknown)=>(error as NodeJS.ErrnoException).code==='ENOENT';
 const inside=(root:string,path:string)=>{const part=relative(root,path);return part!==''&&!isAbsolute(part)&&part!=='..'&&!part.startsWith('..'+sep);};
 const denied=()=>Error('Plug-in integrity verification failed.');
 
+/** True only when the Gen version is a valid semver, the manifest's version
+ * and `compatibleGenVersions` range are valid, and the version satisfies that
+ * range. Anything malformed is incompatible. */
 export function versionCompatible(manifest:PluginManifest,genVersion:string){return Boolean(semver.valid(genVersion)&&semver.valid(manifest.version)&&semver.validRange(manifest.compatibleGenVersions)&&semver.satisfies(genVersion,manifest.compatibleGenVersions));}
+/** True when the string is a valid semantic version. */
 export function validGenVersion(version:string){return Boolean(semver.valid(version));}
 
 /** Reject junctions/symlinks in every existing ancestor before creating children. */
@@ -44,6 +53,12 @@ async function boundedFileSize(path:string,limit:number):Promise<number>{
 }
 async function boundedFile(path:string,limit:number):Promise<Buffer>{const size=await boundedFileSize(path,limit);const bytes=await readFile(path);if(bytes.length!==size||bytes.length>limit)throw denied();return bytes;}
 
+/** Verify an installed package against its trusted inventory digest: the raw
+ * `plugin-files.json` must hash to `expectedDigest`; every package file except
+ * it must be declared, hashed and size-bounded; links, undeclared files,
+ * duplicate/case-folding paths and oversized payloads are rejected; and the
+ * manifest must parse with entry files present. Throws on any mismatch.
+ * Returns the verified manifest, digest, directory and file bytes. */
 async function verifyPayloadFile(path:string,file:{bytes:number;sha256:string},buffer:Buffer):Promise<void>{
  if(await boundedFileSize(path,MAX_FILE_BYTES)!==file.bytes)throw denied();
  const handle=await open(path,'r');
@@ -102,6 +117,9 @@ export function validatePluginPackage(directory:string,expectedDigest:string):Pr
  return verifyPackage(directory,expectedDigest);
 }
 
+/** Read the `active.json` index: up to 100 unique plug-in rows, an empty list
+ * when the file is absent, and an integrity error on any malformed or
+ * duplicate content. */
 export async function readPluginIndex(root:string):Promise<ActivePlugin[]>{
  try{await safeDirectory(root);const bytes=await boundedFile(join(root,'active.json'),128*1024),value=indexSchema.parse(JSON.parse(bytes.toString('utf8')));if(new Set(value.plugins.map(row=>row.id)).size!==value.plugins.length)throw denied();return value.plugins;}
  catch(error){if(missing(error))return [];throw error;}
@@ -143,6 +161,10 @@ async function withIndexLock<T>(root:string,action:()=>Promise<T>):Promise<T>{
 }
 async function saveIndex(root:string,plugins:ActivePlugin[]){const temporary=join(root,'.active-'+randomUUID()+'.json');await writeFile(temporary,JSON.stringify({version:1,plugins}),{flag:'wx',mode:0o600});await rename(temporary,join(root,'active.json'));}
 
+/** Optional preflight inputs for `installPluginPackage`: an advisory database
+ * to screen the exact name/version/digest against, an operator exception, a
+ * screening-record cache and its maximum age. An exception alone can never
+ * authorize activation. */
 export interface PluginScreeningOptions {
  advisory?:AdvisoryDatabase;
  exception?:OperatorException;
@@ -178,7 +200,19 @@ export async function installPluginPackage(source:string,root:string,expectedDig
  }
  return withIndexLock(rootPath,async()=>{
   const index=await readPluginIndex(rootPath),parent=join(rootPath,verified.manifest.id),directory=join(parent,verified.manifest.version);await safeDirectory(parent,true);
-  try{await lstat(directory);throw Error('This immutable plug-in version already exists.');}catch(error){if(!missing(error))throw error;}
+  // An interrupted install can leave staging behind or promote the version
+  // directory without publishing the index. The lock guarantees every
+  // `.install-<uuid>` or `.active-<uuid>.json` still present is abandoned;
+  const uuid='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',abandoned=new RegExp(`^(\\.install-${uuid}|\\.active-${uuid}\\.json)$`);
+  for(const entry of await readdir(rootPath))if(abandoned.test(entry))await rm(join(rootPath,entry),{recursive:true,force:true});
+  const existing=await lstat(directory).then(()=>true).catch((error:unknown)=>missing(error)?false:Promise.reject(error));
+  if(existing){
+    if(index.some(row=>row.id===verified.manifest.id&&row.version===verified.manifest.version))throw Error('This immutable plug-in version already exists.');
+    // Promotion completed but activation did not; recover it when the bytes verify.
+    try{await validatePluginPackage(directory,expectedDigest);}catch{throw Error('A conflicting plug-in version directory exists without an active entry. Remove it before installing this version.');}
+    await saveIndex(rootPath,[...index.filter(row=>row.id!==verified.manifest.id),{id:verified.manifest.id,version:verified.manifest.version,digest:expectedDigest}]);
+    return {manifest:verified.manifest,digest:expectedDigest,directory,...(screening?{screening}:{})};
+  }
   const stage=join(rootPath,'.install-'+randomUUID());await mkdir(stage,{mode:0o700});
   for(const [path,bytes]of verified.files){const target=join(stage,path);await mkdir(dirname(target),{recursive:true});await writeFile(target,bytes,{flag:'wx',mode:0o600});}
   await validatePluginPackage(stage,expectedDigest);await rename(stage,directory);
