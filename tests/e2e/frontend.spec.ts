@@ -433,6 +433,28 @@ test('reported context categories and accepted compaction remain anchored and ke
   expect(narrowBox.x + narrowBox.width).toBeLessThanOrEqual(390);
 });
 
+test('appearance settings keeps one visible section heading at desktop and narrow widths', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await host(page, populated());
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await dialog.getByRole('button', { name: 'Appearance', exact: true }).click();
+  const visibleAppearanceHeadings = () => page.evaluate(() => Array.from(document.querySelectorAll('.settings-content h1, .settings-content h2, .settings-content legend'))
+    .filter(element => element.textContent?.trim() === 'Appearance')
+    .filter(element => {
+      const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+      return box.width > 1 && box.height > 1 && style.visibility === 'visible' && style.display !== 'none';
+    })
+    .map(element => element.tagName));
+  expect(await visibleAppearanceHeadings()).toEqual(['H1']);
+  await expect(page.locator('.appearance-settings legend')).toHaveClass(/sr-only/);
+  await expect(page.getByRole('combobox', { name: 'Color scheme', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 640, height: 900 });
+  expect(await visibleAppearanceHeadings()).toEqual(['H1']);
+  await expect(page.getByRole('combobox', { name: 'Color scheme', exact: true })).toBeVisible();
+});
+
 test('capture shell and settings review batch', async ({ page }, testInfo) => {
   test.skip(process.env.HARNESS_CAPTURE_SHELL !== '1', 'Opt-in bounded shell evidence batch.');
   await page.setViewportSize({ width: 1600, height: 1000 });

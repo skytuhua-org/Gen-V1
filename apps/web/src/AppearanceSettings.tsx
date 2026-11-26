@@ -78,7 +78,7 @@ export function AppearanceSettings({ preferences, theme, threads = [], projects:
     'appearance-motionSpeed': choices('motionSpeed', 'Motion speed', [['0.75', '0.75×'], ['1', '1×'], ['1.25', '1.25×']]),
   };
   return <div className="appearance-settings">
-    <fieldset className="settings-card" disabled={busy}><legend>Appearance</legend>
+    <fieldset className="settings-card" disabled={busy}><legend className="sr-only">Appearance</legend>
       {APPEARANCE_FIELDS.map(field => <AppearanceRow key={field.id} id={field.id} label={field.label} description={field.description}>{controls[field.id]}</AppearanceRow>)}
       {accentError && <p id="appearance-accent-error" role="status" className="error-text appearance-error">{accentError}</p>}
       {error && <p role="status" className="error-text appearance-error">{error}</p>}
