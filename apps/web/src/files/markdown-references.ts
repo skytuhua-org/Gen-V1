@@ -14,7 +14,7 @@ export type FilesImageReference =
 	| { kind: "unsupported" }
 	| { kind: "denied" };
 
-const CONTROL = /[-\x7f]/;
+const CONTROL = /[\x00-\x1f\x7f]/;
 const SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 const INTERNAL_SEGMENT = /^(?:\.git|\.harness-directory-guard)$/i;
 const PERCENT_ESCAPE = /%[0-9a-fA-F]{2}/;

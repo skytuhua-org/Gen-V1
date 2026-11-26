@@ -149,3 +149,27 @@ it("slugs headings deterministically with duplicate suffixes", () => {
 	expect(ids.lookup("setup-1")).toBe("art-setup-1");
 	expect(ids.lookup("missing")).toBeUndefined();
 });
+
+it("admits hyphens in relative file, image and duplicate-heading references", () => {
+	expect(classifyFilesReference("#setup-1", "docs")).toEqual({
+		kind: "fragment", fragment: "setup-1",
+	});
+	expect(classifyFilesReference("setup-guide.md#next-step", "docs")).toEqual({
+		kind: "file", path: "docs/setup-guide.md", fragment: "next-step",
+	});
+	expect(classifyFilesImage("media/setup-guide.png", "docs")).toEqual({
+		kind: "image", path: "docs/media/setup-guide.png",
+	});
+});
+
+it("rejects every C0 and DEL control in raw and encoded local references", () => {
+	for (const code of [...Array.from({ length: 32 }, (_, index) => index), 127]) {
+		const character = String.fromCharCode(code), encoded = `%${code.toString(16).padStart(2, "0")}`;
+		for (const value of [character, encoded]) {
+			for (const target of [`#setup${value}guide`, `a${value}b.md`, `a.md#setup${value}guide`]) {
+				expect(classifyFilesReference(target, "docs"), JSON.stringify(target)).toEqual({ kind: "denied" });
+			}
+			expect(classifyFilesImage(`a${value}b.png`, "docs")).toEqual({ kind: "denied" });
+		}
+	}
+});

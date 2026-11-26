@@ -133,7 +133,9 @@ export function FilesMarkdownPreview({
 		const slash = path.lastIndexOf("/");
 		return slash === -1 ? "" : path.slice(0, slash);
 	}, [path]);
-	const ids = useMemo(() => createFilesHeadingIds("fm-" + prefix), [prefix]);
+	// A successful re-read reparses even unchanged text through a fresh media
+	// policy. Its heading counters must start with that accepted document too.
+	const ids = useMemo(() => createFilesHeadingIds("fm-" + prefix), [prefix, text, revision]);
 	const focusFragment = useCallback(
 		(fragment: string): boolean => {
 			const id = ids.lookup(fragment),

@@ -2,6 +2,7 @@ import {
 	Fragment,
 	useCallback,
 	useEffect,
+	useMemo,
 	useRef,
 	useState,
 	type ReactNode,
@@ -120,6 +121,10 @@ function ProjectFilesReader({
 			selectedMatch?.kind === "text"
 				? "source"
 				: (modeOverride ?? (markdown ? "preview" : "source"));
+	const overRenderLimit = useMemo(
+		() => !!(markdown && file?.text && new TextEncoder().encode(file.text).byteLength > MARKDOWN_RENDER_LIMIT),
+		[markdown, file?.text],
+	);
 	const changeMode = (next: "preview" | "source") => {
 		if (next === "preview") setSelectedMatch(null);
 		setModeOverride(next);
@@ -192,25 +197,25 @@ function ProjectFilesReader({
 			preview={{
 				...preview,
 				controls:
-					markdown && file && !file.binary && file.text !== null ? (
+					markdown && file && !file.binary && file.text !== null && file.text !== "" && !overRenderLimit ? (
 						<span
 							className="files-mode"
 							role="group"
-							aria-label="Preview mode"
+							aria-label="Markdown view"
 						>
-							<button
-								type="button"
-								aria-pressed={effectiveMode === "preview"}
-								onClick={() => changeMode("preview")}
-							>
-								Preview
-							</button>
 							<button
 								type="button"
 								aria-pressed={effectiveMode === "source"}
 								onClick={() => changeMode("source")}
 							>
 								Source
+							</button>
+							<button
+								type="button"
+								aria-pressed={effectiveMode === "preview"}
+								onClick={() => changeMode("preview")}
+							>
+								Preview
 							</button>
 						</span>
 					) : undefined,
@@ -236,15 +241,7 @@ function ProjectFilesReader({
 							</p>
 						) : file.text === "" ? (
 							<p className="files-message">Empty text file</p>
-						) : effectiveMode === "preview" && markdown ? (
-							file.text.length > MARKDOWN_RENDER_LIMIT ? (
-								<>
-									<p className="files-message" role="status">
-										Too large to render. Showing source.
-									</p>
-									<pre>{file.text}</pre>
-								</>
-							) : (
+						) : effectiveMode === "preview" && markdown && !overRenderLimit ? (
 								<FilesMarkdownPreview
 									key={selected!.path}
 									text={file.text}
@@ -260,8 +257,9 @@ function ProjectFilesReader({
 									onFragmentHandled={clearFragment}
 									onNavigate={navigate}
 								/>
-							)
 						) : (
+							<>
+							{overRenderLimit && <p className="files-message" role="status">Too large to render. Showing source.</p>}
 							<pre>
 								{lines && line && lineIndex < lines.length ? (
 									<>
@@ -275,6 +273,7 @@ function ProjectFilesReader({
 									file.text
 								)}
 							</pre>
+							</>
 						)}
 						<small className="files-checksum">SHA-256 {file.sha256}</small>
 					</div>

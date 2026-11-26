@@ -1345,3 +1345,60 @@ for (const theme of ["dark", "light"])
 			fullPage: true,
 		});
 	});
+
+// Review regressions use the production Files renderer and the accepted text response.
+test('review Markdown refresh keeps deterministic duplicate headings and live fragment links', async ({page}) => {
+ await fixture(page);
+ await markdownFiles(page, {'README.md': {text: '# Title\n## Setup\nFirst section.\n## Setup\nSecond section.\n[first](#setup) [second](#setup-1)'}});
+ await page.getByRole('button', {name:'README.md', exact:true}).click();
+ const headings=article(page).locator('h2');
+ await expect(headings).toHaveCount(2);
+ const ids=await headings.evaluateAll(nodes=>nodes.map(node=>node.id));
+ await article(page).getByRole('button', {name:'first', exact:true}).click();
+ await expect(headings.first()).toBeFocused();
+ const response=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/file'));
+ await page.getByRole('button', {name:'Refresh', exact:true}).click();
+ await response; await settled(page);
+ expect(await headings.evaluateAll(nodes=>nodes.map(node=>node.id))).toEqual(ids);
+ await article(page).getByRole('button', {name:'second', exact:true}).click();
+ await expect(headings.nth(1)).toBeFocused();
+ await article(page).getByRole('button', {name:'first', exact:true}).click();
+ await expect(headings.first()).toBeFocused();
+});
+
+test('review Markdown render limit counts UTF-8 bytes for non-ASCII text', async ({page}) => {
+ const text='# Title\n'+'界'.repeat(90*1024);
+ expect(text.length).toBeLessThan(256*1024);
+ expect(Buffer.byteLength(text,'utf8')).toBeGreaterThan(256*1024);
+ await fixture(page);await markdownFiles(page, {'README.md': {text}});
+ await page.getByRole('button', {name:'README.md', exact:true}).click();
+ await expect(preview(page)).toContainText('Too large to render. Showing source.');
+ await expect(article(page)).toHaveCount(0);
+ await expect(modeButtons(page)).toHaveCount(0);
+ expect(await preview(page).locator('pre').textContent()).toBe(text);
+});
+
+test('review Markdown keeps non-ASCII text within the byte limit renderable', async ({page}) => {
+ const text='# Title\n'+'界'.repeat(Math.floor((256*1024-8)/3));
+ expect(Buffer.byteLength(text,'utf8')).toBeLessThanOrEqual(256*1024);
+ await fixture(page);await markdownFiles(page, {'README.md': {text}});
+ await page.getByRole('button', {name:'README.md', exact:true}).click();
+ await expect(article(page).getByRole('heading', {name:'Title', exact:true})).toBeVisible();
+ await expect(modeButtons(page)).toHaveCount(2);
+});
+
+test('review Markdown mode controls expose Source then Preview under the accepted group name', async ({page}) => {
+ await fixture(page);await markdownFiles(page, {'README.md': {text:'# Title\nBody'}});
+ await page.getByRole('button', {name:'README.md', exact:true}).click();
+ const group=preview(page).getByRole('group', {name:'Markdown view', exact:true});
+ await expect(group).toBeVisible();
+ await expect(group.getByRole('button')).toHaveText(['Source','Preview']);
+ await expect(group.getByRole('button', {name:'Preview', exact:true})).toHaveAttribute('aria-pressed','true');
+});
+
+for(const kind of ['empty','binary','over-budget'] as const)test(`review Markdown hides mode controls for ${kind} content`, async ({page}) => {
+ await fixture(page);await markdownFiles(page, {'README.md': kind==='binary'?{binary:true}: {text:kind==='empty'?'':'# Big\n'+'x'.repeat(256*1024)}});
+ await page.getByRole('button', {name:'README.md', exact:true}).click();
+ await expect(preview(page)).toContainText(kind==='binary'?'Binary file':kind==='empty'?'Empty text file':'Too large to render');
+ await expect(modeButtons(page)).toHaveCount(0);
+});
