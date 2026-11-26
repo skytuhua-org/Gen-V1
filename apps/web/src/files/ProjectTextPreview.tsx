@@ -178,9 +178,15 @@ export function ProjectTextPreview({
 		if (pending) setGotoOpen(false);
 	}, [pending]);
 	// Opening the dialog pre-fills and selects the current target (or top visible line).
-	useEffect(() => {
-		if (gotoOpen) inputRef.current?.select();
-	}, [gotoOpen]);
+	const prefillGo = useCallback(() => {
+		const input = inputRef.current, scroller = scrollRef.current;
+		if (!input || !scroller) return;
+		const top = scroller.getBoundingClientRect().top;
+		const visible = Array.from(scroller.querySelectorAll<HTMLElement>(".files-text-row"))
+			.find(row => row.getBoundingClientRect().bottom > top);
+		input.value = String((target ?? Number(visible?.dataset.line ?? 0)) + 1);
+		input.select();
+	}, [target]);
 	// Retries a pending reveal until the target row is mounted and measured, then recenters once.
 	useLayoutEffect(() => {
 		const pending = pendingReveal.current;
@@ -300,9 +306,10 @@ export function ProjectTextPreview({
 				caret.startContainer.nodeType === Node.ELEMENT_NODE
 					? (caret.startContainer as HTMLElement)
 					: caret.startContainer.parentElement
-			)?.closest("[data-line]");
-			if (!cell) return null;
-			const index = Number((cell as HTMLElement).dataset.line),
+			)?.closest(".files-text-cell");
+			if (!cell || !scrollRef.current?.contains(cell)) return null;
+			const row = cell.closest<HTMLElement>("[data-line]");
+			const index = Number(row?.dataset.line),
 				line = lines[index];
 			if (!line) return null;
 			const walker = document.createTreeWalker(
@@ -390,7 +397,7 @@ export function ProjectTextPreview({
 				setSelection({ a: 0, b: text.length });
 			}
 		},
-		[goChord, text],
+		[goChord, text, pending],
 	);
 	const submitGo = useCallback(
 		(raw: string) => {
@@ -518,6 +525,7 @@ export function ProjectTextPreview({
 			<Popover
 				anchor={goButtonRef}
 				initialFocus={inputRef}
+				onReady={prefillGo}
 				open={gotoOpen}
 				width={240}
 				height={gotoError ? 190 : 164}
@@ -536,7 +544,7 @@ export function ProjectTextPreview({
 				}}
 			>
 				<form
-					key={`${gotoOpen ? "open" : "closed"}-${target ?? -1}-${first}`}
+					key={`${gotoOpen ? "open" : "closed"}-${target ?? -1}`}
 					onSubmit={(event) => {
 						event.preventDefault();
 						submitGo(inputRef.current?.value ?? "");
@@ -549,7 +557,7 @@ export function ProjectTextPreview({
 						ref={inputRef}
 						inputMode="numeric"
 						autoComplete="off"
-						defaultValue={target !== null ? String(target + 1) : String(first + 1)}
+						defaultValue={target !== null ? String(target + 1) : undefined}
 						aria-describedby="files-goto-helper files-goto-error"
 					/>
 					<small id="files-goto-helper">Line 1 to {total}</small>

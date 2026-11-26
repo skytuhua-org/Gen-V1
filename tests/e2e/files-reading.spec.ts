@@ -954,3 +954,91 @@ for (const source of ["project", "granted"])
 			).toBeVisible();
 		},
 	);
+
+async function openNumberedAudit(page: Page, content: string) {
+ const go=await fixture(page);
+ await project(page,[entry('audit.txt')]);
+ await page.route('**/api/projects/*/file?*',route=>route.fulfill({json:text(content)}));
+ await go();
+ await page.getByRole('button',{name:'audit.txt',exact:true}).click();
+ return page.getByRole('region',{name:'Numbered file text'});
+}
+
+test('numbered preview audit: pointer copy uses source offsets without gutter characters',async({page,context})=>{
+ await context.grantPermissions(['clipboard-read','clipboard-write']);
+ const source='alpha start\r\nbeta middle\rgamma end\n';
+ const viewport=await openNumberedAudit(page,source);
+ await expect(viewport).toBeVisible();
+ const points=await page.locator('.files-text-row').evaluateAll(rows=>[0,1].map((index)=>{
+  const cell=rows[index].querySelector('.files-text-cell')!;
+  const range=document.createRange();range.setStart(cell.firstChild!,index===0?0:4);range.collapse(true);
+  const rect=range.getBoundingClientRect();return{x:rect.left+.25,y:rect.top+rect.height/2};
+ }));
+ await viewport.focus();
+ await page.mouse.move(points[0].x,points[0].y);await page.mouse.down();
+ await page.mouse.move(points[1].x,points[1].y,{steps:12});await page.mouse.up();
+ await page.keyboard.press('Control+c');
+ await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toBe('alpha start\r\nbeta');
+ // Gutter gestures cannot become a text selection.
+ await page.mouse.click(points[0].x,points[0].y);
+ await expect(page.locator('.files-text-selection')).toHaveCount(0);
+ const gutter=await page.locator('.files-text-gutter').first().boundingBox();
+ await page.mouse.move(gutter!.x+gutter!.width/2,gutter!.y+gutter!.height/2);await page.mouse.down();
+ await page.mouse.move(points[1].x,points[1].y,{steps:8});await page.mouse.up();
+ await expect(page.locator('.files-text-selection')).toHaveCount(0);
+});
+
+test('numbered preview audit: a retained pending read blocks the current Go shortcut',async({page})=>{
+ const viewport=await openNumberedAudit(page,'first\nsecond\nthird');
+ await expect(viewport).toBeVisible();
+ let held:Route|undefined;
+ await page.route('**/api/projects/*/file?*',route=>{held=route;});
+ await page.getByRole('button',{name:'Refresh',exact:true}).click();
+ await expect.poll(()=>Boolean(held)).toBe(true);
+ await expect(page.getByRole('button',{name:'Go to line',exact:true})).toBeDisabled();
+ await viewport.focus();await page.keyboard.press('Control+g');
+ await expect(page.getByRole('textbox',{name:'Line number',exact:true})).toHaveCount(0);
+ await held!.fulfill({json:text('first\nsecond\nthird')});
+ await expect(page.getByRole('button',{name:'Go to line',exact:true})).toBeEnabled();
+ await viewport.focus();await page.keyboard.press('Control+g');
+ await expect(page.getByRole('textbox',{name:'Line number',exact:true})).toBeFocused();
+});
+
+test('numbered preview audit: empty text retains numbered line one and navigation',async({page})=>{
+ const viewport=await openNumberedAudit(page,'');
+ await expect(page.getByText('Empty text file',{exact:true})).toBeVisible();
+ await expect(viewport).toBeVisible();
+ await expect(viewport.locator('.files-text-gutter')).toHaveText('1');
+ await page.getByRole('button',{name:'Go to line',exact:true}).click();
+ await page.getByRole('textbox',{name:'Line number',exact:true}).fill('0');
+ await page.getByRole('button',{name:'Go',exact:true}).click();
+ await expect(page.getByRole('status').filter({hasText:'Line 1 of 1'})).toBeVisible();
+ await expect(viewport).toBeFocused();
+});
+
+test('numbered preview audit: scrolling while Go is open preserves the entered line',async({page})=>{
+ const viewport=await openNumberedAudit(page,Array.from({length:200},(_,index)=>'line '+(index+1)).join('\n'));
+ await expect(viewport).toBeVisible();
+ await page.getByRole('button',{name:'Go to line',exact:true}).click();
+ const input=page.getByRole('textbox',{name:'Line number',exact:true});
+ await input.fill('18');
+ await viewport.evaluate(element=>{element.scrollTop=1200;});
+ await expect.poll(()=>viewport.locator('.files-text-row').first().getAttribute('data-line')).not.toBe('0');
+ await expect(input).toHaveValue('18');
+ await expect(input).toBeFocused();
+ await page.getByRole('button',{name:'Go',exact:true}).click();
+ await expect(page.getByRole('status').filter({hasText:'Line 18 of 200'})).toBeVisible();
+});
+
+test('numbered preview audit: Go starts from the top visible line rather than overscan',async({page})=>{
+ const viewport=await openNumberedAudit(page,Array.from({length:200},(_,index)=>'line '+(index+1)).join('\n'));
+ await expect(viewport).toBeVisible();
+ await viewport.evaluate(element=>{element.scrollTop=1200;});
+ await expect.poll(()=>viewport.locator('.files-text-row').first().getAttribute('data-line')).not.toBe('0');
+ const visible=await viewport.evaluate(element=>{
+  const top=element.getBoundingClientRect().top;
+  return Number([...element.querySelectorAll<HTMLElement>('.files-text-row')].find(row=>row.getBoundingClientRect().bottom>top)!.dataset.line)+1;
+ });
+ await page.getByRole('button',{name:'Go to line',exact:true}).click();
+ await expect(page.getByRole('textbox',{name:'Line number',exact:true})).toHaveValue(String(visible));
+});
