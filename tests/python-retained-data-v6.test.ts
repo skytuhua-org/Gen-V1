@@ -29,10 +29,10 @@ const allocated = async (...paths: string[]) => { let total = 0n; for (const pat
 afterEach(async () => { unavailable.clear(); await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
 // Cases marked linuxFs need Linux filesystem semantics: truncate() leaves a
-// sparse file, ext4 charges block-map metadata to a dense file, and mkfifo makes
+// sparse file, dense files use block-rounded allocation, and mkfifo makes
 // a FIFO. On Windows, libuv reports st_blocks as NTFS AllocationSize/512, so a
-// truncated file is fully allocated, a dense 64 MiB file is exactly 64 MiB and
-// there are no FIFOs. Each such case keeps its full Linux assertions; every
+// truncated file is fully allocated and there are no FIFOs. Each such case
+// keeps its full Linux assertions; every
 // platform-neutral case, including both ceilings, still runs everywhere.
 const linuxFs = process.platform === 'linux';
 
@@ -89,10 +89,11 @@ describe('M12 Python retained-data accounting (accepted retained state, not a fi
   });
 
   it.runIf(linuxFs)('refuses real allocated data over 64 MiB even while logical length stays within its ceiling', async () => {
-    const dir = await root(), file = join(dir, 'dense.bin');
-    await filled(file, Number(CEILING));
-    expect((await lstat(file)).size).toBe(Number(CEILING));
-    expect(await allocated(dir, file)).toBeGreaterThan(CEILING);
+    const dir = await root(), first = join(dir, 'dense-a.bin'), second = join(dir, 'dense-b.bin');
+    await filled(first, Number(CEILING / 2n) + 1);
+    await filled(second, Number(CEILING / 2n) - 1);
+    expect((await lstat(first)).size + (await lstat(second)).size).toBe(Number(CEILING));
+    expect(await allocated(dir, first, second)).toBeGreaterThan(CEILING);
     await expect(inspectPythonPrivateDirectory(dir)).rejects.toMatchObject({ code: 'PYTHON_RETAINED_DATA_LIMIT', message: expect.stringMatching(/allocated/) });
   });
 
