@@ -70,6 +70,19 @@ describe('durable split workspace',()=>{
   layout=apply(layout,'view.open',{paneId:'right',view:{id:'private-view',kind:'workspace',binding:{authority:{kind:'plugin',pluginId:'sample-plugin',scopeId:'company-one'},resourceId:'map'}}});
   expect(layout.views['private-view']!.binding.authority.kind).toBe('plugin');
  });
+ it('preserves the accepted empty and non-chat floors while clamping chat and review views',()=>{
+  const empty=createSplitWorkspaceLayout();expect(minimumSplitSize(empty)).toEqual({width:240,height:180});
+  const files=apply(empty,'view.open',{view:{id:'files',kind:'files',binding:{authority:{kind:'local'}}}});
+  expect(minimumSplitSize(files)).toEqual({width:240,height:180});
+  const chat=open(createSplitWorkspaceLayout(),'one');expect(minimumSplitSize(chat)).toEqual({width:320,height:220});
+  const review=apply(createSplitWorkspaceLayout(),'view.open',{view:{id:'review',kind:'diff',binding:{authority:{kind:'local'}}}});
+  expect(minimumSplitSize(review)).toEqual({width:360,height:220});
+  let pair=split(chat,'right');pair=apply(pair,'pane.resize',{splitId:'split-right',ratio:.01,span:800});
+  expect(pair.root.kind).toBe('split');if(pair.root.kind!=='split')throw Error('Missing split');
+  expect(pair.root.ratio).toBe(.4);
+  pair=apply(pair,'pane.resize',{splitId:'split-right',ratio:.99,span:800});
+  expect(pair.root.kind==='split'&&pair.root.ratio).toBe(.7);
+ });
  it('computes usable minimum sizes and bounded edge previews',()=>{
   let layout=open(createSplitWorkspaceLayout(),'one');expect(minimumSplitSize(layout)).toEqual({width:320,height:220});
   layout=split(layout,'right',{view:{id:'diff',kind:'diff',binding:{authority:{kind:'local'}}}});

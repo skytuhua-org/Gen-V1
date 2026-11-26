@@ -220,7 +220,7 @@ export function SessionBranchMenu({ thread, messages, onOpenThread, onChanged, o
     }] : []),
   ];
   return <>
-    <ActionMenu label="History" icon={<History size={13} />} iconOnly={compact} open={open} onOpenChange={setOpen} items={items} disabled={!overview} />
+    <span className={`session-branch-history${compact ? ' is-compact' : ''}`}><ActionMenu label="History" icon={<History size={13} />} iconOnly={compact} open={open} onOpenChange={setOpen} items={items} disabled={!overview} /></span>
     <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) pickFile(file); }} />
     {error && <span className="error-text" role="alert">{error}</span>}
     {captureId && <CaptureViewer captureId={captureId} onClose={() => setCaptureId(null)} />}
