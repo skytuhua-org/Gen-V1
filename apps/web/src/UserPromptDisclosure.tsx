@@ -1,7 +1,7 @@
 import {useCallback,useId,useLayoutEffect,useRef,useState} from 'react';
 import {ChevronDown,ChevronUp} from 'lucide-react';
 import {Markdown} from './Markdown';
-import {readMotionPolicy} from './motion-policy';
+import {observeMotionPolicy,readMotionPolicy} from './motion-policy';
 import {scrollConversation} from './conversation-scroll';
 import {registerPromptClip} from './prompt-clips';
 import './user-prompt-disclosure.css';
@@ -34,17 +34,25 @@ export function UserPromptDisclosure({text}:{text:string}){
  const collapsed=measurable&&overflows&&!expanded;
  collapsedRef.current=collapsed;
 
+ const cancelAnimation=useCallback((settle=true)=>{
+  pendingAnimation.current=null;
+  const running=animation.current;animation.current=null;
+  if(running){running.onfinish=null;running.oncancel=null;running.cancel();}
+  if(settle)setSettling(false);
+ },[]);
+
  const measure=useCallback(()=>{
   const node=box.current;
   if(!node)return;
   const rect=node.getBoundingClientRect();
   if(rect.width<=0||rect.height<=0)return;// a hidden cached owner is not a short prompt
+  cancelAnimation();
   const style=getComputedStyle(node);
   const lineHeight=parseFloat(style.lineHeight)||parseFloat(style.fontSize)*1.65;
   cap.current=promptCapPx(lineHeight);
   setMeasurable(true);
   setOverflows(promptOverflows(rect.height,cap.current));
- },[]);
+ },[cancelAnimation]);
 
  useLayoutEffect(()=>{
   const node=box.current;
@@ -64,13 +72,13 @@ export function UserPromptDisclosure({text}:{text:string}){
   return registerPromptClip(boundary,{
    clip:()=>clip.current,
    collapsed:()=>collapsedRef.current,
-   reveal(done){if(!collapsedRef.current){done();return;}reveals.current.push(done);setExpanded(true);},
+   reveal(done){if(!collapsedRef.current&&!animation.current&&!pendingAnimation.current){done();return;}reveals.current.push(done);cancelAnimation();setExpanded(true);},
   });
- },[]);
+ },[cancelAnimation]);
 
  // Acknowledge queued Find reveals once the expanded commit has removed clip/mask/inert.
  useLayoutEffect(()=>{
-  if(collapsed||!reveals.current.length)return;
+  if(collapsed||settling||!reveals.current.length)return;
   const callbacks=reveals.current.splice(0);
   callbacks.forEach(done=>done());
  });
@@ -86,7 +94,7 @@ export function UserPromptDisclosure({text}:{text:string}){
   if(wasCollapsible.current&&measurable&&!overflows&&buttonFocused.current&&root.current){
    root.current.focus({preventScroll:true});
   }
-  buttonFocused.current=false;
+  if(measurable&&!overflows)buttonFocused.current=false;
   wasCollapsible.current=measurable&&overflows;
  });
 
@@ -106,31 +114,37 @@ export function UserPromptDisclosure({text}:{text:string}){
   pendingAnimation.current=null;
   if(!pending)return;
   const node=clip.current;
-  if(!node||!node.isConnected){setSettling(false);return;}
-  animation.current?.cancel();
+  if(!node||!node.isConnected||readMotionPolicy()!=='full'||typeof node.animate!=='function'){cancelAnimation();return;}
+  cancelAnimation(false);
   const animate=node.animate([{height:`${pending.from}px`},{height:`${pending.to}px`}],TOGGLE_ANIMATION);
   animation.current=animate;
-  animate.onfinish=animate.oncancel=()=>{if(animation.current===animate)animation.current=null;setSettling(false);};
+  animate.onfinish=animate.oncancel=()=>{if(animation.current!==animate)return;animation.current=null;setSettling(false);};
  });
- useLayoutEffect(()=>()=>{animation.current?.cancel();},[]);
+ useLayoutEffect(()=>{
+  if(!settling)return;
+  if(readMotionPolicy()!=='full'){cancelAnimation();return;}
+  return observeMotionPolicy(policy=>{if(policy!=='full')cancelAnimation();});
+ },[settling,cancelAnimation]);
+ useLayoutEffect(()=>()=>{cancelAnimation(false);},[cancelAnimation]);
 
  const toggle=useCallback(()=>{
   const target=!expanded,node=clip.current;
   if(!node||readMotionPolicy()!=='full'||typeof node.animate!=='function'||!measurable){
+   cancelAnimation();
    if(!target)needsScrollFix.current=true;
    setExpanded(target);return;
   }
   const from=node.getBoundingClientRect().height,to=target?(box.current?.scrollHeight??from):cap.current;
-  if(Math.abs(to-from)<1){if(!target)needsScrollFix.current=true;setExpanded(target);return;}
+  if(Math.abs(to-from)<1){cancelAnimation();if(!target)needsScrollFix.current=true;setExpanded(target);return;}
   pendingAnimation.current={from,to};
   if(!target)needsScrollFix.current=true;
   setSettling(true);
   setExpanded(target);
- },[expanded,measurable]);
+ },[expanded,measurable,cancelAnimation]);
 
  return <div ref={root} className="up-disclosure" tabIndex={-1}>
   {measurable&&overflows&&<div ref={rail} className="up-disclosure-rail">
-   <button ref={button} type="button" className="quiet up-disclosure-toggle" aria-expanded={expanded} aria-controls={id} aria-describedby={collapsed?`${id}-hint`:undefined} onClick={toggle} onFocus={()=>{buttonFocused.current=true;}}>
+   <button ref={button} type="button" className="quiet up-disclosure-toggle" aria-expanded={expanded} aria-controls={id} aria-describedby={collapsed?`${id}-hint`:undefined} onClick={toggle} onFocus={()=>{buttonFocused.current=true;}} onBlur={()=>{buttonFocused.current=false;}}>
     {expanded?<ChevronUp size={14} aria-hidden/>:<ChevronDown size={14} aria-hidden/>}
     {expanded?'Show less':'Show more'}
    </button>

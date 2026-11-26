@@ -1,4 +1,7 @@
-import {describe,it,expect} from 'vitest';
+import {afterAll,beforeAll,describe,it,expect} from 'vitest';
+import {build} from 'esbuild';
+import {readFile} from 'node:fs/promises';
+import {chromium,type Browser,type Page} from '@playwright/test';
 import {promptCapPx,promptOverflows} from '../apps/web/src/UserPromptDisclosure';
 import {isPromptClipBoundary,promptClipBoundary,rangeClippedBy,registerPromptClip} from '../apps/web/src/prompt-clips';
 
@@ -59,5 +62,81 @@ describe('range clipped by cap minus fade',()=>{
   expect(rangeClippedBy(clip,range([{top:0,bottom:0,width:0,height:0},{top:20,bottom:40,width:80,height:20}]))).toBe(false);
   expect(rangeClippedBy(clip,range([]))).toBe(true);
   expect(rangeClippedBy(clip,range([{top:0,bottom:0,width:0,height:0}]))).toBe(true);
+ });
+});
+
+const disclosureFixture = `
+import {createRoot} from 'react-dom/client';
+import {UserPromptDisclosure} from './apps/web/src/UserPromptDisclosure';
+import {promptClipEntry} from './apps/web/src/prompt-clips';
+const animate=Element.prototype.animate;
+Element.prototype.animate=function(...args){const animation=animate.apply(this,args);if(window.holdDisclosureAnimations&&this.matches('.up-disclosure-clip'))animation.pause();return animation;};
+window.resizePrompt=width=>document.getElementById('prompt-owner').style.width=width+'px';
+window.revealPrompt=()=>promptClipEntry(document.querySelector('.up-disclosure-content')).reveal(()=>{const clip=document.querySelector('.up-disclosure-clip');window.revealDone={animations:clip.getAnimations().length,settling:clip.hasAttribute('data-settling'),inert:document.querySelector('.up-disclosure-content').inert};});
+createRoot(document.getElementById('root')).render(<><div id="prompt-owner" style={{width:300}}><UserPromptDisclosure text={'Ordinary wrapped source text. '.repeat(40)}/></div><button type="button">Other control</button></>);
+`;
+
+describe('mounted user prompt disclosure ownership',()=>{
+ let browser:Browser,script:string,css:string;
+ beforeAll(async()=>{
+  script=(await build({stdin:{contents:disclosureFixture,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',loader:{'.css':'empty'},define:{'process.env.NODE_ENV':'"production"'}})).outputFiles[0]!.text;
+  css=(await Promise.all(['packages/ui-shell/tokens.css','apps/web/src/styles.css','apps/web/src/user-prompt-disclosure.css'].map(path=>readFile(path,'utf8')))).join('\n');
+  browser=await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{})});
+ });
+ afterAll(async()=>{await browser?.close();});
+ async function settled(page:Page){await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));}
+ async function open(reducedMotion:'reduce'|'no-preference'='reduce'){
+  const page=await browser.newPage({viewport:{width:1600,height:1000},reducedMotion});
+  await page.setContent('<div id="root"></div>');await page.addStyleTag({content:css});await page.addScriptTag({content:script});
+  await page.getByRole('button',{name:'Show more',exact:true}).waitFor();await settled(page);return page;
+ }
+ for(const focus of ['toggle','outside'])it(`keeps ${focus} focus when resize removes a previously toggled rail`,async()=>{
+  const page=await open();try{
+   await page.getByRole('button',{name:'Show more',exact:true}).click();
+   const button=page.getByRole('button',{name:'Show less',exact:true});await button.waitFor();
+   if(focus==='outside')await page.getByRole('button',{name:'Other control',exact:true}).focus();
+   else expect(await button.evaluate(node=>node===document.activeElement)).toBe(true);
+   await page.evaluate(()=>(window as any).resizePrompt(1400));
+   await expect.poll(()=>button.count()).toBe(0);
+   const target=focus==='toggle'?page.locator('.up-disclosure'):page.getByRole('button',{name:'Other control',exact:true});
+   expect(await target.evaluate(node=>node===document.activeElement)).toBe(true);
+  }finally{await page.close();}
+ });
+ for(const reason of ['app policy','OS policy','remeasure'])it(`settles a real paused height animation on ${reason}`,async()=>{
+  const page=await open('no-preference');try{
+   await page.evaluate(()=>(window as any).holdDisclosureAnimations=true);
+   await page.getByRole('button',{name:'Show more',exact:true}).click();
+   await expect.poll(()=>page.locator('.up-disclosure-clip').evaluate(node=>node.getAnimations().length)).toBe(1);
+   if(reason==='app policy')await page.evaluate(()=>document.documentElement.dataset.motion='off');
+   else if(reason==='OS policy')await page.emulateMedia({reducedMotion:'reduce'});
+   else await page.evaluate(()=>(window as any).resizePrompt(400));
+   await settled(page);
+   await expect.poll(()=>page.locator('.up-disclosure-clip').evaluate(node=>node.getAnimations().length)).toBe(0);
+   expect(await page.locator('.up-disclosure-clip').getAttribute('data-settling')).toBeNull();
+   expect(await page.locator('.up-disclosure-content').evaluate(node=>(node as HTMLElement).inert)).toBe(false);
+  }finally{await page.close();}
+ });
+ it('settles an interrupted collapse before acknowledging the registered Find reveal',async()=>{
+  const page=await open('no-preference');try{
+   await page.getByRole('button',{name:'Show more',exact:true}).click();
+   await expect.poll(()=>page.locator('.up-disclosure-clip').getAttribute('data-settling')).toBeNull();
+   await page.evaluate(()=>(window as any).holdDisclosureAnimations=true);
+   await page.getByRole('button',{name:'Show less',exact:true}).click();
+   await expect.poll(()=>page.locator('.up-disclosure-clip').evaluate(node=>node.getAnimations().length)).toBe(1);
+   await page.evaluate(()=>(window as any).revealPrompt());
+   await expect.poll(()=>page.evaluate(()=>(window as any).revealDone)).toEqual({animations:0,settling:false,inert:false});
+  }finally{await page.close();}
+ });
+
+ it('drops the old animation when a rapid reversal already matches the presented cap',async()=>{
+  const page=await open('no-preference');try{
+   await page.evaluate(()=>(window as any).holdDisclosureAnimations=true);
+   await page.getByRole('button',{name:'Show more',exact:true}).click();
+   await expect.poll(()=>page.locator('.up-disclosure-clip').evaluate(node=>node.getAnimations().length)).toBe(1);
+   await page.getByRole('button',{name:'Show less',exact:true}).click();
+   expect(await page.locator('.up-disclosure-clip').evaluate(node=>node.getAnimations().length)).toBe(0);
+   expect(await page.locator('.up-disclosure-clip').getAttribute('data-settling')).toBeNull();
+   expect(await page.locator('.up-disclosure-content').evaluate(node=>(node as HTMLElement).inert)).toBe(true);
+  }finally{await page.close();}
  });
 });
