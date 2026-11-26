@@ -1,4 +1,5 @@
 import {describe,it,expect,vi} from 'vitest';
+import {writeFileSync} from 'node:fs';
 import {mkdtemp,mkdir,writeFile,readFile,realpath,rename,symlink,rm,lstat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -42,6 +43,25 @@ describe('installed desktop verification custody',()=>{
    expect(JSON.parse(await readFile(receipt,'utf8'))).toEqual(owner);
    expect(JSON.parse(await readFile(join(root,'owner.json'),'utf8'))).toEqual(owner);
   }finally{await rm(root,{recursive:true,force:true});}
+ });
+ it('preserves split UTF-8 in the owned subprocess report and progress text',async()=>{
+  const cwd=await mkdtemp(join(tmpdir(),'installed-stream-fixture-'));
+  const script=`const fs=require('node:fs');const out=Buffer.from(JSON.stringify({path:'é漢'})),err=Buffer.from('first=é漢');
+  process.stdout.write(out.subarray(0,out.indexOf(195)+1),()=>process.stderr.write(err.subarray(0,err.indexOf(195)+1),()=>{
+   const poll=setInterval(()=>{if(!fs.existsSync('continue'))return;clearInterval(poll);
+    setTimeout(()=>{process.stdout.end(out.subarray(out.indexOf(195)+1));process.stderr.end(Buffer.concat([err.subarray(err.indexOf(195)+1),Buffer.from([195])]));},65);
+   },5);
+  }));`;
+  const logs:string[]=[];
+  try{
+   const result=await installedVerification.runOwned(process.execPath,['-e',script],{cwd,env:{},timeoutMs:5000,onStderr:stderr=>{
+    logs.push(stderr);
+    if(logs.length===1)writeFileSync(join(cwd,'continue'),'ready');
+   }});
+   expect(JSON.parse(result.stdout)).toEqual({path:'é漢'});
+   expect(logs[0]).toBe('first=');
+   expect(result.stderr).toBe('first=é漢�');
+  }finally{await rm(cwd,{recursive:true,force:true});}
  });
  it('records installer exit separately from close and never copies child text into lifecycle evidence',()=>{
   const observe=(installedVerification as unknown as {observeOwnedProcess:(child:ChildProcess,phase:'installer',timeoutMs:number,clock:()=>number)=>{status:string;pid:number|null;spawnElapsedMs:number|null;exit:{elapsedMs:number;code:number|null;signal:string|null}|null;close:{elapsedMs:number;code:number|null;signal:string|null}|null;stdoutBytes:number;stderrBytes:number}}).observeOwnedProcess;
