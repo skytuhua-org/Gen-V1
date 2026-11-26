@@ -1,4 +1,4 @@
-import {spawn} from 'node:child_process';
+import {spawn,type ChildProcess} from 'node:child_process';
 import {mkdir,readFile,writeFile,copyFile,readdir} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {args,hash,json,main,output,pnpm,required,windows} from './common.ts';
@@ -13,6 +13,28 @@ const phases=['build','clean','native','flags','dpapi','physical','upgrade','fai
 /** Node timers coerce delays above 2^31-1 ms to 1 ms; reject before an operator value silently mistimes the interruption. */
 export function parseInterruptMs(value:string):number{const milliseconds=Number(value);if(!Number.isInteger(milliseconds)||milliseconds<1||milliseconds>2147483647)throw Error('Invalid --interrupt-ms: positive integer at most 2147483647.');return milliseconds;}
 export function assertCleanLifecycle(receipt:{passed?:boolean;setupSha256?:string;memoryRetentionRequested?:boolean;cleanup?:{status?:string}},sha256:string,continueAfterFailure=false){if(receipt.setupSha256!==sha256||!receipt.memoryRetentionRequested||receipt.cleanup?.status!=='uninstalled-owned-installation')throw Error('Need a candidate-bound clean lifecycle receipt with completed owned uninstall.');if(!receipt.passed&&!continueAfterFailure)throw Error('Clean lifecycle failed; explicit --continue-after-clean-failure is required to continue a dry run.');}
+export function waitForSetupProcess(child:ChildProcess,interruptMs?:number,terminate=terminateProcessTree){
+ return new Promise<void>((accept,reject)=>{
+  let interruption:Promise<void>|undefined;
+  const timer=interruptMs===undefined?undefined:setTimeout(()=>{
+   if(child.exitCode!==null||child.signalCode!==null)return;
+   interruption=Promise.resolve().then(()=>terminate(child));
+   // A failed interruption cannot produce a successful drill, even if the
+   // process emits close before cancellation finishes or never emits it.
+   void interruption.catch(reject);
+  },interruptMs);
+  child.once('error',error=>{clearTimeout(timer);reject(error);});
+  child.once('close',code=>{
+   clearTimeout(timer);
+   if(interruptMs===undefined){if(code===0)accept();else reject(Error('Setup exited '+code));return;}
+   if(!interruption){reject(Error('Setup completed before interruption; failed-setup scenario NOT exercised.'));return;}
+   void interruption.then(()=>{
+    if(code===0)reject(Error('Setup exited successfully; failed-setup scenario NOT exercised.'));
+    else accept();
+   },reject);
+  });
+ });
+}
 main(import.meta.url,async()=>{
  windows();const {options}=args(),phase=required(options,'phase'),out=output(options);if(!phases.includes(phase))throw Error('Phases: '+phases.join(', '));await mkdir(out,{recursive:true});
  const capture=async(argv:string[],name:string)=>{try{const log=await pnpm(argv,true);await writeFile(join(out,name+'.log'),log+'\n');return log;}catch(error){await writeFile(join(out,name+'.log'),((error as {stdout?:string}).stdout??'')+'\n'+String(error)+'\n');throw error;}};
@@ -21,7 +43,7 @@ main(import.meta.url,async()=>{
  const receiptPath=resolve(options.build??join(out,'rc-build.json')),build=JSON.parse(await readFile(receiptPath,'utf8'));if(await hash(build.setup.path)!==build.setup.sha256||await hash(build.buildManifest.path)!==build.buildManifest.sha256)throw Error('Candidate custody mismatch.');
  const install=resolve(options.install??join(out,'installed')),exe=join(install,'Gen V1.exe'),profile=join(process.env.APPDATA!,'GenerativeHarnessDesktop'),host=join(process.env.LOCALAPPDATA!,'GenerativeHarness');
  const authorize=()=>{if(options['allow-install']!=='disposable-vm')throw Error('Installation requires --allow-install disposable-vm. Back up profiles; setup may not be atomic.');};
- const setup=async(path:string,interruptMs?:number)=>{authorize();await new Promise<void>((accept,reject)=>{const child=spawn(path,installedCommandArguments('install',install),{windowsVerbatimArguments:true,stdio:'ignore'});let interrupted=false;const timer=interruptMs===undefined?undefined:setTimeout(()=>{interrupted=true;void terminateProcessTree(child).catch(reject);},interruptMs);child.once('error',reject);child.once('close',code=>{clearTimeout(timer);if(interruptMs!==undefined&&!interrupted)reject(Error('Setup completed before interruption; failed-setup scenario NOT exercised.'));else if(interruptMs===undefined&&code!==0)reject(Error('Setup exited '+code));else accept();});});};
+ const setup=async(path:string,interruptMs?:number)=>{authorize();await waitForSetupProcess(spawn(path,installedCommandArguments('install',install),{windowsVerbatimArguments:true,stdio:'ignore'}),interruptMs);};
  const installedVersion=async()=>JSON.parse(await readFile(join(install,'resources/host/package.json'),'utf8')).version as string;
  const collect=async(log:string,name:string)=>{await writeFile(join(out,name+'.log'),log);const last=log.trim().split(/\r?\n/).at(-1)!;const receipt=JSON.parse(last);await copyFile(join(receipt.directory,'verification.json'),join(out,name+'.json'));await json(join(out,name+'-source.json'),{directory:receipt.directory});if(!receipt.passed)throw Error(name+' did not pass.');};
  if(phase==='clean'){authorize();const root=resolve('.harness-desktop-installed'),previous:string[]=await readdir(root).catch(error=>{if(error.code==='ENOENT')return [];throw error;});let failure:unknown;try{await verifyInstalledDesktop(build.setup.path,build.unpacked,{memoryRetention:true});}catch(error){failure=error;}const created=(await readdir(root)).filter(name=>!previous.includes(name));if(created.length!==1)throw Error('Cannot identify exclusive clean lifecycle evidence.');const directory=join(root,created[0]),receipt=JSON.parse(await readFile(join(directory,'verification.json'),'utf8'));if(receipt.setupSha256!==build.setup.sha256)throw Error('Clean receipt candidate mismatch.');await copyFile(join(directory,'verification.json'),join(out,'clean.json'));const provider=receipt.providerVerification as {receipt:string}|undefined;if(provider)await copyFile(provider.receipt,join(out,'packaged-providers.json'));await json(join(out,'clean-source.json'),{directory,providerReceipt:provider?.receipt});if(failure)throw failure;}

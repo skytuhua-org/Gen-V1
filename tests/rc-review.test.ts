@@ -4,16 +4,15 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
-import {execFile} from 'node:child_process';
+import {ChildProcess,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {snapshot,compare} from '../scripts/rc-review/profile-manifest.ts';
 import {flagsOff} from '../scripts/rc-review/flags-off.ts';
 import {hash,pnpm,run,sha} from '../scripts/rc-review/common.ts';
 import {archiveProfile,restoreProfile} from '../scripts/rc-review/profile-archive.ts';
-import {assertCleanLifecycle,parseInterruptMs} from '../scripts/rc-review/run-rc-review.ts';
+import {assertCleanLifecycle,parseInterruptMs,waitForSetupProcess} from '../scripts/rc-review/run-rc-review.ts';
 import {compareNativeGeometry} from '../scripts/rc-review/upgrade-check.ts';
 import {closeInstalledSession} from '../scripts/rc-review/installed-session.ts';
-import type {ChildProcess} from 'node:child_process';
 
 const roots:string[]=[];
 it('rejects overflowed interruption delays before scheduling and keeps supported positive integers',()=>{for(const value of ['2147483648','999999999999','0','-5','1.5','abc'])expect(()=>parseInterruptMs(value)).toThrow('Invalid --interrupt-ms');for(const value of ['1','500','2147483647'])expect(parseInterruptMs(value)).toBe(Number(value));});
@@ -79,4 +78,48 @@ it('preserves original teardown errors and their order', async () => {
  expect(failure.errors[0]).toBe(closeError);
  expect(failure.errors[1]).toBe(stopError);
  expect(terminate).toHaveBeenCalledTimes(2);
+});
+
+it('does not complete the interrupted setup drill until process-tree termination confirms',async()=>{
+ vi.useFakeTimers();
+ try{
+  const child=new ChildProcess(),failure=new Error('fixture termination unconfirmed');let rejectStop!:(error:Error)=>void;
+  const terminate=vi.fn(async()=>new Promise<void>((_resolve,reject)=>{rejectStop=reject;}));
+  let settled=false;
+  const finish=waitForSetupProcess(child,10,terminate).then(()=>{settled=true;return undefined;},error=>{settled=true;return error;});
+  await vi.advanceTimersByTimeAsync(10);
+  expect(terminate).toHaveBeenCalledOnce();
+  child.emit('close',1,null);
+  await vi.advanceTimersByTimeAsync(0);
+  const early=settled;
+  rejectStop(failure);
+  expect(early).toBe(false);
+  expect(await finish).toBe(failure);
+ }finally{vi.useRealTimers();}
+});
+it('rejects a clean completion after the interrupt timer, but accepts a confirmed nonzero close',async()=>{
+ vi.useFakeTimers();
+ try{
+  for(const code of [0,1]){
+   const child=new ChildProcess();const terminate=vi.fn(async()=>{});
+   const finish=waitForSetupProcess(child,10,terminate).catch(error=>error);
+   await vi.advanceTimersByTimeAsync(10);
+   child.emit('close',code,null);
+   if(code===0)expect(await finish).toBeInstanceOf(Error);else expect(await finish).toBeUndefined();
+  }
+ }finally{vi.useRealTimers();}
+});
+it('clears the interruption timer when an installer cannot start and preserves ordinary exit results',async()=>{
+ vi.useFakeTimers();
+ try{
+  const child=new ChildProcess(),failure=new Error('fixture no spawn'),terminate=vi.fn(async()=>{});
+  const finish=waitForSetupProcess(child,10,terminate).catch(error=>error);
+  child.emit('error',failure);await vi.advanceTimersByTimeAsync(10);
+  expect(await finish).toBe(failure);expect(terminate).not.toHaveBeenCalled();
+  for(const code of [0,4]){
+   const regular=new ChildProcess(),result=waitForSetupProcess(regular).catch(error=>error);
+   regular.emit('close',code,null);
+   if(code===0)expect(await result).toBeUndefined();else expect(await result).toMatchObject({message:'Setup exited 4'});
+  }
+ }finally{vi.useRealTimers();}
 });
