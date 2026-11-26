@@ -146,5 +146,74 @@ test('revision conflict asks for re-review with the fresh draft', async ({ page 
   await expect(sheet).toBeVisible();
   await sheet.getByRole('button', { name: 'Commit, push and open draft PR' }).click();
   await expect(sheet.getByRole('alert')).toContainText('The working copy changed');
+  await expect(sheet.getByRole('button', { name: 'Commit, push and open draft PR' })).toBeDisabled();
+  await sheet.getByRole('button', { name: 'Reload draft', exact: true }).click();
   await expect(sheet.getByRole('button', { name: 'Commit, push and open draft PR' })).toBeEnabled();
+});
+
+function incomplete(request: Record<string, unknown>, state: 'not-applied' | 'uncertain' | 'confirmed' = 'not-applied') {
+  const value = operation(request);
+  return { ...value, result: undefined, steps: { commit: { state }, push: { state: 'not-started' }, pr: { state: 'not-started' }, link: { state: 'not-started' } } };
+}
+
+test('failed review reload exposes a retry that can recover', async ({ page }) => {
+  let drafts = 0, publishes = 0;
+  const api = await fixture(page, (route) => {
+    drafts++;
+    return drafts === 2 ? route.fulfill({ status: 503, json: { error: { code: 'HTTP_ERROR', message: 'Synthetic draft read failure' } } }) : draftOk(route);
+  });
+  api.setExecute(async (route) => { publishes++; await route.fulfill({ json: incomplete(route.request().postDataJSON()) }); });
+  await page.getByRole('button', { name: 'Create PR', exact: true }).click();
+  const sheet = dialog(page);
+  await sheet.getByRole('button', { name: 'Commit, push and open draft PR' }).click();
+  await sheet.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(sheet.getByText('The publish review could not be loaded. Try again.')).toBeVisible();
+  await expect(sheet.getByText('Loading the publish review…')).toHaveCount(0);
+  await sheet.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(sheet.getByRole('textbox', { name: 'Commit message' })).toBeVisible();
+  await expect(sheet.getByRole('button', { name: 'Commit, push and open draft PR' })).toBeEnabled();
+  expect(publishes).toBe(1);
+});
+
+test('safe explicit retry clears the prior result and restores an approvable review', async ({ page }) => {
+  let publishes = 0;
+  const api = await fixture(page, draftOk);
+  api.setExecute(async (route) => { publishes++; await route.fulfill({ json: incomplete(route.request().postDataJSON()) }); });
+  await page.getByRole('button', { name: 'Create PR', exact: true }).click();
+  const sheet = dialog(page);
+  await sheet.getByRole('button', { name: 'Commit, push and open draft PR' }).click();
+  await sheet.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(sheet.getByRole('textbox', { name: 'Commit message' })).toBeVisible();
+  await expect(sheet.getByRole('region', { name: 'Publish result' })).toHaveCount(0);
+  await expect(sheet.getByRole('button', { name: 'Commit, push and open draft PR' })).toBeEnabled();
+  expect(publishes).toBe(1);
+});
+
+for (const state of ['uncertain', 'confirmed'] as const) test(`an incomplete ${state} operation cannot restart publication with a fresh request`, async ({ page }) => {
+  let publishes = 0;
+  const api = await fixture(page, draftOk);
+  api.setExecute(async (route) => { publishes++; await route.fulfill({ json: incomplete(route.request().postDataJSON(), state) }); });
+  await page.getByRole('button', { name: 'Create PR', exact: true }).click();
+  const sheet = dialog(page);
+  await sheet.getByRole('button', { name: 'Commit, push and open draft PR' }).click();
+  await expect(sheet.getByRole('region', { name: 'Publish result' })).toBeVisible();
+  await expect(sheet.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+  await expect(sheet.getByRole('button', { name: 'Commit, push and open draft PR' })).toHaveCount(0);
+  expect(publishes).toBe(1);
+});
+
+test('revision changes preserve edited inputs until explicit re-review', async ({ page }) => {
+  let drafts = 0;
+  const api = await fixture(page, (route) => { drafts++; return route.fulfill({ json: { ...DRAFT, head: drafts === 1 ? HEAD : 'd'.repeat(40), commitMessage: drafts === 1 ? DRAFT.commitMessage : 'Fresh review' } }); });
+  api.setExecute((route) => route.fulfill({ status: 400, json: { error: { code: 'REVISION_CHANGED', message: 'The reviewed working copy changed.' } } }));
+  await page.getByRole('button', { name: 'Create PR', exact: true }).click();
+  const sheet = dialog(page), message = sheet.getByRole('textbox', { name: 'Commit message' });
+  await message.fill('Keep my edited message');
+  const approve = sheet.getByRole('button', { name: 'Commit, push and open draft PR' });
+  await approve.click();
+  await expect(sheet.getByRole('alert')).toContainText('The working copy changed');
+  await expect(message).toHaveValue('Keep my edited message');
+  await expect(approve).toBeDisabled();expect(drafts).toBe(1);
+  await sheet.getByRole('button', { name: 'Reload draft', exact: true }).click();
+  await expect(message).toHaveValue('Fresh review');await expect(approve).toBeEnabled();expect(drafts).toBe(2);
 });

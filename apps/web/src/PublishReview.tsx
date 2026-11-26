@@ -69,7 +69,7 @@ const message = (cause: unknown) => (cause instanceof Error ? cause.message : 'T
 
 export function PublishReview({ open, projectId, threadId, initial, loadDraft, onClose, timeFormat }: PublishReviewProps) {
   const journalKey = `publish-review:${projectId}:${threadId}`;
-  const [phase, setPhase] = useState<'loading' | 'form' | 'auth'>('loading');
+  const [phase, setPhase] = useState<'loading' | 'form' | 'auth' | 'error'>('loading');
   const [draft, setDraft] = useState<PublishDraftV1 | null>(null);
   const [form, setForm] = useState<ReviewForm>(emptyForm);
   const [operation, setOperation] = useState<PublishOperationV1 | null>(null);
@@ -77,6 +77,8 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
   const [hydrated, setHydrated] = useState(false);
+  const [needsReview, setNeedsReview] = useState(false);
+  const retryableOperation = operation !== null && !operation.result && Object.values(operation.steps).every(step => step.state === 'not-started' || step.state === 'not-applied');
   const mounted = useRef(true);
 
   const persist = (next: ReviewForm, basis: PublishDraftV1) => {
@@ -133,19 +135,31 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
     if (outcome.kind === 'draft') {
       applyDraft(outcome.draft);
       setPhase('form');
+      setNeedsReview(false);
       setLoadError('');
     } else if (outcome.kind === 'auth') {
       setPhase('auth');
       setLoadError('');
-    } else setLoadError('The publish review could not be loaded. Try again.');
+    } else {
+      setPhase('error');
+      setLoadError('The publish review could not be loaded. Try again.');
+    }
   };
 
   const reload = async () => {
+    // A fresh request is safe only when no earlier step may have taken effect.
+    // Confirmed or uncertain partial work belongs to the inspection/continue flow.
+    if (operation && !retryableOperation) return;
+    setOperation(null);
+    setError('');
     setPhase('loading');
     setLoadError('');
     try {
-      accept(await loadDraft());
+      const outcome = await loadDraft();
+      if (mounted.current) accept(outcome);
     } catch {
+      if (!mounted.current) return;
+      setPhase('error');
       setLoadError('The publish review could not be loaded. Try again.');
     }
   };
@@ -176,7 +190,7 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
   };
 
   const approve = async () => {
-    if (!draft || running) return;
+    if (!draft || running || needsReview) return;
     const parsed = publishRequestV1Schema.safeParse({
       id: crypto.randomUUID(),
       threadId,
@@ -205,7 +219,7 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
         setPhase('auth');
       } else if (cause instanceof ApiError && cause.code === 'REVISION_CHANGED') {
         setError('The working copy changed. Review the current revision before publishing.');
-        void reload();
+        setNeedsReview(true);
       } else setError(message(cause));
     } finally {
       if (mounted.current) setRunning(false);
@@ -323,13 +337,14 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
           {error && (
             <p role="alert" className="error-text">
               {error}
+              {needsReview && <button type="button" className="quiet" onClick={() => void reload()}>Reload draft</button>}
             </p>
           )}
           <div className="publish-review-actions">
             <button type="button" className="quiet" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="primary" disabled={running || !hydrated || selected === 0}>
+            <button type="submit" className="primary" disabled={running || !hydrated || needsReview || selected === 0}>
               Commit, push and open draft PR
             </button>
           </div>
@@ -361,10 +376,9 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
           )}
           {!operation.result && (
             <p className="publish-review-note">
-              The publish did not complete. Review the step results before trying again.{' '}
-              <button type="button" className="quiet" onClick={() => void reload()}>
-                Retry
-              </button>
+              {retryableOperation ? <>The publish did not complete. Review the step results before trying again.{' '}
+                <button type="button" className="quiet" onClick={() => void reload()}>Retry</button>
+              </> : 'Publishing has a confirmed or uncertain step. Check what happened before continuing.'}
             </p>
           )}
           <div className="publish-review-actions">
