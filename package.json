@@ -64,7 +64,7 @@
     "ajv-formats": "3.0.1",
     "electron-updater": "6.8.11",
     "fastify": "5.12.7",
-    "lucide-react": "0.468.0",
+    "lucide-react": "1.78.0",
     "node-pty": "1.1.0",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.4.299",
