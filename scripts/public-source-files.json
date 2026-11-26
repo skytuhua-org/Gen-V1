@@ -3519,6 +3519,7 @@
     "tests/bun-lint-config.test.ts",
     "tests/capabilities.test.ts",
     "tests/capture-ui/helpers-edges.test.ts",
+    "tests/capture-ui/recording-cursor.test.ts",
     "tests/chat-gesture-audit.test.ts",
     "tests/chat-layout.test.ts",
     "tests/checkpoint-restore-reconcile-v3.test.ts",
