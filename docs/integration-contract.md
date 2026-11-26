@@ -12,7 +12,7 @@ Shared types live in [packages/contracts/index.ts](../packages/contracts/index.t
 - POST /api/commands -> CommandReceipt; body HostCommand.
 - GET /api/artifacts/:id/source -> current source text. Inspect a held revision from its immutable ArtifactRecord, not this latest endpoint.
 - GET /api/resources/:id/content?path=<relative-file> -> granted attachment/file content, bounded to 20 MiB. Omit path for a direct file/attachment; use a URL-encoded relative path for a file below a directory grant. Resource guards apply through final I/O; this is not an arbitrary-URL proxy.
-- GET /api/artifacts/:id/mount -> {url,token,mountId,revision}; currently rejects with CAPABILITY_UNAVAILABLE because generated apps remain disabled. Once accepted, the URL uses the separate loopback origin http://localhost:4318/widget/:artifactId/:revision, a short-lived one-use ticket query and mount credentials in its fragment. It carries no host credentials.
+- GET /api/artifacts/:id/mount -> {url,token,mountId,revision}. Mounts an active generated widget in the [generated-app preview](public/release-notes.md). The URL uses the separate loopback widget origin from bootstrap, a short-lived one-use ticket query and mount credentials in its fragment. The host returns CAPABILITY_UNAVAILABLE when the generated-app gate is disabled.
 
 Command types / payload:
 - thread.create {title?,projectName?}; thread.rename {title}; thread.archive {}.

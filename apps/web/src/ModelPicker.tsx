@@ -1,6 +1,7 @@
 import {useEffect,useId,useMemo,useRef,useState,useImperativeHandle,type Ref,type KeyboardEvent} from 'react';
 import {Popover} from '../../../packages/ui-shell/Popover';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
+import {workareaBoundary} from './popover-boundary';
 import {Bot,Check,ChevronDown,LayoutGrid,Search,Star} from 'lucide-react';
 import type {ModelInfo} from '../../../packages/contracts';
 import {SUBSCRIPTION_CONNECTIONS} from '../../../packages/contracts/connections';
@@ -58,7 +59,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
  function navigate(event:KeyboardEvent<HTMLInputElement>){
   if(isComposing(event)){if(event.key==='Escape')event.preventDefault();return;}
   if(event.altKey||event.ctrlKey||event.metaKey)return;
-  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close(true);return;}
+  if(event.key==='Escape'&&!event.shiftKey){event.preventDefault();event.stopPropagation();close(true);return;}
   if(event.key==='Tab'&&!combined){close(true);return;}
   if(event.key==='Enter'){event.preventDefault();if(active)choose(active);return;}
   if(!['ArrowDown','ArrowUp','Home','End','PageUp','PageDown'].includes(event.key))return;
@@ -92,6 +93,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
    <Bot className="model-picker-trigger-icon" size={16} aria-hidden="true"/><span className="model-picker-trigger-name">{name}</span>{caption&&<span className="model-picker-trigger-effort">{caption}</span>}<ChevronDown size={12} data-open={open}/>
   </button>
   <Popover anchor={trigger} contentRef={popover} initialFocus={search} open={open&&!locked} present={present}
+   getBoundary={()=>workareaBoundary(trigger.current)}
    onReady={()=>{popover.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({block:'nearest'});}}
    width={combined?720:560} height={440}
    onDismiss={()=>close()}
@@ -120,12 +122,12 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
        <button type="button" className="model-picker-favorite" aria-pressed={favorite} aria-label={(favorite?'Remove ':'Add ')+model.id+(favorite?' from favorites':' to favorites')} tabIndex={model.id===active?.id?0:-1} onClick={event=>{event.stopPropagation();toggleFavorite(model);}}><Star size={14} aria-hidden="true" fill={favorite?'currentColor':'none'}/></button>
       </div>;
      })}</div>)}
+     {!visible.length&&(filter.kind==='favorites'&&favoriteCount===0
+      ?<p className="model-picker-empty" role="status">No favorites yet<span>Star a model to keep it here.</span></p>
+      :<p className="model-picker-empty" role="status">No models found<span>Try another model or provider name.</span></p>)}
     </div>
     {scopeHint&&<p className="model-picker-scope" role="note">{scopeHint}</p>}
     {onNewTask&&<button type="button" className="model-picker-new-task" disabled={!modelId} onClick={()=>{onNewTask(modelId);close();}}>Start new task with {name}</button>}
-    {!visible.length&&(filter.kind==='favorites'&&favoriteCount===0
-     ?<p className="model-picker-empty" role="status">No favorites yet<span>Star a model to keep it here.</span></p>
-     :<p className="model-picker-empty" role="status">No models found<span>Try another model or provider name.</span></p>)}
    </div>
    {combined&&<div className="model-picker-reasoning" role="group" aria-label="Reasoning">
     <div className="model-picker-reasoning-head"><span>Reasoning</span><small>{selected?.name??(modelId||'Select model')}</small></div>

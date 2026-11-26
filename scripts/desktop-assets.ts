@@ -28,8 +28,10 @@ export const NODE_ARCHIVE_EXTRACT_COMMAND=[
 ].join('; ');
 export const NODE_VERSION='24.22.2';
 export const NODE_ARCHIVE_SHA256='ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2';
+const CONTROL_ADDON_RESOURCE='host/packages/core/windows-control-bridge.node';
+const CONTROL_TRUST_RESOURCE='host/control-driver-trust.json';
 export const REQUIRED_RUNTIME_FILES=[
- 'node/node.exe','host/apps/server/main.ts','host/node_modules/tsx/dist/loader.mjs',
+ 'app.asar',CONTROL_TRUST_RESOURCE,'node/node.exe','host/apps/server/main.ts','host/node_modules/tsx/dist/loader.mjs',
  'host/packages/plugins/host.ts','host/packages/plugins/installation.ts','host/packages/plugins/contracts.ts',
  'host/node_modules/electron-updater/out/main.js','host/node_modules/semver/index.js',
  'host/dist/plugin-runtime/runtime.js','host/dist/plugin-runtime/runtime.css',
@@ -56,8 +58,20 @@ export const REQUIRED_RUNTIME_FILES=[
  'host/node_modules/@google/gemini-cli/bundle/gemini.js','host/node_modules/@modelcontextprotocol/sdk/package.json',
  'host/node_modules/typescript/lib/typescript.js','host/node_modules/typescript/package.json',
  'host/node_modules/typescript/LICENSE.txt','host/node_modules/typescript/ThirdPartyNoticeText.txt',
- 'host/packages/core/windows-path-guard.ps1','host/packages/core/windows-credential-lease.node','host/packages/capabilities/sqlite-worker.mjs','host/dist/web/index.html'
+ 'host/packages/core/windows-path-guard.ps1','host/packages/core/windows-credential-lease.node',CONTROL_ADDON_RESOURCE,'host/packages/capabilities/sqlite-worker.mjs','host/dist/web/index.html'
 ] as const;
+
+/** Called after Electron Builder has copied the native addon and assembled the app archive. */
+export async function writeControlDriverPackageTrust(resources:string,builtArtifactSha256:string){
+ const artifact=resolve(resources,CONTROL_ADDON_RESOURCE),adapter=resolve(resources,'app.asar');
+ for(const path of [artifact,adapter]){
+  if(!(await lstat(path)).isFile())throw Error('Packaged control driver source is not a regular file.');
+ }
+ const artifactSha256=createHash('sha256').update(await readFile(artifact)).digest('hex');
+ if(artifactSha256!==builtArtifactSha256)throw Error('Packaged control addon differs from the native build output.');
+ const adapterModuleSha256=createHash('sha256').update(await readFile(adapter)).digest('hex');
+ await writeFile(resolve(resources,CONTROL_TRUST_RESOURCE),JSON.stringify({version:1,artifactSha256,adapterModuleSha256}),{flag:'wx'});
+}
 export function packageManagerInvocation(manager:string,node:string,args:string[]){return /\.exe$/i.test(manager)?{file:manager,args}:{file:node,args:[manager,...args]};}
 export function runtimeInstallArguments(host:string){return ['install','--ignore-workspace','--dir',host,'--lockfile-dir',host,'--prod','--frozen-lockfile','--offline','--ignore-scripts'];}
 export async function stageRuntimeInstall(root:string,host:string){

@@ -28,11 +28,15 @@ export class GitHubTools{
  private environment(){const root=join(this.projects.store.dataDir,'github');return{...processEnvironment(),HOME:root,USERPROFILE:root,GH_CONFIG_DIR:join(root,'config'),GH_HOST:'github.com',GH_PROMPT_DISABLED:'1',GH_NO_UPDATE_NOTIFIER:'1',GIT_TERMINAL_PROMPT:'0'};}
  private parseOutput(output:string){try{return JSON.parse(output) as unknown;}catch{throw new HarnessError('GITHUB_CLI_OUTPUT_INVALID','The GitHub CLI returned unreadable output. Check the bundled gh tool and the repository state.');}}
  private async run(path:string,args:string[]){
-  const token=await this.auth.token();await mkdir(join(this.projects.store.dataDir,'github/config'),{recursive:true});
+  const token=await this.auth.token();
+  // A short credential cannot be tracked by the declared redactor. Never pass
+  // it to a child that could echo it into a public GitHub tool result.
+  const redactor=createSecretRedactor([token]);
+  if(redactor.tracked===0)throw new HarnessError('GITHUB_CLI_TOKEN_REDACTION_UNSUPPORTED','The GitHub credential cannot be safely redacted from CLI output.');
+  await mkdir(join(this.projects.store.dataDir,'github/config'),{recursive:true});
   let stdout:string;
   try{({stdout}=await promisify(execFile)(this.executable,args,{cwd:path,env:{...this.environment(),GH_TOKEN:token},windowsHide:true,timeout:60000,maxBuffer:2*1024*1024,encoding:'utf8'}));}
   catch{throw new HarnessError('GITHUB_CLI_FAILED','The GitHub CLI did not complete. Check repository access and the bundled tool.');}
-  const redactor=createSecretRedactor([token]);
   // Decode JSON strings before redaction so escaped ANSI fragments cannot hide
   // this command's known token. Plain URL output still uses the same redactor.
   let decoded:unknown;
