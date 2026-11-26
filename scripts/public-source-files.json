@@ -3957,6 +3957,7 @@
     "tests/effect-recovery-v3.test.ts",
     "tests/environment-settings.test.ts",
     "tests/eval-gates.test.ts",
+    "tests/event-growth-measurement.test.ts",
     "tests/event-stream-projection-v3.test.ts",
     "tests/event-stream.test.ts",
     "tests/everyday-catalog.test.ts",
