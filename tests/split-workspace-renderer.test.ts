@@ -16,8 +16,8 @@ initial=applySplitWorkspaceCommand(initial,'view.open',{view:{id:'one',kind:'thr
 initial=applySplitWorkspaceCommand(initial,'pane.split',{paneId:'pane-main',newPaneId:'right',splitId:'columns',axis:'horizontal',view:{id:'two',kind:'thread',binding:{authority:{kind:'local'},threadId:'two'}}});
 window.mounts={};window.commands=[];window.editorChoices=[];window.flushRejected=false;window.deferEditorChoice=false;
 function Editor({id,active}){const[value,setValue]=useState('');useEffect(()=>{window.mounts[id]=(window.mounts[id]||0)+1;},[]);return <div><label>{id}<input aria-label={'Draft '+id} value={value} onChange={e=>setValue(e.target.value)}/></label><iframe title={'Frame '+id} srcDoc='<input value="same renderer"/>'/><span>{active?'visible':'hidden'}</span></div>}
-function Fixture(){const[layout,setLayout]=useState(initial);window.currentLayout=layout;window.issue=(type,payload)=>setLayout(current=>applySplitWorkspaceCommand(current,type,payload));return <WorkspaceSplitLayout layout={layout} showHistory={false} emptyMainPaneId={window.emptyMain?'pane-main':undefined} editorOptions={[{id:'thread',title:'Conversation'},{id:'diff',title:'Diff'}]} onSelectEditor={async(kind,paneId)=>{window.editorChoices.push({kind,paneId});if(window.deferEditorChoice)await new Promise(resolve=>{window.finishEditorChoice=resolve;});}} onDropThread={async()=>{window.threadDrops=(window.threadDrops||0)+1;}} title={view=>view.id} prepare={async()=>{if(window.flushRejected)throw Error('Draft flush failed. Keep this view open.');}} onCommand={async(type,payload)=>{window.commands.push({type,payload});if(window.commandFault)throw Error(window.commandFault);setLayout(current=>applySplitWorkspaceCommand(current,type,payload));}} renderView={(view,active)=><Editor id={view.id} active={active}/>}/>}
-createRoot(document.getElementById('root')).render(<Fixture/>);
+function Fixture(){const[layout,setLayout]=useState(initial);window.currentLayout=layout;window.issue=(type,payload)=>setLayout(current=>applySplitWorkspaceCommand(current,type,payload));return <WorkspaceSplitLayout layout={layout} showHistory={false} emptyMainPaneId={window.emptyMain?'pane-main':undefined} editorOptions={[{id:'thread',title:'Conversation'},{id:'diff',title:'Diff'}]} onSelectEditor={async(kind,paneId)=>{window.editorChoices.push({kind,paneId});if(window.deferEditorChoice)await new Promise(resolve=>{window.finishEditorChoice=resolve;});}} onDropThread={async()=>{window.threadDrops=(window.threadDrops||0)+1;}} title={view=>view.id} prepare={async()=>{if(window.flushRejected)throw Error('Draft flush failed. Keep this view open.');}} onCommand={async(type,payload)=>{window.commands.push({type,payload});if(window.commandFault)throw Error(window.commandFault);if(type==='pane.resize'&&window.holdResize)await new Promise(resolve=>{window.finishResize=resolve;});setLayout(current=>applySplitWorkspaceCommand(current,type,payload));}} renderView={(view,active)=><Editor id={view.id} active={active}/>}/>}
+const fixtureRoot=createRoot(document.getElementById('root'));window.unmountSplit=()=>fixtureRoot.unmount();fixtureRoot.render(<Fixture/>);
 `;
 beforeAll(async()=>{
  const root=fileURLToPath(new URL('../',import.meta.url));
@@ -31,15 +31,15 @@ async function issue(page:Page,type:string,payload:Record<string,unknown>){await
 
 it('uses the shared area menu for keyboard editor selection, Escape and outside dismissal',async()=>{
  const tab=await page();try{
-  await tab.evaluate(()=>(window as any).deferEditorChoice=true);
+  await tab.evaluate(()=>window.deferEditorChoice=true);
   const trigger=tab.locator('[data-split-pane="right"]').getByLabel('Area actions',{exact:true});await trigger.click();
   expect(await tab.getByRole('menu',{name:'Area actions',exact:true}).count()).toBe(1);
   expect((await trigger.boundingBox())!.width).toBeLessThanOrEqual(34);
   const choice=tab.getByRole('menuitem',{name:'Editor: Diff',exact:true});await choice.focus();await choice.press('Enter');
-  await tab.waitForFunction(()=>(window as any).editorChoices.length===1);
-  expect(await tab.evaluate(()=>(window as any).editorChoices)).toEqual([{kind:'diff',paneId:'right'}]);
+  await tab.waitForFunction(()=>window.editorChoices.length===1);
+  expect(await tab.evaluate(()=>window.editorChoices)).toEqual([{kind:'diff',paneId:'right'}]);
   expect(await tab.getByRole('menu').count()).toBe(0);expect(await trigger.isDisabled()).toBe(true);
-  await tab.evaluate(()=>(window as any).finishEditorChoice());
+  await tab.evaluate(()=>window.finishEditorChoice());
   await expect.poll(()=>trigger.evaluate(node=>node===document.activeElement)).toBe(true);
   expect(await tab.getByRole('menu').count()).toBe(0);expect(await trigger.evaluate(node=>node===document.activeElement)).toBe(true);
   await trigger.press('ArrowDown');await tab.getByRole('menu').waitFor();await tab.keyboard.press('Escape');
@@ -51,7 +51,7 @@ it('uses the shared area menu for keyboard editor selection, Escape and outside 
 
 it('mounts a tool view opened in the empty main pane',async()=>{
  const tab=await page();try{
-  await tab.evaluate(()=>(window as any).emptyMain=true);
+  await tab.evaluate(()=>window.emptyMain=true);
   await issue(tab,'view.open',{paneId:'pane-main',view:{id:'tool:files',kind:'files',binding:{authority:{kind:'local'},projectId:'p1'}}});
   await tab.locator('[data-split-view="tool:files"] span',{hasText:'visible'}).waitFor();
   expect(await tab.locator('[data-split-view="tool:files"]').evaluate(node=>getComputedStyle(node).display)).not.toBe('none');
@@ -64,12 +64,12 @@ it('mounts a tool view opened in the empty main pane',async()=>{
 
 it('keeps editor focus when a pending area action completes',async()=>{
  const tab=await page();try{
-  await tab.evaluate(()=>(window as any).deferEditorChoice=true);
+  await tab.evaluate(()=>window.deferEditorChoice=true);
   const trigger=tab.locator('[data-split-pane="right"]').getByLabel('Area actions',{exact:true});await trigger.click();
   await tab.getByRole('menuitem',{name:'Editor: Diff',exact:true}).click();
-  await tab.waitForFunction(()=>typeof (window as any).finishEditorChoice==='function');expect(await trigger.isDisabled()).toBe(true);
+  await tab.waitForFunction(()=>typeof window.finishEditorChoice==='function');expect(await trigger.isDisabled()).toBe(true);
   const draft=tab.getByRole('textbox',{name:'Draft two'});await draft.fill('Keep typing during the pending action');
-  await tab.evaluate(()=>(window as any).finishEditorChoice());await expect.poll(()=>trigger.isDisabled()).toBe(false);
+  await tab.evaluate(()=>window.finishEditorChoice());await expect.poll(()=>trigger.isDisabled()).toBe(false);
   expect(await draft.evaluate(node=>node===document.activeElement)).toBe(true);expect(await draft.inputValue()).toBe('Keep typing during the pending action');
  }finally{await tab.close();}
 });
@@ -82,7 +82,7 @@ it('uses a shared narrow-area chooser without remounting either editor',async()=
   expect(await tab.getByRole('listbox',{name:'Active workspace area',exact:true}).count()).toBe(1);
   await tab.getByRole('option',{name:'one',exact:true}).click();await tab.getByRole('textbox',{name:'Draft one'}).waitFor({state:'visible'});
   expect(await tab.getByRole('textbox',{name:'Draft one'}).inputValue()).toBe('Retained narrow draft');
-  expect(await tab.evaluate(()=>(window as any).mounts)).toEqual({one:1,two:1});
+  expect(await tab.evaluate(()=>window.mounts)).toEqual({one:1,two:1});
  }finally{await tab.close();}
 });
 
@@ -171,6 +171,58 @@ it('cancels a pending keyboard resize preview on Escape without a command',async
   expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(before);
  }finally{await tab.close();}
 });
+it('cancels unsent keyboard resize when focus leaves the divider',async()=>{
+ const tab=await page();try{
+  await tab.clock.install();await tab.clock.pauseAt(new Date());
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');
+  await tab.getByRole('textbox',{name:'Draft one'}).focus();await tab.clock.runFor(300);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands)).toEqual([]);
+  expect(await divider.getAttribute('aria-valuenow')).toBe('50');
+  expect(await divider.getAttribute('class')).not.toContain('is-dragging');
+ }finally{await tab.close();}
+});
+it('cancels unsent keyboard resize when the component unmounts',async()=>{
+ const tab=await page();try{
+  await tab.clock.install();await tab.clock.pauseAt(new Date());
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');
+  await tab.evaluate(()=>(window as unknown as {unmountSplit:()=>void}).unmountSplit());await tab.clock.runFor(300);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands)).toEqual([]);
+ }finally{await tab.close();}
+});
+it('cancels unsent keyboard resize when its split is removed from the layout',async()=>{
+ const tab=await page();try{
+  await tab.clock.install();await tab.clock.pauseAt(new Date());
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');
+  await issue(tab,'pane.join',{paneId:'right',targetPaneId:'pane-main'});
+  await expect.poll(()=>divider.count()).toBe(0);await tab.clock.runFor(300);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands)).toEqual([]);
+ }finally{await tab.close();}
+});
+it('cancels unsent keyboard resize before a pointer resize takes ownership',async()=>{
+ const tab=await page();try{
+  await tab.clock.install();await tab.clock.pauseAt(new Date());
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');
+  const box=(await divider.boundingBox())!;await tab.mouse.move(box.x+box.width/2,box.y+120);await tab.mouse.down();
+  await tab.clock.runFor(300);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands)).toEqual([]);
+  await tab.mouse.move(box.x+35,box.y+120);await tab.mouse.up();
+  await expect.poll(()=>tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(1);
+ }finally{await tab.close();}
+});
+it('a settled cancelled keyboard resize cannot clear a newer equal-ratio preview',async()=>{
+ const tab=await page();try{
+  await tab.clock.install();await tab.clock.pauseAt(new Date());
+  await tab.evaluate(()=>(window as unknown as {holdResize:boolean}).holdResize=true);
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');await tab.clock.runFor(150);
+  await expect.poll(()=>tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(1);
+  await divider.press('Escape');await divider.press('ArrowRight');
+  await tab.evaluate(()=>(window as unknown as {finishResize:()=>void}).finishResize());
+  await expect.poll(()=>tab.evaluate(()=>document.querySelector('.split-workspace')?.getAttribute('aria-busy'))).toBe('false');
+  expect(await divider.getAttribute('class')).toContain('is-dragging');
+  await divider.press('Escape');await tab.clock.runFor(300);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(1);
+ }finally{await tab.close();}
+});
 it('retains layout when draft flush fails and restores desktop geometry after narrow mode',async()=>{
  const tab=await page();try{
   await tab.evaluate(()=>(window as unknown as {flushRejected:boolean}).flushRejected=true);
@@ -210,7 +262,7 @@ it('keeps editor and recovery controls reachable inside a short pane',async()=>{
   await issue(tab,'pane.join',{paneId:'right'});await tab.setViewportSize({width:900,height:270});await tab.locator('[data-split-pane="pane-main"]').getByLabel('Area actions',{exact:true}).click();
   const bounds=await tab.getByRole('menu',{name:'Area actions',exact:true}).boundingBox(),pane=await tab.locator('[data-split-pane="pane-main"]').boundingBox();
   expect(bounds).not.toBeNull();expect(pane).not.toBeNull();expect(bounds!.y).toBeGreaterThanOrEqual(0);expect(bounds!.y+bounds!.height).toBeLessThanOrEqual(270);
-  const recovery=tab.getByRole('menuitem',{name:'Recover: two',exact:true});await recovery.focus();await recovery.scrollIntoViewIfNeeded();expect(await recovery.isVisible()).toBe(true);await recovery.press('Enter');await tab.getByRole('textbox',{name:'Draft two'}).waitFor({state:'visible'});expect(await tab.evaluate(()=>(window as any).mounts)).toEqual({one:1,two:1});
+  const recovery=tab.getByRole('menuitem',{name:'Recover: two',exact:true});await recovery.focus();await recovery.scrollIntoViewIfNeeded();expect(await recovery.isVisible()).toBe(true);await recovery.press('Enter');await tab.getByRole('textbox',{name:'Draft two'}).waitFor({state:'visible'});expect(await tab.evaluate(()=>window.mounts)).toEqual({one:1,two:1});
  }finally{await tab.close();}
 });
 
