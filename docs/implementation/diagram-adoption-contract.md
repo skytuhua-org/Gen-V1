@@ -27,18 +27,25 @@ by this deterministic procedure:
 Annotation independence: expected direction, ordered nodes, ordered edge multiset
 and groupings were annotated by reading the frozen source text directly, never by
 running any mermaid parser or the trial engine, so downstream render comparison
-does not inherit the engine-under-test's own parse. Selection-time node counting
-used a coarse regex and undercounted chained forms (e.g. `A-->B-->C` counted 2
-where 3 exist); every example remains within the 2–12 bound under the exact
-hand-verified count, so no selection outcome changes. The corpus records the
-hand-verified counts.
+does not inherit the engine-under-test's own parse. The corpus records these
+hand-verified counts and topology.
 
-Several held-out pairs (6/7, 10/11, 12/13, 14/15, 16/17, 18/19) differ only in the
-`graph` vs `flowchart` keyword or trailing whitespace; they are not exact
-duplicates and are retained per the procedure. Entry `heldout-02` uses the
-`flowchart-elk` diagram keyword and entries use modern syntax (`@{shape:}`
-annotations, edge IDs `e1@-->`, `accTitle`/`accDescr`) — faithful retention is
-the point of the corpus; admission policy is DIA02's scope.
+Freeze correction (corpus version 2, review-driven): the first extraction
+miscounted edge-id syntax (`A e1@--> B` counted zero nodes) and silently dropped
+examples with YAML frontmatter, so the frozen set was not the deterministic
+first-20. Version 2 corrects this: `flowchart-step-animation.html` lines 11/26
+(4 and 5 nodes) and `flowchart.html` line 233 (6 nodes, frontmatter retained
+verbatim in the source) are included; the subroutine-shape trio beyond the 20th
+slot drops out; the skip list records the 15-node frontmatter variants examined
+before line 233. YAML frontmatter never disqualifies an example — it is part of
+the faithfully retained source.
+
+Several held-out pairs differ only in the `graph` vs `flowchart` keyword or
+trailing whitespace; they are not exact duplicates and are retained per the
+procedure. Entry `heldout-02` uses the `flowchart-elk` diagram keyword and
+entries use modern syntax (`@{shape:}` annotations, edge IDs `e1@-->`,
+`accTitle`/`accDescr`) — faithful retention is the point of the corpus;
+admission policy is DIA02's scope.
 
 ## 2. Module-Worker feasibility (production and packaged routes)
 
