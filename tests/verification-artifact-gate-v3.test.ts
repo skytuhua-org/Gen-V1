@@ -127,7 +127,6 @@ describe('current artifact custody in the verification gate', () => {
 describe('bounded scoped security findings in the panel read model', () => {
   const blobSha = (bytes: Buffer) => {const hash = createHash('sha1'); hash.update(`blob ${bytes.length}\0`); hash.update(bytes); return hash.digest('hex');};
   const record = (f: ReturnType<typeof fixture>, overrides: Record<string, unknown> = {}, thread = f.thread.id) => {
-    const root = f.store.get<{rootPath: string}>('verificationDeclaration', f.thread.id)!.rootPath;
     const bytes = Buffer.from((overrides.content as string) ?? 'export const ready = true;\n');
     return new SecurityFindingLedger(f.store).record({
       version: 1, findingId: (overrides.findingId as string) ?? 'f-1',
@@ -198,8 +197,6 @@ describe('bounded scoped security findings in the panel read model', () => {
   it('records reproduction as a non-executable presence label', () => {
     const f = fixture();
     const ledger = new SecurityFindingLedger(f.store);
-    const root = f.store.get<{rootPath: string}>('verificationDeclaration', f.thread.id)!.rootPath;
-    void root;
     const bytes = Buffer.from('export const ready = true;\n');
     ledger.record({version: 1, findingId: 'f-repro', source: {path: 'app.ts', blobSha: blobSha(bytes), line: null}, authorizedScope: 'fixture', observation: 'o', impact: 'i', status: 'MITIGATED', reproduction: 'steps text', createdAt: new Date().toISOString()}, f.thread.id);
     expect(verificationPanelModel(f.store, f.thread.id).findings.rows[0].reproductionRecorded).toBe(true);
