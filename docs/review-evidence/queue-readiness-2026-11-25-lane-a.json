@@ -1,0 +1,3068 @@
+{
+  "worker": "codex-cloud-160132",
+  "canonicalIssue": 2307,
+  "planRevision": "queue-readiness-2026-11-25-r1",
+  "status": "IN_PROGRESS",
+  "scopeCount": 82,
+  "originalCount": 45,
+  "expandedCount": 33,
+  "updatedUtc": "2026-11-26 02:23:08 UTC",
+  "otherReviews": {
+    "2303": "lane-a-2303-review.json",
+    "1310": "29PASS local; later coordinator integration rerun had selection variability, coordinator owns final state",
+    "1697": "independent source+1browserPASS; coordinator broader evidence",
+    "2083": "independent accepted-proof gating review and52focusedPASS; broader18Linuxsafe-openfailures explicit",
+    "1548": "lane-a-1548-publication.json: complete independent review and19focusedPASS plus declared gates; artifact8a5825e originalrefheld",
+    "2119/2120": "Independent same-pointer release probe reproduced cancellation suppression bug; root846d43 correction plus unchanged probe atb08ffada passed Escape/blur no-menu assertions. Logs lane-a-corner-cancel-probe*.log; root owns final trees/gates.",
+    "2121": "Independent final feature read and actual probe found missing arrow wrap and ignored app reduced/off policy; root corrected both under accepted2105. Unchanged probe atc8725eb4 confirmed wrap activation and auto scrolling; root owns final gates. Logs lane-a-2121-tabs-probe*.log.",
+    "1632": {
+      "status": "additional-transfer-in-progress",
+      "originalHead": "ff9e1093ddba30bd20e2040d6b581856df082a59",
+      "boundedRepair": "d4c39ae77",
+      "integratedLocal": "9c721cd71",
+      "claim": 7180686679,
+      "evidence": "7newbrowserPASS/17focusedPASS before integration;35integratedfocusedPASS; new heading slug collision qualified and pending repair",
+      "publication": "NOT_YET_PUBLISHED"
+    }
+  },
+  "remaining": [
+    "Finish additional transferred1632 collision regression, accepted-main integration and final declared gates/publication/release",
+    "Integrate355 current accepted-main tool-definitions conflict and publish normal leased update if permitted",
+    "Coordinate own older candidate conflicts1070/1174/1204 and original982/1249 with coordinator; do not infer all PRs ready from source inspection",
+    "Publish compact durable evidence ledger and release parent scope after agreed remaining work"
+  ],
+  "sourceInspectionCount": 82,
+  "sourceUnreadCount": 0,
+  "transferredCount": 4,
+  "acceptedMainAtLatestIntegration": "0a370b35a490d436c362f184d3b840c0710a3cf3",
+  "readinessMeaning": "Source inspection complete for82 recorded original heads; no aggregate merge-ready claim. Actual queue membership/heads/checks belong to live coordinator census.",
+  "prs": [
+    {
+      "pr": 1035,
+      "head": "a10f20323b5030990f728539e197172c25e2498d",
+      "reviewedPaths": [
+        "tests/personal-visuals-ui.test.ts",
+        "tests/widget-committed-owner.test.ts",
+        "tests/window-globals.d.ts"
+      ],
+      "semanticReview": "Reviewed explicit widget guard/event types and surrounding owner checks; emitted JavaScript is identical for both production files. Focused owner/UI tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "a10f20323b5030990f728539e197172c25e2498d",
+          "files": [
+            "tests/personal-visuals-ui.test.ts",
+            "tests/widget-committed-owner.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 19.2,
+          "numTotalTests": 10,
+          "numPassedTests": 10,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 869,
+      "head": "904fcac845ec00f6f30782dd3c8346eb446892ac",
+      "reviewedPaths": [
+        ".github/workflows/ci.yml",
+        "docs/implementation/v6/M14/handoff-followup-x1.md",
+        "packages/core/linux-path-guard.py",
+        "scripts/public-source-files.json",
+        "tests/ci-draft-policy.test.ts",
+        "tests/fixtures/linux-path-guard/native.mjs",
+        "tests/linux-path-guard-cleanup.test.ts",
+        "tests/linux_path_guard_cleanup.py"
+      ],
+      "semanticReview": "Reviewed broker mount ledger, quarantined descendants, unresolved cleanup ownership, credential leaf restoration, CI draft policy, native fixture and all198lines of handoff. Cleanup failures retain custody and named retry ownership;74 synthetic tests do not qualify privileged native broker behavior.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "904fcac845ec00f6f30782dd3c8346eb446892ac",
+          "files": [
+            "tests/linux-path-guard.test.ts",
+            "tests/linux-path-guard-cleanup.test.ts",
+            "tests/ci-draft-policy.test.ts",
+            "tests/public-source.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 5.76,
+          "numTotalTests": 74,
+          "numPassedTests": 74,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1036,
+      "head": "63d32e76189190a292fc4773432f4723b21898d9",
+      "reviewedPaths": [
+        "tests/account-auth-http.test.ts",
+        "tests/account-readiness-cancellation.test.ts",
+        "tests/files-read-commit-owner.test.ts",
+        "tests/ime-artifact-dismissal.test.ts",
+        "tests/plan-key-connections.test.ts",
+        "tests/prediction-runtime.test.ts",
+        "tests/project-action-owner.test.ts",
+        "tests/repository-map-custody.test.ts",
+        "tests/repository-map-host.test.ts",
+        "tests/side-draft-owner.test.ts",
+        "tests/split-workspace-renderer.test.ts",
+        "tests/subscription-connections.test.ts"
+      ],
+      "semanticReview": "Reviewed TypeScript cleanup across changed source/tests and owner guards; ten production emissions identical and two differ only optional arrow-parameter parentheses. Built focused suites150PASS,14explicit skips.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "63d32e76189190a292fc4773432f4723b21898d9",
+          "files": [
+            "tests/account-auth-http.test.ts",
+            "tests/account-readiness-cancellation.test.ts",
+            "tests/files-read-commit-owner.test.ts",
+            "tests/ime-artifact-dismissal.test.ts",
+            "tests/plan-key-connections.test.ts",
+            "tests/prediction-runtime.test.ts",
+            "tests/project-action-owner.test.ts",
+            "tests/repository-map-custody.test.ts",
+            "tests/repository-map-host.test.ts",
+            "tests/side-draft-owner.test.ts",
+            "tests/split-workspace-renderer.test.ts",
+            "tests/subscription-connections.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 32.51,
+          "numTotalTests": 160,
+          "numPassedTests": 146,
+          "numFailedTests": 0,
+          "numPendingTests": 14,
+          "success": false
+        },
+        {
+          "head": "63d32e76189190a292fc4773432f4723b21898d9",
+          "files": [
+            "tests/account-auth-http.test.ts",
+            "tests/account-readiness-cancellation.test.ts",
+            "tests/files-read-commit-owner.test.ts",
+            "tests/ime-artifact-dismissal.test.ts",
+            "tests/plan-key-connections.test.ts",
+            "tests/prediction-runtime.test.ts",
+            "tests/project-action-owner.test.ts",
+            "tests/repository-map-custody.test.ts",
+            "tests/repository-map-host.test.ts",
+            "tests/side-draft-owner.test.ts",
+            "tests/split-workspace-renderer.test.ts",
+            "tests/subscription-connections.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 33.95,
+          "numTotalTests": 164,
+          "numPassedTests": 150,
+          "numFailedTests": 0,
+          "numPendingTests": 14,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1069,
+      "head": "1b8ed3f12fa7c4a62669df7c7ef6e421a05bc758",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/pdf-worker.test.ts"
+      ],
+      "semanticReview": "Reviewed bounded PDF worker parsing/termination and buffer/stream ownership with surrounding reader code;8 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "1b8ed3f12fa7c4a62669df7c7ef6e421a05bc758",
+          "files": [
+            "tests/pdf-worker.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 1.84,
+          "numTotalTests": 8,
+          "numPassedTests": 8,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1206,
+      "head": "b874eb7c493dca8ba8ddb5d2fc170277bbdece0c",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-host-lease.test.ts"
+      ],
+      "semanticReview": "Reviewed PDF host lease acquisition/release and live ownership checks;5 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "b874eb7c493dca8ba8ddb5d2fc170277bbdece0c",
+          "files": [
+            "tests/server-host-lease.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 2.93,
+          "numTotalTests": 5,
+          "numPassedTests": 5,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1208,
+      "head": "3fa394aedb466c025503403b104fd66eacaeb043",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-attention-inventory.test.ts"
+      ],
+      "semanticReview": "Reviewed attention event filtering and read-model projection limits;4 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "3fa394aedb466c025503403b104fd66eacaeb043",
+          "files": [
+            "tests/server-attention-inventory.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 3.09,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "3fa394aedb466c025503403b104fd66eacaeb043",
+          "files": [
+            "tests/server-attention-inventory.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 3.94,
+          "numTotalTests": 4,
+          "numPassedTests": 4,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 355,
+      "head": "824205a227e6f45d5afdf2c8f5623062b2518ae2",
+      "reviewedPaths": [
+        "apps/server/server.ts",
+        "apps/server/tool-program-routes.ts",
+        "apps/web/src/App.tsx",
+        "apps/web/src/ToolProgramPanel.tsx",
+        "apps/web/src/tool-programs.css",
+        "docs/architecture.md",
+        "docs/implementation/v3/M12-build-evidence.py",
+        "docs/implementation/v3/M12-candidate-source-cut.json",
+        "docs/implementation/v3/M12-handoff.md",
+        "docs/implementation/v3/M12-plan.md",
+        "docs/implementation/v3/M12-refresh-source-cut.py",
+        "docs/implementation/v3/M12-source-audit.json",
+        "docs/implementation/v3/M12-source-lock.json",
+        "docs/implementation/v3/M12-verification.json",
+        "docs/implementation/v3/M12-verify-evidence.mts",
+        "docs/implementation/v3/m12-artifacts/M12-source-lock-fcaa52f7.json",
+        "docs/implementation/v3/m12-artifacts/M12-verification-fcaa52f7.json",
+        "docs/implementation/v3/m12-artifacts/aggregation-benchmark.json",
+        "docs/implementation/v3/m12-artifacts/artifact-integrity.json",
+        "docs/implementation/v3/m12-artifacts/baseline-fcaa52-unit-summary.json",
+        "docs/implementation/v3/m12-artifacts/benchmark-before-browser-fixtures.json",
+        "docs/implementation/v3/m12-artifacts/benchmark-command-provenance-probe.py",
+        "docs/implementation/v3/m12-artifacts/benchmark-execution-link-before-browser-fixtures.json",
+        "docs/implementation/v3/m12-artifacts/benchmark-execution-link.json",
+        "docs/implementation/v3/m12-artifacts/browser-baseline-comparison.json",
+        "docs/implementation/v3/m12-artifacts/browser-fixture-regression.json",
+        "docs/implementation/v3/m12-artifacts/browser-fixture-terminal-green.json",
+        "docs/implementation/v3/m12-artifacts/browser-fixture-terminal-red.json",
+        "docs/implementation/v3/m12-artifacts/browser-focused-regression.json",
+        "docs/implementation/v3/m12-artifacts/browser-full-summary.json",
+        "docs/implementation/v3/m12-artifacts/browser-tool-programs-final.json",
+        "docs/implementation/v3/m12-artifacts/browser-tool-programs-summary.json",
+        "docs/implementation/v3/m12-artifacts/candidate-vitest-after-review.json",
+        "docs/implementation/v3/m12-artifacts/candidate-vitest-unhandled-after-review.json",
+        "docs/implementation/v3/m12-artifacts/candidate-vitest-unhandled-before-packaging.json",
+        "docs/implementation/v3/m12-artifacts/candidate-vitest-unhandled.json",
+        "docs/implementation/v3/m12-artifacts/candidate-vitest.json",
+        "docs/implementation/v3/m12-artifacts/command-record-reconciliation.json",
+        "docs/implementation/v3/m12-artifacts/command-recorder.py",
+        "docs/implementation/v3/m12-artifacts/command-records.json",
+        "docs/implementation/v3/m12-artifacts/compare-unit-reports.py",
+        "docs/implementation/v3/m12-artifacts/current-main-source-drift-check.py",
+        "docs/implementation/v3/m12-artifacts/current-main-source-drift-review.json",
+        "docs/implementation/v3/m12-artifacts/current-main-source-drift-review.md",
+        "docs/implementation/v3/m12-artifacts/current-main-source-drift.json",
+        "docs/implementation/v3/m12-artifacts/current-main-source-drift.md",
+        "docs/implementation/v3/m12-artifacts/independent-review-benchmark-final-snapshot.json",
+        "docs/implementation/v3/m12-artifacts/independent-review-benchmark-post-ir14-link.json",
+        "docs/implementation/v3/m12-artifacts/independent-review-benchmark-post-ir14-snapshot.json",
+        "docs/implementation/v3/m12-artifacts/independent-review-benchmark-snapshot.json",
+        "docs/implementation/v3/m12-artifacts/independent-review-current.md",
+        "docs/implementation/v3/m12-artifacts/independent-review-deadline-observation.json",
+        "docs/implementation/v3/m12-artifacts/independent-review-deadline-probe.mts",
+        "docs/implementation/v3/m12-artifacts/independent-review-final.json",
+        "docs/implementation/v3/m12-artifacts/independent-review-final.md",
+        "docs/implementation/v3/m12-artifacts/independent-review-input-amplification-observation.json",
+        "docs/implementation/v3/m12-artifacts/independent-review-input-amplification-probe.mts",
+        "docs/implementation/v3/m12-artifacts/ir14-fixture-audit.md",
+        "docs/implementation/v3/m12-artifacts/javascript-backend-attempt-1-command.json",
+        "docs/implementation/v3/m12-artifacts/javascript-backend-attempt-1.txt",
+        "docs/implementation/v3/m12-artifacts/javascript-backend-attempt-2-command.json",
+        "docs/implementation/v3/m12-artifacts/javascript-backend-attempt-2.txt",
+        "docs/implementation/v3/m12-artifacts/javascript-backend-red.txt",
+        "docs/implementation/v3/m12-artifacts/javascript-backend-review.md",
+        "docs/implementation/v3/m12-artifacts/javascript-historical-attempts.json",
+        "docs/implementation/v3/m12-artifacts/javascript-inspect-result.json",
+        "docs/implementation/v3/m12-artifacts/javascript-results.json",
+        "docs/implementation/v3/m12-artifacts/native-pty-setup.py",
+        "docs/implementation/v3/m12-artifacts/plugin-tools-dock-diagnosis.json",
+        "docs/implementation/v3/m12-artifacts/plugin-tools-dock-recheck.json",
+        "docs/implementation/v3/m12-artifacts/pnpm-launcher.sh",
+        "docs/implementation/v3/m12-artifacts/pre-ir12-independent-review-final.json",
+        "docs/implementation/v3/m12-artifacts/pre-ir12-independent-review-final.md",
+        "docs/implementation/v3/m12-artifacts/pre-ir12-source-cut.json",
+        "docs/implementation/v3/m12-artifacts/pre-ir14-independent-review-final.json",
+        "docs/implementation/v3/m12-artifacts/pre-ir14-independent-review-final.md",
+        "docs/implementation/v3/m12-artifacts/pre-ir14-source-cut.json",
+        "docs/implementation/v3/m12-artifacts/pre-ir15-independent-review-final.json",
+        "docs/implementation/v3/m12-artifacts/pre-ir15-independent-review-final.md",
+        "docs/implementation/v3/m12-artifacts/pre-ir15-source-cut.json",
+        "docs/implementation/v3/m12-artifacts/pre-ir15-verify-evidence.mts.txt",
+        "docs/implementation/v3/m12-artifacts/pre-ir16-build-evidence.py.txt",
+        "docs/implementation/v3/m12-artifacts/prior-audit/M12-handoff.md",
+        "docs/implementation/v3/m12-artifacts/prior-audit/M12-source-audit.json",
+        "docs/implementation/v3/m12-artifacts/prior-audit/M12-source-lock.json",
+        "docs/implementation/v3/m12-artifacts/prior-audit/M12-verification.json",
+        "docs/implementation/v3/m12-artifacts/prior-audit/M12-verify-evidence.mts",
+        "docs/implementation/v3/m12-artifacts/public-source-manifest-additions.json",
+        "docs/implementation/v3/m12-artifacts/python-backend-review.md",
+        "docs/implementation/v3/m12-artifacts/python-runtime-configuration.json",
+        "docs/implementation/v3/m12-artifacts/replay-and-file-read-review.md",
+        "docs/implementation/v3/m12-artifacts/source-inventory-negative-probe.mts",
+        "docs/implementation/v3/m12-artifacts/summarize-browser.py",
+        "docs/implementation/v3/m12-artifacts/tokenizer-dependency-review.json",
+        "docs/implementation/v3/m12-artifacts/unit-baseline-comparison-before-packaging.json",
+        "docs/implementation/v3/m12-artifacts/unit-baseline-comparison-before-packaging.md",
+        "docs/implementation/v3/m12-artifacts/unit-baseline-comparison.json",
+        "docs/implementation/v3/m12-artifacts/unit-baseline-comparison.md",
+        "docs/implementation/v3/m12-artifacts/unit-candidate-diagnosis-before-packaging.json",
+        "docs/implementation/v3/m12-artifacts/unit-regression-assessment.json",
+        "docs/implementation/v3/m12-artifacts/unit-regression-assessment.md",
+        "docs/implementation/v3/m12-artifacts/unit-unhandled-reporter.mjs",
+        "docs/implementation/v3/m12-artifacts/upstream-source-review.md",
+        "docs/implementation/v3/m12-logs/CUSTODY.json",
+        "docs/implementation/v3/m12-logs/baseline-fcaa52-vitest.json",
+        "docs/implementation/v6/M12/M12-handoff.md",
+        "docs/implementation/v6/M12/M12-source-lock.json",
+        "docs/implementation/v6/M12/M12-verification.json",
+        "docs/implementation/v6/M12/build-verification.mjs",
+        "docs/implementation/v6/M12/logs/CUSTODY.json",
+        "docs/implementation/v6/M12/logs/build.bounded.log",
+        "docs/implementation/v6/M12/logs/build.receipt.json",
+        "docs/implementation/v6/M12/logs/lint.bounded.log",
+        "docs/implementation/v6/M12/logs/lint.receipt.json",
+        "docs/implementation/v6/M12/logs/r03/build-widgets.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/r03-smoke-summary.json",
+        "docs/implementation/v6/M12/logs/r03/typecheck-run1-oom.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/typecheck-run1.receipt.json",
+        "docs/implementation/v6/M12/logs/r03/typecheck.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-continuation-v6.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-continuation-v6.receipt.json",
+        "docs/implementation/v6/M12/logs/r03/vitest-python-kernel-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-python-kernel-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r03/vitest-replay-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-replay-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-backend-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-backend-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-integration-v3-rerun1.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-integration-v3-rerun2.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-integration-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-integration-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-recovery-v3-committed-rerun.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-recovery-v3-rerun2.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-recovery-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-recovery-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r03/vitest-tool-program-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r04/public-source.bounded.log",
+        "docs/implementation/v6/M12/logs/r04/public-source.receipt.json",
+        "docs/implementation/v6/M12/logs/r04/typecheck.bounded.log",
+        "docs/implementation/v6/M12/logs/r04/typecheck.receipt.json",
+        "docs/implementation/v6/M12/logs/r04/vitest-continuation-v6.bounded.log",
+        "docs/implementation/v6/M12/logs/r04/vitest-continuation-v6.receipt.json",
+        "docs/implementation/v6/M12/logs/r04/vitest-python-kernel-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r04/vitest-python-kernel-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r04/vitest-replay-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r04/vitest-replay-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r04/vitest-tool-program-backend-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r04/vitest-tool-program-backend-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r04/vitest-tool-program-integration-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r04/vitest-tool-program-integration-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r04/vitest-tool-program-recovery-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/r04/vitest-tool-program-recovery-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/r04/vitest-tool-program-v3-retry.bounded.log",
+        "docs/implementation/v6/M12/logs/r04/vitest-tool-program-v3-retry.receipt.json",
+        "docs/implementation/v6/M12/logs/r04/vitest-tool-program-v3-run1.bounded.log",
+        "docs/implementation/v6/M12/logs/r04/vitest-tool-program-v3-run1.receipt.json",
+        "docs/implementation/v6/M12/logs/r05/context-result-regression.receipt.json",
+        "docs/implementation/v6/M12/logs/r05/crash-death-discriminator.receipt.json",
+        "docs/implementation/v6/M12/logs/r05/r05-merge-verification.receipt.json",
+        "docs/implementation/v6/M12/logs/r05/r06-merge-verification.receipt.json",
+        "docs/implementation/v6/M12/logs/r05/r07-merge-verification.receipt.json",
+        "docs/implementation/v6/M12/logs/r05/windows-run-44438814557.receipt.json",
+        "docs/implementation/v6/M12/logs/test-browser.bounded.log",
+        "docs/implementation/v6/M12/logs/test-browser.receipt.json",
+        "docs/implementation/v6/M12/logs/test-run1-prefix-fixes.bounded.log",
+        "docs/implementation/v6/M12/logs/test-run1-prefix-fixes.receipt.json",
+        "docs/implementation/v6/M12/logs/test.bounded.log",
+        "docs/implementation/v6/M12/logs/test.receipt.json",
+        "docs/implementation/v6/M12/logs/typecheck.bounded.log",
+        "docs/implementation/v6/M12/logs/typecheck.receipt.json",
+        "docs/implementation/v6/M12/logs/vitest-continuation-v6.bounded.log",
+        "docs/implementation/v6/M12/logs/vitest-continuation-v6.receipt.json",
+        "docs/implementation/v6/M12/logs/vitest-python-kernel-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/vitest-python-kernel-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/vitest-replay-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/vitest-replay-v3.receipt.json",
+        "docs/implementation/v6/M12/logs/vitest-tool-program-v3-run1-loaded.bounded.log",
+        "docs/implementation/v6/M12/logs/vitest-tool-program-v3-run1-loaded.receipt.json",
+        "docs/implementation/v6/M12/logs/vitest-tool-program-v3.bounded.log",
+        "docs/implementation/v6/M12/logs/vitest-tool-program-v3.receipt.json",
+        "docs/implementation/v6/M12/merge-resolution.json",
+        "docs/implementation/v6/M12/requirements.json",
+        "docs/implementation/v6/M12/run-evidence.mjs",
+        "packages/capabilities/index.ts",
+        "packages/contracts/index.ts",
+        "packages/contracts/tool-program.ts",
+        "packages/contracts/tool-results.ts",
+        "packages/core/capability-flags.ts",
+        "packages/core/execution-policy.ts",
+        "packages/core/file-access.ts",
+        "packages/core/host-flags.ts",
+        "packages/core/linux-file-read.ts",
+        "packages/core/planning.ts",
+        "packages/core/python-kernels.ts",
+        "packages/core/python-program-provider.ts",
+        "packages/core/service.ts",
+        "packages/core/tool-disclosure.ts",
+        "packages/core/tool-effects.ts",
+        "packages/core/tool-program-host.ts",
+        "packages/core/tool-program-tools.ts",
+        "packages/core/tool-programs.ts",
+        "packages/core/tool-results.ts",
+        "packages/runtime-hermes/index.ts",
+        "packages/runtime-official/index.ts",
+        "packages/runtime-official/mcp.ts",
+        "packages/runtime-pi/tool-definitions.ts",
+        "packages/runtime-pi/worker.ts",
+        "packages/runtime/python-confinement.py",
+        "packages/runtime/python-program-supervisor.py",
+        "packages/runtime/python-program-worker.py",
+        "packages/runtime/python-program-worker.ts",
+        "packages/runtime/tool-program-worker-child.mjs",
+        "packages/runtime/tool-program-worker.ts",
+        "pnpm-lock.yaml",
+        "scripts/browser-suites.ts",
+        "scripts/capture-ui/shell-api.ts",
+        "scripts/public-source-files.json",
+        "scripts/rc-review/flags-off.ts",
+        "tests/e2e/terminal-excerpts.spec.ts",
+        "tests/e2e/tool-programs-fixture.tsx",
+        "tests/e2e/tool-programs.playwright.config.ts",
+        "tests/e2e/tool-programs.spec.ts",
+        "tests/e2e/tool-programs.vite.config.ts",
+        "tests/e2e/wo5-app-integration.spec.ts",
+        "tests/fixtures/python-qualification-profile.ts",
+        "tests/fixtures/tool-program-benchmark-v3.ts",
+        "tests/fixtures/tool-program-crash-death-v3.ts",
+        "tests/fixtures/tool-program-crash-v3.mts",
+        "tests/fixtures/tool-program-replay-harness-v3.ts",
+        "tests/hermes-runtime.test.ts",
+        "tests/linux-bound-read-v3.test.ts",
+        "tests/planning.test.ts",
+        "tests/project-trust-v3.test.ts",
+        "tests/public-source.test.ts",
+        "tests/python-cell-envelope-v6.test.ts",
+        "tests/python-kernel-v3.test.ts",
+        "tests/python-m03-platform-projection-v6.test.ts",
+        "tests/python-program-backend-v3.test.ts",
+        "tests/python-program-integration-v3.test.ts",
+        "tests/python-qualification-profile-v6.test.ts",
+        "tests/python-retained-data-native-v6.test.ts",
+        "tests/python-retained-data-v6.test.ts",
+        "tests/tool-program-authority-v3.test.ts",
+        "tests/tool-program-backend-v3.test.ts",
+        "tests/tool-program-benchmark-v3.test.ts",
+        "tests/tool-program-continuation-v6.test.ts",
+        "tests/tool-program-diagnostics-v3.test.ts",
+        "tests/tool-program-input-budget-v3.test.ts",
+        "tests/tool-program-integration-v3.test.ts",
+        "tests/tool-program-prerequisites-v3.test.ts",
+        "tests/tool-program-recovery-v3.test.ts",
+        "tests/tool-program-replay-v3.test.ts",
+        "tests/tool-program-transport-v3.test.ts",
+        "tests/tool-program-v3.test.ts"
+      ],
+      "semanticReview": "Confirmed and repaired pre-dispatch KERNEL_GRANT_LIMIT state loss while keeping uncertain/post-dispatch reset. Current-main integration preserves both M12/M16 service groups and semantic manifest union; portable real-allocation fixture keeps logical64MiB/allocated>64MiB contract. Original branch updated normally to5eea8bf40dbc5e081975040d7d7dc9b3ca0d417d after independent review.",
+      "state": "repair-applied-historical-head-new-accepted-main-conflict-pending",
+      "repair": {
+        "commit": "5eea8bf40dbc5e081975040d7d7dc9b3ca0d417d",
+        "validation": "158tests/11files; type/UIlint/Bunlint/buildPASS; Windows/nativepending",
+        "artifact": "lane-a-355-current-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/5eea8bf40dbc5e081975040d7d7dc9b3ca0d417d"
+      },
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-355-current-publication.json",
+      "publicationEvidence": "lane-a-355-current-publication.json",
+      "followups": [
+        "Integrate accepted main0a370 and resolve new packages/runtime-pi/tool-definitions.ts conflict under a fresh exact claim; retain portable allocated-byte fixture and grant-limit correction",
+        "Rerun focused and final declared gates before ordinary expected-SHA update"
+      ],
+      "tests": []
+    },
+    {
+      "pr": 812,
+      "head": "907298aad420d8b257d65cbcb23f8d6edde76936",
+      "reviewedPaths": [
+        ".github/workflows/ci.yml",
+        "apps/desktop/control-bridge.ts",
+        "apps/desktop/main.ts",
+        "apps/server/desktop-controls.ts",
+        "apps/server/host.ts",
+        "apps/server/main.ts",
+        "apps/server/server.ts",
+        "apps/web/src/ControlConsentPanel.tsx",
+        "check_m16_evidence.mts",
+        "docs/implementation/v3/M16-verification.json",
+        "docs/implementation/v6/M16/handoff.md",
+        "docs/implementation/v6/M16/installed-proof.md",
+        "docs/implementation/v6/M16/logs/build-m16-bridge.log",
+        "docs/implementation/v6/M16/logs/filehash-m16-bridge.log",
+        "docs/implementation/v6/M16/logs/fixture-browser-m16-bridge.log",
+        "docs/implementation/v6/M16/logs/fixture-window-m16-bridge.log",
+        "docs/implementation/v6/M16/logs/lint-m16-bridge.log",
+        "docs/implementation/v6/M16/logs/provenance.json",
+        "docs/implementation/v6/M16/logs/smoke-m16-bridge.log",
+        "docs/implementation/v6/M16/logs/typecheck-m16-bridge.log",
+        "docs/implementation/v6/M16/logs/vitest-m16-bridge.log",
+        "docs/implementation/v6/M16/requirements.json",
+        "package.json",
+        "packages/contracts/interactive-control.ts",
+        "packages/core/browser-consent.ts",
+        "packages/core/control-runtime.ts",
+        "packages/core/control-sidecar-driver.ts",
+        "packages/core/desktop-control.ts",
+        "packages/core/file-access.ts",
+        "packages/core/service.ts",
+        "packages/core/windows-control-bridge.cc",
+        "scripts/build-windows-control-bridge.ts",
+        "scripts/desktop-assets.ts",
+        "scripts/m16-installed-control-scenario.ts",
+        "scripts/m16-installed-identity.ts",
+        "scripts/package-desktop.ts",
+        "scripts/public-source-files.json",
+        "scripts/verify-installed-desktop.ts",
+        "tests/control-bridge-v6.test.ts",
+        "tests/control-driver-package-trust.test.ts",
+        "tests/control-runtime-v6.test.ts",
+        "tests/file-access-startup.test.ts",
+        "tests/installed-desktop-verification.test.ts",
+        "tests/interactive-control-decisions-v6.test.ts",
+        "tests/m16-installed-control-scenario.test.ts",
+        "tests/m16-installed-identity.test.ts"
+      ],
+      "semanticReview": "Confirmed chooser/disposal owner leak; original repair artifact was protected from application and original812 merged into main401725 unfixed. Follow-up2328 publishes the exact closed-owner fence and synchronous detach on current main, with focused regression proof. Do not describe main as fixed until2328 merges.",
+      "state": "original-merged-unfixed-followup2328-open",
+      "repair": {
+        "commit": "1d28d91a68e21e864c08ab250377d90a6a61b75c",
+        "validation": "Merged-original defect corrected in ordinary follow-up2328:51focusedPASS,4declaredgatesPASS, rootindependentreview; CIreportedgreen, final live state belongs to coordinator",
+        "artifact": "lane-a-812-main-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/1d28d91a68e21e864c08ab250377d90a6a61b75c",
+        "followupPr": 2328
+      },
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply.",
+        "Old a07414a0 artifact was not applied before original812 merged; do not call original merge fixed."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-812-main-publication.json",
+      "publicationEvidence": "lane-a-812-main-publication.json",
+      "tests": []
+    },
+    {
+      "pr": 1290,
+      "head": "f5141b3659d7bcd390da3ea5b9a6a368c93448d5",
+      "reviewedPaths": [
+        "docs/agent-plans/assets/design/composer-file-mentions.png",
+        "docs/agent-plans/assets/design/composer-image-paste.png",
+        "docs/agent-plans/assets/design/diff-review-comments.png",
+        "docs/agent-plans/assets/design/explorer-open-in-gen-v1.png",
+        "docs/agent-plans/assets/design/message-timestamps.png",
+        "docs/agent-plans/assets/design/pick-terminal-shell.png",
+        "docs/agent-plans/assets/design/publish-pr-card-recovery.png",
+        "docs/agent-plans/assets/design/publish-review-sheet.png",
+        "docs/agent-plans/assets/design/thread-markdown-export.png",
+        "docs/agent-plans/composer-file-mentions-design.md",
+        "docs/agent-plans/composer-image-paste-design.md",
+        "docs/agent-plans/diff-review-comments-design.md",
+        "docs/agent-plans/explorer-open-in-gen-v1-design.md",
+        "docs/agent-plans/message-timestamps-design.md",
+        "docs/agent-plans/pick-terminal-shell-design.md",
+        "docs/agent-plans/thread-markdown-export-design.md"
+      ],
+      "semanticReview": "Read all7 design-document changes and visually inspected all9 supplied PNGs. composer-file-mentions image clips the top menu/first row; thread-markdown-export bubble obscures a menu item. Render sources absent, so visual completeness is limited and no evidence image was fabricated.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1294,
+      "head": "f3185c359f1b970b0bfb2a174f2731edcc02ad8a",
+      "reviewedPaths": [
+        "apps/desktop/open-project-args.ts",
+        "scripts/public-source-files.json",
+        "tests/desktop-open-project-args.test.ts"
+      ],
+      "semanticReview": "Reviewed Explorer argv parser and identified ambiguous inline --open-project=C accepted alongside spaced argument. Minimal explicit rejection,2RED then18PASS plus scoped strict typecheck.",
+      "state": "semantic-reviewed",
+      "repair": {
+        "commit": "112fde1351dac9277116a28486ee6443d5cbeb71",
+        "validation": "18parsertests; scopedstrictTS"
+      },
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-1294-publication.json",
+      "publicationEvidence": "lane-a-1294-publication.json",
+      "tests": [
+        {
+          "head": "f3185c359f1b970b0bfb2a174f2731edcc02ad8a",
+          "files": [
+            "tests/desktop-open-project-args.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 1.7,
+          "numTotalTests": 16,
+          "numPassedTests": 16,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1280,
+      "head": "7869a5f8566e1f360e5e3a58be1c29695028e57f",
+      "reviewedPaths": [
+        "AGENTS.md"
+      ],
+      "semanticReview": "Reviewed task-claim arbitration/tie-break workflow against identity and concurrency contracts; no additional confirmed defect in bounded change.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1261,
+      "head": "e7da50ef392e8d0b324f15aeecc68287bd4b66ac",
+      "reviewedPaths": [
+        ".github/workflows/stale-claim-release.yml",
+        "AGENTS.md"
+      ],
+      "semanticReview": "Reviewed release-on-silence conflict with AGENTS and claim parsing; reassigned to CI lane for report-only/per-worker ledger repair. See coordinator/CI evidence, no claim to their implementation.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "REVIEWED_AND_TRANSFERRED_TO_CI_LANE_FOR_REPAIR",
+      "tests": []
+    },
+    {
+      "pr": 1251,
+      "head": "13a6592b95f306967ab28cf3d326a00c2ba09009",
+      "reviewedPaths": [
+        "docs/releasing.md"
+      ],
+      "semanticReview": "Read complete signing documentation diff and checked referenced release/build contract. Exact doc head lacks windows-signing workflow wiring; PR explicitly documents1234 T02/T03 work from separate branches. Acceptance depends on signing implementation/provisioning and actual signed-release qualification; no signed release inferred.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1250,
+      "head": "f72c0b415ec33dd5aad4647baa6a9c3031e14e6d",
+      "reviewedPaths": [
+        "apps/desktop/updater.ts",
+        "tests/desktop-updater.test.ts"
+      ],
+      "semanticReview": "Reviewed updater wording and platform presentation against installer/signing state;27 focused tests pass. Release qualification remains separate.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "f72c0b415ec33dd5aad4647baa6a9c3031e14e6d",
+          "files": [
+            "tests/desktop-updater.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 0.97,
+          "numTotalTests": 27,
+          "numPassedTests": 27,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1249,
+      "head": "ab58db2abaf49637fccfbe97282920331ebf5d26",
+      "reviewedPaths": [
+        "scripts/desktop-assets.ts",
+        "tests/desktop-packaging.test.ts"
+      ],
+      "semanticReview": "Reviewed explicit azure/unset mode, variable presence checks, secret non-disclosure and unsigned compatibility in desktop builder config;30PASS1declared skip. Live signing requires provisioned environment and Windows qualification.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "ab58db2abaf49637fccfbe97282920331ebf5d26",
+          "files": [
+            "tests/desktop-packaging.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 1.51,
+          "numTotalTests": 31,
+          "numPassedTests": 30,
+          "numFailedTests": 0,
+          "numPendingTests": 1,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1233,
+      "head": "816acc469ad3ce3b71ddd1c7e6798a0e7759aee8",
+      "reviewedPaths": [
+        ".github/workflows/issue-labeler.yml",
+        "AGENTS.md",
+        "scripts/public-source-files.json"
+      ],
+      "semanticReview": "Reviewed labeler taxonomy/workflow scopes; no extra owner assignment or queue mutation performed.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1231,
+      "head": "08d3fd86c69e299fc6f6eb6d5083c4718f70485c",
+      "reviewedPaths": [
+        "tests/ui-shell-feedback.test.ts",
+        "tests/ui-shell-toast.test.ts"
+      ],
+      "semanticReview": "Found missing feedback/toast test paths in source distribution manifest. Added exactly those two test paths, preserving runtime manifest;31 tests pass.",
+      "state": "semantic-reviewed",
+      "repair": {
+        "commit": "2a1a9b2b3e57e34c22ef9659901f2e18f95a678c",
+        "validation": "31tests/2files; source manifestonly"
+      },
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-1231-publication.json",
+      "publicationEvidence": "lane-a-1231-publication.json",
+      "tests": [
+        {
+          "head": "08d3fd86c69e299fc6f6eb6d5083c4718f70485c",
+          "files": [
+            "tests/ui-shell-feedback.test.ts",
+            "tests/ui-shell-toast.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 1.68,
+          "numTotalTests": 18,
+          "numPassedTests": 18,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1226,
+      "head": "99785cc4777af9160dd797a270f42f30a53194fe",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-read-model-routes.test.ts"
+      ],
+      "semanticReview": "Reviewed conversation-read-model types and serialized envelope boundaries;2 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "99785cc4777af9160dd797a270f42f30a53194fe",
+          "files": [
+            "tests/server-read-model-routes.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 4.01,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "99785cc4777af9160dd797a270f42f30a53194fe",
+          "files": [
+            "tests/server-read-model-routes.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 4.56,
+          "numTotalTests": 2,
+          "numPassedTests": 2,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1225,
+      "head": "eaad5d70672e12734ef1a81cdcb7e9e3f35f4dc4",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-operation-project-trust.test.ts"
+      ],
+      "semanticReview": "Reviewed operation trust contract/mappers and existing rejection boundaries;3 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "eaad5d70672e12734ef1a81cdcb7e9e3f35f4dc4",
+          "files": [
+            "tests/server-operation-project-trust.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 3.24,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "eaad5d70672e12734ef1a81cdcb7e9e3f35f4dc4",
+          "files": [
+            "tests/server-operation-project-trust.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 3.74,
+          "numTotalTests": 3,
+          "numPassedTests": 3,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1223,
+      "head": "e19f26c017260dc5b40834c2d26779556a7fdb64",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-project-memory.test.ts"
+      ],
+      "semanticReview": "Reviewed project-memory read models/ownership type refactor;3 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "e19f26c017260dc5b40834c2d26779556a7fdb64",
+          "files": [
+            "tests/server-project-memory.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 3.3,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "e19f26c017260dc5b40834c2d26779556a7fdb64",
+          "files": [
+            "tests/server-project-memory.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 3.63,
+          "numTotalTests": 3,
+          "numPassedTests": 3,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1222,
+      "head": "979420d0c1b9bb566838886c2c075e776a0073b8",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-source-workbench.test.ts"
+      ],
+      "semanticReview": "Reviewed source-selection type contracts and serialization preserving owner scope;3 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "979420d0c1b9bb566838886c2c075e776a0073b8",
+          "files": [
+            "tests/server-source-workbench.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 6.02,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "979420d0c1b9bb566838886c2c075e776a0073b8",
+          "files": [
+            "tests/server-source-workbench.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 5.75,
+          "numTotalTests": 3,
+          "numPassedTests": 3,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1221,
+      "head": "535c19ffc99b732d7ad6da7739d077fcc3dcdc5d",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-background-routes.test.ts"
+      ],
+      "semanticReview": "Reviewed background-work read models and owner identifiers;2 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "535c19ffc99b732d7ad6da7739d077fcc3dcdc5d",
+          "files": [
+            "tests/server-background-routes.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 6.45,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "535c19ffc99b732d7ad6da7739d077fcc3dcdc5d",
+          "files": [
+            "tests/server-background-routes.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 4.78,
+          "numTotalTests": 2,
+          "numPassedTests": 2,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1220,
+      "head": "0f3d51856819d31ec264b9ba89f8f7d62b2f6eac",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-agent-input.test.ts"
+      ],
+      "semanticReview": "Reviewed agent-input types and follow-up binding/admission boundaries;2 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "0f3d51856819d31ec264b9ba89f8f7d62b2f6eac",
+          "files": [
+            "tests/server-agent-input.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 5.67,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "0f3d51856819d31ec264b9ba89f8f7d62b2f6eac",
+          "files": [
+            "tests/server-agent-input.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 4.6,
+          "numTotalTests": 2,
+          "numPassedTests": 2,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1219,
+      "head": "30e091d9d07612dc0d0d3e9a3bdbb3ef08081e67",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-environment-routes.test.ts"
+      ],
+      "semanticReview": "Reviewed environment type changes and runtime defaults;3 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "30e091d9d07612dc0d0d3e9a3bdbb3ef08081e67",
+          "files": [
+            "tests/server-environment-routes.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 5.45,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "30e091d9d07612dc0d0d3e9a3bdbb3ef08081e67",
+          "files": [
+            "tests/server-environment-routes.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 4.49,
+          "numTotalTests": 3,
+          "numPassedTests": 3,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1218,
+      "head": "5b757e21d906fa21ba72f668b51d9956c9d41ba3",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-session-branch-read.test.ts"
+      ],
+      "semanticReview": "Reviewed session receipt types and owner consistency at consumers;3 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "5b757e21d906fa21ba72f668b51d9956c9d41ba3",
+          "files": [
+            "tests/server-session-branch-read.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 5.07,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "5b757e21d906fa21ba72f668b51d9956c9d41ba3",
+          "files": [
+            "tests/server-session-branch-read.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 4.39,
+          "numTotalTests": 3,
+          "numPassedTests": 3,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1207,
+      "head": "e0f402276fb5ab5bac280c0b0563d6ecc1f22dd1",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/server-shell-read.test.ts"
+      ],
+      "semanticReview": "Reviewed shell type cleanup and current behavior at consumers;3 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "e0f402276fb5ab5bac280c0b0563d6ecc1f22dd1",
+          "files": [
+            "tests/server-shell-read.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 4.44,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "e0f402276fb5ab5bac280c0b0563d6ecc1f22dd1",
+          "files": [
+            "tests/server-shell-read.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 4.5,
+          "numTotalTests": 3,
+          "numPassedTests": 3,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1204,
+      "head": "86fb73abb3909533cc6365826436aa488e5a622c",
+      "reviewedPaths": [
+        "apps/web/src/BackgroundWork.tsx",
+        "apps/web/src/Connections.tsx",
+        "apps/web/src/FileCheckpoints.tsx",
+        "apps/web/src/InboxView.tsx",
+        "apps/web/src/MapView.tsx",
+        "apps/web/src/Settings.tsx",
+        "apps/web/src/SkillLibrary.tsx",
+        "apps/web/src/TaskTable.tsx",
+        "apps/web/src/WorkObjects.tsx",
+        "apps/web/src/agent-inbox.css",
+        "apps/web/src/background-work.css",
+        "apps/web/src/connections.css",
+        "apps/web/src/file-checkpoints.css",
+        "apps/web/src/list-motion.ts",
+        "apps/web/src/map-view.css",
+        "apps/web/src/relationship-graph.css",
+        "apps/web/src/settings.css",
+        "apps/web/src/skill-library.css",
+        "apps/web/src/styles.css",
+        "apps/web/src/task-table.css",
+        "apps/web/src/usage-dialog.css",
+        "apps/web/src/work-objects.css",
+        "packages/ui-shell/feedback.css",
+        "scripts/public-source-files.json",
+        "third-party/vespin/inbox-presentation.tsx"
+      ],
+      "semanticReview": "Reviewed row-motion retention, status/list UI integrations, reduced-motion handling and all changed CSS. Reproduced outgoing aria-hidden rows receiving Tab; inert repair tested in both motion modes, with survivors still actionable. Provenance hashes updated/read back.",
+      "state": "semantic-reviewed",
+      "repair": {
+        "commit": "15df4f5bf212d9947af4436953f9aaee51ed8bbc",
+        "validation": "23browser+29units/3files; type/UIlint/buildPASS; originalrefblockedqueued"
+      },
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "Older branch declares tsc; supplemental Bun check is not a claimed successful tsc run."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-1204-publication.json",
+      "publicationEvidence": "lane-a-1204-publication.json",
+      "tests": [
+        {
+          "head": "86fb73abb3909533cc6365826436aa488e5a622c",
+          "files": [
+            "tests/content-motion.test.ts",
+            "tests/motion-policy.test.ts",
+            "tests/reduced-motion-coverage.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 4.39,
+          "numTotalTests": 23,
+          "numPassedTests": 23,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1194,
+      "head": "155fc9184506f787c7ae78c1a36a1f93bcc2c405",
+      "reviewedPaths": [
+        "apps/web/src/DocumentWindow.tsx",
+        "apps/web/src/FloatingWindow.tsx",
+        "apps/web/src/PluginFloatingWindow.tsx",
+        "apps/web/src/floating-window.css",
+        "scripts/ui-overlay-legacy.json"
+      ],
+      "semanticReview": "Reviewed surface spring lifecycle, interruption/disposal and CSS consumers;73 focused tests pass. Possible no-op intermediate motion was not established as a user defect, so no speculative edit.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "155fc9184506f787c7ae78c1a36a1f93bcc2c405",
+          "files": [
+            "tests/document-window.test.ts",
+            "tests/floating-layout.test.ts",
+            "tests/floating-order.test.ts",
+            "tests/plugin-floating-owner.test.ts",
+            "tests/plugin-floating-owner-browser.test.ts",
+            "tests/overlay-motion.test.ts",
+            "tests/motion-policy.test.ts",
+            "tests/motion-spring.test.ts",
+            "tests/reduced-motion-coverage.test.ts",
+            "tests/content-motion.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 11.28,
+          "numTotalTests": 73,
+          "numPassedTests": 73,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1184,
+      "head": "80a75265d424005e7f188af7a062f854578b4753",
+      "reviewedPaths": [
+        "packages/runtime-official/acp.ts",
+        "packages/runtime-official/gemini-headless.ts",
+        "packages/runtime-official/gemini.ts"
+      ],
+      "semanticReview": "Reviewed runtime guard narrowing and failure propagation;28 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "80a75265d424005e7f188af7a062f854578b4753",
+          "files": [
+            "tests/official-runtime-acp.test.ts",
+            "tests/official-runtime-headless.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 4.6,
+          "numTotalTests": 28,
+          "numPassedTests": 28,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1181,
+      "head": "e52e0af356cf6eb84eff4cd139f4fb32194e7a08",
+      "reviewedPaths": [
+        "scripts/verify-readiness.ts",
+        "tests/readiness-manifest.test.ts"
+      ],
+      "semanticReview": "Reviewed stdio readiness and terminal process ownership across start/close/cancel;26 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "e52e0af356cf6eb84eff4cd139f4fb32194e7a08",
+          "files": [
+            "tests/readiness-manifest.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 2.55,
+          "numTotalTests": 26,
+          "numPassedTests": 26,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1174,
+      "head": "b740b3208ede83cff98f4e7cde1d24313c4b5441",
+      "reviewedPaths": [
+        "apps/web/src/App.tsx",
+        "apps/web/src/WorkspaceControls.tsx",
+        "apps/web/src/WorkspacePanel.tsx",
+        "apps/web/src/WorkspacePanelBodies.tsx",
+        "apps/web/src/shell.css",
+        "scripts/installed-memory-retention.ts",
+        "scripts/ui-overlay-legacy.json",
+        "tests/e2e/composer-app-refinement.spec.ts",
+        "tests/e2e/desktop-surfaces.spec.ts",
+        "tests/e2e/document-window.spec.ts",
+        "tests/e2e/floating-windows.spec.ts",
+        "tests/e2e/plan-presentation.spec.ts",
+        "tests/e2e/project-memory-host.spec.ts",
+        "tests/e2e/redundant-ui.spec.ts",
+        "tests/e2e/reserved-rail.spec.ts",
+        "tests/e2e/shared-panels.spec.ts",
+        "tests/e2e/shell-micro-motion.spec.ts",
+        "tests/e2e/t3-centered.spec.ts",
+        "tests/e2e/ui-shell-controls.spec.ts",
+        "tests/e2e/wo5-app-integration.spec.ts",
+        "tests/redundant-ui.test.ts",
+        "tests/split-app-browser.test.ts"
+      ],
+      "semanticReview": "Reviewed drawer Escape and global shortcut ownership; IME composition events incorrectly dismissed drawer/stopped run. Added isComposing/keyCode229 guards and browser regressions while ordinary Escape/Stop remain covered. Broad57-case suite has documented variability.",
+      "state": "semantic-reviewed",
+      "repair": {
+        "commit": "dcae6e9a397cb7a8b45f9c4862114a3396b92e76",
+        "validation": "focused9browser+22units; broad56PASS1FAIL different original/candidate cases; isolated candidate drag3PASS"
+      },
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-1174-publication.json",
+      "publicationEvidence": "lane-a-1174-publication.json",
+      "tests": [
+        {
+          "head": "b740b3208ede83cff98f4e7cde1d24313c4b5441",
+          "files": [
+            "tests/redundant-ui.test.ts",
+            "tests/split-app-browser.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 4.13,
+          "numTotalTests": 69,
+          "numPassedTests": 12,
+          "numFailedTests": 0,
+          "numPendingTests": 57,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1170,
+      "head": "c144f928304b78c13c8518945bb52c0918c482d0",
+      "reviewedPaths": [
+        "scripts/verify-packaged-providers.ts",
+        "tests/packaged-providers.test.ts"
+      ],
+      "semanticReview": "Reviewed UTF8 buffered stream boundaries and child failure handling;10 tests pass, real Windows SDK rg.exe validation is unavailable on Linux. No weakened platform gate.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "c144f928304b78c13c8518945bb52c0918c482d0",
+          "files": [
+            "tests/packaged-providers.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 1.94,
+          "numTotalTests": 11,
+          "numPassedTests": 10,
+          "numFailedTests": 1,
+          "numPendingTests": 0,
+          "success": false,
+          "failureCases": [
+            {
+              "file": "packaged-providers.test.ts",
+              "name": "packaged provider custody imports the actual installed SDK with an explicit empty store and runs only the stock rg version helper"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pr": 1165,
+      "head": "8ea59d21073dfebeec7075940bf0f2c9953fcbd6",
+      "reviewedPaths": [
+        "scripts/verify-official-distributions.ts",
+        "tests/official-runtime-storage.test.ts"
+      ],
+      "semanticReview": "Reviewed fatal UTF8 decoding and malformed byte handling;10 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "8ea59d21073dfebeec7075940bf0f2c9953fcbd6",
+          "files": [
+            "tests/official-runtime-storage.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 1.17,
+          "numTotalTests": 10,
+          "numPassedTests": 10,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1156,
+      "head": "d87c67f16c5e8e064a4aedb1e1c9da73b944da60",
+      "reviewedPaths": [
+        "scripts/rc-review/run-rc-review.ts",
+        "tests/rc-review.test.ts"
+      ],
+      "semanticReview": "Reviewed primary error retention through cleanup;17 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "d87c67f16c5e8e064a4aedb1e1c9da73b944da60",
+          "files": [
+            "tests/rc-review.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 9.67,
+          "numTotalTests": 17,
+          "numPassedTests": 17,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1149,
+      "head": "400ab87394f2d9719ef4c5c3109283de356defab",
+      "reviewedPaths": [
+        "scripts/rc-review/run-rc-review.ts",
+        "tests/rc-review.test.ts"
+      ],
+      "semanticReview": "Reviewed interrupt integer bound and lifecycle semantics, including2^31-1 boundary;16 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "400ab87394f2d9719ef4c5c3109283de356defab",
+          "files": [
+            "tests/rc-review.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 3.55,
+          "numTotalTests": 16,
+          "numPassedTests": 16,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1130,
+      "head": "0701f2c47f11b920f9cc4c549545d87b505995eb",
+      "reviewedPaths": [
+        "scripts/rc-review/common.ts",
+        "tests/rc-review.test.ts"
+      ],
+      "semanticReview": "Reviewed stdin EPIPE/close handling without masking primary execution result;16 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "0701f2c47f11b920f9cc4c549545d87b505995eb",
+          "files": [
+            "tests/rc-review.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 4.82,
+          "numTotalTests": 16,
+          "numPassedTests": 16,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1129,
+      "head": "521e8df0d4f184396356a58103373d3a11fdc164",
+      "reviewedPaths": [
+        "scripts/integration_python_projection.py"
+      ],
+      "semanticReview": "Reviewed Python boolean serialization/narrowing; bounded behavior matches contract, no additional confirmed defect.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1070,
+      "head": "3366c06ce348b815bfd9d162531957b1b40867a0",
+      "reviewedPaths": [
+        "packages/capabilities/pdf-worker.ts",
+        "scripts/public-source-files.json",
+        "tests/backend-pdf.test.ts",
+        "tests/pdf-text-extraction.test.ts"
+      ],
+      "semanticReview": "Confirmed bounded PDF TJ-array append overflow, unmatched operand array poisoning and invalid hex handling. Added looped append, operator reset and incremental hex prefix parse;3RED then21PASS across3files.",
+      "state": "semantic-reviewed",
+      "repair": {
+        "commit": "14cd79e7003cb90c98647393cc368e8ad56afefc",
+        "validation": "21tests/3files; Buncheck/UIlint/buildPASS; declaredtscOOM"
+      },
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply.",
+        "Declared tsc attempts OOM at2GiB/8GiB; supplemental Bun check passed. Native parser/runtime qualification remains separate."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-1070-publication.json",
+      "publicationEvidence": "lane-a-1070-publication.json",
+      "tests": []
+    },
+    {
+      "pr": 1021,
+      "head": "5355f4afc584e71f62cae8d83804dd67326e1bd9",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/widget-runtime-policy.test.ts"
+      ],
+      "semanticReview": "Reviewed widget source/type changes and committed owner checks;12 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "5355f4afc584e71f62cae8d83804dd67326e1bd9",
+          "files": [
+            "tests/widget-runtime-policy.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 1.66,
+          "numTotalTests": 0,
+          "numPassedTests": 0,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "5355f4afc584e71f62cae8d83804dd67326e1bd9",
+          "files": [
+            "tests/widget-runtime-policy.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 0.77,
+          "numTotalTests": 12,
+          "numPassedTests": 12,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 978,
+      "head": "0335ccccbc7ed24fc003d20309995f5e336b5c06",
+      "reviewedPaths": [
+        "docs/public/features.md",
+        "docs/public/media/README.md",
+        "docs/public/media/models.png",
+        "docs/public/media/narrow.png",
+        "docs/public/media/plan-context.png",
+        "docs/public/media/projects.png",
+        "docs/public/media/provenance.json",
+        "docs/public/media/skills.png",
+        "docs/public/media/workspace-dark.png",
+        "docs/public/media/workspace-light.png",
+        "scripts/capture-public-media.ts",
+        "scripts/public-source-files.json"
+      ],
+      "semanticReview": "Read capture script/provenance and all changed assets. All19 records match SHA256/bytes, all7 PNG dimensions match and all7 were visually inspected. Historical capture dates remain explicit.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 966,
+      "head": "0d6e04f0ba76331e0265b743c49c6ecaad006991",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/skill-materialize.test.ts"
+      ],
+      "semanticReview": "Reviewed skill test/helper changes and relevant source boundaries;63 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "0d6e04f0ba76331e0265b743c49c6ecaad006991",
+          "files": [
+            "tests/skill-materialize.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 0.97,
+          "numTotalTests": 63,
+          "numPassedTests": 63,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 951,
+      "head": "8bddb5cdccf46a6934e5332ad59302458f99ce12",
+      "reviewedPaths": [
+        "packages/plugins/contracts.ts",
+        "packages/plugins/frame-protocol.ts",
+        "packages/plugins/frontend.ts",
+        "packages/plugins/host.ts",
+        "packages/plugins/installation.ts",
+        "packages/plugins/isolated-host.ts",
+        "packages/plugins/lifecycle.ts"
+      ],
+      "semanticReview": "Read full484line comment-only patch; emitted production JS identical in7files. No behavior change or additional confirmed defect.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 948,
+      "head": "1d65e3cd9b0ac07b3a2d229a93ae37ab0b474761",
+      "reviewedPaths": [
+        "CHANGELOG.md",
+        "apps/web/src/Connections.tsx",
+        "apps/web/src/connections.css",
+        "docs/subscription-connections.md",
+        "packages/contracts/authentication.ts",
+        "packages/runtime-pi/entitlement.ts",
+        "packages/runtime-pi/plan-keys.ts",
+        "packages/runtime/account-auth.ts",
+        "scripts/public-source-files.json",
+        "tests/account-auth.test.ts",
+        "tests/e2e/compact-settings.spec.ts"
+      ],
+      "semanticReview": "Reviewed runtime/UI behavior changes and focused regressions;104 tests pass. No native/platform qualification inferred.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "1d65e3cd9b0ac07b3a2d229a93ae37ab0b474761",
+          "files": [
+            "tests/account-auth.test.ts",
+            "tests/plan-key-connections.test.ts",
+            "tests/subscription-connections.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 7.14,
+          "numTotalTests": 104,
+          "numPassedTests": 104,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 982,
+      "head": "0f92de8a338fefb52172181c1cf010ddb9fb76c1",
+      "reviewedPaths": [
+        "tests/personal-visuals-ui.test.ts",
+        "tests/plugin-floating-owner-browser.test.ts",
+        "tests/plugin-frame-custody.test.ts",
+        "tests/plugin-tools-dock.test.ts",
+        "tests/window-globals.d.ts"
+      ],
+      "semanticReview": "Reviewed declaration/type cleanup; four production emissions identical.31 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "0f92de8a338fefb52172181c1cf010ddb9fb76c1",
+          "files": [
+            "tests/personal-visuals-ui.test.ts",
+            "tests/plugin-floating-owner-browser.test.ts",
+            "tests/plugin-frame-custody.test.ts",
+            "tests/plugin-tools-dock.test.ts"
+          ],
+          "exit": 1,
+          "seconds": 35.6,
+          "numTotalTests": 23,
+          "numPassedTests": 23,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": false
+        },
+        {
+          "head": "0f92de8a338fefb52172181c1cf010ddb9fb76c1",
+          "files": [
+            "tests/personal-visuals-ui.test.ts",
+            "tests/plugin-floating-owner-browser.test.ts",
+            "tests/plugin-frame-custody.test.ts",
+            "tests/plugin-tools-dock.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 43.44,
+          "numTotalTests": 31,
+          "numPassedTests": 31,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 958,
+      "head": "2eda2d757c56a29123e1f61ee144c92401be6d22",
+      "reviewedPaths": [
+        "scripts/public-source-files.json",
+        "tests/pure-helper-modules.test.ts"
+      ],
+      "semanticReview": "Reviewed test helper ownership/fixture changes and affected suites;85 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "2eda2d757c56a29123e1f61ee144c92401be6d22",
+          "files": [
+            "tests/pure-helper-modules.test.ts"
+          ],
+          "exit": 0,
+          "seconds": 0.87,
+          "numTotalTests": 85,
+          "numPassedTests": 85,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1859,
+      "head": "8e4e6de044f7041fcb0a01a496116bc301cd5673",
+      "reviewedPaths": [
+        "apps/web/src/ScopedConversationComposer.tsx",
+        "apps/web/src/agents-workspace/composer.ts",
+        "apps/web/src/api.ts",
+        "apps/web/src/conversation-workspace/ConversationPane.tsx",
+        "apps/web/src/conversation-workspace/conversation-pane.css",
+        "scripts/public-source-files.json",
+        "tests/agents-workspace-grid-fixture.ts",
+        "tests/composer-send-timeout.test.ts",
+        "tests/conversation-message-time.test.ts"
+      ],
+      "semanticReview": "Reviewed relative timestamp formatter/timer disposal and inherited composer path. Applied same verified1858 pending-journal cancellation and Cancel-button default prevention correction in independent artifact e4016c4138bd6f5a59df8440eeb95cf2690a052e. Accepted T00 timestamp policy remains contradictory between1282/1430 absolute/system and relative-under24h behavior; policy/integration HOLD remains.",
+      "state": "confirmed-repair-published-original-branch-held",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "Timestamp policy T00 contradiction remains an acceptance HOLD; cancellation correction does not resolve it.",
+        "Older branch declares tsc; supplemental Bun check is not a claimed successful tsc run."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-1859-publication.json",
+      "publicationEvidence": "lane-a-1859-publication.json",
+      "repair": {
+        "commit": "e4016c4138bd6f5a59df8440eeb95cf2690a052e",
+        "artifact": "lane-a-1859-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/e4016c4138bd6f5a59df8440eeb95cf2690a052e"
+      },
+      "tests": [
+        {
+          "head": "8e4e6de044f7041fcb0a01a496116bc301cd5673",
+          "exit": 0,
+          "seconds": 2.22,
+          "numTotalTests": 8,
+          "numPassedTests": 8,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1858,
+      "head": "df655bdc23a8a5c640a1febc280ca8f07a03ca38",
+      "reviewedPaths": [
+        "apps/web/src/ScopedConversationComposer.tsx",
+        "apps/web/src/agents-workspace/composer.ts",
+        "apps/web/src/api.ts",
+        "scripts/public-source-files.json",
+        "tests/agents-workspace-grid-fixture.ts",
+        "tests/composer-send-timeout.test.ts"
+      ],
+      "semanticReview": "Reviewed complete composer submission/cancellation/retry and journal/API ordering. Reproduced pending-persistence unhandled abort and late send plus Cancel button automatic resubmit after React changes button type. Verified two bounded corrections and immutable64fe96d artifact; original queued branch remains unchanged.",
+      "state": "confirmed-repair-published-original-branch-held",
+      "repair": {
+        "commit": "64fe96d064660d2f8b90d7deb4c3c392d4e1d2a6",
+        "validation": "41units/3files;11browser; Buncheck1504; UIlint630/0; build; actualBunlint--no-scriptPASS; declaredtscnotrerun",
+        "artifact": "lane-a-1858-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/64fe96d064660d2f8b90d7deb4c3c392d4e1d2a6"
+      },
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "Older branch declares tsc; supplemental Bun check is not a claimed successful tsc run."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-1858-publication.json",
+      "publicationEvidence": "lane-a-1858-publication.json",
+      "tests": [
+        {
+          "head": "df655bdc23a8a5c640a1febc280ca8f07a03ca38",
+          "exit": 0,
+          "seconds": 1.06,
+          "numTotalTests": 4,
+          "numPassedTests": 4,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1854,
+      "head": "0b53b89b120d4ee6666511618daba55c02d9b8a5",
+      "reviewedPaths": [
+        "apps/web/src/ComposerToolbar.tsx",
+        "apps/web/src/ModelPicker.tsx",
+        "apps/web/src/ScopedConversationComposer.tsx",
+        "scripts/public-source-files.json",
+        "tests/composer-polish.test.ts"
+      ],
+      "semanticReview": "Reviewed Changes-count label and model unavailable/held descriptions; count validity and empty models are handled without introducing actions.5 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "0b53b89b120d4ee6666511618daba55c02d9b8a5",
+          "exit": 0,
+          "seconds": 0.97,
+          "numTotalTests": 5,
+          "numPassedTests": 5,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1853,
+      "head": "0c630a983a4a5225f5f4ce2096bb0296522cf795",
+      "reviewedPaths": [
+        "apps/web/src/App.tsx",
+        "apps/web/src/ComposerAttachments.tsx",
+        "apps/web/src/styles.css",
+        "packages/core/service.ts",
+        "scripts/public-source-files.json",
+        "tests/composer-chip-remove.test.ts",
+        "tests/resource-revoke.test.ts"
+      ],
+      "semanticReview": "Reviewed resource revoke owner validation, attachment chip removal, read-only/archived gating and success/error retention.6 focused tests pass; revocation during a busy send is authority removal, not a demonstrated defect.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "0c630a983a4a5225f5f4ce2096bb0296522cf795",
+          "exit": 0,
+          "seconds": 3.93,
+          "numTotalTests": 6,
+          "numPassedTests": 6,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1831,
+      "head": "59723029319b9f3db428180ab59d983b2b1c0d2d",
+      "reviewedPaths": [
+        "DESIGN.md",
+        "apps/web/src/agents-workspace/agents-workspace.css",
+        "apps/web/src/composer-toolbar.css",
+        "apps/web/src/loading-state.css",
+        "apps/web/src/settings.css",
+        "apps/web/src/shell.css",
+        "apps/web/src/side-chat.css",
+        "apps/web/src/sidebar-context.css",
+        "apps/web/src/styles.css",
+        "apps/web/src/workspace-canvas.css",
+        "apps/web/src/workspace-split.css",
+        "packages/ui-shell/chat-view.css",
+        "packages/ui-shell/summary-dock.css",
+        "tests/theme-contrast.test.ts"
+      ],
+      "semanticReview": "Reviewed all CSS and DESIGN changes against1830 r4/r8 accepted neutral-fill/border/separator requirements. Focus rings remain; high contrast uses control border; one hairline keeps drag/focus divider states.37 theme tests pass. Dedicated-build visual matrix and Windows verification remain accepted gates.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "59723029319b9f3db428180ab59d983b2b1c0d2d",
+          "exit": 0,
+          "seconds": 3.58,
+          "numTotalTests": 37,
+          "numPassedTests": 37,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1822,
+      "head": "1b6fc679144144473d5568530a34f301de2283a7",
+      "reviewedPaths": [
+        "apps/web/src/EverydayData.tsx",
+        "apps/web/src/ExplorationTools.tsx",
+        "apps/web/src/InteractionTools.tsx",
+        "apps/web/src/SoftwareDevelopment.tsx",
+        "apps/web/src/WorkObjects.tsx",
+        "apps/web/src/artifact-source.ts",
+        "scripts/public-source-files.json",
+        "tests/artifact-source.test.ts"
+      ],
+      "semanticReview": "Reviewed source text/link classification and5 component consumers; only trimmed single http(s) URL becomes a link, blank source omitted, desktop link path uses owned browser bridge.5 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "1b6fc679144144473d5568530a34f301de2283a7",
+          "exit": 0,
+          "seconds": 0.74,
+          "numTotalTests": 5,
+          "numPassedTests": 5,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1813,
+      "head": "7217c997bee1775631677b909e5936d30ca81980",
+      "reviewedPaths": [
+        "apps/web/src/WorkspacePanel.tsx",
+        "scripts/public-source-files.json",
+        "tests/workspace-tabstrip-surface-stub.tsx",
+        "tests/workspace-tabstrip.test.ts"
+      ],
+      "semanticReview": "Reviewed WorkspacePanel roving tabs, ordered wrap/Home/End navigation, reveal and cleanup. Existing focused suite actually launches Chromium:3 browser cases PASS, not static-only tests.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "7217c997bee1775631677b909e5936d30ca81980",
+          "exit": 0,
+          "seconds": 2.69,
+          "numTotalTests": 3,
+          "numPassedTests": 3,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1808,
+      "head": "7e453d12a114257461e805a8a3af23b66f86fa30",
+      "reviewedPaths": [
+        "apps/web/src/ModelPicker.tsx",
+        "apps/web/src/model-picker.css",
+        "tests/e2e/model-picker.spec.ts"
+      ],
+      "semanticReview": "Reviewed ModelPicker empty-search content hierarchy and scroll ownership; message moved into the existing list region with provider action retained. Browser regression present, pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1804,
+      "head": "8a3ff9aabdf8e35055657da049b59de3f2f2833d",
+      "reviewedPaths": [
+        "packages/ui-shell/Toast.tsx",
+        "packages/ui-shell/feedback.css",
+        "tests/feedback-primitives.test.ts"
+      ],
+      "semanticReview": "Reviewed Toast visible-cap eviction with outgoing ghosts and reduced-motion specificity;9 focused DOM/browser cases PASS. Existing keyed deduplication and ghost settlement retained.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "8a3ff9aabdf8e35055657da049b59de3f2f2833d",
+          "exit": 0,
+          "seconds": 6.75,
+          "numTotalTests": 9,
+          "numPassedTests": 9,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1794,
+      "head": "3d62180315b1ec9dcd4245f1a2025718e88a52b8",
+      "reviewedPaths": [
+        "apps/web/src/styles.css",
+        "tests/artifact-restoring.test.ts"
+      ],
+      "semanticReview": "Reviewed pending artifact CSS against real data-artifact-pending/region/canvas markup;3 actual browser rendering cases PASS, without adding a second state owner.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "3d62180315b1ec9dcd4245f1a2025718e88a52b8",
+          "exit": 0,
+          "seconds": 1.41,
+          "numTotalTests": 3,
+          "numPassedTests": 3,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1782,
+      "head": "f0dc6f8e67abfea080a471c3941f44af3a7c2640",
+      "reviewedPaths": [
+        "apps/web/src/App.tsx",
+        "tests/e2e/composer-integration.spec.ts"
+      ],
+      "semanticReview": "Reviewed composer autofocus eligibility/once-per-owner ref and existing active-element/dialog/draft exclusions. New/empty ready thread can focus, historic/busy/dialog context cannot steal focus. Browser regression pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1777,
+      "head": "0670fb5fff9fbc452965c17523e040851f9c9264",
+      "reviewedPaths": [
+        "apps/web/src/project-picker.css",
+        "tests/e2e/project-picker-fixture.tsx",
+        "tests/e2e/project-picker.spec.ts"
+      ],
+      "semanticReview": "Reviewed project-picker fit-content/max-height behavior and variable-count fixture; empty and two-row lists shrink, long list keeps bounded scroll. Browser regression pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1762,
+      "head": "e910fe6cdf047364d9ab1b4a49f40bf236749ce4",
+      "reviewedPaths": [
+        "apps/web/src/App.tsx",
+        "apps/web/src/styles.css",
+        "tests/content-motion.test.ts"
+      ],
+      "semanticReview": "Reviewed keyed empty-state owner, existing motion tokens/reduced/off preferences and cleanup. Existing6-case content-motion suite exercises real Chromium;6PASS.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "e910fe6cdf047364d9ab1b4a49f40bf236749ce4",
+          "exit": 0,
+          "seconds": 3.6,
+          "numTotalTests": 6,
+          "numPassedTests": 6,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1760,
+      "head": "767627308e3cbc4016d466ff9312ca0115fd9cab",
+      "reviewedPaths": [
+        "apps/web/src/shell.css",
+        "packages/ui-shell/chat-view.css",
+        "packages/ui-shell/tokens.css",
+        "scripts/browser-suites.ts",
+        "scripts/public-source-files.json",
+        "tests/e2e/chat-view-layer-fixture.tsx",
+        "tests/e2e/chat-view-layer.spec.ts",
+        "tests/e2e/chat-view-modes.playwright.config.ts"
+      ],
+      "semanticReview": "Reviewed floating chat stacking against tool panel, docked/full exclusions and hit-test fixture. Uses existing layer token and lowers when docked. Browser hit-test pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1756,
+      "head": "b3fdb1d40b797cc0fb1000fec9d3fba58c843ea5",
+      "reviewedPaths": [
+        "apps/web/src/ShellSidebar.tsx",
+        "tests/sidebar-unread-label.test.ts"
+      ],
+      "semanticReview": "Reviewed thread accessible-name unread suffix and aria-hidden visual dot;2 focused tests pass, same state drives both.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "b3fdb1d40b797cc0fb1000fec9d3fba58c843ea5",
+          "exit": 0,
+          "seconds": 1.18,
+          "numTotalTests": 2,
+          "numPassedTests": 2,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1754,
+      "head": "06cd51640711ba906000ea4762b8448fb3004b11",
+      "reviewedPaths": [
+        "apps/web/src/InboxView.tsx",
+        "packages/ui-shell/Select.tsx",
+        "packages/ui-shell/controls.css",
+        "tests/e2e/ui-shell-controls-fixture.tsx",
+        "tests/e2e/ui-shell-controls.spec.ts",
+        "tests/inbox-presentation.test.ts"
+      ],
+      "semanticReview": "Reviewed30second Inbox refresh timer cleanup and inherited1751Select sizing.10 existing mounted-browser cases PASS, including disposal; no separate native platform claim.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "06cd51640711ba906000ea4762b8448fb3004b11",
+          "exit": 0,
+          "seconds": 4.53,
+          "numTotalTests": 10,
+          "numPassedTests": 10,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1753,
+      "head": "a3ef474dbc09a784b902ef798beaa389be0aad2f",
+      "reviewedPaths": [
+        "apps/web/src/Settings.tsx",
+        "apps/web/src/settings-registry.ts",
+        "tests/compact-settings.test.ts",
+        "tests/settings-browser-section.test.ts"
+      ],
+      "semanticReview": "Reviewed desktop-only browser section filtering, initial fallback and dynamic section correction plus settings-registry platform override. Browser surfaces cannot retain hidden Browser section; focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "a3ef474dbc09a784b902ef798beaa389be0aad2f",
+          "exit": 0,
+          "seconds": 2.17,
+          "numTotalTests": 8,
+          "numPassedTests": 8,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1752,
+      "head": "d3e59ba0416c7a6006b6ff73e5adfdb5f54c41bc",
+      "reviewedPaths": [
+        "apps/web/src/InboxView.tsx",
+        "tests/e2e/inbox-controls.spec.ts"
+      ],
+      "semanticReview": "Reviewed selected=visible.find and list/reader behavior. Implementation matches DESIGN/T01/T02 restoration but canonical1712 REQUIREMENTS explicitly forbids auto-reselection. Acceptance decision remains contradictory;2303 records unresolved decision. No speculative semantics change.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply.",
+        "Accepted1712 clear-vs-restore selection contradiction remains a decision HOLD."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1751,
+      "head": "79b40550b10e02d451d322260583b91f38693403",
+      "reviewedPaths": [
+        "packages/ui-shell/Select.tsx",
+        "packages/ui-shell/controls.css",
+        "tests/e2e/ui-shell-controls-fixture.tsx",
+        "tests/e2e/ui-shell-controls.spec.ts"
+      ],
+      "semanticReview": "Reviewed Select trigger sizing from display label,280px cap, nowrap and min-width; shared toolbar behavior preserved. Browser regression pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1750,
+      "head": "53132b9ccb51d66d710d67fa66e04a10f28a0586",
+      "reviewedPaths": [
+        "apps/web/src/AppearanceSettings.tsx",
+        "apps/web/src/Settings.tsx",
+        "tests/preferences-presentation.test.ts"
+      ],
+      "semanticReview": "Reviewed disabled fieldset/legend and per-row controls for browser notification settings, matched platform registry and consumer intent. Focused tests pass. No false claim of native system-notification verification.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "53132b9ccb51d66d710d67fa66e04a10f28a0586",
+          "exit": 0,
+          "seconds": 1.32,
+          "numTotalTests": 6,
+          "numPassedTests": 6,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1733,
+      "head": "be93acd1f540079745cf77cfe02e48759341e68b",
+      "reviewedPaths": [
+        "apps/web/src/settings.css",
+        "tests/theme-contrast.test.ts"
+      ],
+      "semanticReview": "Reviewed dark checked switch track/knob token substitution against actual themes;36 contrast tests pass, light theme unchanged.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "be93acd1f540079745cf77cfe02e48759341e68b",
+          "exit": 0,
+          "seconds": 3.87,
+          "numTotalTests": 36,
+          "numPassedTests": 36,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1684,
+      "head": "92e70a8e8b69b00aa305ef89a4735c6691e54aaa",
+      "reviewedPaths": [
+        "apps/web/src/ContextInspector.tsx",
+        "apps/web/src/context-inspector.css",
+        "tests/e2e/context-compact-fixture.tsx",
+        "tests/e2e/context-compact.spec.ts"
+      ],
+      "semanticReview": "Confirmed compactRun inferred success from absent activeRun or cancelled report without accepted receipt. Removed only that inference; existing owner/epoch/session/run/status-valid acceptedReceipt effect remains authoritative. Browser10PASS,109unitsPASS and immutableae3293ea artifact independently reviewed; original branch update rejected queued protection.",
+      "state": "confirmed-repair-published-original-branch-held",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply.",
+        "Older branch declares tsc; supplemental Bun check is not a claimed successful tsc run."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-1684-publication.json",
+      "publicationEvidence": "lane-a-1684-publication.json",
+      "repair": {
+        "commit": "ae3293ea58e7c988e851bcae14f92f29b961ce0c",
+        "artifact": "lane-a-1684-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/ae3293ea58e7c988e851bcae14f92f29b961ce0c"
+      },
+      "tests": []
+    },
+    {
+      "pr": 1683,
+      "head": "0584f818d395630e18216c5ef0c463b9cc294d26",
+      "reviewedPaths": [
+        "apps/web/src/DocumentPreview.tsx",
+        "apps/web/src/document-preview.css",
+        "packages/ui-shell/Feedback.tsx",
+        "tests/e2e/document-preview.spec.ts"
+      ],
+      "semanticReview": "Confirmed four CSS min-height/height rules retained dead380px space around compact document failures. Narrow/centered/Steps regressions prove four RED then five PASS with6d42b6a artifact;49unitsPASS. Two successful PDF/AcroForm renderer cases fail Invalid workerSrc type identically on original and candidate, so no successful-renderer pass claimed.",
+      "state": "confirmed-repair-published-original-branch-held",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply.",
+        "Older branch declares tsc; supplemental Bun check is not a claimed successful tsc run."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "publicationEvidenceFile": "lane-a-1683-publication.json",
+      "publicationEvidence": "lane-a-1683-publication.json",
+      "repair": {
+        "commit": "6d42b6a59f15291c92360deedddf953efaa09658",
+        "artifact": "lane-a-1683-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/6d42b6a59f15291c92360deedddf953efaa09658"
+      },
+      "tests": []
+    },
+    {
+      "pr": 1682,
+      "head": "fafbfde134b2b96bcd812a66cbf63af1ffc42880",
+      "reviewedPaths": [
+        "apps/web/src/WorkspacePanel.tsx",
+        "apps/web/src/shell.css",
+        "tests/e2e/workspace-host.spec.ts"
+      ],
+      "semanticReview": "Reviewed empty workspace artifact select disabled state/reason with normal selection callback and list; browser regression pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1681,
+      "head": "84e9ca36bc5dcc36608926d44f68cac6a273bea1",
+      "reviewedPaths": [
+        "apps/web/src/MapView.tsx",
+        "apps/web/src/map-source.ts",
+        "apps/web/src/map-view.css",
+        "scripts/public-source-files.json",
+        "tests/e2e/task-interface.spec.ts",
+        "tests/map-source.test.ts"
+      ],
+      "semanticReview": "Reviewed Map source classifier and source rendering/link forwarding against artifact-bound inputs.3 focused tests pass; no unexpected URL scheme accepted as link.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "84e9ca36bc5dcc36608926d44f68cac6a273bea1",
+          "exit": 0,
+          "seconds": 0.7,
+          "numTotalTests": 3,
+          "numPassedTests": 3,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1679,
+      "head": "b7c9f84665ecb471638794fee5f6929019c2c040",
+      "reviewedPaths": [
+        "apps/web/src/MapView.tsx",
+        "apps/web/src/map-view.css",
+        "tests/e2e/task-interface.spec.ts"
+      ],
+      "semanticReview": "Reviewed per-point accepted feedback state, in-flight disabled controls and confirmation keyed to submitted point. Switching selection cannot misattribute response. Browser regression pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1678,
+      "head": "b25fe792a7fbfec3059f3f84084b70422e598b98",
+      "reviewedPaths": [
+        "apps/web/src/App.tsx",
+        "apps/web/src/project-api.ts",
+        "apps/web/src/saved-drafts.ts",
+        "tests/e2e/frontend.spec.ts",
+        "tests/saved-drafts.test.ts"
+      ],
+      "semanticReview": "Reviewed SavedDrafts slot states against project/thread/working-copy identity and useProjectContext generation/abort guards; retry is explicit, stale context cannot create an owner.45 focused tests pass.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "b25fe792a7fbfec3059f3f84084b70422e598b98",
+          "exit": 0,
+          "seconds": 1.27,
+          "numTotalTests": 45,
+          "numPassedTests": 45,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1675,
+      "head": "9def26d5bb524f10f7fb2d02641b3133f65c42f4",
+      "reviewedPaths": [
+        "apps/web/src/App.tsx",
+        "tests/e2e/frontend.spec.ts"
+      ],
+      "semanticReview": "Reviewed unavailable model CTA against actual working/reply history; working runs hide connection CTA and existing history labels reply. Browser regression pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1674,
+      "head": "4ff094146cb1d4f88e2d42ba353183fa3b815792",
+      "reviewedPaths": [
+        "apps/web/src/conversation-find.css",
+        "tests/e2e/conversation-find.spec.ts"
+      ],
+      "semanticReview": "Reviewed find-bar flex sizing and text input minimum against toolbar controls; browser narrow-width regression pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1546,
+      "head": "ad0e2604e5a10ae5ec6bc7682b31455a0150a1c7",
+      "reviewedPaths": [
+        "apps/web/src/model-picker.css",
+        "apps/web/src/sidebar-context.css"
+      ],
+      "semanticReview": "Reviewed two motion-duration/easing substitutions against existing tokens/reduced-motion selectors; no structural or ownership change.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1545,
+      "head": "d8e05f167c1de55e83dd22a9ec5edb0199597006",
+      "reviewedPaths": [
+        "apps/web/src/agents-workspace/AgentsWorkspace.tsx",
+        "apps/web/src/agents-workspace/agents-workspace.css"
+      ],
+      "semanticReview": "Reviewed whitespace-only transcript content fallback and typography; nonempty Markdown path unchanged. Browser fallback coverage pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1427,
+      "head": "b7d2fdda963367037ca6c4c9a84a91036732e62b",
+      "reviewedPaths": [
+        ".artifacts/1137/after-empty.png",
+        ".artifacts/1137/after-populated.png",
+        ".artifacts/1137/before-empty.png",
+        ".artifacts/1137/before-populated.png",
+        "apps/web/src/UsageDialog.tsx",
+        "apps/web/src/usage-dialog.css",
+        "tests/e2e/frontend.spec.ts",
+        "tests/e2e/usage-context.spec.ts"
+      ],
+      "semanticReview": "Reviewed empty Usage presentation and header refresh ownership; removes duplicate action while preserving loading/error/filter cases. Browser empty-state coverage pending supplemental run.",
+      "state": "semantic-reviewed",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
+        "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": []
+    },
+    {
+      "pr": 1405,
+      "head": "71b7e5838c12564626e6e49716041bccf07545b1",
+      "reviewedPaths": [
+        "apps/web/src/App.tsx",
+        "apps/web/src/run-announcements.ts",
+        "scripts/public-source-files.json",
+        "tests/run-announcements.test.ts"
+      ],
+      "semanticReview": "Reviewed transition mapper, announcements and App owner placement. Possible previous-status retention across owner changes was investigated but a reachable user defect was not established; no speculative source change.12 focused mapper tests PASS. Manual NVDA/Narrator acceptance remains open.",
+      "state": "semantic-reviewed-no-confirmed-additional-defect",
+      "limits": [
+        "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
+        "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests."
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "tests": [
+        {
+          "head": "71b7e5838c12564626e6e49716041bccf07545b1",
+          "exit": 0,
+          "seconds": 0.67,
+          "numTotalTests": 12,
+          "numPassedTests": 12,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ]
+    },
+    {
+      "pr": 1801,
+      "head": "0823cf6a8436f6a1a13a771693402e09c410304f",
+      "reviewedPaths": [
+        "apps/web/src/files/FilesView.tsx",
+        "apps/web/src/files/ProjectFiles.tsx",
+        "apps/web/src/files/files.css",
+        "apps/web/src/files/pinned-previews.ts",
+        "apps/web/src/files/useFilesRead.ts",
+        "packages/workspace/tools.ts",
+        "scripts/public-source-files.json",
+        "tests/files-read-commit-owner.test.ts",
+        "tests/pinned-previews.test.ts",
+        "tests/private-git-family.test.ts",
+        "tests/project-files-binding.test.ts"
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "limits": [
+        "Exact original-head review; current-main integration and required CI remain separate.",
+        "No native Windows or assistive-technology qualification inferred.",
+        "Verified repair exists on a durable isolated branch; original queued PR did not receive it."
+      ],
+      "semanticReview": "Production UI and portable host regressions reproduced stale-owner binding/pin adoption, premature resume reads, invalid binding retention, thread/path identity mismatches, guarded-read/final-async-recheck Store rebinds and active-unpin refresh mismatch. Correction uses the existing committed-owner fence, validates folder binding before preview, clears invalid accepted data, and performs a synchronous Store-owner check after physical revalidation. Root independently reviewed full patch plus final recheck correction. Integrated accepted main0a370.",
+      "state": "confirmed-repair-published-original-branch-held",
+      "followups": [
+        "Original branch update remains blocked by queued-branch protection",
+        "Live required CI, accepted-main integration freshness and native acceptance remain coordinator/maintainer gates"
+      ],
+      "coordinatorTestEvidenceFile": "root-source-tests-results.json",
+      "repair": {
+        "commit": "84ef7f48e72973ef2ffd5dc36a9a2a34f5cb0f06",
+        "tree": "b5811f7027a6bf76ec2899a4625e282ea472239b",
+        "artifact": "lane-a-1801-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/84ef7f48e72973ef2ffd5dc36a9a2a34f5cb0f06",
+        "validation": "42 focused tests PASS after final Store fence; fixture-only projectName correction reran11 protocol tests and final declared Bun/UI/Bun-lint/build, allPASS. Full84 Files/Search browser PASS at20592 with final UI/browser bytes unchanged. Real Store/files/realpath/lstat; native guard mocked. Original native baseline15PASS/13Linuxsafe-openFAIL remains."
+      },
+      "publicationEvidence": "lane-a-1801-publication.json",
+      "tests": [
+        {
+          "head": "0823cf6a8436f6a1a13a771693402e09c410304f",
+          "files": [
+            "tests/pinned-previews.test.ts",
+            "tests/private-git-family.test.ts"
+          ],
+          "dependency_mode": "shared exact direct versions; transitive lock comparison recorded separately",
+          "exit": 1,
+          "seconds": 1.95,
+          "numTotalTests": 28,
+          "numPassedTests": 15,
+          "numFailedTests": 13,
+          "numPendingTests": 0,
+          "success": false,
+          "failureCases": [
+            {
+              "file": "private-git-family.test.ts",
+              "name": "imports once into protected private bare storage and creates three independent native worktrees"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "does not consume original metadata after private import and ignores dependency bulk for managed status"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "keeps original bindings in place, reports tracked-only coverage and rejects legacy mutations"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "refuses stored identity substitution before managed Git starts"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "refuses stored gitDirectoryIdentity substitution before managed Git starts"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "refuses stored commonDirectoryIdentity substitution before managed Git starts"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "streams metadata beyond the unchanged ordinary snapshot budget with a bounded buffer"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "imports safe author and GitHub origin scalars and drops arbitrary source configuration"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "refuses a legacy scratch view inside a broad source grant"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "keeps incremental legacy objects out of the authoritative managed family"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "reports each admitted managed copy rather than the original repository root in hover context"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "rejects a context read when the admitted model changes during its Git read"
+            },
+            {
+              "file": "private-git-family.test.ts",
+              "name": "returns a stable opaque bindingId on folder and file reads per admitted copy"
+            }
+          ]
+        }
+      ],
+      "coordinatorTests": "15PASS/13native-safe-openFAIL at original exact head; Linux failures do not qualify native Windows paths"
+    },
+    {
+      "pr": 1779,
+      "head": "369dfe592e00955c32d4ca8d264e5e2a663ff46e",
+      "reviewedPaths": [
+        "apps/web/src/files/ProjectSearch.tsx",
+        "apps/web/src/files/files.css",
+        "apps/web/src/files/project-search-api.ts",
+        "packages/contracts/project-search.ts",
+        "packages/contracts/search-path-filter.ts",
+        "packages/workspace/project-search.ts",
+        "scripts/public-source-files.json",
+        "tests/e2e/project-search.spec.ts",
+        "tests/project-search-host.test.ts",
+        "tests/search-path-filter.test.ts"
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "limits": [
+        "Exact original-head review; current-main integration and required CI remain separate.",
+        "No native Windows or assistive-technology qualification inferred.",
+        "Verified repair exists on a durable isolated branch; original queued PR did not receive it."
+      ],
+      "semanticReview": "Removed the trim-empty UI bypass so raw input always passes the accepted shared bounded Unicode path-filter validator. Four unit and two actual-browser regressions reproduced before repair. Integrated accepted main c4be and equivalent custom issue-code literal; independent root review found no further issue. Original and pre-main declared default-heap tsc both OOM, retained separately from final current-main declared Bun gates.",
+      "state": "confirmed-repair-published-original-branch-held",
+      "followups": [
+        "Original branch update remains blocked by queued-branch protection",
+        "Live required CI, accepted-main integration freshness and native acceptance remain coordinator/maintainer gates"
+      ],
+      "coordinatorTestEvidenceFile": "root-source-tests-results.json",
+      "repair": {
+        "commit": "7be4699c072235ff310eb0747fcf7cd8dfabb6aa",
+        "tree": "455c1e526ca1a303a6db869a0a9f42edca3939cf",
+        "artifact": "lane-a-1779-current-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/7be4699c072235ff310eb0747fcf7cd8dfabb6aa",
+        "validation": "110 focused units and14 path-filter browser cases PASS; final declared Bun checker/UI guard/Bun lint/build PASS. Earlier broad browser49PASS/1 timing-count failure, not a50-case pass. Native Windows guard remains unqualified."
+      },
+      "publicationEvidence": "lane-a-1779-current-publication.json",
+      "tests": [
+        {
+          "head": "369dfe592e00955c32d4ca8d264e5e2a663ff46e",
+          "files": [
+            "tests/project-search-host.test.ts",
+            "tests/search-path-filter.test.ts"
+          ],
+          "dependency_mode": "shared exact direct versions; transitive lock comparison recorded separately",
+          "exit": 1,
+          "seconds": 17.12,
+          "numTotalTests": 104,
+          "numPassedTests": 103,
+          "numFailedTests": 1,
+          "numPendingTests": 0,
+          "success": false,
+          "failureCases": [
+            {
+              "file": "project-search-host.test.ts",
+              "name": "uses an acquired real Windows guard for ordinary reads; unsupported platforms fail closed"
+            }
+          ]
+        }
+      ],
+      "coordinatorTests": "103PASS/1WindowsguardFAIL at exact original head; production adapter remains unavailable/A7HOLD"
+    },
+    {
+      "pr": 1702,
+      "head": "89a7e35bf60ba9fbd8d59c8de10a955f772b396e",
+      "reviewedPaths": [
+        "apps/web/src/WorkspaceSurfaceBody.tsx",
+        "apps/web/src/files/ProjectFiles.tsx",
+        "apps/web/src/files/ProjectTextPreview.tsx",
+        "apps/web/src/files/files.css",
+        "apps/web/src/keyboard-bindings.ts",
+        "packages/contracts/preferences.ts",
+        "scripts/public-source-files.json",
+        "tests/e2e/files-reading.spec.ts",
+        "tests/e2e/project-search.spec.ts",
+        "tests/project-text-preview.test.ts"
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "limits": [
+        "Exact original-head review; current-main integration and required CI remain separate.",
+        "No native Windows or assistive-technology qualification inferred.",
+        "Verified repair exists on a durable isolated branch; original queued PR did not receive it."
+      ],
+      "semanticReview": "Five actual-browser defects reproduced and corrected: decorative gutter inflated copy offsets, stale pending closure, empty-text line1 omitted, Go form identity reset during scrolling, and onReady measured overscan rather than visible row. Integrated accepted main cd714; root independently reviewed the complete bounded patch.",
+      "state": "confirmed-repair-published-original-branch-held",
+      "followups": [
+        "Original branch update remains blocked by queued-branch protection",
+        "Live required CI, accepted-main integration freshness and native acceptance remain coordinator/maintainer gates"
+      ],
+      "coordinatorTestEvidenceFile": "root-source-tests-results.json",
+      "repair": {
+        "commit": "bff1e8182eb0bf80a11ef2f4b7e0007ecae82c2a",
+        "tree": "2e5e81fbbb0455ea395b133af4319af09f5ed7f9",
+        "artifact": "lane-a-1702-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/bff1e8182eb0bf80a11ef2f4b7e0007ecae82c2a",
+        "validation": "51 final Files browser and35 focused tests PASS;5 earlier c4be Search cases PASS; final declared Bun checker/UI guard/Bun lint/build PASS. Original declared tsc not run; native clipboard/Windows/screen-reader acceptance separate."
+      },
+      "publicationEvidence": "lane-a-1702-publication.json",
+      "tests": [
+        {
+          "head": "89a7e35bf60ba9fbd8d59c8de10a955f772b396e",
+          "files": [
+            "tests/project-text-preview.test.ts"
+          ],
+          "dependency_mode": "shared exact direct versions; transitive lock comparison recorded separately",
+          "exit": 0,
+          "seconds": 1.53,
+          "numTotalTests": 12,
+          "numPassedTests": 12,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ],
+      "coordinatorTests": "12 parser units PASS at original head; actual browser clipboard/reveal acceptance remains separate"
+    },
+    {
+      "pr": 1551,
+      "head": "08e354e1daecd239d3aa2f4d0ac3c3eb2f47c3d8",
+      "reviewedPaths": [
+        "apps/web/src/App.tsx",
+        "apps/web/src/ConversationFind.tsx",
+        "apps/web/src/UserPromptDisclosure.tsx",
+        "apps/web/src/conversation-find.ts",
+        "apps/web/src/conversation-scroll.ts",
+        "apps/web/src/prompt-clips.ts",
+        "apps/web/src/user-prompt-disclosure.css",
+        "scripts/public-source-files.json",
+        "tests/e2e/conversation-find.spec.ts",
+        "tests/user-prompt-disclosure.test.ts"
+      ],
+      "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
+      "limits": [
+        "Exact original-head review; current-main integration and required CI remain separate.",
+        "No native Windows or assistive-technology qualification inferred.",
+        "Verified repair exists on a durable isolated branch; original queued PR did not receive it."
+      ],
+      "semanticReview": "Six actual-browser ownership/focus/animation failures reproduced. Cancellation detaches animation callbacks and identity-fences completion; motion changes and remeasurement cancel stale animation; Find waits for settled reveal; focused disclosure toggle fallback survives unrelated commits and clears on real blur. Integrated accepted main cd714 while preserving App reply jump and Find coalesced scan. Root independently reviewed source, surrounding policy and merge resolution.",
+      "state": "confirmed-repair-published-original-branch-held",
+      "followups": [
+        "Original branch update remains blocked by queued-branch protection",
+        "Live required CI, accepted-main integration freshness and native acceptance remain coordinator/maintainer gates"
+      ],
+      "coordinatorTestEvidenceFile": "root-source-tests-results.json",
+      "repair": {
+        "commit": "10ef118113eb582510331599276f0a1a5add291e",
+        "tree": "b0a8835fc613062ec78cdf4950924bb8c44bae74",
+        "artifact": "lane-a-1551-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/10ef118113eb582510331599276f0a1a5add291e",
+        "validation": "34 integrated focused tests and12 full Find browser cases PASS; all declared Bun checker/UI guard/Bun lint/build gates PASS. No native Windows or screen-reader qualification; original queued ref remains unchanged."
+      },
+      "publicationEvidence": "lane-a-1551-publication.json",
+      "tests": [
+        {
+          "head": "08e354e1daecd239d3aa2f4d0ac3c3eb2f47c3d8",
+          "files": [
+            "tests/user-prompt-disclosure.test.ts"
+          ],
+          "dependency_mode": "shared exact direct versions; transitive lock comparison recorded separately",
+          "exit": 0,
+          "seconds": 1.4,
+          "numTotalTests": 8,
+          "numPassedTests": 8,
+          "numFailedTests": 0,
+          "numPendingTests": 0,
+          "success": true
+        }
+      ],
+      "coordinatorTests": "8 focused pure tests PASS at exact head; historic browser/CI evidence is author-reported and not relabeled as this audit run"
+    }
+  ],
+  "parentCheckpoint": 7180732381,
+  "snapshotNotes": [
+    "Only source-inspection completeness is aggregated; no queue/merge/native readiness aggregate.",
+    "Additional1632 repair and355 accepted-main integration remain active.",
+    "Full raw logs remain separate; durable code commits and issue checkpoints anchor findings."
+  ]
+}
