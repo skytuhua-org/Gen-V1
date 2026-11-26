@@ -40,6 +40,10 @@ describe('installed desktop verification custody',()=>{
    const {prepareInstalledNativeSave}=await import('../scripts/installed-native-save.ts');
    expect((await prepareInstalledNativeSave(directory)).directory.path).toBe(directory);
    await expect(installedVerification.prepareInstalledMemoryPhaseDirectory(root,owner)).rejects.toMatchObject({code:'EEXIST'});
+   const flagFree=await installedVerification.prepareInstalledMemoryPhaseDirectory(root,owner,'flag-free');
+   expect(flagFree).not.toBe(directory);
+   expect(JSON.parse(await readFile(join(flagFree,'owner.json'),'utf8'))).toEqual(owner);
+   await expect(installedVerification.prepareInstalledMemoryPhaseDirectory(root,owner,'flag-free')).rejects.toMatchObject({code:'EEXIST'});
    expect(JSON.parse(await readFile(receipt,'utf8'))).toEqual(owner);
    expect(JSON.parse(await readFile(join(root,'owner.json'),'utf8'))).toEqual(owner);
   }finally{await rm(root,{recursive:true,force:true});}
@@ -62,6 +66,41 @@ describe('installed desktop verification custody',()=>{
    expect(logs[0]).toBe('first=');
    expect(result.stderr).toBe('first=é漢�');
   }finally{await rm(cwd,{recursive:true,force:true});}
+ });
+ it('uses six launches with one executable and stable, disjoint port sets across three profiles',async()=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'installed-acceptance-launches-')));
+  try{
+   const executable=join(root,'Gen V1.exe');
+   await writeFile(executable,'owned fixture');
+   const stat=await lstat(executable,{bigint:true});
+   const executableIdentity={dev:String(stat.dev),ino:String(stat.ino),sha256:createHash('sha256').update('owned fixture').digest('hex')};
+   const usedPorts=new Set<number>(),portsByPhase:number[][]=[];
+   for(const phase of ['retention','enabled-memory','flag-free']){
+    const directory=join(root,phase);await mkdir(directory);
+    const launch=vi.fn(async(_iteration:number,_ports:readonly[number,number,number])=>{});
+    await installedVerification.runInstalledAcceptanceLaunches({directory,executable,executableIdentity,usedPorts,launch});
+    expect(launch.mock.calls.map(([iteration])=>iteration)).toEqual([1,2]);
+    expect(launch.mock.calls[1]?.[1]).toEqual(launch.mock.calls[0]?.[1]);
+    portsByPhase.push([...launch.mock.calls[0]![1]]);
+   }
+   expect(new Set(portsByPhase.flat()).size).toBe(9);
+  }finally{await rm(root,{recursive:true,force:true});}
+ });
+ it.each(['executable','profile','launch error'])('does not restart a scenario after %s failure',async change=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'installed-acceptance-custody-')));
+  try{
+   const executable=join(root,'Gen V1.exe'),directory=join(root,'profile');
+   await mkdir(directory);await writeFile(executable,'owned fixture');
+   const stat=await lstat(executable,{bigint:true});
+   const executableIdentity={dev:String(stat.dev),ino:String(stat.ino),sha256:createHash('sha256').update('owned fixture').digest('hex')};
+   const launch=vi.fn(async()=>{
+    if(change==='executable')await writeFile(executable,'mutated');
+    else if(change==='profile'){await rename(directory,directory+'-previous');await mkdir(directory);}
+    else throw Error('first launch failed');
+   });
+   await expect(installedVerification.runInstalledAcceptanceLaunches({directory,executable,executableIdentity,usedPorts:new Set(),launch})).rejects.toThrow(/identity changed|first launch failed/);
+   expect(launch).toHaveBeenCalledTimes(1);
+  }finally{await rm(root,{recursive:true,force:true});}
  });
  it('records installer exit separately from close and never copies child text into lifecycle evidence',()=>{
   const observe=(installedVerification as unknown as {observeOwnedProcess:(child:ChildProcess,phase:'installer',timeoutMs:number,clock:()=>number)=>{status:string;pid:number|null;spawnElapsedMs:number|null;exit:{elapsedMs:number;code:number|null;signal:string|null}|null;close:{elapsedMs:number;code:number|null;signal:string|null}|null;stdoutBytes:number;stderrBytes:number}}).observeOwnedProcess;
@@ -216,6 +255,8 @@ describe('installed project memory retention fixture',()=>{
   expect(installedVerification.readInstalledVerificationArguments(['setup','unpacked'])).toEqual({setup:'setup',unpacked:'unpacked',memoryRetention:false,memoryEnabled:false});
   expect(installedVerification.readInstalledVerificationArguments(['setup','unpacked','--project-memory-retention'])).toEqual({setup:'setup',unpacked:'unpacked',memoryRetention:true,memoryEnabled:false});
   expect(installedVerification.readInstalledVerificationArguments(['setup','unpacked','--project-memory-retention','--project-memory-enabled'])).toEqual({setup:'setup',unpacked:'unpacked',memoryRetention:true,memoryEnabled:true});
+  expect(installedVerification.readInstalledVerificationArguments(['setup','unpacked','--project-memory-retention','--project-memory-enabled','--single-install-acceptance'])).toEqual({setup:'setup',unpacked:'unpacked',memoryRetention:true,memoryEnabled:true,singleInstallAcceptance:true});
+  expect(()=>installedVerification.readInstalledVerificationArguments(['setup','unpacked','--single-install-acceptance'])).toThrow(/usage/i);
   for(const args of [[],['setup'],['setup','unpacked','--enable-memory'],['setup','unpacked','--project-memory-enabled'],['setup','unpacked','--project-memory-retention','--project-memory-retention'],['setup','unpacked','--project-memory-retention','--project-memory-enabled','--project-memory-enabled']])expect(()=>installedVerification.readInstalledVerificationArguments(args)).toThrow(/usage|pass|option/i);
  });
  it('activates only project memory for explicit enabled launches and never inherits ambient feature flags',()=>{
