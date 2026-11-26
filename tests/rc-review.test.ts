@@ -12,13 +12,23 @@ import {hash,pnpm,run,sha} from '../scripts/rc-review/common.ts';
 import {archiveProfile,restoreProfile} from '../scripts/rc-review/profile-archive.ts';
 import {assertCleanLifecycle,parseInterruptMs} from '../scripts/rc-review/run-rc-review.ts';
 import {compareNativeGeometry} from '../scripts/rc-review/upgrade-check.ts';
-import {closeInstalledSession} from '../scripts/rc-review/installed-session.ts';
+import {closeInstalledSession,withInstalledSessionCleanup} from '../scripts/rc-review/installed-session.ts';
 import type {ChildProcess} from 'node:child_process';
 
 const roots:string[]=[];
 it('rejects overflowed interruption delays before scheduling and keeps supported positive integers',()=>{for(const value of ['2147483648','999999999999','0','-5','1.5','abc'])expect(()=>parseInterruptMs(value)).toThrow('Invalid --interrupt-ms');for(const value of ['1','500','2147483647'])expect(parseInterruptMs(value)).toBe(Number(value));});
 it('proves Node coerces an overflowed timer delay to 1 ms with a synthetic timer-only probe',async()=>{const started=Date.now(),output=await run(process.execPath,['-e','setTimeout(()=>console.log("fired"),2147483648)'],{capture:true});expect(output).toBe('fired');expect(Date.now()-started).toBeLessThan(15000);});
 const runningChild=()=>({exitCode:null,signalCode:null}) as ChildProcess;
+it('keeps the installed RC action and teardown failures together',async()=>{
+ const actionError=Error('installed action failed'),cleanupError=Error('teardown failed'),cleanup=vi.fn(async()=>{throw cleanupError;});
+ const failure=await withInstalledSessionCleanup(async()=>{throw actionError;},cleanup).catch(error=>error);
+ expect(cleanup).toHaveBeenCalledOnce();
+ expect(failure).toBeInstanceOf(AggregateError);
+ expect((failure as AggregateError).errors).toEqual([actionError,cleanupError]);
+ expect((failure as AggregateError).message).toMatch(/installed action failed.*teardown failed/);
+ await expect(withInstalledSessionCleanup(async()=>{throw null;},async()=>{})).rejects.toBeNull();
+ await expect(withInstalledSessionCleanup(async()=>{},cleanup)).rejects.toBe(cleanupError);
+});
 it('still runs owned child cleanup when the browser session close rejects',async()=>{let terminated=false;await expect(closeInstalledSession(true,{close:()=>Promise.reject(Error('close failed'))},runningChild(),async()=>{terminated=true;})).rejects.toThrow('close failed');expect(terminated).toBe(true);});
 it('keeps close and termination failures observable together',async()=>{let terminated=false;const failure=await closeInstalledSession(true,{close:()=>Promise.reject(Error('close failed'))},runningChild(),async()=>{terminated=true;throw Error('terminate failed');}).catch(error=>error);expect(terminated).toBe(true);expect(failure).toBeInstanceOf(AggregateError);expect((failure as AggregateError).errors.map(String)).toEqual([expect.stringContaining('close failed'),expect.stringContaining('terminate failed')]);});
 it('skips termination once the child already exited and leaves an unverified browser session untouched',async()=>{let terminated=false,closed=false;const browser={close:()=>{closed=true;return Promise.reject(Error('must not run'));}};await closeInstalledSession(false,browser,{exitCode:0,signalCode:null} as ChildProcess,async()=>{terminated=true;});expect(terminated).toBe(false);expect(closed).toBe(false);});
