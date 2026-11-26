@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Snapshot, TaskMemory as Note } from '../../../packages/contracts';
 import { TaskMemory } from '../../../apps/web/src/TaskMemory';
@@ -51,15 +51,18 @@ IDBObjectStore.prototype.get = function (key) {
 
 const initialNotes: Note[] = setup.notes ?? [{ id: 'synthetic-note', threadId: 'thread-a', key: 'decision', content: 'Saved decision.', revision: 3, author: 'user', updatedAt: '2026-11-07T00:00:00Z' }];
 let change: (threadId: string) => void = () => {}, show: (value: boolean) => void = () => {}, publish: (notes: Note[]) => void = () => {};
+let nextLayout: (() => void) | null = null;
 const fixture = {
   counts, held: () => [...held.keys()],
   release: (key: string, fail = false) => { delete reads[key]; const callbacks = held.get(key) ?? []; held.delete(key); callbacks.forEach(finish => finish(fail)); },
   change: (threadId: string) => change(threadId), show: (value: boolean) => show(value), publish: (notes: Note[]) => publish(notes),
+  onNextLayout: (callback: () => void) => { nextLayout = callback; },
   read: (key: string) => journal.journalRead<Draft | null>(key), flush: journal.journalFlush,
 };
 Object.assign(window, { memoryFixture: fixture });
 function Fixture() {
   const [threadId, setThreadId] = useState('thread-a'), [mounted, setMounted] = useState(true), [notes, setNotes] = useState(initialNotes);
+  useLayoutEffect(() => { const callback = nextLayout; nextLayout = null; callback?.(); });
   change = setThreadId; show = setMounted; publish = setNotes;
   return <main><p className="memory-fixture-label">Synthetic journal and API · production Thread memory</p>{mounted && <TaskMemory threadId={threadId} snapshot={{ memory: notes } as Snapshot} />}<div className="memory-fixture-controls"><button onClick={() => setThreadId(id => id === 'thread-a' ? 'thread-b' : 'thread-a')}>Switch synthetic thread</button><button onClick={() => setMounted(value => !value)}>Toggle memory</button></div></main>;
 }

@@ -206,7 +206,8 @@ test('saved-note recovery failure blocks Delete until Retry and keeps stale revi
 test('Use saved note clears only its captured draft and a subsequent edit uses the saved revision', async ({ page }) => {
   const commands = await mount(page, { drafts: { [savedKey]: draft } }); await expect(editor(page)).toHaveValue(draft.content);
   await page.getByText('A newer saved note is available', { exact: true }).click();
-  await page.getByRole('button', { name: 'Use saved note', exact: true }).click(); await expect(editor(page)).toHaveValue('Saved decision.');
+  await page.getByRole('button', { name: 'Use saved note', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard my edits and use saved note', exact: true }).click(); await expect(editor(page)).toHaveValue('Saved decision.');
   await editor(page).fill('Edit after adopting the saved note.');
   await page.getByRole('button', { name: 'Save note', exact: true }).click(); await expect.poll(() => commands.length).toBe(1);
   expect(commands[0]).toMatchObject({ type: 'memory.save', threadId: 'thread-a', payload: { key: 'decision', content: 'Edit after adopting the saved note.', baseRevision: 3 } });
@@ -260,6 +261,100 @@ for (const view of [
   if (view.failed) { const retry = page.getByRole('button', { name: 'Retry', exact: true }); await retry.scrollIntoViewIfNeeded(); await retry.focus(); await retry.press('Enter'); await expect(editor(page)).toHaveValue(draft.content); }
 });
 
+test('the newer-saved-note conflict is announced and needs a second confirmation', async ({ page }) => {
+  const keyed = (key: string, revision = 3): Note => ({ id: `thread-a:${key}`, threadId: 'thread-a', key, content: `Saved ${key} r${revision}.`, revision, author: 'user', updatedAt: '2026-11-07T00:00:00Z' });
+  await mount(page, { notes: [keyed('alpha', 3)] });
+  const editor = page.getByRole('textbox', { name: 'Note alpha', exact: true });
+  // A clean note never renders the conflict region.
+  await expect(page.locator('.memory-conflict')).toHaveCount(0);
+  await editor.fill('My unsaved edit.');
+  await expect(page.getByRole('button', { name: 'Discard unsaved changes to alpha', exact: true })).toBeVisible();
+  // The saved revision advancing elsewhere opens the conflict disclosure, announced politely.
+  await page.evaluate(note => window.memoryFixture.publish([note]), keyed('alpha', 5));
+  const region = page.locator('.memory-conflict[role="status"][aria-live="polite"]');
+  await expect(region).toHaveCount(1);
+  const disclosure = region.locator('details');
+  await expect(disclosure).not.toHaveAttribute('open', '');
+  await disclosure.locator('summary').click();
+  const useSaved = page.getByRole('button', { name: 'Use saved note' });
+  await expect(useSaved).toBeVisible();
+  // First click only arms; the draft is retained.
+  await useSaved.click();
+  const armed = page.getByRole('button', { name: 'Discard my edits and use saved note' });
+  await expect(armed).toBeVisible();
+  await expect(editor).toHaveValue('My unsaved edit.');
+  // The arming expires after four seconds.
+  await page.waitForTimeout(4300);
+  await expect(armed).toBeHidden(); await expect(useSaved).toBeVisible();
+  // A changed revision resets an armed confirmation before it can complete.
+  await useSaved.click(); await expect(armed).toBeVisible();
+  await page.evaluate(note => window.memoryFixture.publish([note]), keyed('alpha', 6));
+  await expect(armed).toBeHidden(); await expect(useSaved).toBeVisible(); await expect(editor).toHaveValue('My unsaved edit.');
+  // Keyboard confirmation adopts the saved note and focuses the editor.
+  await useSaved.focus(); await useSaved.press('Enter');
+  await expect(armed).toBeVisible(); await armed.press('Enter');
+  await expect(editor).toHaveValue('Saved alpha r6.');
+  await expect(region).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Discard unsaved changes to alpha', exact: true })).toBeHidden();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe('TEXTAREA');
+});
+
+test('a deleted note hands keyboard focus to the next, previous or add control', async ({ page }) => {
+  const keyed = (key: string, revision = 3): Note => ({ id: `thread-a:${key}`, threadId: 'thread-a', key, content: `Saved ${key}.`, revision, author: 'user', updatedAt: '2026-11-07T00:00:00Z' });
+  let failNext = false;
+  const commands = await mount(page, { notes: [keyed('alpha'), keyed('beta'), keyed('gamma')] }, async (route, command) => {
+    if (command.type === 'memory.delete' && failNext) { failNext = false; await route.fulfill({ status: 503, json: { error: { code: 'SYNTHETIC_FAILURE', message: 'Synthetic delete failed.' } } }); return; }
+    await route.fulfill({ json: { commandId: command.id, seq: 2, result: {} } });
+  });
+  const publish = (keys: string[]) => page.evaluate(list => window.memoryFixture.publish(list), keys.map(keyed));
+  const acked = async (key: string, count: number) => { await expect.poll(() => commands.length).toBe(count); await expect(page.getByRole('button', { name: `Forget ${key}` })).toBeEnabled(); };
+  const active = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.getAttribute('aria-label') ?? document.activeElement?.tagName);
+  // Rejected delete never moves focus.
+  failNext = true;
+  await page.getByRole('button', { name: 'Forget alpha' }).click();
+  await expect(page.getByRole('button', { name: 'Forget alpha' })).toBeVisible();
+  await expect.poll(active).toBe('Forget alpha');
+  // Middle delete moves focus to the next note's Forget button (keyboard path).
+  const forgetAlpha = page.getByRole('button', { name: 'Forget alpha' });
+  await forgetAlpha.focus(); await forgetAlpha.press('Enter'); await acked('alpha', 2);
+  await publish(['beta', 'gamma']);
+  await expect.poll(active).toBe('Forget beta');
+  // Last delete falls back to the previous note's Forget button.
+  await page.getByRole('button', { name: 'Forget gamma' }).click(); await acked('gamma', 3);
+  await publish(['beta']);
+  await expect.poll(active).toBe('Forget beta');
+  // Deleting the only remaining note lands on Add memory note.
+  await page.getByRole('button', { name: 'Forget beta' }).click(); await acked('beta', 4);
+  await publish([]);
+  await expect.poll(active).toBe('Add memory note');
+});
+
+test('Discard restores the saved note, clears its draft generation and focuses the editor', async ({ page }) => {
+  const keyed = (key: string, revision = 3): Note => ({ id: `thread-a:${key}`, threadId: 'thread-a', key, content: `Saved ${key}.`, revision, author: 'user', updatedAt: '2026-11-07T00:00:00Z' });
+  await mount(page, { notes: [keyed('alpha')] });
+  const editor = page.getByRole('textbox', { name: 'Note alpha', exact: true });
+  // Clean and fresh notes never show Discard.
+  await expect(page.getByRole('button', { name: 'Discard unsaved changes to alpha' })).toBeHidden();
+  await editor.fill('Edited body.');
+  const discard = page.getByRole('button', { name: 'Discard unsaved changes to alpha' });
+  await expect(discard).toBeVisible();
+  await discard.focus(); await discard.press('Enter');
+  await expect(editor).toHaveValue('Saved alpha.');
+  await expect(discard).toBeHidden();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe('TEXTAREA');
+  // Journal cleared: a remount shows the saved note with no recovered draft.
+  await page.evaluate(() => window.memoryFixture.flush());
+  await page.evaluate(() => window.memoryFixture.show(false)); await page.evaluate(() => window.memoryFixture.show(true));
+  await expect(editor).toHaveValue('Saved alpha.');
+  await expect(page.getByRole('button', { name: 'Discard unsaved changes to alpha' })).toBeHidden();
+  // A later edit survives: it writes a new generation the earlier discard cannot clear.
+  await editor.fill('Edited again.');
+  await page.evaluate(() => window.memoryFixture.flush());
+  await page.evaluate(() => window.memoryFixture.show(false)); await page.evaluate(() => window.memoryFixture.show(true));
+  await expect(editor).toHaveValue('Edited again.');
+  await expect(page.getByRole('button', { name: 'Discard unsaved changes to alpha' })).toBeVisible();
+});
+
 test('busy copy names the in-flight action for save, delete and add', async ({ page }) => {
   const pending: Route[] = [];
   const commands = await mount(page, {}, async route => { pending.push(route); });
@@ -295,4 +390,118 @@ test('busy copy names the in-flight action for save, delete and add', async ({ p
   await pending.shift()!.fulfill({ status: 503, json: { error: { code: 'SYNTHETIC_FAILURE', message: 'Synthetic save failed.' } } });
   await expect(page.getByRole('button', { name: 'Add note', exact: true })).toBeEnabled();
   await expect(page.locator('.task-memory [role=status].error-text')).toContainText('Synthetic save failed.');
+});
+
+test('a scheduled delete focus cannot steal focus after the thread changes', async ({ page }) => {
+  const other = note('other', 1, 'thread-b');
+  const commands = await mount(page, { notes: [note(), other] });
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  await expect(page.getByRole('button', { name: 'Forget decision', exact: true })).toBeEnabled();
+  await page.evaluate(other => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    const request = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+    let next = 0;
+    window.requestAnimationFrame = callback => { const id = ++next; callbacks.set(id, callback); return id; };
+    window.cancelAnimationFrame = id => { callbacks.delete(id); };
+    Object.assign(window, { deleteFocusFrames: {
+      count: () => callbacks.size,
+      release: () => { window.requestAnimationFrame = request; window.cancelAnimationFrame = cancel; for (const callback of callbacks.values()) callback(performance.now()); callbacks.clear(); },
+    } });
+    window.memoryFixture.publish([other]);
+  }, other);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { deleteFocusFrames: { count(): number } }).deleteFocusFrames.count())).toBe(1);
+  await page.evaluate(() => window.memoryFixture.change('thread-b'));
+  await expect.poll(() => page.evaluate(() => document.querySelector('textarea')?.getAttribute('value') ?? document.querySelector('textarea')?.value)).toBe(other.content);
+  await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === 'Switch synthetic thread')!.focus());
+  await page.evaluate(() => (window as unknown as { deleteFocusFrames: { release(): void } }).deleteFocusFrames.release());
+  await expect(page.getByRole('button', { name: 'Switch synthetic thread', exact: true })).toBeFocused();
+});
+
+test('delete focus waits for the matching note removal before handing off', async ({ page }) => {
+  const notes = [note(), note('other')];
+  const commands = await mount(page, { notes });
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  await expect(page.getByRole('button', { name: 'Forget decision', exact: true })).toBeEnabled();
+  const switcher = page.getByRole('button', { name: 'Switch synthetic thread', exact: true });
+  await switcher.focus();
+  // An unrelated snapshot still contains the acknowledged deletion's note.
+  await page.evaluate(notes => window.memoryFixture.publish(notes), notes);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(switcher).toBeFocused();
+  await page.evaluate(notes => window.memoryFixture.publish(notes), [notes[1]]);
+  await expect(page.getByRole('button', { name: 'Forget other', exact: true })).toBeFocused();
+});
+
+test('a delete focus frame is fenced during the replacement thread layout', async ({ page }) => {
+  const other = note('other', 1, 'thread-b');
+  const commands = await mount(page, { notes: [note(), other] });
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  await expect(page.getByRole('button', { name: 'Forget decision', exact: true })).toBeEnabled();
+  await page.evaluate(other => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    const request = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+    let next = 0;
+    window.requestAnimationFrame = callback => { const id = ++next; callbacks.set(id, callback); return id; };
+    window.cancelAnimationFrame = id => { callbacks.delete(id); };
+    Object.assign(window, { deleteLayoutFrames: {
+      count: () => callbacks.size,
+      release: () => { window.requestAnimationFrame = request; window.cancelAnimationFrame = cancel; for (const callback of callbacks.values()) callback(performance.now()); callbacks.clear(); },
+    } });
+    window.memoryFixture.publish([other]);
+  }, other);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { deleteLayoutFrames: { count(): number } }).deleteLayoutFrames.count())).toBe(1);
+  await page.evaluate(() => {
+    [...document.querySelectorAll('button')].find(button => button.textContent === 'Switch synthetic thread')!.focus();
+    window.memoryFixture.onNextLayout(() => (window as unknown as { deleteLayoutFrames: { release(): void } }).deleteLayoutFrames.release());
+    window.memoryFixture.change('thread-b');
+  });
+  await expect(page.getByRole('textbox', { name: 'Note other', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Switch synthetic thread', exact: true })).toBeFocused();
+});
+
+test('a disposed delete command cannot move focus after returning to its thread', async ({ page }) => {
+  const gate = deferred(), other = note('other', 1, 'thread-b');
+  const commands = await mount(page, { notes: [note(), other] }, async (route, command) => {
+    await gate.promise; await route.fulfill({ json: { commandId: command.id, seq: 2, result: {} } });
+  });
+  await expect(editor(page)).toBeEnabled(); await editor(page).fill('Draft submitted before leaving this thread.');
+  await page.evaluate(() => window.memoryFixture.flush());
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  const switcher = page.getByRole('button', { name: 'Switch synthetic thread', exact: true });
+  await switcher.click();
+  await expect(page.getByRole('textbox', { name: 'Note other', exact: true })).toBeEnabled();
+  await switcher.click();
+  await expect(editor(page)).toBeEnabled();
+  await expect(editor(page)).toHaveValue('Draft submitted before leaving this thread.');
+  await switcher.focus();
+  gate.resolve();
+  // Real generation-CAS cleanup proves the old command continuation has settled.
+  await expect.poll(() => page.evaluate(key => window.memoryFixture.read(key), savedKey)).toBeNull();
+  await page.evaluate(other => window.memoryFixture.publish([other]), other);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(switcher).toBeFocused();
+});
+
+test('a current delete still hands off focus when its removal snapshot precedes the receipt', async ({ page }) => {
+  const gate = deferred();
+  const commands = await mount(page, {}, async (route, command) => {
+    await gate.promise; await route.fulfill({ json: { commandId: command.id, seq: 2, result: {} } });
+  });
+  await expect(editor(page)).toBeEnabled(); await editor(page).fill('Draft submitted for this current view.');
+  await page.evaluate(() => window.memoryFixture.flush());
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  const switcher = page.getByRole('button', { name: 'Switch synthetic thread', exact: true });
+  await switcher.focus();
+  await page.evaluate(() => window.memoryFixture.publish([]));
+  await expect(editor(page)).toHaveCount(0);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(switcher).toBeFocused();
+  gate.resolve();
+  await expect.poll(() => page.evaluate(key => window.memoryFixture.read(key), savedKey)).toBeNull();
+  await expect(page.getByRole('button', { name: 'Add memory note', exact: true })).toBeFocused();
 });
