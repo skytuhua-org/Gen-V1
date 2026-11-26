@@ -13,14 +13,15 @@ const jobs=starts.map((match,index)=>{
   return {id:match[1],condition:/^    if:\s*(.+)$/m.exec(block)?.[1]??'true',shards:shards?JSON.parse(shards) as number[]:null};
 });
 const requiredJobs=['checks','test-1','test-2','test-3','test-4','browser','installed-memory'];
-const pullRequestJobs=['checks','select','selected'];
+const linuxCleanupJob='linux-path-guard-cleanup';
+const pullRequestJobs=[linuxCleanupJob,'checks','select','selected'];
 const types=/^  pull_request:\n    types:\s*\[([^\]\n]+)\]/m.exec(workflow)?.[1].split(',').map(value=>value.trim())??['opened','synchronize','reopened'];
 type CiEvent={name:'pull_request'|'push'|'workflow_dispatch'|'merge_group';action?:string;draft?:boolean;ref?:string;selectedShards?:number;queueProof?:'true'|'false'};
 function context(event:CiEvent){return {workflow:'CI',ref:event.ref??'refs/pull/42/merge',event_name:event.name,event:event.name==='pull_request'?{action:event.action,pull_request:{number:42,draft:event.draft}}:{}};}
-function evaluate(expression:string,event:CiEvent):unknown {
+function evaluate(expression:string,event:CiEvent,inputs:Record<string,boolean>={}):unknown {
   // The policy uses boolean/string comparisons and property access, whose
   // JavaScript and Actions semantics agree for these boolean/string fixtures.
-  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),cancelled:()=>false,needs:{select:{outputs:{total:String(event.selectedShards??1)}},proof:{outputs:{verified:event.queueProof??''}}}},{timeout:100});
+  return runInNewContext('('+expression.replace(/^\$\{\{\s*|\s*\}\}$/g,'')+')',{github:context(event),inputs,cancelled:()=>false,needs:{select:{outputs:{total:String(event.selectedShards??1)}},proof:{outputs:{verified:event.queueProof??''}}}},{timeout:100});
 }
 function scheduledJobs(event:CiEvent):string[]|null {
   if(event.name==='pull_request'&&!types.includes(event.action??''))return null;
@@ -58,14 +59,14 @@ it('cancels the same PR run when reviewable work becomes draft and admits no rep
   expect(evaluate(cancel!,draft)).toBe(true);
 });
 it('preserves every job for pushes to agent/m05-v3 without a pull request payload or a proof lookup',()=>{
-  expect(scheduledJobs({name:'push',ref:'refs/heads/agent/m05-v3'})).toEqual(requiredJobs);
+  expect(scheduledJobs({name:'push',ref:'refs/heads/agent/m05-v3'})).toEqual([linuxCleanupJob,...requiredJobs]);
 });
 it.each([undefined,'false'] as const)('runs every job for a push to main when the proof lookup reports %s',queueProof=>{
   // An absent output is what a failed, timed-out or skipped lookup job leaves behind.
-  expect(scheduledJobs({name:'push',ref:'refs/heads/main',queueProof})).toEqual(['proof',...requiredJobs]);
+  expect(scheduledJobs({name:'push',ref:'refs/heads/main',queueProof})).toEqual(['proof',linuxCleanupJob,...requiredJobs]);
 });
 it('skips the repeat suite on main only for a commit the merge queue already passed, and still refreshes the caches',()=>{
-  expect(scheduledJobs({name:'push',ref:'refs/heads/main',queueProof:'true'})).toEqual(['proof','caches']);
+  expect(scheduledJobs({name:'push',ref:'refs/heads/main',queueProof:'true'})).toEqual(['proof','caches',linuxCleanupJob]);
 });
 it('looks for proof only on pushes to main, read-only, and never lets the lookup hide or replace a job',()=>{
   const proof=jobSource.split(/^  proof:\n/m)[1]?.split(/^  \S/m)[0]??'';
@@ -90,10 +91,10 @@ it('requires the lookup to find exactly the jobs this workflow names as required
   expect(proven).toEqual(requiredJobs.map(id=>/^    name:\s*(.+)$/m.exec(jobSource.slice(jobSource.indexOf('  '+id+':\n')))?.[1]));
 });
 it('preserves every job for a manual dispatch without a pull request payload',()=>{
-  expect(scheduledJobs({name:'workflow_dispatch',ref:'refs/heads/main'})).toEqual(requiredJobs);
+  expect(scheduledJobs({name:'workflow_dispatch',ref:'refs/heads/main'})).toEqual([linuxCleanupJob,...requiredJobs]);
 });
 it('runs every job for a merge queue entry before it reaches main',()=>{
-  expect(scheduledJobs({name:'merge_group',ref:'refs/heads/gh-readonly-queue/main/pr-42-'+'a'.repeat(40)})).toEqual(requiredJobs);
+  expect(scheduledJobs({name:'merge_group',ref:'refs/heads/gh-readonly-queue/main/pr-42-'+'a'.repeat(40)})).toEqual([linuxCleanupJob,...requiredJobs]);
 });
 it('reports every failing check in the folded job instead of stopping at the first',()=>{
   const checks=jobSource.split(/^  checks:\n/m)[1]?.split(/^  \S/m)[0]??'';
@@ -168,11 +169,29 @@ it('selects pull-request tests from the merge commit diff and keeps the full sui
   for(const id of ['test-1','test-2','test-3','test-4','browser','installed-memory'])expect(jobs.find(job=>job.id===id)?.condition).toBe("${{ !cancelled() && needs.proof.outputs.verified != 'true' && github.event_name != 'pull_request' }}");
 });
 it('books no Windows test runner when the diff reaches no test',()=>{
-  expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual(['checks','select']);
+  expect(scheduledJobs({name:'pull_request',action:'synchronize',draft:false,selectedShards:0})).toEqual([linuxCleanupJob,'checks','select']);
+});
+it('uses single-install verification by default and retains the manual two-install control',()=>{
+  const installed=jobSource.split(/^  installed-memory:\n/m)[1]??'';
+  const single=/^          INSTALLED_SINGLE_INSTALL: (.+)$/m.exec(installed)?.[1]??'';
+  const control=/^      - name: Verify installed default-off retention and separate enabled opt-in\n        if: (.+)$/m.exec(installed)?.[1]??'';
+  const dispatchDefault=/^      installed_single_install:\n(?:^        .*\n)*?^        default: (true|false)$/m.exec(workflow)?.[1];
+  expect(dispatchDefault).toBe('true');
+  expect(installed).toContain("if ($env:INSTALLED_SINGLE_INSTALL -eq 'true') { $verifyArgs += '--single-install-acceptance' }");
+  for(const name of ['merge_group','push'] as const){
+    expect(evaluate(single,{name})).toBe(true);
+    expect(evaluate(control,{name})).toBe(false);
+  }
+  for(const input of [dispatchDefault==='true',false]){
+    const event={name:'workflow_dispatch'} as const;
+    const inputs={installed_single_install:input};
+    expect(evaluate(single,event,inputs)).toBe(input);
+    expect(evaluate(control,event,inputs)).toBe(!input);
+  }
 });
 it('fails any job that exceeds its time budget',()=>{
   const budgets=Object.fromEntries(starts.map((match,index)=>[match[1],Number(/^    timeout-minutes: (\d+)$/m.exec(jobSource.slice(match.index,starts[index+1]?.index))?.[1])]));
-  expect(budgets).toEqual({proof:5,caches:10,checks:15,'test-1':22,'test-2':22,'test-3':22,'test-4':22,browser:30,'installed-memory':60,select:5,selected:22});
+  expect(budgets).toEqual({proof:5,caches:10,[linuxCleanupJob]:5,checks:15,'test-1':22,'test-2':22,'test-3':22,'test-4':22,browser:30,'installed-memory':60,select:5,selected:22});
 });
 
 it('gives every job skipped on pull requests a literal name so its required check still reports',()=>{

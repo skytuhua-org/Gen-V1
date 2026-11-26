@@ -37,7 +37,7 @@ export function Select({ value, onValueChange, options, 'aria-label': label, 'ar
   };
   const navigation = useListNavigation(options, choose, close);
   // Fit the trigger or the longest label, so a narrow select does not cover its neighbours.
-  const popupWidth = Math.max(anchor.current?.offsetWidth ?? 0, Math.min(280, 64 + 7 * Math.max(0, ...options.map(option => option.label.length))));
+  const popupWidth = Math.max(anchor.current?.offsetWidth ?? 0, Math.min(280, 48 + Math.ceil(7.5 * Math.max(0, ...options.map(option => option.label.length)))));
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   useEffect(() => {
     const update = () => { const blocked = Boolean(native.current?.matches(':disabled')); setFieldsetDisabled(blocked); if (blocked) setOpen(false); };

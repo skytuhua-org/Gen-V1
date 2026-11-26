@@ -27,7 +27,7 @@ export interface ApprovedWriteOrigin extends RunContext {sessionPath:string;mode
 export interface CompletedWriteReceipt {operationId:string;revision:number;inputId:string;origin:ApprovedWriteOrigin;path:string;sha256:string;bytes:number;delivery?:RunContext}
 export interface WriteHookDiagnostic {operationId:string;revision:number;inputId:string;status:'applied'|'failed'|'stale'|'disabled'|'no_project'|'scope_unavailable'|'unknown';message:string}
 export interface HostCommand { id: string; type: string; threadId?: string; payload: Record<string, unknown> }
-export interface CommandReceipt { commandId: string; eventSeq: number; result: unknown }
+export interface CommandReceipt { commandId: string; eventSeq: number; result: unknown; /** Set by the retention sweep when the stored result was expired; the command still dedupes by id+hash. */ expired?: boolean }
 export interface ToolCall { name: string; args: Record<string, unknown> }
 export interface RuntimeEvent { type: string; threadId: string; runId: string; epoch: number; [key: string]: unknown }
 export interface RuntimeCallbacks { onEvent: (event: RuntimeEvent) => void; onTool: (call: ToolCall, ctx: RunContext) => Promise<unknown>; onMemoryCheckpoint?: (request: import('./memory-checkpoint.ts').MemoryCheckpointRequestV1) => Promise<import('./memory-checkpoint.ts').MemoryCheckpointAckV1>; onBeforeInference?: (request: import('./request-context.ts').InferenceAdmissionV1) => void | Promise<void>; onCompactionCommit?: (request: import('./native-compaction.ts').NativeCompactionAdmissionV1) => import('./native-compaction.ts').NativeCompactionAckV1 }

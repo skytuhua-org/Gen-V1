@@ -6,7 +6,10 @@ export const CONTEXT_PREVIEW_CAP_BYTES = 16 * 1024;
 export const CONTEXT_RANGE_CAP_BYTES = 1024 * 1024;
 export const RESULT_CAP_BYTES = 16 * 1024 * 1024;
 export const MAX_TRACKED_RESULTS = 128;
+// The preview keeps the fixed first and last 8 KiB of source; the marker is a
+// presentation label outside those windows, not part of the content budget.
 const OMIT = '\n[… result clipped …]\n';
+const PREVIEW_WINDOW_BYTES = CONTEXT_PREVIEW_CAP_BYTES / 2;
 export type ContextResultStorage = {
   put(key: string, bytes: Uint8Array, record: ToolResultHandleV1): Promise<void>;
   get(key: string): Promise<Uint8Array | undefined>;
@@ -26,7 +29,7 @@ export function clipContextResult(bytes: Uint8Array): { preview: string; omitted
   try {
     if (bytes.length <= CONTEXT_PREVIEW_CAP_BYTES)
       return { preview: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes), omittedBytes: 0 };
-    const half = Math.floor((CONTEXT_PREVIEW_CAP_BYTES - Buffer.byteLength(OMIT)) / 2);
+    const half = PREVIEW_WINDOW_BYTES;
     const start = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, half), { stream: true });
     let boundary = bytes.length - half;
     while (boundary < bytes.length && (bytes[boundary]! & 0xc0) === 0x80) boundary++;
@@ -44,7 +47,7 @@ export type EncodedContextResult = { bytes: Uint8Array | null; mediaType: string
  * The inspection ceiling is explicit; unsupported shapes never escape raw. */
 export function encodeContextResult(value: unknown): EncodedContextResult {
   const mediaType = typeof value === 'string' ? 'text/plain' : 'application/json';
-  const half = Math.floor((CONTEXT_PREVIEW_CAP_BYTES - Buffer.byteLength(OMIT)) / 2);
+  const half = PREVIEW_WINDOW_BYTES;
   let totalBytes = 0, nodes = 0, head = Buffer.alloc(0), tail = Buffer.alloc(0), chunks: Buffer[] | null = [];
   const ancestors = new Set<object>();
   function* stringParts(text: string): Generator<string> {

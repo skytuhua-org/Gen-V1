@@ -862,3 +862,28 @@ test('an unavailable main layout gives the user a retry without reloading the pa
   expect(reads).toBeGreaterThan(failedReads);
   expect(navigations).toBe(0);
 });
+
+test('closing Settings returns focus to the invoker', async ({page}) => {
+  await fixture(page);
+  const search = page.getByRole('textbox', {name: 'Search threads'});
+  await search.focus();
+  await page.keyboard.press('Control+,');
+  const dialog = page.getByRole('dialog', {name: 'Settings', exact: true});
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(search).toBeFocused();
+});
+
+test('closing Settings with a gone invoker falls back to the sidebar Settings button', async ({page}) => {
+  await fixture(page);
+  const search = page.getByRole('textbox', {name: 'Search threads'});
+  await search.focus();
+  await page.keyboard.press('Control+,');
+  const dialog = page.getByRole('dialog', {name: 'Settings', exact: true});
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => document.querySelector('input[aria-label="Search threads"]')?.remove());
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('button', {name: 'Settings', exact: true})).toBeFocused();
+});

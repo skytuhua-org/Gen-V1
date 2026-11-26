@@ -1,7 +1,8 @@
 import {describe,it,expect} from 'vitest';
 import {SecretReferenceLedger,buildChildEnvironment,createSecretRedactor} from '../packages/core/secret-references';
 import {secretRefV1Schema,type SecretRefV1} from '../packages/contracts/execution-profile';
-import {hostFlagEnabled,HOST_FLAG_REGISTRY,HOST_FLAG_NAMES} from '../packages/core/host-flags';
+import {hostFlagEnabled,HOST_FLAG_REGISTRY,HOST_FLAG_NAMES,type RegisteredHostFlag} from '../packages/core/host-flags';
+import {HarnessError} from '../packages/contracts/index.ts';
 import {preferencesSchema} from '../packages/contracts/preferences';
 
 const EXEC_SHA='a'.repeat(64);
@@ -144,6 +145,36 @@ describe('host-owned security flags',()=>{
   expect(hostFlagEnabled('security.projectTrustV1',{HARNESS_FLAG_SECURITY_PROJECT_TRUST_V1:'1'})).toBe(true);
   expect(hostFlagEnabled('security.projectTrustV1',{HARNESS_FLAG_SECURITY_PROJECT_TRUST_V1:'true'})).toBe(true);
   expect(hostFlagEnabled('security.projectTrustV1',{HARNESS_FLAG_SECURITY_PROJECT_TRUST_V1:'yes'})).toBe(false);
+ });
+ it('rejects unknown, inherited and malformed runtime keys before any environment access',()=>{
+  const invalid:unknown[]=['security.unregisteredV1','toString','constructor','__proto__','','Security.projectTrustV1',' security.projectTrustV1 ',null,undefined,123,true,[],{},'private-marker-fixture'];
+  for(const name of invalid){
+   for(const values of [{},{HARNESS_FLAG_SECURITY_UNREGISTERED_V1:'true',HARNESS_FLAG_SECURITY_PROJECT_TRUST_V1:'true'}]){
+    let reads=0;
+    const env=new Proxy<Record<string,string|undefined>>(values,{get(target,key){reads++;return Reflect.get(target,key);}});
+    let error:unknown;
+    try{hostFlagEnabled(name as RegisteredHostFlag,env);}catch(caught){error=caught;}
+    expect(error).toBeInstanceOf(HarnessError);
+    expect(error).toMatchObject({code:'UNKNOWN_CAPABILITY_FLAG',message:'Unknown host capability flag.'});
+    expect(reads).toBe(0);
+   }
+  }
+ });
+ it('preserves exact enablement values for every registered key',()=>{
+  const envNames:Record<RegisteredHostFlag,string>={
+   'security.projectTrustV1':'HARNESS_FLAG_SECURITY_PROJECT_TRUST_V1',
+   'security.secretRefsV1':'HARNESS_FLAG_SECURITY_SECRET_REFS_V1',
+   'security.executionProfilesV1':'HARNESS_FLAG_SECURITY_EXECUTION_PROFILES_V1',
+   'verification.workflowV1':'HARNESS_FLAG_VERIFICATION_WORKFLOW_V1',
+   'coding.intelligenceV1':'HARNESS_FLAG_CODING_INTELLIGENCE_V1',
+   'coding.renameV1':'HARNESS_FLAG_CODING_RENAME_V1',
+   'coding.debuggerV1':'HARNESS_FLAG_CODING_DEBUGGER_V1',
+  };
+  for(const name of HOST_FLAG_NAMES){
+   for(const value of [undefined,'1','true','0','false','yes','TRUE',' true ']){
+    expect(hostFlagEnabled(name,{[envNames[name]]:value})).toBe(value==='1'||value==='true');
+   }
+  }
  });
  it('is not reachable through strict UI preferences or agent/plugin writable settings',()=>{
   for(const name of HOST_FLAG_NAMES){

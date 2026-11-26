@@ -29,10 +29,19 @@ const COMPACTION_JOINED = "FROM entities a LEFT JOIN entities u ON u.kind='compa
 const PROVED = "(json_extract(u.body,'$.nativeReceipt.status')='APPLIED' AND json_extract(u.body,'$.nativeReceipt.candidateId')=a.id)";
 
 export class Store {
-  readonly db: DatabaseSync;
+  private readonly connection: DatabaseSync;
+  /** The shared SQLite connection. Access reconciles an abandoned transaction
+   * first, so callers can never observe uncommitted writes the next rollback
+   * would discard. */
+  get db(): DatabaseSync { this.reconcileIfNeeded(); return this.connection; }
   readonly dataDir: string;
   private listeners = new Set<(event: WorkspaceEvent) => void>();
   private transactionOpen = false;
+  /** True while an abandoned transaction is still open on this connection:
+   * reads would observe writes the next reconcile discards, so every entry
+   * point rolls the orphan back first and only reports STORE_INCONSISTENT
+   * while the store stays unreconcilable. */
+  private reconcileRequired = false;
   private committedEvents: WorkspaceEvent[] = [];
   private drainingEvents = false;
   private readonly statements: {
@@ -59,9 +68,9 @@ export class Store {
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
     this.dataDir = realpathSync(dataDir);
-    this.db = new DatabaseSync(join(this.dataDir, "harness.sqlite"));
-    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
-    this.db.exec(`
+    this.connection = new DatabaseSync(join(this.dataDir, "harness.sqlite"));
+    this.connection.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+    this.connection.exec(`
       CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS entities (kind TEXT NOT NULL, id TEXT NOT NULL, thread_id TEXT, body TEXT NOT NULL, PRIMARY KEY(kind,id));
       CREATE INDEX IF NOT EXISTS entities_thread ON entities(kind,thread_id);
@@ -70,17 +79,17 @@ export class Store {
       INSERT OR IGNORE INTO migrations(version) VALUES (1);
     `);
     this.statements = {
-      get: this.db.prepare("SELECT body FROM entities WHERE kind=? AND id=?"),
+      get: this.connection.prepare("SELECT body FROM entities WHERE kind=? AND id=?"),
       // rowid order is insertion order: callers rely on chronological message
       // order for windowing, cursor paging, and tail slices.
-      allKind: this.db.prepare("SELECT body FROM entities WHERE kind=? ORDER BY rowid"),
-      allKindThread: this.db.prepare("SELECT body FROM entities WHERE kind=? AND thread_id=? ORDER BY rowid"),
-      messageCursor: this.db.prepare("SELECT rowid FROM entities WHERE kind='message' AND id=? AND thread_id=?"),
-      messageTail: this.db.prepare("SELECT body FROM entities WHERE kind='message' AND thread_id=? ORDER BY rowid DESC LIMIT ?"),
-      messageBefore: this.db.prepare("SELECT body FROM entities WHERE kind='message' AND thread_id=? AND rowid<? ORDER BY rowid DESC LIMIT ?"),
-      messageCount: this.db.prepare("SELECT count(*) AS count FROM entities WHERE kind='message' AND thread_id=?"),
-      messageCountBefore: this.db.prepare("SELECT count(*) AS count FROM entities WHERE kind='message' AND thread_id=? AND rowid<?"),
-      snapshotMessages: this.db.prepare(`
+      allKind: this.connection.prepare("SELECT body FROM entities WHERE kind=? ORDER BY rowid"),
+      allKindThread: this.connection.prepare("SELECT body FROM entities WHERE kind=? AND thread_id=? ORDER BY rowid"),
+      messageCursor: this.connection.prepare("SELECT rowid FROM entities WHERE kind='message' AND id=? AND thread_id=?"),
+      messageTail: this.connection.prepare("SELECT body FROM entities WHERE kind='message' AND thread_id=? ORDER BY rowid DESC LIMIT ?"),
+      messageBefore: this.connection.prepare("SELECT body FROM entities WHERE kind='message' AND thread_id=? AND rowid<? ORDER BY rowid DESC LIMIT ?"),
+      messageCount: this.connection.prepare("SELECT count(*) AS count FROM entities WHERE kind='message' AND thread_id=?"),
+      messageCountBefore: this.connection.prepare("SELECT count(*) AS count FROM entities WHERE kind='message' AND thread_id=? AND rowid<?"),
+      snapshotMessages: this.connection.prepare(`
         WITH groups AS (
           SELECT thread_id, COUNT(*) AS total, MIN(rowid) AS first_row
           FROM entities
@@ -99,20 +108,21 @@ export class Store {
         WHERE entity.kind='message' AND entity.thread_id IS tails.thread_id AND entity.rowid >= tails.first_retained
         ORDER BY entity.rowid
       `),
-      put: this.db.prepare("INSERT INTO entities(kind,id,thread_id,body) VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET thread_id=excluded.thread_id,body=excluded.body"),
-      remove: this.db.prepare("DELETE FROM entities WHERE kind=? AND id=?"),
-      receipt: this.db.prepare("SELECT hash,body FROM receipts WHERE id=?"),
-      insertEvent: this.db.prepare("INSERT INTO events(id,type,thread_id,payload,occurred_at) VALUES(?,?,?,?,?)"),
-      insertReceipt: this.db.prepare("INSERT INTO receipts(id,hash,body) VALUES(?,?,?)"),
-      eventsAfter: this.db.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq"),
-      eventsAfterLimit: this.db.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?"),
-      sequence: this.db.prepare("SELECT COALESCE(MAX(seq),0) AS seq FROM events"),
+      put: this.connection.prepare("INSERT INTO entities(kind,id,thread_id,body) VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET thread_id=excluded.thread_id,body=excluded.body"),
+      remove: this.connection.prepare("DELETE FROM entities WHERE kind=? AND id=?"),
+      receipt: this.connection.prepare("SELECT hash,body FROM receipts WHERE id=?"),
+      insertEvent: this.connection.prepare("INSERT INTO events(id,type,thread_id,payload,occurred_at) VALUES(?,?,?,?,?)"),
+      insertReceipt: this.connection.prepare("INSERT INTO receipts(id,hash,body) VALUES(?,?,?)"),
+      eventsAfter: this.connection.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq"),
+      eventsAfterLimit: this.connection.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?"),
+      sequence: this.connection.prepare("SELECT COALESCE(MAX(seq),0) AS seq FROM events"),
       // Prepared once: snapshot() evaluates a compaction projection per usage row.
-      compactionCounts: this.db.prepare(`SELECT COUNT(*) AS attempts, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='FAILED' AND COALESCE(${PROVED},0)=0 THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='DISCARDED' AND COALESCE(${PROVED},0)=0 THEN 1 ELSE 0 END),0) AS discarded ${COMPACTION_JOINED}`),
-      compactionRows: this.db.prepare(`SELECT a.body, u.body AS usage ${COMPACTION_JOINED} ORDER BY a.rowid DESC LIMIT 8`),
+      compactionCounts: this.connection.prepare(`SELECT COUNT(*) AS attempts, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='FAILED' AND COALESCE(${PROVED},0)=0 THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='DISCARDED' AND COALESCE(${PROVED},0)=0 THEN 1 ELSE 0 END),0) AS discarded ${COMPACTION_JOINED}`),
+      compactionRows: this.connection.prepare(`SELECT a.body, u.body AS usage ${COMPACTION_JOINED} ORDER BY a.rowid DESC LIMIT 8`),
     };
   }
   get<T = unknown>(kind: string, id: string): T | null {
+    this.reconcileIfNeeded();
     const row = this.statements.get.get(kind, id) as { body: string } | undefined;
     if (!row) return null;
     const value = JSON.parse(row.body);
@@ -126,6 +136,7 @@ export class Store {
     return value as T;
   }
   compactionProjection(threadId: string, threads?: Map<string, Thread>): CompactionProjectionV1 | undefined {
+    this.reconcileIfNeeded();
     const thread = threads ? threads.get(threadId) : this.get<Thread>('thread', threadId);
     // A retained model/session is already account-bound. As in Service.binding,
     // its absent legacy field means null; it never uses the selected default.
@@ -145,6 +156,7 @@ export class Store {
     return {version: 1, candidates, accounting: {...counts, costBytes: 0}};
   }
   all<T = unknown>(kind: string, threadId?: string): T[] {
+    this.reconcileIfNeeded();
     const rows = (threadId === undefined ? this.statements.allKind.all(kind) : this.statements.allKindThread.all(kind, threadId)) as { body: string }[];
     return rows.map(row => JSON.parse(row.body) as T);
   }
@@ -156,7 +168,20 @@ export class Store {
     if (!this.transactionOpen) throw new Error("Projection writes require a command transaction");
     this.statements.remove.run(kind, id);
   }
+  /** Roll the abandoned transaction back before answering. A read must never
+   * observe uncommitted writes the reconcile discards, and a retried command
+   * is itself the recovery path, so healing is attempted lazily at entry and
+   * only a still-open orphan fails closed. */
+  private reconcileIfNeeded(): void {
+    if (!this.reconcileRequired) return;
+    if (this.connection.isTransaction) {
+      try { this.connection.exec("ROLLBACK"); } catch { /* State is checked again below. */ }
+    }
+    if (this.connection.isTransaction) throw new HarnessError('STORE_INCONSISTENT', 'A previous transaction is still open and its uncommitted writes are visible; reopen the store.');
+    this.reconcileRequired = false;
+  }
   receipt(command: HostCommand): CommandReceipt | null {
+    this.reconcileIfNeeded();
     const row = this.statements.receipt.get(command.id) as { hash: string; body: string } | undefined;
     if (!row) return null;
     if (row.hash !== digest(command)) throw new HarnessError("DUPLICATE_COMMAND", "Command ID reused with different content");
@@ -164,12 +189,39 @@ export class Store {
   }
   command(command: HostCommand, apply: () => unknown): CommandReceipt {
     const existing = this.receipt(command); if (existing) return existing;
-    const {event,result}=this.commit(command.type,command.threadId??null,apply,command);
-    return {commandId:command.id,eventSeq:event.seq,result};
+    try {
+      const {event,result}=this.commit(command.type,command.threadId??null,apply,command);
+      return {commandId:command.id,eventSeq:event.seq,result};
+    } catch (error) {
+      // A competing writer may have committed the same command while ours
+      // failed; its durable receipt wins over our error. Re-check only once
+      // our own transaction has actually closed: while it is still open the
+      // row we read could be our own uncommitted insert, not durable proof.
+      if (!this.connection.isTransaction) {
+        const raced = this.receipt(command);
+        if (raced) return raced;
+      }
+      throw error;
+    }
+  }
+  /** SQLITE_BUSY (5) and SQLITE_LOCKED (6) classify as retryable store contention. */
+  private static transactionError(error: unknown): unknown {
+    const errcode = (error as { errcode?: number }).errcode;
+    if (errcode === 5 || errcode === 6) return new HarnessError('STORE_BUSY', 'The store is busy with another writer. Retry the command.', { cause: (error as Error).message });
+    return error;
   }
   private commit(type: string, threadId: string | null, apply: () => unknown, command?: HostCommand): {event:WorkspaceEvent;result:unknown} {
     if (this.transactionOpen) throw new Error("Nested command transaction");
-    this.db.exec("BEGIN IMMEDIATE"); this.transactionOpen = true;
+    if (this.connection.isTransaction) {
+      // A failed rollback can leave this connection's own transaction open;
+      // the store owns the connection, so reclaim it instead of wedging.
+      try { this.connection.exec("ROLLBACK"); } catch { /* The orphan is closed on a best-effort basis. */ }
+      if (this.connection.isTransaction) throw new HarnessError('STORE_INCONSISTENT', 'The store transaction could not be reconciled. Reopen the store.');
+    }
+    this.reconcileRequired = false;
+    try { this.connection.exec("BEGIN IMMEDIATE"); }
+    catch (error) { throw Store.transactionError(error); }
+    this.transactionOpen = true;
     let event: WorkspaceEvent;
     let result: unknown;
     try {
@@ -179,9 +231,18 @@ export class Store {
       const inserted = this.statements.insertEvent.run(id, type, threadId, JSON.stringify({ result }), occurredAt);
       event = { seq: Number(inserted.lastInsertRowid), id, type, threadId, payload: { result }, occurredAt };
       if(command){const receipt:CommandReceipt={commandId:command.id,eventSeq:event.seq,result};this.statements.insertReceipt.run(command.id,digest(command),JSON.stringify(receipt));}
-      this.db.exec("COMMIT");
-    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
-    finally { this.transactionOpen = false; }
+      this.connection.exec("COMMIT");
+    } catch (error) {
+      // Preserve the causal failure: a rollback error must not replace it.
+      try { this.connection.exec("ROLLBACK"); } catch { /* best-effort rollback */ }
+      throw Store.transactionError(error);
+    }
+    finally {
+      this.transactionOpen = false;
+      // A still-open transaction here means the rollback failed; until a
+      // later commit reconciles it, reads would see abandoned writes.
+      if (this.connection.isTransaction) this.reconcileRequired = true;
+    }
     this.committedEvents.push(event!);
     this.drainCommittedEvents();
     return {event:event!,result};
@@ -201,25 +262,77 @@ export class Store {
     return this.commit(type,threadId,apply).result;
   }
   eventsAfter(seq: number, limit?: number): WorkspaceEvent[] {
+    this.reconcileIfNeeded();
     if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)) throw new HarnessError('INVALID_INPUT', 'Event page size must be between 1 and 1000');
     const rows = (limit === undefined ? this.statements.eventsAfter.all(seq) : this.statements.eventsAfterLimit.all(seq, limit)) as unknown as { seq: number; id: string; type: string; thread_id: string | null; payload: string; occurred_at: string }[];
     return rows.map(row => ({ seq: row.seq, id: row.id, type: row.type, threadId: row.thread_id, payload: JSON.parse(row.payload), occurredAt: row.occurred_at }));
   }
-  get sequence(): number { return Number((this.statements.sequence.get() as { seq: number }).seq); }
+  get sequence(): number { this.reconcileIfNeeded(); return Number((this.statements.sequence.get() as { seq: number }).seq); }
+  /** Oldest retained event seq; consumers holding a lower cursor have lost the
+   * gap (read-sync resyncs against this floor). */
+  retentionFloor(): number {
+    return (this.db.prepare("SELECT COALESCE(MIN(seq),0) AS floor FROM events").get() as { floor: number }).floor;
+  }
+  /** Lowest seq a durable consumer may still replay: plan extensions keep a
+   * persisted `reportWatermark` and read `seq > watermark`, so rows at or
+   * below the minimum watermark are expendable. */
+  private retentionWatermarkFloor(): number {
+    const row = this.db.prepare("SELECT MIN(json_extract(body,'$.reportWatermark')) AS watermark FROM entities WHERE kind='planExtension' AND json_type(body,'$.reportWatermark')='integer'").get() as { watermark: number | null };
+    return row.watermark ?? Number.MAX_SAFE_INTEGER;
+  }
+  /** Bounded, resumable deletion of replayable event history and expiry of
+   * command receipts. Keeps `seq > floor` where
+   * `floor = min(headSeq - keepEvents, minWatermark)` so both the recency
+   * window and every durable consumer cursor stay readable. Each batch is its
+   * own committed transaction, so an interrupted sweep resumes safely on the
+   * next call; a `store.retention.swept` audit event is recorded on success.
+   * Receipts tied to retained events are kept, and receipts referenced by a
+   * live `workspaceAction`/`workspaceActionOutcome` entity's command are always
+   * kept so crash recovery can still resolve uncertain outcomes. An expired
+   * receipt is tombstoned, not deleted: its `id`, `hash` and `eventSeq`
+   * survive so a replayed command still dedupes and a reused ID with
+   * different content still raises DUPLICATE_COMMAND, while the heavy
+   * `result` payload is dropped (`result: null`, `expired: true`). */
+  retentionSweep(options: { keepEvents?: number; batchSize?: number; maxBatches?: number; receipts?: 'with-events' | 'keep' } = {}): { floor: number; removedEvents: number; removedReceipts: number; batches: number } {
+    if (this.transactionOpen) throw new HarnessError('TRANSACTION_OPEN', 'Retention sweep cannot run inside a command transaction');
+    const keep = options.keepEvents ?? 50_000;
+    if (!Number.isSafeInteger(keep) || keep < 1) throw new HarnessError('INVALID_INPUT', 'keepEvents must be a positive integer');
+    const batch = Math.max(1, Math.min(10_000, options.batchSize ?? 5_000));
+    const floor = Math.max(0, Math.min(this.sequence - keep, this.retentionWatermarkFloor()));
+    if (floor <= 0) return { floor, removedEvents: 0, removedReceipts: 0, batches: 0 };
+    const removeEvents = this.db.prepare("DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE seq<=? LIMIT ?)");
+    const expireReceipts = this.db.prepare("UPDATE receipts SET body=json_object('commandId',id,'eventSeq',json_extract(body,'$.eventSeq'),'result',null,'expired',json('true')) WHERE id IN (SELECT id FROM receipts WHERE json_extract(body,'$.eventSeq')<=? AND COALESCE(json_extract(body,'$.expired'),0)!=1 AND id NOT IN (SELECT json_extract(body,'$.command.id') FROM entities WHERE kind IN ('workspaceAction','workspaceActionOutcome') AND json_type(body,'$.command.id')='text') LIMIT ?)");
+    let removedEvents = 0, removedReceipts = 0, batches = 0;
+    while (options.maxBatches === undefined || batches < options.maxBatches) {
+      this.db.exec("BEGIN IMMEDIATE"); this.transactionOpen = true;
+      let batchEvents = 0, batchReceipts = 0;
+      try {
+        batchEvents = Number(removeEvents.run(floor, batch).changes);
+        if (options.receipts !== 'keep') batchReceipts = Number(expireReceipts.run(floor, batch).changes);
+        this.db.exec("COMMIT");
+      } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+      finally { this.transactionOpen = false; }
+      removedEvents += batchEvents; removedReceipts += batchReceipts; batches++;
+      if (batchEvents < batch && batchReceipts < batch) break;
+    }
+    this.commit('store.retention.swept', null, () => ({ floor, removedEvents, removedReceipts, batches, keepEvents: keep }));
+    return { floor, removedEvents, removedReceipts, batches };
+  }
   /** True while a command/internal commit is open: host modules invoked from
    * a command write through the open transaction instead of opening a nested
    * one (Store rejects nested commits). */
   get inTransaction(): boolean { return this.transactionOpen; }
   private visibleEntities() {
-    const archivedRows = this.db.prepare("SELECT id,body FROM entities WHERE kind=?").all("archivedThread") as { id: string; body: string }[];
+    const archivedRows = this.connection.prepare("SELECT id,body FROM entities WHERE kind=?").all("archivedThread") as { id: string; body: string }[];
     const archived = new Set(archivedRows.filter(row => JSON.parse(row.body)).map(row => row.id));
     const archivedIds = JSON.stringify([...archived]);
-    const rows = this.db.prepare("SELECT body FROM entities WHERE kind=? AND (thread_id IS NULL OR thread_id NOT IN (SELECT value FROM json_each(?))) ORDER BY rowid");
+    const rows = this.connection.prepare("SELECT body FROM entities WHERE kind=? AND (thread_id IS NULL OR thread_id NOT IN (SELECT value FROM json_each(?))) ORDER BY rowid");
     const visible = <T>(kind: string): T[] => (rows.all(kind, archivedIds) as {body: string}[]).map(row => JSON.parse(row.body) as T);
     return {archived, archivedIds, visible};
   }
   /** Inbox and desktop notification polling need no transcripts or artifact history. */
   attentionProjection(): Pick<Snapshot, "threads" | "requests" | "operations"> {
+    this.reconcileIfNeeded();
     const {archived, visible} = this.visibleEntities();
     return {
       threads: this.all<Snapshot["threads"][number]>("thread").filter(thread => !archived.has(thread.id)),
@@ -228,6 +341,7 @@ export class Store {
     };
   }
   snapshot(): Snapshot {
+    this.reconcileIfNeeded();
     const allThreads = this.all<Snapshot["threads"][number]>("thread");
     const {archived, archivedIds, visible} = this.visibleEntities();
     const threads = allThreads.filter(thread => !archived.has(thread.id));
@@ -235,7 +349,7 @@ export class Store {
     const data = visible<Snapshot["data"][number]>("data"), seen = new Set(data.map(d => d.id + "@" + d.revision));
     const refs = [...artifacts.flatMap(a => Object.values(a.bindings).flatMap(b => b.mode === "snapshot" ? [b.ref] : [])), ...requests.flatMap(r => r.basis)];
     for (const ref of refs) { const key = ref.id + "@" + ref.revision; if (!seen.has(key)) { const item = this.get<Snapshot["data"][number]>("dataVersion", key); if (item) { data.push(item); seen.add(key); } } }
-    const skillUsage=new Map((this.db.prepare('SELECT id,body FROM entities WHERE kind=?').all('skillUsage') as {id:string;body:string}[]).map(row=>[row.id,JSON.parse(row.body) as {count:number;lastUsedAt:string}]));
+    const skillUsage=new Map((this.connection.prepare('SELECT id,body FROM entities WHERE kind=?').all('skillUsage') as {id:string;body:string}[]).map(row=>[row.id,JSON.parse(row.body) as {count:number;lastUsedAt:string}]));
     // Locate each visible thread's cutoff using the index, then read retained bodies.
     // Keep global insertion order for consumers that combine messages across threads.
     const rows = this.statements.snapshotMessages.all({archivedIds, windowSize: MESSAGE_WINDOW}) as {body:string; total:number}[];
@@ -247,6 +361,7 @@ export class Store {
     });
     return {
       seq: this.sequence, threads, archivedThreads: allThreads.filter(thread => archived.has(thread.id)), messages, messagesTruncated, artifacts, userStates: visible("userState"),
+
       data, requests, accounts: this.all('account'), skills:this.all<import('../contracts/skills.ts').SkillSummary>('skill').map(skill=>{const usage=skillUsage.get(skill.name);return usage?{...skill,useCount:usage.count,lastUsedAt:usage.lastUsedAt}:skill;}),skillProposals:(this.db.prepare("SELECT json_remove(body,'$.operations') AS body FROM entities WHERE kind=? AND json_extract(body,'$.status')='pending'").all('skillProposal') as {body:string}[]).map(row=>JSON.parse(row.body)),learning:this.get('learningStatus','global')??{supported:false,status:'idle',lastReview:null},operations: visible("operation"), resources: visible("resource"), memory: visible('taskMemory'),
       usage: Object.fromEntries((() => {
         // Batch: reuse the loaded threads instead of a get()+projection per row.
@@ -263,6 +378,7 @@ export class Store {
     };
   }
   messagesFor(threadId: string, beforeId?: string, limit = 200): { messages: Message[]; truncated: number } {
+    this.reconcileIfNeeded();
     const cap = Math.min(500, Math.max(1, Math.ceil(limit)));
     let rows: { body: string }[], count: { count: number };
     if (beforeId === undefined) {
@@ -277,5 +393,5 @@ export class Store {
     return { messages: rows.reverse().map(row => JSON.parse(row.body) as Message), truncated: count.count - rows.length };
   }
   subscribe(listener: (event: WorkspaceEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  close(): void { this.listeners.clear(); this.committedEvents.length = 0; this.db.close(); }
+  close(): void { this.listeners.clear(); this.committedEvents.length = 0; this.connection.close(); }
 }
