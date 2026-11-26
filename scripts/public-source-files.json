@@ -4250,6 +4250,7 @@
     "tests/verification-source-authority.test.ts",
     "tests/verification-source-digest.test.ts",
     "tests/verification-v3.test.ts",
+    "tests/web-guard-panels.test.ts",
     "tests/widget-isolation.test.ts",
     "tests/widget-runtime-policy.test.ts",
     "tests/window-globals.d.ts",
