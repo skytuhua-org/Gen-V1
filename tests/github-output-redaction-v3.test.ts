@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,7 +21,7 @@ const publicPull = {
   state: 'OPEN', headRefOid: 'a'.repeat(40), headRefName: 'review', isDraft: true,
 };
 
-async function fixture(script: string) {
+async function fixture(script: string, token = syntheticToken) {
   const root = await mkdtemp(join(tmpdir(), 'github-output-boundary-'));
   roots.push(root);
   // Node executes this owned extensionless fixture when the real CLI boundary
@@ -32,7 +33,7 @@ async function fixture(script: string) {
     git: async () => 'https://github.com/example/fixture.git',
   } as unknown as ProjectTools;
   const github = new GitHubTools(projects, {} as TerminalHost, process.execPath);
-  vi.spyOn(github.auth, 'token').mockResolvedValue(syntheticToken);
+  vi.spyOn(github.auth, 'token').mockResolvedValue(token);
   return github;
 }
 
@@ -57,6 +58,22 @@ describe('M03 GitHub credential output boundary', () => {
       repo: 'example/fixture',
       items: [{ ...publicPull, title: 'Public prefix\n[REDACTED]\nPublic suffix' }],
     });
+  });
+
+  it.each(['short', '1234567'])('denies untrackable %s token before launching GitHub CLI', async token => {
+    const markerRoot = await mkdtemp(join(tmpdir(), 'github-no-short-secret-spawn-'));
+    roots.push(markerRoot);
+    const marker = join(markerRoot, 'spawned');
+    const github = await fixture(`
+      require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started');
+      const item = ${JSON.stringify(publicPull)};
+      item.title = process.env.GH_TOKEN;
+      process.stdout.write(JSON.stringify([item]));
+    `, token);
+    await expect(github.list('fixture-project')).rejects.toMatchObject({
+      code: 'GITHUB_CLI_TOKEN_REDACTION_UNSUPPORTED',
+    });
+    expect(existsSync(marker)).toBe(false);
   });
 
   it('preserves ordinary structured CLI output', async () => {

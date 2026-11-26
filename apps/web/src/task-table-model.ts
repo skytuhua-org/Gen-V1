@@ -67,3 +67,20 @@ export function tableView(rows: unknown[], columns: TableColumn[], query: string
     return (sort.direction === 'ascending' ? compared : -compared) || a.index - b.index;
   });
 }
+
+/** Render only a bounded window of the matched view; the remainder is
+ * revealed on demand so large bound tables never mount every row at once. */
+export function tableRowWindow<T>(view: T[], shown: number) {
+  const end = Math.min(view.length, Math.max(0, Math.trunc(shown)));
+  return { rows: view.slice(0, end), remaining: view.length - end };
+}
+
+/** Bound per-update minima measurement to a strided sample that always covers
+ * the first and last rows; small sets pass through unchanged. */
+export function measuredRowSample<T>(rows: T[], limit: number): T[] {
+  if (rows.length <= limit) return rows;
+  const stride = Math.ceil(rows.length / limit);
+  const sample = rows.filter((_, index) => index % stride === 0);
+  if (sample.at(-1) !== rows.at(-1)) sample.push(rows.at(-1)!);
+  return sample;
+}
