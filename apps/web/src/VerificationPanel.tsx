@@ -163,7 +163,7 @@ function VerificationReadPanel({ threadId }: { threadId: string }) {
   if (current?.unavailable) return <section className="verification-panel" aria-label="Verification">
     <p role="status">Verification unavailable. The current evidence could not be refreshed.</p>
   </section>;
-  if (!model || (!model.label && !model.rows.length)) return null;
+  if (!model || (!model.label && !model.rows.length && !model.findings.rows.length)) return null;
   return (
     <section className="verification-panel" aria-label="Verification" tabIndex={0}>
       <header>
