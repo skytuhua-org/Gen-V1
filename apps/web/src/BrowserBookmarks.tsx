@@ -20,7 +20,7 @@ function pageHost(raw:string|undefined){try{return new URL(raw!).hostname;}catch
 /** Star + list controls for the Gen Browser toolbar. Renders nothing outside the desktop shell. */
 export function BrowserBookmarkControls({state,detached=false}:{state?:DesktopBrowserState;detached?:boolean}){
  const desktop=useDesktop(),[saveOpen,setSaveOpen]=useState(false),[listOpen,setListOpen]=useState(false),[draft,setDraft]=useState(''),[keepQuery,setKeepQuery]=useState(false),[editing,setEditing]=useState<string|null>(null),[active,setActive]=useState(0),[announcement,setAnnouncement]=useState(''),[pending,setPending]=useState(false);
- const star=useRef<HTMLButtonElement>(null),list=useRef<HTMLButtonElement>(null),nameInput=useRef<HTMLInputElement>(null),listContent=useRef<HTMLDivElement>(null),rows=useRef(new Map<string,HTMLElement>()),editingRef=useRef<string|null>(null);
+ const star=useRef<HTMLButtonElement>(null),list=useRef<HTMLButtonElement>(null),nameInput=useRef<HTMLInputElement>(null),listContent=useRef<HTMLDivElement>(null),firstRow=useRef<HTMLDivElement>(null),rows=useRef(new Map<string,HTMLElement>()),editingRef=useRef<string|null>(null);
  const store=desktop?.state.browserBookmarks,items=store?.items??[],limit=store?.limit??200,notice=store?.notice;
  const trimmed=pageBookmarkUrl(state?.url,false),full=pageBookmarkUrl(state?.url,true),saved=items.find(item=>item.url===trimmed||item.url===full);
  const starReason=!trimmed?'Only public http or https pages can be bookmarked.':items.length>=limit&&!saved?`Bookmark limit reached (${limit}). Remove one to save another.`:'';
@@ -56,12 +56,12 @@ export function BrowserBookmarkControls({state,detached=false}:{state?:DesktopBr
     <button type="button" className="primary" onClick={()=>setSaveOpen(false)}>Done</button>
    </div>
   </Popover>
-  <Popover anchor={list} open={listOpen} contentRef={listContent} initialFocus={listContent} width={320} height={Math.min(360,72+Math.max(items.length,1)*36+(notice?40:0))} preferredSide="below" align="end" onDismiss={()=>{setListOpen(false);editingRef.current=null;setEditing(null);}} role="dialog" aria-label="Bookmarks" className="bookmark-list-popover" tabIndex={-1}>
+  <Popover anchor={list} open={listOpen} contentRef={listContent} initialFocus={items.length?firstRow:listContent} width={320} height={Math.min(360,72+Math.max(items.length,1)*36+(notice?40:0))} preferredSide="below" align="end" onDismiss={()=>{setListOpen(false);editingRef.current=null;setEditing(null);}} role="dialog" aria-label="Bookmarks" className="bookmark-list-popover" tabIndex={-1}>
    <p className="bookmark-popover-title">Bookmarks <span className="bookmark-count">{items.length} of {limit}</span></p>
    {notice&&<p className="bookmark-notice">{notice}<button type="button" className="icon-button" aria-label="Dismiss bookmark notice" onClick={()=>void send({type:'bookmark-notice-dismiss'}).catch(()=>{})}><X size={12}/></button></p>}
    {items.length===0?<p className="bookmark-empty">No bookmarks yet. Use the star to save this page.</p>:
    <div role="listbox" aria-label="Saved bookmarks" onKeyDown={event=>{
-    if(!items.length)return;const current=items[Math.min(active,items.length-1)]!;
+    if(!items.length||!(event.target instanceof HTMLElement)||event.target.getAttribute('role')!=='option')return;const current=items[Math.min(active,items.length-1)]!;
     if(event.key==='ArrowDown'||event.key==='ArrowUp'||event.key==='Home'||event.key==='End'){event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?items.length-1:Math.min(items.length-1,Math.max(0,active+(event.key==='ArrowDown'?1:-1)));setActive(next);rows.current.get(items[next]!.id)?.focus();}
     else if(event.key==='Enter'){event.preventDefault();void send({type:'bookmark-open',id:current.id}).then(()=>setListOpen(false)).catch(cause=>toast(cause instanceof Error?cause.message:'Bookmark could not be opened.',{tone:'error'}));}
     else if(event.key==='F2'){event.preventDefault();editingRef.current=current.id;setEditing(current.id);}
@@ -69,7 +69,7 @@ export function BrowserBookmarkControls({state,detached=false}:{state?:DesktopBr
    }}>
     {items.map((item,index)=>editing===item.id?
      <input key={item.id} className="bookmark-rename" defaultValue={item.title} maxLength={120} autoFocus onKeyDown={event=>{event.stopPropagation();if(event.key==='Enter')commitName(item,(event.target as HTMLInputElement).value);if(event.key==='Escape'){editingRef.current=null;setEditing(null);listContent.current?.focus();}}} onBlur={event=>{if(editingRef.current===item.id)commitName(item,event.target.value);}} aria-label={`Rename ${item.title}`}/>:
-     <div key={item.id} id={`bookmark-row-${item.id}`} role="option" aria-selected={index===active} tabIndex={index===active?0:-1} className="bookmark-row" ref={node=>{if(node)rows.current.set(item.id,node);else rows.current.delete(item.id);}} onClick={()=>{void send({type:'bookmark-open',id:item.id}).then(()=>setListOpen(false)).catch(cause=>toast(cause instanceof Error?cause.message:'Bookmark could not be opened.',{tone:'error'}));}}>
+     <div key={item.id} id={`bookmark-row-${item.id}`} role="option" aria-selected={index===active} tabIndex={index===active?0:-1} className="bookmark-row" ref={node=>{if(index===0)firstRow.current=node;if(node)rows.current.set(item.id,node);else rows.current.delete(item.id);}} onFocus={()=>setActive(index)} onClick={()=>{void send({type:'bookmark-open',id:item.id}).then(()=>setListOpen(false)).catch(cause=>toast(cause instanceof Error?cause.message:'Bookmark could not be opened.',{tone:'error'}));}}>
       <Globe size={14} className="bookmark-row-icon"/>
       <span className="bookmark-row-name" title={item.title}>{item.title}</span>
       <span className="bookmark-row-host">{pageHost(item.url)}</span>

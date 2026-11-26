@@ -109,3 +109,31 @@ test('detached overlay bounds hide and restore the native view around popovers',
  await page.keyboard.press('Escape');
  await expect.poll(async()=>(await commands(page,'overlay'))).toEqual([{type:'overlay',open:true},{type:'overlay',open:false}]);
 });
+
+async function twoBookmarks(page:Page){
+ await open(page);
+ await page.evaluate(()=>window.browserActionFixture.bookmarks([1,2].map(n=>({id:`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`,url:`https://reading.example/page-${n}`,title:`Saved page ${n}`,createdAt:'2026-11-21T22:00:00.000Z',updatedAt:'2026-11-21T22:00:00.000Z'}))));
+ await page.getByRole('button',{name:'Bookmarks',exact:true}).click();
+ return page.getByRole('dialog',{name:'Bookmarks',exact:true});
+}
+
+test('review opening the bookmark list focuses its first row',async({page})=>{
+ const dialog=await twoBookmarks(page);
+ await expect(dialog.getByRole('option').first()).toBeFocused();
+});
+
+for(const action of ['Rename','Remove'] as const)test(`review Enter on the ${action} button performs that row action only`,async({page})=>{
+ const dialog=await twoBookmarks(page);
+ await dialog.getByRole('option').nth(1).focus();
+ const button=dialog.getByRole('button',{name:`${action} Saved page 2`,exact:true});
+ await button.focus();await button.press('Enter');
+ if(action==='Rename')await expect(dialog.getByRole('textbox',{name:'Rename Saved page 2',exact:true})).toBeVisible();
+ else await expect.poll(async()=>await commands(page,'bookmark-remove')).toEqual([{type:'bookmark-remove',id:id(2)}]);
+ expect(await commands(page,'bookmark-open')).toEqual([]);
+});
+
+test('review Enter opens the actually focused row after focus changes directly',async({page})=>{
+ const dialog=await twoBookmarks(page);
+ await dialog.getByRole('option').nth(1).focus();await page.keyboard.press('Enter');
+ await expect.poll(async()=>await commands(page,'bookmark-open')).toEqual([{type:'bookmark-open',id:id(2)}]);
+});

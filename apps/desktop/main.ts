@@ -1,12 +1,13 @@
 import {app,BrowserWindow,WebContentsView,ipcMain,session,screen,dialog,Menu,Tray,nativeImage,powerMonitor,shell,type IpcMainInvokeEvent,type Session} from 'electron';
 import {spawn,type ChildProcess} from 'node:child_process';
-import {randomBytes,randomUUID} from 'node:crypto';
-import {readFile,writeFile,mkdir,rename} from 'node:fs/promises';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
+import {readFile,writeFile,mkdir,rename,stat,lstat} from 'node:fs/promises';
 import {mkdirSync,existsSync,writeSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {GITHUB_DEVICE_URL,githubDevicePopup} from './github-device-policy.ts';
 import {createDesktopUpdater,type DesktopUpdater,type DesktopUpdateDriver,type UpdateStatus} from './updater.ts';
 import {checkInstalledCompatibility} from '../../packages/plugins/installation.ts';
+import {bindBrowserNavigationFence,createControlBridge,handleRegisterReply,loadWindowsWindowBridge,type BridgeBrowser} from './control-bridge.ts';
 import {resolve,join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {DESKTOP_CHANNELS as channels,desktopId,desktopSurfaceKey,parseDesktopSurface,parseDesktopLayout,parseDesktopWindowControl,type DesktopLayout,type DesktopLayoutEntry,type DesktopSurface,type DesktopWindowInfo,type DesktopContext,type DesktopState,type DesktopBrowserState,type DesktopBrowserBookmark} from '../../packages/desktop-contract/index.ts';
@@ -14,7 +15,7 @@ import {allowRemoteBrowserUrl,clampDesktopBounds,pluginDesktopChannelAllowed,plu
 import {createBrowserProxy,type BrowserProxy} from './browser-proxy.ts';
 import {createStartupOutputCapture,finishBackendStartup,nodeSidecarArguments,requestBackendShutdown,startupErrorDiagnostic,waitForBackendReady,writeStartupDiagnostic,type StartupDiagnostic,type StartupObservation} from './backend-policy.ts';
 import {releaseOwnedBrowsers,detachOwnedBrowser} from './browser-lifecycle.ts';
-import {addBookmark,BOOKMARK_LIMIT,normalizeBookmarkUrl,parseBookmarkStore,removeBookmark,restoreBookmark,serializeBookmarkStore,updateBookmark} from './browser-bookmarks.ts';
+import {addBookmark,BOOKMARK_LIMIT,BOOKMARK_STORE_MAX_BYTES,normalizeBookmarkUrl,parseBookmarkStore,removeBookmark,restoreBookmark,serializeBookmarkStore,updateBookmark} from './browser-bookmarks.ts';
 import {ensureMainDockedBrowser} from './docked-browser.ts';
 import {nativeBrowserBounds} from './browser-bounds.ts';
 import {launchDesktopSignIn,parseDesktopSignInTarget} from './auth-launcher.ts';
@@ -31,7 +32,7 @@ const trayMark16='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf
 const trayMark32='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAC/ElEQVR4nOxXS0hVURRd574rKQ3sQwZSg2gifSBNfA2sIAcN1KcEr1kTIYsahIMgPw9uPLWgSRRBRZATR0HlLx2FRT8zHFTD7KeUEUKBqdXz7tYVBO9757zu85OTFlzOuefus/c6+5y997kWVhgWVhgrTsBGhnAcsWZeIMzuFlch3xuzBJ/YvAsVY8BxlJuJPhVUMFYlO8XFSXYP8dlgEPvK57aycCXeoV4hAP5KoLFCSrlPZ0ShHBlACXroivMt3epRWrl0H2OVsp2G+yDYhIVhxFY44HSqNyYB4yFsjEixCB4vwriHzQnqiJXLbmRCoC4qOXThdfonF4uEAJMJCz9M37VRsHoaN9kUwqx1gHv3gHs8ZFnedqMILvaRcDhJ7ombhci5O2rcpCrlDNRXybaQi5fshjTyE7RWF+9WN3TKmirkKDVeYjebbbu9CjXOLfULaZBCoKlSrrI5liLJ1diCI06Peos0qK+UArp1T7xLtSEAfARqayUr7zNG2N2okT3e3KWuYYnhOwN5YygzGP/2PYE2LAN8UcBMt8sg13+5V/3EMsDnAaWwRiul0A8DYhEpZLJaj6AGBe/nJyY7ydC0F7gpEI4b4AouMDLKEBAJMLkBpXPvvi1gHRvTTeIKTVuzEPiSkp1kSEuAK1wyAtxmHwGfB1jfn9LdvzXzShoiklE1NIH1ZdRIoLVTfREL9zXzLMtFu5dksEjQm1NGArMCwEX9TOQyNw/Optt5yMpGdcLFOu/h6k5xaAImCKITOXCS7KWCpbiPTA/CrGiA1B9y8pDrgk5DEYNnf0ox8hvqYHquTh7XVsMsoIbhMshuPvTawiQR9iKWh0obuUmEh0MWTuhVGdBQLjtYavvZDZxkDBhnXQ0331XDuo/GG1Frj3otM/BuMs+wcDwPCYpMxtMS8NByT32ws7m3gjhfM6kFk5zjcO7es93qYzrBwNfypmrZihmcZvcwn7UGsdlruZ1As9OrRoPoDUxgDtGohAqmUIJ//WOyXPj/c/oHAAD//863s6QAAAAGSURBVAMAQjrrdqpvZbAAAAAASUVORK5CYII=';
 const persistence=createPersistenceQueue();
 
-interface BrowserRecord {id:string;view:WebContentsView;state:DesktopBrowserState;owner?:WindowRecord;generation:number;networkReady:Promise<void>}
+interface BrowserRecord {id:string;view:WebContentsView;state:DesktopBrowserState;owner?:WindowRecord;generation:number;navigationGeneration:number;networkReady:Promise<void>}
 interface WindowRecord extends NativeCloseOwner {id:string;surface:DesktopSurface;window:BrowserWindow;url:string;ready:boolean;settled:boolean;visible:boolean;normalBounds:ReturnType<typeof createNormalBounds>;placement?:DesktopPlacement;appliedBounds?:DesktopBounds;monitorRescued?:boolean;recoveries?:number;browserOverlay?:boolean;resolveReady:(value:DesktopWindowInfo)=>void;rejectReady:(error:Error)=>void;readyPromise:Promise<DesktopWindowInfo>;readyTimer:ReturnType<typeof setTimeout>;browser?:BrowserRecord;dockedBrowser?:BrowserRecord}
 interface SavedWindow {surface:DesktopSurface;bounds:DesktopBounds;placement?:DesktopPlacement;open:boolean;visible?:boolean;alwaysOnTop?:boolean;dockedBrowserId?:string}
 const windows=new Map<string,WindowRecord>(),browsers=new Map<string,BrowserRecord>();
@@ -104,11 +105,20 @@ function remember(record:WindowRecord,open=true){if(record.window.isDestroyed())
  if(!awaitingRescue)record.placement=retainDesktopPlacement(bounds,record.placement,record.appliedBounds,all);
  if(record.placement&&all.some(display=>display.id===record.placement!.displayId))record.monitorRescued=false;
  const value={surface:record.surface,bounds,placement:record.placement,open,visible:record.visible,alwaysOnTop:record.window.isAlwaysOnTop(),...(record.dockedBrowser?{dockedBrowserId:record.dockedBrowser.id}:{})};saved=[...saved.filter(entry=>desktopSurfaceKey(entry.surface)!==key),value];if(saved.length>24){const live=new Set([...windows.values()].map(item=>desktopSurfaceKey(item.surface)));saved=[...saved.filter(entry=>live.has(desktopSurfaceKey(entry.surface))),...saved.filter(entry=>!live.has(desktopSurfaceKey(entry.surface)))].slice(0,24);}persist();}
-function writeBookmarks(){const body=serializeBookmarkStore(bookmarks);void persistence.enqueue(async()=>{await mkdir(dirname(bookmarkFile),{recursive:true});const tmp=bookmarkFile+'.tmp';await writeFile(tmp,body,{encoding:'utf8',mode:0o600});await rename(tmp,bookmarkFile);}).catch(()=>{bookmarkNotice='Bookmarks could not be saved to this device.';broadcast();});}
+function writeBookmarks(change:()=>DesktopBrowserBookmark[]):Promise<void>{
+ return persistence.enqueue(async()=>{
+  const next=change(),body=serializeBookmarkStore(next);
+  if(Buffer.byteLength(body,'utf8')>BOOKMARK_STORE_MAX_BYTES)throw Error('The bookmark storage limit is reached. Remove a saved page first.');
+  try{await mkdir(dirname(bookmarkFile),{recursive:true});const tmp=bookmarkFile+'.tmp';await writeFile(tmp,body,{encoding:'utf8',mode:0o600});await rename(tmp,bookmarkFile);}
+  catch{bookmarkNotice='Bookmarks could not be saved to this device.';broadcast();throw Error(bookmarkNotice);}
+  bookmarks=next;bookmarkRevision++;broadcast();
+ });
+}
 async function loadBookmarks(){
  if(!existsSync(bookmarkFile))return;
  try{
-  const text=await readFile(bookmarkFile,'utf8');if(text.length>1024*1024)throw Error('oversize');
+  if((await stat(bookmarkFile)).size>BOOKMARK_STORE_MAX_BYTES)throw Error('oversize');
+  const text=await readFile(bookmarkFile,'utf8');if(Buffer.byteLength(text,'utf8')>BOOKMARK_STORE_MAX_BYTES)throw Error('oversize');
   const parsed=parseBookmarkStore(text);
   if('invalid' in parsed)throw Error('invalid');
   bookmarks=parsed.items;
@@ -145,10 +155,11 @@ function browserRecord(id:string):BrowserRecord {
  const browserSession=session.fromPartition('persist:harness-browser'),networkReady=secureBrowserSession(browserSession);
  const view=new WebContentsView({webPreferences:{session:browserSession,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false}});
  view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
- const record:BrowserRecord={id,view,state:{url:'about:blank',title:'Browser',canGoBack:false,canGoForward:false,loading:false},generation:0,networkReady};void networkReady.catch(error=>{record.state.error='The isolated browser connection could not start: '+String(error instanceof Error?error.message:error).slice(0,200);broadcast();});browsers.set(id,record);
+ const record:BrowserRecord={id,view,state:{url:'about:blank',title:'Browser',canGoBack:false,canGoForward:false,loading:false},generation:0,navigationGeneration:0,networkReady};void networkReady.catch(error=>{record.state.error='The isolated browser connection could not start: '+String(error instanceof Error?error.message:error).slice(0,200);broadcast();});browsers.set(id,record);
  view.webContents.setWindowOpenHandler(()=>({action:'deny'}));view.webContents.on('will-attach-webview',event=>event.preventDefault());
  view.webContents.on('will-navigate',(event,url)=>{try{remoteBrowserUrl(url);}catch{event.preventDefault();record.state.error='Local, private-network and non-HTTP pages are blocked.';broadcast();}});
  view.webContents.on('will-redirect',(event,url)=>{try{remoteBrowserUrl(url);}catch{event.preventDefault();}});
+ bindBrowserNavigationFence(view.webContents,()=>{record.navigationGeneration++;});
  view.webContents.on('did-navigate',()=>browserState(record));view.webContents.on('did-navigate-in-page',()=>browserState(record));view.webContents.on('did-start-loading',()=>browserState(record));view.webContents.on('did-stop-loading',()=>browserState(record));view.webContents.on('page-title-updated',()=>browserState(record));
  view.webContents.on('did-fail-load',(_event,code,description,_url,isMainFrame)=>{if(isMainFrame&&code!==-3){record.state.error=description.slice(0,300);browserState(record);}});
  view.webContents.on('render-process-gone',()=>{record.state.error='The browser page stopped. Reload it to continue.';record.state.loading=false;broadcast();});
@@ -232,7 +243,7 @@ function installTray(){
 async function applyLayout(raw:DesktopLayout){
  const next=parseDesktopLayout(raw);if(next.windows.some(entry=>!desktopSurfaceAllowed(entry.surface)))throw Error('A profile cannot transfer another workspace authority.');const before=structuredClone(saved),wasRestoring=restoringLayout;restoringLayout=true;
  const find=(entry:DesktopLayoutEntry)=>[...windows.values()].find(record=>desktopSurfaceKey(record.surface)===desktopSurfaceKey(entry.surface));
- try{await applyNativeLayout(next,{current:()=>captureLayout().windows,prepare:async entry=>{const record=find(entry);if(record&&!await requestClose(record))throw Error('Save the window edits before applying this profile. Your current layout is unchanged.');},open:async entry=>{const record=find(entry);if(record&&!record.window.isDestroyed())return;await openSurface(entry.surface,entry.bounds);},apply:async entry=>{const record=find(entry);if(!record)throw Error('A profile window is no longer available.');const placement=entry.placement??captureDesktopPlacement(entry.bounds,displays());applyPlacement(record,restoreDesktopPlacement(placement,displays(),surfaceSize(entry.surface)),placement);record.window.setAlwaysOnTop(entry.alwaysOnTop);if(record.dockedBrowser&&record.dockedBrowser.id!==entry.dockedBrowserId)detachOwnedBrowser(record,record.dockedBrowser,value=>record.window.contentView.removeChildView(value.view));if(entry.surface.kind==='browser')moveBrowser(browserRecord(entry.surface.browserId),record,false);if(entry.dockedBrowserId)moveBrowser(browserRecord(entry.dockedBrowserId),record,true);record.visible=entry.visible;if(entry.visible){if(record.window.isMinimized())record.window.restore();record.window.show();}else record.window.hide();remember(record);},close:async entry=>{const record=find(entry);if(record)destroyWindow(record);},resume:()=>{for(const record of windows.values())cancelClose(record);}});for(const browser of browsers.values())if(!browser.owner){browser.generation++;browsers.delete(browser.id);if(!browser.view.webContents.isDestroyed())browser.view.webContents.close({waitForBeforeUnload:false});}layoutError=undefined;}catch(error){saved=before;throw error;}finally{restoringLayout=wasRestoring;persist();broadcast();}
+ try{await applyNativeLayout(next,{current:()=>captureLayout().windows,prepare:async entry=>{const record=find(entry);if(record&&!await requestClose(record))throw Error('Save the window edits before applying this profile. Your current layout is unchanged.');},open:async entry=>{const record=find(entry);if(record&&!record.window.isDestroyed())return;await openSurface(entry.surface,entry.bounds);},apply:async entry=>{const record=find(entry);if(!record)throw Error('A profile window is no longer available.');const placement=entry.placement??captureDesktopPlacement(entry.bounds,displays());applyPlacement(record,restoreDesktopPlacement(placement,displays(),surfaceSize(entry.surface)),placement);record.window.setAlwaysOnTop(entry.alwaysOnTop);if(record.dockedBrowser&&record.dockedBrowser.id!==entry.dockedBrowserId)detachOwnedBrowser(record,record.dockedBrowser,value=>record.window.contentView.removeChildView(value.view));if(entry.surface.kind==='browser')moveBrowser(browserRecord(entry.surface.browserId),record,false);if(entry.dockedBrowserId)moveBrowser(browserRecord(entry.dockedBrowserId),record,true);record.visible=entry.visible;if(entry.visible){if(record.window.isMinimized())record.window.restore();record.window.show();}else record.window.hide();remember(record);},close:async entry=>{const record=find(entry);if(record)destroyWindow(record);},resume:()=>{for(const record of windows.values())cancelClose(record);}});for(const browser of browsers.values())if(!browser.owner){browser.generation++;browsers.delete(browser.id);if(!browser.view.webContents.isDestroyed())browser.view.webContents.close({waitForBeforeUnload:false});}layoutError=undefined;}catch(error){const live=new Set([...windows.values()].filter(record=>!record.window.isDestroyed()).map(record=>desktopSurfaceKey(record.surface)));saved=before.map(entry=>entry.open&&!live.has(desktopSurfaceKey(entry.surface))?{...entry,open:false}:entry);for(const record of windows.values())if(!record.window.isDestroyed())remember(record);throw error;}finally{restoringLayout=wasRestoring;persist();broadcast();}
 }
 async function openAttention(eventId:string){
  if(quitting||quitPending||!/^[A-Za-z0-9][A-Za-z0-9:_.-]{0,999}$/.test(eventId))throw Error('This inbox item is unavailable.');
@@ -307,17 +318,23 @@ function registerIpc(){
    const browser=record.browser??record.dockedBrowser;if(!browser)throw Error('No browser is attached to this window');
    const url=normalizeBookmarkUrl(browser.view.webContents.isDestroyed()?'':browser.view.webContents.getURL()||browser.state.url,command.keepQuery===true);
    if(!url||url==='about:blank')throw Error('Only open pages can be bookmarked.');
-   const next=addBookmark(bookmarks,{url,title:(browser.state.title||'Untitled').trim()||'Untitled',now:new Date().toISOString(),id:randomUUID()});
-   if(typeof next==='string')throw Error(next==='limit'?'The bookmark limit is reached. Remove a saved page first.':next==='duplicate'?'This page is already bookmarked.':'This page cannot be bookmarked.');
-   bookmarks=next;bookmarkRevision++;writeBookmarks();broadcast();return;
+   const input={url,title:(browser.state.title||'Untitled').trim()||'Untitled',now:new Date().toISOString(),id:randomUUID()};
+   return writeBookmarks(()=>{
+    const next=addBookmark(bookmarks,input);
+    if(typeof next==='string')throw Error(next==='limit'?'The bookmark limit is reached. Remove a saved page first.':next==='duplicate'?'This page is already bookmarked.':'This page cannot be bookmarked.');
+    return next;
+   });
   }
   if(command.type==='bookmark-update'||command.type==='bookmark-remove'||command.type==='bookmark-restore'){
-   const change={now:new Date().toISOString()} as {title?:string;url?:string;now:string};
-   if(command.type==='bookmark-update'&&command.title!==undefined)change.title=command.title;
-   if(command.type==='bookmark-update'&&command.keepQuery!==undefined){const current=bookmarks.find(item=>item.id===command.id);if(current){const browser=record.browser??record.dockedBrowser,base=browser&&!browser.view.webContents.isDestroyed()?browser.view.webContents.getURL()||current.url:current.url,next=normalizeBookmarkUrl(base,command.keepQuery);if(next&&next!==current.url)change.url=next;}}
-   const next=command.type==='bookmark-update'?updateBookmark(bookmarks,command.id,change):command.type==='bookmark-remove'?removeBookmark(bookmarks,command.id):restoreBookmark(bookmarks,command.bookmark);
-   if(typeof next==='string')throw Error(next==='limit'?'The bookmark limit is reached. Remove a saved page first.':next==='duplicate'?'Another bookmark already opens this page.':next==='missing'?'The bookmark is no longer saved.':'This bookmark cannot be stored.');
-   bookmarks=next;bookmarkRevision++;writeBookmarks();broadcast();return;
+   const browser=record.browser??record.dockedBrowser,page=browser&&!browser.view.webContents.isDestroyed()?browser.view.webContents.getURL()||browser.state.url:undefined;
+   return writeBookmarks(()=>{
+    const change={now:new Date().toISOString()} as {title?:string;url?:string;now:string};
+    if(command.type==='bookmark-update'&&command.title!==undefined)change.title=command.title;
+    if(command.type==='bookmark-update'&&command.keepQuery!==undefined&&page){const current=bookmarks.find(item=>item.id===command.id);if(current&&(current.url===normalizeBookmarkUrl(page,false)||current.url===normalizeBookmarkUrl(page,true))){const next=normalizeBookmarkUrl(page,command.keepQuery);if(next&&next!==current.url)change.url=next;}}
+    const next=command.type==='bookmark-update'?updateBookmark(bookmarks,command.id,change):command.type==='bookmark-remove'?removeBookmark(bookmarks,command.id):restoreBookmark(bookmarks,command.bookmark);
+    if(typeof next==='string')throw Error(next==='limit'?'The bookmark limit is reached. Remove a saved page first.':next==='duplicate'?'Another bookmark already opens this page.':next==='missing'?'The bookmark is no longer saved.':'This bookmark cannot be stored.');
+    return next;
+   });
   }
   if(command.type==='open')return handoff(async()=>{
    if(quitting||quitPending||record.window.isDestroyed()||windows.get(record.id)!==record)throw Error('The workspace is closing.');
@@ -383,9 +400,99 @@ async function startBackend():Promise<void>{
   if(value.nativeLayout!==undefined)try{hostLayout=parseDesktopLayout(value.nativeLayout);}catch{layoutError='The saved host workspace layout is invalid. The local backup is retained.';}
   workspaceRelay=workspaceEvents(backendOrigin,change=>{for(const record of windows.values())if(!record.window.isDestroyed())record.window.webContents.send(channels.workspaceChanged,change);},token);
   child.once('exit',()=>scheduleBackendRestart(child));
+  void attachControlBridge(child,token).catch(error=>{
+   console.warn('Control driver registration failed:',String(error instanceof Error?error.message:error).slice(0,300));
+  });
   backendError=undefined;broadcast();
  },observation=>{if(!quitting)observeStartup(observation);});
  }finally{try{if(output)startupDiagnostic('backend-output',null,output.read().streams);}catch{}}
+}
+
+// M16 C3/C4: the approved first-party bridge registers with the backend over
+// the launch-token channel each time a backend comes up. A failed registration
+// leaves the control surface unavailable — never a fallback driver (D01/D02).
+async function attachControlBridge(child:ChildProcess,token:string){
+ if(!app.isPackaged||root!==join(process.resourcesPath,'host'))return;
+ const adapterModulePath=join(process.resourcesPath,'app.asar');
+ if(app.getAppPath()!==adapterModulePath)return;
+ const trustPath=join(root,'control-driver-trust.json');
+ const trustFile=await lstat(trustPath);
+ if(!trustFile.isFile()||trustFile.size>1024)throw Error('Invalid packaged control driver trust resource.');
+ const trust=JSON.parse(await readFile(trustPath,'utf8')) as {version?:unknown;artifactSha256?:unknown;adapterModuleSha256?:unknown}|null;
+ if(trust?.version!==1||typeof trust.artifactSha256!=='string'||!/^[a-f0-9]{64}$/.test(trust.artifactSha256)||
+    typeof trust.adapterModuleSha256!=='string'||!/^[a-f0-9]{64}$/.test(trust.adapterModuleSha256)||Object.keys(trust).length!==3){
+  throw Error('Invalid packaged control driver trust resource.');
+ }
+ const originalFs=createRequire(import.meta.url)('original-fs') as typeof import('original-fs');
+ if(!(await originalFs.promises.lstat(adapterModulePath)).isFile())throw Error('Invalid packaged app archive.');
+ const adapterModuleSha256=createHash('sha256').update(await originalFs.promises.readFile(adapterModulePath)).digest('hex');
+ if(adapterModuleSha256!==trust.adapterModuleSha256)throw Error('The packaged app archive differs from the build digest.');
+ if(backend!==child||!child.connected)return;
+ const nativePath=join(root,'packages/core/windows-control-bridge.node');
+ const native=loadWindowsWindowBridge(nativePath,trust.artifactSha256);
+ if(!native)throw Error('The packaged control addon did not verify and load.');
+ const bridgeBrowser=(record:BrowserRecord):BridgeBrowser=>{
+  const contents=record.view.webContents;
+  return {
+   id:record.id,
+   get generation(){return record.generation+record.navigationGeneration;},
+   contents:{
+    id:contents.id,
+    isDestroyed:()=>contents.isDestroyed(),
+    isFocused:()=>contents.isFocused(),
+    isLoadingMainFrame:()=>contents.isLoadingMainFrame(),
+    getURL:()=>contents.getURL(),
+    capturePage:async()=>{const image=await contents.capturePage();return {toPNG:()=>image.toPNG(),getSize:()=>image.getSize()};},
+    sendInputEvent:event=>contents.sendInputEvent(event as unknown as Parameters<typeof contents.sendInputEvent>[0]),
+    loadURL:url=>contents.loadURL(url),
+   },
+   geometry(){
+    if(!record.owner||record.owner.window.isDestroyed())return null;
+    const bounds=record.view.getBounds();
+    if(!bounds.width||!bounds.height)return null;
+    return {...bounds,dpiScale:screen.getDisplayMatching(record.owner.window.getBounds()).scaleFactor};
+   },
+   focused(){
+    if(!record.owner||record.owner.window.isDestroyed())return false;
+    return record.owner.window.isFocused()&&!record.owner.window.isMinimized()&&record.owner.window.isVisible()&&contents.isFocused();
+   },
+   title:()=>record.state.title||null,
+   navigated:()=>{record.generation++;},
+  };
+ };
+ const bridge=createControlBridge({
+  browsers:function*(){for(const record of browsers.values())if(record.owner)yield bridgeBrowser(record);},
+  native,
+  ownerWindowHandle(){
+   const main=[...windows.values()].find(record=>record.surface.kind==='main'&&!record.window.isDestroyed());
+   return main?main.window.getNativeWindowHandle():null;
+  },
+  send:value=>new Promise<void>(resolve=>{if(!child.connected){resolve();return;}child.send(value,error=>{if(error)console.warn('Control bridge IPC send failed:',String(error instanceof Error?error.message:error).slice(0,200));resolve();});}),
+  token,
+  artifactPath:nativePath,
+  adapterModulePath,
+  adapterModuleSha256,
+  apiVersion:app.getVersion(),
+  allowNavigateUrl:url=>allowRemoteBrowserUrl(url),
+  now:()=>Date.now(),
+ });
+ const receive=(value:unknown)=>{
+   if(!value||typeof value!=='object'||Array.isArray(value))return;
+   const input=value as Record<string,unknown>;
+   if(handleRegisterReply(input))return;
+   void bridge.handleCall(input).catch(()=>{});
+ };
+ const close=()=>{
+   child.off('message',receive);
+   child.off('disconnect',close);
+   child.off('exit',close);
+   void bridge.close();
+ };
+ child.on('message',receive);
+ child.once('disconnect',close);
+ child.once('exit',close);
+ try { await bridge.register(); }
+ catch(error) { close(); throw error; }
 }
 async function stopBackend():Promise<boolean>{
  let clean=true;
