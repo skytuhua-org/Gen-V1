@@ -49,9 +49,10 @@ import { HarnessError, EMPTY_USAGE, type ArtifactRecord, type DataRecord, type H
 import { hostFlagEnabled } from "./host-flags.ts";
 import { OperationProjectTrustHost } from './operation-project-trust.ts';
 import { OperationExecutionAdviceHost } from './operation-execution-advice.ts';
-import { computeAssessment, observationMatchesThreadOwner } from "./verification-gate.ts";
+import { computeAssessment, observationMatchesThreadOwner, SecurityFindingLedger } from "./verification-gate.ts";
 import { assertVerificationSourceRoot, sourceDigestSync } from "./project-verification.ts";
-import { verificationDeclarationV1Schema, type CheckObservationV1, type DeliverableAssessmentV1, type VerificationDeclarationV1, type VisualObservationV1 } from "../contracts/verification.ts";
+import { verificationDeclarationV1Schema, securityFindingV1Schema, type CheckObservationV1, type DeliverableAssessmentV1, type VerificationDeclarationV1, type VisualObservationV1 } from "../contracts/verification.ts";
+const securityFindingInput = securityFindingV1Schema.omit({ updatedAt: true });
 import type { ToolEffectRecord, ToolOwner } from "../contracts/tool-effects.ts";
 import { MODEL_REQUEST_OBSERVATION_LIMIT, modelRequestObservationV1Schema, type ModelRequestObservationV1 } from "../contracts/model-request.ts";
 import { buildToolRegistry, ToolAuthority, type ActorRole } from "./tool-authority.ts";
@@ -2259,7 +2260,7 @@ export class Service {
     }
     if (call.name === "ui_discover") return discoverCapabilities(args);
     if (call.name === "ui_inspect") return inspectTask(this.store, this.thread(ctx.threadId), this.planning.inspect(ctx.threadId), args);
-    if (call.name.startsWith("ui_") || call.name === "task_finish" || call.name === "verification_declare") return this.uiTool(call, ctx);
+    if (call.name.startsWith("ui_") || call.name === "task_finish" || call.name === "verification_declare" || call.name === "security_finding_record") return this.uiTool(call, ctx);
     if (call.name === "operation_execute") {
       this.assertMutation(ctx.threadId); const op = this.store.get<Operation>("operation", text(args, "operationId", 200));
       if (!op || op.threadId !== ctx.threadId || !op.approved) throw new HarnessError("APPROVAL_REQUIRED", "The user must approve the exact prepared operation");
@@ -2339,6 +2340,16 @@ export class Service {
         assertVerificationSourceRoot(this.store, ctx.threadId, declaration.rootPath);
         this.store.put("verificationDeclaration", ctx.threadId, ctx.threadId, declaration);
         return { requirements: declaration.requirements.length };
+      }
+      if (call.name === "security_finding_record") {
+        if (!hostFlagEnabled("verification.workflowV1")) throw new HarnessError("CAPABILITY_DENIED", "The verification workflow capability is disabled on this host.");
+        // commandId is host plumbing for receipt dedup, not finding data.
+        const { commandId: _commandId, rootPath, ...findingArgs } = a;
+        assertVerificationSourceRoot(this.store, ctx.threadId, rootPath as string);
+        // The recording thread owns the finding; dedupe is per owner.
+        // Inside this command's transaction already — write, don't re-open one.
+        const recorded = new SecurityFindingLedger(this.store).recordInTransaction(securityFindingInput.parse({ version: 1, ...findingArgs }), ctx.threadId);
+        return { findingId: recorded.findingId, status: recorded.status };
       }
       if (call.name === "task_finish") {
         if (this.hasGate(ctx.threadId) || this.store.all<Operation>("operation", ctx.threadId).some(o => ["running", "unknown", "prepared"].includes(o.status))) throw new HarnessError("REQUEST_GATED", "Resolve decisions and outstanding operations before completion");
