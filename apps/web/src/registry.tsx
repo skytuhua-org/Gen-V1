@@ -27,7 +27,7 @@ const DocumentPreview = lazy(() => import('./DocumentPreview').then(module => ({
 const SignaturePad = lazy(() => import('./SignaturePad').then(module => ({ default: module.SignaturePad })));
 
 export { ArtifactActions } from './task-context';
-import { mapActionPayload, statePath, useTaskAction } from './task-context';
+import { mapActionPayload, statePath, useChoiceValidation, useTaskAction } from './task-context';
 import { Disclosure } from './TaskDisclosure';
 import { Table } from './TaskTable';
 import { MapView } from './MapView';
@@ -112,8 +112,9 @@ function Select({ element: { props }, bindings }: ComponentRenderProps) {
   return <label className="field">{string(props.label)}<ShellSelect aria-label={string(props.label, 'Choose an option')} value={selected} onValueChange={setValue} options={options}/></label>;
 }
 function Button({ element: { props } }: ComponentRenderProps) {
-  const action = useTaskAction(), store = useStateStore();
-  return <span className="surface-action"><button type="button" className={props.tone === 'primary' || props.variant === 'primary' ? 'primary' : props.tone === 'danger' ? 'secondary tone-danger' : 'secondary'} disabled={action.busy || props.disabled === true || !props.actionId} title={!props.actionId ? 'This control has no registered action.' : undefined} onClick={() => { if (props.actionId) void action.run(string(props.actionId), mapActionPayload(props, store.getSnapshot().values)); }}>{action.busy && props.disabled !== true ? 'Submitting…' : string(props.label, 'Continue')}</button>{action.error && <span role="alert" className="error-text">{action.error}</span>}</span>;
+  const action = useTaskAction(), store = useStateStore(), choices = useChoiceValidation();
+  const mappedKeys = Object.values(obj(props.payloadFromState)).filter((key): key is string => typeof key === 'string');
+  return <span className="surface-action"><button type="button" className={props.tone === 'primary' || props.variant === 'primary' ? 'primary' : props.tone === 'danger' ? 'secondary tone-danger' : 'secondary'} disabled={action.busy || props.disabled === true || !props.actionId} title={!props.actionId ? 'This control has no registered action.' : undefined} onClick={() => { if (choices && !choices.validate({ mappedKeys }).valid) return; if (props.actionId) void action.run(string(props.actionId), mapActionPayload(props, store.getSnapshot().values)); }}>{action.busy && props.disabled !== true ? 'Submitting…' : string(props.label, 'Continue')}</button>{action.error && <span role="alert" className="error-text">{action.error}</span>}</span>;
 }
 function Chart({ element: { props } }: ComponentRenderProps) {
   const data = list(useData(props) ?? props.data);
@@ -186,9 +187,12 @@ function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) 
 }
 function Badge({ element: { props } }: ComponentRenderProps) { return <span className={`badge tone-${string(props.tone)}`}>{string(props.text, string(props.label))}</span>; }
 function Form({ element: { props }, children }: ComponentRenderProps) {
-  const action = useTaskAction(), store = useStateStore(), artifactTitle = useContext(ArtifactTitle), composing = useRef(false);
-  return <form className="surface-form" aria-busy={action.busy} onCompositionStartCapture={() => { composing.current = true; }} onCompositionEndCapture={() => { composing.current = false; }} onKeyDown={event => { if (event.key === 'Enter' && (composing.current || event.nativeEvent.isComposing || event.keyCode === 229)) event.preventDefault(); }} onSubmit={event => {
+  const action = useTaskAction(), store = useStateStore(), artifactTitle = useContext(ArtifactTitle), composing = useRef(false), form = useRef<HTMLFormElement>(null), choices = useChoiceValidation();
+  const mappedKeys = Object.values(obj(props.payloadFromState)).filter((key): key is string => typeof key === 'string');
+  const syncChoices = () => { if (form.current) choices?.syncNativeParticipation(form.current); };
+  return <form ref={form} className="surface-form" aria-busy={action.busy} onCompositionStartCapture={() => { composing.current = true; }} onCompositionEndCapture={() => { composing.current = false; }} onClickCapture={syncChoices} onKeyDownCapture={event => { if (event.key === 'Enter') syncChoices(); }} onInvalidCapture={event => { if (form.current && event.target instanceof HTMLElement && event.target.closest('.task-choices')) choices?.validate({ form: form.current, mappedKeys }); }} onKeyDown={event => { if (event.key === 'Enter' && (composing.current || event.nativeEvent.isComposing || event.keyCode === 229)) event.preventDefault(); }} onSubmit={event => {
     event.preventDefault(); if (!props.actionId || composing.current || action.busy) return;
+    if (form.current && choices && !choices.validate({ form: form.current, mappedKeys }).valid) return;
     const submitted = { ...obj(store.getSnapshot().values) };
     void action.run(string(props.actionId), mapActionPayload(props, submitted)).then(accepted => {
       if (accepted) for (const key of list(props.clearOnSuccess)) if (typeof key === 'string' && store.get(statePath(key)) === submitted[key]) store.set(statePath(key), '');

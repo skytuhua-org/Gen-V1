@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState } from 'react';
+import { createContext, createElement, useContext, useRef, useState, type ReactNode } from 'react';
 
 export const ArtifactTitle = createContext('');
 export const ArtifactInline = createContext(false);
@@ -11,6 +11,53 @@ export function mapActionPayload(props: Record<string, unknown>, values: unknown
   const state = record(values);
   return Object.fromEntries([...Object.entries(record(props.payload)), ...Object.entries(record(props.payloadFromState)).map(([name, key]) => [name, typeof key === 'string' && Object.hasOwn(state, key) ? state[key] : undefined])]);
 }
+
+export type ChoiceCapture = { instanceId: string; stateKey: string; label: string; valueLabel: string; userEditVersion: number };
+export type ChoiceRegistration = {
+  instanceId: string; stateKey: string; fieldset: HTMLFieldSetElement;
+  isEligible: () => boolean; isRequired: () => boolean; isValid: () => boolean;
+  capture: () => ChoiceCapture; setInvalid: (value: boolean) => void; focusInvalid: () => void;
+};
+export type ChoiceValidation = {
+  register: (entry: ChoiceRegistration) => () => void;
+  syncNativeParticipation: (form: HTMLFormElement) => void;
+  validate: (input: { form?: HTMLFormElement; mappedKeys: readonly string[] }) => { valid: boolean; captures: ChoiceCapture[] };
+  subscribeUserEdit: (listener: (instanceId: string, version: number) => void) => () => void;
+  notifyUserEdit: (instanceId: string, version: number) => void;
+};
+const ChoiceValidationContext = createContext<ChoiceValidation | null>(null);
+export const useChoiceValidation = () => useContext(ChoiceValidationContext);
+
+/** Renderer-local choice validation registry. It never reads registrations from another artifact provider. */
+export function ChoiceValidationProvider({ children }: { children: ReactNode }) {
+  const entries = useRef(new Map<string, ChoiceRegistration>());
+  const listeners = useRef(new Set<(instanceId: string, version: number) => void>());
+  const api = useRef<ChoiceValidation>({
+    register(entry) {
+      entries.current.set(entry.instanceId, entry);
+      return () => { if (entries.current.get(entry.instanceId) === entry) entries.current.delete(entry.instanceId); };
+    },
+    syncNativeParticipation(form) {
+      for (const entry of entries.current.values()) if (entry.fieldset.closest('form') === form) entry.fieldset.disabled = !entry.isEligible();
+    },
+    validate({ form, mappedKeys }) {
+      const associated = [...entries.current.values()].filter(entry => entry.isEligible() && (form ? entry.fieldset.closest('form') === form || mappedKeys.includes(entry.stateKey) : mappedKeys.includes(entry.stateKey)));
+      const invalid = associated.filter(entry => entry.isRequired() && !entry.isValid());
+      for (const entry of associated) entry.setInvalid(invalid.includes(entry));
+      invalid[0]?.focusInvalid();
+      return { valid: invalid.length === 0, captures: invalid.length ? [] : associated.filter(entry => entry.isValid()).map(entry => entry.capture()) };
+    },
+    subscribeUserEdit(listener) {
+      listeners.current.add(listener);
+      return () => { listeners.current.delete(listener); };
+    },
+    notifyUserEdit(instanceId, version) {
+      for (const listener of listeners.current) listener(instanceId, version);
+    },
+  });
+  return createElement(ChoiceValidationContext.Provider, { value: api.current }, children);
+}
+
 export function useTaskAction() {
   const action = useContext(ArtifactActions);
   const pending = useRef(false);
