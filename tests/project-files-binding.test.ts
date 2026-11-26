@@ -7,6 +7,16 @@ import { ProjectTools, type WorkspaceBinding } from '../packages/workspace/tools
 import { withPathGuard } from '../packages/core/file-access.ts';
 import type { Thread } from '../packages/contracts/index.ts';
 
+const recheckProbe = vi.hoisted(() => ({ afterRealpath: undefined as (() => Promise<void>) | undefined }));
+vi.mock('node:fs/promises', async original => {
+  const actual = await original<typeof import('node:fs/promises')>();
+  return { ...actual, realpath: async (...args: Parameters<typeof actual.realpath>) => {
+    const resolved = await actual.realpath(...args), after = recheckProbe.afterRealpath;
+    recheckProbe.afterRealpath = undefined;
+    await after?.();
+    return resolved;
+  } };
+});
 // Portable binding-protocol tests. Store, ordinary files, reads and identity
 // checks are real. The native custody guard is mocked, not qualified here.
 vi.mock('../packages/core/file-access.ts', async original => ({
@@ -17,6 +27,7 @@ vi.mock('../packages/core/file-access.ts', async original => ({
 }));
 const cleanup: (() => Promise<void>)[] = [];
 beforeEach(() => {
+  recheckProbe.afterRealpath = undefined;
   vi.mocked(withPathGuard).mockImplementation(async (_paths, signal, action) => {
     signal.throwIfAborted(); return action([]);
   });
@@ -74,6 +85,21 @@ for (const managed of [false, true]) for (const read of ['file', 'folder'] as co
     const f = await fixture(managed);
     vi.mocked(withPathGuard).mockImplementationOnce(async (_paths, signal, action) => {
       signal.throwIfAborted(); const result = await action([]); await f.bind(f.next); return result;
+    });
+    const pending = read === 'file' ? f.tools.file(f.projectId, 'one', 'one.txt') : f.tools.files(f.projectId, 'one');
+    await expect(pending).rejects.toMatchObject({ code: 'FILES_BINDING_CHANGED' });
+  });
+}
+
+for (const managed of [false, true]) for (const read of ['file', 'folder'] as const) {
+  it(`refuses a ${managed ? 'managed' : 'legacy'} ${read} response when Store binding changes during the final identity recheck`, async () => {
+    const f = await fixture(managed);
+    vi.mocked(withPathGuard).mockImplementationOnce(async (_paths, signal, action) => {
+      signal.throwIfAborted(); const result = await action([]);
+      // Preserve the real realpath/lstat checks; replace the Store owner while
+      // the final async recheck is awaiting its captured checkout identity.
+      recheckProbe.afterRealpath = () => f.bind(f.next);
+      return result;
     });
     const pending = read === 'file' ? f.tools.file(f.projectId, 'one', 'one.txt') : f.tools.files(f.projectId, 'one');
     await expect(pending).rejects.toMatchObject({ code: 'FILES_BINDING_CHANGED' });

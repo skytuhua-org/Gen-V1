@@ -71,13 +71,17 @@ export class ProjectTools{
   }));
  }
  private project(projectId:string){const project=this.store.get<ProjectSummary>('workspaceProject',id.parse(projectId));if(!project)throw new HarnessError('NOT_FOUND','Project is unavailable.');if(project.authority.kind!=='local')throw new HarnessError('CAPABILITY_DENIED','Company authority cannot use personal project tools.');return project;}
- async binding(projectId:string,threadId?:string):Promise<ProjectFileBinding>{
+ private storedBinding(projectId:string,threadId?:string):ProjectFileBinding{
   const project=this.project(projectId);let workspace:WorkspaceBinding|undefined;
   if(threadId){const thread=this.store.get<Thread>('thread',id.parse(threadId));if(!thread||thread.projectId!==project.id||thread.kind==='delegate'||thread.kind==='side'||Boolean(thread.sideParentId))throw new HarnessError('CAPABILITY_DENIED','Select a main thread belonging to this project.');workspace=thread.workspaceId?this.store.get<WorkspaceBinding>('workspaceBinding',thread.workspaceId)??undefined:undefined;if(thread.workspaceId&&(!workspace||workspace.id!==thread.workspaceId||workspace.threadId!==thread.id||workspace.projectId!==project.id))throw new HarnessError('CAPABILITY_DENIED','The working copy binding is unavailable.');}
   const root=this.store.get<{path:string;identity:Identity}>('workspaceProjectRoot',project.id),path=workspace?.path??root?.path;
   if(!path||!root)throw new HarnessError('PROJECT_NOT_CONNECTED','Connect this project to a local folder.');
-  if(resolve(await realpath(path))!==resolve(path)||!equal(await identity(path),workspace?.identity??root.identity))throw new HarnessError('CAPABILITY_DENIED','The project folder changed. Reconnect it explicitly.');
   return{project,path,identity:workspace?.identity??root.identity,...(workspace?{workspace}:{})};
+ }
+ async binding(projectId:string,threadId?:string):Promise<ProjectFileBinding>{
+  const admitted=this.storedBinding(projectId,threadId),{path}=admitted;
+  if(resolve(await realpath(path))!==resolve(path)||!equal(await identity(path),admitted.identity))throw new HarnessError('CAPABILITY_DENIED','The project folder changed. Reconnect it explicitly.');
+  return admitted;
  }
  async connect(command:HostCommand){
   const existing=this.store.receipt(command);if(existing)return existing;
@@ -226,7 +230,7 @@ export class ProjectTools{
   const admitted=await this.filesBinding(projectId,threadId),path=admitted.path,target=relativePath?join(path,pathName.parse(relativePath)):path,resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Files stay inside the selected worktree.');
   const bindingId=this.filesBindingId(admitted,threadId);
   const result=await withPathGuard([{path:target,leaf:false}],new AbortController().signal,async()=>{const{readdir}=await import('node:fs/promises'),entries=[];for(const item of(await readdir(target,{withFileTypes:true})).slice(0,500)){if(item.name.toLowerCase()==='.git'||item.name==='.harness-directory-guard'||item.isSymbolicLink())continue;entries.push({name:item.name,path:relativePath?relativePath+'/'+item.name:item.name,kind:item.isDirectory()?'directory':'file'});}return{path:relativePath,bindingId,entries};});
-  await this.checkFilesBinding(projectId,threadId,bindingId);return result;
+  await this.checkFilesBinding(projectId,threadId,bindingId);this.checkFilesStore(projectId,threadId,bindingId);return result;
  }
  /** Only binding admission failures invalidate pins; ordinary file denials keep their original codes. */
  private async filesBinding(projectId:string,threadId:string|undefined):Promise<ProjectFileBinding>{
@@ -243,6 +247,15 @@ export class ProjectTools{
   const current=await this.filesBinding(projectId,threadId);
   if(this.filesBindingId(current,threadId)!==expected)throw new HarnessError('FILES_BINDING_CHANGED','The project folder changed. Refresh project files.');
  }
- async file(projectId:string,threadId:string|undefined,relativePath:string){const admitted=await this.filesBinding(projectId,threadId),path=admitted.path,target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');const bindingId=this.filesBindingId(admitted,threadId);const result=await withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data),bindingId};});await this.checkFilesBinding(projectId,threadId,bindingId);return result;}
+ /** No await after this fence: the final filesystem check may itself outlive its Store owner. */
+ private checkFilesStore(projectId:string,threadId:string|undefined,expected:string){
+  let current:ProjectFileBinding;
+  try{current=this.storedBinding(projectId,threadId);}catch(error){
+   if(error instanceof HarnessError&&error.code==='PROJECT_NOT_CONNECTED')throw error;
+   throw new HarnessError('FILES_BINDING_CHANGED','The project folder changed. Refresh project files.');
+  }
+  if(this.filesBindingId(current,threadId)!==expected)throw new HarnessError('FILES_BINDING_CHANGED','The project folder changed. Refresh project files.');
+ }
+ async file(projectId:string,threadId:string|undefined,relativePath:string){const admitted=await this.filesBinding(projectId,threadId),path=admitted.path,target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');const bindingId=this.filesBindingId(admitted,threadId);const result=await withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data),bindingId};});await this.checkFilesBinding(projectId,threadId,bindingId);this.checkFilesStore(projectId,threadId,bindingId);return result;}
  async dispose(){await Promise.allSettled([...this.queues.values()]);}
 }
