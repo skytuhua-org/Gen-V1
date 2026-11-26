@@ -13,7 +13,8 @@ describe('parseSearchPathFilter', () => {
   it('treats blank input as canonically absent', () => {
     expect(parseSearchPathFilter('')).toEqual({ ok: true });
     expect(parseSearchPathFilter('   ')).toEqual({ ok: true });
-    // A tab is an ASCII control character: rejected before trimming per grammar.\n    expect(parseSearchPathFilter('\t')).toMatchObject({ ok: false, failure: 'characters' });
+    // A tab is an ASCII control character: rejected before trimming per grammar.
+    expect(parseSearchPathFilter('\t')).toMatchObject({ ok: false, failure: 'characters' });
   });
 
   it('trims and keeps a case-sensitive canonical form', () => {

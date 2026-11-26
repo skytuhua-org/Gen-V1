@@ -961,10 +961,13 @@ test("path filters apply canonically, stay collapsed-aware and send the pair onl
 		include: "src/**",
 		exclude: "**/*.test.ts",
 	});
-	// Whitespace-equivalent reapply commits the same pair: no restart.
+	// The initial query debounce can combine with the first filter application.
+	// Equivalent reapply must preserve the observed count in either ordering.
+	const requestCount = (await requests(page)).length;
 	await includeInput(page).fill("src/**   ");
 	await page.getByRole("button", { name: "Apply filters" }).click();
-	expect(await requests(page)).toHaveLength(2);
+	await settled(page);
+	expect(await requests(page)).toHaveLength(requestCount);
 	// Collapsing preserves drafts and applied state.
 	await toggle.click();
 	await expect(includeInput(page)).toHaveCount(0);
@@ -1130,3 +1133,27 @@ for (const theme of ["dark", "light"])
 					),
 			).toBe(true);
 		});
+
+
+for (const [label, invalid] of [["control-only", "\t"], ["overlong blank", " ".repeat(513)]]) {
+	test(`invalid ${label} filter draft preserves applied criteria and sends nothing`, async ({page}) => {
+		await fixture(page);
+		await projectScope(page);
+		await filtersToggle(page).click();
+		await includeInput(page).fill("src/**");
+		await page.getByRole("button", {name:"Apply filters"}).click();
+		await expect(filtersToggle(page)).toContainText("1 active");
+		const count=(await requests(page)).length;
+		await includeInput(page).fill(invalid);
+		await page.getByRole("button", {name:"Apply filters"}).click();
+		await expect(includeInput(page)).toHaveAttribute("aria-invalid", "true");
+		await expect(includeInput(page)).toBeFocused();
+		await expect(filtersToggle(page)).toContainText("1 active");
+		expect(await requests(page)).toHaveLength(count);
+		expect((await requests(page)).at(-1)).toMatchObject({include:"src/**"});
+		await includeInput(page).fill("   ");
+		await page.getByRole("button", {name:"Apply filters"}).click();
+		await expect(filtersToggle(page)).not.toContainText("active");
+		expect((await requests(page)).at(-1)?.include).toBeUndefined();
+	});
+}

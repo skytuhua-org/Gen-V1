@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	appendProjectSearch,
 	projectSearchQueryError,
+	projectSearchFilterError,
 	readProjectSearch,
 	unavailableProjectSearch,
 	type ProjectSearchAdapter,
@@ -355,4 +356,14 @@ it("keeps every spec and capture script free of external evidence destinations",
 	const itemSpec = readFileSync("tests/e2e/project-search.spec.ts", "utf8");
 	expect(itemSpec.includes(["WO5", "CAPTURE", "DIR"].join("_"))).toBe(false);
 	expect(itemSpec).toContain("testInfo.outputPath(");
+});
+
+
+describe("project search filter draft validation", () => {
+	it.each(["\t", "\n", "\r", " ".repeat(513)])("rejects invalid trim-empty draft %j before applying criteria", draft => {
+		expect(projectSearchFilterError(draft)).not.toBe("");
+	});
+	it("accepts bounded canonical blank and surrounding whitespace", () => {
+		for (const draft of ["", "   ", " \u00a0 ", " src/** "]) expect(projectSearchFilterError(draft)).toBe("");
+	});
 });

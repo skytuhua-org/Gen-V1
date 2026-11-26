@@ -138,7 +138,6 @@ export function projectSearchQueryError(q: string): string {
 // UI-side validation for a single filter draft. Blank is valid (absent);
 // every nonblank draft must parse and already equal its canonical form.
 export function projectSearchFilterError(draft: string): string {
-	if (!draft.trim()) return "";
 	const parsed = parseSearchPathFilter(draft);
 	if (!parsed.ok)
 		return parsed.failure === "length"
