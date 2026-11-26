@@ -7,7 +7,8 @@ import {Store} from '../packages/storage/store.ts';
 import {Service} from '../packages/core/service.ts';
 import {__setCapabilityFlagForTests} from '../packages/core/capability-flags.ts';
 import {sourceDigestSync} from '../packages/core/project-verification.ts';
-import {computeAssessment, type AssessmentInput} from '../packages/core/verification-gate.ts';
+import {computeAssessment, SecurityFindingLedger, type AssessmentInput} from '../packages/core/verification-gate.ts';
+import {createHash} from 'node:crypto';
 import {attestVerificationArtifacts, VerificationArtifactStore, VERIFICATION_ARTIFACT_LIMITS} from '../packages/core/verification-artifacts.ts';
 import {verificationPanelModel} from '../packages/core/verification-read-models.ts';
 import type {RuntimeAdapter, Thread} from '../packages/contracts/index.ts';
@@ -121,5 +122,74 @@ describe('current artifact custody in the verification gate', () => {
     const attestations = attestVerificationArtifacts(f.store, observations, requirements);
     expect(attestations).toHaveLength(VERIFICATION_ARTIFACT_LIMITS.assessmentCount);
     expect(computeAssessment({...f.input, observations, requirements, artifactAttestations: attestations}).label).toBe('BLOCKED');
+  });
+});
+describe('bounded scoped security findings in the panel read model', () => {
+  const blobSha = (bytes: Buffer) => {const hash = createHash('sha1'); hash.update(`blob ${bytes.length}\0`); hash.update(bytes); return hash.digest('hex');};
+  const record = (f: ReturnType<typeof fixture>, overrides: Record<string, unknown> = {}, thread = f.thread.id) => {
+    const root = f.store.get<{rootPath: string}>('verificationDeclaration', f.thread.id)!.rootPath;
+    const bytes = Buffer.from((overrides.content as string) ?? 'export const ready = true;\n');
+    return new SecurityFindingLedger(f.store).record({
+      version: 1, findingId: (overrides.findingId as string) ?? 'f-1',
+      source: {path: (overrides.path as string) ?? 'app.ts', blobSha: (overrides.blobSha as string) ?? blobSha(bytes), line: 1},
+      authorizedScope: 'local fixture project only',
+      observation: 'Fixture observation', impact: 'Fixture impact', status: 'OPEN',
+      reproduction: null, createdAt: new Date().toISOString(),
+    } as never, thread);
+  };
+
+  it('shows same-owner detail with source, scope, status and advisory quality', () => {
+    const f = fixture();
+    record(f);
+    const model = verificationPanelModel(f.store, f.thread.id);
+    expect(model.findings.rows).toHaveLength(1);
+    expect(model.findings.rows[0]).toMatchObject({
+      findingId: 'f-1', path: 'app.ts', line: 1, sourceState: 'CURRENT',
+      authorizedScope: 'local fixture project only', status: 'OPEN',
+      reproductionRecorded: false, evidenceQuality: 'ADVISORY',
+    });
+    expect(model.findings.rows[0].blobRevision).toHaveLength(12);
+    expect(model.findings.omitted).toBe(0);
+  });
+
+  it('marks a finding stale when the source file changed after recording', () => {
+    const f = fixture();
+    record(f);
+    const root = f.store.get<{rootPath: string}>('verificationDeclaration', f.thread.id)!.rootPath;
+    writeFileSync(join(root, 'app.ts'), 'export const ready = false;\n');
+    expect(verificationPanelModel(f.store, f.thread.id).findings.rows[0].sourceState).toBe('STALE');
+  });
+
+  it('reports unavailable custody when the source file is missing', () => {
+    const f = fixture();
+    record(f);
+    const root = f.store.get<{rootPath: string}>('verificationDeclaration', f.thread.id)!.rootPath;
+    rmSync(join(root, 'app.ts'));
+    expect(verificationPanelModel(f.store, f.thread.id).findings.rows[0].sourceState).toBe('UNAVAILABLE');
+  });
+
+  it('never leaks findings across owners', () => {
+    const f = fixture();
+    record(f, {}, 'foreign-thread');
+    expect(verificationPanelModel(f.store, f.thread.id).findings.rows).toHaveLength(0);
+    expect(verificationPanelModel(f.store, 'foreign-thread').findings.rows).toHaveLength(1);
+  });
+
+  it('bounds the list with an omission count', () => {
+    const f = fixture();
+    for (let index = 0; index < 55; index++) record(f, {findingId: `f-${index}`});
+    const model = verificationPanelModel(f.store, f.thread.id);
+    expect(model.findings.rows).toHaveLength(50);
+    expect(model.findings.omitted).toBe(5);
+  });
+
+  it('records reproduction as a non-executable presence label', () => {
+    const f = fixture();
+    const ledger = new SecurityFindingLedger(f.store);
+    const root = f.store.get<{rootPath: string}>('verificationDeclaration', f.thread.id)!.rootPath;
+    void root;
+    const bytes = Buffer.from('export const ready = true;\n');
+    ledger.record({version: 1, findingId: 'f-repro', source: {path: 'app.ts', blobSha: blobSha(bytes), line: null}, authorizedScope: 'fixture', observation: 'o', impact: 'i', status: 'MITIGATED', reproduction: 'steps text', createdAt: new Date().toISOString()}, f.thread.id);
+    expect(verificationPanelModel(f.store, f.thread.id).findings.rows[0].reproductionRecorded).toBe(true);
   });
 });

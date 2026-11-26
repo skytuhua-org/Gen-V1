@@ -6,8 +6,12 @@ import type {
   CheckObservationV1, CompletionLabel, DeliverableAssessmentV1,
   VerificationDeclarationV1, VisualObservationV1,
 } from '../contracts/verification.ts';
-import { computeAssessment, observationFreshness, observationMatchesThreadOwner } from './verification-gate.ts';
+import { computeAssessment, observationFreshness, observationMatchesThreadOwner, SecurityFindingLedger } from './verification-gate.ts';
 import { assertVerificationSourceRoot, sourceDigestSync } from './project-verification.ts';
+import { createHash } from 'node:crypto';
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { join, sep } from 'node:path';
+import type { SecurityFindingV1 } from '../contracts/verification.ts';
 
 /** M06 additive read model for the verification panel. Columns: requirement,
  * observed check, source revision, outcome, freshness, verifier and evidence.
@@ -43,11 +47,35 @@ export interface VerificationPanelRow {
   details?: VerificationCheckDetails;
 }
 
+/** M06 T03 bounded scoped security evidence. Findings are recorded advisory
+ * observations — never executable reproductions and never a numeric severity
+ * or confidence score. `sourceState` compares the recorded blob against the
+ * live workspace file: CURRENT byte-identical, STALE edited since recording,
+ * UNAVAILABLE missing/out-of-root/unreadable custody, INDETERMINATE when no
+ * attested source root exists to compare against. */
+export interface VerificationFindingRow {
+  findingId: string;
+  path: string;
+  line: number | null;
+  blobRevision: string;
+  sourceState: 'CURRENT' | 'STALE' | 'UNAVAILABLE' | 'INDETERMINATE';
+  authorizedScope: string;
+  observation: string;
+  impact: string;
+  status: SecurityFindingV1['status'];
+  reproductionRecorded: boolean;
+  evidenceQuality: 'ADVISORY';
+  updatedAt: string;
+}
+
 export interface VerificationPanelModel {
   label: CompletionLabel | null;
   staleBanner: boolean;
   summary: { verified: number; failed: number; unverified: number; blocked: number; missing: string[] };
   rows: VerificationPanelRow[];
+  /** Bounded scoped findings for the current owner only. `omitted` counts
+   * findings beyond the cap so the panel can say the list is truncated. */
+  findings: { rows: VerificationFindingRow[]; omitted: number };
 }
 
 const short = (value: string) => (value.length > 12 ? value.slice(0, 12) : value);
@@ -65,6 +93,67 @@ function checkDetails(obs: CheckObservationV1 | VisualObservationV1): Verificati
     startedAt: obs.startedAt, endedAt: obs.endedAt, exitCode: obs.exitCode,
     observationKind: obs.observationKind, detail: obs.detail?.slice(0, 2000) ?? null, visual,
   };
+}
+
+const FINDINGS_CAP = 50;
+const FINDING_FILE_BYTES = 4 * 1024 * 1024;
+
+/** Git-style blob digest (`sha1("blob <len>\\0" + bytes)`) of one root-relative
+ * file, bounded and confined to the attested root. Null when the file cannot
+ * be read as ordinary in-root custody. */
+function findingBlobDigest(rootPath: string, relative: string): string | null {
+  try {
+    const base = realpathSync.native(rootPath);
+    const candidate = realpathSync.native(join(base, ...relative.split('/')));
+    if (candidate !== base && !candidate.startsWith(base + sep)) return null;
+    const fd = openSync(candidate, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      const info = fstatSync(fd);
+      if (!info.isFile() || info.size > FINDING_FILE_BYTES) return null;
+      const body = Buffer.alloc(info.size);
+      let offset = 0;
+      while (offset < info.size) {
+        const count = readSync(fd, body, offset, info.size - offset, null);
+        if (count === 0) return null;
+        offset += count;
+      }
+      const hash = createHash('sha1');
+      hash.update(`blob ${info.size}\0`);
+      hash.update(body);
+      return hash.digest('hex');
+    } finally { closeSync(fd); }
+  } catch {
+    return null;
+  }
+}
+
+function findingRows(store: Store, threadId: string, rootPath: string | null): { rows: VerificationFindingRow[]; omitted: number } {
+  const all = new SecurityFindingLedger(store).all(threadId)
+    .slice()
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const rows: VerificationFindingRow[] = [];
+  for (const finding of all.slice(0, FINDINGS_CAP)) {
+    let sourceState: VerificationFindingRow['sourceState'] = 'INDETERMINATE';
+    if (rootPath) {
+      const live = findingBlobDigest(rootPath, finding.source.path);
+      sourceState = live === null ? 'UNAVAILABLE' : live === finding.source.blobSha ? 'CURRENT' : 'STALE';
+    }
+    rows.push({
+      findingId: finding.findingId,
+      path: finding.source.path,
+      line: finding.source.line,
+      blobRevision: finding.source.blobSha.slice(0, 12),
+      sourceState,
+      authorizedScope: finding.authorizedScope,
+      observation: finding.observation,
+      impact: finding.impact,
+      status: finding.status,
+      reproductionRecorded: finding.reproduction !== null,
+      evidenceQuality: 'ADVISORY',
+      updatedAt: finding.updatedAt,
+    });
+  }
+  return { rows, omitted: Math.max(0, all.length - FINDINGS_CAP) };
 }
 
 export function verificationPanelModel(store: Store, threadId: string): VerificationPanelModel {
@@ -173,5 +262,17 @@ export function verificationPanelModel(store: Store, threadId: string): Verifica
   // A completion label exists only after a saved completion assessment — the
   // task_finish boundary. Before that the panel still recomputes requirement
   // rows and freshness against the live cut, but shows no label.
-  return { label: latest ? (recomputed?.label ?? latest.label) : null, staleBanner, summary: counts, rows };
+  // Scoped findings are current-owner evidence only. Freshness compares the
+  // recorded blob against the live file under the attested declaration root;
+  // without a root the comparison is indeterminate — never silently current.
+  let findingRoot: string | null = null;
+  if (declaration) {
+    try {
+      assertVerificationSourceRoot(store, threadId, declaration.rootPath);
+      findingRoot = declaration.rootPath;
+    } catch {
+      findingRoot = null;
+    }
+  }
+  return { label: latest ? (recomputed?.label ?? latest.label) : null, staleBanner, summary: counts, rows, findings: findingRows(store, threadId, findingRoot) };
 }
