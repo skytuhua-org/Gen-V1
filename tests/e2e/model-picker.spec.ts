@@ -35,6 +35,25 @@ test('model search groups the advertised catalog and keyboard selection reaches 
   await expect.poll(() => host.commands.find(command => command.type === 'message.send')?.payload.modelId).toBe('openai/terra');
 });
 
+test('Home, End and Page keys move and clamp the active model row', async ({ page }) => {
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await trigger.click();
+  const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
+  const options = page.getByRole('listbox', { name: 'Available models', exact: true }).getByRole('option');
+  await search.press('End');
+  await expect(options.last()).toHaveAttribute('data-active', 'true');
+  await expect(options.last()).toBeInViewport();
+  await search.press('Home');
+  await expect(options.first()).toHaveAttribute('data-active', 'true');
+  await search.press('End'); await search.press('PageDown');
+  await expect(options.last()).toHaveAttribute('data-active', 'true');
+  await search.press('PageUp');
+  await expect(options.first()).toHaveAttribute('data-active', 'true');
+  await search.press('Escape');
+  await expect(trigger).toBeFocused();
+});
+
 test('model search has an empty state, Escape and outside click dismiss, and Tab stays in the combined dialog', async ({ page }) => {
   const host = await mount(page), trigger = page.getByRole('combobox', { name: 'Model', exact: true });
   await trigger.click(); const search = page.getByRole('searchbox', { name: 'Search models', exact: true });

@@ -34,8 +34,8 @@ and Lezer packages pinned in [package.json](package.json). The pinned versions i
 transitive `@codemirror/*` (`autocomplete`, `lang-*`, `legacy-modes`, `lint`,
 `streamparser`), `@lezer/*` (`common`, `lr` and the per-language grammars
 `cpp`, `css`, `go`, `html`, `java`, `javascript`, `json`, `markdown`, `php`,
-`python`, `rust`, `sass`, `xml`, `yaml`), `style-mod`, `w3c-keyname` and `crelt`
-packages. Each package is published under the MIT license and ships its own
+`python`, `rust`, `sass`, `xml`, `yaml`), `@marijn/find-cluster-break`, `style-mod`,
+`w3c-keyname` and `crelt` packages. Each is published under the MIT license and ships its own
 LICENSE file in the installed package; copyright belongs to Marijn Haverbeke and
 contributors.
 
