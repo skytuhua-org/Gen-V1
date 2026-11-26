@@ -1402,3 +1402,20 @@ for(const kind of ['empty','binary','over-budget'] as const)test(`review Markdow
  await expect(preview(page)).toContainText(kind==='binary'?'Binary file':kind==='empty'?'Empty text file':'Too large to render');
  await expect(modeButtons(page)).toHaveCount(0);
 });
+
+for (const [titles, slugs] of [
+ [['Setup', 'Setup', 'Setup-1'], ['setup', 'setup-1', 'setup-1-1']],
+ [['Setup-1', 'Setup', 'Setup'], ['setup-1', 'setup', 'setup-2']],
+]) test(`review Markdown collision fragments focus their distinct heading: ${titles!.join(', ')}`, async ({page}) => {
+ const text=titles!.map(title=>`## ${title}\nBody`).join('\n\n')+'\n\n'+slugs!.map((slug,index)=>`[section${index}](#${slug})`).join(' ');
+ await fixture(page); await markdownFiles(page, {'README.md': {text}});
+ await page.getByRole('button', {name:'README.md', exact:true}).click();
+ const headings=article(page).locator('h2'); await expect(headings).toHaveCount(3);
+ const ids=await headings.evaluateAll(nodes=>nodes.map(node=>node.id));
+ expect(new Set(ids).size).toBe(3);
+ for(const index of [2,1,0]) {
+  expect(ids[index]!.endsWith('-'+slugs![index])).toBe(true);
+  await article(page).getByRole('button', {name:`section${index}`, exact:true}).click();
+  await expect(headings.nth(index)).toBeFocused();
+ }
+});

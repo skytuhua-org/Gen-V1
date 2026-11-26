@@ -173,3 +173,13 @@ it("rejects every C0 and DEL control in raw and encoded local references", () =>
 		}
 	}
 });
+
+for (const [headings, slugs] of [
+	[["Setup", "Setup", "Setup-1"], ["setup", "setup-1", "setup-1-1"]],
+	[["Setup-1", "Setup", "Setup"], ["setup-1", "setup", "setup-2"]],
+]) it(`keeps heading IDs distinct for ${headings!.join(", ")}`, () => {
+	const ids = createFilesHeadingIds("art"), actual = headings!.map(ids.issue);
+	expect(actual).toEqual(slugs!.map(slug => `art-${slug}`));
+	expect(new Set(actual).size).toBe(actual.length);
+	for (const [index, slug] of slugs!.entries()) expect(ids.lookup(slug)).toBe(actual[index]);
+});

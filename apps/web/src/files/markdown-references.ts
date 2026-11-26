@@ -152,11 +152,13 @@ export function createFilesHeadingIds(prefix: string): FilesHeadingIds {
 		issued = new Map<string, string>();
 	return {
 		issue(headingText) {
-			const base = slugifyHeading(headingPlainText(headingText)) || "heading",
-				seen = used.get(base) ?? 0;
+			const base = slugifyHeading(headingPlainText(headingText)) || "heading";
+			let seen = used.get(base) ?? 0,
+				slug = seen ? `${base}-${seen}` : base;
+			// A literal suffixed heading can already own a duplicate's next slug.
+			while (issued.has(slug)) slug = `${base}-${++seen}`;
 			used.set(base, seen + 1);
-			const slug = seen ? `${base}-${seen}` : base,
-				id = `${prefix}-${slug}`;
+			const id = `${prefix}-${slug}`;
 			issued.set(slug, id);
 			return id;
 		},
