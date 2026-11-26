@@ -1,4 +1,5 @@
 import {chromium,expect,type Browser,type Page} from '@playwright/test';
+import {StringDecoder} from 'node:string_decoder';
 import {spawn,type ChildProcess} from 'node:child_process';
 import {createReadStream} from 'node:fs';
 import {mkdir,readFile,writeFile,readdir,lstat,realpath,copyFile,unlink,rmdir} from 'node:fs/promises';
@@ -271,7 +272,7 @@ function baseEnvironment():NodeJS.ProcessEnv{
 export function installedVerificationEnvironment(directory:string,ports:readonly[number,number,number],memoryMode?:InstalledMemoryMode):NodeJS.ProcessEnv{
  return {...baseEnvironment(),HARNESS_DESKTOP_TEST_DATA_DIR:directory,HARNESS_DESKTOP_PORT:String(ports[0]),HARNESS_DESKTOP_WIDGET_PORT:String(ports[1]),...(memoryMode==='enabled'?{HARNESS_FLAG_MEMORY_PROJECT_V1:'true'}:{})};
 }
-async function runOwned(file:string,args:string[],options:{cwd:string;env:NodeJS.ProcessEnv;timeoutMs:number;rawTail?:boolean;phase?:OwnedPhase;onStderr?:(stderr:string)=>void;onObservation?:(value:OwnedProcessObservation)=>void;sampleProgress?:(elapsedMs:number,active:()=>boolean)=>Promise<InstalledPathProgress>}){
+export async function runOwned(file:string,args:string[],options:{cwd:string;env:NodeJS.ProcessEnv;timeoutMs:number;rawTail?:boolean;phase?:OwnedPhase;onStderr?:(stderr:string)=>void;onObservation?:(value:OwnedProcessObservation)=>void;sampleProgress?:(elapsedMs:number,active:()=>boolean)=>Promise<InstalledPathProgress>}){
  const started=Date.now(),phase=options.phase??'verification',observation=newOwnedProcessObservation(phase,options.timeoutMs,started);options.onObservation?.(observation);
  const child=spawn(file,args,{cwd:options.cwd,env:options.env,windowsHide:true,windowsVerbatimArguments:options.rawTail,stdio:['ignore','pipe','pipe']});
  observeOwnedProcess(child,phase,options.timeoutMs,Date.now,observation);
@@ -282,12 +283,13 @@ async function runOwned(file:string,args:string[],options:{cwd:string;env:NodeJS
   pending.add(task);void task.finally(()=>pending.delete(task));
  },delay)):[];
  try{const output=await new Promise<{exitCode:number;stdout:string;stderr:string}>((accept,reject)=>{
+  const stdoutDecoder=new StringDecoder('utf8'),stderrDecoder=new StringDecoder('utf8');
   let stdout='',stderr='',bytes=0,failed=false;
   const fail=(error:Error,reason:OwnedProcessObservation['failure'])=>{if(failed)return;failed=true;observation.status='failed';observation.failure=reason;observation.terminationRequested=true;clearTimeout(timer);void terminateProcessTree(child).then(()=>reject(error),reject);};
   const timer=setTimeout(()=>fail(Error('Owned '+phase+' process exceeded its '+options.timeoutMs+' ms deadline.'),'deadline'),options.timeoutMs);
   child.once('error',()=>fail(Error('Owned '+phase+' process could not start.'),'spawn-error'));
-  for(const stream of [child.stdout,child.stderr])stream.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>256*1024){fail(Error('Owned '+phase+' process exceeded its output bound.'),'output-bound');return;}if(stream===child.stdout)stdout+=String(chunk);else{stderr=(stderr+String(chunk)).slice(-16000);options.onStderr?.(stderr);}});
-  child.once('close',code=>{clearTimeout(timer);if(failed)return;failed=true;observation.status==='completed'&&code===0?accept({exitCode:code,stdout,stderr}):reject(Error('Owned '+phase+' process exited '+code+'.'));});
+  for(const stream of [child.stdout,child.stderr])stream.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>256*1024){fail(Error('Owned '+phase+' process exceeded its output bound.'),'output-bound');return;}if(stream===child.stdout)stdout+=stdoutDecoder.write(chunk);else{stderr=(stderr+stderrDecoder.write(chunk)).slice(-16000);options.onStderr?.(stderr);}});
+  child.once('close',code=>{clearTimeout(timer);if(failed)return;failed=true;observation.status==='completed'&&code===0?accept({exitCode:code,stdout:stdout+stdoutDecoder.end(),stderr:(stderr+stderrDecoder.end()).slice(-16000)}):reject(Error('Owned '+phase+' process exited '+code+'.'));});
  });
  return {...output,elapsedMs:Date.now()-started};
  }finally{for(const timer of progressTimers)clearTimeout(timer);await Promise.allSettled(pending);observation.elapsedMs=Date.now()-started;}
