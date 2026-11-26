@@ -25,7 +25,11 @@ export function SettingsWindow(props: ComponentProps<SettingsComponent>) {
   const opener = useRef(document.activeElement as HTMLElement | null);
   const [Settings, setSettings] = useState(() => loadedSettings);
   const [error, setError] = useState(''), [reloading, setReloading] = useState(false);
-  useEffect(() => () => { if (opener.current?.isConnected) opener.current.focus({ preventScroll: true }); }, []);
+  useEffect(() => () => {
+    const invoker = opener.current;
+    if (invoker && invoker !== document.body && invoker !== document.documentElement && invoker.isConnected && invoker.getClientRects().length) { invoker.focus({ preventScroll: true }); return; }
+    (document.querySelector<HTMLElement>('aside[aria-label="Thread navigation"] button[aria-label="Settings"]') ?? document.querySelector<HTMLElement>('input[aria-label="Search threads"]'))?.focus({ preventScroll: true });
+  }, []);
   useEffect(() => {
     if (Settings) return;
     let active = true;

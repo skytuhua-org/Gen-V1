@@ -396,3 +396,47 @@ test('a delete focus frame is fenced during the replacement thread layout', asyn
   await expect(page.getByRole('textbox', { name: 'Note other', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Switch synthetic thread', exact: true })).toBeFocused();
 });
+
+test('a disposed delete command cannot move focus after returning to its thread', async ({ page }) => {
+  const gate = deferred(), other = note('other', 1, 'thread-b');
+  const commands = await mount(page, { notes: [note(), other] }, async (route, command) => {
+    await gate.promise; await route.fulfill({ json: { commandId: command.id, seq: 2, result: {} } });
+  });
+  await expect(editor(page)).toBeEnabled(); await editor(page).fill('Draft submitted before leaving this thread.');
+  await page.evaluate(() => window.memoryFixture.flush());
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  const switcher = page.getByRole('button', { name: 'Switch synthetic thread', exact: true });
+  await switcher.click();
+  await expect(page.getByRole('textbox', { name: 'Note other', exact: true })).toBeEnabled();
+  await switcher.click();
+  await expect(editor(page)).toBeEnabled();
+  await expect(editor(page)).toHaveValue('Draft submitted before leaving this thread.');
+  await switcher.focus();
+  gate.resolve();
+  // Real generation-CAS cleanup proves the old command continuation has settled.
+  await expect.poll(() => page.evaluate(key => window.memoryFixture.read(key), savedKey)).toBeNull();
+  await page.evaluate(other => window.memoryFixture.publish([other]), other);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(switcher).toBeFocused();
+});
+
+test('a current delete still hands off focus when its removal snapshot precedes the receipt', async ({ page }) => {
+  const gate = deferred();
+  const commands = await mount(page, {}, async (route, command) => {
+    await gate.promise; await route.fulfill({ json: { commandId: command.id, seq: 2, result: {} } });
+  });
+  await expect(editor(page)).toBeEnabled(); await editor(page).fill('Draft submitted for this current view.');
+  await page.evaluate(() => window.memoryFixture.flush());
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  const switcher = page.getByRole('button', { name: 'Switch synthetic thread', exact: true });
+  await switcher.focus();
+  await page.evaluate(() => window.memoryFixture.publish([]));
+  await expect(editor(page)).toHaveCount(0);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(switcher).toBeFocused();
+  gate.resolve();
+  await expect.poll(() => page.evaluate(key => window.memoryFixture.read(key), savedKey)).toBeNull();
+  await expect(page.getByRole('button', { name: 'Add memory note', exact: true })).toBeFocused();
+});

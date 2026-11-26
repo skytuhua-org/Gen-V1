@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, Plus, Trash2 } from 'lucide-react';
 import type { Snapshot, TaskMemory as Note } from '../../../packages/contracts';
 import { command } from './api';
@@ -88,6 +88,10 @@ function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpanded
 }
 export function TaskMemory({ snapshot, threadId }: { snapshot: Snapshot; threadId?: string }) {
   const [addingThread, setAddingThread] = useState<string>();
+  const [focusRequest, setFocusRequest] = useState(0);
+  const view = useMemo(() => ({ threadId }), [threadId]), currentView = useRef<typeof view | null>(null);
+  // A removed row may acknowledge later; only its committed thread view may hand off focus.
+  useLayoutEffect(() => { currentView.current = view; return () => { if (currentView.current === view) currentView.current = null; }; }, [view]);
   const addButton = useRef<HTMLButtonElement>(null);
   const forgetButtons = useRef(new Map<string, HTMLButtonElement>());
   const pendingFocus = useRef<{ thread: string; deletedKey: string; candidates: string[] } | null>(null);
@@ -95,7 +99,7 @@ export function TaskMemory({ snapshot, threadId }: { snapshot: Snapshot; threadI
   const adding = Boolean(threadId && addingThread === threadId);
   const notes = (snapshot.memory ?? []).filter(note => note.threadId === threadId);
   // Record the fallback focus order from the pre-delete list: next Forget, previous Forget, Add.
-  const deleted = (key: string) => { const order = notes.map(item => item.key); const index = order.indexOf(key); pendingFocus.current = { thread: threadId ?? '', deletedKey: key, candidates: [order[index + 1], order[index - 1], 'add'].filter((item): item is string => Boolean(item)) }; };
+  const deleted = (key: string) => { if (currentView.current !== view) return; const order = notes.map(item => item.key); const index = order.indexOf(key); pendingFocus.current = { thread: threadId ?? '', deletedKey: key, candidates: [order[index + 1], order[index - 1], 'add'].filter((item): item is string => Boolean(item)) }; setFocusRequest(value => value + 1); };
   // Apply it once the post-delete snapshot renders; only focus a live node.
   useLayoutEffect(() => {
     const pending = pendingFocus.current;
@@ -112,6 +116,6 @@ export function TaskMemory({ snapshot, threadId }: { snapshot: Snapshot; threadI
       });
       return () => { current = false; cancelAnimationFrame(frame); };
     }
-  }, [notes, threadId]);
+  }, [notes, threadId, focusRequest]);
   return <section className="task-memory" aria-label="Thread memory"><header><BookOpen size={16} /><h3>Thread memory</h3>{notes.length >= 10 && <span>{notes.length}/12</span>}<button ref={addButton} className="icon-button" aria-label="Add memory note" aria-expanded={adding} disabled={!threadId || notes.length >= 12} onClick={() => setExpanded(!adding)}><Plus size={15} /></button></header>{!notes.length && !adding && <p className="muted">No saved notes.</p>}{threadId && notes.map(note => <MemoryNote key={`${threadId}:saved:${note.key}`} note={note} threadId={threadId} onDeleted={deleted} forgetRef={node => { if (node) forgetButtons.current.set(note.key, node); else forgetButtons.current.delete(note.key); }} />)}{threadId && <MemoryNote key={`${threadId}:create`} fresh expanded={adding} onExpandedChange={setExpanded} threadId={threadId} note={{ id: '', threadId, key: '', content: '', revision: 0, author: 'user', updatedAt: '' }} />}</section>;
 }
