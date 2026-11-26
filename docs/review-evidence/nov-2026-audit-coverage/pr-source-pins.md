@@ -1,0 +1,205 @@
+# Historical audit PR source pins
+
+GitHub PR head and configured base snapshot for non-private explicit PR references found in reports 05 and 09. Sampled with main at `fa8f814fd3f8c4b569c7be9932558ed6eff4cc9b`. Historical issue and topology coordination remains under [#1973](https://github.com/skytuhua-org/Gen-V1/issues/1973) and [#1126](https://github.com/skytuhua-org/Gen-V1/issues/1126).
+
+GitHub head/base pins show what can be checked now. The exact-patch rows in the other ledger files identify which historical finding was actually inspected. Earlier cleanup classifications are retained only when the head SHA matches that ledger. A base mismatch leaves its merge disposition historical.
+
+[Prior cleanup inventory](https://github.com/skytuhua-org/Gen-V1/blob/ae54c94b4efa6defb01171f2302acad73d143829/docs/review-evidence/cleanup-2026-11-24/pr-dispositions.json).
+
+| PR | Current disposition | Head SHA | Configured base SHA | Prior inventory alignment |
+| --- | --- | --- | --- | --- |
+| [#355](https://github.com/skytuhua-org/Gen-V1/pull/355) | open | `e80dfafc4f60b34a3fddd116885e7886df1e2e4e` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#501](https://github.com/skytuhua-org/Gen-V1/pull/501) | Merged to main | `a5aa3798f25163e117d0709503343cc890f29ac8` | `3f7f96840255f3f21c1983ef23c5dee946f5ce05` | — |
+| [#641](https://github.com/skytuhua-org/Gen-V1/pull/641) | open draft | `fcf99f0e56d4195b750fc9652caaca0cd9262ab2` | `4a1ca25f3760efb36b8273bc04a11e1b5596f09c` | Same head/base · retain_historical_scope_decision |
+| [#651](https://github.com/skytuhua-org/Gen-V1/pull/651) | open draft | `ad56efafa9acc5c6db96067bdce205a653f931bb` | `4e8d0d55bc9a193953e0567a3b80cfd979819936` | Same head/base · retain_historical_stack_gate |
+| [#652](https://github.com/skytuhua-org/Gen-V1/pull/652) | open draft | `89a49ea800f56a1a1c44b78d124dcf9e3efd8c7d` | `deca722ac8dbf8f606dd31d010125a44dd37dabb` | Same head; base differs · retain_historical_stack_gate |
+| [#653](https://github.com/skytuhua-org/Gen-V1/pull/653) | open draft | `c328a1de6fe43c5e7984eaa5444f94750dd4ea14` | `cb637f3186a4667940f12b94ce531464509b2e7f` | Same head; base differs · retain_historical_stack_gate |
+| [#670](https://github.com/skytuhua-org/Gen-V1/pull/670) | open draft | `9c42469365d944cab827b7e775df8ace2c21d9a5` | `08a5e79b63b3b26b55c6c6d33f0b37a372eb6cda` | Same head; base differs · retain_stack_dependency |
+| [#673](https://github.com/skytuhua-org/Gen-V1/pull/673) | open draft | `6567fe9c156c3b83d5f66e4bd832799abdb9f375` | `8528a7a0998612780c41f4d53b1b64474d29fb37` | Same head; base differs · retain_historical_scope_decision |
+| [#687](https://github.com/skytuhua-org/Gen-V1/pull/687) | closed draft | `262fc71c10140db7ef67570d705d413cd1f1a00a` | `c328a1de6fe43c5e7984eaa5444f94750dd4ea14` | — |
+| [#699](https://github.com/skytuhua-org/Gen-V1/pull/699) | closed draft | `f18aeeceba6e91cf1950213882d0df4f3b2ab3eb` | `da6fbcaa348fe7ab974d4c18752ab37d9407cccb` | — |
+| [#709](https://github.com/skytuhua-org/Gen-V1/pull/709) | closed draft | `0470f4acebd0f44f0124def06a89a97039d75eac` | `f2fda21a8a18fe1c426859a8d0a938ce9371d126` | — |
+| [#733](https://github.com/skytuhua-org/Gen-V1/pull/733) | closed draft | `98cd56fbfba1c13078954d14c07d2864098b9a3f` | `5d7cbba3803e3ee4d05b941de9176400dc053c1d` | — |
+| [#737](https://github.com/skytuhua-org/Gen-V1/pull/737) | open draft | `d3363d3bde1ea2af81a7eea145066173e4df1882` | `acebd5cdd9f61caa41c5d36a1c546702f64995bb` | Same head/base · retain_historical_stack_gate |
+| [#782](https://github.com/skytuhua-org/Gen-V1/pull/782) | open draft | `c937d590ceff044ac2234a136efc48b685e9325d` | `d3363d3bde1ea2af81a7eea145066173e4df1882` | Same head/base · retain_historical_stack_gate |
+| [#812](https://github.com/skytuhua-org/Gen-V1/pull/812) | open draft | `7c8a9fffa3e3f4ea34a3a3c33f4621f3e80cf20a` | `19e6c7a789ae85f3314ee652d4dceefaff102999` | Same head; base differs · retain_unique_review |
+| [#869](https://github.com/skytuhua-org/Gen-V1/pull/869) | open | `fd526c4a94d9b80cfbed986e9d74b201bcea0a5b` | `c7cf6e60ac5291e7004482efa1bcd06d535b20bb` | Same head; base differs · retain_unique_review |
+| [#896](https://github.com/skytuhua-org/Gen-V1/pull/896) | open | `ac25284de39ec060a5143e29006ff01511e774ad` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_conflict_repair |
+| [#948](https://github.com/skytuhua-org/Gen-V1/pull/948) | open | `1d65e3cd9b0ac07b3a2d229a93ae37ab0b474761` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#958](https://github.com/skytuhua-org/Gen-V1/pull/958) | open | `0911b3708b16ac7094106e0aa00593d0ef78c721` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#966](https://github.com/skytuhua-org/Gen-V1/pull/966) | open | `0d6e04f0ba76331e0265b743c49c6ecaad006991` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#970](https://github.com/skytuhua-org/Gen-V1/pull/970) | open | `4b4a87adf355ef88416f014623e98333d9beb365` | `1d65e3cd9b0ac07b3a2d229a93ae37ab0b474761` | Same head/base · retain_stack_dependency |
+| [#982](https://github.com/skytuhua-org/Gen-V1/pull/982) | open | `fa257e2c4da84dd801e1b25c3f68f0b09781307b` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1021](https://github.com/skytuhua-org/Gen-V1/pull/1021) | open | `5355f4afc584e71f62cae8d83804dd67326e1bd9` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1035](https://github.com/skytuhua-org/Gen-V1/pull/1035) | open | `a10f20323b5030990f728539e197172c25e2498d` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1036](https://github.com/skytuhua-org/Gen-V1/pull/1036) | open | `63d32e76189190a292fc4773432f4723b21898d9` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1069](https://github.com/skytuhua-org/Gen-V1/pull/1069) | open | `1b8ed3f12fa7c4a62669df7c7ef6e421a05bc758` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#1082](https://github.com/skytuhua-org/Gen-V1/pull/1082) | closed | `0495499844c93cef22a31060a44e2ed03afc729d` | `898f3de0e7635de66f951a6cc18712426995c9fe` | — |
+| [#1109](https://github.com/skytuhua-org/Gen-V1/pull/1109) | Merged to main | `fff9bfbef8a29f75c6cea956bb43f881a42abeb5` | `fab1ec40664dd986be105806704ade758048c351` | — |
+| [#1127](https://github.com/skytuhua-org/Gen-V1/pull/1127) | open | `194457b78de782a8cca30e16277310db424e2abc` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1142](https://github.com/skytuhua-org/Gen-V1/pull/1142) | open | `280b91e7ea85038dddd95ae8ed64216dcbb2b219` | `2aaeda2379e27cc25e5c80461718e5b52adfe3a1` | Same head; base differs · retain_stack_dependency |
+| [#1146](https://github.com/skytuhua-org/Gen-V1/pull/1146) | open | `c54ec29742ae2b658241c16ec7fda8ef1a926ce0` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1151](https://github.com/skytuhua-org/Gen-V1/pull/1151) | open | `b6143eea952c082528d6fa588d62648ee3235e5d` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1157](https://github.com/skytuhua-org/Gen-V1/pull/1157) | open | `5f74c365176b23a987598a300506a827e1a85b27` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1163](https://github.com/skytuhua-org/Gen-V1/pull/1163) | open | `3675a66b518d5366b64f42376f580d6e27121b57` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1164](https://github.com/skytuhua-org/Gen-V1/pull/1164) | open | `fdfd43fab697bce0296994acca093c168bae661a` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1165](https://github.com/skytuhua-org/Gen-V1/pull/1165) | open | `8ea59d21073dfebeec7075940bf0f2c9953fcbd6` | `d84095827dae2232085adca77148e9fbb098583e` | Same head; base differs · retain_unique_review |
+| [#1172](https://github.com/skytuhua-org/Gen-V1/pull/1172) | open | `21da79cc8b190ae848bf55a323e8c027d563e41b` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1193](https://github.com/skytuhua-org/Gen-V1/pull/1193) | open | `61dfa3e396146319c05faadaa4074af5ee00c1eb` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1195](https://github.com/skytuhua-org/Gen-V1/pull/1195) | open | `bf6fdc26ef3d7f5552cad301ae45014a3ffd7e9f` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1199](https://github.com/skytuhua-org/Gen-V1/pull/1199) | open | `f8cb8c797c75ec963d04bf0027cc2ec33ebc74d9` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1201](https://github.com/skytuhua-org/Gen-V1/pull/1201) | open | `f929dc349e6832f80c2d76445152a517c10b06bc` | `898f3de0e7635de66f951a6cc18712426995c9fe` | Same head; base differs · retain_unique_review |
+| [#1206](https://github.com/skytuhua-org/Gen-V1/pull/1206) | open | `b874eb7c493dca8ba8ddb5d2fc170277bbdece0c` | `d84095827dae2232085adca77148e9fbb098583e` | Same head; base differs · retain_unique_review |
+| [#1215](https://github.com/skytuhua-org/Gen-V1/pull/1215) | open | `63fdf2ba162e380d6e146329ab6ff6cd7ff76e5b` | `3914273c3667133747e4f7ee4031fe3ad4f7c933` | Same head; base differs · retain_stack_dependency |
+| [#1218](https://github.com/skytuhua-org/Gen-V1/pull/1218) | open | `5b757e21d906fa21ba72f668b51d9956c9d41ba3` | `d84095827dae2232085adca77148e9fbb098583e` | Same head; base differs · retain_unique_review |
+| [#1222](https://github.com/skytuhua-org/Gen-V1/pull/1222) | open | `979420d0c1b9bb566838886c2c075e776a0073b8` | `d84095827dae2232085adca77148e9fbb098583e` | Same head; base differs · retain_unique_review |
+| [#1228](https://github.com/skytuhua-org/Gen-V1/pull/1228) | Merged to main | `56fcf2f2d4ea98e05f894235671a8420cd2a132c` | `e883ac0327c834120d89c3697dec7380a342ba4d` | — |
+| [#1233](https://github.com/skytuhua-org/Gen-V1/pull/1233) | open | `816acc469ad3ce3b71ddd1c7e6798a0e7759aee8` | `d84095827dae2232085adca77148e9fbb098583e` | Same head; base differs · retain_unique_review |
+| [#1249](https://github.com/skytuhua-org/Gen-V1/pull/1249) | open | `ab58db2abaf49637fccfbe97282920331ebf5d26` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1252](https://github.com/skytuhua-org/Gen-V1/pull/1252) | open | `800281955b3ac32dfc5eab21fd48aa1249c78c24` | `f87e45032d6012e64f37b4f5b82540c227f3917e` | Same head; base differs · retain_stack_dependency |
+| [#1256](https://github.com/skytuhua-org/Gen-V1/pull/1256) | open draft | `2cbd3647e6d45fa34bed4655f289985c6f95c93d` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#1258](https://github.com/skytuhua-org/Gen-V1/pull/1258) | open | `ca49bb770f157889655d2c5915785c30e3af24f2` | `e513a61c6ac9d86386adfd95c84a5759a44c4553` | Same head; base differs · retain_stack_dependency |
+| [#1259](https://github.com/skytuhua-org/Gen-V1/pull/1259) | open | `8da3f34f6e37ee810bfd7227270e00d51b854956` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1261](https://github.com/skytuhua-org/Gen-V1/pull/1261) | open | `e7da50ef392e8d0b324f15aeecc68287bd4b66ac` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1279](https://github.com/skytuhua-org/Gen-V1/pull/1279) | open | `41515c24cc547922b610588d83fe8916bf29238b` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1290](https://github.com/skytuhua-org/Gen-V1/pull/1290) | open | `f5141b3659d7bcd390da3ea5b9a6a368c93448d5` | `8f54f406b80f2d7d8ac09cc2a46557c125d681fa` | Same head; base differs · retain_unique_review |
+| [#1291](https://github.com/skytuhua-org/Gen-V1/pull/1291) | open | `15af30140c541951cd1219bcc08d6ca9da9d51b7` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1292](https://github.com/skytuhua-org/Gen-V1/pull/1292) | open | `e1bfd8be2e3d78eeea15bf3f4412f5c748f77202` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1293](https://github.com/skytuhua-org/Gen-V1/pull/1293) | open | `d2503df513afe88901b7e09a782c66e199d8d83a` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1294](https://github.com/skytuhua-org/Gen-V1/pull/1294) | open | `f3185c359f1b970b0bfb2a174f2731edcc02ad8a` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1305](https://github.com/skytuhua-org/Gen-V1/pull/1305) | open | `d9e4263776cc2f6303a24c80663f0725f026f36a` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1307](https://github.com/skytuhua-org/Gen-V1/pull/1307) | open | `df725e2a7394480d14008b59d5d164d2a80c788d` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1319](https://github.com/skytuhua-org/Gen-V1/pull/1319) | open | `b2f072105b448f0708f0acd51ee4ed3fbca1d5d3` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1320](https://github.com/skytuhua-org/Gen-V1/pull/1320) | open | `775b19208e73c7d4ab79e51c09b2d1c8851fee12` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1330](https://github.com/skytuhua-org/Gen-V1/pull/1330) | closed | `f96c4c265bb691c1d508e853d30b44814523ab38` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | — |
+| [#1334](https://github.com/skytuhua-org/Gen-V1/pull/1334) | open | `088079f2f3294163274d0363194c9143cf8eda81` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1347](https://github.com/skytuhua-org/Gen-V1/pull/1347) | open | `df57da57f89a17ed008b896ae96f60fc72fa3963` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1353](https://github.com/skytuhua-org/Gen-V1/pull/1353) | open | `a30f1da64d2a584a9a54f5337253fc2c90bed896` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1355](https://github.com/skytuhua-org/Gen-V1/pull/1355) | open | `b376a71a215cd0dc7e64ce1e0a6c7fd6e84073bc` | `f3185c359f1b970b0bfb2a174f2731edcc02ad8a` | Same head/base · retain_stack_dependency |
+| [#1356](https://github.com/skytuhua-org/Gen-V1/pull/1356) | open | `cb3a20e8480856c20088b83ba8e213312ef80de6` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1370](https://github.com/skytuhua-org/Gen-V1/pull/1370) | open | `1eeb4bd0eb851118fdfed067e466d971f4a9a576` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · published_bounded_maintenance |
+| [#1372](https://github.com/skytuhua-org/Gen-V1/pull/1372) | open | `b698cd6a37e52c0248de9ff988df7c93818036fa` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1380](https://github.com/skytuhua-org/Gen-V1/pull/1380) | open | `f0645654c1ce5ea87cb7e54138b266a4374c0c4a` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1381](https://github.com/skytuhua-org/Gen-V1/pull/1381) | open | `690180537e585dad4621ddd6d1f808da96a492f7` | `62e5c5475c802ae95a6c804cea558a8268cd59b9` | Same head; base differs · retain_stack_dependency |
+| [#1386](https://github.com/skytuhua-org/Gen-V1/pull/1386) | open | `7b15aa10634fa1013471b028a1595ed1db62abfc` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1387](https://github.com/skytuhua-org/Gen-V1/pull/1387) | open | `624cf65a7a12a1dab987ef55329b6a4dee30cbff` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1388](https://github.com/skytuhua-org/Gen-V1/pull/1388) | open | `9e9c715e71eb24c731713dcac1a2efa3963d7b73` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1390](https://github.com/skytuhua-org/Gen-V1/pull/1390) | open | `a5a5cff4a048797912ebee6422471dfe4ad1f8bb` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1398](https://github.com/skytuhua-org/Gen-V1/pull/1398) | open | `1f8f5fd0a6d96b79f6a5e8d7329991054058c84f` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1404](https://github.com/skytuhua-org/Gen-V1/pull/1404) | open | `610899aeb1339948304c2b3c0f8ef7923a60169b` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1407](https://github.com/skytuhua-org/Gen-V1/pull/1407) | open | `c29fbb7534b0d5b1b21e7e60f080f4398e860945` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1408](https://github.com/skytuhua-org/Gen-V1/pull/1408) | open | `64fd5b9d0c7df045450e3575fa1918ae13370f51` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1410](https://github.com/skytuhua-org/Gen-V1/pull/1410) | open | `f63de568e9cd345479593616931ea3349c791ea7` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1411](https://github.com/skytuhua-org/Gen-V1/pull/1411) | open | `a62d9b7d165998db3ba52bbf5524ee05cca4661d` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1414](https://github.com/skytuhua-org/Gen-V1/pull/1414) | open | `96832a2bd68a6e647857d1187911bdcfad790995` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1416](https://github.com/skytuhua-org/Gen-V1/pull/1416) | open | `5edf58d7102513573ee9d95977ae7061c58d1672` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1417](https://github.com/skytuhua-org/Gen-V1/pull/1417) | open | `958a0bfba8e7555de2820ea9066cf8244c898176` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1421](https://github.com/skytuhua-org/Gen-V1/pull/1421) | open | `94105f9aefb6f83a9721bfaa169633ae7ce72687` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1422](https://github.com/skytuhua-org/Gen-V1/pull/1422) | open | `cbd88f0586308055a8355eccc6acdb9f4e18f706` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1426](https://github.com/skytuhua-org/Gen-V1/pull/1426) | open | `1f122cfcc53dcb7ce8ddbf4e91ad1c75cc50a5e1` | `b66aea3e4447562eaf7ac85732016b324e283d65` | Same head/base · retain_stack_dependency |
+| [#1428](https://github.com/skytuhua-org/Gen-V1/pull/1428) | open | `3d31dc06dfc79bec5e73a8efdf6f926b29916a3e` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1431](https://github.com/skytuhua-org/Gen-V1/pull/1431) | open | `9e239f0ea4d395a06fc748889442fb05dca453b4` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1432](https://github.com/skytuhua-org/Gen-V1/pull/1432) | open | `68b91ab69ce7e9a99f744736f8e0d52db5ac76f9` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1433](https://github.com/skytuhua-org/Gen-V1/pull/1433) | open | `3f51d14e9e359490057473d5988aaf1248d69ffc` | `b376a71a215cd0dc7e64ce1e0a6c7fd6e84073bc` | Same head/base · retain_stack_dependency |
+| [#1435](https://github.com/skytuhua-org/Gen-V1/pull/1435) | open | `b1b134d33c5df04acf15cbd6b49efc7733991a5c` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1436](https://github.com/skytuhua-org/Gen-V1/pull/1436) | open | `fc7e5987bb1b9ae32998249d8f237d4ab944767d` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1439](https://github.com/skytuhua-org/Gen-V1/pull/1439) | open | `dbe8577c4f5e74bd608f60dd7a56035b54b14da1` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1440](https://github.com/skytuhua-org/Gen-V1/pull/1440) | open | `e64e31c9aaa6d29c299a0000f0fbc339573ba565` | `5701aca53a1feebd6fb70871421722cf1accd83e` | Same head; base differs · retain_stack_dependency |
+| [#1441](https://github.com/skytuhua-org/Gen-V1/pull/1441) | open | `8ccfd90f091b9426069a1a47749ab6c4d979bfba` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1442](https://github.com/skytuhua-org/Gen-V1/pull/1442) | open | `b0c6cc970345a72fe390e53fe5bc928ba25fe3e9` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1444](https://github.com/skytuhua-org/Gen-V1/pull/1444) | open | `a60003c2abf81928c5788112dca84ae28458c259` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1447](https://github.com/skytuhua-org/Gen-V1/pull/1447) | open | `479e3ea530729c6290efe217b1132cf996fa1366` | `fab1ec40664dd986be105806704ade758048c351` | Same head; base differs · retain_unique_review |
+| [#1450](https://github.com/skytuhua-org/Gen-V1/pull/1450) | open | `3d92bf7b870c1262d5392a390797e1f6fd8a83cf` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1451](https://github.com/skytuhua-org/Gen-V1/pull/1451) | open | `d662a3efa79ea320e2bd887f2f5651a2c340949d` | `fab1ec40664dd986be105806704ade758048c351` | Same head; base differs · retain_unique_review |
+| [#1452](https://github.com/skytuhua-org/Gen-V1/pull/1452) | open | `859655b75517add49ed6795b2d37ea02823fe9fe` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1455](https://github.com/skytuhua-org/Gen-V1/pull/1455) | open | `71f3d0e552c23545c986fcb4e5622743146e8431` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1456](https://github.com/skytuhua-org/Gen-V1/pull/1456) | open | `2dc82cd75b7067fb81ae3584d1ddfbf897000ea4` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1457](https://github.com/skytuhua-org/Gen-V1/pull/1457) | open | `5765caa039a8b2eeb4c40eb791ed5b8d8ba6fed4` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1458](https://github.com/skytuhua-org/Gen-V1/pull/1458) | open | `20242f552cd68bd81d3e591595afee025bbcd970` | `71f3d0e552c23545c986fcb4e5622743146e8431` | Same head/base · retain_stack_dependency |
+| [#1459](https://github.com/skytuhua-org/Gen-V1/pull/1459) | open | `517421f77d9c826f8be02c02518d22f363137d84` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1460](https://github.com/skytuhua-org/Gen-V1/pull/1460) | open | `2fadca0693ea212132cd7b93358fc853026aac88` | `20242f552cd68bd81d3e591595afee025bbcd970` | Same head/base · retain_stack_dependency |
+| [#1462](https://github.com/skytuhua-org/Gen-V1/pull/1462) | open | `1218730ba3b2734ee5341505f1f67ae4a7fd1864` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1464](https://github.com/skytuhua-org/Gen-V1/pull/1464) | open | `66f62a7257d1220a0d08c2b8813ddee49cb0f828` | `2fadca0693ea212132cd7b93358fc853026aac88` | Same head/base · retain_stack_dependency |
+| [#1465](https://github.com/skytuhua-org/Gen-V1/pull/1465) | open | `aff6be870b5a89de575fc2c35a5c0cf33fef1951` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1470](https://github.com/skytuhua-org/Gen-V1/pull/1470) | open | `f03ac7dae019295e1e49a6c3b3b16dd950cceb7f` | `5765caa039a8b2eeb4c40eb791ed5b8d8ba6fed4` | Same head/base · retain_stack_dependency |
+| [#1480](https://github.com/skytuhua-org/Gen-V1/pull/1480) | open | `1a8cbd086c592ecd3e6db2c73ca337b537a9801c` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1483](https://github.com/skytuhua-org/Gen-V1/pull/1483) | open | `c015b437adf2fa8779c04fbc76a838bc74fa6bd6` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1487](https://github.com/skytuhua-org/Gen-V1/pull/1487) | open | `59142773aa79b39b6e68505801b8c85416882adb` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1488](https://github.com/skytuhua-org/Gen-V1/pull/1488) | open | `1c3efbc8e2af7085f70fbdefce6ec57386d4f1ca` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1489](https://github.com/skytuhua-org/Gen-V1/pull/1489) | open | `3897e87c0b480f1df7cb7222b31773485b11cdd6` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1492](https://github.com/skytuhua-org/Gen-V1/pull/1492) | open | `995c4efbf55f38753b715a0874f9282bd7721a93` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1493](https://github.com/skytuhua-org/Gen-V1/pull/1493) | open | `056cb1655c24910379e08ab16865d34843f1d6ac` | `c015b437adf2fa8779c04fbc76a838bc74fa6bd6` | Same head/base · retain_stack_dependency |
+| [#1495](https://github.com/skytuhua-org/Gen-V1/pull/1495) | open | `5a463cdd9eeaa6f3e838b932ee453b8e1ee6e863` | `66f62a7257d1220a0d08c2b8813ddee49cb0f828` | Same head/base · retain_stack_dependency |
+| [#1497](https://github.com/skytuhua-org/Gen-V1/pull/1497) | open | `bc159a5532c8e0f8426e3d79f963c4bfe23908ef` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1498](https://github.com/skytuhua-org/Gen-V1/pull/1498) | open | `c59762b7635cc7028dd9f36ecd7c30bf7fb3c919` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#1501](https://github.com/skytuhua-org/Gen-V1/pull/1501) | open | `605e17a7a79c99a43936bface25e11fdd1527b09` | `e883ac0327c834120d89c3697dec7380a342ba4d` | Same head; base differs · retain_unique_review |
+| [#1503](https://github.com/skytuhua-org/Gen-V1/pull/1503) | open | `31667b250d083077d1f8c19dfada6848cf8fb485` | `35d3ee06284c2d1445db6cd4fe49cd367705bc0c` | Same head/base · retain_stack_dependency |
+| [#1504](https://github.com/skytuhua-org/Gen-V1/pull/1504) | open | `d886b67b3cebdfc5d58d1bf6899e68632a3767ca` | `5a463cdd9eeaa6f3e838b932ee453b8e1ee6e863` | Same head/base · retain_stack_dependency |
+| [#1506](https://github.com/skytuhua-org/Gen-V1/pull/1506) | open | `c2ca1b7ef9c19fd08260899834e3e61aa0516ca8` | `97217f43e04eaccaeae3a8797a2792e2c7cda246` | Same head; base differs · retain_stack_dependency |
+| [#1507](https://github.com/skytuhua-org/Gen-V1/pull/1507) | open | `86cb774c2258aadb6a05500807ba87b818e08145` | `4ca1134ae1e4f354064457cb5664b545712da4a9` | Same head; base differs · retain_unique_review |
+| [#1511](https://github.com/skytuhua-org/Gen-V1/pull/1511) | open | `e3f366547ca0d620262196647d71efaa757978af` | `4ca1134ae1e4f354064457cb5664b545712da4a9` | Same head; base differs · retain_unique_review |
+| [#1514](https://github.com/skytuhua-org/Gen-V1/pull/1514) | open | `736321f26e782ccc7050439911f64723dff2355e` | `c2ca1b7ef9c19fd08260899834e3e61aa0516ca8` | Same head/base · retain_stack_dependency |
+| [#1516](https://github.com/skytuhua-org/Gen-V1/pull/1516) | open | `dfecd4ca6f0ababec50ca37d8a759b95bb35b18b` | `d886b67b3cebdfc5d58d1bf6899e68632a3767ca` | Same head/base · retain_stack_dependency |
+| [#1517](https://github.com/skytuhua-org/Gen-V1/pull/1517) | open | `6a3d15b7959273a6ef98b1dc66daa5acc24455ca` | `4ca1134ae1e4f354064457cb5664b545712da4a9` | Same head; base differs · retain_unique_review |
+| [#1518](https://github.com/skytuhua-org/Gen-V1/pull/1518) | open | `740259bebf45f440313d0420cc128cc6f02c25d7` | `2fd72508dfcbcd329f849ec601a3a28f6a225e54` | Same head; base differs · retain_stack_dependency |
+| [#1521](https://github.com/skytuhua-org/Gen-V1/pull/1521) | open | `020beacb665b8e3f2d584da107ffa6c44e098558` | `efdee3c0b98f7085811a130f2e4e7990c1c311c7` | Same head/base · retain_stack_dependency |
+| [#1528](https://github.com/skytuhua-org/Gen-V1/pull/1528) | open | `fd41138b36e99ed459ce56c02590ce0c33269c9c` | `4ca1134ae1e4f354064457cb5664b545712da4a9` | Same head; base differs · retain_unique_review |
+| [#1541](https://github.com/skytuhua-org/Gen-V1/pull/1541) | open | `959c3027ca24dcb0505d99ea5cffa57155c96504` | `056cb1655c24910379e08ab16865d34843f1d6ac` | Same head/base · retain_stack_dependency |
+| [#1550](https://github.com/skytuhua-org/Gen-V1/pull/1550) | open | `00de34365c0b0f0c0ba8973acf2c95f0a110beb8` | `fab1ec40664dd986be105806704ade758048c351` | Same head; base differs · retain_unique_review |
+| [#1554](https://github.com/skytuhua-org/Gen-V1/pull/1554) | open | `acf3549bf432bb5468700118dfeb16a0ab7d64dc` | `4ca1134ae1e4f354064457cb5664b545712da4a9` | Same head; base differs · retain_unique_review |
+| [#1557](https://github.com/skytuhua-org/Gen-V1/pull/1557) | open | `59365900d622d22837e313afbf878abd54c8607e` | `af2ac42913a72735d2d882856373574942167b1d` | Same head/base · retain_stack_dependency |
+| [#1558](https://github.com/skytuhua-org/Gen-V1/pull/1558) | open | `b6d6ad076745a25eb5be99ff08ece9b69f0b035b` | `59365900d622d22837e313afbf878abd54c8607e` | Same head/base · retain_stack_dependency |
+| [#1564](https://github.com/skytuhua-org/Gen-V1/pull/1564) | open | `958101b4ad3a82a324654963b7059451551cff9a` | `e64e31c9aaa6d29c299a0000f0fbc339573ba565` | Same head/base · retain_stack_dependency |
+| [#1565](https://github.com/skytuhua-org/Gen-V1/pull/1565) | open | `8303abd66687d289f4b85f27acc8d0344af8e329` | `b6d6ad076745a25eb5be99ff08ece9b69f0b035b` | Same head/base · retain_stack_dependency |
+| [#1576](https://github.com/skytuhua-org/Gen-V1/pull/1576) | open | `580949cf5eef68a1750b61d466f3efa8e2817983` | `71cc0fe891ed319b97476d30e708f7223a202029` | Same head; base differs · retain_conflict_repair |
+| [#1577](https://github.com/skytuhua-org/Gen-V1/pull/1577) | open | `dcb7dc7d989660750c734ce927f32bca72da4ec2` | `4b18513fc1f8ffad6b0236a4e3d1f1ca8fd648d1` | Same head; base differs · retain_stack_dependency |
+| [#1593](https://github.com/skytuhua-org/Gen-V1/pull/1593) | open | `992d05c54461b8b7702c6bdc9606905140c52c79` | `8fa907f378127bcfc23d71b55c53625ffc43e8da` | Same head; base differs · retain_unique_review |
+| [#1597](https://github.com/skytuhua-org/Gen-V1/pull/1597) | open | `17e7d089ecf523e5a6a0bf3cea0a57a664a2ef14` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1633](https://github.com/skytuhua-org/Gen-V1/pull/1633) | open | `303bfa467f4a4500c7acafc1cd060805c6e45405` | `8fa907f378127bcfc23d71b55c53625ffc43e8da` | Same head; base differs · retain_unique_review |
+| [#1634](https://github.com/skytuhua-org/Gen-V1/pull/1634) | open | `f142fe7f7517d717f84fe140cb2ba74916667ea2` | `8fa907f378127bcfc23d71b55c53625ffc43e8da` | Same head; base differs · retain_unique_review |
+| [#1668](https://github.com/skytuhua-org/Gen-V1/pull/1668) | open | `35a5d2a6fa128a58f36ab13b451ffd1fbc327c5f` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#1670](https://github.com/skytuhua-org/Gen-V1/pull/1670) | Merged to main | `68d1814f945afe3857627923ac12636d5d7f5b4d` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | — |
+| [#1671](https://github.com/skytuhua-org/Gen-V1/pull/1671) | Merged to main | `66acfb283fe11c1736af36e87bd7cc69cc3be356` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | — |
+| [#1673](https://github.com/skytuhua-org/Gen-V1/pull/1673) | Merged to main | `b9dbc0b41688da81a60792f4b017a997cf833ad9` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | — |
+| [#1692](https://github.com/skytuhua-org/Gen-V1/pull/1692) | open | `508c01c6d539870f459d8086af2cd7a3cbea319f` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1694](https://github.com/skytuhua-org/Gen-V1/pull/1694) | open | `9d4bf8ae9a8ef964663c7e67315307b15d7cc764` | `2640b897a42739eba3785fc934af882996c07097` | Same head; base differs · retain_unique_review |
+| [#1700](https://github.com/skytuhua-org/Gen-V1/pull/1700) | open | `a9d00e881503f74b2342ca497d8e8b9f264dbb69` | `2640b897a42739eba3785fc934af882996c07097` | Same head; base differs · retain_unique_review |
+| [#1708](https://github.com/skytuhua-org/Gen-V1/pull/1708) | open | `d73aa413ad39a9c4530eb511894f4d3785deac86` | `2640b897a42739eba3785fc934af882996c07097` | Same head; base differs · retain_unique_review |
+| [#1719](https://github.com/skytuhua-org/Gen-V1/pull/1719) | open | `6837ddc1c89f3a42c28f2dcf5eeb9d67a4fa04df` | `bffae7ff03a16dcc5b9c10abd25b956564059ec2` | Same head; base differs · retain_unique_review |
+| [#1745](https://github.com/skytuhua-org/Gen-V1/pull/1745) | open | `7868059b6ab5da2f00f56dca67c2ce8e589328cd` | `97efd9caf3201f2903780669c86ad6c83e746fcb` | Same head; base differs · retain_unique_review |
+| [#1774](https://github.com/skytuhua-org/Gen-V1/pull/1774) | open | `af441bd40d920b756cd09f3ba8c0349c60b60d07` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#1775](https://github.com/skytuhua-org/Gen-V1/pull/1775) | open | `81ac3183610f41a6c6a042ecab018ae1d9249c7a` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1778](https://github.com/skytuhua-org/Gen-V1/pull/1778) | open | `b92deb76229bcc5ec64de9f93a40b3e30b092c92` | `e0afb15e031ce8132a050d44ee5c30c0b7081ea2` | Same head/base · retain_stack_dependency |
+| [#1781](https://github.com/skytuhua-org/Gen-V1/pull/1781) | open | `0395dbf1346658a4419ef706b7a583a577477a4f` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#1783](https://github.com/skytuhua-org/Gen-V1/pull/1783) | open | `e9bb85adf7dab2e873d6a57b4933e837175af543` | `83e521bdad79315c80b25b478fa6c9ce2c611df1` | Same head; base differs · retain_stack_dependency |
+| [#1785](https://github.com/skytuhua-org/Gen-V1/pull/1785) | closed | `6184327c909cc0dcb9a0297cfafe5e0d65f4927b` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | — |
+| [#1786](https://github.com/skytuhua-org/Gen-V1/pull/1786) | open | `6e5937089b0b38f734d0a82ed7c24c8550f00d89` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#1791](https://github.com/skytuhua-org/Gen-V1/pull/1791) | open | `fde5f184680906df1cc8256d27abbb36899acd33` | `e9bb85adf7dab2e873d6a57b4933e837175af543` | Same head/base · retain_stack_dependency |
+| [#1793](https://github.com/skytuhua-org/Gen-V1/pull/1793) | open | `0487f654a6bd78a356058cbac3e0d382fd7cd825` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_conflict_repair |
+| [#1795](https://github.com/skytuhua-org/Gen-V1/pull/1795) | open | `98a0187350ca7035918da4d114cf31cad39680ab` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1796](https://github.com/skytuhua-org/Gen-V1/pull/1796) | open | `8bcf8ba044ffce3fcd5194c2e0af936ade6d3930` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#1798](https://github.com/skytuhua-org/Gen-V1/pull/1798) | open | `2385c6cfe3d3f7c6a89a1293f188f6e59cf044ba` | `2996a59659fe5d0aa1d68aa63324f3d53799431e` | Same head/base · retain_stack_dependency |
+| [#1799](https://github.com/skytuhua-org/Gen-V1/pull/1799) | open | `c4eda72f1a9905863a1e8506e95a07d90401317d` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1810](https://github.com/skytuhua-org/Gen-V1/pull/1810) | open | `1d97e2c27338f7f49d33b3e3cf419028efd43fc6` | `36fcc56d24cef7558059264a8540d7f0592d93cd` | Same head; base differs · retain_unique_review |
+| [#1814](https://github.com/skytuhua-org/Gen-V1/pull/1814) | open | `06c58429ffc3636298bc62ca386e6488315279b7` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1823](https://github.com/skytuhua-org/Gen-V1/pull/1823) | open | `d1f8cff83456d1f17e95c5058a8ed9fdd5c68789` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · published_bounded_maintenance_acceptance_gap |
+| [#1853](https://github.com/skytuhua-org/Gen-V1/pull/1853) | open | `0c630a983a4a5225f5f4ce2096bb0296522cf795` | `8f54f406b80f2d7d8ac09cc2a46557c125d681fa` | Same head; base differs · retain_unique_review |
+| [#1858](https://github.com/skytuhua-org/Gen-V1/pull/1858) | open | `df655bdc23a8a5c640a1febc280ca8f07a03ca38` | `8f54f406b80f2d7d8ac09cc2a46557c125d681fa` | Same head; base differs · retain_unique_review |
+| [#1859](https://github.com/skytuhua-org/Gen-V1/pull/1859) | open | `8e4e6de044f7041fcb0a01a496116bc301cd5673` | `8f54f406b80f2d7d8ac09cc2a46557c125d681fa` | Same head; base differs · retain_unique_review |
+| [#1876](https://github.com/skytuhua-org/Gen-V1/pull/1876) | open | `2f9062f0cdf75fa2e4b0eb163c9da90d7ca842e7` | `1cbd02cd78e93771ddca6f0f490c31133919e44a` | Same head; base differs · retain_unique_review |
+| [#1877](https://github.com/skytuhua-org/Gen-V1/pull/1877) | open | `03bc9814461c94691c5ae9ba64603e0990f56fbe` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | — |
+| [#1888](https://github.com/skytuhua-org/Gen-V1/pull/1888) | open | `3317a46497b5a157e099f698937f0e357234c5be` | `1cbd02cd78e93771ddca6f0f490c31133919e44a` | Same head; base differs · retain_unique_review |
+| [#1892](https://github.com/skytuhua-org/Gen-V1/pull/1892) | open | `cefb71b52aa69f32a8bdc772c79324d012fbada6` | `1cbd02cd78e93771ddca6f0f490c31133919e44a` | Same head; base differs · retain_unique_review |
+| [#1895](https://github.com/skytuhua-org/Gen-V1/pull/1895) | Merged to main | `41e47392321c3c5f8c7a4a5ca86a64c342db1a4c` | `50b35412812123f882ec12895585b2612c4d2352` | Same head; base differs · retain_unique_review |
+| [#1902](https://github.com/skytuhua-org/Gen-V1/pull/1902) | open | `7a25e461ac594e3efbe7b0a08f20b7bce20dc424` | `86cb774c2258aadb6a05500807ba87b818e08145` | Same head/base · retain_stack_dependency |
+| [#1904](https://github.com/skytuhua-org/Gen-V1/pull/1904) | open | `f13ac242733f1fa5a6cd79f8e19e8f1aeaded47d` | `86cb774c2258aadb6a05500807ba87b818e08145` | Same head/base · retain_stack_dependency |
+| [#1905](https://github.com/skytuhua-org/Gen-V1/pull/1905) | open | `670e4c79fc9e7625ef777c3665b927a168b09f97` | `e3f366547ca0d620262196647d71efaa757978af` | — |
+| [#1906](https://github.com/skytuhua-org/Gen-V1/pull/1906) | open | `de8dcf54a9165228efe18605b2fd00ff1bb139a0` | `9b058241146a9c069cb9c3081e4fa162163892da` | Same head; base differs · retain_stack_dependency |
+| [#1907](https://github.com/skytuhua-org/Gen-V1/pull/1907) | open | `e2b18a6a0de16cfe87720385fbc241ab06a7d5b8` | `de8dcf54a9165228efe18605b2fd00ff1bb139a0` | Same head/base · retain_stack_dependency |
+| [#1909](https://github.com/skytuhua-org/Gen-V1/pull/1909) | open | `f880c11420ba8e369becc0db52b03e74dc4f08b8` | `8c8e1942461fb1d710354647725e980045b3b31d` | Same head/base · retain_stack_dependency |
+| [#1910](https://github.com/skytuhua-org/Gen-V1/pull/1910) | open | `1e111c14aa6697060f5b3a8b3fafb3a69628a9ca` | `f880c11420ba8e369becc0db52b03e74dc4f08b8` | Same head/base · retain_stack_dependency |
+| [#1917](https://github.com/skytuhua-org/Gen-V1/pull/1917) | open | `6ba513c7d99d5af760a145dad192877c0acf9166` | `1cbd02cd78e93771ddca6f0f490c31133919e44a` | Same head; base differs · retain_unique_review |
+| [#1919](https://github.com/skytuhua-org/Gen-V1/pull/1919) | open | `8f266909e1d1853c7bcc792d9437bbc456dca676` | `9ddd536cc84c0f327ddf6133d485f8ab8baf294b` | Same head/base · retain_unique_review |
+| [#1920](https://github.com/skytuhua-org/Gen-V1/pull/1920) | open | `eec8d20229fc05d86ee01e5fe43d0f504952f464` | `1cbd02cd78e93771ddca6f0f490c31133919e44a` | Same head; base differs · retain_unique_review |
+| [#1937](https://github.com/skytuhua-org/Gen-V1/pull/1937) | open | `8967067e02f0fa311af2835bd9374ffd1ff568bd` | `65801227c0a5bc1cde9c3afc7eb889c3ceee0b70` | Same head; base differs · retain_unique_review |
+

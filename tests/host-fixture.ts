@@ -1,6 +1,7 @@
 import { test as base, expect, type Page, type TestInfo } from '@playwright/test';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -175,6 +176,24 @@ export class HostFixture {
     this.service = new Service(this.store, this.runtime, this.effectOptions); await this.service.recover();
     const mounts: MountRegistry = new Map();
     this.host = await buildServer(this.service, { port: 4337, widgetPort: 4338, mounts, dev: false });
+    // Browsers may open a connection before they have a request to send.
+    // Release unused fixture sockets while allowing requests in flight to finish.
+    const awaitingRequest = new Set<Socket>();
+    let closing = false;
+    this.host.server.on('connection', socket => {
+      if (closing) {
+        socket.destroy();
+        return;
+      }
+      awaitingRequest.add(socket);
+      socket.once('close', () => awaitingRequest.delete(socket));
+    });
+    this.host.server.prependListener('request', request => awaitingRequest.delete(request.socket));
+    this.host.addHook('preClose', async () => {
+      closing = true;
+      for (const socket of awaitingRequest) socket.destroy();
+      awaitingRequest.clear();
+    });
     this.widgets = await buildWidgetServer(this.service, mounts, 4338);
     this.host.addHook('preHandler', async request => { if (request.url === '/api/commands') { const command = request.body as HostCommand; this.commands.push(command); await this.beforeCommand?.(command); } });
     try {

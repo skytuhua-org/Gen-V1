@@ -10,7 +10,7 @@ import { Select } from '../../../packages/ui-shell/Select';
 import { command, getModels } from './api';
 import type { SettingsInventoryRow } from './settings-inventory';
 import { buildSupportedSettings, searchSettings, GROUPS, type SupportedSettingRow } from './settings-registry';
-import { PREFERENCE_BINDINGS, chordFor } from './keyboard-bindings';
+import { PREFERENCE_BINDINGS, chordFor, isReservedChord } from './keyboard-bindings';
 import { matchesShortcut } from './shell-layout';
 import { KeyboardReference } from './KeyboardReference';
 import { DEPENDENCY_NOTICES } from './dependency-notices';
@@ -86,7 +86,23 @@ function PreferenceControl({ item, preferences, update, busy }: { item: Settings
   return <button type="button" role="switch" aria-label={item.title} aria-checked={Boolean(value)} disabled={busy} className="settings-switch" onClick={() => void update({ [definition.key]: !value })}><span/></button>;
 }
 function ShortcutInput({ action, label, value, save, busy }: { action: string; label: string; value: string; save: (key: string, value: string) => void; busy: boolean }) {
-  return <input aria-label={`${label} shortcut`} title="Focus and press a shortcut" readOnly value={value} disabled={busy} onKeyDown={event => { if (event.nativeEvent.isComposing || event.keyCode === 229 || event.key === 'Tab') return; event.preventDefault(); event.stopPropagation(); if (['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return; const key = event.key === ',' ? 'Comma' : event.key.length === 1 ? event.key.toUpperCase() : event.key; save(action, [event.ctrlKey ? 'Ctrl' : '', event.metaKey ? 'Meta' : '', event.altKey ? 'Alt' : '', event.shiftKey ? 'Shift' : '', key].filter(Boolean).join('+')); }}/>;
+  const desktop = useDesktop();
+  const [error, setError] = useState(''), clear = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (clear.current) clearTimeout(clear.current); }, []);
+  return <div style={{display: 'flex', flexDirection: 'column'}}>
+    <input aria-label={`${label} shortcut`} title={desktop ? 'Focus and press a shortcut' : "Focus and press a shortcut. Browser-reserved keys can't be used."} readOnly value={value} disabled={busy} onKeyDown={event => {
+      if (event.nativeEvent.isComposing || event.keyCode === 229 || event.key === 'Tab') return;
+      event.preventDefault(); event.stopPropagation();
+      if (['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return;
+      setError(''); if (clear.current) { clearTimeout(clear.current); clear.current = null; }
+      const key = event.key === ',' ? 'Comma' : event.key.length === 1 ? event.key.toUpperCase() : event.key;
+      const chord = [event.ctrlKey ? 'Ctrl' : '', event.metaKey ? 'Meta' : '', event.altKey ? 'Alt' : '', event.shiftKey ? 'Shift' : '', key].filter(Boolean).join('+');
+      // Browser-reserved only: the desktop app registers real accelerators and may honor chords Chrome keeps.
+      if (!desktop && isReservedChord(chord)) { setError('Chrome keeps that shortcut — pick another.'); clear.current = setTimeout(() => setError(''), 4000); return; }
+      save(action, chord);
+    }}/>
+    <span role="alert" className="error-text" style={{minHeight: 14}}>{error}</span>
+  </div>;
 }
 export interface SettingsActions {
   environmentSettings?: ReactNode; openBrowser?: (url: string) => Promise<void>;
@@ -164,7 +180,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const details = (item: SettingsInventoryRow): { description: string; control: ReactNode } => {
     if (item.id === 'thread-notifications') return { description: desktop ? preferenceRows[item.id]!.description : `${preferenceRows[item.id]!.description} System popups and sound are unavailable in this browser build; in-app notices stay active.`, control: <PreferenceControl item={item} preferences={preferences} update={update} busy={busy}/> };
     if (preferenceRows[item.id]) return { description: preferenceRows[item.id]!.description, control: <PreferenceControl item={item} preferences={preferences} update={update} busy={busy}/> };
-    if (item.id.startsWith('harness-keybinding-')) { const action = item.id.slice('harness-keybinding-'.length) as keyof UiPreferences['keybindings']; return { description: 'Focus and press a shortcut.', control: <ShortcutInput action={action} label={item.title} value={preferences.keybindings[action]} busy={busy} save={(key, value) => void persist({ preferences: { keybindings: { [key]: value } } })}/> }; }
+    if (item.id.startsWith('harness-keybinding-')) { const action = item.id.slice('harness-keybinding-'.length) as keyof UiPreferences['keybindings']; return { description: desktop ? 'Focus and press a shortcut.' : "Focus and press a shortcut. Browser-reserved keys can't be used.", control: <ShortcutInput action={action} label={item.title} value={preferences.keybindings[action]} busy={busy} save={(key, value) => void persist({ preferences: { keybindings: { [key]: value } } })}/> }; }
     if (item.id.startsWith('license-')) { const notice = DEPENDENCY_NOTICES.find(([name]) => name === item.title)!; return { description: `Version ${notice[1]} · ${notice[2]}. Complete LICENSE and NOTICE files remain in the installed package.`, control: <a href={`https://www.npmjs.com/package/${encodeURIComponent(notice[0])}/v/${notice[1]}`} target="_blank" rel="noreferrer">Package notice<ExternalLink size={12}/></a> }; }
     switch (item.id) {
       case 'harness-local-models': return { description: `${newTaskModels.length} ${newTaskModels.length === 1 ? 'model' : 'models'} reported by connected runtimes.`, control: <button type="button" className="secondary" disabled={busy} onClick={() => void refreshModels(true)}>Refresh models</button> };

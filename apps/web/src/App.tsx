@@ -361,7 +361,7 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
           const submitKey = event.key === 'Enter' && !event.shiftKey && (preferences.sendShortcut === 'enter' || event.ctrlKey || event.metaKey);
           if (submitKey && /^\/(?:btw|side)$/i.test(draft.trim())) { event.preventDefault(); void send(); return; }
           if(commands.current?.keyDown(event))return;
-          if (prediction.candidate && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); prediction.dismiss(); return; }
+          if (prediction.candidate && event.key === 'Escape' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) { event.preventDefault(); event.stopPropagation(); prediction.dismiss(); return; }
           if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && acceptPrediction()) { event.preventDefault(); return; }
           if (submitKey) { event.preventDefault(); void send(); }
         }} rows={1} />
@@ -747,6 +747,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     else if (!editableTarget && matchesShortcut(event, chordFor('show-shortcuts'))) { event.preventDefault(); setSettingsSection('keybindings'); setSettingsOpen(true); }
     if (matchesShortcut(event, 'Escape') && !event.defaultPrevented) { setSidebarOpen(false);  }
   }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [preferences.keybindings.search, preferences.keybindings.newThread, preferences.keybindings.toggleSidebar, preferences.keybindings.toggleRightPanel, preferences.keybindings.openSettings, preferences.keybindings.stop, selectedId, mobile, refresh, host?.composers, settingsOpen]);
+
   const conversationMotion=useRef<ReturnType<typeof createConversationScroll>|null>(null),conversationElement=useRef<HTMLElement|null>(null);
   useEffect(()=>()=>conversationMotion.current?.dispose(),[]);
   const messages = snapshot.messages.filter(item => item.threadId === thread?.id);
