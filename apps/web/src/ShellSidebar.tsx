@@ -441,7 +441,7 @@ export function ShellSidebar({
         {group('pinned', 'Pinned', pinned, {
           list: 'pinned',
           keepVisible: !locked,
-          empty: <div className="sidebar-pinned-empty">Drag a thread here to pin it.</div>,
+          empty: <div className="sidebar-pinned-empty" role="note">Pin a thread from its ⋯ menu, or drag it here.</div>,
         })}
         {group('working', 'Working', working, { list: 'working' })}
         {orderedRemaining.length > 0 && <div className="thread-flat-list" data-thread-list="flat">{orderedRemaining.map((item, index) => {
