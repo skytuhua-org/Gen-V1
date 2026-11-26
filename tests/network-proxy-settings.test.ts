@@ -29,6 +29,9 @@ describe('parseProxyUrl', () => {
   it('rejects malformed percent escapes in userinfo', () => {
     expect(() => parseProxyUrl('http://u%zz:p@h')).toThrowError();
   });
+  it.each(['http://pro\txy.example:8080', 'http://proxy.example\r\n:8080', 'http://proxy.example?', 'http://proxy.example#'])('rejects raw controls and empty query/fragment delimiters: %j', raw => {
+    expect(() => parseProxyUrl(raw)).toThrowError();
+  });
 });
 
 describe('parseBypassEntry / canonicalizeBypass', () => {
@@ -45,6 +48,22 @@ describe('parseBypassEntry / canonicalizeBypass', () => {
   });
   it('canonicalizes: trims, dedups, sorts', () => {
     expect(canonicalizeBypass(['B.corp', ' a.corp ', 'b.corp'])).toEqual(['a.corp', 'b.corp']);
+  });
+  it.each(['[::::]', '[1:2:3]:80', '[12345::1]', '[::1]:0', 'example.test:0'])('rejects malformed IPv6 and zero ports: %s', raw => {
+    expect(() => parseBypassEntry(raw)).toThrowError();
+  });
+  it('canonicalizes equivalent IPv6 literals and numeric ports before deduplication', () => {
+    expect(canonicalizeBypass(['[FD00:0:0:0:0:0:0:1]:00443', '[fd00::1]:443'])).toEqual(['[fd00::1]:443']);
+    expect(parseBypassEntry('fd00::1')).toBe('[fd00::1]');
+    expect(parseBypassEntry('[::ffff:127.0.0.1]')).toBe('[::ffff:7f00:1]');
+    expect(parseBypassEntry('example.test:00443')).toBe('example.test:443');
+  });
+  it.each(['https://synthetic-marker.example/path', 'synthetic-marker*.example', 'synthetic marker.example'])('keeps invalid bypass input out of errors: %s', raw => {
+    try { parseBypassEntry(raw); throw new Error('Unexpected acceptance'); }
+    catch (cause) {
+      expect(cause).toMatchObject({code: 'NETWORK_PROXY_INVALID'});
+      expect((cause as Error).message).not.toContain(raw);
+    }
   });
 });
 
@@ -68,6 +87,22 @@ describe('bypassesHost', () => {
     expect(bypassesHost(all, '127.4.5.6', 8080)).toBe(true);
     expect(bypassesHost(all, '::1', 8080)).toBe(true);
     expect(bypassesHost(all, 'example.com', 8080)).toBe(false);
+  });
+  it('matches equivalent IPv6 spellings while preserving explicit port restrictions', () => {
+    const entries = canonicalizeBypass(['[0:0:0:0:0:0:0:1]:8080', '[fd00::1]:443']);
+    expect(bypassesHost(entries, '[::1]', 8080)).toBe(true);
+    expect(bypassesHost(entries, '0:0:0:0:0:0:0:1', 8080)).toBe(true);
+    expect(bypassesHost(entries, '[::1]', 80)).toBe(false);
+    expect(bypassesHost(entries, '[fd00:0:0:0:0:0:0:1]', 443)).toBe(true);
+  });
+  it('keeps every normalized mapped-loopback address direct without admitting other mapped addresses', () => {
+    const all = [...MANDATORY_LOCAL_BYPASS];
+    for (const address of ['::ffff:127.0.0.1', '::ffff:127.255.255.255', '0:0:0:0:0:ffff:7f00:1']) {
+      expect(bypassesHost(all, new URL('http://[' + address + ']:8080').hostname, 8080), address).toBe(true);
+    }
+    for (const address of ['::ffff:126.255.255.255', '::ffff:128.0.0.1', '::ffff:10.0.0.1', '2001:db8::7f00:1']) {
+      expect(bypassesHost(all, new URL('http://[' + address + ']:8080').hostname, 8080), address).toBe(false);
+    }
   });
 });
 

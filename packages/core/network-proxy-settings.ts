@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile, lstat, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isIP } from 'node:net';
 import { z } from 'zod';
 import { HarnessError } from '../contracts/index.ts';
 import { windowsSecretCodec, type SecretCodec } from '../storage/secret-codec.ts';
@@ -21,6 +22,8 @@ const invalid = (message: string) => new HarnessError('NETWORK_PROXY_INVALID', m
 /** Parse + canonicalize a proxy URL; userinfo is split out, never persisted inside url. */
 export function parseProxyUrl(raw: string): { url: string; credentials: string | null } {
   if (Buffer.byteLength(raw, 'utf8') > 4096) throw invalid('Proxy URL is too long.');
+  if (/[\u0000-\u001f\u007f]/.test(raw)) throw invalid('Proxy URL contains unsupported control characters.');
+  if (/[?#]/.test(raw)) throw invalid('Proxy URL must not carry query or fragment.');
   let parsed: URL;
   try { parsed = new URL(raw); } catch { throw invalid('Enter a valid proxy URL, for example http://proxy.corp:8080.'); }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw invalid('Only http:// or https:// proxies are supported.');
@@ -40,30 +43,41 @@ const decodeURIComponentSafe = (v: string) => { try { return decodeURIComponent(
 
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
 const HOSTNAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
+const canonicalIPv6 = (value: string): string => {
+  if (isIP(value) !== 6 || value.includes('%')) throw invalid('Enter a valid IPv6 bypass address.');
+  return new URL('http://[' + value + ']/').hostname.slice(1, -1);
+};
+const canonicalHost = (value: string): string => {
+  const bare = /^\[(.+)\]$/.exec(value)?.[1] ?? value;
+  return isIP(bare) === 6 && !bare.includes('%') ? canonicalIPv6(bare) : value.toLowerCase();
+};
+const canonicalPort = (value: string | undefined): string => {
+  if (!value) return '';
+  const port = Number(value);
+  if (port < 1 || port > 65535) throw invalid('Bypass port is out of range.');
+  return ':' + port;
+};
 /** Canonicalize one bypass entry; rejects wildcards, CIDR, schemes, paths per spec. */
 export function parseBypassEntry(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed || trimmed.length > 200) throw invalid('Bypass entries must be 1-200 characters.');
-  if (/[*\/]|:\/\/|\\/.test(trimmed)) throw invalid(`Unsupported bypass entry "${trimmed}". Use host, .suffix, host:port or [ipv6]:port.`);
-  // [ipv6]:port | [ipv6]
-  const v6 = trimmed.match(/^\[([0-9a-fA-F:]+)\](?::(\d{1,5}))?$/);
-  if (v6) {
-    if (v6[2] && (+v6[2] > 65535)) throw invalid('Bypass port is out of range.');
-    return `[${v6[1].toLowerCase()}]${v6[2] ? ':' + v6[2] : ''}`;
-  }
+  if (/[*\/]|:\/\/|\\/.test(trimmed)) throw invalid('Unsupported bypass entry. Use host, .suffix, host:port or [ipv6]:port.');
+  const v6 = trimmed.match(/^\[([^\]]+)\](?::(\d{1,5}))?$/);
+  if (v6) return '[' + canonicalIPv6(v6[1]) + ']' + canonicalPort(v6[2]);
+  if (isIP(trimmed) === 6) return '[' + canonicalIPv6(trimmed) + ']';
   const hostPort = trimmed.match(/^([^:]+)(?::(\d{1,5}))?$/);
-  if (!hostPort) throw invalid(`Unsupported bypass entry "${trimmed}".`);
+  if (!hostPort) throw invalid('Unsupported bypass entry.');
   const [, host, port] = hostPort;
-  if (port && (+port > 65535)) throw invalid('Bypass port is out of range.');
+  const portSuffix = canonicalPort(port);
   const suffix = host.startsWith('.');
   const bare = suffix ? host.slice(1) : host;
   const lower = bare.toLowerCase();
   if (IPV4.test(lower)) {
     if (lower.split('.').some(n => +n > 255)) throw invalid('Bypass IPv4 octet is out of range.');
   } else if (!HOSTNAME.test(lower) || lower.includes('..')) {
-    throw invalid(`Unsupported bypass host "${trimmed}".`);
+    throw invalid('Unsupported bypass host.');
   }
-  return `${suffix ? '.' : ''}${lower}${port ? ':' + port : ''}`;
+  return (suffix ? '.' : '') + lower + portSuffix;
 }
 export function canonicalizeBypass(list: string[]): string[] {
   return [...new Set(list.map(parseBypassEntry))].sort();
@@ -71,23 +85,22 @@ export function canonicalizeBypass(list: string[]): string[] {
 
 /** Effective-port aware bypass matcher (host-private). */
 export function bypassesHost(entries: string[], host: string, port: number): boolean {
-  const h = host.toLowerCase();
-  const v6 = /^\[(.+)\]$/.exec(h)?.[1];
+  const h = canonicalHost(host);
   for (const entry of entries) {
-    const m = entry.match(/^(.*?)(?::(\d{1,5}))?$/);
-    let eh = m![1], ep = m![2] ? +m![2] : null;
-    const ev6 = eh.match(/^\[(.+)\]$/);
-    if (ev6) eh = ev6[1];
+    const bracketed = entry.match(/^\[([^\]]+)\](?::(\d{1,5}))?$/);
+    const m = bracketed ?? (isIP(entry) === 6 ? [entry, entry] : entry.match(/^(.*?)(?::(\d{1,5}))?$/)!);
+    const eh = canonicalHost(m[1]), ep = m[2] ? +m[2] : null;
     if (ep !== null && ep !== port) continue;
     if (eh.startsWith('.')) {
       const suffix = eh.slice(1);
-      if (h === suffix || h.endsWith('.' + suffix) || (v6 && v6 === suffix)) return true;
-    } else if (h === eh || (v6 && v6 === eh)) return true;
+      if (h === suffix || h.endsWith('.' + suffix)) return true;
+    } else if (h === eh) return true;
   }
   // CIDR-style loopback entries from the mandatory list.
-  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h) && entries.includes('127.0.0.0/8')) return true;
-  if ((h === '::1' || v6 === '::1') && entries.includes('::1')) return true;
-  if ((h.startsWith('::ffff:127.') || (v6 ?? '').startsWith('::ffff:127.')) && entries.includes('[::ffff:127.0.0.0]/104')) return true;
+  if (isIP(h) === 4 && h.startsWith('127.') && entries.includes('127.0.0.0/8')) return true;
+  if (h === '::1' && entries.includes('::1')) return true;
+  const mapped = /^::ffff:([0-9a-f]{1,4}):[0-9a-f]{1,4}$/.exec(h);
+  if (mapped && (Number.parseInt(mapped[1], 16) >>> 8) === 127 && entries.includes('[::ffff:127.0.0.0]/104')) return true;
   return false;
 }
 
