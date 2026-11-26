@@ -91,10 +91,18 @@ export function useArtifactState(artifact: ArtifactRecord, record: UserStateReco
     void journalRead<PendingState | null>(key).then(saved => {
       if (!alive) return;
       if (saved) {
-        revision.current = Math.max(revision.current, lane.acknowledgedRevision, saved.baseRevision);
-        store.set('/values', saved.values);
-        dirty.current = true;
-        setStatus('Recovered draft · save to sync');
+        // A recovered draft is only valid on top of the revision it observed.
+        // Applying it over a newer save (this host or an acknowledged local
+        // save) would silently overwrite the newer content — keep it pending
+        // in the journal and report the conflict instead.
+        if (saved.baseRevision >= Math.max(revision.current, lane.acknowledgedRevision)) {
+          revision.current = saved.baseRevision;
+          store.set('/values', saved.values);
+          dirty.current = true;
+          setStatus('Recovered draft · save to sync');
+        } else {
+          setStatus('Newer state is saved · recovered draft kept');
+        }
       }
       setLoaded(true);
     }).catch(() => { if (alive) { setStatus('Local journal unavailable'); setLoaded(true); } });

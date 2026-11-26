@@ -133,7 +133,9 @@ export function createConversationReader(options: {onState?: (state: Conversatio
         if (update.transcriptChanged) {
           const previous = state.messages;
           cancelReads();
-          publish({context: next, messages: [], nextCursor: null, pending: true, historyPending: false});
+          // The acknowledged transcript stays visible until its replacement
+          // is ready; history() republishes messages and nextCursor atomically.
+          publish({context: next, pending: true});
           await history(version, true, previous);
           if (current(version) && state.context) publish({pending: false});
         } else publish({context: next});

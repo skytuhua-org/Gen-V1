@@ -25,6 +25,10 @@ export interface AgentMessageRow {
 }
 export interface PlanProgress {
   extension: boolean; planId: string;
+  weights?: {nodeId: string; units: number}[];
+  parentRelationships?: {parentId: string; childId: string}[];
+  /** Verbatim canonical status per node — reported completion, not accepted verification. Absent node = unreported. */
+  reportedStatuses?: Record<string, string>;
   progress?: {completed: number; pending: number; unknown: number; total: number};
 }
 
