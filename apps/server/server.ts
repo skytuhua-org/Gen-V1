@@ -190,8 +190,29 @@ export async function buildServer(service: Service, options: ServerOptions) {
   app.get<{ Params: { id: string } }>('/api/threads/:id/verification', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const { id } = request.params;
-    if (!service.store.get('thread', id) || service.store.get('archivedThread', id)) throw new HarnessError('NOT_FOUND', 'Thread unavailable');
-    return { seq: service.store.sequence, verification: verificationPanelModel(service.store, id) };
+    const assertThreadAvailable = () => {
+      if (!service.store.get('thread', id) || service.store.get('archivedThread', id))
+        throw new HarnessError('NOT_FOUND', 'Thread unavailable');
+    };
+    assertThreadAvailable();
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const close = () => { if (!reply.raw.writableEnded) abort(); };
+    request.raw.once('aborted', abort);
+    reply.raw.once('close', close);
+    try {
+      if (request.raw.aborted || reply.raw.destroyed) abort();
+      const verification = await verificationPanelModel(service.store, id, controller.signal);
+      controller.signal.throwIfAborted();
+      assertThreadAvailable();
+      return { seq: service.store.sequence, verification };
+    } catch (error) {
+      if (!controller.signal.aborted) throw error;
+      reply.hijack();
+    } finally {
+      request.raw.removeListener('aborted', abort);
+      reply.raw.removeListener('close', close);
+    }
   });
   app.get<{ Params: { id: string; artifactId: string } }>('/api/threads/:id/verification/artifacts/:artifactId', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

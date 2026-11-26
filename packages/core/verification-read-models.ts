@@ -7,7 +7,7 @@ import type {
   VerificationDeclarationV1, VisualObservationV1,
 } from '../contracts/verification.ts';
 import { computeAssessment, observationFreshness, observationMatchesThreadOwner, SecurityFindingLedger } from './verification-gate.ts';
-import { assertVerificationSourceRoot, sourceDigestSync } from './project-verification.ts';
+import { assertVerificationSourceRoot, readVerificationSourceCut } from './project-verification.ts';
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { join, sep } from 'node:path';
@@ -79,6 +79,8 @@ export interface VerificationPanelModel {
 }
 
 const short = (value: string) => (value.length > 12 ? value.slice(0, 12) : value);
+const sourceBasis = ({rootPath, sourceFiles, dependencyFiles, environmentId}: VerificationDeclarationV1) =>
+  JSON.stringify([rootPath, sourceFiles, dependencyFiles, environmentId]);
 
 function checkDetails(obs: CheckObservationV1 | VisualObservationV1): VerificationCheckDetails {
   // Functional browser assertions also carry visual fields. Their recorded
@@ -98,7 +100,7 @@ function checkDetails(obs: CheckObservationV1 | VisualObservationV1): Verificati
 const FINDINGS_CAP = 50;
 const FINDING_FILE_BYTES = 4 * 1024 * 1024;
 
-/** Git-style blob digest (`sha1("blob <len>\\0" + bytes)`) of one root-relative
+/** Git-style blob digest (`sha1("blob <len>\0" + bytes)`) of one root-relative
  * file, bounded and confined to the attested root. Null when the file cannot
  * be read as ordinary in-root custody. */
 function findingBlobDigest(rootPath: string, relative: string): string | null {
@@ -156,9 +158,27 @@ function findingRows(store: Store, threadId: string, rootPath: string | null): {
   return { rows, omitted: Math.max(0, all.length - FINDINGS_CAP) };
 }
 
-export function verificationPanelModel(store: Store, threadId: string): VerificationPanelModel {
+export async function verificationPanelModel(store: Store, threadId: string, signal?: AbortSignal): Promise<VerificationPanelModel> {
+  signal?.throwIfAborted();
+  let declaration = store.get<VerificationDeclarationV1>('verificationDeclaration', threadId);
+  // Re-digest the declared inputs on each read. A lost root, changed input
+  // or changed declaration makes that cut indeterminate.
+  let current: { codeDigest: string; dependencyDigest: string; environmentId: string } | null = null;
+  if (declaration) {
+    const basis = sourceBasis(declaration);
+    try {
+      const cut = await readVerificationSourceCut(store, threadId, declaration, signal);
+      cut.assertCurrent();
+      current = cut;
+    } catch {
+      signal?.throwIfAborted();
+    }
+    declaration = store.get<VerificationDeclarationV1>('verificationDeclaration', threadId);
+    if (current && (!declaration || sourceBasis(declaration) !== basis)) current = null;
+  }
+  // Read the owner and evidence after the source I/O so in-flight state changes
+  // are reflected in the returned projection.
   const thread = store.get<Thread>('thread', threadId);
-  const declaration = store.get<VerificationDeclarationV1>('verificationDeclaration', threadId);
   const assessments = store.all<DeliverableAssessmentV1>('assessment', threadId);
   const latest = assessments.at(-1) ?? null;
   const observations: (CheckObservationV1 | VisualObservationV1)[] = [
@@ -166,22 +186,6 @@ export function verificationPanelModel(store: Store, threadId: string): Verifica
     ...store.all<VisualObservationV1>('visualObservation', threadId),
   ];
   const ownedObservations = observations.filter(observation => observationMatchesThreadOwner(observation, thread));
-  // The current source cut describes the workspace at READ time, not when an
-  // assessment was saved: with a declaration, re-digest the declared inputs
-  // live. Unavailable inputs make freshness indeterminate — never verified.
-  let current: { codeDigest: string; dependencyDigest: string; environmentId: string } | null = null;
-  if (declaration) {
-    try {
-      assertVerificationSourceRoot(store, threadId, declaration.rootPath);
-      current = {
-        codeDigest: sourceDigestSync(declaration.rootPath, declaration.sourceFiles),
-        dependencyDigest: sourceDigestSync(declaration.rootPath, declaration.dependencyFiles),
-        environmentId: declaration.environmentId,
-      };
-    } catch {
-      current = null;
-    }
-  }
   // Completion snapshots cannot attest today's source or external effects.
   // Recompute the projection without rewriting any saved observation/assessment.
   const unresolvedEffects = store.all<ToolEffectRecord>('toolEffect', threadId)

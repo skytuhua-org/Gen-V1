@@ -76,10 +76,10 @@ describe('current artifact custody in the verification gate', () => {
 
   it.each(['deleted', 'changed'] as const)('loses current verification in every production projection when screenshot bytes are %s', async change => {
     const f = fixture();
-    expect(verificationPanelModel(f.store, f.thread.id).label).toBe('VERIFIED');
+    expect((await verificationPanelModel(f.store, f.thread.id)).label).toBe('VERIFIED');
     expect((await f.service.sourceWorkbench.evidence(f.thread.id)).items.find(item => item.id === 'requirement:app-ready')).toMatchObject({grade: 'VERIFIED', outcome: 'VERIFIED'});
     if (change === 'deleted') rmSync(f.path); else writeFileSync(f.path, Buffer.from('changed screenshot'));
-    expect(verificationPanelModel(f.store, f.thread.id).label).toBe('BLOCKED');
+    expect((await verificationPanelModel(f.store, f.thread.id)).label).toBe('BLOCKED');
     expect((await f.service.sourceWorkbench.evidence(f.thread.id)).items.find(item => item.id === 'requirement:app-ready')).toMatchObject({grade: 'REPORTED', outcome: 'BLOCKED'});
     expect((await f.finish()).label).toBe('BLOCKED');
     expect(f.store.get('visualObservation', f.observed.checkId)).toEqual(f.observed);
@@ -137,10 +137,10 @@ describe('bounded scoped security findings in the panel read model', () => {
     } as never, thread);
   };
 
-  it('shows same-owner detail with source, scope, status and advisory quality', () => {
+  it('shows same-owner detail with source, scope, status and advisory quality', async () => {
     const f = fixture();
     record(f);
-    const model = verificationPanelModel(f.store, f.thread.id);
+    const model = await verificationPanelModel(f.store, f.thread.id);
     expect(model.findings.rows).toHaveLength(1);
     expect(model.findings.rows[0]).toMatchObject({
       findingId: 'f-1', path: 'app.ts', line: 1, sourceState: 'CURRENT',
@@ -151,54 +151,54 @@ describe('bounded scoped security findings in the panel read model', () => {
     expect(model.findings.omitted).toBe(0);
   });
 
-  it('marks a finding stale when the source file changed after recording', () => {
+  it('marks a finding stale when the source file changed after recording', async () => {
     const f = fixture();
     record(f);
     const root = f.store.get<{rootPath: string}>('verificationDeclaration', f.thread.id)!.rootPath;
     writeFileSync(join(root, 'app.ts'), 'export const ready = false;\n');
-    expect(verificationPanelModel(f.store, f.thread.id).findings.rows[0].sourceState).toBe('STALE');
+    expect((await verificationPanelModel(f.store, f.thread.id)).findings.rows[0].sourceState).toBe('STALE');
   });
 
-  it('reports unavailable custody when the source file is missing', () => {
+  it('reports unavailable custody when the source file is missing', async () => {
     const f = fixture();
     record(f);
     const root = f.store.get<{rootPath: string}>('verificationDeclaration', f.thread.id)!.rootPath;
     rmSync(join(root, 'app.ts'));
-    expect(verificationPanelModel(f.store, f.thread.id).findings.rows[0].sourceState).toBe('UNAVAILABLE');
+    expect((await verificationPanelModel(f.store, f.thread.id)).findings.rows[0].sourceState).toBe('UNAVAILABLE');
   });
 
-  it('never leaks findings across owners', () => {
+  it('never leaks findings across owners', async () => {
     const f = fixture();
     record(f, {}, 'foreign-thread');
-    expect(verificationPanelModel(f.store, f.thread.id).findings.rows).toHaveLength(0);
-    expect(verificationPanelModel(f.store, 'foreign-thread').findings.rows).toHaveLength(1);
+    expect((await verificationPanelModel(f.store, f.thread.id)).findings.rows).toHaveLength(0);
+    expect((await verificationPanelModel(f.store, 'foreign-thread')).findings.rows).toHaveLength(1);
   });
 
-  it('bounds the list with an omission count', () => {
+  it('bounds the list with an omission count', async () => {
     const f = fixture();
     for (let index = 0; index < 55; index++) record(f, {findingId: `f-${index}`});
-    const model = verificationPanelModel(f.store, f.thread.id);
+    const model = await verificationPanelModel(f.store, f.thread.id);
     expect(model.findings.rows).toHaveLength(50);
     expect(model.findings.omitted).toBe(5);
   });
 
-  it('orders mixed-precision timestamps chronologically at the cap boundary', () => {
+  it('orders mixed-precision timestamps chronologically at the cap boundary', async () => {
     const f = fixture();
     const ledger = new SecurityFindingLedger(f.store);
     const bytes = Buffer.from('export const ready = true;\n');
     const base = {version: 1 as const, source: {path: 'app.ts', blobSha: blobSha(bytes), line: null}, authorizedScope: 'fixture', observation: 'o', impact: 'i', status: 'OPEN' as const, reproduction: null};
     ledger.record({...base, findingId: 'whole-second', createdAt: '2026-01-01T00:00:00Z'}, f.thread.id);
     ledger.record({...base, findingId: 'fractional-later', createdAt: '2026-01-01T00:00:00.500Z'}, f.thread.id);
-    const rows = verificationPanelModel(f.store, f.thread.id).findings.rows;
+    const rows = (await verificationPanelModel(f.store, f.thread.id)).findings.rows;
     expect(rows[0].findingId).toBe('fractional-later');
     expect(rows[1].findingId).toBe('whole-second');
   });
 
-  it('records reproduction as a non-executable presence label', () => {
+  it('records reproduction as a non-executable presence label', async () => {
     const f = fixture();
     const ledger = new SecurityFindingLedger(f.store);
     const bytes = Buffer.from('export const ready = true;\n');
     ledger.record({version: 1, findingId: 'f-repro', source: {path: 'app.ts', blobSha: blobSha(bytes), line: null}, authorizedScope: 'fixture', observation: 'o', impact: 'i', status: 'MITIGATED', reproduction: 'steps text', createdAt: new Date().toISOString()}, f.thread.id);
-    expect(verificationPanelModel(f.store, f.thread.id).findings.rows[0].reproductionRecorded).toBe(true);
+    expect((await verificationPanelModel(f.store, f.thread.id)).findings.rows[0].reproductionRecorded).toBe(true);
   });
 });
