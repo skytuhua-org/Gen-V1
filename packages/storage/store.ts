@@ -206,7 +206,7 @@ export class Store {
   }
   /** SQLITE_BUSY (5) and SQLITE_LOCKED (6) classify as retryable store contention. */
   private static transactionError(error: unknown): unknown {
-    const errcode = (error as { errcode?: number }).errcode;
+    const errcode = (error as { errcode?: number } | null | undefined)?.errcode;
     if (errcode === 5 || errcode === 6) return new HarnessError('STORE_BUSY', 'The store is busy with another writer. Retry the command.', { cause: (error as Error).message });
     return error;
   }
