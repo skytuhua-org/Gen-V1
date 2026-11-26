@@ -104,7 +104,7 @@ export function createConversationScroll(element:HTMLElement){
    return {top:element.scrollTop,tail:following&&(spring.active||nearTail())};
   },
   jump():ConversationPosition{
-   following=true;follow();return {top:maximum(),tail:true};
+   interrupt();following=true;follow();return {top:maximum(),tail:true};
   },
   /** Prompt navigation: one cancellable controller-owned 220ms move. The caller
    * keeps the returned handle; every existing interrupt path also cancels it. */
@@ -125,6 +125,14 @@ export function createConversationScroll(element:HTMLElement){
    if(Math.abs(target-start)<1||document.visibilityState==='hidden'||readMotionPolicy()!=='full'){write(target);landed?.();return {cancel:()=>{}};}
    navSettle=settle;navFrame=requestAnimationFrame(step);
    return {cancel(){if(navSettle===settle)cancelNavigation();}};
+  },
+  /** Controller-owned reading jump: interrupts pending tail motion and never
+   * reattaches to the tail; an explicit jump()/user intent resumes normal
+   * behavior. */
+  jumpToReadingPosition(top:number):ConversationPosition{
+   if(disposed)return {top:element.scrollTop,tail:false};
+   interrupt();element.scrollTop=Math.max(0,Math.min(maximum(),top));ownedTop=element.scrollTop;
+   return {top:element.scrollTop,tail:false};
   },
   dispose(){
    if(disposed)return;disposed=true;cancelNavigation();spring.dispose();observer.disconnect();observed.clear();

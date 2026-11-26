@@ -255,3 +255,37 @@ it('rejects invalid or disposed prompt navigation requests',()=>{
  expect(f.scroll.navigateTo(Number.NaN)).toBeNull();
  f.scroll.dispose();expect(f.scroll.navigateTo(100)).toBeNull();f.tick(5);expect(f.element.scrollTop).toBe(600);
 });
+
+it('lands a reading jump without reattaching to the tail',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});f.tick(60);
+ expect(f.element.scrollTop).toBe(600);expect(f.scroll.position().tail).toBe(true);
+ expect(f.scroll.jumpToReadingPosition(200)).toEqual({top:200,tail:false});
+ f.element.scrollHeight=1600;f.resize();f.tick(20);
+ expect(f.element.scrollTop).toBe(200);expect(f.frames.size).toBe(0);
+ expect(f.scroll.jump()).toEqual({top:1200,tail:true});f.scroll.dispose();
+});
+
+it('ignores a reading jump after dispose',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});f.tick(60);
+ f.scroll.dispose();
+ expect(f.scroll.jumpToReadingPosition(50)).toEqual({top:600,tail:false});
+});
+
+it('Jump to latest supersedes an in-flight prompt without a stale landing',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});const landed=vi.fn();
+ f.scroll.navigateTo(200,landed);f.tick(3);
+ expect(f.element.scrollTop).toBeGreaterThan(200);expect(f.element.scrollTop).toBeLessThan(600);
+ expect(f.scroll.jump()).toEqual({top:600,tail:true});f.tick(60);
+ expect(f.element.scrollTop).toBe(600);expect(landed).not.toHaveBeenCalled();expect(f.frames.size).toBe(0);
+ f.element.scrollHeight=1600;f.resize();f.tick(60);
+ expect(f.element.scrollTop).toBe(1200);expect(f.scroll.position().tail).toBe(true);f.scroll.dispose();
+});
+
+it('a reading jump supersedes an in-flight prompt and keeps the reader detached',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});const landed=vi.fn();
+ f.scroll.navigateTo(200,landed);f.tick(3);
+ expect(f.scroll.jumpToReadingPosition(350)).toEqual({top:350,tail:false});f.tick(30);
+ expect(f.element.scrollTop).toBe(350);expect(landed).not.toHaveBeenCalled();expect(f.frames.size).toBe(0);
+ f.element.scrollHeight=1600;f.resize();f.tick(30);
+ expect(f.element.scrollTop).toBe(350);expect(f.scroll.position().tail).toBe(false);f.scroll.dispose();
+});
