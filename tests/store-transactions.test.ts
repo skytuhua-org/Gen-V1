@@ -38,6 +38,23 @@ function setup() {
 }
 
 describe("store transaction consistency", () => {
+  it.each([null, undefined])("preserves a thrown %s after rolling back the write", cause => {
+    const store = setup();
+    let observed: unknown = Symbol("transaction did not throw");
+    try {
+      store.internal("fixture.nullish.failure", null, () => {
+        store.put("sample", "nullish", null, {v: 1});
+        throw cause;
+      });
+    } catch (error) {
+      observed = error;
+    }
+    expect(store.get("sample", "nullish")).toBeNull();
+    expect(store.sequence).toBe(0);
+    expect(store.db.isTransaction).toBe(false);
+    expect(observed).toBe(cause);
+  });
+
   it("maps a second writer's lock to STORE_BUSY instead of a raw SQLite error", () => {
     const store = setup();
     const other = new DatabaseSync(join(store.dataDir, "harness.sqlite"));
