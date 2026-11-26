@@ -17,14 +17,14 @@ describe('reusable source-bound task surfaces', () => {
       expect(() => validateSurface(tabs(labels))).toThrow(expect.objectContaining({ code: 'INVALID_SURFACE' }));
     }
   });
-  it('preserves exact Tabs label identities and existing admission limits', () => {
-    for (const labels of [['Details', 'details'], [' Details', 'Details'], ['é', 'e\u0301'], ['', 'Details'], ['Only'], Array.from({ length: 20 }, (_, i) => String(i))]) {
+  it('preserves exact Tabs label identities within the current admission limits', () => {
+    for (const labels of [['Details', 'details'], [' Details', 'Details'], ['é', 'e\u0301'], ['x'], ['x'.repeat(500)], ['Only'], Array.from({ length: 20 }, (_, i) => String(i))]) {
       expect(() => validateSurface(tabs(labels))).not.toThrow();
     }
     const mismatched = tabs(['A', 'B']); mismatched.elements.tabs.children.pop();
     delete (mismatched.elements as Record<string, unknown>).input1;
     expect(() => validateSurface(mismatched)).toThrow(/Tabs labels and children must match/);
-    for (const labels of [[], Array.from({ length: 21 }, (_, i) => String(i)), ['x'.repeat(100_001)]]) expect(() => validateSurface(tabs(labels))).toThrow(HarnessError);
+    for (const labels of [[], ['', 'Details'], ['x'.repeat(501)], Array.from({ length: 21 }, (_, i) => String(i)), ['x'.repeat(100_001)]]) expect(() => validateSurface(tabs(labels))).toThrow(HarnessError);
     expect(() => validateSurface(tabs(['x'.repeat(70_000), 'y'.repeat(70_000)]))).toThrow(/128 KiB/);
     const deep = tabs(['A']);
     for (let i = 0; i < 11; i++) {
