@@ -6,7 +6,7 @@
   "scopeCount": 82,
   "originalCount": 45,
   "expandedCount": 33,
-  "updatedUtc": "2026-11-26 02:23:08 UTC",
+  "updatedUtc": "2026-11-26T03:57:00Z",
   "otherReviews": {
     "2303": "lane-a-2303-review.json",
     "1310": "29PASS local; later coordinator integration rerun had selection variability, coordinator owns final state",
@@ -16,25 +16,64 @@
     "2119/2120": "Independent same-pointer release probe reproduced cancellation suppression bug; root846d43 correction plus unchanged probe atb08ffada passed Escape/blur no-menu assertions. Logs lane-a-corner-cancel-probe*.log; root owns final trees/gates.",
     "2121": "Independent final feature read and actual probe found missing arrow wrap and ignored app reduced/off policy; root corrected both under accepted2105. Unchanged probe atc8725eb4 confirmed wrap activation and auto scrolling; root owns final gates. Logs lane-a-2121-tabs-probe*.log.",
     "1632": {
-      "status": "additional-transfer-in-progress",
+      "status": "confirmed-repair-published-original-queue-held",
       "originalHead": "ff9e1093ddba30bd20e2040d6b581856df082a59",
-      "boundedRepair": "d4c39ae77",
-      "integratedLocal": "9c721cd71",
-      "claim": 7180686679,
-      "evidence": "7newbrowserPASS/17focusedPASS before integration;35integratedfocusedPASS; new heading slug collision qualified and pending repair",
-      "publication": "NOT_YET_PUBLISHED"
+      "remote": "fd3c692ba12c4e6013cfe24223916fc3ec5f358b",
+      "tree": "9ff8ebe5d5952cc8c064762ac1424f57d1ed46cf",
+      "artifact": "lane-a-1632-publication.json",
+      "testedMain": "0a370b35a490d436c362f184d3b840c0710a3cf3",
+      "validation": "37focused/6files,19 final affected Markdown browser and4declared gates PASS. Prior101 complete Files/Search browser before final slug retained, not a final103 claim. Root reviewed full correction/main Markdown union/unique-slug delta.",
+      "releaseComment": 7180869284,
+      "reviewComment": 6067762927,
+      "limits": [
+        "Original queue update blocked.",
+        "Native/requiredCI/full feature acceptance remain separate.",
+        "d59 clean read-only merge-tree is not a new test receipt."
+      ]
+    },
+    "1861": {
+      "status": "complete-readonly-original-merged",
+      "originalHead": "355e71a943ff531b53f1928c2181dda397b48a18",
+      "mergeCommit": "b5cab927874f247c61b026726d7f58038b23ea38",
+      "artifact": "lane-a-1861-source-review.json",
+      "review": "Full25 changed paths plus retained callers/packager;21 restored modules exactly match official NousResearch/hermes-agent@c627ec84664d43e0b18b95d9d86d8963747d56c7.",
+      "validation": "763 local custody,21 Python AST,22 packaging/public-source PASS;two behavior checks blocked before assertions by absent isolated ruamel on Python3.12.14.",
+      "releaseComment": 7181202291,
+      "limits": [
+        "No native/full-workflow acceptance inferred.",
+        "No source edits or interrupted1483 operation."
+      ]
+    },
+    "1563": {
+      "status": "distinct-T03-T04-implementation-claimed-runtime-proof-pending",
+      "rootTopical": "e97eda104055ed6a5edc38b5b6fc4d7f467eb396",
+      "rootGrammarCorrection": "8d207c6c1adbf8c041bf62ab39d0c9a8fa88a623",
+      "review": "Read complete8-file correction/fullproduction/callers/plan/journal. A found whole-segment ** mismatch via five pure-schema cases; root added3RED->GREEN and minimal refinement, final delta independently clear.",
+      "rootExecution": "Root117 related PASS/2nativeSKIP,8Settings+3mentions browser and4gates PASS; A does not claim duplicate execution.",
+      "additionalScope": "Root durable handoff accepted and both exact implementation claims read back. Source-revision gaps confirmed; portable runtime RED and minimal correction pending. Exact production scope project-search.ts,approved-project-context.ts,Service existing policy helpers/context.withResource; new agent-file-policy-revision.test.ts plus source entry only.",
+      "claimComment": 7181912006,
+      "checkpointComment": 7181965285,
+      "limits": [
+        "Native/model-boundary/full feature acceptance held.",
+        "A made no root-worktree source changes."
+      ],
+      "startingRemote": "533e3352b94ac03d1991a54c4a5e5aa67c7fd6a6",
+      "startingTree": "1001b4cc58009f65db47ebfe4ca31943d330ba09",
+      "rootRelease": 7182104445,
+      "independentRelease": 7182154520,
+      "implementationClaim": 7182154989,
+      "parentClaim": 7182165891
     }
   },
   "remaining": [
-    "Finish additional transferred1632 collision regression, accepted-main integration and final declared gates/publication/release",
-    "Integrate355 current accepted-main tool-definitions conflict and publish normal leased update if permitted",
-    "Coordinate own older candidate conflicts1070/1174/1204 and original982/1249 with coordinator; do not infer all PRs ready from source inspection",
-    "Publish compact durable evidence ledger and release parent scope after agreed remaining work"
+    "After durable root1563 handoff, claim and qualify three accepted T03/T04 policy-revision boundaries with portable synthetic fixtures; repair only demonstrated failures, independent review, final gates/publication/release.",
+    "Refresh exact main/canonical claims, then integrate legacy1174/1204/982/1249 without unreviewed queue predecessors.",
+    "Publish final acceptance-aware evidence and release parent only after assigned work."
   ],
   "sourceInspectionCount": 82,
   "sourceUnreadCount": 0,
   "transferredCount": 4,
-  "acceptedMainAtLatestIntegration": "0a370b35a490d436c362f184d3b840c0710a3cf3",
+  "acceptedMainAtLatestIntegration": "3db4e3f87f9a55e7d8aa1a6c82025653afbed13e",
   "readinessMeaning": "Source inspection complete for82 recorded original heads; no aggregate merge-ready claim. Actual queue membership/heads/checks belong to live coordinator census.",
   "prs": [
     {
@@ -547,12 +586,14 @@
         "tests/tool-program-v3.test.ts"
       ],
       "semanticReview": "Confirmed and repaired pre-dispatch KERNEL_GRANT_LIMIT state loss while keeping uncertain/post-dispatch reset. Current-main integration preserves both M12/M16 service groups and semantic manifest union; portable real-allocation fixture keeps logical64MiB/allocated>64MiB contract. Original branch updated normally to5eea8bf40dbc5e081975040d7d7dc9b3ca0d417d after independent review.",
-      "state": "repair-applied-historical-head-new-accepted-main-conflict-pending",
+      "state": "repair-adopted-open-unmerged",
       "repair": {
-        "commit": "5eea8bf40dbc5e081975040d7d7dc9b3ca0d417d",
-        "validation": "158tests/11files; type/UIlint/Bunlint/buildPASS; Windows/nativepending",
-        "artifact": "lane-a-355-current-publication.json",
-        "url": "https://github.com/skytuhua-org/Gen-V1/commit/5eea8bf40dbc5e081975040d7d7dc9b3ca0d417d"
+        "commit": "20d6bfd9eac2de8a0110a4eaf3b6f1eab31f2b84",
+        "tree": "9e6e8c185f196133debeff895d2d6ce5ef7f0611",
+        "artifact": "lane-a-355-main-latest-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/20d6bfd9eac2de8a0110a4eaf3b6f1eab31f2b84",
+        "testedMain": "d59a861e7cdf0a1d24e4c07c1ee142b4d844206d",
+        "validation": "167 focused / 6 files and all four declared gates PASS. Root independently reviewed the service/tool-definitions union and portable allocated-byte fixture."
       },
       "limits": [
         "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
@@ -560,13 +601,40 @@
         "No additional exact-head unit run selected; source inspection and any separately recorded targeted/browser evidence apply."
       ],
       "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
-      "publicationEvidenceFile": "lane-a-355-current-publication.json",
-      "publicationEvidence": "lane-a-355-current-publication.json",
+      "publicationEvidenceFile": "lane-a-355-main-latest-publication.json",
+      "publicationEvidence": "lane-a-355-main-latest-publication.json",
       "followups": [
-        "Integrate accepted main0a370 and resolve new packages/runtime-pi/tool-definitions.ts conflict under a fresh exact claim; retain portable allocated-byte fixture and grant-limit correction",
-        "Rerun focused and final declared gates before ordinary expected-SHA update"
+        "Ordinary guarded original update succeeded. Required CI, merge-group and newer-base compatibility remain separate.",
+        "Native Linux/WSL/Windows quota and hard-I/O activation acceptance remain held."
       ],
-      "tests": []
+      "tests": [],
+      "publicationHistory": [
+        {
+          "state": "repair-applied-historical-head-new-accepted-main-conflict-pending",
+          "repair": {
+            "commit": "5eea8bf40dbc5e081975040d7d7dc9b3ca0d417d",
+            "validation": "158tests/11files; type/UIlint/Bunlint/buildPASS; Windows/nativepending",
+            "artifact": "lane-a-355-current-publication.json",
+            "url": "https://github.com/skytuhua-org/Gen-V1/commit/5eea8bf40dbc5e081975040d7d7dc9b3ca0d417d"
+          },
+          "followups": [
+            "Integrate accepted main0a370 and resolve new packages/runtime-pi/tool-definitions.ts conflict under a fresh exact claim; retain portable allocated-byte fixture and grant-limit correction",
+            "Rerun focused and final declared gates before ordinary expected-SHA update"
+          ],
+          "publicationEvidence": "lane-a-355-current-publication.json"
+        }
+      ],
+      "releaseComment": 7181000051,
+      "latestObservedOriginalPr": {
+        "pr": 355,
+        "head": "20d6bfd9eac2de8a0110a4eaf3b6f1eab31f2b84",
+        "state": "open",
+        "merged": false,
+        "mergedAt": null,
+        "mergeCommit": null,
+        "url": "https://github.com/skytuhua-org/Gen-V1/pull/355",
+        "observedAtUtc": "2026-11-26T03:51:00Z"
+      }
     },
     {
       "pr": 812,
@@ -637,7 +705,17 @@
       "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
       "publicationEvidenceFile": "lane-a-812-main-publication.json",
       "publicationEvidence": "lane-a-812-main-publication.json",
-      "tests": []
+      "tests": [],
+      "followUp": {
+        "pr": 2328,
+        "head": "1d28d91a68e21e864c08ab250377d90a6a61b75c",
+        "state": "open",
+        "merged": false,
+        "mergedAt": null,
+        "mergeCommit": null,
+        "url": "https://github.com/skytuhua-org/Gen-V1/pull/2328",
+        "observedAtUtc": "2026-11-26T03:51:00Z"
+      }
     },
     {
       "pr": 1290,
@@ -1663,10 +1741,14 @@
         "tests/pdf-text-extraction.test.ts"
       ],
       "semanticReview": "Confirmed bounded PDF TJ-array append overflow, unmatched operand array poisoning and invalid hex handling. Added looped append, operator reset and incremental hex prefix parse;3RED then21PASS across3files.",
-      "state": "semantic-reviewed",
+      "state": "repair-published-original-unadopted-queue-held",
       "repair": {
-        "commit": "14cd79e7003cb90c98647393cc368e8ad56afefc",
-        "validation": "21tests/3files; Buncheck/UIlint/buildPASS; declaredtscOOM"
+        "commit": "280a9864f6c027eacf4a8a396dc2307507d9421b",
+        "tree": "317117b755ff8e38b65cd5def26fd23cd37fe7ea",
+        "artifact": "lane-a-1070-current-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/280a9864f6c027eacf4a8a396dc2307507d9421b",
+        "testedMain": "3e63ce3b5c5bf2352dd80aabe9b9db79b5a9d6f9",
+        "validation": "42 focused / 5 files and all four current declared gates PASS. Exact main manifest plus one test; three parser repair blobs unchanged. Historical declared tsc OOM at 2GiB/8GiB remains distinct."
       },
       "limits": [
         "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
@@ -1675,9 +1757,34 @@
         "Declared tsc attempts OOM at2GiB/8GiB; supplemental Bun check passed. Native parser/runtime qualification remains separate."
       ],
       "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
-      "publicationEvidenceFile": "lane-a-1070-publication.json",
-      "publicationEvidence": "lane-a-1070-publication.json",
-      "tests": []
+      "publicationEvidenceFile": "lane-a-1070-current-publication.json",
+      "publicationEvidence": "lane-a-1070-current-publication.json",
+      "tests": [],
+      "publicationHistory": [
+        {
+          "state": "semantic-reviewed",
+          "repair": {
+            "commit": "14cd79e7003cb90c98647393cc368e8ad56afefc",
+            "validation": "21tests/3files; Buncheck/UIlint/buildPASS; declaredtscOOM"
+          },
+          "publicationEvidence": "lane-a-1070-publication.json"
+        }
+      ],
+      "releaseComment": 7181565421,
+      "followups": [
+        "REQUEST_CHANGES6068072293 accepted/read back; one ordinary expected-head force=false update was queue-rejected. Original3366 remains OPEN/unmerged.",
+        "Native parser/Windows/installed acceptance and required hosted checks pending."
+      ],
+      "latestObservedOriginalPr": {
+        "pr": 1070,
+        "head": "3366c06ce348b815bfd9d162531957b1b40867a0",
+        "state": "open",
+        "merged": false,
+        "mergedAt": null,
+        "mergeCommit": null,
+        "url": "https://github.com/skytuhua-org/Gen-V1/pull/1070",
+        "observedAtUtc": "2026-11-26T03:51:00Z"
+      }
     },
     {
       "pr": 1021,
@@ -1938,8 +2045,8 @@
         "tests/composer-send-timeout.test.ts",
         "tests/conversation-message-time.test.ts"
       ],
-      "semanticReview": "Reviewed relative timestamp formatter/timer disposal and inherited composer path. Applied same verified1858 pending-journal cancellation and Cancel-button default prevention correction in independent artifact e4016c4138bd6f5a59df8440eeb95cf2690a052e. Accepted T00 timestamp policy remains contradictory between1282/1430 absolute/system and relative-under24h behavior; policy/integration HOLD remains.",
-      "state": "confirmed-repair-published-original-branch-held",
+      "semanticReview": "Reviewed relative timestamp formatter/timer disposal and inherited composer path. Applied same verified1858 pending-journal cancellation and Cancel-button default prevention correction in independent artifact e4016c4138bd6f5a59df8440eeb95cf2690a052e. Accepted T00 timestamp policy remains contradictory between1282/1430 absolute/system and relative-under24h behavior; policy/integration HOLD remains. Original subsequently merged without cancellation correction; ordinary focused follow-up2344 preserves five reviewed repair/test blobs on mainf13.",
+      "state": "original-merged-unfixed-followup2344-open",
       "limits": [
         "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
         "No blanket native Windows or screen-reader qualification inferred from Linux synthetic tests.",
@@ -1947,12 +2054,16 @@
         "Older branch declares tsc; supplemental Bun check is not a claimed successful tsc run."
       ],
       "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
-      "publicationEvidenceFile": "lane-a-1859-publication.json",
-      "publicationEvidence": "lane-a-1859-publication.json",
+      "publicationEvidenceFile": "lane-a-1859-main-publication.json",
+      "publicationEvidence": "lane-a-1859-main-publication.json",
       "repair": {
-        "commit": "e4016c4138bd6f5a59df8440eeb95cf2690a052e",
-        "artifact": "lane-a-1859-publication.json",
-        "url": "https://github.com/skytuhua-org/Gen-V1/commit/e4016c4138bd6f5a59df8440eeb95cf2690a052e"
+        "commit": "426329e37df05690c5f8a03a152a584b0f75a86f",
+        "tree": "b081721f15551996a1d39a527ff7c4f9066235d2",
+        "artifact": "lane-a-1859-main-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/426329e37df05690c5f8a03a152a584b0f75a86f",
+        "testedMain": "f13a02de8ad6ac81f106f1a86241283be25be6a5",
+        "validation": "Current-main two held-persistence unit RED cases plus actual Cancel-button browser RED / Escape PASS ->58focusedPASS and11 complete terminal-excerpts browser PASS;all four declared gates PASS. Five blobs equal reviewed e401; root independent source/blob review.",
+        "followupPr": 2344
       },
       "tests": [
         {
@@ -1965,7 +2076,44 @@
           "numPendingTests": 0,
           "success": true
         }
-      ]
+      ],
+      "publicationHistory": [
+        {
+          "state": "confirmed-repair-published-original-branch-held",
+          "repair": {
+            "commit": "e4016c4138bd6f5a59df8440eeb95cf2690a052e",
+            "artifact": "lane-a-1859-publication.json",
+            "url": "https://github.com/skytuhua-org/Gen-V1/commit/e4016c4138bd6f5a59df8440eeb95cf2690a052e"
+          },
+          "publicationEvidence": "lane-a-1859-publication.json"
+        }
+      ],
+      "releaseComment": 7181416320,
+      "followups": [
+        "Original cancellation correction did not land with originals; ordinary follow-up2344 remains OPEN/unmerged.",
+        "1856T00 timestamp policy contradiction stays HOLD; cancellation correction does not resolve it.",
+        "Later3e63 merge-tree clean is simulation only, not a later-base test receipt."
+      ],
+      "latestObservedOriginalPr": {
+        "pr": 1859,
+        "head": "8e4e6de044f7041fcb0a01a496116bc301cd5673",
+        "state": "closed",
+        "merged": true,
+        "mergedAt": "2026-11-26T02:37:45Z",
+        "mergeCommit": "f13a02de8ad6ac81f106f1a86241283be25be6a5",
+        "url": "https://github.com/skytuhua-org/Gen-V1/pull/1859",
+        "observedAtUtc": "2026-11-26T03:51:00Z"
+      },
+      "followUp": {
+        "pr": 2344,
+        "head": "426329e37df05690c5f8a03a152a584b0f75a86f",
+        "state": "open",
+        "merged": false,
+        "mergedAt": null,
+        "mergeCommit": null,
+        "url": "https://github.com/skytuhua-org/Gen-V1/pull/2344",
+        "observedAtUtc": "2026-11-26T03:51:00Z"
+      }
     },
     {
       "pr": 1858,
@@ -1978,13 +2126,16 @@
         "tests/agents-workspace-grid-fixture.ts",
         "tests/composer-send-timeout.test.ts"
       ],
-      "semanticReview": "Reviewed complete composer submission/cancellation/retry and journal/API ordering. Reproduced pending-persistence unhandled abort and late send plus Cancel button automatic resubmit after React changes button type. Verified two bounded corrections and immutable64fe96d artifact; original queued branch remains unchanged.",
-      "state": "confirmed-repair-published-original-branch-held",
+      "semanticReview": "Reviewed complete composer submission/cancellation/retry and journal/API ordering. Reproduced pending-persistence unhandled abort and late send plus Cancel button automatic resubmit after React changes button type. Verified two bounded corrections and immutable64fe96d artifact; original queued branch remains unchanged. Original subsequently merged without cancellation correction; ordinary focused follow-up2344 preserves five reviewed repair/test blobs on mainf13.",
+      "state": "original-merged-unfixed-followup2344-open",
       "repair": {
-        "commit": "64fe96d064660d2f8b90d7deb4c3c392d4e1d2a6",
-        "validation": "41units/3files;11browser; Buncheck1504; UIlint630/0; build; actualBunlint--no-scriptPASS; declaredtscnotrerun",
-        "artifact": "lane-a-1858-publication.json",
-        "url": "https://github.com/skytuhua-org/Gen-V1/commit/64fe96d064660d2f8b90d7deb4c3c392d4e1d2a6"
+        "commit": "426329e37df05690c5f8a03a152a584b0f75a86f",
+        "tree": "b081721f15551996a1d39a527ff7c4f9066235d2",
+        "artifact": "lane-a-1859-main-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/426329e37df05690c5f8a03a152a584b0f75a86f",
+        "testedMain": "f13a02de8ad6ac81f106f1a86241283be25be6a5",
+        "validation": "Current-main two held-persistence unit RED cases plus actual Cancel-button browser RED / Escape PASS ->58focusedPASS and11 complete terminal-excerpts browser PASS;all four declared gates PASS. Five blobs equal reviewed e401; root independent source/blob review.",
+        "followupPr": 2344
       },
       "limits": [
         "Review is bound to this exact head; current-main integration and required repository CI are separate gates.",
@@ -1992,8 +2143,8 @@
         "Older branch declares tsc; supplemental Bun check is not a claimed successful tsc run."
       ],
       "sourceInspection": "COMPLETE_FOR_RECORDED_HEAD",
-      "publicationEvidenceFile": "lane-a-1858-publication.json",
-      "publicationEvidence": "lane-a-1858-publication.json",
+      "publicationEvidenceFile": "lane-a-1859-main-publication.json",
+      "publicationEvidence": "lane-a-1859-main-publication.json",
       "tests": [
         {
           "head": "df655bdc23a8a5c640a1febc280ca8f07a03ca38",
@@ -2005,7 +2156,45 @@
           "numPendingTests": 0,
           "success": true
         }
-      ]
+      ],
+      "publicationHistory": [
+        {
+          "state": "confirmed-repair-published-original-branch-held",
+          "repair": {
+            "commit": "64fe96d064660d2f8b90d7deb4c3c392d4e1d2a6",
+            "validation": "41units/3files;11browser; Buncheck1504; UIlint630/0; build; actualBunlint--no-scriptPASS; declaredtscnotrerun",
+            "artifact": "lane-a-1858-publication.json",
+            "url": "https://github.com/skytuhua-org/Gen-V1/commit/64fe96d064660d2f8b90d7deb4c3c392d4e1d2a6"
+          },
+          "publicationEvidence": "lane-a-1858-publication.json"
+        }
+      ],
+      "releaseComment": 7181416320,
+      "followups": [
+        "Original cancellation correction did not land with originals; ordinary follow-up2344 remains OPEN/unmerged.",
+        "1856T00 timestamp policy contradiction stays HOLD; cancellation correction does not resolve it.",
+        "Later3e63 merge-tree clean is simulation only, not a later-base test receipt."
+      ],
+      "latestObservedOriginalPr": {
+        "pr": 1858,
+        "head": "df655bdc23a8a5c640a1febc280ca8f07a03ca38",
+        "state": "closed",
+        "merged": true,
+        "mergedAt": "2026-11-26T02:37:46Z",
+        "mergeCommit": "df655bdc23a8a5c640a1febc280ca8f07a03ca38",
+        "url": "https://github.com/skytuhua-org/Gen-V1/pull/1858",
+        "observedAtUtc": "2026-11-26T03:51:00Z"
+      },
+      "followUp": {
+        "pr": 2344,
+        "head": "426329e37df05690c5f8a03a152a584b0f75a86f",
+        "state": "open",
+        "merged": false,
+        "mergedAt": null,
+        "mergeCommit": null,
+        "url": "https://github.com/skytuhua-org/Gen-V1/pull/2344",
+        "observedAtUtc": "2026-11-26T03:51:00Z"
+      }
     },
     {
       "pr": 1854,
@@ -2801,21 +2990,23 @@
         "No native Windows or assistive-technology qualification inferred.",
         "Verified repair exists on a durable isolated branch; original queued PR did not receive it."
       ],
-      "semanticReview": "Production UI and portable host regressions reproduced stale-owner binding/pin adoption, premature resume reads, invalid binding retention, thread/path identity mismatches, guarded-read/final-async-recheck Store rebinds and active-unpin refresh mismatch. Correction uses the existing committed-owner fence, validates folder binding before preview, clears invalid accepted data, and performs a synchronous Store-owner check after physical revalidation. Root independently reviewed full patch plus final recheck correction. Integrated accepted main0a370.",
-      "state": "confirmed-repair-published-original-branch-held",
+      "semanticReview": "Production UI and portable host regressions reproduced stale-owner binding/pin adoption, premature resume reads, invalid binding retention, thread/path identity mismatches, guarded-read/final-async-recheck Store rebinds and active-unpin refresh mismatch. Correction uses the existing committed-owner fence, validates folder binding before preview, clears invalid accepted data, and performs a synchronous Store-owner check after physical revalidation. Root independently reviewed full patch plus final recheck correction. Integrated accepted main0a370. Original subsequently merged without the repair; ordinary current-main follow-up2345 now contains the nine reviewed product/test blobs and current manifest union.",
+      "state": "original-merged-unfixed-followup2345-open",
       "followups": [
-        "Original branch update remains blocked by queued-branch protection",
-        "Live required CI, accepted-main integration freshness and native acceptance remain coordinator/maintainer gates"
+        "Original0823 merged without correction as3db at2026-11-26T03:09:56Z. Old84ef remained unapplied; main is not fixed until ordinary follow-up2345 merges.",
+        "Portable host tests mock native path guard; original15PASS/13Linuxsafe-openFAIL stays historical. Native/T07/manual-editor/frontend/requiredCI gates remain."
       ],
       "coordinatorTestEvidenceFile": "root-source-tests-results.json",
       "repair": {
-        "commit": "84ef7f48e72973ef2ffd5dc36a9a2a34f5cb0f06",
-        "tree": "b5811f7027a6bf76ec2899a4625e282ea472239b",
-        "artifact": "lane-a-1801-publication.json",
-        "url": "https://github.com/skytuhua-org/Gen-V1/commit/84ef7f48e72973ef2ffd5dc36a9a2a34f5cb0f06",
-        "validation": "42 focused tests PASS after final Store fence; fixture-only projectName correction reran11 protocol tests and final declared Bun/UI/Bun-lint/build, allPASS. Full84 Files/Search browser PASS at20592 with final UI/browser bytes unchanged. Real Store/files/realpath/lstat; native guard mocked. Original native baseline15PASS/13Linuxsafe-openFAIL remains."
+        "commit": "c67136094fcfa2e081735177fa36eb6e05b53df2",
+        "tree": "ed0a2ed1a4b771bc92fdae641a35327ec4b87837",
+        "artifact": "lane-a-1801-main-publication.json",
+        "url": "https://github.com/skytuhua-org/Gen-V1/commit/c67136094fcfa2e081735177fa36eb6e05b53df2",
+        "testedMain": "3db4e3f87f9a55e7d8aa1a6c82025653afbed13e",
+        "validation": "Main test-only 16FAIL/13PASS -> 42focusedPASS/4files;84 complete Files/Search browser PASS; all four declared gates PASS. Root independently verified nine non-manifest blobs equal fully reviewed84ef and exact current manifest union.",
+        "followupPr": 2345
       },
-      "publicationEvidence": "lane-a-1801-publication.json",
+      "publicationEvidence": "lane-a-1801-main-publication.json",
       "tests": [
         {
           "head": "0823cf6a8436f6a1a13a771693402e09c410304f",
@@ -2887,7 +3078,46 @@
           ]
         }
       ],
-      "coordinatorTests": "15PASS/13native-safe-openFAIL at original exact head; Linux failures do not qualify native Windows paths"
+      "coordinatorTests": "15PASS/13native-safe-openFAIL at original exact head; Linux failures do not qualify native Windows paths",
+      "publicationHistory": [
+        {
+          "state": "confirmed-repair-published-original-branch-held",
+          "repair": {
+            "commit": "84ef7f48e72973ef2ffd5dc36a9a2a34f5cb0f06",
+            "tree": "b5811f7027a6bf76ec2899a4625e282ea472239b",
+            "artifact": "lane-a-1801-publication.json",
+            "url": "https://github.com/skytuhua-org/Gen-V1/commit/84ef7f48e72973ef2ffd5dc36a9a2a34f5cb0f06",
+            "validation": "42 focused tests PASS after final Store fence; fixture-only projectName correction reran11 protocol tests and final declared Bun/UI/Bun-lint/build, allPASS. Full84 Files/Search browser PASS at20592 with final UI/browser bytes unchanged. Real Store/files/realpath/lstat; native guard mocked. Original native baseline15PASS/13Linuxsafe-openFAIL remains."
+          },
+          "followups": [
+            "Original branch update remains blocked by queued-branch protection",
+            "Live required CI, accepted-main integration freshness and native acceptance remain coordinator/maintainer gates"
+          ],
+          "publicationEvidence": "lane-a-1801-publication.json"
+        }
+      ],
+      "publicationEvidenceFile": "lane-a-1801-main-publication.json",
+      "releaseComment": 7181846751,
+      "latestObservedOriginalPr": {
+        "pr": 1801,
+        "head": "0823cf6a8436f6a1a13a771693402e09c410304f",
+        "state": "closed",
+        "merged": true,
+        "mergedAt": "2026-11-26T03:09:56Z",
+        "mergeCommit": "3db4e3f87f9a55e7d8aa1a6c82025653afbed13e",
+        "url": "https://github.com/skytuhua-org/Gen-V1/pull/1801",
+        "observedAtUtc": "2026-11-26T03:51:00Z"
+      },
+      "followUp": {
+        "pr": 2345,
+        "head": "c67136094fcfa2e081735177fa36eb6e05b53df2",
+        "state": "open",
+        "merged": false,
+        "mergedAt": null,
+        "mergeCommit": null,
+        "url": "https://github.com/skytuhua-org/Gen-V1/pull/2345",
+        "observedAtUtc": "2026-11-26T03:51:00Z"
+      }
     },
     {
       "pr": 1779,
@@ -3059,10 +3289,11 @@
       "coordinatorTests": "8 focused pure tests PASS at exact head; historic browser/CI evidence is author-reported and not relabeled as this audit run"
     }
   ],
-  "parentCheckpoint": 7180732381,
+  "parentCheckpoint": 7182165891,
   "snapshotNotes": [
-    "Only source-inspection completeness is aggregated; no queue/merge/native readiness aggregate.",
-    "Additional1632 repair and355 accepted-main integration remain active.",
-    "Full raw logs remain separate; durable code commits and issue checkpoints anchor findings."
+    "Source inspection completeness only:82rows/zeroUnread at recorded heads; no queue/merge/native all-clear.",
+    "Latest tested main applies to individual receipts only; earlier baselines stay explicit.",
+    "Published repair, ordinary adoption, original merge without correction and open follow-up PR are distinct states.",
+    "Local supplemental logs are indexed by publication metadata; durable code/PR/issue receipts anchor findings."
   ]
 }
