@@ -19,6 +19,7 @@ async function fixture(page: Page, query = "") {
 	await page.route("**/api/projects/*/files?*", (route) =>
 		route.fulfill({
 			json: {
+				bindingId: "fixture-binding",
 				entries: new URL(route.request().url()).searchParams.has("path")
 					? []
 					: [
@@ -39,6 +40,7 @@ async function fixture(page: Page, query = "") {
 			line = path === "docs/README.md" ? 12 : 48;
 		return route.fulfill({
 			json: {
+				bindingId: "fixture-binding",
 				text: Array.from({ length: 100 }, (_, index) =>
 					index === line - 1
 						? "const workspace = restoreLayout();"
@@ -494,7 +496,7 @@ test("a denied preview retries and a late file read cannot replace another resul
 			return;
 		}
 		return route.fulfill({
-			json: { text: "Accepted README", binary: false, sha256: "a".repeat(64) },
+			json: { bindingId: "fixture-binding", text: "Accepted README", binary: false, sha256: "a".repeat(64) },
 		});
 	});
 	await hits(page).first().click();
@@ -505,7 +507,7 @@ test("a denied preview retries and a late file read cannot replace another resul
 	await hits(page).nth(1).click();
 	await expect(preview(page)).toContainText("Accepted README");
 	await held!.fulfill({
-		json: { text: "Stale file", binary: false, sha256: "a".repeat(64) },
+		json: { bindingId: "fixture-binding", text: "Stale file", binary: false, sha256: "a".repeat(64) },
 	});
 	await settled(page);
 	await expect(preview(page)).toContainText("Accepted README");
@@ -846,7 +848,7 @@ test("QA r2 valid control paths stay visible and retain the exact read target", 
 	await page.route("**/api/projects/*/file?*", (route) => {
 		readTarget = new URL(route.request().url()).searchParams.get("path");
 		return route.fulfill({
-			json: { text: "needle", binary: false, sha256: "a".repeat(64) },
+			json: { bindingId: "fixture-binding", text: "needle", binary: false, sha256: "a".repeat(64) },
 		});
 	});
 	await hits(page).first().click();
@@ -907,7 +909,7 @@ for (const { name, text, line } of [
 			{ line },
 		);
 		await page.route("**/api/projects/*/file?*", (route) =>
-			route.fulfill({ json: { text, binary: false, sha256: "a".repeat(64) } }),
+			route.fulfill({ json: { bindingId: "fixture-binding", text, binary: false, sha256: "a".repeat(64) } }),
 		);
 		await hits(page).first().click();
 		await expect(page.locator(".files-matching-line")).toHaveText("needle");

@@ -33,6 +33,7 @@ it('unpin: inactive keeps active; active demotes to transient and stays active',
  expect(inactive.state.activePath).toBe('b.ts');expect(inactive.state.transient).toBeNull();expect(inactive.state.pins).toEqual([entry('b.ts')]);
  const active=transitionSlots(state,{kind:'unpin',path:'b.ts'});
  expect(active.state.activePath).toBe('b.ts');expect(active.state.transient).toEqual(entry('b.ts'));
+ expect(active.refresh).toBe(false);expect(inactive.refresh).toBe(false);
 });
 
 it('close: inactive preserves active; active pin picks next, then previous, then transient',()=>{

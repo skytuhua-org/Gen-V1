@@ -33,7 +33,7 @@ export function transitionSlots(state:PreviewSlots,transition:SlotTransition):Sl
    const index=state.pins.findIndex(entry=>entry.path===transition.path);
    if(index<0)return unchanged(state);
    const removed=state.pins[index]!,pins=state.pins.filter(entry=>entry.path!==transition.path);
-   if(state.activePath===transition.path)return{state:{pins,transient:removed,activePath:removed.path},refresh:true,capped:false,focus:null};
+   if(state.activePath===transition.path)return{state:{pins,transient:removed,activePath:removed.path},refresh:false,capped:false,focus:null};
    return{state:{...state,pins},refresh:false,capped:false,focus:null};
   }
   case'close':{

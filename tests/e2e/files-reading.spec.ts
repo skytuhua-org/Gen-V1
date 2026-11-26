@@ -9,6 +9,7 @@ const entry = (name: string, kind = "file") => ({
 	bytes: 10,
 });
 const text = (value = "Current file") => ({
+	bindingId: "fixture-binding",
 	text: value,
 	binary: false,
 	sha256: "a".repeat(64),
@@ -54,6 +55,7 @@ async function project(
 	await page.route("**/api/projects/*/files?*", (route) =>
 		route.fulfill({
 			json: {
+				bindingId: "fixture-binding",
 				entries: new URL(route.request().url()).searchParams.has("path")
 					? []
 					: names,
@@ -106,14 +108,17 @@ test("RED source: held project directory and file requests expose separate pendi
 	await expect(page.getByRole("status")).toContainText(
 		/Loading…/,
 	);
-	await tree!.fulfill({ json: { entries: [entry("held.txt")] } });
+	const acceptedFolder = { bindingId: "fixture-binding", entries: [entry("held.txt")] };
+	// First binding adoption revalidates the folder under its scoped read key.
+	await page.route("**/api/projects/*/files?*", route => route.fulfill({ json: acceptedFolder }));
+	await tree!.fulfill({ json: acceptedFolder });
 	await page.route("**/api/projects/*/file?*", (route) => {
 		file = route;
 	});
 	await page.getByRole("button", { name: "held.txt", exact: true }).click();
 	await expect.poll(() => !!file).toBe(true);
 	await expect(
-		page.getByRole("region", { name: "File content" }).getByRole("status"),
+		page.getByRole("region", { name: "File content" }).locator(".files-preview-content").getByRole("status"),
 	).toContainText(/Loading…/);
 	await file!.fulfill({ json: text() });
 	await expect(
@@ -177,7 +182,7 @@ test("RED source: a held project file identifies the pending selection", async (
 		page.getByRole("region", { name: "File content" }),
 	).toContainText("ok.txt");
 	await expect(
-		page.getByRole("region", { name: "File content" }).getByRole("status"),
+		page.getByRole("region", { name: "File content" }).locator(".files-preview-content").getByRole("status"),
 	).toContainText(/Loading…/);
 	await held!.fulfill({ json: text() });
 });
@@ -192,6 +197,10 @@ test("folder filter is local, breadcrumb navigates, and empty folders are explic
 		if (request.url().includes("/api/projects/")) requests.push(request.url());
 	});
 	await go();
+	await page.getByRole("button", { name: "ok.txt", exact: true }).waitFor();
+	await expect(page.getByRole("navigation", { name: "Project files", exact: true })).toHaveAttribute("aria-busy", "false");
+	const acceptedReads = requests.length;
+	expect(acceptedReads).toBeGreaterThan(0);
 	await page.getByRole("searchbox", { name: "Filter this folder" }).fill("OK");
 	await expect(
 		page.getByRole("button", { name: "ok.txt", exact: true }),
@@ -199,7 +208,7 @@ test("folder filter is local, breadcrumb navigates, and empty folders are explic
 	await expect(
 		page.getByRole("button", { name: "denied.txt", exact: true }),
 	).toHaveCount(0);
-	expect(requests).toHaveLength(1);
+	expect(requests).toHaveLength(acceptedReads);
 	await page
 		.getByRole("searchbox", { name: "Filter this folder" })
 		.fill("no match");
@@ -246,7 +255,7 @@ test("refresh retains the selected project content and retry recovers directory 
 	});
 	await expect(page.locator(".files-error[role=status]")).toContainText("Folder read failed");
 	await page.route("**/api/projects/*/files?*", (route) =>
-		route.fulfill({ json: { entries: [entry("ok.txt")] } }),
+		route.fulfill({ json: { bindingId: "fixture-binding", entries: [entry("ok.txt")] } }),
 	);
 	await page.getByRole("button", { name: "Retry" }).click();
 	await expect(page.locator(".files-error[role=status]")).toHaveCount(0);
@@ -418,6 +427,7 @@ for (const source of ["project", "granted"])
 				}
 				return route.fulfill({
 					json: {
+						...(source === "project" ? { bindingId: "fixture-binding" } : {}),
 						path: "",
 						entries: [entry("ok.txt"), entry("next", "directory")],
 						truncated: false,
@@ -434,7 +444,7 @@ for (const source of ["project", "granted"])
 			if (late === "error") await deny(held!);
 			else
 				await held!.fulfill({
-					json: { path: "next", entries: [entry("stale.txt")], truncated: false },
+					json: { ...(source === "project" ? { bindingId: "fixture-binding" } : {}), path: "next", entries: [entry("stale.txt")], truncated: false },
 				});
 			await settled(page, held!);
 			await expect(
@@ -798,7 +808,7 @@ test("project empty text, binary and too-large errors remain distinct", async ({
 			? route.fulfill({ json: text("") })
 			: path === "binary.dat"
 				? route.fulfill({
-						json: { text: null, binary: true, sha256: "b".repeat(64) },
+						json: { bindingId: "fixture-binding", text: null, binary: true, sha256: "b".repeat(64) },
 					})
 				: route.fulfill({
 						status: 413,
@@ -911,7 +921,7 @@ test("project inactive state aborts its read and resumes without stale content",
 	await expect(
 		page.getByRole("region", { name: "File content" }),
 	).not.toContainText("Inactive stale result");
-	await expect(page.getByRole("status")).toHaveCount(0);
+	await expect(page.locator(".files-message[role=status]")).toHaveCount(0);
 	await page.route("**/api/projects/*/file?*", (route) =>
 		route.fulfill({ json: text("Resumed file") }),
 	);
