@@ -2,6 +2,7 @@ import {useContext,useEffect,useId,useMemo,useRef,type KeyboardEvent} from 'reac
 import {useStateStore,type ComponentRegistry,type ComponentRenderProps} from '@json-render/react';
 import {ArrowUpRight,Check,Minus} from 'lucide-react';
 import {EVERYDAY_SCHEMAS,EVERYDAY_DATA_SCHEMAS,boundedEverydayData,type StatsData,type CredentialEntryProps} from '../../../packages/ui-catalog/everyday';
+import {artifactSourceContent,openArtifactSourceLink} from './artifact-source';
 import {ArtifactTitle,inputPath,statePath,useTaskAction} from './task-context';
 import {animateTask} from './task-motion';
 import {CredentialEntry} from './CredentialEntry';
@@ -19,7 +20,7 @@ function metricValue(metric:StatsData['metrics'][number],value=metric.value){
   if(metric.format==='currency'){const code=metric.currency!;let format=currencyFormats.get(code);if(!format){format=new Intl.NumberFormat(undefined,{style:'currency',currency:code,maximumFractionDigits:2});currencyFormats.set(code,format);}return format.format(value);}
   return number(value)+(metric.format==='percent'?'%':'');
 }
-function Source({text}:{text?:string}){return text?<details className="everyday-source"><summary>Source</summary><p>{text}</p></details>:null;}
+function Source({text}:{text?:string}){const source=artifactSourceContent(text);return source?<details className="everyday-source"><summary>Source</summary>{source.kind==='link'?<a href={source.text} target="_blank" rel="noopener" onClick={event=>openArtifactSourceLink(event,source.text)}>{source.text}</a>:<p>{source.text}</p>}</details>:null;}
 function useSelectionMotion(identity:string|undefined){
   const ref=useRef<HTMLDivElement>(null),previous=useRef(identity);
   useEffect(()=>{const changed=previous.current!==identity;previous.current=identity;if(!changed)return;const animation=animateTask(ref.current,[{opacity:.7,transform:'translateY(3px)'},{opacity:1,transform:'translateY(0)'}],200);return()=>animation?.cancel();},[identity]);return ref;

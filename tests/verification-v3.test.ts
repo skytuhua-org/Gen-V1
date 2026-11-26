@@ -431,7 +431,7 @@ it('the panel shows no completion label until task_finish saved an assessment',a
  const declaration={version:1,rootPath:root,sourceFiles:['app.ts'],dependencyFiles:['pnpm-lock.yaml'],environmentId:envId,requirements:[{id:'tests-pass',checkRefs:['exec-1']}],declaredAt:stamp};
  const obs:CheckObservationV1={version:1,checkId:'c1',executionId:'exec-1',owner:{...owner(),projectId:'project-1'},codeDigest:code,dependencyDigest:dep,recipeDigest:'a'.repeat(64),environmentId:envId,argv:['pnpm','test'],cwdIdentity:root,phase:'TEST',startedAt:stamp,endedAt:stamp,exitCode:0,outcome:'PASS',artifactRefs:[],observationKind:'process'};
  store.internal('test.fixture','t1',()=>{store.put('verificationDeclaration','t1','t1',declaration);store.put('checkObservation','c1','t1',obs);});
- const model=verificationPanelModel(store,'t1');
+ const model=await verificationPanelModel(store,'t1');
  // Rows and freshness still compute against the live cut; the label stays
  // absent until the completion boundary records an assessment.
  expect(model.label).toBeNull();
@@ -448,16 +448,16 @@ it('the panel read model re-digests declared inputs so edits never keep a green 
  const obs:CheckObservationV1={version:1,checkId:'c1',executionId:'exec-1',owner:{...owner(),projectId:'project-1'},codeDigest:code,dependencyDigest:dep,recipeDigest:'a'.repeat(64),environmentId:envId,argv:['pnpm','test'],cwdIdentity:root,phase:'TEST',startedAt:stamp,endedAt:stamp,exitCode:0,outcome:'PASS',artifactRefs:[],observationKind:'process'};
  const assessment=computeAssessment({threadId:'t1',sourceCut:{headSha:null,codeDigest:code,dependencyDigest:dep,environmentId:envId},requirements:declaration.requirements,observations:[obs],unresolvedEffects:[],verifierIdentity:'service/r1',provenance:'test'});
  store.internal('test.fixture','t1',()=>{store.put('verificationDeclaration','t1','t1',declaration);store.put('checkObservation','c1','t1',obs);store.put('assessment',assessment.assessmentId,'t1',assessment);});
- const before=verificationPanelModel(store,'t1');
+ const before=await verificationPanelModel(store,'t1');
  expect(before.label).toBe('VERIFIED');
  // Editing a declared input makes the recorded PASS stale on the next read.
  writeFileSync(join(root,'app.ts'),'export const v=2; // edited after verification\n');
- const after=verificationPanelModel(store,'t1');
+ const after=await verificationPanelModel(store,'t1');
  expect(after.label).toBe('COMPLETED_UNVERIFIED');
  expect(after.rows.some(row=>row.freshness==='STALE')).toBe(true);
  // Unavailable declared inputs make freshness indeterminate — never verified.
  rmSync(join(root,'app.ts'),{force:true});
- const unavailable=verificationPanelModel(store,'t1');
+ const unavailable=await verificationPanelModel(store,'t1');
  expect(unavailable.rows.every(row=>row.freshness==='INDETERMINATE')).toBe(true);
  expect(unavailable.label).not.toBe('VERIFIED');
 });
@@ -620,6 +620,6 @@ it('task_finish and the live panel keep 65 unresolved ledger effects blocked wit
  finally{if(saved===undefined)delete process.env.HARNESS_FLAG_VERIFICATION_WORKFLOW_V1;else process.env.HARNESS_FLAG_VERIFICATION_WORKFLOW_V1=saved;}
  const assessment=store.all<{label:string;unresolvedEffects:string[];provenance:string}>('assessment','t1').at(-1)!;
  expect(assessment.label).toBe('BLOCKED');expect(assessment.unresolvedEffects).toHaveLength(64);expect(assessment.provenance).toContain('Unresolved effects: 65');
- expect(verificationPanelModel(store,'t1').label).toBe('BLOCKED');
+ expect((await verificationPanelModel(store,'t1')).label).toBe('BLOCKED');
  expect(store.all<ToolEffectRecord>('toolEffect','t1')).toHaveLength(65);
 });

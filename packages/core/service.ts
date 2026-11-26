@@ -1,5 +1,6 @@
 import {attestVerificationArtifacts} from './verification-artifacts.ts';
 import { randomUUID, createHash } from "node:crypto";
+import { isDeepStrictEqual } from 'node:util';
 import { MODEL_ONLY_MAX_PROMPT_BYTES } from '../runtime/model-only.ts';
 import type { ContextRequestObservationV1 } from '../contracts/request-context.ts';
 import { createContextResults, encodeContextResult, CONTEXT_PREVIEW_CAP_BYTES, MAX_TRACKED_RESULTS, type ContextResultStorage } from './context-results.ts';
@@ -48,9 +49,10 @@ import { HarnessError, EMPTY_USAGE, type ArtifactRecord, type DataRecord, type H
 import { hostFlagEnabled } from "./host-flags.ts";
 import { OperationProjectTrustHost } from './operation-project-trust.ts';
 import { OperationExecutionAdviceHost } from './operation-execution-advice.ts';
-import { computeAssessment, observationMatchesThreadOwner } from "./verification-gate.ts";
+import { computeAssessment, observationMatchesThreadOwner, SecurityFindingLedger } from "./verification-gate.ts";
 import { assertVerificationSourceRoot, sourceDigestSync } from "./project-verification.ts";
-import { verificationDeclarationV1Schema, type CheckObservationV1, type DeliverableAssessmentV1, type VerificationDeclarationV1, type VisualObservationV1 } from "../contracts/verification.ts";
+import { verificationDeclarationV1Schema, securityFindingV1Schema, type CheckObservationV1, type DeliverableAssessmentV1, type VerificationDeclarationV1, type VisualObservationV1 } from "../contracts/verification.ts";
+const securityFindingInput = securityFindingV1Schema.omit({ updatedAt: true });
 import type { ToolEffectRecord, ToolOwner } from "../contracts/tool-effects.ts";
 import { MODEL_REQUEST_OBSERVATION_LIMIT, modelRequestObservationV1Schema, type ModelRequestObservationV1 } from "../contracts/model-request.ts";
 import { buildToolRegistry, ToolAuthority, type ActorRole } from "./tool-authority.ts";
@@ -68,6 +70,10 @@ import type { NativeCompactionAdmissionV1, NativeCompactionAckV1, NativeCompacti
 import { nativeContextProjectionSchema, inferenceBudgetSchema, type InferenceAdmissionV1, type RequestPreparationV1, type RequestContextV1 } from '../contracts/request-context.ts';
 import {SourceWorkbench, type PreparedSourceContext, type WorkbenchQueuedInput} from './source-workbench.ts';
 import {BrowserConsentHost, hostControlDriverRegistry} from './browser-consent.ts';
+import {ControlRuntime} from './control-runtime.ts';
+import type {ControlDriverOperations} from './desktop-control.ts';
+import {controlTargetIdentityV1Schema, controlModeSchema, type ControlDriverRegistrationV1} from '../contracts/interactive-control.ts';
+import {hostname} from 'node:os';
 import {sourceRefsV1Schema, sendModeV1Schema, WORKBENCH_LIMITS, type SendModeV1} from '../contracts/source-selection.ts';
 import {ProjectMemoryHost} from './project-memory-host.ts';
 import {applySessionBranch} from './session-branches.ts';
@@ -131,6 +137,8 @@ export interface ServiceOptions {
 export class Service {
   readonly sourceWorkbench: SourceWorkbench;
   readonly controlConsent: BrowserConsentHost;
+  readonly controlRuntime: ControlRuntime;
+  private readonly controlDevice: { deviceId: string; sessionId: string };
   readonly research:PersonalResearchRepository;
   readonly planning: PlanningCoordinator;
   readonly agentWork: AgentWorkCoordinator;
@@ -272,7 +280,15 @@ export class Service {
       finalize:async(preparation,input)=>{const memory=this.memoryHostInstance?await this.memoryHostInstance.finalize(preparation,input):{sources:[]},extra=await options.requestContextHooks?.finalize?.(preparation,input);return{sources:[...memory.sources,...(extra?.sources??[])],assertCurrent:()=>{memory.assertCurrent?.();extra?.assertCurrent?.();}};},
       released:(preparation,reason)=>{this.memoryHostInstance?.released(preparation,reason);options.requestContextHooks?.released?.(preparation,reason);},
     });
-    this.controlConsent = new BrowserConsentHost(store, {registry: hostControlDriverRegistry});
+    this.controlConsent = new BrowserConsentHost(store, {
+      registry: hostControlDriverRegistry,
+      isGrantAttached: grant => this.controlRuntime.ownsGrant(grant),
+    });
+    this.controlDevice = { deviceId: 'device:' + createHash('sha256').update(hostname() + '|' + store.dataDir).digest('hex').slice(0, 32), sessionId: 'session-' + randomUUID() };
+    this.controlRuntime = new ControlRuntime(store, this.controlConsent, { registry: hostControlDriverRegistry, device: this.controlDevice, artifactRoot: store.dataDir, currentOwner: threadId => {
+      const thread = store.get<Thread>('thread', threadId);
+      return thread && !store.get('archivedThread', threadId) ? this.controlOwner(thread) : null;
+    } });
     this.sourceWorkbench = new SourceWorkbench(store, requestId => this.requestCustody.release(requestId, 'cancelled'), {
       requestContextEnabled: () => this.requestContextEnabled(),
       readMemoryModule: async owner => {
@@ -556,6 +572,78 @@ export class Service {
     const thread = this.thread(ctx.threadId);
     if (thread.epoch !== ctx.epoch || thread.runId !== ctx.runId || !["working", "awaiting_input"].includes(thread.status)) throw new HarnessError("CANCELLED_RUN", "This run no longer has authority");
     return thread;
+  }
+
+  /** M16 C3/C4: the single approved driver attaches through host composition
+   * (the private desktop sidecar channel), never through a command or tool. */
+  attachControlDriver(driver: ControlDriverOperations, registrations: readonly ControlDriverRegistrationV1[]): void {
+    for (const registration of registrations) {
+      try { hostControlDriverRegistry.register(registration); }
+      catch (error) {
+        if (error instanceof HarnessError && error.code === 'REGISTRY_CONFLICT') continue;
+        throw error;
+      }
+    }
+    this.controlRuntime.attachDriver(driver);
+  }
+  detachControlDriver(): void { this.controlRuntime.detachDriver(); }
+
+  private controlOwner(thread: Thread): ToolOwner {
+    return { ...ownerFor(thread), runId: null };
+  }
+
+  /** S02/U02: approved-driver candidate targets for a pending consent. */
+  async controlTargets(threadId: string, mode: unknown) {
+    const parsed = controlModeSchema.parse(mode);
+    const owner = this.controlOwner(this.thread(threadId));
+    const pending = this.controlConsent.surfaceModel(threadId).pendingConsent;
+    if (pending?.state !== 'PENDING' || pending.mode !== parsed || !isDeepStrictEqual(pending.owner, owner)) {
+      throw new HarnessError('CAPABILITY_DENIED', 'Target selection requires a pending consent for this mode.');
+    }
+    const offer = await this.controlRuntime.targets(parsed, threadId, pending.consentId);
+    try {
+      const currentOwner = this.controlOwner(this.thread(threadId));
+      const control = this.controlConsent.surfaceModel(threadId);
+      if (control.state !== 'consent' || control.pendingConsent?.consentId !== pending.consentId ||
+          !isDeepStrictEqual(pending.owner, currentOwner)) {
+        throw new HarnessError('CAPABILITY_DENIED', 'The consent changed while selecting targets.');
+      }
+      this.controlRuntime.recordTargetOffer(threadId, offer);
+      return { candidates: offer.candidates, control };
+    } catch (error) {
+      void this.controlRuntime.discardTargetOffer(threadId, offer.offer);
+      throw error;
+    }
+  }
+
+  /** S05: a consented observation only — bytes stay under the host artifact
+   * root and the store keeps the digest (S08). */
+  async controlCapture(threadId: string) {
+    this.thread(threadId);
+    return this.controlRuntime.capture(threadId);
+  }
+
+  /** Fresh observation straight from the driver for pre-dispatch binding. */
+  async controlObserve(threadId: string) {
+    this.thread(threadId);
+    const { observation } = await this.controlRuntime.observe(threadId);
+    return { observation };
+  }
+
+  /** One consent-admitted input action through the serialized dispatcher;
+   * the durable 'controlAction' record lands after settle (D05/M02). The
+   * observation is re-taken from the driver here — client-supplied
+   * observations are never dispatch authority (S06). */
+  async controlAction(threadId: string, input: { action?: unknown; parameters?: unknown }) {
+    const thread = this.thread(threadId);
+    const owner = this.controlOwner(thread);
+    const { grantId, observation } = await this.controlRuntime.observe(threadId);
+    return this.controlRuntime.action(threadId, owner, {
+      grantId,
+      action: String(input.action ?? ''),
+      parameters: input.parameters && typeof input.parameters === 'object' && !Array.isArray(input.parameters) ? input.parameters as Record<string, unknown> : {},
+      observation,
+    });
   }
   hasGate(threadId: string): boolean { return this.store.all<InputRequest>("request", threadId).some(r => r.status === "pending"); }
   private isAccountBound(thread:Thread):boolean {
@@ -1121,17 +1209,28 @@ export class Service {
     if(command.type==='control.request')return this.store.command(command,()=>{
       const thread=this.thread(command.threadId!),mode=p.mode;
       if(mode!=='FRESH_VERIFICATION_BROWSER'&&mode!=='CONSENTED_EXISTING_TAB'&&mode!=='SELECTED_DESKTOP_APPLICATION')throw new HarnessError('INVALID_INPUT','Choose a control mode.');
-      const owner={threadId:thread.id,runId:null,epoch:thread.epoch,projectId:thread.projectId??null,workspaceId:thread.workspaceId??null,accountBinding:thread.accountId??null};
+      const owner=this.controlOwner(thread);
       const OPS=['CLICK','TYPE','KEYPRESS','UPLOAD','DOWNLOAD','NAVIGATE'] as const;
       const operations=Array.isArray(p.operations)?p.operations.filter((o):o is (typeof OPS)[number]=>typeof o==='string'&&(OPS as readonly string[]).includes(o)):[];
+      void this.controlRuntime.discardTargetOffer(thread.id);
       const request=this.controlConsent.requestConsent(owner,{mode,observe:p.observe===true,operations,allowedOrigins:Array.isArray(p.allowedOrigins)?p.allowedOrigins.filter((o):o is string=>typeof o==='string'):[]});
       return {consent:request,control:this.controlConsent.surfaceModel(thread.id)};
     });
+    if(command.type==='control.grant')return this.store.command(command,()=>{
+      const thread=this.thread(command.threadId!);
+      const consentId=text(p,'consentId',200);
+      const target=controlTargetIdentityV1Schema.parse(p.target);
+      const owner=this.controlOwner(thread);
+      const grant=this.controlRuntime.grant(consentId,owner,target);
+      return {grant,control:this.controlConsent.surfaceModel(thread.id)};
+    });
     if(command.type==='control.stop')return this.store.command(command,()=>{
       const thread=this.thread(command.threadId!);
+      void this.controlRuntime.stopDispatch(thread.id);
       return {control:this.controlConsent.stop(thread.id)};
     });
     if(command.type==='learning.cancel')return this.store.command(command,()=>({cancelled:true}));
+    if(command.type==='control.attachDriver'||command.type==='control.detachDriver')throw new HarnessError('UNKNOWN_CAPABILITY','Driver attachment is host composition, not a command.');
     if(command.type==='learning.curate')return this.store.command(command,()=>({changes:curateSkills(this.store)}));
     if(command.type.startsWith('account.'))return this.store.command(command,()=>changeAccount(this.store,command));
     if(command.type.startsWith('background.')||command.type.startsWith('intake.'))return this.backgroundCommand(command);
@@ -1272,6 +1371,12 @@ export class Service {
       const grant: ResourceGrant = { id: randomUUID(), threadId: thread.id, path, kind: p.kind as ResourceGrant["kind"], label: typeof p.label === "string" ? p.label : basename(path), writable: p.writable === true, createdAt: now(), identity: { dev: String(identity.dev), ino: String(identity.ino) } };
       return this.store.command(command, () => { this.store.put("resource", grant.id, thread.id, grant); return grant; });
     }
+    if (command.type === "resource.revoke") {
+      const resourceId = text(p, "resourceId", 200);
+      const grant = this.store.get<ResourceGrant>("resource", resourceId);
+      if (!grant || grant.threadId !== thread.id) throw new HarnessError("CAPABILITY_DENIED", "Operation resource is not granted");
+      return this.store.command(command, () => { this.store.remove("resource", resourceId); return { removed: resourceId }; });
+    }
     if (command.type === "resource.upload") {
       const name = basename(text(p, "name", 200)).replace(/[^a-zA-Z0-9._ -]/g, "_");
       const base64 = text(p, "base64", 28 * 1024 * 1024);
@@ -1373,6 +1478,8 @@ export class Service {
       case "thread.archive": {
         if(thread.runId)throw new HarnessError("RUN_BUSY","Stop the thread before archiving");
         if(this.planning.hasActiveChildren(thread.id)||this.store.all<Thread>('thread').some(side=>(side.sideParentId===thread.id||side.parentThreadId===thread.id)&&side.runId&&!this.store.get('archivedThread',side.id)))throw new HarnessError('RUN_BUSY','Finish or stop the child conversation before archiving this thread');
+        void this.controlRuntime.stopDispatch(thread.id);
+        this.controlConsent.stop(thread.id);
         this.store.put("archivedThread",thread.id,thread.id,true);return {archived:true};
       }
       case "edit.begin": {
@@ -2093,7 +2200,7 @@ export class Service {
     }
     if (call.name === "ui_discover") return discoverCapabilities(args);
     if (call.name === "ui_inspect") return inspectTask(this.store, this.thread(ctx.threadId), this.planning.inspect(ctx.threadId), args);
-    if (call.name.startsWith("ui_") || call.name === "task_finish" || call.name === "verification_declare") return this.uiTool(call, ctx);
+    if (call.name.startsWith("ui_") || call.name === "task_finish" || call.name === "verification_declare" || call.name === "security_finding_record") return this.uiTool(call, ctx);
     if (call.name === "operation_execute") {
       this.assertMutation(ctx.threadId); const op = this.store.get<Operation>("operation", text(args, "operationId", 200));
       if (!op || op.threadId !== ctx.threadId || !op.approved) throw new HarnessError("APPROVAL_REQUIRED", "The user must approve the exact prepared operation");
@@ -2173,6 +2280,16 @@ export class Service {
         assertVerificationSourceRoot(this.store, ctx.threadId, declaration.rootPath);
         this.store.put("verificationDeclaration", ctx.threadId, ctx.threadId, declaration);
         return { requirements: declaration.requirements.length };
+      }
+      if (call.name === "security_finding_record") {
+        if (!hostFlagEnabled("verification.workflowV1")) throw new HarnessError("CAPABILITY_DENIED", "The verification workflow capability is disabled on this host.");
+        // commandId is host plumbing for receipt dedup, not finding data.
+        const { commandId: _commandId, rootPath, ...findingArgs } = a;
+        assertVerificationSourceRoot(this.store, ctx.threadId, rootPath as string);
+        // The recording thread owns the finding; dedupe is per owner.
+        // Inside this command's transaction already — write, don't re-open one.
+        const recorded = new SecurityFindingLedger(this.store).recordInTransaction(securityFindingInput.parse({ version: 1, ...findingArgs }), ctx.threadId);
+        return { findingId: recorded.findingId, status: recorded.status };
       }
       if (call.name === "task_finish") {
         if (this.hasGate(ctx.threadId) || this.store.all<Operation>("operation", ctx.threadId).some(o => ["running", "unknown", "prepared"].includes(o.status))) throw new HarnessError("REQUEST_GATED", "Resolve decisions and outstanding operations before completion");

@@ -155,6 +155,48 @@ for (const width of [768, 1024, 1440]) {
   });
 }
 
+test('search chord ignores inert copies and follows the rebound chord', async ({page}) => {
+  await page.setViewportSize({width: 1024, height: 1000});
+  await fixture(page, {keybindings: {search: 'Ctrl+E'}});
+  await page.evaluate(() => {
+    const real = document.querySelector<HTMLElement>('.app-shell > .sidebar');
+    if (!real) throw Error('The fixture sidebar did not mount.');
+    const copy = real.cloneNode(true) as HTMLElement;
+    copy.inert = true;
+    copy.setAttribute('aria-hidden', 'true');
+    copy.dataset.searchCopy = 'true';
+    real.before(copy);
+  });
+  await page.keyboard.press('Control+k');
+  await expect(sidebar(page).getByRole('textbox', {name: 'Search threads'})).not.toBeFocused();
+  await page.keyboard.press('Control+e');
+  const focused = await page.evaluate(() => {
+    const active = document.activeElement;
+    return {
+      copy: Boolean(active instanceof Element && active.closest('[data-search-copy]')),
+      real: active instanceof Element && Boolean(active.closest('.app-shell > .sidebar')),
+    };
+  });
+  expect(focused).toEqual({copy: false, real: true});
+});
+
+test('mobile search chord preserves scoped Escape and drawer focus restoration', async ({page}) => {
+  await page.setViewportSize({width: 1024, height: 844});
+  await fixture(page);
+  await page.setViewportSize({width: 390, height: 844});
+  const composer = page.getByRole('textbox', {name: 'Message', exact: true});
+  await composer.click();
+  await page.keyboard.press('Control+k');
+  const search = sidebar(page).getByRole('textbox', {name: 'Search threads'});
+  await expect(search).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(search).not.toBeFocused();
+  await expect(sidebar(page)).toHaveClass(/sidebar-open/);
+  await sidebar(page).getByRole('button', {name: 'Close navigation', exact: true}).focus();
+  await page.keyboard.press('Escape');
+  await expect(composer).toBeFocused();
+});
+
 test('pointer handoffs finish naturally and release the snapshot without moving the conversation', async ({page}, info) => {
   await fixture(page);
   for (const closed of [true, false]) {
