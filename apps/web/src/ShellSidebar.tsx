@@ -11,7 +11,6 @@ import {
   GitBranch,
   GitPullRequest,
   ListFilter,
-  LoaderCircle,
   MoreHorizontal,
   PanelLeftClose,
   Pin,
@@ -55,6 +54,9 @@ export const threadStatus = (thread: Thread) =>
       : thread.status === 'ready'
         ? 'Ready'
         : thread.status.charAt(0).toUpperCase() + thread.status.slice(1);
+
+export const threadRowLabel = (thread: Thread) =>
+  `${thread.title} ${threadStatus(thread)}${thread.presentation?.unread ? ' Unread' : ''}`;
 
 export function projectMonogram(name?: string | null): string {
   const cleaned = (name ?? '').trim();
@@ -259,7 +261,7 @@ export function ShellSidebar({
             if (reorder.key(item, event)) return;
             trigger.onKeyDown?.(event);
           }}
-          aria-label={`${item.title} ${threadStatus(item)}`}
+          aria-label={threadRowLabel(item)}
           aria-current={item.id === selectedId ? 'page' : undefined}
           onClick={() => {
             select(item.id);
@@ -272,24 +274,25 @@ export function ShellSidebar({
                 {projectMonogram(item.projectName)}
               </span>
               <span className="thread-item-title">
-                {item.presentation?.unread && <span className="unread-dot" />}
+                {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
                 {item.title}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
+                {isWorking && <span className="thread-run-badge" aria-hidden="true" />}
                 <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
               </span>
             </span>
           ) : (
             <>
               <span className="thread-item-title">
-                {item.presentation?.unread && <span className="unread-dot" />}
+                {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
                 {item.title}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
                 {showStatus && (
                   <span className="thread-item-status">
                     {isWorking ? (
-                      <LoaderCircle size={11} className="spinning" />
+                      <span className="thread-run-badge" aria-hidden="true" />
                     ) : item.status === 'awaiting_input' ? (
                       <span className="pending-dot" />
                     ) : null}

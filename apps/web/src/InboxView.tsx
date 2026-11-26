@@ -20,8 +20,10 @@ export interface InboxViewProps {attention:{items:AttentionItem[];unread:number;
 export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projectColorFor,timeFormat='system'}:InboxViewProps){
  const [filter,setFilter]=useState<Filter>('all'),[query,setQuery]=useState(''),[chosen,setChosen]=useState<string>(),[single,setSingle]=useState(false),[actionError,setActionError]=useState(''),root=useRef<HTMLElement>(null),reader=useRef<HTMLElement>(null),rows=useRef(new Map<string,HTMLButtonElement>()),heading=useId(),actionVersion=useRef(0),markTimer=useRef<ReturnType<typeof setTimeout>>(undefined);
  useEffect(()=>()=>{clearTimeout(markTimer.current);actionVersion.current++;},[]);
+ const [,setTick]=useState(0);
+ useEffect(()=>{const id=setInterval(()=>setTick(t=>t+1),30_000);return()=>clearInterval(id);},[]);
  const visible=attention.items.filter(item=>(filter==='all'||filter==='needs-you'&&needsYou(item)||filter==='unread'&&!item.read||filter==='completed'&&(item.state==='completed'||item.state==='resolved'))&&`${item.title} ${item.summary} ${labels[item.state]}`.toLowerCase().includes(query.toLowerCase().trim()));
- const selected=attention.items.find(item=>item.id===chosen),columns=shownColumns(single,selected?.id);
+ const selected=visible.find(item=>item.id===chosen),columns=shownColumns(single,selected?.id);
  useEffect(()=>{const node=root.current;if(!node)return;const measure=(width:number)=>{if(width>0)setSingle(was=>oneColumn(width,was));};measure(node.getBoundingClientRect().width);const observer=new ResizeObserver(entries=>{if(entries[0])measure(entries[0].contentRect.width);});observer.observe(node);return()=>observer.disconnect();},[]);
  const activeReads=useRef(new Map<string,Promise<void>>());
  const act=(work:()=>void|Promise<void>,version=++actionVersion.current)=>{

@@ -72,6 +72,30 @@ test('model search has an empty state, Escape and outside click dismiss, and Tab
   await expect(trigger).toContainText('GPT-6.1 Sol'); expect(host.commands).toHaveLength(0);
 });
 
+test('model picker empty states render inside the results list before the scope hint and CTA', async ({ page }) => {
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await trigger.click();
+  const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
+  const list = page.getByRole('listbox', { name: 'Available models', exact: true });
+  const checkOrder = () => page.evaluate(() => {
+    const empty = document.querySelector('.model-picker-empty'), scope = document.querySelector('.model-picker-scope'), cta = document.querySelector('.model-picker-new-task'), listEl = document.querySelector('.model-picker-list');
+    if (!empty || !listEl?.contains(empty)) return 'empty state is not inside the results list';
+    for (const [label, node] of [['scope hint', scope], ['new-task CTA', cta]] as const)
+      if (node && !(empty.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) return `empty state does not precede the ${label}`;
+    return 'ok';
+  });
+  await search.fill('zz');
+  await expect(list.getByRole('status')).toContainText('No models found');
+  await expect(list.getByRole('status')).toContainText('Try another model or provider name.');
+  expect(await checkOrder()).toBe('ok');
+  await page.getByRole('button', { name: 'Favorites' }).click();
+  await expect(list.getByRole('status')).toContainText('No favorites yet');
+  await expect(list.getByRole('status')).toContainText('Star a model to keep it here.');
+  expect(await checkOrder()).toBe('ok');
+  await search.press('Escape');
+});
+
 test('a first send keeps a usable model when the account pin lands before the bound model id', async ({ page }) => {
   const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic model selection fixture' } } } });
   snapshot.settings = { theme: 'dark', modelId: null };
@@ -158,5 +182,39 @@ test('the popover stays mounted through the exit animation and rapid cycles do n
     await search.press('Escape');
     await page.clock.runFor(140);
     await expect(popover).toHaveCount(0);
+  }
+});
+
+test('an empty catalog disables the chip with a stated reason', async ({ page }) => {
+  const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic model selection fixture' } } } });
+  snapshot.settings = { theme: 'dark', modelId: null };
+  await serveTaskFixture(page, snapshot);
+  await page.route('**/api/models*', route => route.fulfill({ json: { models: [] } }));
+  await page.goto('/');
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await expect(trigger).toBeDisabled();
+  await expect(trigger).toHaveAttribute('title', 'No models available — check the provider connection');
+});
+
+test('the model picker never paints over the sidebar at supported widths', async ({ page }, testInfo) => {
+  await mount(page);
+  for (const width of [1280, 900, 700, 500]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const trigger = page.getByRole('combobox', { name: 'Model', exact: true }); await trigger.click();
+    const popover = page.locator('.model-picker-popover'); await expect(popover).toHaveAttribute('data-state', 'open');
+    await popover.evaluate(node => Promise.all(node.getAnimations().map(animation => animation.finished.catch(() => {}))));
+    const bounds = (await popover.boundingBox())!;
+    const column = await trigger.evaluate(el => el.closest('.workspace-layout-workarea')?.getBoundingClientRect().toJSON() ?? null);
+    if (column) {
+      expect(bounds.x).toBeGreaterThanOrEqual(column.x + 8 - 0.5);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(column.x + column.width - 8 + 0.5);
+    }
+    const sidebar = await page.locator('.sidebar:visible').first().boundingBox();
+    if (sidebar) {
+      const overlap = Math.max(0, Math.min(bounds.x + bounds.width, sidebar.x + sidebar.width) - Math.max(bounds.x, sidebar.x));
+      expect(overlap).toBe(0);
+    }
+    await page.screenshot({ path: testInfo.outputPath(`model-picker-column-${width}.png`) });
+    await page.getByRole('searchbox', { name: 'Search models', exact: true }).press('Escape');
   }
 });

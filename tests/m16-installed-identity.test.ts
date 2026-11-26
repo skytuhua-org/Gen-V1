@@ -89,6 +89,16 @@ describe('M16 hosted installed identity verification',()=>{
   expect(M16_BROWSER_SCENARIO_REVIEW.prerequisites).toEqual(expect.arrayContaining(['control-flag-activation','live-driver-registration','independent-stop']));
  });
 
+ it('accepts all six owned launches while requiring only the flag-free identity callbacks',()=>{
+  const combined=receipt();
+  combined.launches=['default-off','default-off','enabled','enabled',null,null].map(memoryMode=>({passed:true,verifiedOwner:true,memoryMode}));
+  expect(()=>assertM16IdentityVerificationReceipt(combined,electron,true)).not.toThrow();
+  expect(()=>assertM16IdentityVerificationReceipt(receipt(),electron,true)).toThrow(/exactly six/);
+  const launches=combined.launches as Record<string,unknown>[];
+  launches[5]!.memoryMode='enabled';
+  expect(()=>assertM16IdentityVerificationReceipt(combined,electron,true)).toThrow(/expected memory mode/);
+ });
+
  it('keeps the hosted adaptation inside the existing installed-memory job without memory activation',()=>{
   const workflow=readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url),'utf8');
   expect(workflow.match(/^  installed-memory:\n/gm)).toHaveLength(1);
@@ -96,6 +106,8 @@ describe('M16 hosted installed identity verification',()=>{
   expect(start).toBeGreaterThan(-1);expect(end).toBeGreaterThan(start);
   const step=workflow.slice(start,end);
   expect(step).toContain('scripts/m16-installed-identity.ts');
+  expect(step).toContain("if ($env:INSTALLED_SINGLE_INSTALL -eq 'true') { $verifyArgs += '--single-install-acceptance' }");
+  expect(step).not.toMatch(/^        if:/m);
   expect(step).not.toContain('--project-memory');
   expect(workflow).toContain('.harness-desktop-installed/run-*/m16-identity-receipt.json');
  });
