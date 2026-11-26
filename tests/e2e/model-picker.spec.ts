@@ -185,6 +185,19 @@ test('the popover stays mounted through the exit animation and rapid cycles do n
   }
 });
 
+test('an unnamed provider renders a title-cased label in the rail and group header', async ({ page }) => {
+  const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic model selection fixture' } } } });
+  snapshot.settings = { theme: 'dark', modelId: 'recording-fixture/alpha' };
+  snapshot.threads[0].modelId = 'recording-fixture/alpha';
+  await serveTaskFixture(page, snapshot);
+  await page.route('**/api/models*', route => route.fulfill({ json: { models: [{ id: 'recording-fixture/alpha', provider: 'recording-fixture', name: 'Alpha' }] } }));
+  await page.goto('/');
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await trigger.click();
+  await expect(page.getByRole('button', { name: /Recording Fixture/ })).toBeVisible();
+  await expect(page.getByRole('listbox', { name: 'Available models', exact: true }).getByRole('group', { name: 'Recording Fixture', exact: true })).toBeVisible();
+});
+
 test('an empty catalog disables the chip with a stated reason', async ({ page }) => {
   const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic model selection fixture' } } } });
   snapshot.settings = { theme: 'dark', modelId: null };

@@ -15,7 +15,8 @@ export interface ModelPickerProps {
  /** New-task binding note; selecting a profile never rebinds an existing thread. */
  scopeHint?:string;onNewTask?:(modelId:string)=>void;
 }
-const providerLabel=(provider:string)=>SUBSCRIPTION_CONNECTIONS.find(connection=>connection.id===provider)?.label??provider;
+const providerDisplayName=(provider:string)=>provider.trim().split(/[-_\s]+/).filter(Boolean).map(word=>word.charAt(0).toUpperCase()+word.slice(1)).join(' ');
+const providerLabel=(provider:string)=>SUBSCRIPTION_CONNECTIONS.find(connection=>connection.id===provider)?.label||providerDisplayName(provider);
 const effortLabel=(value:string)=>value==='xhigh'?'Extra high':value.replaceAll('_',' ').replaceAll('-',' ').replace(/\b\w/g,letter=>letter.toUpperCase());
 const FAVORITES_KEY='harness:model-favorites:v1';
 /* keep in sync with --ui-motion-popup-exit */
