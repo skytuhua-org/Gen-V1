@@ -58,6 +58,7 @@ interface LiveSession {
   sessionId: string;
   owner: string;
   adapter: DebugAdapter;
+  backend: ExecutionBackend;
   recipe: DebugRecipe;
   state: DebugSessionV1["state"];
   processIdentity: string | null;
@@ -95,6 +96,7 @@ export class DebugRegistry {
     const adapter = this.adapterFor(selection.backend, input.recipe);
     const session: LiveSession = {
       sessionId: randomUUID(), owner: input.owner, adapter,
+      backend: selection.backend,
       recipe: input.recipe, state: "STARTING", processIdentity: null,
     };
     this.sessions.set(session.sessionId, session);
@@ -125,7 +127,7 @@ export class DebugRegistry {
   async inspect(sessionId: string, owner: string, command: (typeof DEBUG_INSPECT_COMMANDS)[number], args: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
     const session = this.require(sessionId, owner);
     if (!DEBUG_INSPECT_COMMANDS.includes(command)) throw new HarnessError("CAPABILITY_DENIED", "Unknown inspect command.");
-    if (session.adapter.state() !== "PAUSED" && session.adapter.state() !== "STOPPED")
+    if (session.adapter.state() !== "PAUSED")
       throw new HarnessError("PRECONDITION_FAILED", "Inspect commands require a paused debug session.");
     const result = await session.adapter.inspect(command, args, signal);
     return this.bound(command, result);
@@ -136,6 +138,11 @@ export class DebugRegistry {
   async effect(sessionId: string, owner: string, command: (typeof DEBUG_EFFECT_COMMANDS)[number], args: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
     const session = this.require(sessionId, owner);
     if (!DEBUG_EFFECT_COMMANDS.includes(command)) throw new HarnessError("CAPABILITY_DENIED", "Unknown debug command.");
+    // Admission is checked at launch and re-validated on every effect: a
+    // backend whose platform proof is revoked or expires mid-session must
+    // not keep executing code through a stale approval.
+    if (!hasCurrentPlatformProof(session.backend))
+      throw new HarnessError("CAPABILITY_DENIED", "The debug backend no longer holds a proven platform admission.");
     if (command === "evaluate") {
       // Evaluation executes code in the debuggee: bounded and gated by the
       // recipe's confinement admission — it is never treated as a read.
@@ -175,6 +182,14 @@ export class DebugRegistry {
       const variables = (result as { variables: DebugVariable[] }).variables;
       return { ...result as object, variables: variables.slice(0, CODE_INTELLIGENCE_LIMITS.debugVariables).map(v => ({ ...v, value: clampValue(v.value) })) };
     }
+    if (command === "threads" && result && typeof result === "object" && "threads" in result) {
+      const threads = (result as { threads: unknown[] }).threads;
+      return { ...result as object, threads: threads.slice(0, CODE_INTELLIGENCE_LIMITS.debugThreads) };
+    }
+    if (command === "scopes" && result && typeof result === "object" && "scopes" in result) {
+      const scopes = (result as { scopes: unknown[] }).scopes;
+      return { ...result as object, scopes: scopes.slice(0, CODE_INTELLIGENCE_LIMITS.debugScopes) };
+    }
     return result;
   }
 
@@ -198,8 +213,10 @@ export class DebugRegistry {
 
   async dispose(signal: AbortSignal): Promise<void> {
     for (const session of [...this.sessions.values()]) {
-      await session.adapter.terminate(signal).catch(() => {});
-      this.sessions.delete(session.sessionId);
+      // A session whose adapter could not confirm teardown stays listed:
+      // deleting it would lose custody of a possibly still-running process.
+      const released = await session.adapter.terminate(signal).then(() => true, () => false);
+      if (released) this.sessions.delete(session.sessionId);
     }
   }
 }

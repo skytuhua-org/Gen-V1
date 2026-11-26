@@ -1,25 +1,74 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { link, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../packages/storage/store.ts";
 import { checkpointScope } from "../packages/workspace/edit-journal.ts";
 import { CheckpointService } from "../packages/workspace/checkpoints.ts";
+import { withPathGuard } from "../packages/core/file-access.ts";
 import type { CheckpointOwner } from "../apps/web/src/file-checkpoint-api.ts";
 
-// The path-guard supervisor is absent in unit tests; the blob bytes and digest
-// checks under test live inside the guarded action, so admit it directly.
-vi.mock("../packages/core/file-access.ts", async (importActual) => {
-  const actual = await importActual<typeof import("../packages/core/file-access.ts")>();
+// Model the native deny-delete leaf pins as well as its custody checks. These
+// are deterministic boundary tests, not native Windows qualification.
+const custody = vi.hoisted(() => ({
+  pins: new Map<string, number>(),
+  beforePublish: undefined as undefined | ((source: string, destination: string) => Promise<void>),
+}));
+vi.mock("node:fs/promises", async (importActual) => {
+  const actual = await importActual<typeof import("node:fs/promises")>();
   return {
     ...actual,
-    withPathGuard: async (_paths: unknown, _signal: AbortSignal, action: (manifest: unknown) => Promise<unknown>) => action([]),
+    rename: async (source: string, destination: string) => {
+      if (custody.pins.has(destination)) throw Object.assign(new Error("Destination has a deny-delete pin"), { code: "EPERM" });
+      return actual.rename(source, destination);
+    },
+  };
+});
+vi.mock("../packages/core/file-access.ts", async (importActual) => {
+  const actual = await importActual<typeof import("../packages/core/file-access.ts")>();
+  const fs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  const { HarnessError } = await import("../packages/contracts/index.ts");
+  const { createHash } = await import("node:crypto");
+  const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  return {
+    ...actual,
+    withPathGuard: async (paths: { path: string; leaf: boolean }[], signal: AbortSignal, action: (manifest: unknown) => Promise<unknown>) => {
+      if (signal.aborted) throw new HarnessError("CANCELLED", "Fixture operation cancelled");
+      const acquired: string[] = [];
+      try {
+        for (const entry of paths.filter((path) => path.leaf)) {
+          const info = await fs.lstat(entry.path);
+          if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new HarnessError("CAPABILITY_DENIED", "Fixture custody rejected");
+          custody.pins.set(entry.path, (custody.pins.get(entry.path) ?? 0) + 1);
+          acquired.push(entry.path);
+        }
+        return await action([]);
+      } finally {
+        for (const path of acquired) {
+          const remaining = custody.pins.get(path)! - 1;
+          if (remaining) custody.pins.set(path, remaining); else custody.pins.delete(path);
+        }
+      }
+    },
+    replaceOwnedFile: async (source: string, destination: string, identity: { dev: bigint; ino: bigint }, sha256: string, signal: AbortSignal, expectedDestinationHash?: string) => {
+      await custody.beforePublish?.(source, destination);
+      if (signal.aborted) throw new HarnessError("CANCELLED", "Fixture operation cancelled");
+      if (custody.pins.has(destination)) throw Object.assign(new Error("Destination has a deny-delete pin"), { code: "EPERM" });
+      const info = await fs.lstat(source, { bigint: true });
+      if (info.dev !== identity.dev || info.ino !== identity.ino || digest(await actual.readBoundFile(source, 8 * 1024 * 1024)) !== sha256)
+        throw new HarnessError("CAPABILITY_DENIED", "Fixture replacement source changed");
+      if (expectedDestinationHash !== undefined && digest(await actual.readBoundFile(destination, 8 * 1024 * 1024)) !== expectedDestinationHash)
+        throw new HarnessError("PRECONDITION_FAILED", "Fixture replacement destination changed");
+      await fs.rename(source, destination);
+    },
   };
 });
 
 const roots: string[] = [];
 const stores: Store[] = [];
 afterEach(async () => {
+  custody.beforePublish = undefined;
+  expect(custody.pins.size).toBe(0);
   for (const store of stores.splice(0)) store.close();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true, maxRetries: 5 });
 });
@@ -121,13 +170,14 @@ it("leaves no staging file after publication and concurrent captures share one b
   expect((await readdir(blobDir(store))).sort()).toEqual([first.files[0]!.blobRef]);
 });
 
-it("keeps prior-format digest blobs readable and publishes atomically over them", async () => {
+it("keeps prior-format digest blobs readable without replacing a valid file", async () => {
   const { project, service, owner, store } = await fixture();
   const bytes = Buffer.from("prior-format\n");
   const ref = (await import("node:crypto")).createHash("sha256").update(bytes).digest("hex");
   await mkdir(blobDir(store), { recursive: true });
   // A blob written by the previous format stays valid: reads verify but do not reject it.
   await writeFile(blobPath(store, ref), bytes);
+  const original = await lstat(blobPath(store, ref), { bigint: true });
 
   await writeFile(join(project, "prior.txt"), bytes);
   const checkpoint = await service.create({ owner, root: project, paths: ["prior.txt"] });
@@ -136,4 +186,47 @@ it("keeps prior-format digest blobs readable and publishes atomically over them"
   expect(detail.files.find((file) => file.path === "prior.txt")!.restorable).toBe(true);
   expect(store.get<{ retention: string }>("workspaceCheckpoint", checkpoint.id)!.retention).toBe("AVAILABLE");
   expect(await readFile(blobPath(store, ref))).toEqual(bytes);
+  expect((await lstat(blobPath(store, ref), { bigint: true })).ino).toBe(original.ino);
+});
+
+it("reuses valid bytes while another reader holds a deny-delete leaf pin", async () => {
+  const { project, service, owner, store } = await fixture();
+  const bytes = Buffer.from("shared pinned bytes\n");
+  const { ref } = await capture(project, service, owner, "pinned.txt", bytes);
+  await withPathGuard([{ path: blobPath(store, ref), leaf: true, readOnly: true }], new AbortController().signal, async () => {
+    const again = await service.create({ owner, root: project, paths: ["pinned.txt"] });
+    expect(again.files[0]!.blobRef).toBe(ref);
+    expect(await readFile(blobPath(store, ref))).toEqual(bytes);
+  });
+});
+
+it("preserves the old blob and removes only its stage when publication fails", async () => {
+  const { project, service, owner, store } = await fixture();
+  const { ref } = await capture(project, service, owner, "retry.txt", Buffer.from("complete bytes\n"));
+  await writeFile(blobPath(store, ref), "partial");
+  const otherStage = join(blobDir(store), `.${ref}.other-writer.tmp`);
+  await writeFile(otherStage, "other operation");
+  custody.beforePublish = async () => { throw new Error("synthetic publish failure"); };
+  await expect(service.create({ owner, root: project, paths: ["retry.txt"] })).rejects.toThrow("synthetic publish failure");
+  expect(await readFile(blobPath(store, ref), "utf8")).toBe("partial");
+  expect((await readdir(blobDir(store))).sort()).toEqual([`.${ref}.other-writer.tmp`, ref].sort());
+});
+
+it("refuses a changed corrupt preimage instead of overwriting a concurrent writer", async () => {
+  const { project, service, owner, store } = await fixture();
+  const { ref } = await capture(project, service, owner, "race.txt", Buffer.from("complete bytes\n"));
+  await writeFile(blobPath(store, ref), "partial");
+  custody.beforePublish = async (_source, destination) => { await writeFile(destination, "newer bytes"); };
+  await expect(service.create({ owner, root: project, paths: ["race.txt"] })).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  expect(await readFile(blobPath(store, ref), "utf8")).toBe("newer bytes");
+  expect(await readdir(blobDir(store))).toEqual([ref]);
+});
+
+it("keeps cancellation distinct from missing or untrusted blob bytes", async () => {
+  const { project, service, owner, store } = await fixture();
+  const { checkpoint } = await capture(project, service, owner, "cancel.txt", Buffer.from("retained bytes\n"));
+  const controller = new AbortController();
+  controller.abort();
+  await expect(service.detail(owner, checkpoint.id, { signal: controller.signal })).rejects.toMatchObject({ code: "CANCELLED" });
+  expect(store.get<{ retention: string }>("workspaceCheckpoint", checkpoint.id)!.retention).toBe("AVAILABLE");
 });

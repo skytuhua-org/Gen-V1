@@ -76,25 +76,53 @@ function VerificationReadPanel({ threadId }: { threadId: string }) {
   const [state, setState] = useState<{threadId: string; model: Model | null; unavailable: boolean} | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null), opener = useRef<HTMLButtonElement | null>(null), id = useId();
   useEffect(() => {
-    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let request: AbortController | null = null;
+    let generation = 0;
+    let disposed = false;
+    const visible = () => document.visibilityState === 'visible';
+    const clearTimer = () => { if (timer !== undefined) clearTimeout(timer); timer = undefined; };
     const load = async () => {
+      if (disposed || request || !visible()) return;
+      const controller = new AbortController();
+      const owner = ++generation;
+      request = controller;
+      const current = () => !disposed && owner === generation && !controller.signal.aborted && visible();
       try {
         const response = await authenticated(() => fetch(`/api/threads/${encodeURIComponent(threadId)}/verification`, {
           credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
         }));
         const body = await read<{verification: Model}>(response);
-        if (!controller.signal.aborted) setState({threadId, model: body.verification, unavailable: false});
+        if (current()) setState({threadId, model: body.verification, unavailable: false});
       } catch {
-        if (!controller.signal.aborted) setState({threadId, model: null, unavailable: true});
+        if (current()) setState({threadId, model: null, unavailable: true});
       } finally {
+        if (request === controller) request = null;
         // One read owns the next poll. A slower old response cannot replace a
         // newer source result, and a hidden owner has no outstanding request.
-        if (!controller.signal.aborted) timer = setTimeout(() => void load(), 4000);
+        if (current() && timer === undefined) timer = setTimeout(() => { timer = undefined; void load(); }, 4000);
       }
     };
-    void load();
-    return () => { controller.abort(); clearTimeout(timer); };
+    const visibility = () => {
+      if (visible()) {
+        if (!request && timer === undefined) void load();
+        return;
+      }
+      generation++;
+      clearTimer();
+      const active = request;
+      request = null;
+      active?.abort();
+    };
+    document.addEventListener('visibilitychange', visibility);
+    visibility();
+    return () => {
+      disposed = true;
+      generation++;
+      document.removeEventListener('visibilitychange', visibility);
+      clearTimer();
+      request?.abort();
+    };
   }, [threadId]);
   // Render-time ownership matters: effects run after the newly selected owner
   // renders, so resetting state in an effect alone can show the prior result.
