@@ -82,7 +82,7 @@ it("bounds complete local hashing before reading an oversized sparse file", asyn
       if (args[0] === "rev-parse") return "a".repeat(40);
       if (args[0] === "branch") return "fixture";
       if (args[0] === "ls-files") return "";
-      if (args[0] === "status") return "?? large\0";
+      if (args[0] === "status") return "## fixture\0?? large\0";
       throw Error("Unexpected command");
     };
     await expect(
