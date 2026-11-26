@@ -160,7 +160,7 @@ describe('readLocalComparison', () => {
       if (key === 'rev-parse HEAD') return 'a'.repeat(40) + '\n';
       if (key === 'branch --show-current') return 'main\n';
       if (key === 'ls-files --stage -z') return 'index-state';
-      if (key.startsWith('status --porcelain=v1 -z')) return statusRaw;
+      if (key.startsWith('status --porcelain=v1 -b -z')) return '## main\0' + statusRaw;
       throw new Error('unexpected git call: ' + key);
     },
     path: root, managed: true, signal, owner: 'owner-1', ...overrides,
@@ -196,7 +196,7 @@ describe('readLocalComparison', () => {
       if (key === 'rev-parse HEAD') return 'a'.repeat(40);
       if (key === 'branch --show-current') return 'main';
       if (key === 'ls-files --stage -z') return 'index-state';
-      if (key.startsWith('status --porcelain=v1 -z')) return ++calls >= 2 ? ' D late.ts\0' : '';
+      if (key.startsWith('status --porcelain=v1 -b -z')) return '## main\0' + (++calls >= 2 ? ' D late.ts\0' : '');
       throw new Error('unexpected');
     };
     await expect(readLocalComparison(ctx, 'worktree')).rejects.toMatchObject({ code: 'REVISION_CHANGED' });
@@ -214,20 +214,19 @@ describe('readLocalComparison', () => {
       if (key === 'rev-parse HEAD') return 'a'.repeat(40);
       if (key === 'branch --show-current') return 'main';
       if (key === 'ls-files --stage -z') return 'index-state';
-      if (key.startsWith('status --porcelain=v1 -z')) {
+      if (key.startsWith('status --porcelain=v1 -b -z')) {
         reads.push('snapshot');
-        return changed ? ' D deleted.ts\0 D late.ts\0' : ' D deleted.ts\0';
+        return '## main\0' + (changed ? ' D deleted.ts\0 D late.ts\0' : ' D deleted.ts\0');
       }
-      if (key.startsWith('diff --numstat -z')) return '0\t1\tdeleted.ts\0';
-      if (key.startsWith('diff --full-index')) {
+      if (key.startsWith('diff --numstat -z --patch')) {
         reads.push('diff');
         changed = changeDuringDiff;
-        return diff;
+        return '0\t1\tdeleted.ts\0\0diff --git a/deleted.ts b/deleted.ts\n' + diff;
       }
       throw new Error('unexpected git call: ' + key);
     };
     const patch = await readLocalComparisonFile(ctx, value, 'deleted.ts');
-    expect(patch).toMatchObject({ state: 'text', text: diff });
+    expect(patch).toMatchObject({ state: 'text', text: 'diff --git a/deleted.ts b/deleted.ts\n' + diff });
     expect(reads).toEqual(['snapshot', 'diff', 'snapshot']);
     await expect(readLocalComparisonFile(ctx, value, 'other.ts')).rejects.toMatchObject({ code: 'NOT_FOUND' });
     changeDuringDiff = true;
@@ -242,7 +241,7 @@ describe('readLocalComparison', () => {
       if (key === 'rev-parse HEAD') return 'a'.repeat(40);
       if (key === 'branch --show-current') return 'main';
       if (key === 'ls-files --stage -z') return 'index-state';
-      if (key.startsWith('status --porcelain=v1 -z')) return ' D blob.bin\0 D gone\\path.ts\0';
+      if (key.startsWith('status --porcelain=v1 -b -z')) return '## main\0 D blob.bin\0 D gone\\path.ts\0';
       if (key.startsWith('diff --numstat -z')) return '-\t-\tblob.bin\0';
       if (key.startsWith('diff --full-index')) return 'binary diff';
       throw new Error('unexpected: ' + key);
