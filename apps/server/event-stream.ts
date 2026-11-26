@@ -51,7 +51,9 @@ function chunkFor(event: WorkspaceEvent): string {
 export function streamEvents(response: ServerResponse, store: Pick<Store, 'eventsAfter' | 'subscribe' | 'sequence' | 'retentionFloor'>, after: number, onClose: () => void): () => void {
   if (response.destroyed || response.writableEnded) { onClose(); return () => {}; }
   const controller = new AbortController();
-  const floor = store.retentionFloor();
+  const abandonStartup = () => { onClose(); response.destroy(); return () => {}; };
+  let floor: number;
+  try { floor = store.retentionFloor(); } catch { return abandonStartup(); }
   let cursor = after, pumping = false, closed = false, comment = ': connected\n\n', gap: string | null = null;
   if (cursor < floor) { gap = `event: retention-gap\ndata: ${JSON.stringify({ floor })}\n\n`; cursor = floor - 1; }
   // subscribe() already delivers each parsed commit once, in order, to every
@@ -68,7 +70,7 @@ export function streamEvents(response: ServerResponse, store: Pick<Store, 'event
     else if (pending.length >= 1024) { pending.length = 0; dropped = true; liveCut = Number.MAX_SAFE_INTEGER; }
     else { pending.push(event); void pump(); }
   });
-  liveCut = store.sequence;
+  try { liveCut = store.sequence; } catch { unsubscribe(); return abandonStartup(); }
   async function pump() {
     if (pumping || closed) return;
     pumping = true;
