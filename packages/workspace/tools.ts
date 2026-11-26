@@ -17,6 +17,7 @@ import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison
 
 interface Identity{dev:string;ino:string}
 export interface WorkspaceBinding {id:string;threadId:string;projectId:string;familyId?:string;path:string;branch:string;gitDirectory:string;commonDirectory:string;identity:Identity;gitDirectoryIdentity:Identity;commonDirectoryIdentity:Identity}
+interface ProjectFileBinding {project:ProjectSummary;path:string;workspace?:WorkspaceBinding;identity:Identity}
 export interface GitFile{path:string;oldPath?:string;index:string;worktree:string;staged:boolean;untracked:boolean;binary:boolean;added:number|null;removed:number|null}
 export interface GitStatus{head:string;branch:string;revision:string;files:GitFile[];diff:string;stagedDiff:string;truncated:boolean;mode?:'managed'|'legacy';gitWrite?:boolean;untrackedIncluded?:boolean}
 export interface ProjectToolOptions{git?:string;gh?:string}
@@ -68,13 +69,13 @@ export class ProjectTools{
   }));
  }
  private project(projectId:string){const project=this.store.get<ProjectSummary>('workspaceProject',id.parse(projectId));if(!project)throw new HarnessError('NOT_FOUND','Project is unavailable.');if(project.authority.kind!=='local')throw new HarnessError('CAPABILITY_DENIED','Company authority cannot use personal project tools.');return project;}
- async binding(projectId:string,threadId?:string):Promise<{project:ProjectSummary;path:string;workspace?:WorkspaceBinding}>{
+ async binding(projectId:string,threadId?:string):Promise<ProjectFileBinding>{
   const project=this.project(projectId);let workspace:WorkspaceBinding|undefined;
   if(threadId){const thread=this.store.get<Thread>('thread',id.parse(threadId));if(!thread||thread.projectId!==project.id||thread.kind==='delegate'||thread.kind==='side'||Boolean(thread.sideParentId))throw new HarnessError('CAPABILITY_DENIED','Select a main thread belonging to this project.');workspace=thread.workspaceId?this.store.get<WorkspaceBinding>('workspaceBinding',thread.workspaceId)??undefined:undefined;if(thread.workspaceId&&(!workspace||workspace.id!==thread.workspaceId||workspace.threadId!==thread.id||workspace.projectId!==project.id))throw new HarnessError('CAPABILITY_DENIED','The working copy binding is unavailable.');}
   const root=this.store.get<{path:string;identity:Identity}>('workspaceProjectRoot',project.id),path=workspace?.path??root?.path;
   if(!path||!root)throw new HarnessError('PROJECT_NOT_CONNECTED','Connect this project to a local folder.');
   if(resolve(await realpath(path))!==resolve(path)||!equal(await identity(path),workspace?.identity??root.identity))throw new HarnessError('CAPABILITY_DENIED','The project folder changed. Reconnect it explicitly.');
-  return{project,path,...(workspace?{workspace}:{})};
+  return{project,path,identity:workspace?.identity??root.identity,...(workspace?{workspace}:{})};
  }
  async connect(command:HostCommand){
   const existing=this.store.receipt(command);if(existing)return existing;
@@ -198,15 +199,26 @@ export class ProjectTools{
   return{project,...(threadId?{threadId,threadRevision}:{}),...(admitted.workspace?{workingCopy:{id:admitted.workspace.id,path:admitted.path}}:{}),machineName:hostname(),editor:{available:true,label:'Default editor'},branch:status?.branch??null,head:status?.head??null,...(status?{revision:status.revision}:{}),changes:{added:status?status.files.reduce((sum,file)=>sum+(file.added??0),0):null,removed:status?status.files.reduce((sum,file)=>sum+(file.removed??0),0):null,files:status?.files.length??null},lineage,scripts,capabilities:{git:!!status,gitWrite:status?.gitWrite??false,untrackedIncluded:status?.untrackedIncluded??false,terminal:!!project.rootPath,pullRequests:!!status?.gitWrite},...(error?{error}:{})};
  }
  async files(projectId:string,threadId:string|undefined,relativePath=''){
-  const admitted=await this.binding(projectId,threadId),path=admitted.path,target=relativePath?join(path,pathName.parse(relativePath)):path,resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Files stay inside the selected worktree.');
-  const bindingId=this.filesBindingId(admitted);
-  return withPathGuard([{path:target,leaf:false}],new AbortController().signal,async()=>{const{readdir}=await import('node:fs/promises'),entries=[];for(const item of(await readdir(target,{withFileTypes:true})).slice(0,500)){if(item.name.toLowerCase()==='.git'||item.name==='.harness-directory-guard'||item.isSymbolicLink())continue;entries.push({name:item.name,path:relativePath?relativePath+'/'+item.name:item.name,kind:item.isDirectory()?'directory':'file'});}return{path:relativePath,bindingId,entries};});
+  const admitted=await this.filesBinding(projectId,threadId),path=admitted.path,target=relativePath?join(path,pathName.parse(relativePath)):path,resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Files stay inside the selected worktree.');
+  const bindingId=this.filesBindingId(admitted,threadId);
+  const result=await withPathGuard([{path:target,leaf:false}],new AbortController().signal,async()=>{const{readdir}=await import('node:fs/promises'),entries=[];for(const item of(await readdir(target,{withFileTypes:true})).slice(0,500)){if(item.name.toLowerCase()==='.git'||item.name==='.harness-directory-guard'||item.isSymbolicLink())continue;entries.push({name:item.name,path:relativePath?relativePath+'/'+item.name:item.name,kind:item.isDirectory()?'directory':'file'});}return{path:relativePath,bindingId,entries};});
+  await this.checkFilesBinding(projectId,threadId,bindingId);return result;
  }
- /** Opaque digest of the admitted checkout binding: managed worktree identity or the enrolled root identity. Excludes HEAD, content and browsed directory so ordinary edits and browsing do not change it. */
- private filesBindingId(admitted:{project:ProjectSummary;workspace?:WorkspaceBinding}):string{
-  const root=this.store.get<{identity:Identity}>('workspaceProjectRoot',admitted.project.id);
-  return hash('gen-files-binding:v1\0'+JSON.stringify(admitted.workspace?['managed',admitted.project.id,admitted.workspace.id,admitted.workspace.identity.dev,admitted.workspace.identity.ino]:['legacy',admitted.project.id,root?.identity.dev??'',root?.identity.ino??'']));
+ /** Only binding admission failures invalidate pins; ordinary file denials keep their original codes. */
+ private async filesBinding(projectId:string,threadId:string|undefined):Promise<ProjectFileBinding>{
+  try{return await this.binding(projectId,threadId);}catch(error){
+   if(error instanceof HarnessError&&error.code==='PROJECT_NOT_CONNECTED')throw error;
+   throw new HarnessError('FILES_BINDING_CHANGED','The project folder changed. Refresh project files.');
+  }
  }
- async file(projectId:string,threadId:string|undefined,relativePath:string){const admitted=await this.binding(projectId,threadId),path=admitted.path,target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');const bindingId=this.filesBindingId(admitted);return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data),bindingId};});}
+ /** Hash captured identity, never a later store lookup. Physical paths remain inside the digest; content, HEAD and browsed directory do not affect it. */
+ private filesBindingId(admitted:ProjectFileBinding,threadId:string|undefined):string{
+  return hash('gen-files-binding:v1\0'+JSON.stringify([admitted.workspace?'managed':'legacy',admitted.project.id,threadId??null,admitted.workspace?.id??null,admitted.path,admitted.identity.dev,admitted.identity.ino]));
+ }
+ private async checkFilesBinding(projectId:string,threadId:string|undefined,expected:string){
+  const current=await this.filesBinding(projectId,threadId);
+  if(this.filesBindingId(current,threadId)!==expected)throw new HarnessError('FILES_BINDING_CHANGED','The project folder changed. Refresh project files.');
+ }
+ async file(projectId:string,threadId:string|undefined,relativePath:string){const admitted=await this.filesBinding(projectId,threadId),path=admitted.path,target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');const bindingId=this.filesBindingId(admitted,threadId);const result=await withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data),bindingId};});await this.checkFilesBinding(projectId,threadId,bindingId);return result;}
  async dispose(){await Promise.allSettled([...this.queues.values()]);}
 }

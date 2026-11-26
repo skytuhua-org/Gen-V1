@@ -13,6 +13,8 @@ export function useFilesRead<T>(
 	key: string,
 	enabled: boolean,
 	read: (signal: AbortSignal) => Promise<T>,
+	accept?: (value: T) => void,
+	onError?: (cause: unknown) => void,
 ) {
 	const [state, setState] = useState<FilesRead<T> & { key: string }>({
 		key,
@@ -46,10 +48,15 @@ export function useFilesRead<T>(
 			}));
 			void read(controller.signal)
 				.then((value) => {
-					if (current())
-						setState({ key, value, pending: false, error: "", errorCode: "" });
+					if (!current()) return;
+					// Admission may update caller-owned binding state, so it shares
+					// the same committed-owner fence as the accepted value.
+					accept?.(value);
+					if (current()) setState({ key, value, pending: false, error: "", errorCode: "" });
 				})
 				.catch((cause) => {
+					if (!current()) return;
+					onError?.(cause);
 					if (current())
 						setState((previous) => ({
 							...previous,
@@ -66,7 +73,7 @@ export function useFilesRead<T>(
 			generation.current++;
 			controller.abort();
 		};
-	}, [key, enabled, read, retry]);
+	}, [key, enabled, read, accept, onError, retry]);
 	const visible =
 		state.key === key
 			? state

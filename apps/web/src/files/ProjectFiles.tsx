@@ -2,11 +2,12 @@ import {
 	Fragment,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useRef,
 	useState,
 	type ReactNode,
 } from "react";
-import { authenticated, read } from "../api";
+import { ApiError, authenticated, read } from "../api";
 import { FilesView, displayFilePath, type FilesEntry } from "./FilesView";
 import { ProjectSearch } from "./ProjectSearch";
 import {
@@ -52,6 +53,8 @@ function ProjectFilesReader({
 	const [path, setPath] = useState(""),
 		[slots, setSlots] = useState<PreviewSlots>(emptySlots),
 		[bindingId, setBindingId] = useState<string | undefined>(),
+		[bindingReady, setBindingReady] = useState(false),
+		[bindingError, setBindingError] = useState<ApiError | null>(null),
 		[selectedMatch, setSelectedMatch] = useState<ProjectSearchMatch | null>(
 			null,
 		),
@@ -63,11 +66,14 @@ function ProjectFilesReader({
 			? slots.transient
 			: (slots.pins.find((entry) => entry.path === slots.activePath) ?? null);
 	const selected = activeEntry;
+	useLayoutEffect(() => {
+		if (!active) setBindingReady(false);
+	}, [active]);
 	const bindingRef = useRef(bindingId);
 	const adoptBinding = useCallback(
 		(observed: string | undefined, folderResponse: boolean) => {
 			if (typeof observed !== "string" || !observed)
-				throw new Error("Checkout binding is unavailable.");
+				throw new ApiError("FILES_BINDING_CHANGED", "Checkout binding is unavailable.");
 			if (bindingRef.current === undefined) {
 				bindingRef.current = observed;
 				setBindingId(observed);
@@ -79,7 +85,7 @@ function ProjectFilesReader({
 				setSlots(emptySlots());
 				setSelectedMatch(null);
 				if (!folderResponse)
-					throw new Error("Checkout binding changed.");
+					throw new ApiError("FILES_BINDING_CHANGED", "Checkout binding changed.");
 			}
 		},
 			[],
@@ -99,12 +105,7 @@ function ProjectFilesReader({
 					cache: "no-store",
 					signal,
 				}),
-			)
-				.then(read<ProjectFolder>)
-				.then((data) => {
-					adoptBinding(data.bindingId, true);
-					return data;
-				});
+			).then(read<ProjectFolder>);
 		},
 		[base, query, path],
 	);
@@ -118,25 +119,42 @@ function ProjectFilesReader({
 					cache: "no-store",
 					signal,
 				}),
-			)
-				.then(read<ProjectFile>)
-				.then((data) => {
-					adoptBinding(data.bindingId, false);
-					return data;
-				});
+			).then(read<ProjectFile>);
 		},
 		[base, query, selected?.path],
 	);
+	const acceptFolder = useCallback((data: ProjectFolder) => {
+		adoptBinding(data.bindingId, true);
+		setBindingError(null);
+		setBindingReady(true);
+	}, [adoptBinding]);
+	const acceptFile = useCallback((data: ProjectFile) => {
+		adoptBinding(data.bindingId, false);
+	}, [adoptBinding]);
+	const rejectBinding = useCallback((cause: unknown) => {
+		if (!(cause instanceof ApiError) || (cause.code !== "FILES_BINDING_CHANGED" && cause.code !== "PROJECT_NOT_CONNECTED")) return;
+		setSlots(emptySlots());
+		setSelectedMatch(null);
+		setBindingReady(false);
+		setBindingError(cause);
+	}, []);
 	const folder = useFilesRead(
 			(bindingId ?? "") + "|" + path,
 			active,
 			readFolder,
+			acceptFolder,
+			rejectBinding,
 		),
 		preview = useFilesRead(
 			(bindingId ?? "") + "|" + (selected?.path ?? ""),
-			active && !!selected,
+			active && bindingReady && !!selected,
 			readFile,
+			acceptFile,
+			rejectBinding,
 		);
+	const visiblePreview = active && bindingReady ? preview : {
+		...preview, value: null, pending: active && !!selected, error: "", errorCode: "",
+	};
 	const apply = useCallback(
 		(transition: Parameters<typeof transitionSlots>[1]) => {
 			const result = transitionSlots(slots, transition);
@@ -160,20 +178,20 @@ function ProjectFilesReader({
 		},
 		[apply],
 	);
-	const file = preview.value;
+	const file = visiblePreview.value;
 	const stale = !!(
 		selectedMatch &&
 		file &&
 		file.sha256.toLowerCase() !== selectedMatch.sha256.toLowerCase()
 	);
 	useEffect(() => {
-		if (!stale && !preview.pending)
+		if (!stale && !visiblePreview.pending)
 			matchLine.current?.scrollIntoView({
 				block: "center",
 				behavior: "instant",
 			});
-	}, [file, selectedMatch, stale, preview.pending]);
-	if (folder.errorCode === "PROJECT_NOT_CONNECTED") return fallback;
+	}, [file, selectedMatch, stale, visiblePreview.pending]);
+	if (folder.errorCode === "PROJECT_NOT_CONNECTED" || bindingError?.code === "PROJECT_NOT_CONNECTED") return fallback;
 	const line =
 		selectedMatch?.kind === "text" && !stale ? selectedMatch.line : undefined;
 	const lines =
@@ -196,7 +214,7 @@ function ProjectFilesReader({
 			source="project"
 			rootLabel="Project files"
 			path={path}
-			folder={folder}
+			folder={bindingError ? { ...folder, value: null, error: bindingError.message, errorCode: bindingError.code } : folder}
 			selected={selected}
 			projectSearch={{
 				available: searchAdapter.available,
@@ -223,7 +241,7 @@ function ProjectFilesReader({
 				),
 			}}
 			preview={{
-				...preview,
+				...visiblePreview,
 				body: file ? (
 					<>
 						{stale && (
@@ -281,8 +299,8 @@ function ProjectFilesReader({
 			}}
 			projectPreviews={{
 				slots,
-				busy: preview.pending,
-				failed: !!preview.error,
+				busy: visiblePreview.pending,
+				failed: !!visiblePreview.error,
 				status: slotStatus,
 				capped: capReason,
 				capLimit: PIN_LIMIT,
