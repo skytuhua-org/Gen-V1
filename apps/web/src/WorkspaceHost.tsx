@@ -264,7 +264,14 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
     if (settingsOpen || !settingsInvoker.current) return;
     restoreSettingsFocus();
   }, [settingsOpen]);
-  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]);});
+  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]);
+    // The close-commit restoration can land on a control the refreshed
+    // preferences then remove (e.g. the user disabled the section holding the
+    // invoker). Once the refresh settles, custody of the focused control is
+    // re-verified and lost focus falls back to a surviving control.
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || active === document.body || !active.isConnected || !active.getClientRects().length || active.closest('[inert], [hidden], [aria-hidden="true"]')) restoreSettingsFocus();
+  });
   const openBrowser = desktop?.context.surface.kind === 'main' ? async (url: string) => {
     const owner = desktop.context.windowId;
     await prepare();
