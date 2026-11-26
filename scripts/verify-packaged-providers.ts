@@ -170,7 +170,7 @@ async function runProbe(host:string,node:string,directory:string,cursorRequired:
   const timer=setTimeout(()=>fail(Error('Packaged runtime verification exceeded its deadline.')),90000);
   child.once('error',fail);
   for(const stream of [child.stdout,child.stderr])stream.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>256*1024){fail(Error('Packaged verification output exceeded its bound.'));return;}if(stream===child.stdout)stdout.push(chunk);else stderr=(stderr+String(chunk)).slice(-16000);});
-  child.once('close',code=>{clearTimeout(timer);if(failed)return;failed=true;code===0?accept(decodeProbeStdout(stdout)):reject(Error('Packaged runtime verification exited '+code+'. No authentication or inference was requested. '+stderr));});
+  child.once('close',code=>{clearTimeout(timer);if(failed)return;failed=true;if(code!==0){reject(Error('Packaged runtime verification exited '+code+'. No authentication or inference was requested. '+stderr));return;}try{accept(decodeProbeStdout(stdout));}catch(error){reject(error);}});
  });
  return JSON.parse(output);
 }

@@ -2,9 +2,16 @@ import {mkdtemp,mkdir,writeFile,symlink,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {describe,it,expect} from 'vitest';
+import {describe,it,expect,vi} from 'vitest';
+import {EventEmitter} from 'node:events';
+import {PassThrough} from 'node:stream';
 import {spawn} from 'node:child_process';
 import {distributionManifest,assertDistributionMatches,assertContainedPath,cursorDependencyVersion,resolveCursorDistributions,assertPackagedProbe,probeCursorBootstrap,decodeProbeStdout} from '../scripts/verify-packaged-providers.ts';
+
+vi.mock('node:child_process',async importOriginal=>{
+ const original=await importOriginal<typeof import('node:child_process')>();
+ return {...original,spawn:vi.fn(original.spawn)};
+});
 
 async function cursorFixture(directory:string){
  await writeFile(join(directory,'package.json'),JSON.stringify({dependencies:{'@cursor/sdk':'1.0.38'}}));
@@ -24,6 +31,25 @@ describe('packaged provider custody',()=>{
   expect(decodeProbeStdout(await syntheticStdout("process.stdout.write('1.0.38\\n')"))).toBe('1.0.38');
   expect(decodeProbeStdout(await syntheticStdout("process.stdout.write('v\\uFFFD\\n')"))).toBe('v�');
   for(const script of ['process.stdout.write(Buffer.from([0xff,0x21]))','process.stdout.write(Buffer.from([0xe4,0xbd]))']){const chunks=await syntheticStdout(script);expect(()=>decodeProbeStdout(chunks)).toThrow(/UTF-8/i);}
+ });
+ it('rejects a malformed outer probe report without throwing from the close callback',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'harness-cursor-report-'));
+  try{
+   await cursorFixture(directory);
+   const closed=new Promise<unknown>(resolve=>{
+    vi.mocked(spawn).mockImplementationOnce(()=>{
+     const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stderr:new PassThrough()});
+     queueMicrotask(()=>{
+      child.stdout.end(Buffer.from([0xe4,0xbd]));child.stderr.end();
+      try{child.emit('close',0);resolve(null);}catch(error){resolve(error);}
+     });
+     return child as unknown as ReturnType<typeof spawn>;
+    });
+   });
+   const outcome=probeCursorBootstrap(directory,process.execPath,directory).then(value=>({value}),error=>({error}));
+   expect(await Promise.race([closed,outcome])).toBeNull();
+   expect(await outcome).toEqual({error:expect.objectContaining({message:'Probe stdout is not well-formed UTF-8.'})});
+  }finally{vi.mocked(spawn).mockClear();await rm(directory,{recursive:true,force:true});}
  });
  it('validates the bundled probe version captures with a fatal UTF-8 decode',async()=>{
   const source=(await import('node:fs/promises')).readFile(new URL('../scripts/verify-packaged-providers.ts',import.meta.url),'utf8');
