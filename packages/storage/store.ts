@@ -310,8 +310,14 @@ export class Store {
         batchEvents = Number(removeEvents.run(floor, batch).changes);
         if (options.receipts !== 'keep') batchReceipts = Number(expireReceipts.run(floor, batch).changes);
         this.db.exec("COMMIT");
-      } catch (error) { this.db.exec("ROLLBACK"); throw error; }
-      finally { this.transactionOpen = false; }
+      } catch (error) {
+        try { this.connection.exec("ROLLBACK"); } catch { /* Preserve the batch failure. */ }
+        throw error;
+      } finally {
+        this.transactionOpen = false;
+        // Reuse command recovery so readers never observe abandoned deletions.
+        if (this.connection.isTransaction) this.reconcileRequired = true;
+      }
       removedEvents += batchEvents; removedReceipts += batchReceipts; batches++;
       if (batchEvents < batch && batchReceipts < batch) break;
     }
