@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import { HarnessError } from '../contracts/index.ts';
 import { terminateProcessTree } from '../runtime-pi/process-tree.ts';
 import { officialRuntimeCommand, officialRuntimeEnvironment } from './environment.ts';
@@ -25,16 +25,31 @@ export async function openGeminiHeadless(context: DriverContext, spawnProcess: t
   const config=preflight.geminiConfig;
   if(!config)throw new HarnessError('OFFICIAL_PROTOCOL_INVALID','The official preflight has no owned configuration.');
   const promptPath=config.promptPath;
-  await preflight.close();
-  if (!context.current()) throw new HarnessError('OFFICIAL_RUN_ABORTED', 'Official run authority was revoked.');
   // The preflight writes app-owned settings in the task directory; use an explicit
   // host server definition for native headless mode, which has no ACP MCP argument.
   const settingsPath = join(context.taskDir, `headless-settings-${randomUUID()}.json`);
-  const source = JSON.parse(await readFile(config.settingsPath, 'utf8'));
-  source.mcpServers = context.modelOnly?{}:{ host: { httpUrl: context.mcp.url, headers: context.mcp.headers, trust: true, includeTools: [...context.mcp.names] } };
-  await writeFile(settingsPath, JSON.stringify(source), { mode: 0o600 });
+  const taskDir = resolve(context.taskDir);
+  const scratchPaths = [...new Set([config.settingsPath, config.promptPath, settingsPath].filter(path => dirname(resolve(path)) === taskDir && /^(?:runtime-settings|system|headless-settings)-/.test(basename(path))))];
+  let cleanupPromise: Promise<void> | undefined;
+  async function removeScratch(): Promise<void> {
+    const results = await Promise.allSettled(scratchPaths.map(path => rm(path, { force: true })));
+    if (results.some(result => result.status === 'rejected')) throw new HarnessError('OFFICIAL_SCRATCH_CLEANUP_FAILED', 'Official Gemini headless scratch configuration could not be retired completely.');
+  }
+  const cleanupScratch = () => cleanupPromise ??= removeScratch();
+  try {
+    await preflight.close();
+    if (!context.current()) throw new HarnessError('OFFICIAL_RUN_ABORTED', 'Official run authority was revoked.');
+    const source = JSON.parse(await readFile(config.settingsPath, 'utf8'));
+    source.mcpServers = context.modelOnly?{}:{ host: { httpUrl: context.mcp.url, headers: context.mcp.headers, trust: true, includeTools: [...context.mcp.names] } };
+    await writeFile(settingsPath, JSON.stringify(source), { mode: 0o600 });
+  } catch (error) {
+    await cleanupScratch().catch(() => {});
+    throw error;
+  }
   let closed = false;
   let active: ChildProcess | undefined;
+  let activeDone: Promise<void> | undefined;
+  let activeClosed = false;
   let draining = false;
   const queue: WireInput[] = [];
   const assert = () => { if (closed || !context.current()) throw new HarnessError('OFFICIAL_RUN_ABORTED', 'Official run authority was revoked.'); };
@@ -45,6 +60,8 @@ export async function openGeminiHeadless(context: DriverContext, spawnProcess: t
       cwd: context.taskDir, env: { ...officialRuntimeEnvironment(context.dataDir, 'gemini-cli'), NO_BROWSER: 'true', GEMINI_CLI_SYSTEM_SETTINGS_PATH: settingsPath, GEMINI_SYSTEM_MD: promptPath },
       stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32', windowsHide: true,
     });
+    activeClosed = false;
+    activeDone = new Promise<void>(resolve => child.once('close', () => { activeClosed = true; resolve(); }));
     context.own(child); child.stderr?.resume();
     let buffer = ''; let initialized = false; let echoed = false; let consumed = false; let terminal = false; let status: string | undefined;
     let content = ''; let usage: { input_tokens?: number; output_tokens?: number } | undefined; let failure: Error | undefined;
@@ -94,6 +111,7 @@ export async function openGeminiHeadless(context: DriverContext, spawnProcess: t
     const ended = new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('close', resolve); child.stdin?.once('error', reject); });
     child.stdin?.end(text);
     const code = await bounded(ended, 180_000, 'Official Gemini headless turn did not terminate.');
+    if (active === child && activeClosed) { active = undefined; activeDone = undefined; }
     // A clean process close ends its last JSONL record even without a newline.
     if (!failure && code === 0 && buffer.trim()) {
       try { accept(JSON.parse(buffer) as GeminiStreamFrame); }
@@ -104,7 +122,6 @@ export async function openGeminiHeadless(context: DriverContext, spawnProcess: t
     if (code !== 0 || !terminal || status !== 'success') throw new HarnessError('OFFICIAL_TURN_FAILED', 'Official Gemini did not confirm a successful terminal turn. Native history will determine input delivery.');
     if (content) context.event('assistant.message', { messageId: randomUUID(), content, inputIds: context.inputIds([wire.uuid]) });
     context.event('usage', { usage: { contextTokens: null, contextWindow: null, inputTokens: finite(usage?.input_tokens), outputTokens: finite(usage?.output_tokens), cost: null, sessionPercent: null, weeklyPercent: null, activity: queue.length ? 'running' : 'idle' } });
-    active = undefined;
   }
   async function drain(): Promise<void> {
     if (draining) return;
@@ -123,14 +140,20 @@ export async function openGeminiHeadless(context: DriverContext, spawnProcess: t
       if (closed) return;
       closed = true; queue.length = 0;
       const child = active;
-      if (!child || child.exitCode !== null || child.signalCode !== null) return;
-      let onExit!: () => void;
-      const exited = new Promise<void>(resolve => { onExit = resolve; });
-      child.once('exit', onExit);
-      try {
-        child.kill('SIGINT');
-        await bounded(exited, 500, 'Official Gemini cancellation grace elapsed.').catch(() => {});
-      } finally { child.removeListener('exit', onExit); }
+      const done = activeDone;
+      if (child && child.exitCode === null && child.signalCode === null) {
+        try { child.kill('SIGINT'); } catch { /* The close confirmation below owns the outcome. */ }
+      }
+      if (child && done) await bounded(done, 500, 'Official Gemini cancellation grace elapsed.').catch(() => {});
+      if (child && active === child && activeClosed) { active = undefined; activeDone = undefined; }
+      if (!active) {
+        await cleanupScratch();
+        return;
+      }
+      void done?.then(async () => {
+        if (active === child) { active = undefined; activeDone = undefined; }
+        try { await cleanupScratch(); } catch { /* The unconfirmed child keeps its files until a later confirmed close. */ }
+      });
     },
   };
   context.ready(driver);
