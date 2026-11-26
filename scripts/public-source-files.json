@@ -4123,6 +4123,7 @@
     "tests/store-backed-helpers.test.ts",
     "tests/store.test.ts",
     "tests/subscription-connections.test.ts",
+    "tests/task-action-ownership.test.ts",
     "tests/task-composition.test.ts",
     "tests/task-design-recording.test.ts",
     "tests/task-interface-fixture.test.ts",
