@@ -3310,6 +3310,7 @@
     "tests/agents-workspace-grid.test.ts",
     "tests/analyze-initiated-motion.test.ts",
     "tests/appearance-draft.test.ts",
+    "tests/artifact-draft-recovery.test.ts",
     "tests/artifact-inputs.test.ts",
     "tests/attention-boundaries.test.ts",
     "tests/attention-popups.test.ts",
