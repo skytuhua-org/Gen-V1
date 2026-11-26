@@ -78,7 +78,16 @@ export function TooltipLayer() {
     const observer = new MutationObserver(records => {
       const targets = new Set(records.map(record => record.target));
       for (const element of targets) {
-        if (!(element instanceof Element) || !element.hasAttribute('data-tooltip-adopted')) continue;
+        if (!(element instanceof Element)) continue;
+        const names = new Set(records.filter(record => record.target === element).map(record => record.attributeName));
+        // A caller-provided data-tooltip update refreshes or dismisses the shown
+        // tooltip; it never touches the adopted-title bookkeeping.
+        if (names.has('data-tooltip') && current.current === element) {
+          const text = adopt(element);
+          if (!text) hide();
+          else if (opened.current) setShown({ text, target: element, leaving: false });
+        }
+        if (!names.has('title') || !element.hasAttribute('data-tooltip-adopted')) continue;
         const title = element.getAttribute('title');
         if (title) {
           if (current.current !== element) continue;
@@ -95,7 +104,7 @@ export function TooltipLayer() {
         if (current.current === element) hide();
       }
     });
-    observer.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['title'] });
+    observer.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['title', 'data-tooltip'] });
     return () => {
       observer.disconnect();
       clearTimeout(timer.current);

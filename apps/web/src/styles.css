@@ -44,6 +44,7 @@ summary { cursor:pointer; line-height:1.6; }
 .sr-only { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
 .muted { color:var(--muted); }
 .error-text { color:var(--danger); font-size:12px; overflow-wrap:anywhere; }
+.field-hint { display:block; margin-top:4px; font-size:12px; line-height:16px; color:var(--muted); }
 .primary,.secondary,.accent-button,.quiet { border-radius:8px; padding:8px 12px; font-size:12px; min-height:32px; white-space:nowrap; }
 .primary { color:white; background:var(--accent-solid); }
 .primary:hover:not(:disabled) { background:var(--accent-hover); }
