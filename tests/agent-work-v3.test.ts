@@ -203,7 +203,9 @@ describe('output schema, repair and verification', () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
     const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
-    await f.coordinator.submitResult(work.workId, childRun, validOutput);
+    // Trusted host verification record proving requirement r1.
+    f.store.internal('fixture.evidence', f.parentThread.id, () => f.store.put('data', 'ev-ok', f.parentThread.id, {id: 'ev-ok', threadId: f.parentThread.id, revision: 1, value: {checkId: 'check-1', outcome: 'PASS', requirementId: 'r1'}, provenance: 'harness:verification', createdAt: new Date().toISOString()}));
+    await f.coordinator.submitResult(work.workId, childRun, {...validOutput, evidenceRefs: [{id: 'ev-ok', revision: 1}]});
     expect(f.coordinator.inspect(work.workId)).toMatchObject({state: 'COMPLETED_REPORTED'});
     expect(f.coordinator.inspect(work.workId)!.outputRef).toMatchObject({revision: 1});
     await f.coordinator.verify(f.ctx, work.workId);
@@ -217,14 +219,66 @@ describe('output schema, repair and verification', () => {
     await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
     expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
   });
-  it('verifies real evidence records belonging to the parent task', async () => {
+  it('verifies trusted evidence records belonging to the parent task', async () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
     const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
-    f.store.internal('fixture.evidence', f.parentThread.id, () => f.store.put('data', 'ev-1', f.parentThread.id, {id: 'ev-1', threadId: f.parentThread.id, revision: 1, value: {note: 'real'}, provenance: 'test', createdAt: new Date().toISOString()}));
+    f.store.internal('fixture.evidence', f.parentThread.id, () => f.store.put('data', 'ev-1', f.parentThread.id, {id: 'ev-1', threadId: f.parentThread.id, revision: 1, value: {checkId: 'check-1', outcome: 'PASS', requirementId: 'r1'}, provenance: 'harness:verification', createdAt: new Date().toISOString()}));
     await f.coordinator.submitResult(work.workId, childRun, {...validOutput, evidenceRefs: [{id: 'ev-1', revision: 1}]});
     await f.coordinator.verify(f.ctx, work.workId);
     expect(f.coordinator.inspect(work.workId)!.state).toBe('VERIFIED');
+  });
+  // #2043 T02 fixtures: verify today only checks record existence, parent
+  // thread and revision — trusted provenance, check outcome, nonempty
+  // required evidence and evidence binding are unenforced. These
+  // `it.fails` fixtures pin the desired contract; flip to `it` when the
+  // typed evidence-verifier repair lands.
+  const evidencePut = (f: ReturnType<typeof fixture>, id: string, value: unknown, provenance: string) =>
+    f.store.internal('fixture.evidence', f.parentThread.id, () => f.store.put('data', id, f.parentThread.id, {id, threadId: f.parentThread.id, revision: 1, value, provenance, createdAt: new Date().toISOString()}));
+  it('refuses to verify when required evidence is empty', async () => {
+    const f = fixture();
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
+    await f.coordinator.submitResult(work.workId, childRun, {...validOutput, evidenceRefs: []});
+    await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
+    expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
+  });
+  it('refuses to verify on a model-authored evidence record', async () => {
+    const f = fixture();
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
+    evidencePut(f, 'ev-model', {note: 'child wrote this itself'}, 'harness:agent-output');
+    await f.coordinator.submitResult(work.workId, childRun, {...validOutput, evidenceRefs: [{id: 'ev-model', revision: 1}]});
+    await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
+    expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
+  });
+  it('refuses to verify on a failed or stale check result', async () => {
+    const f = fixture();
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
+    evidencePut(f, 'ev-check', {checkId: 'check-1', outcome: 'FAIL', requirementId: 'r1'}, 'harness:verification');
+    await f.coordinator.submitResult(work.workId, childRun, {...validOutput, evidenceRefs: [{id: 'ev-check', revision: 1}]});
+    await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
+    expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
+  });
+  it('refuses to verify a reported BLOCKED or INCOMPLETE outcome', async () => {
+    const f = fixture();
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
+    evidencePut(f, 'ev-blocked', {note: 'host proof'}, 'harness:verification');
+    await f.coordinator.submitResult(work.workId, childRun, {...validOutput, outcome: 'BLOCKED', evidenceRefs: [{id: 'ev-blocked', revision: 1}]});
+    await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
+    expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
+  });
+  it('refuses to verify evidence bound to a different requirement', async () => {
+    const f = fixture();
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    const childRun = {threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch};
+    // Real host verification record, but it proves 'r-other', not 'r1'.
+    evidencePut(f, 'ev-other', {checkId: 'check-1', outcome: 'PASS', requirementId: 'r-other'}, 'harness:verification');
+    await f.coordinator.submitResult(work.workId, childRun, {...validOutput, evidenceRefs: [{id: 'ev-other', revision: 1}]});
+    await expect(f.coordinator.verify(f.ctx, work.workId)).rejects.toMatchObject({code: 'INVALID_AGENT_EVIDENCE'});
+    expect(f.coordinator.inspect(work.workId)!.state).toBe('COMPLETED_REPORTED');
   });
 });
 
@@ -410,5 +464,50 @@ describe('result contract and lifetime budget', () => {
     expect(f.coordinator.budgetLedger()).toMatchObject({spentTokens: 100, reservedTokens: 0});
     await expect(f.coordinator.admit(f.ctx, f.admission({budget: {tokens: 60, ms: null}}, 2), new AbortController().signal))
       .rejects.toMatchObject({code: 'AGENT_BUDGET_EXHAUSTED'});
+  });
+});
+
+describe('M09-04 atomic admission and resume budgets', () => {
+  it('rechecks the three-slot cap after awaited proof validation, so concurrent admits cannot exceed it', async () => {
+    __setCapabilityFlagForTests('agents.workV1', true);
+    __setCapabilityFlagForTests('workspace.writeDelegateV1', true);
+    let release!: () => void, calls = 0;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const proof = {worktreeId: 'wt-1', path: 'C:/work', profileDigest: 'a'.repeat(64)};
+    const f = fixture({flags: {}, roleProofs: {codeWorktree: async () => { if (++calls === 4) release(); await barrier; return proof; }}});
+    const admits = await Promise.allSettled(
+      Array.from({length: 4}, (_, i) => f.coordinator.admit(f.ctx, f.admission({role: 'CODE_WORKTREE'}, i), new AbortController().signal)),
+    );
+    const dispatched = admits.filter(result => result.status === 'fulfilled');
+    expect(dispatched).toHaveLength(3);
+    expect(f.children).toHaveLength(3);
+    expect(admits.filter(result => result.status === 'rejected').map(result => (result as PromiseRejectedResult).reason?.code)).toEqual(['AGENT_LIMIT']);
+  });
+  it('rejects a racing admit whose reservation would over-commit the token budget', async () => {
+    __setCapabilityFlagForTests('agents.workV1', true);
+    __setCapabilityFlagForTests('workspace.writeDelegateV1', true);
+    let release!: () => void, calls = 0;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const proof = {worktreeId: 'wt-1', path: 'C:/work', profileDigest: 'a'.repeat(64)};
+    const f = fixture({flags: {}, globalBudget: {tokens: 15, ms: null}, roleProofs: {codeWorktree: async () => { if (++calls === 2) release(); await barrier; return proof; }}});
+    // Both admits pass the pre-await budget check (0 + 10 <= 15) while the
+    // barrier holds; only the inner transaction re-verification can stop the
+    // second one from over-reserving.
+    const admits = await Promise.allSettled(
+      Array.from({length: 2}, (_, i) => f.coordinator.admit(f.ctx, f.admission({role: 'CODE_WORKTREE', budget: {tokens: 10, ms: null}}, i), new AbortController().signal)),
+    );
+    expect(admits.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(admits.filter(result => result.status === 'rejected').map(result => (result as PromiseRejectedResult).reason?.code)).toEqual(['AGENT_BUDGET_EXHAUSTED']);
+    expect(f.coordinator.budgetLedger()).toMatchObject({reservedTokens: 10});
+  });
+  it('reserves the wall-time budget again on resume, refusing an exhausted-ms ledger', async () => {
+    const f = fixture({globalBudget: {tokens: 1000, ms: 15}});
+    const work = await f.coordinator.admit(f.ctx, f.admission({budget: {tokens: 10, ms: 10}}), new AbortController().signal);
+    await f.coordinator.stop(f.ctx, work.workId);
+    expect(f.coordinator.budgetLedger()).toMatchObject({spentTokens: 10, spentMs: 10, reservedMs: 0});
+    // Tokens still fit (10+10 <= 1000) but wall-time is exhausted (10+10 > 15):
+    // the resume reservation must reject instead of silently exceeding the cap.
+    await expect(f.coordinator.resume(f.ctx, work.workId)).rejects.toMatchObject({code: 'AGENT_BUDGET_EXHAUSTED'});
+    expect(f.coordinator.inspect(work.workId)!.state).toBe('CANCELLED');
   });
 });

@@ -33,7 +33,7 @@
   flex: 1;
   min-width: 0;
   height: 31px;
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
   padding: 0 8px;
@@ -43,7 +43,7 @@
 
 .app-shell .sidebar .search-field:focus-within,
 .sidebar .search-field:focus-within {
-  border-color: var(--ui-focus-ring, #808080);
+  border-color: var(--composer-focus-border);
 }
 
 .sidebar .search-field kbd {
@@ -84,8 +84,8 @@
 
 .app-shell .sidebar .sidebar-action-btn.selected,
 .sidebar .sidebar-action-btn.selected {
-  background: var(--selection-bg);
-  border-color: var(--text);
+  background: var(--hover);
+  border-color: transparent;
   color: var(--accent);
 }
 
@@ -172,13 +172,13 @@
 
 .app-shell .sidebar .sidebar-thread-row:hover:not(.active),
 .sidebar .sidebar-thread-row:hover:not(.active) {
-  background: color-mix(in srgb, var(--hover) 62%, transparent);
+  background: var(--subtle);
 }
 
 .app-shell .sidebar .sidebar-thread-row.active,
 .sidebar .sidebar-thread-row.active {
-  background: var(--selection-bg);
-  border-color: var(--text);
+  background: var(--hover);
+  border-color: transparent;
 }
 
 .app-shell .sidebar .sidebar-thread-row .thread-item,
@@ -293,11 +293,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.app-shell .sidebar .sidebar-thread-row.active .thread-item-title,
-.sidebar .sidebar-thread-row.active .thread-item-title {
-  font-weight: 600;
 }
 
 .app-shell .sidebar .thread-item-meta,
@@ -504,7 +499,6 @@
   flex: 0 0 auto;
   margin-top: 6px;
   padding: 7px 2px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
 
 .sidebar .sidebar-footer > button {
@@ -519,15 +513,16 @@
   color: var(--muted);
 }
 
-.sidebar .sidebar-footer > button:hover:not(:disabled),
+.sidebar .sidebar-footer > button:hover:not(:disabled):not([aria-disabled="true"]),
 .sidebar .sidebar-footer > button:focus-visible {
   color: var(--text);
   background: var(--hover);
 }
 
-.sidebar .sidebar-footer > button:disabled {
+.sidebar .sidebar-footer > button:disabled,
+.sidebar .sidebar-footer > button[aria-disabled="true"] {
   opacity: 0.45;
-  cursor: default;
+  cursor: not-allowed;
 }
 
 /* --- Row actions: quiet at rest, revealed on hover/focus/touch, aligned to the metadata line --- */
@@ -544,7 +539,7 @@
   align-items: center;
   gap: 2px;
   opacity: 0;
-  transition: opacity 90ms linear;
+  transition: opacity var(--ui-motion-hover) var(--ui-ease-move);
 }
 
 .sidebar .sidebar-settled-row .sidebar-thread-actions {

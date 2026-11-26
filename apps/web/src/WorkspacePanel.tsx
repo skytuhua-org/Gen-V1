@@ -59,22 +59,43 @@ export function WorkspacePanel({ snapshot, threadId, preferences, layout, setWid
   const [handoffError,setHandoffError]=useState('');
   useEffect(()=>setHandoffError(''),[threadId,workspace.activeTab]);
   const tabStrip=useRef<HTMLDivElement>(null);
+  const tabLabels: Record<WorkspaceTab, string> = {artifact:'Artifact',plan:'Plan',diff:'Diff',files:'Files',terminal:'Terminal','pull-request':'Pull request','linked-pull-requests':'Linked pull requests',notes:'Notes',output:'Output',usage:'Usage'};
+  const openTabs = workspace.openTabs ?? layout.openTabs;
   useLayoutEffect(()=>{
     const strip=tabStrip.current;if(!strip)return;
     const mark=()=>{strip.dataset.overflowEnd=String(strip.scrollLeft+strip.clientWidth<strip.scrollWidth-1);strip.dataset.overflowStart=String(strip.scrollLeft>1);};
     mark();strip.addEventListener('scroll',mark);const observer=new ResizeObserver(mark);observer.observe(strip);
     return()=>{strip.removeEventListener('scroll',mark);observer.disconnect();};
   },[]);
+  // T01 (#1741): reveal the active tab whenever selection or tab count changes.
+  useLayoutEffect(()=>{
+    const strip=tabStrip.current;if(!strip)return;
+    const tab=strip.querySelector<HTMLElement>(`#workspace-tab-${workspace.activeTab}`);if(!tab)return;
+    const tr=tab.getBoundingClientRect(),sr=strip.getBoundingClientRect();
+    if(tr.left>=sr.left&&tr.right<=sr.right)return;
+    tab.scrollIntoView({block:'nearest',inline:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+  },[workspace.activeTab,openTabs.length]);
+  // T02 (#1741): APG tablist arrow-key navigation (automatic activation).
+  const onStripKeyDown=(event:React.KeyboardEvent<HTMLDivElement>)=>{
+    const index=openTabs.indexOf(workspace.activeTab);if(index<0)return;
+    let next=-1;
+    if(event.key==='ArrowRight')next=(index+1)%openTabs.length;
+    else if(event.key==='ArrowLeft')next=(index+openTabs.length-1)%openTabs.length;
+    else if(event.key==='Home')next=0;
+    else if(event.key==='End')next=openTabs.length-1;
+    else return;
+    event.preventDefault();
+    const id=openTabs[next];workspace.setActiveTab(id);
+    tabStrip.current?.querySelector<HTMLElement>(`#workspace-tab-${id}`)?.focus();
+  };
   const artifacts = snapshot.artifacts.filter(item => item.threadId === threadId && item.lifecycle === 'active');
   const activeArtifact = artifacts.find(item => item.id === workspace.activeArtifactId);
-  const tabLabels: Record<WorkspaceTab, string> = {artifact:'Artifact',plan:'Plan',diff:'Diff',files:'Files',terminal:'Terminal','pull-request':'Pull request','linked-pull-requests':'Linked pull requests',notes:'Notes',output:'Output',usage:'Usage'};
-  const openTabs = workspace.openTabs ?? layout.openTabs;
   const [addOpen,setAddOpen]=useState(false);
   const addable: WorkspaceTab[] = (Object.keys(tabLabels) as WorkspaceTab[]).filter(tab => tab !== 'artifact');
   const addItems = addable.map(tab=>({id:'add-'+tab,label:tabLabels[tab],onSelect:()=>{workspace.openTab?.(tab);}}));
   return <aside className="workspace-right" aria-label="Workspace panel" data-state={leaving?"closed":undefined} onAnimationEnd={event=>{if(leaving&&event.target===event.currentTarget&&event.animationName==="panel-exit")onLeave?.();}}>
     {!standalone && !resizeBounds?.stacked && <ResizeHandle label="Resize workspace panel" value={resizeBounds?.width ?? layout.rightPanelWidth} minimum={resizeBounds?.minimum ?? 280} maximum={resizeBounds?.maximum ?? 720} side="right" change={setWidth} />}
-    <header className="workspace-right-header"><div ref={tabStrip} role="tablist" aria-label="Workspace views">{openTabs.map(id => <button role="tab" key={id} id={`workspace-tab-${id}`} aria-selected={workspace.activeTab === id} aria-controls={`workspace-view-${id}`} onClick={() => workspace.setActiveTab(id)}>{tabLabels[id]}</button>)}</div><ActionMenu label="Add surface" icon={<Plus size={14} aria-hidden="true"/>} iconOnly open={addOpen} onOpenChange={setAddOpen} items={addItems}/>{standalone&&close&&<button className="icon-button" aria-label="Close workspace panel" onClick={close}><X size={15} /></button>}</header>
+    <header className="workspace-right-header"><div ref={tabStrip} role="tablist" aria-label="Workspace views" onKeyDown={onStripKeyDown}>{openTabs.map(id => <button role="tab" key={id} id={`workspace-tab-${id}`} tabIndex={workspace.activeTab === id ? 0 : -1} aria-selected={workspace.activeTab === id} aria-controls={`workspace-view-${id}`} onClick={() => workspace.setActiveTab(id)}>{tabLabels[id]}</button>)}</div><ActionMenu label="Add surface" icon={<Plus size={14} aria-hidden="true"/>} iconOnly open={addOpen} onOpenChange={setAddOpen} items={addItems}/>{standalone&&close&&<button className="icon-button" aria-label="Close workspace panel" onClick={close}><X size={15} /></button>}</header>
     {handoffError&&<p role="status" className="error-text">{handoffError}</p>}
     <div ref={content} className="workspace-panel-content" role="tabpanel" id={`workspace-view-${workspace.activeTab}`} aria-labelledby={`workspace-tab-${workspace.activeTab}`}>
       {workspace.activeTab === 'artifact' && <><div className="panel-toolbar"><Select aria-label="Workspace artifact" value={activeArtifact?.id ?? ''} onValueChange={workspace.requestOpenArtifact} options={[{value:'',label:'Choose an artifact'},...artifacts.map(artifact=>({value:artifact.id,label:artifact.title}))]}/></div>{!activeArtifact && <WorkspaceLauncher />}</>}
