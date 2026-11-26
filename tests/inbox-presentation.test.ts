@@ -92,3 +92,32 @@ it.each(['mutation','stream','reconnect','busy-stream'] as const)('reconciles %s
   expect(await page.evaluate(()=>(window as unknown as AttentionWindow).disconnected)).toBe(1);
  }finally{await browser.close();}
 },30000);
+
+it('advances row ages on the mounted tick and clears the interval on unmount',async()=>{
+ const {build}=await import('esbuild'),{chromium}=await import('@playwright/test');
+ const script=(await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
+  import React from 'react';import {createRoot} from 'react-dom/client';
+  import {InboxView} from './apps/web/src/InboxView';
+  window.intervals=new Set();
+  const setI=window.setInterval,clearI=window.clearInterval;
+  window.setInterval=(...args)=>{const id=setI(...args);window.intervals.add(id);return id;};
+  window.clearInterval=id=>{window.intervals.delete(id);clearI(id);};
+  const item={id:'item',threadId:'thread',kind:'thread-completed',title:'Completed task',summary:'Synthetic result',state:'completed',read:true,actionable:false,createdAt:new Date(Date.now()-90_000).toISOString(),updatedAt:new Date(Date.now()-90_000).toISOString(),popupDismissed:false,notificationKey:'item:completed',destination:{threadId:'thread'}};
+  function App(){return <InboxView attention={{items:[item],unread:0,error:'',refresh:async()=>{},markRead:async()=>{},markUnread:async()=>{}}} onOpenThread={()=>{}}/>;}
+  const root=createRoot(document.getElementById('root'));root.render(<App/>);window.hide=()=>root.unmount();
+ `},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'},plugins:[{name:'stub-css',setup(plugin){plugin.onLoad({filter:/\.css$/},()=>({loader:'js',contents:'export {}'}));}}]})).outputFiles[0]!.text;
+ const browser=await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{})}),page=await browser.newPage();
+ type TickWindow=Window&{intervals:Set<unknown>;hide:()=>void};
+ try{
+  await page.clock.install();
+  await page.setContent('<div id="root"></div>');await page.addScriptTag({content:script});
+  await expect.poll(()=>page.locator('time').first().textContent()).toBe('1m');
+  expect(await page.evaluate(()=>(window as unknown as TickWindow).intervals.size)).toBe(1);
+  await page.clock.runFor(61_000);
+  await expect.poll(()=>page.locator('time').first().textContent()).toBe('2m');
+  await page.evaluate(()=>(window as unknown as TickWindow).hide());
+  expect(await page.evaluate(()=>(window as unknown as TickWindow).intervals.size)).toBe(0);
+  await page.clock.runFor(60_000);
+  expect(await page.evaluate(()=>(window as unknown as TickWindow).intervals.size)).toBe(0);
+ }finally{await browser.close();}
+},30000);

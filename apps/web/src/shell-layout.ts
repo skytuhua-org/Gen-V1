@@ -34,3 +34,19 @@ export function matchesShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | '
   return event.key.toLowerCase() === key && matchesPlatform
     && event.shiftKey === modifiers.includes('shift') && event.altKey === modifiers.includes('alt');
 }
+
+const sidebarSearchSelector = '.search-field input, input.search-field, input[placeholder="Search"]';
+
+function visibleSidebarSearch(input: HTMLInputElement) {
+  if (!input.isConnected || input.disabled || input.closest('[inert], [hidden], [aria-hidden="true"]')) return false;
+  const box = input.getBoundingClientRect(), style = getComputedStyle(input);
+  return box.width > 0 && box.height > 0 && style.visibility === 'visible' && style.display !== 'none';
+}
+
+/** Focus the rendered sidebar search field, ignoring inert collapse snapshots. */
+export function focusSidebarSearch(fallback: HTMLInputElement | null = null) {
+  const target = (fallback && visibleSidebarSearch(fallback) ? fallback : null)
+    ?? Array.from(document.querySelectorAll<HTMLInputElement>(sidebarSearchSelector)).find(visibleSidebarSearch);
+  target?.focus({ preventScroll: true });
+  return target;
+}

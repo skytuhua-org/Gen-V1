@@ -56,6 +56,24 @@ describe('feedback primitives', () => {
     await page.close();
   });
 
+  it('evicts the oldest toast through the leaving animation, not instantly (#1705)', async () => {
+    const page = await open();
+    await page.evaluate(`for (const m of ['First','Second','Third']) window.toast(m)`);
+    // The evicted item enters `leaving` (data-state=closed) in the same publish, then unmounts on animation end.
+    const state = await page.evaluate(`window.toast('Fourth'), new Promise(resolve => setTimeout(() => resolve(document.querySelector('.ui-toast').dataset.state), 0))`);
+    expect(state).toBe('closed');
+    const first = page.locator('.ui-toast', {hasText: 'First'});
+    await first.waitFor({state: 'detached', timeout: 3000});
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(3);
+    // Rapid pushes: every evicted item exits through the same path; only the newest three stay open.
+    const rest = await page.evaluate<string[]>(`for (const m of ['Five','Six','Seven','Eight']) window.toast(m); new Promise(resolve => setTimeout(() => resolve([...document.querySelectorAll('.ui-toast')].map(n => n.dataset.state + ':' + n.querySelector('span').textContent)), 0))`);
+    expect(rest.filter(item => item.startsWith('closed'))).toHaveLength(4);
+    await expect.poll(() => page.locator('.ui-toast').count(), {timeout: 4000}).toBe(3);
+    const remaining = await page.evaluate(`[...document.querySelectorAll('.ui-toast span')].map(n => n.textContent).join()`);
+    expect(remaining).toBe('Six,Seven,Eight');
+    await page.close();
+  });
+
   it('expires toasts after their duration', async () => {
     const page = await open();
     await page.evaluate(`window.toast('Short', {durationMs: 60})`);
@@ -131,6 +149,19 @@ describe('feedback primitives', () => {
     const busy = page.locator('#busy');
     expect(await busy.getAttribute('aria-busy')).toBe('true');
     expect(await busy.isDisabled()).toBe(true);
+    await page.close();
+  });
+
+  it('evicts with the opacity-only fade under reduced motion', async () => {
+    const page = await open();
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    for (const m of ['r1', 'r2', 'r3']) await page.evaluate(`window.toast('${m}', {durationMs: 60000})`);
+    await page.evaluate(`window.toast('r4', {durationMs: 60000})`);
+    const evicted = page.locator('.ui-toast[data-state="closed"]', {hasText: 'r1'});
+    await evicted.waitFor();
+    expect(await evicted.evaluate(el => getComputedStyle(el).animationDuration)).toBe('0.08s');
+    expect(await evicted.evaluate(el => getComputedStyle(el).transform)).toBe('none');
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(3);
     await page.close();
   });
 

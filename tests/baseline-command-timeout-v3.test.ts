@@ -33,6 +33,7 @@ function fixture(testDelayMs = 0) {
   const calls = join(root, 'calls.jsonl'), out = join(root, 'out');
   const entry = join(bin, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs');
   mkdirSync(join(bin, 'node_modules', 'pnpm', 'bin'), { recursive: true });
+  writeFileSync(join(bin, 'node_modules', 'pnpm', 'package.json'), JSON.stringify({ name: 'pnpm', version: '10.30.3' }));
   writeFileSync(entry, `const fs = require('node:fs');
 const command = process.argv[2];
 fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ command, pid: process.pid }) + '\\n');
@@ -53,7 +54,7 @@ else {
     links.push(path);
   }
   const execute = (args: string[]) => spawnSync(executable, ['--import', loader, ...args], {
-    cwd: root, env: { ...process.env, PATH: bin, Path: bin }, encoding: 'utf8',
+    cwd: root, env: { ...process.env, PATH: bin, Path: bin, PNPM_HOME: '' }, encoding: 'utf8',
     timeout: 20_000, windowsHide: true, maxBuffer: 128 * 1024,
   });
   const api = (timeout: string) => execute(['--input-type=module', '--eval', `
