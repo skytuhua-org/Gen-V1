@@ -21,6 +21,17 @@ export function formatElapsed(ms: number) {
 // When a run started as far as this session can tell; keyed per run so a new
 // run on the same thread resets the clock.
 const firstSeen = new Map<string, number>();
+let latestSnapshotSequence = -1;
+
+// Progress views unmount when work finishes. Retire their clocks from accepted
+// complete snapshots, while keeping live clocks across view changes. Nested
+// workspaces may receive an older snapshot after another view accepted a newer one.
+export function reconcileRunProgress(snapshot: Pick<Snapshot, 'seq' | 'threads'>) {
+  if (snapshot.seq < latestSnapshotSequence) return;
+  latestSnapshotSequence = snapshot.seq;
+  const active = new Set(snapshot.threads.filter(threadWorking).map(thread => `${thread.id}:${thread.runId ?? ''}`));
+  for (const key of firstSeen.keys()) if (!active.has(key)) firstSeen.delete(key);
+}
 
 function useRunProgress(thread: Thread | undefined, snapshot: Snapshot) {
   const working = threadWorking(thread);
@@ -33,7 +44,7 @@ function useRunProgress(thread: Thread | undefined, snapshot: Snapshot) {
 
   const lastActivity = useRef(activity);
   const lastEvent = useRef(0);
-  if (runKey && !firstSeen.has(runKey)) firstSeen.set(runKey, Date.now());
+  if (working && runKey && snapshot.seq >= latestSnapshotSequence && !firstSeen.has(runKey)) firstSeen.set(runKey, Date.now());
   if (lastActivity.current !== activity) {
     lastActivity.current = activity;
     lastEvent.current = Date.now();
@@ -54,11 +65,6 @@ function useRunProgress(thread: Thread | undefined, snapshot: Snapshot) {
     if (!working) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [working, runKey]);
-
-  useEffect(() => {
-    if (working || !runKey) return;
-    firstSeen.delete(runKey);
   }, [working, runKey]);
 
   const startedAt = runKey ? firstSeen.get(runKey) ?? now : now;

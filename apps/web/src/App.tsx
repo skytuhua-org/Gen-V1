@@ -47,7 +47,7 @@ import {createPlanVisibility,selectPlanRecord} from './plan-visibility';
 import {ComposerToolbar,ComposerTaskActions} from './ComposerToolbar';
 import {ComposerView} from './ComposerView';
 import {LoadingState} from './LoadingState';
-import {RunProgressCard,RunStrip,threadWorking} from './run-progress';
+import {RunProgressCard,RunStrip,reconcileRunProgress,threadWorking} from './run-progress';
 import {SurfaceBoundary} from './SurfaceBoundary';
 import {ComposerSkeleton, ConversationSkeleton, SettingsSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
 import {ComposerAttachments} from './ComposerAttachments';
@@ -635,6 +635,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const refreshPending = useRef<Promise<void> | null>(null);
   const refreshAgain = useRef(false);
   const apply = useCallback((value: Snapshot) => { if (value.seq >= snapshotRef.current.seq) {
+    reconcileRunProgress(value);
     const previous = snapshotRef.current;
     if (previous.seq > 0) {
       const known = new Set(previous.artifacts.map(artifact => artifact.id));
