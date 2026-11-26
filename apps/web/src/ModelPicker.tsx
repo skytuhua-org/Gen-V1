@@ -19,6 +19,8 @@ const providerDisplayName=(provider:string)=>provider.trim().split(/[-_\s]+/).fi
 const providerLabel=(provider:string)=>SUBSCRIPTION_CONNECTIONS.find(connection=>connection.id===provider)?.label||providerDisplayName(provider);
 const effortLabel=(value:string)=>value==='xhigh'?'Extra high':value.replaceAll('_',' ').replaceAll('-',' ').replace(/\b\w/g,letter=>letter.toUpperCase());
 const FAVORITES_KEY='harness:model-favorites:v1';
+/* keep in sync with --ui-motion-popup-exit */
+const POPUP_EXIT_MS=140;
 function readFavorites():string[]{
  try{const value:unknown=JSON.parse(localStorage.getItem(FAVORITES_KEY)??'[]');return Array.isArray(value)?value.filter((id):id is string=>typeof id==='string'):[];}catch{return [];}
 }
@@ -82,7 +84,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
   event.preventDefault();chooseEffort(next);
   efforts.current?.querySelector<HTMLElement>(`[data-effort="${CSS.escape(next)}"]`)?.focus();
  }
- useEffect(()=>{if(open||!present)return;const timeout=window.setTimeout(()=>setPresent(false),110);return()=>window.clearTimeout(timeout);},[open,present]);
+ useEffect(()=>{if(open||!present)return;const timeout=window.setTimeout(()=>setPresent(false),POPUP_EXIT_MS);return()=>window.clearTimeout(timeout);},[open,present]);
  useEffect(()=>{if(locked)setOpen(false);},[locked]);
  const wasOpen=useRef(false);
  useEffect(()=>{const opened=open&&!wasOpen.current;wasOpen.current=open;if(!open||!active)return;
