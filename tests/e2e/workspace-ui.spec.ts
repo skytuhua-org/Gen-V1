@@ -124,6 +124,50 @@ test('main and side composers keep independent drafts across reload and rejected
  expect(host.commands.some(command=>command.type==='run.stop')).toBe(false);
 });
 
+for(const timing of ['before retry','during retry'] as const)test(`retry preserves a newer side draft written ${timing}`,async({page})=>{
+ await fixture(page,[panel('side-panel','side',24)]);
+ const shell=page.locator('[data-panel-id="side-panel"]'),draft=shell.getByRole('textbox',{name:'Message to Side investigation',exact:true}),row=shell.locator('.send-error-row');
+ let attempts=0,release:(()=>void)|undefined;const sent:unknown[]=[];
+ await page.route('**/api/commands',async route=>{
+  const command=route.request().postDataJSON();if(command.type!=='message.send')return route.fallback();
+  attempts++;sent.push(command.payload);
+  if(attempts===1)return route.fulfill({status:409,json:{error:{code:'RUN_BUSY',message:'Synthetic rejected send'}}});
+  if(timing==='during retry')await new Promise<void>(resolve=>{release=resolve;});
+  await route.fallback();
+ });
+ await draft.fill('Original failed payload');await shell.getByRole('button',{name:'Send',exact:true}).click();await expect(row).toBeVisible();
+ if(timing==='before retry')await draft.fill('A newer draft must survive');
+ await row.getByRole('button',{name:'Try again.',exact:true}).click();
+ if(timing==='during retry'){await expect.poll(()=>Boolean(release)).toBe(true);await draft.fill('A newer draft must survive');release!();}
+ await expect(row).toHaveCount(0);expect(attempts).toBe(2);expect(sent[1]).toEqual(sent[0]);
+ await expect(draft).toHaveValue('A newer draft must survive');await page.reload();await expect(draft).toHaveValue('A newer draft must survive');
+});
+
+for(const retried of [false,true])test(`an accepted ${retried?'retry':'send'} with failed snapshot refresh is never offered for resend`,async({page})=>{
+ await fixture(page,[panel('side-panel','side',24)]);
+ const shell=page.locator('[data-panel-id="side-panel"]'),draft=shell.getByRole('textbox',{name:'Message to Side investigation',exact:true}),row=shell.locator('.send-error-row');
+ let attempts=0,failedRefreshes=0;
+ await page.route('**/api/snapshot',async route=>{if(attempts===(retried?2:1)){failedRefreshes++;return route.fulfill({status:503,json:{error:{code:'UNAVAILABLE',message:'Synthetic snapshot failure'}}});}await route.fallback();});
+ await page.route('**/api/commands',async route=>{const command=route.request().postDataJSON();if(command.type==='message.send'){attempts++;if(retried&&attempts===1)return route.fulfill({status:409,json:{error:{code:'RUN_BUSY',message:'Synthetic rejected send'}}});}await route.fallback();});
+ await draft.fill('This message is accepted once');await shell.getByRole('button',{name:'Send',exact:true}).click();
+ if(retried){await expect(row).toBeVisible();await row.getByRole('button',{name:'Try again.',exact:true}).click();}
+ await expect.poll(()=>failedRefreshes).toBeGreaterThan(0);
+ await expect(row).toHaveCount(0);expect(attempts).toBe(retried?2:1);
+ await expect(draft).toHaveValue('');
+ await expect(shell.getByRole('alert').filter({hasText:'The message was sent, but the conversation could not finish updating.'})).toBeVisible();
+});
+
+test('an accepted shared main send with failed refresh is not converted into a raw retry',async({page})=>{
+ await fixture(page,[panel('main-panel','task-thread',24)]);
+ const shell=page.locator('[data-panel-id="main-panel"]'),draft=shell.getByRole('textbox',{name:'Message',exact:true});let attempts=0,failedRefreshes=0;
+ await page.route('**/api/snapshot',async route=>{if(attempts){failedRefreshes++;return route.fulfill({status:503,json:{error:{code:'UNAVAILABLE',message:'Synthetic snapshot failure'}}});}await route.fallback();});
+ await page.route('**/api/commands',async route=>{if(route.request().postDataJSON().type==='message.send')attempts++;await route.fallback();});
+ await draft.fill('This shared message is accepted once');await shell.getByRole('button',{name:'Send message',exact:true}).click();
+ await expect.poll(()=>failedRefreshes).toBeGreaterThan(0);await expect(shell.locator('.send-error-row')).toHaveCount(0);
+ await expect(draft).toHaveValue('');expect(attempts).toBe(1);
+ await expect(shell.getByRole('alert').filter({hasText:'The conversation could not finish updating.'})).toBeVisible();
+});
+
 test('offscreen tool bodies unmount while zoom leaves the surrounding shell unchanged',async({page})=>{
  let fileRequests=0;
 

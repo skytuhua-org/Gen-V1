@@ -178,7 +178,8 @@ function ResourcePicker({ threadId, close, refresh, opener }: { threadId: string
 }
 
 type PrepareThread = (id: string) => Promise<unknown>;
-type SendErrorPayload = { content: string; modelId: string; thinkingLevel?: string | null; threadId: string };
+type SendErrorPayload = { content: string; modelId: string; threadId: string; retry: () => Promise<unknown>; accepted: () => Promise<unknown> };
+const acceptedSendUpdateError = "The message was sent, but the conversation could not finish updating.";
 type ComposerChangesAvailability=(threadId:string,available:boolean)=>void;
 const emptyComposerState: ComposerState = {draft: '', ready: false, busy: false, stopping: false, error: '', retry: false};
 function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, onComposerChangesAvailability, thread, models, modelId, setModelId, snapshot, ensureThread, busy: externalBusy, runAction, refresh, setup, openResource, inspectChanges, reportError,onSide, predictionBlocked, selectProject, usageOpen=false, onShowUsage, onNewTask, onSendError }: { usageOpen?:boolean; onShowUsage?:()=>void; modelPickerRequest?:number; onModelPickerOpened?:(request:number)=>void; sharedComposers?: SharedAgentComposers; onComposerChangesAvailability?:ComposerChangesAvailability; selectProject?:(id:string|undefined,opener?:HTMLElement|null,prepare?:PrepareThread)=>void; predictionBlocked: boolean; thread: Thread | undefined; models: ModelInfo[]; modelId: string; setModelId: (id: string) => void; snapshot: Snapshot; ensureThread: (prepare: PrepareThread) => Promise<string>; busy: boolean; runAction: (action: () => Promise<void>) => Promise<void>; refresh: () => Promise<void>; setup: () => void; openResource: (id: string, opener?: HTMLElement | null) => void; browseProject:(id:string)=>void;inspectChanges:()=>void; reportError: (error: string) => void;onSide:(content:string)=>Promise<void>; onNewTask?:(modelId:string)=>void; onSendError?: (payload: SendErrorPayload) => void }) {
@@ -296,32 +297,37 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
       const submittedDraft = draft, submittedSkills = skills.slice(), submittedThinking = thinkingLatest.current || null;
       const submittedGeneration = journalGeneration(`draft:${key}`), submittedExcerptGeneration = journalGeneration(excerptDraftKey(key));
       let submittedPrompt = submittedDraft;
-      let submittedThreadId = thread?.id ?? key;
+      let failedSend: SendErrorPayload | undefined, accepted = false;
       try {
         const submittedExcerpts=readTerminalExcerpts(excerpts,thread?.projectId?{projectId:thread.projectId,threadId:thread.id}:undefined);
         submittedPrompt = serializeTerminalExcerpts(submittedDraft, submittedExcerpts);
         const requestContextId = retry ? undefined : preparedMemory.requestContextId({prompt: submittedPrompt, modelId, thinkingLevel: submittedThinking});
         let migrated: Awaited<ReturnType<typeof migrateDraft>> | undefined;
         const id = await ensureThread(async id => { migrated = await migrateDraft(id, submittedDraft, true); });
-        submittedThreadId = id;
+
         if (sharedComposers) {
           const target: ConversationComposerTarget = {kind: 'conversation', projectId:thread?.projectId, workspaceId:thread?.workspaceId, threadId: id, modelId, working};
           await sharedComposers.prepare(target); await sharedComposers.submit(target, {sourceContextVisible:Boolean(workbench?.draft&&workbench.owner?.threadId===id),thinkingLevel: submittedThinking, ...(requestContextId ? {requestContextId} : {}),submission:{content:submittedDraft,generation:id===key?submittedGeneration:migrated&&migrated.source?.generation===submittedGeneration?migrated.generation:undefined,skills:submittedSkills,excerpts:submittedExcerpts,excerptGeneration:submittedExcerptGeneration}});
           await refresh(); return;
         }
         if(workbench?.draft?.sourceRefs.length||workbench?.draft?.sendMode==='AFTER_CURRENT')throw Error('Source-aware sending is unavailable in this composer. The draft was retained.');
-        await command('message.send', { content: submittedPrompt, modelId, thinkingLevel:submittedThinking, ...(requestContextId ? {requestContextId} : {}), ...(submittedSkills.length?{skills:submittedSkills.map(binding=>binding.ref)}:{}) }, id);
-        await clearAcceptedSkills(skillDraftKey(id),submittedSkills);
-        await clearAcceptedExcerpts(id,submittedExcerptGeneration);
-        await journalCompareAndSwap(`draft:${key}`, submittedGeneration, '');
-        if (id !== key && migrated && migrated.source?.generation === submittedGeneration) await journalCompareAndSwap(`draft:${id}`, migrated.generation, '');
+        const payload = { content: submittedPrompt, modelId, thinkingLevel:submittedThinking, ...(requestContextId ? {requestContextId} : {}), ...(submittedSkills.length?{skills:submittedSkills.map(binding=>binding.ref)}:{}) };
+        failedSend = {content:submittedPrompt,modelId,threadId:id,retry:()=>command('message.send',payload,id),accepted:async()=>{
+          await clearAcceptedSkills(skillDraftKey(id),submittedSkills);
+          await clearAcceptedExcerpts(id,submittedExcerptGeneration);
+          await journalCompareAndSwap(`draft:${key}`, submittedGeneration, '');
+          if (id !== key && migrated && migrated.source?.generation === submittedGeneration) await journalCompareAndSwap(`draft:${id}`, migrated.generation, '');
+        }};
+        await failedSend.retry(); accepted = true;
+        await failedSend.accepted();
         await refresh();
       } catch (error) {
         // A thrown send never leaks its exception text into the transcript:
         // the owning thread renders a fixed-copy .send-error-row with retry.
         console.error(error);
-        onSendError?.({ content: submittedPrompt, modelId, thinkingLevel: submittedThinking ?? undefined, threadId: submittedThreadId });
-        if (!onSendError) fail(error);
+        if (failedSend && !accepted && onSendError) onSendError(failedSend);
+        else if (accepted) fail(Error(acceptedSendUpdateError));
+        else fail(onSendError ? Error('The conversation could not finish updating. Review the retained draft before sending again.') : error);
         if (key === 'new') reportError(messageOf(error));
       }
     });
@@ -396,7 +402,7 @@ function SideThreadComposer({thread,modelId,refresh,onSendError}:{thread:Thread;
  useEffect(()=>{let active=true;void journalRead<string>(key).then(value=>{if(active){setDraft(value??'');setReady(true);}}).catch(()=>{if(active)setError('Draft recovery failed. Keep this panel open.');});return()=>{active=false;};},[key]);
  useEffect(()=>journalSubscribe(key,value=>setDraft(typeof value==='string'?value:'')),[key]);
  const working=Boolean(thread.runId)||thread.status==='working';
- return <form className="canvas-side-composer" onSubmit={event=>{event.preventDefault();if(!ready||busy||working||!modelId||!draft.trim())return;const generation=journalGeneration(key),content=draft.trim();setBusy(true);setError('');void command('message.send',{content,modelId},thread.id).then(()=>journalCompareAndSwap(key,generation,'')).then(refresh).catch(cause=>{console.error(cause);onSendError?.({content,modelId,threadId:thread.id});if(!onSendError)setError(messageOf(cause));}).finally(()=>setBusy(false));}}><label className="sr-only" htmlFor={`side-message-${thread.id}`}>Message to {thread.title}</label><textarea id={`side-message-${thread.id}`} aria-label={`Message to ${thread.title}`} placeholder="Ask a side question…" disabled={!ready} value={draft} onChange={event=>{const value=event.target.value;setDraft(value);void journalWrite(key,value).catch(()=>setError('Draft could not be stored. Keep this panel open.'));}}/><div><small>Side conversation · independent draft</small><button className="secondary" disabled={busy||!ready||working||!modelId||!draft.trim()}>Send</button></div>{error&&<p role="alert" className="error-text">{error}</p>}</form>;
+ return <form className="canvas-side-composer" onSubmit={event=>{event.preventDefault();if(!ready||busy||working||!modelId||!draft.trim())return;const generation=journalGeneration(key),content=draft.trim(),payload:SendErrorPayload={content,modelId,threadId:thread.id,retry:()=>command('message.send',{content,modelId},thread.id),accepted:()=>journalCompareAndSwap(key,generation,'')};let accepted=false;setBusy(true);setError('');void payload.retry().then(()=>{accepted=true;return payload.accepted();}).then(()=>refresh()).catch(cause=>{console.error(cause);if(accepted)setError(acceptedSendUpdateError);else{onSendError?.(payload);if(!onSendError)setError(messageOf(cause));}}).finally(()=>setBusy(false));}}><label className="sr-only" htmlFor={`side-message-${thread.id}`}>Message to {thread.title}</label><textarea id={`side-message-${thread.id}`} aria-label={`Message to ${thread.title}`} placeholder="Ask a side question…" disabled={!ready} value={draft} onChange={event=>{const value=event.target.value;setDraft(value);void journalWrite(key,value).catch(()=>setError('Draft could not be stored. Keep this panel open.'));}}/><div><small>Side conversation · independent draft</small><button className="secondary" disabled={busy||!ready||working||!modelId||!draft.trim()}>Send</button></div>{error&&<p role="alert" className="error-text">{error}</p>}</form>;
 }
 function CanvasThread({sharedComposers,thread,snapshot,visible,blocked,refresh,setup,openResource,browseProject,inspectChanges,reportError,selectProject,liveMessages}:{sharedComposers?:SharedAgentComposers;thread:Thread;snapshot:Snapshot;visible:boolean;blocked:boolean;refresh:()=>Promise<void>;setup:()=>void;openResource:(id:string,opener?:HTMLElement|null)=>void;browseProject:(id:string)=>void;inspectChanges:()=>void;liveMessages:ReadonlySet<string>;selectProject?:(id:string|undefined,opener?:HTMLElement|null,prepare?:PrepareThread)=>void;reportError:(error:string)=>void}){
  const findScope=useRef<HTMLDivElement>(null),findTranscript=useRef<HTMLDivElement>(null);
@@ -407,7 +413,7 @@ function CanvasThread({sharedComposers,thread,snapshot,visible,blocked,refresh,s
  const [sendError,setSendError]=useState<{payload:SendErrorPayload|null;attempts:number}|null>(null);
  useEffect(()=>{setSendError(null);},[thread.id]);
  const reportSendError=(payload:SendErrorPayload)=>{setSendError(current=>({payload,attempts:current?.payload?.content===payload.content?current.attempts:0}));};
- const retrySend=()=>{const failed=sendError;if(failed===null&&!thread.error)return;const payload=failed?.payload??null;setBusy(true);void (payload?command('message.send',{content:payload.content,modelId:payload.modelId,...(payload.thinkingLevel!==undefined?{thinkingLevel:payload.thinkingLevel}:{})},payload.threadId):command('run.resume',{modelId},thread.id)).then(()=>{setSendError(null);if(payload){const draftKey=threadParent(thread)?`side-draft:${threadParent(thread)}:${thread.id}`:`draft:${thread.id}`;void journalWrite(draftKey,'').catch(()=>undefined);}return refresh();}).catch(cause=>{console.error(cause);setSendError({payload,attempts:(failed?.attempts??0)+1});}).finally(()=>setBusy(false));};
+ const retrySend=()=>{const failed=sendError;if(busy||failed===null&&!thread.error)return;const payload=failed?.payload??null;let accepted=false;setBusy(true);setError('');void (payload?payload.retry():command('run.resume',{modelId},thread.id)).then(async()=>{accepted=true;setSendError(null);await payload?.accepted();await refresh();}).catch(cause=>{console.error(cause);if(accepted)setError(payload?acceptedSendUpdateError:'The run was resumed, but the conversation could not finish updating.');else setSendError({payload,attempts:(failed?.attempts??0)+1});}).finally(()=>setBusy(false));};
  const owner=`${thread.id}:${thread.accountId??'legacy'}:${thread.modelId??''}`;
  useEffect(()=>{
   if(readOnly||!visible)return;let controller:AbortController|undefined;
