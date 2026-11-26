@@ -8,6 +8,10 @@ Use the latest user-supplied T3 screenshot as the palette authority: pure black 
 
 Dark is the primary theme for fresh profiles and review recordings; preserve saved Light/System choices and the original colors of documents and images.
 
+## Brand
+
+The Gen V1 mark is a G built from halftone dots, followed by dotted lettering in Electric purple (`#7C4DFF`). Use the frosted logo at 300px wide or more where SVG filters render, the flat logo for small or print use, and the solid G at 32px and below. See the [logo and brand assets](docs/public/brand/README.md).
+
 Current source defaults to Wide (760px); Comfortable (680px) and Full remain selectable (`apps/web/src/AppearanceSettings.tsx`, `apps/web/src/shell.css`, `packages/contracts/preferences.ts`). The active settings registry has 12 sections (`apps/web/src/Settings.tsx`); the older 21-section inventory is historical, not current navigation.
 
 The task's working object determines its interior structure: time intervals, reviewed passages, failing assertions, code hunks, request/response exchanges, dependencies, images, fields, records or question branches. Shared outer containment does not impose a shared task body. Avoid the universal list/sidebar/detail/button layout and repeated selected summaries. Preserve successful task-specific mechanics.
@@ -44,7 +48,7 @@ Side-by-side chat keeps at least 420px; tools stay between 280px and min(720px, 
 ### Spacing, color and compact surfaces
 
 - Shared tokens live in `packages/ui-shell/tokens.css`. Normal content inset is 16px, panels 12px, dialogs 24px, compact control text at least 8px. Intentional code/media edge-to-edge layouts declare their exception; badges use 2px vertical and 6px horizontal inset.
-- Navigation highlights have a 4px gap. Selected, hovered and keyboard-focused states are visually distinct. Compact/Comfortable/Touch controls use 32/36/44px minimum rows; long text can grow a row.
+- Navigation highlights have a 4px gap. Selected navigation uses a neutral fill only; hover and keyboard focus remain distinct. Compact/Comfortable/Touch controls use 32/36/44px minimum rows; long text can grow a row.
 - Keep dark black/near-black and neutral light equivalents from the established palette. Use stable project-color dots or monograms with editable palette/custom color; no decorative colored rails. Communicate status with text/icon as well as color.
 - Thread hover cards are 304px wide with 12px inset and 8px section gaps; keep the full 16px title. Show exact thread/working-copy/project/environment/branch/model/activity and linked PR facts only when known.
 - Context popovers are 328px wide with 12px inset and 34px information rows. On-demand category details are 220px. Conversation token capacity stays separate from provider quotas/reset times in Usage.
