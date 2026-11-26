@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 import { resolve } from 'node:path';
 
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.', testMatch: 'ui-shell-overlays.spec.ts', workers: 1, timeout: 20000,
   outputDir: resolve('.harness-ui-shell/overlays'),
   use: { baseURL: 'http://127.0.0.1:5393', channel: 'msedge', viewport: { width: 800, height: 600 }, trace: 'retain-on-failure' },

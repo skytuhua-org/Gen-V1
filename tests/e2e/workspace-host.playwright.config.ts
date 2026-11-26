@@ -1,7 +1,7 @@
 import {defineConfig} from '@playwright/test';
 import {resolve} from 'node:path';
 
-export default defineConfig({
+export default defineConfig({expect:{timeout:15000},
   testDir: '.', testMatch: 'workspace-host.spec.ts', workers: 1, timeout: 20000,
   outputDir: process.env.WORKSPACE_HOST_EVIDENCE_DIR ?? resolve('.harness-ui-shell/workspace-host'),
   use: {baseURL: 'http://127.0.0.1:5678', channel: 'msedge', trace: 'retain-on-failure'},

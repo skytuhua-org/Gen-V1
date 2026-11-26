@@ -20,7 +20,7 @@ export const projectOwnerSchema = z.strictObject({
 // invalid grammar is rejected, and both sides share the same pure validator.
 const pathFilter = unicode.superRefine((value, context) => {
   const parsed = parseSearchPathFilter(value);
-  if (!parsed.ok) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Use a valid path glob filter.' });
+  if (!parsed.ok) context.addIssue({ code: 'custom', message: 'Use a valid path glob filter.' });
 }).transform(value => {
   const parsed = parseSearchPathFilter(value);
   return parsed.ok ? parsed.filter?.canonical : undefined;
