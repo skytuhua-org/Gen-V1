@@ -47,7 +47,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
  const optionId=(model:ModelInfo)=>id+'-option-'+models.indexOf(model);
  const name=selected?.name??(modelId||'Select model'),caption=combined&&selectedEffort?effortLabel(selectedEffort):'';
  function close(restoreFocus=false){setOpen(false);if(restoreFocus)trigger.current?.focus();}
- function show(){if(locked)return;setQuery('');setActiveId(modelId);setKeyboard(false);setPresent(true);setOpen(true);}
+ function show(){if(locked)return;setQuery('');setActiveId(modelId);setKeyboard(false);setFilter({kind:'all'});setPresent(true);setOpen(true);}
  useImperativeHandle(ref,()=>({open:show}));
  function choose(model:ModelInfo){if(locked)return;onChange(model.id);if(!combined)close(true);}
  function chooseEffort(level:string){if(locked||!onThinkingChange||level===thinkingLevel||(level!==''&&!levels.includes(level)))return;onThinkingChange(level);}
