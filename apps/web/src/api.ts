@@ -112,13 +112,13 @@ export async function authenticated(send: () => Promise<Response>) {
   return response;
 }
 
-export async function command(type: string, payload: Record<string, unknown> = {}, threadId?: string, commandId: string = crypto.randomUUID(), isCurrent?: () => boolean): Promise<CommandReceipt> {
+export async function command(type: string, payload: Record<string, unknown> = {}, threadId?: string, commandId: string = crypto.randomUUID(), isCurrent?: () => boolean, signal?: AbortSignal): Promise<CommandReceipt> {
   await bootstrap();
   const command: HostCommand = { id: commandId, type, payload, ...(threadId ? { threadId } : {}) };
   const body = JSON.stringify(command);
   const send = () => {
     if (isCurrent && !isCurrent()) throw Error('The command owner changed. Retry from the current view.');
-    return fetch('/api/commands', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'x-harness-csrf': csrfToken }, body });
+    return fetch('/api/commands', { method: 'POST', credentials: 'same-origin', signal, headers: { 'Content-Type': 'application/json', 'x-harness-csrf': csrfToken }, body });
   };
   const response = await authenticated(async () => { try { return await send(); } catch { return send(); } });
   return readSchema(commandReceiptSchema)(response) as Promise<CommandReceipt>;

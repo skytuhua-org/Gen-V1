@@ -37,7 +37,7 @@ export function Select({ value, onValueChange, options, 'aria-label': label, 'ar
   };
   const navigation = useListNavigation(options, choose, close);
   // Fit the trigger or the longest label, so a narrow select does not cover its neighbours.
-  const popupWidth = Math.max(anchor.current?.offsetWidth ?? 0, Math.min(280, 64 + 7 * Math.max(0, ...options.map(option => option.label.length))));
+  const popupWidth = Math.max(anchor.current?.offsetWidth ?? 0, Math.min(280, 48 + Math.ceil(7.5 * Math.max(0, ...options.map(option => option.label.length)))));
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   useEffect(() => {
     const update = () => { const blocked = Boolean(native.current?.matches(':disabled')); setFieldsetDisabled(blocked); if (blocked) setOpen(false); };
@@ -58,16 +58,18 @@ export function Select({ value, onValueChange, options, 'aria-label': label, 'ar
     select.value = nativeValue;
   }, [options, nativeValue]);
   useEffect(() => {
-    const owner = native.current?.form;
+    // reset bubbles to document; resolving the form at dispatch time keeps the
+    // listener attached across late association and reassociation.
     const reset = (event: Event) => queueMicrotask(() => {
-      if (event.defaultPrevented || !native.current) return;
+      if (event.defaultPrevented || !native.current || event.target !== native.current.form) return;
       const next = initial.current;
       native.current.value = [...native.current.options].some(option => option.value === next) ? next : '';
       change.current(next); setOpen(false); setInvalid(false);
     });
-    owner?.addEventListener('reset', reset);
-    return () => owner?.removeEventListener('reset', reset);
-  }, [form]);
+    const root = native.current?.ownerDocument ?? document;
+    root.addEventListener('reset', reset);
+    return () => root.removeEventListener('reset', reset);
+  }, []);
   return <span className="ui-select">
     <button ref={anchor} id={id} type="button" role="combobox" aria-label={label} aria-expanded={open && !effectivelyDisabled}
       aria-invalid={showInvalid ? true : suppliedInvalid} aria-describedby={showInvalid ? errorId : undefined}

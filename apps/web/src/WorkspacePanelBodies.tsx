@@ -29,6 +29,8 @@ export function WorkspaceLauncher({onOpenTool}:{onOpenTool?:(kind:WorkspacePanel
     <button type="button" aria-label="Device" disabled title="Phone and device automation is not connected."><Smartphone size={18} /><span>Device</span><small>{unavailable}</small></button>
     <button type="button" aria-label="Executor output" onClick={() => openTool('output')}><ScrollText size={18} /><span>Executor output</span><small>Recorded operations</small></button>
     <button type="button" aria-label="Usage" onClick={() => openTool('usage')}><ChartNoAxesCombined size={18} /><span>Usage</span><small>Runtime reports</small></button>
+    <button type="button" aria-label="Notes" onClick={() => openTool('notes')}><span>Notes</span><small>Thread memory</small></button>
+    <button type="button" aria-label="Plan" onClick={() => openTool('plan')}><span>Plan</span><small>Task plan</small></button>
   </section>;
 }
 
