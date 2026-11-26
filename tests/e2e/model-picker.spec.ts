@@ -180,6 +180,17 @@ test('reopening resets a picked type filter back to All', async ({ page }) => {
   await expect(page.getByRole('button', { name: /All models/ })).toHaveAttribute('aria-pressed', 'true');
 });
 
+test('an empty catalog disables the chip with a stated reason', async ({ page }) => {
+  const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic model selection fixture' } } } });
+  snapshot.settings = { theme: 'dark', modelId: null };
+  await serveTaskFixture(page, snapshot);
+  await page.route('**/api/models*', route => route.fulfill({ json: { models: [] } }));
+  await page.goto('/');
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await expect(trigger).toBeDisabled();
+  await expect(trigger).toHaveAttribute('title', 'No models available — check the provider connection');
+});
+
 test('the model picker never paints over the sidebar at supported widths', async ({ page }, testInfo) => {
   await mount(page);
   for (const width of [1280, 900, 700, 500]) {
