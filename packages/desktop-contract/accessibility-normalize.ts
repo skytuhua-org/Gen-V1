@@ -77,6 +77,7 @@ const IMPACT_ORDER: AccessibilityImpact[] = [
 const MAX_RULES = 100,
 	MAX_NODES = 20,
 	MAX_BYTES = 256 * 1024;
+const encoder = new TextEncoder();
 const LIMITS = {
 	target: 300,
 	html: 300,
@@ -207,14 +208,15 @@ export function normalizeAudit(
 		blockedRequests: Math.max(0, Math.trunc(meta.blockedRequests)),
 		truncated,
 	};
+	const size = () => encoder.encode(JSON.stringify(result)).byteLength;
 	while (
-		JSON.stringify(result).length > MAX_BYTES &&
+		size() > MAX_BYTES &&
 		kept.some((rule) => rule.nodes.length > 0)
 	) {
-		const size = JSON.stringify(result).length;
+		const bytes = size();
 		const nodeTotal = kept.reduce((sum, rule) => sum + rule.nodes.length, 0);
-		const perNode = Math.max(1, Math.ceil(size / nodeTotal));
-		let drop = Math.max(1, Math.ceil((size - MAX_BYTES) / perNode));
+		const perNode = Math.max(1, Math.ceil(bytes / nodeTotal));
+		let drop = Math.max(1, Math.ceil((bytes - MAX_BYTES) / perNode));
 		for (const rule of [...kept].reverse()) {
 			if (drop <= 0) break;
 			const take = Math.min(drop, rule.nodes.length);
@@ -223,8 +225,15 @@ export function normalizeAudit(
 		}
 		truncated = true;
 	}
+	// Metadata can fill the budget even after every element detail is removed.
+	while (size() > MAX_BYTES && kept.length) {
+		const removed = kept.pop()!;
+		counts[removed.impact]--;
+		result.elementCount -= removed.nodeCount;
+		truncated = true;
+	}
 	result.truncated = truncated;
-	return result;
+	return size() <= MAX_BYTES ? result : null;
 }
 
 export function criterionLabel(criterion: string): string {

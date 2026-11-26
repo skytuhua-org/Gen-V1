@@ -128,6 +128,29 @@ describe("normalizeAudit", () => {
 			result.rules.find((rule) => rule.ruleId === "bad-url")!.helpUrl,
 		).toBe("");
 	});
+	it("measures the result cap in UTF-8 bytes for ordinary non-ASCII text", () => {
+		const rules = Array.from({ length: 100 }, (_, index) => ({
+			...violation(`rule-${index}`, "serious", 20),
+			nodes: Array.from({ length: 20 }, () => ({
+				target: "section", html: "文".repeat(300), failureSummary: "説明".repeat(300),
+			})),
+		}));
+		const result = normalizeAudit({version:"4.14.1", violations:rules}, meta)!;
+		expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(256 * 1024);
+		expect(result.truncated).toBe(true);
+		expect(result.rules.every(rule => rule.nodeCount === 20)).toBe(true);
+	});
+	it("keeps the byte cap when rule metadata alone fills the result", () => {
+		const rules = Array.from({ length: 100 }, (_, index) => ({
+			...violation(`rule-${index}`, "serious", 0), help:"説明".repeat(100),
+			description:"説明".repeat(200), helpUrl:"https://dequeuniversity.com/" + "a".repeat(2000),
+		}));
+		const result = normalizeAudit({version:"4.14.1", violations:rules}, meta)!;
+		expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(256 * 1024);
+		expect(result.truncated).toBe(true);
+		expect(result.rules.map(rule => rule.ruleId)).toEqual(rules.slice(0, result.rules.length).map(rule => rule.id));
+		expect(result.counts.serious).toBe(result.rules.length);
+	});
 	it("normalizes the recorded T09 real-axe fixture to exactly five rules", () => {
 		const raw = JSON.parse(
 			readFileSync(

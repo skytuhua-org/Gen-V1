@@ -160,3 +160,21 @@ it('rolls back an unpublishable final preview without retaining its argument byt
  });
  expect(registry['previews'].get(preview.previewId)).toMatchObject({buffered:[],bufferedBytes:0});
 });
+
+// Issue #2021 / M07-02 T02: the aggregate cap must bind across all open
+// previews of a run — several streams each below the per-preview buffer
+// bound must still trip the shared 256 KiB budget.
+it('the aggregate cap binds multi-byte streams across concurrent previews',()=>{
+ const raw=args('a.ts','x'.repeat(60)),bytes=Buffer.byteLength(raw);
+ const limits={...CODE_INTELLIGENCE_LIMITS,previewBufferBytes:bytes*8,previewAggregateBytes:Math.floor(bytes*3.5)};
+ const registry=new EditPreviewRegistry(limits);
+ const first=registry.begin(owner,schemaDigest);
+ const second=registry.begin(owner,schemaDigest);
+ registry.append(first.previewId,owner,raw);
+ registry.append(first.previewId,owner,raw);
+ registry.append(second.previewId,owner,raw); // aggregate: 3*bytes > cap
+ expect(()=>registry.append(first.previewId,owner,raw)).toThrowError(/byte bound|RESOURCE_LIMIT/i);
+ expect(registry.get(first.previewId,owner)?.state).toBe('INVALID');
+ // The second stream remains usable; the cap is per-run, not global.
+ expect(registry.get(second.previewId,owner)?.state).toBe('STREAMING_UNAPPLIED');
+});

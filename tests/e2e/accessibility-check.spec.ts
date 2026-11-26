@@ -2,6 +2,7 @@ import {test,expect,type Page} from '@playwright/test';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 import {mkdirSync,writeFileSync} from 'node:fs';
+import {buildSync} from 'esbuild';
 import {AUDIT_RUNNER} from '../../apps/desktop/accessibility-audit.ts';
 import {taskFixture,serveTaskFixture} from './task-interface-fixture';
 import type {HostCommand} from '../../packages/contracts';
@@ -235,4 +236,44 @@ test('screenshots: light and dark results',async({page})=>{
  await shot(page,'results-light');
  await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
  await shot(page,'results-dark');
+});
+
+for(const settlement of ['resolve','reject','layout-resolve'] as const) test(`an old bridge ${settlement} cannot complete the current audit owner`,async({page})=>{
+ await capability(page);
+ await page.goto('/tests/e2e/fixtures/a11y-violations.html');
+ await page.setContent('<div id="audit-hook"></div>');
+ const script=buildSync({stdin:{resolveDir:resolve(import.meta.dirname,'../..'),sourcefile:'audit-owner-fixture.tsx',loader:'tsx',contents:`
+  import {useLayoutEffect,useState} from 'react';
+  import {createRoot} from 'react-dom/client';
+  import {useAccessibilityAudit} from './apps/web/src/accessibility/useAccessibilityAudit.ts';
+  const control={calls:[],pending:[[],[]]}; window.auditHook=control;
+  const bridges=[0,1].map(owner=>({accessibilityAudit:command=>{
+   control.calls.push({owner,type:command.type});
+   if(command.type==='capability')return Promise.resolve({available:true});
+   if(command.type==='cancel')return Promise.resolve({status:'cancelled'});
+   return new Promise((resolve,reject)=>control.pending[owner].push({resolve,reject}));
+  }}));
+  function Probe(){const[owner,setOwner]=useState(0),audit=useAccessibilityAudit(bridges[owner]);
+   control.replace=()=>setOwner(1);
+   useLayoutEffect(()=>{if(owner===1&&control.onReplace){const callback=control.onReplace;control.onReplace=null;callback();}},[owner]);
+   return <><button onClick={()=>audit.run({type:'run',target:{kind:'browser'}})}>Run</button>
+    <button onClick={()=>setOwner(1)}>Replace bridge</button>
+    <output data-testid="audit-state">{audit.state.status}</output>
+    <output data-testid="audit-capable">{String(audit.capable)}</output></>;
+  }
+  createRoot(document.getElementById('audit-hook')).render(<Probe/>);
+ `},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"development"'}}).outputFiles[0]!.text;
+ await page.addScriptTag({content:script});
+ await expect(page.getByTestId('audit-capable')).toHaveText('true');
+ await page.getByRole('button',{name:'Run',exact:true}).click();
+ await expect(page.getByTestId('audit-state')).toHaveText('running');
+ if(settlement==='layout-resolve') await page.evaluate(outcome=>{const control=(window as any).auditHook;control.onReplace=()=>control.pending[0][0].resolve(outcome);control.replace();},result());
+ else await page.getByRole('button',{name:'Replace bridge',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>(window as any).auditHook.calls.filter((call:any)=>call.owner===0&&call.type==='cancel').length)).toBe(1);
+ if(settlement!=='layout-resolve') await page.evaluate(({settlement,outcome})=>{const pending=(window as any).auditHook.pending[0][0];if(settlement==='resolve')pending.resolve(outcome);else pending.reject(Error('Late old bridge completion'));},{settlement,outcome:result()});
+ await expect(page.getByTestId('audit-state')).toHaveText('cancelled');
+ await page.getByRole('button',{name:'Run',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>(window as any).auditHook.pending[1].length)).toBe(1);
+ await page.evaluate(outcome=>(window as any).auditHook.pending[1][0].resolve(outcome),result());
+ await expect(page.getByTestId('audit-state')).toHaveText('done');
 });

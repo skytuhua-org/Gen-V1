@@ -93,6 +93,8 @@ describe("buildFixMessage", () => {
 			rules: Array.from({ length: 40 }, (_, i) => ({
 				...result.rules[0],
 				ruleId: "rule-" + i,
+				help: "h".repeat(200),
+				helpUrl: "https://dequeuniversity.com/" + "a".repeat(2000),
 				nodes: result.rules[0].nodes.map((node) => ({
 					...node,
 					failureSummary: "z".repeat(500),
@@ -103,7 +105,32 @@ describe("buildFixMessage", () => {
 			big,
 			big.rules.map((rule) => rule.ruleId),
 		);
-		expect(text.length).toBeLessThanOrEqual(24 * 1024);
+		expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(24 * 1024);
 		expect(text).toMatch(/and \d+ more rules? not listed/);
+	});
+	it("includes UTF-8 node text in the message byte budget", () => {
+		const rules = Array.from({length:30}, (_, index) => ({...result.rules[0], ruleId:`rule-${index}`,
+			nodes:Array.from({length:5}, () => ({target:"section", html:"文".repeat(300), failureSummary:"説明".repeat(250)})),
+		}));
+		const text = buildFixMessage({...result,rules}, rules.map(rule => rule.ruleId));
+		expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(24 * 1024);
+		expect(text).toContain("6 elements");
+	});
+	it("includes rule-help links in the same message budget", () => {
+		const rules = Array.from({length:40}, (_, index) => ({...result.rules[0], ruleId:`rule-${index}`,
+			nodes:[], helpUrl:"https://dequeuniversity.com/" + "a".repeat(2000),
+		}));
+		const text = buildFixMessage({...result,rules}, rules.map(rule => rule.ruleId));
+		expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(24 * 1024);
+		expect(text).toMatch(/and \d+ more rules? not listed/);
+	});
+	it("drops element detail before omitting trailing rule summaries", () => {
+		const rules = Array.from({length:40}, (_, index) => ({...result.rules[0], ruleId:`rule-${index}`,
+			nodes:Array.from({length:5}, () => ({target:"section", html:"<section>", failureSummary:"z".repeat(500)})),
+		}));
+		const text = buildFixMessage({...result,rules}, rules.map(rule => rule.ruleId));
+		expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(24 * 1024);
+		for(const rule of rules) expect(text).toContain(`] ${rule.ruleId}:`);
+		expect(text).not.toContain("more rules not listed");
 	});
 });

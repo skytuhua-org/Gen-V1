@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type {
 	AccessibilityAuditCommand,
 	AccessibilityAuditOutcome,
@@ -158,8 +158,10 @@ export function useAccessibilityAudit(
 	useEffect(() => {
 		if (!open && state.status === "running") cancel();
 	}, [open, state.status, cancel]);
-	useEffect(
+	useLayoutEffect(
 		() => () => {
+			generation.current += 1;
+			dispatch({ type: "cancel" });
 			if (bridge?.accessibilityAudit)
 				void bridge.accessibilityAudit({ type: "cancel" }).catch(() => {});
 		},
