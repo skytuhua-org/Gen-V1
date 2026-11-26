@@ -4,7 +4,7 @@ import {z} from 'zod';
 import type {Service} from '../../packages/core/service.ts';
 import {HarnessError} from '../../packages/contracts/index.ts';
 import {integrationIdSchema} from '../../packages/contracts/integrations.ts';
-import {ComparisonFileRequestSchema,ComparisonScopeSchema} from '../../packages/contracts/code-review.ts';
+import {ComparisonFileRequestSchema,ComparisonScopeSchema,GitHistoryCommitQuerySchema,GitHistoryFileQuerySchema,GitHistoryQuerySchema} from '../../packages/contracts/code-review.ts';
 import {workspaceHost,githubFor} from './workspace-host.ts';
 import {registerEnvironmentRoutes} from './environment-routes.ts';
 import {registerIntegrationSecretReferenceRoutes} from './integration-secret-reference-routes.ts';
@@ -56,6 +56,22 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
   reply.header('Cache-Control','no-store');
   const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,...input}=ComparisonFileRequestSchema.extend({threadId:identifier.optional()}).parse(request.query);
   return projects.gitComparisonFile(projectId,threadId,input);
+ });
+ // Read-only Git history. The server owns paging cursors and snapshot expiry.
+ app.get('/api/projects/:projectId/git/history',async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,cursor}=GitHistoryQuerySchema.parse(request.query);
+  return projects.gitHistory(projectId,threadId,{cursor});
+ });
+ app.get('/api/projects/:projectId/git/history/commit',async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,...input}=GitHistoryCommitQuerySchema.parse(request.query);
+  return projects.gitHistoryCommit(projectId,threadId,input);
+ });
+ app.get('/api/projects/:projectId/git/history/file',async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId,...input}=GitHistoryFileQuerySchema.parse(request.query);
+  return projects.gitHistoryFile(projectId,threadId,input);
  });
  app.get('/api/projects/:projectId/pull-requests/:number/comparison',async(request,reply)=>{
   reply.header('Cache-Control','no-store');
@@ -126,6 +142,15 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
   const{projectId}=z.object({projectId:identifier}).parse(request.params),input=checkpointBody.extend({planId:identifier,approvalId:identifier}).parse(request.body);
   const{owner,root}=await checkpointOwner(projectId,input.threadId??input.owner.threadId??undefined);admitOwner(owner,input.owner);
   return checkpoints.applyRestore(owner,{planId:input.planId,approvalId:input.approvalId,root});
+ });
+ app.post('/api/projects/:projectId/checkpoints/restore/reconcile',{bodyLimit:64*1024},async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  if(!capabilityEnabled('workspace.restoreV1'))throw new HarnessError('CAPABILITY_DENIED','Checkpoint restore is disabled.');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),input=checkpointBody.extend({planId:identifier}).parse(request.body);
+  const{owner,root}=await checkpointOwner(projectId,input.threadId??input.owner.threadId??undefined);admitOwner(owner,input.owner);
+  // Reconcile reads only: it reports what an interrupted apply left on disk
+  // and settles the plan into a terminal state, so it needs no approval.
+  return checkpoints.reconcileRestore(owner,{planId:input.planId,root});
  });
  app.post('/api/projects/:projectId/actions',{bodyLimit:1024*1024},async(request,reply)=>{
   const{projectId}=z.object({projectId:identifier}).parse(request.params),input=envelope.parse(request.body);

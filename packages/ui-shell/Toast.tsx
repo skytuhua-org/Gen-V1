@@ -18,7 +18,9 @@ export function toast(message: string, options: ToastOptions = {}) {
   const text = message.trim();
   if (!text) return 0;
   const id = nextId++;
-  publish([...entries.filter(entry => entry.message !== text).slice(-(MAX_VISIBLE - 1)), { ...options, id, message: text, leaving: false }]);
+  const next = [...entries.filter(entry => entry.message !== text), { ...options, id, message: text, leaving: false }];
+  let visible = next.filter(entry => !entry.leaving).length;
+  publish(next.map(entry => (visible > MAX_VISIBLE && !entry.leaving ? (visible--, { ...entry, leaving: true }) : entry)));
   return id;
 }
 export function dismissToast(id: number) { publish(entries.map(entry => entry.id === id ? { ...entry, leaving: true } : entry)); }
@@ -42,7 +44,7 @@ function ToastItem({ entry, paused }: { entry: ToastEntry; paused: boolean }) {
     return () => { cancelled = true; };
   }, [entry.leaving, entry.id]);
   const tone = entry.tone ?? 'info', Icon = icons[tone];
-  return <div ref={element} className="ui-toast" data-tone={tone} data-state={entry.leaving ? 'closed' : 'open'} role={tone === 'error' ? 'alert' : 'status'}>
+  return <div ref={element} className="ui-toast" data-toast-id={entry.id} data-tone={tone} data-state={entry.leaving ? 'closed' : 'open'} role={tone === 'error' ? 'alert' : 'status'}>
     <Icon size={15} aria-hidden="true" /><span>{entry.message}</span>
     {entry.action && <button type="button" className="ui-toast-action" onClick={() => { entry.action?.onClick(); dismissToast(entry.id); }}>{entry.action.label}</button>}
     <button type="button" className="ui-toast-close" aria-label="Dismiss notification" onClick={() => dismissToast(entry.id)}><X size={14} /></button>
@@ -58,10 +60,31 @@ export function Toaster() {
   useLayoutEffect(() => {
     // Removing or replacing a focused toast can happen without a blur event.
     const root = stack.current;
-    if (root && !root.contains(root.ownerDocument.activeElement)) setFocused(false);
+    if (!root) return;
+    const active = root.ownerDocument.activeElement;
+    if (!root.contains(active)) {
+      setFocused(false);
+      // Focus was inside and its node vanished: land on the newest remaining
+      // toast's close button instead of dropping to body.
+      if (root.dataset.prevHadFocus === 'true' && active === root.ownerDocument.body) {
+        const buttons = root.querySelectorAll<HTMLElement>('.ui-toast:not([data-state="closed"]) .ui-toast-close');
+        buttons[buttons.length - 1]?.focus({ preventScroll: true });
+      }
+    }
   }, [list]);
   return <div ref={stack} className="ui-toaster" role="region" aria-label="Notifications" onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
-    onFocus={() => setFocused(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
+    onFocus={() => { setFocused(true); if (stack.current) stack.current.dataset.prevHadFocus = 'true'; }}
+    onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) { setFocused(false); event.currentTarget.dataset.prevHadFocus = 'false'; } }}
+    onKeyDown={event => {
+      if (event.key !== 'Escape') return;
+      const target = event.target as HTMLElement;
+      const item = target.closest<HTMLElement>('.ui-toast');
+      if (item) { const id = Number(item.dataset.toastId); if (id) dismissToast(id); return; }
+      if (target === event.currentTarget) {
+        const newest = [...list].reverse().find(entry => !entry.leaving);
+        if (newest) dismissToast(newest.id);
+      }
+    }}>
     {list.map(entry => <ToastItem key={entry.id} entry={entry} paused={hovered || focused} />)}
   </div>;
 }

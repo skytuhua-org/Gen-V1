@@ -1,4 +1,4 @@
-import {resolve,join} from 'node:path';
+import {resolve,join,dirname,basename} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {homedir} from 'node:os';
 import {Store} from '../../packages/storage/store.ts';
@@ -13,8 +13,8 @@ import {workspaceHost} from './workspace-host.ts';
 import {AttentionRepository} from '../../packages/core/attention.ts';
 import type {AttentionDelivery} from '../../packages/contracts/attention.ts';
 import {parseDesktopLayout,type DesktopLayout} from '../../packages/desktop-contract/index.ts';
-import {randomUUID} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
+import {createHash,randomUUID} from 'node:crypto';
+import {lstat,readFile} from 'node:fs/promises';
 import {loadInstalledPlugins,type PluginRegistry} from '../../packages/plugins/host.ts';
 import {checkInstalledCompatibility} from '../../packages/plugins/installation.ts';
 import {IsolatedExtensionHost,createSpawnWorkerLauncher} from '../../packages/plugins/isolated-host.ts';
@@ -23,9 +23,13 @@ import {readPluginIndex} from '../../packages/plugins/installation.ts';
 import type {ExecutionBackend} from '../../packages/core/execution-policy.ts';
 import {createPersonalSkillCatalog} from '../../packages/skill-catalog/adapters.ts';
 import {configureHostCapabilityFlags,readCapabilityFlagOverrides,capabilityEnabled,type CapabilityFlagKey} from '../../packages/core/capability-flags.ts';
+import {createSidecarControlDriver,type ControlSidecarChannel} from '../../packages/core/control-sidecar-driver.ts';
+import {controlDriverManifestV1Schema,type ControlDriverRegistrationV1} from '../../packages/contracts/interactive-control.ts';
+import {HarnessError} from '../../packages/contracts/index.ts';
+import {z} from 'zod';
 
-export interface HostOptions {dataDir:string;port:number;widgetPort:number;dev:boolean;pluginDir?:string;launchToken?:string;capabilityFlags?:Readonly<Partial<Record<CapabilityFlagKey,boolean>>>;toolEffectFlags?:EffectServiceOptions['toolEffectFlags'];approvedBackendId?:string;isolationBackends?:readonly ExecutionBackend[]}
-export interface RunningHost {attentionRead?():Promise<AttentionDelivery>;attentionAction?(type:'open'|'dismiss',eventId:string):Promise<{threadId?:string;dismissed?:boolean}>;origin:string;widgetOrigin:string;pid:number;close():Promise<void>;nativeLayout?:DesktopLayout;stopAll():Promise<{stopped:number;errors?:string[]}>;saveNativeLayout(layout:unknown):Promise<void>;validatePluginSurface?(surface:unknown):Promise<boolean>;pluginCompatibility?(version:string):Promise<{allowed:boolean}>;updateReadiness?():Promise<{idle:boolean}>;prepareUpdateClose?():Promise<{idle:boolean}>;devServersCount?():Promise<{count:number;items:{url:string;port:number;label:string}[]}>}
+export interface HostOptions {dataDir:string;port:number;widgetPort:number;dev:boolean;pluginDir?:string;launchToken?:string;capabilityFlags?:Readonly<Partial<Record<CapabilityFlagKey,boolean>>>;toolEffectFlags?:EffectServiceOptions['toolEffectFlags'];approvedBackendId?:string;isolationBackends?:readonly ExecutionBackend[];controlChannel?:ControlSidecarChannel}
+export interface RunningHost {attentionRead?():Promise<AttentionDelivery>;attentionAction?(type:'open'|'dismiss',eventId:string):Promise<{threadId?:string;dismissed?:boolean}>;origin:string;widgetOrigin:string;pid:number;close():Promise<void>;nativeLayout?:DesktopLayout;stopAll():Promise<{stopped:number;errors?:string[]}>;saveNativeLayout(layout:unknown):Promise<void>;validatePluginSurface?(surface:unknown):Promise<boolean>;pluginCompatibility?(version:string):Promise<{allowed:boolean}>;updateReadiness?():Promise<{idle:boolean}>;prepareUpdateClose?():Promise<{idle:boolean}>;controlAttach?(manifest:unknown):Promise<{registered:boolean}>;devServersCount?():Promise<{count:number;items:{url:string;port:number;label:string}[]}>}
 export interface HostFactories {
  acquireProfile:typeof acquireProfileLease;
  createStore(dataDir:string):Store;
@@ -47,6 +51,51 @@ export function readHostOptions(env:NodeJS.ProcessEnv=process.env):HostOptions {
  if(env.HARNESS_DATA_DIR!==undefined&&!env.HARNESS_DATA_DIR.trim())throw new Error('HARNESS_DATA_DIR must be a nonempty directory.');
  const capabilityFlags=readCapabilityFlagOverrides(env);
  return {dataDir:resolve(env.HARNESS_DATA_DIR??join(env.LOCALAPPDATA??homedir(),'GenerativeHarness')),port:port(env.HARNESS_PORT??4317,'HARNESS_PORT'),widgetPort:port(env.HARNESS_WIDGET_PORT??4318,'HARNESS_WIDGET_PORT'),dev:env.HARNESS_DEV==='1',launchToken:env.HARNESS_DESKTOP_LAUNCH_TOKEN,...(Object.keys(capabilityFlags).length?{capabilityFlags}:{})};
+}
+
+const controlDriverPackageTrustSchema=z.strictObject({
+ version:z.literal(1),
+ artifactSha256:controlDriverManifestV1Schema.shape.artifactSha256,
+ adapterModuleSha256:controlDriverManifestV1Schema.shape.artifactSha256,
+});
+
+async function readPackagedFile(path:string,maxBytes=Infinity){
+ const info=await lstat(path);
+ if(!info.isFile()||info.size>maxBytes)throw new Error('Invalid packaged control driver resource.');
+ return readFile(path);
+}
+
+/** The packager pins the native output and physical ASAR independently of IPC. */
+export async function verifyPackagedControlDriver(hostRoot:string,version:string,manifest:unknown):Promise<ControlDriverRegistrationV1[]>{
+ if(basename(hostRoot)!=='host')throw new HarnessError('DRIVER_UNAVAILABLE','No packaged control driver is available.');
+ const artifact=join(hostRoot,'packages/core/windows-control-bridge.node');
+ const adapterModule=join(dirname(hostRoot),'app.asar');
+ const trust=await readPackagedFile(join(hostRoot,'control-driver-trust.json'),1024)
+  .then(bytes=>controlDriverPackageTrustSchema.parse(JSON.parse(bytes.toString('utf8'))))
+  .catch(()=>{throw new HarnessError('DRIVER_UNAVAILABLE','The packaged control driver trust resource is missing or invalid.');});
+
+ const parsed=controlDriverManifestV1Schema.safeParse(manifest);
+ const driverId='gen-v1-windows-control-bridge',backendProofRef=`electron/${version}`;
+ const targetIdentityFormat='gen-v1.control-target.v1',stopRoute='HOST_CANCEL';
+ const captureBounds={maxWidth:8192,maxHeight:8192,maxBytes:33554432};
+ const protocols=['browser-tab','native-window'] as const;
+ if(!parsed.success||parsed.data.artifact!==artifact||parsed.data.adapterModule!==adapterModule||
+    parsed.data.artifactSha256!==trust.artifactSha256||parsed.data.adapterModuleSha256!==trust.adapterModuleSha256||
+    parsed.data.driverId!==driverId||parsed.data.backendProofRef!==backendProofRef||
+    parsed.data.targetIdentityFormat!==targetIdentityFormat||parsed.data.stopRoute!==stopRoute||
+    parsed.data.captureBounds.maxWidth!==captureBounds.maxWidth||parsed.data.captureBounds.maxHeight!==captureBounds.maxHeight||
+    parsed.data.captureBounds.maxBytes!==captureBounds.maxBytes||parsed.data.apiProtocols.length!==protocols.length||
+    !protocols.every(protocol=>parsed.data.apiProtocols.includes(protocol))){
+  throw new HarnessError('DRIVER_ARTIFACT_MISMATCH','The control driver claim does not match the packaged identity.');
+ }
+
+ const [artifactDigest,adapterDigest]=await Promise.all([artifact,adapterModule].map(async path=>
+  createHash('sha256').update(await readPackagedFile(path)).digest('hex'),
+ )).catch(()=>{throw new HarnessError('DRIVER_ARTIFACT_MISMATCH','The packaged control driver files are missing or unreadable.');});
+ if(artifactDigest!==trust.artifactSha256||adapterDigest!==trust.adapterModuleSha256){
+  throw new HarnessError('DRIVER_ARTIFACT_MISMATCH','The packaged control driver files do not match the build digests.');
+ }
+ return protocols.map(apiProtocol=>({driverId:`${driverId}:${apiProtocol}`,packageDigest:trust.artifactSha256,apiProtocol,backendProofRef,targetIdentityFormat,captureBounds,supportsInputCancellation:true,stopRoute}));
 }
 
 /** One owned host, reused by the CLI and the desktop's real-Node sidecar. */
@@ -130,6 +179,15 @@ export async function launchHost(options:HostOptions,overrides:Partial<HostFacto
    async updateReadiness(){return {idle:accepting&&!pluginLoadFailed&&!await plugins?.isBusy()&&service!.isUpdateIdle()};},
    async prepareUpdateClose(){accepting=false;const idle=service!.freezeForUpdate();return {idle:idle&&!pluginLoadFailed&&!await plugins?.isBusy()};},
    async devServersCount(){const tracker=workspaceHost(service!).devServers;return {count:tracker?.count()??0,items:(tracker?.all()??[]).map(row=>({url:row.url,port:row.port,label:row.label}))};},
+   // Resolve trust from this server's own installed location (D02).
+   async controlAttach(manifest){
+    if(!accepting)throw new HarnessError('DRIVER_UNAVAILABLE','The host is not accepting control attachments.');
+    if(!options.controlChannel)throw new HarnessError('DRIVER_UNAVAILABLE','No control driver transport is available.');
+    const registrations=await verifyPackagedControlDriver(fileURLToPath(new URL('../../',import.meta.url)),version,manifest);
+    if(!accepting)throw new HarnessError('DRIVER_UNAVAILABLE','The host is not accepting control attachments.');
+    service!.attachControlDriver(createSidecarControlDriver(options.controlChannel),registrations);
+    return {registered:true};
+   },
   };
  }catch(error){await close().catch(()=>{});throw error;}
 }

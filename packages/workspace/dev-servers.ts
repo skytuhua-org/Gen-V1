@@ -88,7 +88,7 @@ export class DevServerTracker{
    candidate.attempts++;
    if(candidate.attempts>MAX_ATTEMPTS){this.candidates.delete(key);return;}
    candidate.timer=this.setTimer(()=>this.attempt(key,candidate),RETRY_MS);
-  },()=>{this.candidates.delete(key);});
+  },()=>{if(this.candidates.get(key)===candidate)this.candidates.delete(key);});
  }
  private confirm(key:string,candidate:Candidate){
   this.candidates.delete(key);

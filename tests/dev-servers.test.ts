@@ -36,8 +36,8 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
 function trackerFixture(){
  now=0;timers.list.length=0;timers.seq=0;
- const probes:{host:string;port:number;resolve:(listening:boolean)=>void}[]=[];
- const tracker=new DevServerTracker({probe:(host,port)=>new Promise<boolean>(resolve=>probes.push({host,port,resolve})),now:()=>now,setTimer,clearTimer,timestamp:()=>'2026-02-02T00:00:00.000Z'});
+ const probes:{host:string;port:number;resolve:(listening:boolean)=>void;reject:(reason:unknown)=>void}[]=[];
+ const tracker=new DevServerTracker({probe:(host,port)=>new Promise<boolean>((resolve,reject)=>probes.push({host,port,resolve,reject})),now:()=>now,setTimer,clearTimer,timestamp:()=>'2026-02-02T00:00:00.000Z'});
  cleanups.push(()=>tracker.dispose());
  return{tracker,probes};
 }
@@ -85,6 +85,18 @@ describe('DevServerTracker',()=>{
   expect(tracker.list('project-a')).toEqual([]);
   probes[1].resolve(true);await flush();run(20*1000);
   expect(probes.length).toBe(2);
+ });
+ it('keeps a replacement candidate when an exited terminal probe rejects late',async()=>{
+  const{tracker,probes}=trackerFixture();
+  const previous=info({label:'previous server'});
+  tracker.output(previous,'http://localhost:4000/\n');
+  tracker.exit(previous);
+  const replacement=info({label:'replacement server',startedAt:'2026-01-02T00:00:00.000Z'});
+  tracker.output(replacement,'http://localhost:4000/\n');
+  expect(probes).toHaveLength(2);
+  probes[0].reject(Error('Synthetic previous probe failure.'));await flush();
+  probes[1].resolve(true);await flush();
+  expect(tracker.list('project-a')).toEqual([expect.objectContaining({terminalId:replacement.id,label:replacement.label,startedAt:replacement.startedAt,port:4000})]);
  });
  it('caps candidates at eight per terminal and thirty-two overall',async()=>{
   const{tracker,probes}=trackerFixture();

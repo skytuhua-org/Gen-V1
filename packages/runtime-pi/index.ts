@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { HarnessError, type ModelInfo, type RunContext, type RuntimeAdapter, type RuntimeCallbacks, type StartRun } from "../contracts/index.ts";
-import { extractInputIds } from "./input-envelope.ts";
+import { messageInputIds } from "./input-envelope.ts";
 import { routeToolCall, sameContext, type ToolRequest } from "./ipc.ts";
 import { safeError } from "./sdk.ts";
 import { taskPaths, validateSessionPath } from "./session.ts";
@@ -297,7 +297,28 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       if(purpose==='memory-extraction')throw new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot read conversations.');
       if(purpose==='prediction')throw new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot read conversations.');
       const file = await validateSessionPath(storage, sessionPath);
-      return extractInputIds(await readFile(file, "utf8"));
+      const absent = (error: unknown): never => { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new HarnessError("PI_SESSION_MISSING", "Pi session history is missing or moved. Restore the session file or start a new session."); throw error; };
+      // Stream line by line: memory stays bounded on arbitrarily large
+      // transcripts, a torn final append is still skipped, and a single
+      // record over the limit fails closed instead of blocking resume.
+      const handle = await open(file, "r").catch(absent);
+      try {
+        const ids = new Set<string>(), decoder = new TextDecoder("utf-8"), buffer = Buffer.alloc(1024 * 1024);
+        let pending = "", position = 0;
+        const record = (line: string) => { try { const entry = JSON.parse(line); if (entry?.type === "message") for (const id of messageInputIds(entry.message)) ids.add(id); } catch { /* A torn append is not a delivered input. */ } };
+        for (;;) {
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+          if (!bytesRead) break;
+          position += bytesRead;
+          pending += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
+          let newline: number;
+          while ((newline = pending.indexOf("\n")) >= 0) { const line = pending.slice(0, newline); pending = pending.slice(newline + 1); if (line.length > 32 * 1024 * 1024) throw new HarnessError("PI_HISTORY_LIMIT", "Pi session history entry exceeds the bounded reader limit."); record(line); }
+          if (pending.length > 32 * 1024 * 1024) throw new HarnessError("PI_HISTORY_LIMIT", "Pi session history entry exceeds the bounded reader limit.");
+        }
+        pending += decoder.decode();
+        if (pending) record(pending);
+        return [...ids];
+      } finally { await handle.close(); }
     },
     async dispose() {
       disposed = true;
