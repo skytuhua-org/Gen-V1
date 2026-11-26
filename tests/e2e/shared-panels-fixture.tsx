@@ -15,7 +15,7 @@ import '../../apps/web/src/styles.css';
 const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Fixture'}}}});
 snapshot.artifacts=[];
 if(new URLSearchParams(location.search).has('project'))snapshot.threads.find(thread=>thread.id==='task-thread')!.projectId='project-one';
-const w=window as unknown as {__saved?:string[];__refuseSave?:boolean;__opened?:string[]};
+const w=window as unknown as {__saved?:string[];__refuseSave?:boolean;__reject?:boolean;__opened?:string[]};
 function WebEditor({name}:{name:string}){
  const [draft,setDraft]=useState('');
  useDesktopCloseGuard('artifact:duplicate',async()=>{if(w.__refuseSave&&name==='first')throw Error('Save refused');w.__saved??=[];w.__saved.push(name+':'+draft);});
@@ -30,7 +30,7 @@ function Fixture(){
  if(mode)return <><button onClick={()=>setPanels(value=>!value)}>{panels?'Hide PR bodies':'Show PR bodies'}</button><button onClick={()=>void prepare()}>Prepare PR handoff</button>{error&&<p role="alert">{error}</p>}{!editors&&<output>PR handoff ready</output>}{panels&&['first','second'].map(id=><section key={id} aria-label={id+' PR panel'}><WorkspaceSurfaceBody panelId={'pr-'+id} kind={mode==='linked'?'linked-pull-requests':mode==='diff'?'diff':'pull-request'} binding={{authority:{kind:'local'},projectId:'project-one',threadId:'task-thread'}} snapshot={snapshot} refresh={async()=>{}}/></section>)}</>;
  return <WorkspaceProvider value={{activeArtifactId:null,requestOpenArtifact:()=>{},closeArtifact:()=>{},rightPanelOpen:true,activeTab:layout.activeTab,setActiveTab:(tab:WorkspaceTab)=>setLayout(value=>({...value,activeTab:tab,openTabs:value.openTabs.includes(tab)?value.openTabs:[...value.openTabs,tab]})),openTabs:layout.openTabs,openTab:(tab:WorkspaceTab)=>setLayout(value=>({...value,activeTab:tab,openTabs:value.openTabs.includes(tab)?value.openTabs:[...value.openTabs,tab]})),closeTab:(tab:WorkspaceTab)=>setLayout(value=>{const openTabs=value.openTabs.filter(item=>item!==tab);return {...value,openTabs,activeTab:value.activeTab===tab?(openTabs[openTabs.length-1]??'artifact'):value.activeTab};})}}>
   {editors&&<><WebEditor name="first"/><WebEditor name="second"/></>}<button onClick={()=>void prepare()}>Prepare layout change</button>{error&&<p role="alert">{error}</p>}
-  <section aria-label="Canvas launcher"><WorkspaceLauncher onOpenTool={kind=>{w.__opened??=[];w.__opened.push(kind);}}/></section>
+  <section aria-label="Canvas launcher"><WorkspaceLauncher onOpenTool={kind=>{if(w.__reject)return Promise.reject(new Error('Fixture opener refused'));w.__opened??=[];w.__opened.push(kind);}}/></section>
   <output aria-label="Refresh count">{refreshes}</output>
   <WorkspacePanel snapshot={snapshot} threadId="task-thread" preferences={DEFAULT_PREFERENCES} layout={layout} close={()=>{}} setWidth={()=>{}} refresh={async()=>{setRefreshes(value=>value+1);}}/>
  </WorkspaceProvider>;

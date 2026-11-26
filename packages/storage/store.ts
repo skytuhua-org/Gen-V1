@@ -25,6 +25,9 @@ function normalized(value: unknown): unknown {
 }
 export function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(normalized(value))).digest("hex"); }
 
+const COMPACTION_JOINED = "FROM entities a LEFT JOIN entities u ON u.kind='compactionUsage' AND u.id=a.id AND u.thread_id=a.thread_id WHERE a.kind='compactionAttempt' AND a.thread_id=? AND json_extract(a.body,'$.ownerKey')=?";
+const PROVED = "(json_extract(u.body,'$.nativeReceipt.status')='APPLIED' AND json_extract(u.body,'$.nativeReceipt.candidateId')=a.id)";
+
 export class Store {
   readonly db: DatabaseSync;
   readonly dataDir: string;
@@ -50,6 +53,8 @@ export class Store {
     eventsAfter: ReturnType<DatabaseSync['prepare']>;
     eventsAfterLimit: ReturnType<DatabaseSync['prepare']>;
     sequence: ReturnType<DatabaseSync['prepare']>;
+    compactionCounts: ReturnType<DatabaseSync['prepare']>;
+    compactionRows: ReturnType<DatabaseSync['prepare']>;
   };
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
@@ -102,6 +107,9 @@ export class Store {
       eventsAfter: this.db.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq"),
       eventsAfterLimit: this.db.prepare("SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?"),
       sequence: this.db.prepare("SELECT COALESCE(MAX(seq),0) AS seq FROM events"),
+      // Prepared once: snapshot() evaluates a compaction projection per usage row.
+      compactionCounts: this.db.prepare(`SELECT COUNT(*) AS attempts, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='FAILED' AND COALESCE(${PROVED},0)=0 THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='DISCARDED' AND COALESCE(${PROVED},0)=0 THEN 1 ELSE 0 END),0) AS discarded ${COMPACTION_JOINED}`),
+      compactionRows: this.db.prepare(`SELECT a.body, u.body AS usage ${COMPACTION_JOINED} ORDER BY a.rowid DESC LIMIT 8`),
     };
   }
   get<T = unknown>(kind: string, id: string): T | null {
@@ -117,17 +125,15 @@ export class Store {
     }
     return value as T;
   }
-  compactionProjection(threadId: string): CompactionProjectionV1 | undefined {
-    const thread = this.get<Thread>('thread', threadId);
+  compactionProjection(threadId: string, threads?: Map<string, Thread>): CompactionProjectionV1 | undefined {
+    const thread = threads ? threads.get(threadId) : this.get<Thread>('thread', threadId);
     // A retained model/session is already account-bound. As in Service.binding,
     // its absent legacy field means null; it never uses the selected default.
     if (!thread?.modelId) return;
     const ownerKey = compactionOwnerKey(thread, thread.modelId, thread.accountId ?? null);
-    const joined = "FROM entities a LEFT JOIN entities u ON u.kind='compactionUsage' AND u.id=a.id AND u.thread_id=a.thread_id WHERE a.kind='compactionAttempt' AND a.thread_id=? AND json_extract(a.body,'$.ownerKey')=?";
-    const proved = "(json_extract(u.body,'$.nativeReceipt.status')='APPLIED' AND json_extract(u.body,'$.nativeReceipt.candidateId')=a.id)";
-    const counts = this.db.prepare(`SELECT COUNT(*) AS attempts, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='FAILED' AND COALESCE(${proved},0)=0 THEN 1 ELSE 0 END),0) AS failed, COALESCE(SUM(CASE WHEN json_extract(a.body,'$.candidate.status')='DISCARDED' AND COALESCE(${proved},0)=0 THEN 1 ELSE 0 END),0) AS discarded ${joined}`).get(threadId, ownerKey) as {attempts: number; failed: number; discarded: number};
+    const counts = this.statements.compactionCounts.get(threadId, ownerKey) as {attempts: number; failed: number; discarded: number};
     if (!counts.attempts) return;
-    const rows = this.db.prepare(`SELECT a.body, u.body AS usage ${joined} ORDER BY a.rowid DESC LIMIT 8`).all(threadId, ownerKey) as {body: string; usage: string | null}[];
+    const rows = this.statements.compactionRows.all(threadId, ownerKey) as {body: string; usage: string | null}[];
     const candidates = rows.reverse().map(row => {
       const entry = JSON.parse(row.body) as CompactionAttemptRecord;
       const usage = row.usage ? JSON.parse(row.usage) as {nativeReceipt?: NativeCompactionReceiptV1} : null;
@@ -200,6 +206,56 @@ export class Store {
     return rows.map(row => ({ seq: row.seq, id: row.id, type: row.type, threadId: row.thread_id, payload: JSON.parse(row.payload), occurredAt: row.occurred_at }));
   }
   get sequence(): number { return Number((this.statements.sequence.get() as { seq: number }).seq); }
+  /** Oldest retained event seq; consumers holding a lower cursor have lost the
+   * gap (read-sync resyncs against this floor). */
+  retentionFloor(): number {
+    return (this.db.prepare("SELECT COALESCE(MIN(seq),0) AS floor FROM events").get() as { floor: number }).floor;
+  }
+  /** Lowest seq a durable consumer may still replay: plan extensions keep a
+   * persisted `reportWatermark` and read `seq > watermark`, so rows at or
+   * below the minimum watermark are expendable. */
+  private retentionWatermarkFloor(): number {
+    const row = this.db.prepare("SELECT MIN(json_extract(body,'$.reportWatermark')) AS watermark FROM entities WHERE kind='planExtension' AND json_type(body,'$.reportWatermark')='integer'").get() as { watermark: number | null };
+    return row.watermark ?? Number.MAX_SAFE_INTEGER;
+  }
+  /** Bounded, resumable deletion of replayable event history and expiry of
+   * command receipts. Keeps `seq > floor` where
+   * `floor = min(headSeq - keepEvents, minWatermark)` so both the recency
+   * window and every durable consumer cursor stay readable. Each batch is its
+   * own committed transaction, so an interrupted sweep resumes safely on the
+   * next call; a `store.retention.swept` audit event is recorded on success.
+   * Receipts tied to retained events are kept, and receipts referenced by a
+   * live `workspaceAction`/`workspaceActionOutcome` entity's command are always
+   * kept so crash recovery can still resolve uncertain outcomes. An expired
+   * receipt is tombstoned, not deleted: its `id`, `hash` and `eventSeq`
+   * survive so a replayed command still dedupes and a reused ID with
+   * different content still raises DUPLICATE_COMMAND, while the heavy
+   * `result` payload is dropped (`result: null`, `expired: true`). */
+  retentionSweep(options: { keepEvents?: number; batchSize?: number; maxBatches?: number; receipts?: 'with-events' | 'keep' } = {}): { floor: number; removedEvents: number; removedReceipts: number; batches: number } {
+    if (this.transactionOpen) throw new HarnessError('TRANSACTION_OPEN', 'Retention sweep cannot run inside a command transaction');
+    const keep = options.keepEvents ?? 50_000;
+    if (!Number.isSafeInteger(keep) || keep < 1) throw new HarnessError('INVALID_INPUT', 'keepEvents must be a positive integer');
+    const batch = Math.max(1, Math.min(10_000, options.batchSize ?? 5_000));
+    const floor = Math.max(0, Math.min(this.sequence - keep, this.retentionWatermarkFloor()));
+    if (floor <= 0) return { floor, removedEvents: 0, removedReceipts: 0, batches: 0 };
+    const removeEvents = this.db.prepare("DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE seq<=? LIMIT ?)");
+    const expireReceipts = this.db.prepare("UPDATE receipts SET body=json_object('commandId',id,'eventSeq',json_extract(body,'$.eventSeq'),'result',null,'expired',json('true')) WHERE id IN (SELECT id FROM receipts WHERE json_extract(body,'$.eventSeq')<=? AND COALESCE(json_extract(body,'$.expired'),0)!=1 AND id NOT IN (SELECT json_extract(body,'$.command.id') FROM entities WHERE kind IN ('workspaceAction','workspaceActionOutcome') AND json_type(body,'$.command.id')='text') LIMIT ?)");
+    let removedEvents = 0, removedReceipts = 0, batches = 0;
+    while (options.maxBatches === undefined || batches < options.maxBatches) {
+      this.db.exec("BEGIN IMMEDIATE"); this.transactionOpen = true;
+      let batchEvents = 0, batchReceipts = 0;
+      try {
+        batchEvents = Number(removeEvents.run(floor, batch).changes);
+        if (options.receipts !== 'keep') batchReceipts = Number(expireReceipts.run(floor, batch).changes);
+        this.db.exec("COMMIT");
+      } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+      finally { this.transactionOpen = false; }
+      removedEvents += batchEvents; removedReceipts += batchReceipts; batches++;
+      if (batchEvents < batch && batchReceipts < batch) break;
+    }
+    this.commit('store.retention.swept', null, () => ({ floor, removedEvents, removedReceipts, batches, keepEvents: keep }));
+    return { floor, removedEvents, removedReceipts, batches };
+  }
   /** True while a command/internal commit is open: host modules invoked from
    * a command write through the open transaction instead of opening a nested
    * one (Store rejects nested commits). */
@@ -242,7 +298,15 @@ export class Store {
     return {
       seq: this.sequence, threads, archivedThreads: allThreads.filter(thread => archived.has(thread.id)), messages, messagesTruncated, artifacts, userStates: visible("userState"),
       data, requests, accounts: this.all('account'), skills:this.all<import('../contracts/skills.ts').SkillSummary>('skill').map(skill=>{const usage=skillUsage.get(skill.name);return usage?{...skill,useCount:usage.count,lastUsedAt:usage.lastUsedAt}:skill;}),skillProposals:(this.db.prepare("SELECT json_remove(body,'$.operations') AS body FROM entities WHERE kind=? AND json_extract(body,'$.status')='pending'").all('skillProposal') as {body:string}[]).map(row=>JSON.parse(row.body)),learning:this.get('learningStatus','global')??{supported:false,status:'idle',lastReview:null},operations: visible("operation"), resources: visible("resource"), memory: visible('taskMemory'),
-      usage: Object.fromEntries(visible<{ id: string; value: unknown }>("usage").map(x => [x.id, this.get<{value: RuntimeUsage}>('usage', x.id)!.value])) as Snapshot["usage"],
+      usage: Object.fromEntries((() => {
+        // Batch: reuse the loaded threads instead of a get()+projection per row.
+        const threadsById = new Map(allThreads.map(thread => [thread.id, thread]));
+        return visible<{ id: string; value: RuntimeUsage }>("usage").map(row => {
+          const { compaction: _historical, ...value } = row.value as RuntimeUsage & { compaction?: unknown };
+          const compaction = this.compactionProjection(row.id, threadsById);
+          return [row.id, { ...value, ...(compaction ? { compaction } : {}) }];
+        });
+      })()) as Snapshot["usage"],
       modelRequests: visible<{ id: string; value: import('../contracts/model-request.ts').ModelRequestObservationV1 }>("modelRequest").reduce((grouped, item) => { const owner = item.value?.owner?.threadId; if (owner) (grouped[owner] ??= []).push(item.value); return grouped; }, {} as Record<string, import('../contracts/model-request.ts').ModelRequestObservationV1[]>),
       settings: this.get("settings", "global") ?? { theme: "dark", modelId: null },
       activeThreadId: threads.find(t => !t.sideParentId && t.runId !== null && (t.status === "working" || t.status === "awaiting_input"))?.id ?? null

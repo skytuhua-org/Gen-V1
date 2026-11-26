@@ -101,6 +101,49 @@ it("check observations name their exact tested head and go stale on head change"
   // Inside the backoff window the stored observation may be served — but it
   // still names head A and is flagged stale; head B never inherits a pass.
   expect(second.checkObservation ?? second.observation).toMatchObject({ headOid: headA, stale: true });
+  expect(second.canReview).toBe(false);
+}, 60000);
+
+it("revalidates the provider head before a review inside the read backoff window", async () => {
+  const { github, projectId, provider } = await fixture();
+  await github.details(projectId, "main", 12);
+  provider.mockImplementation(async () => JSON.stringify(detailsItem(headB)));
+  await expect(github.review(projectId, "main", {
+    number: 12, event: "COMMENT", body: "Reviewed head A", head: headA, revision: 1,
+  })).rejects.toMatchObject({ code: "REVISION_CHANGED" });
+  expect(provider.mock.calls.filter(([, args]) => args[0] === "pr" && args[1] === "view")).toHaveLength(2);
+  expect(provider.mock.calls.some(([, args]) => args.includes("POST"))).toBe(false);
+}, 60000);
+
+it.each(["unavailable", "malformed"] as const)("never authorizes a review from stored checks when a fresh read is %s", async mode => {
+  const { github, projectId, provider } = await fixture();
+  await github.details(projectId, "main", 12);
+  const failure = Error("Provider unavailable");
+  provider.mockImplementation(async (_path, args) => {
+    if (args[0] === "pr" && args[1] === "view") {
+      if (mode === "unavailable") throw failure;
+      return "{";
+    }
+    return JSON.stringify({ id: "synthetic-review" });
+  });
+  const review = github.review(projectId, "main", {
+    number: 12, event: "COMMENT", body: "Reviewed head A", head: headA, revision: 1,
+  });
+  if (mode === "unavailable") await expect(review).rejects.toBe(failure);
+  else await expect(review).rejects.toMatchObject({ code: "GITHUB_CLI_OUTPUT_INVALID" });
+  expect(provider.mock.calls.some(([, args]) => args.includes("POST"))).toBe(false);
+}, 60000);
+
+it("allows one exact-head review after a fresh provider read while retaining read backoff", async () => {
+  const { github, projectId, provider } = await fixture();
+  await github.details(projectId, "main", 12);
+  await github.details(projectId, "main", 12);
+  expect(provider).toHaveBeenCalledTimes(1);
+  await github.review(projectId, "main", {
+    number: 12, event: "COMMENT", body: "Reviewed head A", head: headA, revision: 1,
+  });
+  expect(provider.mock.calls.filter(([, args]) => args[0] === "pr" && args[1] === "view")).toHaveLength(2);
+  expect(provider.mock.calls.filter(([, args]) => args.includes("POST"))).toHaveLength(1);
 }, 60000);
 
 it("pending, unavailable and billing-blocked provider states are never PASS", async () => {

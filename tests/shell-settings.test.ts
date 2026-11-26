@@ -14,6 +14,10 @@ describe('recoverable browser shell layout', () => {
     const value = readShellLayout();
     expect(value.sidebarWidth).toBe(380); expect(value.rightPanelWidth).toBe(280); expect(value.activeTab).toBe('artifact'); expect(value.folded).toEqual({ valid: true });
   });
+  it('clamps a persisted sidebar width below the resizable floor up to 232', () => {
+    vi.stubGlobal('localStorage', { getItem: () => JSON.stringify({ sidebarWidth: 200 }) });
+    expect(readShellLayout().sidebarWidth).toBe(232);
+  });
   it('uses a usable layout when browser storage is corrupt or unavailable', () => {
     vi.stubGlobal('localStorage', { getItem: () => '{broken' }); expect(readShellLayout().sidebarWidth).toBe(248);
     vi.stubGlobal('localStorage', { getItem: () => { throw new Error('Unavailable'); } }); expect(readShellLayout().rightPanelOpen).toBe(false);
