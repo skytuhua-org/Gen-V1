@@ -43,7 +43,7 @@ export const InboxItemRow=memo(function InboxItemRow({title,description,lead,met
  );
  return(
   <li className="ui-list-row" data-meta="title" data-lead="above" data-current={current?'true':undefined} data-current-look="tint" data-unread={unread?'true':undefined} data-muted={muted?'true':undefined} data-ink="sidebar">
-   <button ref={pressRef} type="button" className="ui-list-row-main" aria-current={current?'page':undefined} aria-label={label} onClick={onPress}>{face}</button>
+   <button ref={pressRef} type="button" className="ui-list-row-main" aria-current={current?'true':undefined} aria-label={label} onClick={onPress}>{face}</button>
   </li>
  );
 });
