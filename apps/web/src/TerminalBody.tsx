@@ -3,6 +3,7 @@ import {ApiError,authenticated,csrfToken,read} from './api.ts';
 import './terminal-read.css';
 import {captureTerminalExcerpt,type TerminalExcerpt} from './terminal-excerpts';
 import {terminalNameHasForbidden,TERMINAL_NAME_MAX,TERMINAL_NAME_RAW_MAX} from '../../../packages/contracts/terminal-session.ts';
+import {throttleLatest} from './coalesced-updates';
 import './terminal-excerpts.css';
 export interface TerminalExcerptComposer {projectId:string;threadId:string;readOnly?:boolean;addExcerpt:(excerpt:TerminalExcerpt)=>Promise<void>}
 
@@ -27,11 +28,14 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
  useLayoutEffect(()=>{latest.current={projectId,threadId,terminalId,active,generation,isCurrent,excerptComposer};});
  const pendingId=useRef<{key:string;id:string}|null>(null);
  const actions=useRef<{current:()=>boolean;retry:()=>void;stop:()=>Promise<void>;rename:(text:string)=>Promise<void>}|null>(null);
+ const renameFocusOwner=useRef<(()=>boolean)|null>(null);
+ useLayoutEffect(()=>{if(editing)return;const current=renameFocusOwner.current;renameFocusOwner.current=null;if(current&&current===actions.current?.current&&current()&&!renameButton.current?.disabled)renameButton.current?.focus({preventScroll:true});},[editing]);
 
  useEffect(()=>{
   if(!active||!element.current)return;
   let disposed=false,confirmedId:string|undefined,cursor=0,ended=false,interrupted=false,reading=false,stopPending=false,readSequence=0;
   let timer:ReturnType<typeof setTimeout>|undefined,observer:ResizeObserver|undefined,instance:import('@xterm/xterm').Terminal|undefined;
+  let resizeThrottle:{queue():void;cancel():void}|undefined,sentCols=-1,sentRows=-1;
   const controller=new AbortController();
   const ownerCurrent=()=>!disposed&&latest.current.active&&latest.current.projectId===projectId&&latest.current.threadId===threadId&&latest.current.terminalId===terminalId&&latest.current.generation===generation&&(!latest.current.isCurrent||latest.current.isCurrent());
   const matches=(value:TerminalRead,id:string)=>{
@@ -112,7 +116,10 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
    if(!ownerCurrent())return;
    matches(first,requestedId);syncMeta(first);confirmedId=first.id;setAcknowledged(true);
    try{localStorage.setItem(key,first.id);localStorage.removeItem(key+':pending');}catch{}
-   append(first);
+   append(first);sentCols=instance.cols;sentRows=instance.rows;
+   // fit runs per ResizeObserver tick; the resize command is latest-wins
+   // with a trailing send so a drag cannot issue a request per frame.
+   resizeThrottle=throttleLatest(150,()=>{if(!instance)return;const c=instance.cols,r=instance.rows;if(c===sentCols&&r===sentRows)return;sentCols=c;sentRows=r;void command({type:'resize',cols:c,rows:r}).catch(fail);});
    const canCapture=()=>ownerCurrent()&&latest.current.excerptComposer&&!latest.current.excerptComposer.readOnly&&latest.current.excerptComposer.projectId===projectId&&latest.current.excerptComposer.threadId===threadId;
    instance.onSelectionChange(()=>{if(!canCapture()||!confirmedId||!threadId)return;const text=instance!.getSelection();setSelection(text?captureTerminalExcerpt({terminalId:confirmedId,projectId,threadId,selection:text}):null);});
    instance.attachCustomKeyEventHandler(event=>{
@@ -124,12 +131,12 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
    instance.onData(data=>{if(ownerCurrent()&&!ended&&!stopPending)void command({type:'input',data}).catch(fail);});
    observer=new ResizeObserver(()=>{
     if(!ownerCurrent()||!instance||ended||stopPending)return;
-    fit.fit();void command({type:'resize',cols:instance.cols,rows:instance.rows}).catch(fail);
+    fit.fit();resizeThrottle?.queue();
    });
    observer.observe(element.current!);
    if(!ended)timer=setTimeout(()=>void poll(),250);
   })().catch(error=>{if(ownerCurrent()){setPhase(error instanceof ApiError&&error.code==='TERMINAL_ENDED'?'ended':'unconfirmed');setError(message(error));}});
-  return()=>{disposed=true;readSequence++;clearTimeout(timer);controller.abort();observer?.disconnect();instance?.dispose();if(actions.current===ownedActions)actions.current=null;};
+  return()=>{disposed=true;readSequence++;clearTimeout(timer);controller.abort();observer?.disconnect();resizeThrottle?.cancel();instance?.dispose();if(actions.current===ownedActions)actions.current=null;};
  },[projectId,threadId,terminalId,active,generation,key]);
 
  const restart=async()=>{
@@ -141,10 +148,11 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
  const canAdd=active&&excerptComposer&&!excerptComposer.readOnly&&excerptComposer.projectId===projectId&&excerptComposer.threadId===threadId;
  const addSelection=async()=>{const owner=actions.current,composer=excerptComposer;if(!selection||!canAdd||!owner?.current()||adding||!composer)return;setAdding(true);try{await composer.addExcerpt(selection);if(owner.current())setError('');}catch(cause){if(owner.current())setError(message(cause));}finally{if(owner.current())setAdding(false);}};
  useEffect(()=>{if(editing)nameInput.current?.select();},[editing]);
- const draftCount=[...draft].length;
+ const cancelRename=()=>{const current=actions.current?.current;if(saving||!current?.())return;renameFocusOwner.current=current;setEditing(false);setRenameError('');setDraft('');};
+ const draftCount=[...draft.trim()].length;
  const draftError=draft.length>TERMINAL_NAME_RAW_MAX?'Use 256 characters or fewer.':draftCount>TERMINAL_NAME_MAX?'Use 64 characters or fewer.':terminalNameHasForbidden(draft)?'Use a single-line name without control characters.':'';
  const canRename=active&&acknowledged&&(phase==='running')&&!stopping&&!!actions.current?.current();
  const canStop=active&&acknowledged&&phase!=='ended'&&!stopping&&!!actions.current?.current();
  const label=stopping?'Stopping':({starting:'Starting',running:'Running','read-interrupted':'Read interrupted',ended:'Ended',unconfirmed:'Start unconfirmed'} as const)[phase];
- return <div className="live-terminal terminal-read"><div className="panel-toolbar"><span className="terminal-name">{editing?<><label className="visually-hidden" htmlFor="terminal-name-input">Terminal name</label><input id="terminal-name-input" ref={nameInput} className="terminal-name-input" value={draft} placeholder="Terminal" disabled={saving} aria-invalid={!!(draftError||renameError)} aria-describedby="terminal-name-help terminal-name-error" onChange={event=>{setDraft(event.target.value);setRenameError('');}} onKeyDown={event=>{event.stopPropagation();if(event.nativeEvent.isComposing)return;if(event.key==='Enter'){event.preventDefault();if(!draftError&&!saving)void actions.current?.rename(draft);}else if(event.key==='Escape'){event.preventDefault();setEditing(false);setRenameError('');setDraft('');renameButton.current?.focus();}}}/><button disabled={!!draftError||saving} aria-busy={saving} onClick={()=>void actions.current?.rename(draft)}>{saving?'Saving…':'Save'}</button><button disabled={saving} onClick={()=>{setEditing(false);setRenameError('');setDraft('');renameButton.current?.focus();}}>Cancel</button>{termName!==null&&<button disabled={saving} onClick={()=>setDraft('')}>Reset name</button>}<span id="terminal-name-help" className="terminal-name-help">Up to 64 characters. Leave blank to use Terminal. ({draftCount}/{TERMINAL_NAME_MAX})</span>{(draftError||renameError)&&<span id="terminal-name-error" className="error-text" role="alert">{draftError||renameError}</span>}</>:<><strong className="terminal-name-heading" title={termName??'Terminal'}>{termName??'Terminal'}</strong><button ref={renameButton} className="terminal-rename" disabled={!canRename} onClick={()=>{setDraft(termName??'');setRenameError('');setEditing(true);}}>Rename</button></>}</span><span role="status">{label}</span><span className="visually-hidden" aria-live="polite">{nameNotice}</span><button disabled={!canStop} onClick={()=>void actions.current?.stop()}>Stop</button>{phase==='read-interrupted'&&<button disabled={!active||retrying||stopping||!actions.current?.current()} aria-busy={retrying} onClick={()=>actions.current?.retry()}>Retry</button>}{(phase==='ended'||(error&&acknowledged))&&(!terminalId||openAnother?<button disabled={!active||stopping||!actions.current?.current()} onClick={()=>void restart()}>New terminal</button>:<span>Open a new terminal from the workspace.</span>)}</div>{error&&<p className="error-text" role="alert">{error}</p>}<div className="xterm-host" ref={element} aria-label="Terminal output"/>{canAdd&&<div className="terminal-selection-actions"><button type="button" className="secondary" disabled={!selection||adding} onPointerDown={event=>event.preventDefault()} onClick={()=>void addSelection()}>Add selection to prompt</button><p>{selection?.truncated?`Selection truncated from ${selection.originalBytes} bytes. Review before sending.`:'Selection stays editable before sending. Ctrl+Shift+A selects output.'}</p></div>}</div>;
+ return <div className="live-terminal terminal-read"><div className="panel-toolbar"><span className="terminal-name">{editing?<><label className="visually-hidden" htmlFor="terminal-name-input">Terminal name</label><input id="terminal-name-input" ref={nameInput} className="terminal-name-input" value={draft} placeholder="Terminal" disabled={saving} aria-invalid={!!(draftError||renameError)} aria-describedby="terminal-name-help terminal-name-error" onChange={event=>{setDraft(event.target.value);setRenameError('');}} onKeyDown={event=>{event.stopPropagation();if(event.nativeEvent.isComposing)return;if(event.key==='Enter'){event.preventDefault();if(!draftError&&!saving)void actions.current?.rename(draft);}else if(event.key==='Escape'){event.preventDefault();cancelRename();}}}/><button disabled={!!draftError||saving} aria-busy={saving} onClick={()=>void actions.current?.rename(draft)}>{saving?'Saving…':'Save'}</button><button disabled={saving} onClick={()=>{cancelRename();}}>Cancel</button>{termName!==null&&<button disabled={saving} onClick={()=>setDraft('')}>Reset name</button>}<span id="terminal-name-help" className="terminal-name-help">Up to 64 characters. Leave blank to use Terminal. ({draftCount}/{TERMINAL_NAME_MAX})</span>{(draftError||renameError)&&<span id="terminal-name-error" className="error-text" role="alert">{draftError||renameError}</span>}</>:<><strong className="terminal-name-heading" title={termName??'Terminal'}>{termName??'Terminal'}</strong><button ref={renameButton} className="terminal-rename" disabled={!canRename} onClick={()=>{setDraft(termName??'');setRenameError('');setEditing(true);}}>Rename</button></>}</span><span role="status">{label}</span><span className="visually-hidden" aria-live="polite">{nameNotice}</span><button disabled={!canStop} onClick={()=>void actions.current?.stop()}>Stop</button>{phase==='read-interrupted'&&<button disabled={!active||retrying||stopping||!actions.current?.current()} aria-busy={retrying} onClick={()=>actions.current?.retry()}>Retry</button>}{(phase==='ended'||(error&&acknowledged))&&(!terminalId||openAnother?<button disabled={!active||stopping||!actions.current?.current()} onClick={()=>void restart()}>New terminal</button>:<span>Open a new terminal from the workspace.</span>)}</div>{error&&<p className="error-text" role="alert">{error}</p>}<div className="xterm-host" ref={element} aria-label="Terminal output"/>{canAdd&&<div className="terminal-selection-actions"><button type="button" className="secondary" disabled={!selection||adding} onPointerDown={event=>event.preventDefault()} onClick={()=>void addSelection()}>Add selection to prompt</button><p>{selection?.truncated?`Selection truncated from ${selection.originalBytes} bytes. Review before sending.`:'Selection stays editable before sending. Ctrl+Shift+A selects output.'}</p></div>}</div>;
 }

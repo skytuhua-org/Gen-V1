@@ -225,6 +225,35 @@ test.describe('terminal rename (#1640)',()=>{
   expect(api.requests.filter(item=>item.body?.type==='rename')).toHaveLength(1);
  });
 
+ for(const raw of ['  '+'🙂'.repeat(64)+'  ',' '.repeat(100)])test(`rename validates the normalized length ${raw.trim()?'at the limit':'for a blank reset'}`,async({page})=>{
+  let name:string|null='Original',revision=3;
+  const api=await mount(page,{
+   create:async(route,body)=>json(route,result(String(body.terminalId),'before\r\n',{name,nameRevision:revision})),
+   read:async route=>json(route,named(name,revision,{start:8,cursor:8})),
+   command:async(route,body)=>{name=String(body.name).trim()||null;revision++;await json(route,named(name,revision,{start:8,cursor:8}));},
+  });
+  await renameButton(page).click();const input=page.getByRole('textbox',{name:'Terminal name',exact:true});await input.fill(raw);
+  await expect(page.locator('#terminal-name-help')).toContainText(`(${[...raw.trim()].length}/64)`);
+  await expect(page.getByRole('button',{name:'Save',exact:true})).toBeEnabled();await input.press('Enter');
+  await expect(heading(page)).toHaveText(raw.trim()||'Terminal');
+  expect(api.requests.filter(item=>item.body?.type==='rename').map(item=>item.body?.name)).toEqual([raw]);
+  expect(api.requests.filter(item=>item.body?.type==='input')).toEqual([]);
+ });
+
+ for(const dismiss of ['Escape','Cancel'])test(`rename ${dismiss} restores focus to the committed Rename button`,async({page})=>{
+  const api=await mount(page);await renameButton(page).click();const input=page.getByRole('textbox',{name:'Terminal name',exact:true});await input.fill('Discard me');
+  if(dismiss==='Escape')await input.press('Escape');else await page.getByRole('button',{name:'Cancel',exact:true}).click();
+  await expect(input).toHaveCount(0);await expect(renameButton(page)).toBeFocused();
+  expect(api.requests.filter(item=>item.body?.type==='rename'||item.body?.type==='input')).toEqual([]);
+ });
+
+ test('rename cancellation does not restore focus after the owner becomes inactive',async({page})=>{
+  const api=await mount(page);await renameButton(page).click();
+  await page.evaluate(()=>{document.querySelector('input[aria-label="Terminal name"],#terminal-name-input')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));window.terminalFixture.update({active:false});document.querySelector<HTMLButtonElement>('main>button')!.focus();});
+  await expect(page.getByRole('button',{name:'Toggle view',exact:true})).toBeFocused();await expect(renameButton(page)).toBeDisabled();
+  expect(api.requests.filter(item=>item.body?.type==='rename'||item.body?.type==='input')).toEqual([]);
+ });
+
  test('client validation blocks overlong and control names without a request',async({page})=>{
   const api=await mount(page,{});
   await renameButton(page).click();
