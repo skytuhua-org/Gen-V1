@@ -62,7 +62,7 @@ it('preserves the authenticated panel response and refuses a thread archived dur
   expect(response.statusCode).toBe(200);
   expect(response.headers['cache-control']).toBe('no-store');
   expect(response.json()).toEqual({seq: f.store.sequence, verification: {
-    label: null, staleBanner: false, summary: {verified: 0, failed: 0, unverified: 0, blocked: 0, missing: []}, rows: [],
+    label: null, staleBanner: false, summary: {verified: 0, failed: 0, unverified: 0, blocked: 0, missing: []}, rows: [], findings: {rows: [], omitted: 0},
   }});
 
   const original = (await vi.importActual<typeof import('../packages/core/project-verification.ts')>('../packages/core/project-verification.ts')).readVerificationSourceCut;
