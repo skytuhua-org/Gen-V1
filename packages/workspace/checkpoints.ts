@@ -33,6 +33,9 @@ const CHECKPOINT_KIND = "workspaceCheckpoint" as const;
 const RESTORE_PLAN_KIND = "workspaceRestorePlan" as const;
 const REPOSITORY_RECIPE_KIND = "workspaceRepositoryRecipe" as const;
 
+// Own temp files left behind by a killed writeRestored; see sweepRestoreTemps.
+const RESTORE_TEMP_NAME = /^\.gen-restore-[0-9a-f-]{36}\.tmp$/;
+
 // Adapter-visible cap: the frozen web contract lists at most 100 files.
 const ADAPTER_FILE_CAP = 100;
 const REVIEW_DIFF_LIMIT = 128 * 1024;
@@ -49,9 +52,19 @@ export interface StoredCheckpoint extends CheckpointV1 {
   expiresAt: string | null;
 }
 
+/** Per-path restore receipt: what happened to each selected path. */
+export interface RestorePathResult {
+  path: string;
+  status: "applied" | "conflict" | "not_applied" | "rolled_back" | "left_written" | "skipped" | "uncertain";
+}
+
 export interface StoredRestorePlan extends RestorePlanV1 {
   id: string;
   conflicts: string[];
+  /** Workspace root the plan was previewed against; absent on legacy plans. */
+  root?: string;
+  /** Per-path outcome receipt, populated when the plan reaches a terminal state. */
+  results?: RestorePathResult[];
   createdAt: string;
 }
 
@@ -488,6 +501,9 @@ export class CheckpointService {
       }),
       id: "rst-" + randomUUID(),
       conflicts: [],
+      // The preview digests were taken under this root — apply must use it too.
+      root: resolve(input.root),
+      results: [],
       createdAt: now(),
     };
     this.store.internal("workspace.restore.planned", scope.threadId, () => {
@@ -504,6 +520,7 @@ export class CheckpointService {
       throw new HarnessError("NOT_FOUND", "Restore plan is unavailable for this owner.");
     if (plan.approvalId !== input.approvalId) throw new HarnessError("CAPABILITY_DENIED", "Restore needs the exact approval for this plan.");
     if (plan.state !== "PREVIEW") throw new HarnessError("REVISION_CHANGED", "This restore plan was already applied or superseded.");
+    if (plan.root && resolve(plan.root) !== resolve(input.root)) throw new HarnessError("CAPABILITY_DENIED", "This restore plan is bound to a different workspace root.");
     const checkpoint = this.checkpoint(scope, plan.checkpointId);
 
     // The exact pre-restore checkpoint is the recovery anchor. It must exist
@@ -516,14 +533,20 @@ export class CheckpointService {
       provenance: { kind: "restore_backup", operationId: plan.id },
       signal,
     });
-    this.transition(plan, "APPLYING");
+    // Claim the plan: only the caller whose PREVIEW→APPLYING write won may
+    // enter the write loop; a concurrent apply that already passed the state
+    // check above must not double-apply.
+    if (!this.transition(plan, "APPLYING")) throw new HarnessError("REVISION_CHANGED", "This restore plan was already applied or superseded.");
     this.store.internal("workspace.restore.pre-checkpoint", scope.threadId, () => {
       const latest = this.store.get<StoredRestorePlan>(RESTORE_PLAN_KIND, plan.id);
       if (latest) this.store.put(RESTORE_PLAN_KIND, plan.id, scope.threadId, { ...latest, preRestoreCheckpointId: preRestore.id });
     });
 
+    await this.sweepRestoreTemps(input.root, plan.selectedPaths, signal);
+
     const written: { path: string; before: Buffer | null }[] = [];
     const conflicts: string[] = [];
+    const results = new Map<string, RestorePathResult["status"]>(plan.targetDigests.map((target) => [target.path, "skipped"]));
     let partialRecovery = false;
     let applyError: unknown;
     try {
@@ -532,6 +555,7 @@ export class CheckpointService {
         const blob = await this.readBlob(checkpoint.files.find((file) => file.path === target.path)!.blobRef, signal);
         if (blob === null || sha256hex(blob) !== target.digest) {
           conflicts.push(target.path);
+          results.set(target.path, "conflict");
           continue;
         }
         const absolute = join(input.root, ...target.path.split("/"));
@@ -540,12 +564,14 @@ export class CheckpointService {
         const currentDigest = current ? sha256hex(current) : null;
         if (currentDigest !== before.digest) {
           conflicts.push(target.path);
+          results.set(target.path, "conflict");
           continue;
         }
         // The recovery checkpoint cannot hold excluded content; never
         // overwrite bytes there is no recovery copy of.
         if (current !== null && exclusionReason(target.path, current) !== null) {
           conflicts.push(target.path);
+          results.set(target.path, "conflict");
           continue;
         }
         try {
@@ -554,18 +580,24 @@ export class CheckpointService {
           // The destination appeared between preview and apply.
           if (error instanceof HarnessError && error.code === "REVISION_CHANGED") {
             conflicts.push(target.path);
+            results.set(target.path, "conflict");
             continue;
           }
           throw error;
         }
         written.push({ path: target.path, before: current });
+        results.set(target.path, "applied");
         // Postimage must equal the checkpoint digest.
         const after = await this.readOptional(absolute, signal);
         if (after === null) {
           partialRecovery = true;
+          results.set(target.path, "uncertain");
           continue;
         }
-        if (sha256hex(after) !== target.digest) partialRecovery = true;
+        if (sha256hex(after) !== target.digest) {
+          partialRecovery = true;
+          results.set(target.path, "uncertain");
+        }
       }
     } catch (error) {
       applyError = error;
@@ -580,6 +612,7 @@ export class CheckpointService {
           const targetDigest = plan.targetDigests.find((item) => item.path === entry.path)!.digest;
           if (!nowBytes || sha256hex(nowBytes) !== targetDigest) {
             partialRecovery = true;
+            results.set(entry.path, "left_written");
             continue;
           }
           if (entry.before === null) {
@@ -587,19 +620,112 @@ export class CheckpointService {
           } else {
             await this.writeRestored(absolute, entry.before, nowBytes, signal);
           }
+          results.set(entry.path, "rolled_back");
         } catch {
           partialRecovery = true;
+          results.set(entry.path, "left_written");
         }
       }
     }
     const state = partialRecovery ? "PARTIAL_RECOVERY_REQUIRED" : conflicts.length || applyError ? "CONFLICT" : "APPLIED";
+    const pathResults = plan.targetDigests.map((target) => ({ path: target.path, status: results.get(target.path)! }));
     this.store.internal("workspace.restore.finished", scope.threadId, () => {
       const latest = this.store.get<StoredRestorePlan>(RESTORE_PLAN_KIND, plan.id);
-      if (latest) this.store.put(RESTORE_PLAN_KIND, plan.id, scope.threadId, { ...latest, state, conflicts });
+      if (latest) this.store.put(RESTORE_PLAN_KIND, plan.id, scope.threadId, { ...latest, state, conflicts, results: pathResults });
     });
     // The plan is terminal before the failure surfaces — it never stays APPLYING.
     if (applyError) throw applyError;
-    return { ...plan, state, conflicts, preRestoreCheckpointId: preRestore.id };
+    return { ...plan, state, conflicts, results: pathResults, preRestoreCheckpointId: preRestore.id };
+  }
+
+  /**
+   * Reconcile a plan left APPLYING by a killed or crashed apply. No bytes are
+   * written: each selected path is compared against the plan's before/target
+   * digests and reported in the receipt, then the plan moves to a terminal
+   * state — APPLIED when every path holds the target, CONFLICT when nothing
+   * was applied, PARTIAL_RECOVERY_REQUIRED for mixed or uncertain outcomes.
+   */
+  async reconcileRestore(owner: CheckpointScope, input: { planId: string; root: string; signal?: AbortSignal }): Promise<StoredRestorePlan> {
+    const scope = checkpointScopeSchema.parse(owner);
+    const signal = input.signal ?? new AbortController().signal;
+    const plan = this.store.get<StoredRestorePlan>(RESTORE_PLAN_KIND, input.planId);
+    if (!plan || plan.scope.projectId !== scope.projectId || plan.scope.threadId !== scope.threadId || plan.scope.workingCopyId !== scope.workingCopyId || plan.scope.binding !== scope.binding)
+      throw new HarnessError("NOT_FOUND", "Restore plan is unavailable for this owner.");
+    if (plan.state !== "APPLYING") throw new HarnessError("REVISION_CHANGED", "Only a plan interrupted during apply can be reconciled.");
+    if (plan.root && resolve(plan.root) !== resolve(input.root)) throw new HarnessError("CAPABILITY_DENIED", "This restore plan is bound to a different workspace root.");
+
+    await this.sweepRestoreTemps(input.root, plan.selectedPaths, signal);
+
+    let anyApplied = false;
+    let anyUncertain = false;
+    const pathResults: RestorePathResult[] = [];
+    for (const target of plan.targetDigests) {
+      const before = plan.beforeDigests.find((entry) => entry.path === target.path)!;
+      const absolute = join(input.root, ...target.path.split("/"));
+      const current = await this.readOptional(absolute, signal);
+      const currentDigest = current ? sha256hex(current) : null;
+      let status: RestorePathResult["status"];
+      if (currentDigest === target.digest) {
+        // The written image is on disk — the interrupted apply landed here.
+        status = "applied";
+        anyApplied = true;
+      } else if (current === null) {
+        // Nothing on disk: with no preimage nothing was written, with a
+        // preimage the bytes are gone either way and cannot be attributed.
+        status = before.digest === null ? "not_applied" : "uncertain";
+      } else if (currentDigest === before.digest) {
+        status = "not_applied";
+      } else {
+        // Neither before nor target: another writer touched the path.
+        status = "uncertain";
+      }
+      if (status === "uncertain") anyUncertain = true;
+      pathResults.push({ path: target.path, status });
+    }
+    const state = anyUncertain || (anyApplied && pathResults.some((entry) => entry.status !== "applied"))
+      ? "PARTIAL_RECOVERY_REQUIRED"
+      : anyApplied
+        ? "APPLIED"
+        : "CONFLICT";
+    const conflicts = pathResults.filter((entry) => entry.status !== "applied").map((entry) => entry.path);
+    this.store.internal("workspace.restore.reconciled", scope.threadId, () => {
+      const latest = this.store.get<StoredRestorePlan>(RESTORE_PLAN_KIND, plan.id);
+      if (latest && latest.state === "APPLYING") this.store.put(RESTORE_PLAN_KIND, plan.id, scope.threadId, { ...latest, state, conflicts, results: pathResults });
+    });
+    return { ...plan, state, conflicts, results: pathResults };
+  }
+
+  /** Remove stale `.gen-restore-*.tmp` files a killed apply left behind.
+   *  Only files older than a minute are touched — a temp created this second
+   *  may belong to a concurrent restore. Best-effort, never throws. */
+  private async sweepRestoreTemps(root: string, paths: string[], signal: AbortSignal): Promise<void> {
+    const staleBeforeMs = Date.now() - 60_000;
+    const directories = new Set(paths.map((path) => dirname(join(root, ...path.split("/")))));
+    for (const directory of directories) {
+      try {
+        await withPathGuard([{ path: directory, leaf: false, allowChildWrites: true }], signal, async () => {
+          let names: string[];
+          try {
+            names = await readdir(directory);
+          } catch {
+            names = [];
+          }
+          for (const name of names) {
+            if (!RESTORE_TEMP_NAME.test(name)) continue;
+            const target = join(directory, name);
+            try {
+              const info = await lstat(target);
+              if (!info.isFile() || info.mtimeMs > staleBeforeMs) continue;
+              await rm(target, { force: true });
+            } catch {
+              /* another writer raced us — leave it */
+            }
+          }
+        });
+      } catch {
+        /* directory gone or unguarded — nothing to sweep */
+      }
+    }
   }
 
   private async writeRestored(absolute: string, bytes: Buffer, before: Buffer | null, signal: AbortSignal): Promise<void> {
@@ -647,11 +773,17 @@ export class CheckpointService {
     );
   }
 
-  private transition(plan: StoredRestorePlan, state: StoredRestorePlan["state"]) {
+  /** Atomically move the plan out of PREVIEW; returns whether this call won. */
+  private transition(plan: StoredRestorePlan, state: StoredRestorePlan["state"]): boolean {
+    let won = false;
     this.store.internal("workspace.restore.transition", plan.scope.threadId, () => {
       const latest = this.store.get<StoredRestorePlan>(RESTORE_PLAN_KIND, plan.id);
-      if (latest && latest.state === "PREVIEW") this.store.put(RESTORE_PLAN_KIND, plan.id, plan.scope.threadId, { ...latest, state });
+      if (latest && latest.state === "PREVIEW") {
+        this.store.put(RESTORE_PLAN_KIND, plan.id, plan.scope.threadId, { ...latest, state });
+        won = true;
+      }
     });
+    return won;
   }
 
   /** Remove blobs no checkpoint or receipt still references; demote broken ones. */

@@ -93,6 +93,7 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
       <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ' (unavailable)'}`).join(', ')} · budget reserved {list.budget.reservedTokens}tok</div>
       {progress && <div className="agents-work-progress">
         <progress aria-label="Task progress" aria-valuetext={progressLabel} max={progress.total || 1} value={progress.completed}/><span>{progressLabel}</span>
+        <PlanTree plan={plan!}/>
       </div>}
       {list.works.map(work => <article key={work.workId} className="agents-work-row" data-state={work.state}>
         <header>
@@ -137,4 +138,24 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
       {error && <p className="agents-error" role="alert">{error}</p>}
     </div>}
   </section>;
+}
+
+/** M09-U03: weighted task tree. Each node shows its allocated units and its
+ * verbatim reported status — absent from the report means unknown work, and a
+ * reported "completed" is not accepted verification. */
+function PlanTree({plan}: {plan: PlanProgress}) {
+  const weights = plan.weights ?? [];
+  const children = new Map<string, string[]>();
+  for (const rel of plan.parentRelationships ?? []) children.set(rel.parentId, [...(children.get(rel.parentId) ?? []), rel.childId]);
+  const childSet = new Set([...children.values()].flat());
+  const units = new Map(weights.map(weight => [weight.nodeId, weight.units]));
+  const roots = weights.map(weight => weight.nodeId).filter(id => !childSet.has(id));
+  const render = (nodeId: string, depth: number) => {
+    const status = plan.reportedStatuses?.[nodeId];
+    return <li key={nodeId}><span className="agents-work-meta" style={{paddingLeft: depth * 12}}>{nodeId} · {units.get(nodeId) ?? 0} units · {status ?? 'unreported'}{status === 'completed' ? ' (reported)' : ''}</span>
+      {(children.get(nodeId) ?? []).length > 0 && <ul>{children.get(nodeId)!.map(child => render(child, depth + 1))}</ul>}
+    </li>;
+  };
+  if (roots.length === 0) return null;
+  return <ul className="agents-plan-tree" aria-label="Task tree">{roots.map(root => render(root, 0))}</ul>;
 }
