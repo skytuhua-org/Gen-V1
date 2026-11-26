@@ -179,6 +179,19 @@ export class Service {
   private readonly teardowns=new Map<string,RunTeardown>();
   private readonly backgroundSourceOwners=new Map<string,{ctx:RunContext;threadEpoch:number}>();
   private readonly publishingStops=new Set<string>();
+  private readonly runEndHooks=new Set<(threadId:string,status:'cancelled'|'failed'|'interrupted')=>void>();
+
+  /** Subscribes to a thread run ending cancelled, failed or interrupted — the
+   * surfaces owner-scoped registries (edit previews) use to discard run-bound
+   * state. 'review_required' settlements do not fire the hooks. */
+  onRunEnd(hook:(threadId:string,status:'cancelled'|'failed'|'interrupted')=>void):()=>void{
+    this.runEndHooks.add(hook);
+    return ()=>{this.runEndHooks.delete(hook);};
+  }
+  private endRun(ctx:RunContext,status:'cancelled'|'failed'|'interrupted'|'review_required'):void{
+    this.planning.endRun(ctx,status);
+    if(status!=='review_required')for(const hook of this.runEndHooks)try{hook(ctx.threadId,status);}catch{/* run-bound discard hooks never break the run ledger */}
+  }
   private readonly authority:ToolAuthority;
   private readonly hostToolRegistryDigest:string;
   private readonly effects:ToolEffectLedger;
@@ -234,10 +247,10 @@ export class Service {
     this.research=new PersonalResearchRepository(store,{assertHostActive:()=>{if(this.closed||this.updateClosing)throw new HarnessError('HOST_CLOSING','Gen is closing. Saved work is retained.');}});
     this.predictions=new ComposerPredictions({factory:()=>{if(!options.predictionRuntimeFactory)throw new HarnessError('PREDICTION_UNAVAILABLE','Composer predictions are unavailable in this host.');return options.predictionRuntimeFactory();},current:id=>this.predictionBasis(id)});
     this.planning=new PlanningCoordinator({store,assertRun:ctx=>this.assertRun(ctx),domainContext:(ctx,signal)=>this.context(ctx.threadId,signal,undefined,ctx),runtimeFactory:options.planningRuntimeFactory,canonicalJobs:options.canonicalPlanJobs,observeTool:(call,parent,execute)=>{this.effects.assertAdmissionsEnabled();return this.effectFlags.enabled("audit.effectsV1")||this.effectFlags.enabled("security.authorityV1")?this.effects.invoke({call,ctx:parent,thread:this.thread(parent.threadId),role:"planning_child"},execute):execute();}});
-    // M09: typed multi-agent work. No registered M08 managed-worktree profile
-    // or M06 typed-verification proof exists on this host, so CODE_WORKTREE
-    // and QA expose ROLE_UNAVAILABLE while PLAN_READ/RESEARCH_READ run
-    // read-only through the restricted resolver below.
+    // M09: typed multi-agent work. Native child allocation and exact M02/M03
+    // proof are not registered on this host. Keep CODE_WORKTREE and QA
+    // unavailable; parent workspace identity is not native execution proof.
+    // PLAN_READ/RESEARCH_READ retain the restricted read-only resolver.
     this.planExtensions=new PlanExtensionStore({store});
     this.agentWork=new AgentWorkCoordinator({store,assertRun:ctx=>this.assertRun(ctx),isEnabled:capabilityEnabled,
       resourceResolver:async(_grant,_write,call)=>{const domain=await import('../capabilities/index.ts');return domain.handleDomainTool(call.name,call.args,this.agentReadDomain(_grant.threadId));},
@@ -1259,7 +1272,7 @@ export class Service {
       this.publishingStops.add(thread.id);
       try{
         receipt=this.store.command(command,()=>{
-          this.planning.endRun(ctx,'cancelled');
+          this.endRun(ctx,'cancelled');
           this.failUnansweredDetails(ctx,"The explanation was stopped. Resume the task to retry.");
           this.store.put("thread",thread.id,thread.id,{...thread,epoch:thread.epoch+1,runId:null,status:"stopped",updatedAt:now()});
           return {stopped:true,nativeOwner:ctx};
@@ -1846,7 +1859,7 @@ export class Service {
       const intent = this.store.get<{kind:string;previousStatus:Thread["status"]}>("runtimeIntent", ctx.runId);
       const stamp=now();
       if(intent?.kind!=="compaction"){
-        this.planning.endRun(ctx,"failed");
+        this.endRun(ctx,"failed");
         if(!this.store.get('runFailure',ctx.runId))this.store.put('runFailure',ctx.runId,thread.id,{threadId:ctx.threadId,runId:ctx.runId,epoch:ctx.epoch,projectId:thread.projectId??null,occurredAt:stamp});
       }
       this.store.put("thread", thread.id, thread.id, { ...thread, runId: null, status: intent?.kind === "compaction" ? this.afterMaintenance(thread.id, intent.previousStatus) : "interrupted", error: error instanceof Error ? error.message : String(error), updatedAt: stamp });
@@ -2048,7 +2061,7 @@ export class Service {
         const handled = new Set([...(finished?.inputIds ?? []), ...(finalized?.inputIds ?? [])]);
         for (const input of this.store.all<Outbox>("outbox", thread.id).filter(i => i.runId === event.runId && i.status !== "handled" && i.enteredRuntime && handled.has(i.id))) this.store.put("outbox", input.id, thread.id, { ...input, status:"handled" });
         const unresolved = this.store.all<Outbox>("outbox", thread.id).some(i => i.runId === event.runId && i.status !== "handled");
-        if(intent?.kind!=="compaction")this.planning.endRun(event,event.aborted?"cancelled":unresolved?"interrupted":"review_required");
+        if(intent?.kind!=="compaction")this.endRun(event,event.aborted?"cancelled":unresolved?"interrupted":"review_required");
         const queuedNext = this.store.all<Outbox>('outbox', thread.id).some(input => input.status === 'persisted' && (input.sendMode === 'AFTER_CURRENT' || input.sourceFailure || input.sourceRecovery?.resumeRequired));
         this.store.put("thread", thread.id, thread.id, { ...thread, runId: null, status: event.aborted ? "stopped" : unresolved ? "interrupted" : intent?.kind === "compaction" ? this.afterMaintenance(thread.id, intent.previousStatus) : this.hasGate(thread.id) ? "awaiting_input" : finished && !finished.invalidated && !queuedNext ? "completed" : "ready", updatedAt: now() });
         const old = this.store.get<{ value: RuntimeUsage }>("usage", thread.id)?.value ?? EMPTY_USAGE; this.store.put("usage", thread.id, thread.id, { id: thread.id, value: { ...old, activity: "idle" } });

@@ -154,6 +154,74 @@ test('model selection fits both themes on a phone and removes spatial motion whe
   }
 });
 
+test('the popover stays mounted through the exit animation and rapid cycles do not stick it', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-11-26T00:00:00Z') });
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true }), popover = page.locator('.model-picker-popover');
+  await trigger.click();
+  const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
+  await expect(search).toBeFocused();
+  // Measure the component's timer, independent of protocol round-trip latency.
+  await page.clock.pauseAt(new Date('2026-11-26T00:10:00Z'));
+  await search.press('Escape');
+  await expect(popover).toHaveAttribute('data-state', 'closed');
+  await expect(popover).toHaveAttribute('aria-hidden', 'true');
+  await page.clock.runFor(139);
+  await expect(popover).toHaveCount(1);
+  await page.clock.runFor(1);
+  await expect(popover).toHaveCount(0);
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await trigger.click();
+    await expect(search).toBeVisible();
+    await search.press('Escape');
+    await expect(popover).toHaveAttribute('data-state', 'closed');
+    await page.clock.runFor(60);
+    await trigger.click();
+    await page.clock.runFor(200);
+    await expect(search).toBeVisible();
+    await search.press('Escape');
+    await page.clock.runFor(140);
+    await expect(popover).toHaveCount(0);
+  }
+});
+
+test('an unnamed provider renders a title-cased label in the rail and group header', async ({ page }) => {
+  const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic model selection fixture' } } } });
+  snapshot.settings = { theme: 'dark', modelId: 'recording-fixture/alpha' };
+  snapshot.threads[0].modelId = 'recording-fixture/alpha';
+  await serveTaskFixture(page, snapshot);
+  await page.route('**/api/models*', route => route.fulfill({ json: { models: [{ id: 'recording-fixture/alpha', provider: 'recording-fixture', name: 'Alpha' }] } }));
+  await page.goto('/');
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await trigger.click();
+  await expect(page.getByRole('button', { name: /Recording Fixture/ })).toBeVisible();
+  await expect(page.getByRole('listbox', { name: 'Available models', exact: true }).getByRole('group', { name: 'Recording Fixture', exact: true })).toBeVisible();
+});
+
+test('reopening resets a picked type filter back to All', async ({ page }) => {
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  const listbox = page.getByRole('listbox', { name: 'Available models', exact: true });
+  await trigger.click();
+  await page.locator('.model-picker-rail-item', { hasText: 'ChatGPT / Codex' }).click();
+  await expect(listbox.getByRole('option')).toHaveCount(2);
+  await page.getByRole('searchbox', { name: 'Search models', exact: true }).press('Escape');
+  await trigger.click();
+  await expect(listbox.getByRole('option')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: /All models/ })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('an empty catalog disables the chip with a stated reason', async ({ page }) => {
+  const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic model selection fixture' } } } });
+  snapshot.settings = { theme: 'dark', modelId: null };
+  await serveTaskFixture(page, snapshot);
+  await page.route('**/api/models*', route => route.fulfill({ json: { models: [] } }));
+  await page.goto('/');
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await expect(trigger).toBeDisabled();
+  await expect(trigger).toHaveAttribute('title', 'No models available — check the provider connection');
+});
+
 test('the model picker never paints over the sidebar at supported widths', async ({ page }, testInfo) => {
   await mount(page);
   for (const width of [1280, 900, 700, 500]) {

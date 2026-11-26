@@ -114,15 +114,15 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
    const refresh=query?.refresh;
    const results=await withAccountProfile(root,account,async()=>{active();if(account)available(account.providerId,account.id);return Promise.allSettled(targets.map(adapter=>{const requested=providerId?[providerId]:probeProviders(account,adapter===selected.official);return probe(adapter,requested,account?.id??null,async effective=>{
     try{
-     if(providerId||refresh===undefined)return await adapter.models(providerId?{refresh,providerId}:undefined);
-     // No provider skipped: keep the ordinary whole-adapter refresh so its
+     if(providerId)return await adapter.models({refresh,providerId});
+     // No provider skipped: keep ordinary whole-adapter discovery so its
      // catalog cache warms and failures keep their all-or-nothing semantics.
-     if(effective.length===requested.length)return await adapter.models({refresh});
-     // A forced refresh must not reach a profile that is still signing in:
-     // refresh each probeable provider on its own. Pi reports a disconnected
-     // provider per refresh; keep the others instead of retiring the adapter.
+     if(effective.length===requested.length)return await adapter.models(refresh===undefined?undefined:{refresh});
+     // Even cold discovery must not reach a profile that is still signing in:
+     // discover each leased provider on its own. Pi reports a disconnected
+     // provider per query; keep the others instead of retiring the adapter.
      let authErrors=0;
-     const lists=await Promise.all(effective.map(id=>adapter.models({refresh,providerId:id}).catch(error=>{
+     const lists=await Promise.all(effective.map(id=>adapter.models({refresh,providerId:id}).then(models=>models.filter(model=>model.provider===id&&model.id.startsWith(id+'/'))).catch(error=>{
       if((error as {code?:unknown})?.code==='PI_AUTH_REQUIRED'){authErrors++;return [];}
       throw error;
      })));
