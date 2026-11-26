@@ -90,11 +90,12 @@ describe('read-aloud controller', () => {
     c.subscribe(s => { phase = s.phase; });
     c.play(owner('a'), ['first'], prefs);
     const stale = e.spoken[0]!;
+    const lateError = stale.onerror!, lateEnd = stale.onend!;
     c.play(owner('b'), ['second'], prefs);
-    stale.onerror!();
+    lateError();
     expect(phase).toBe('starting');
     e.spoken[1]!.onstart!();
-    stale.onend!();
+    lateEnd();
     expect(e.spoken).toHaveLength(2);
     expect(phase).toBe('speaking');
   });
@@ -122,10 +123,11 @@ describe('read-aloud controller', () => {
     c.subscribe(s => { phase = s.phase; });
     c.play(owner(), ['one.'], prefs);
     e.spoken[0]!.onstart!();
+    const cancellations = e.calls.cancel, lateEnd = e.spoken[0]!.onend!;
     c.stop();
-    expect(e.calls.cancel).toBeGreaterThanOrEqual(0); // endSession doesn't cancel; play() does
+    expect(e.calls.cancel).toBe(cancellations + 1);
     expect(phase).toBe('idle');
-    e.spoken[0]!.onend!();
+    lateEnd();
     expect(phase).toBe('idle');
   });
 
@@ -135,9 +137,11 @@ describe('read-aloud controller', () => {
     let snap: { phase: string; error: string | null } | null = null;
     c.subscribe(s => { snap = s; });
     c.play(owner(), ['hello'], prefs);
+    const cancellations = e.calls.cancel;
     vi.advanceTimersByTime(5000);
     expect(snap!.phase).toBe('idle');
     expect(snap!.error).toBe(READ_ALOUD_ERROR_RETRY);
+    expect(e.calls.cancel).toBe(cancellations + 1);
   });
 
   it('ends the session on an utterance error', () => {
@@ -147,9 +151,47 @@ describe('read-aloud controller', () => {
     c.subscribe(s => { snap = s; });
     c.play(owner(), ['hello'], prefs);
     e.spoken[0]!.onstart!();
+    const cancellations = e.calls.cancel;
     e.spoken[0]!.onerror!();
     expect(snap!.phase).toBe('idle');
     expect(snap!.error).toBe(READ_ALOUD_ERROR_RETRY);
+    expect(e.calls.cancel).toBe(cancellations + 1);
+  });
+
+  it('owner cleanup cancels only the exact owning session', () => {
+    const e = engine(), c = createReadAloudController(e.api), active = owner('active');
+    let snapshot = {phase: '', owner: null as unknown, error: null as string | null};
+    c.subscribe(s => { snapshot = s; });
+    c.play(active, ['hello'], prefs); e.spoken[0]!.onstart!();
+    const cancellations = e.calls.cancel;
+    c.stopOwner(owner('active'));
+    expect(e.calls.cancel).toBe(cancellations); expect(snapshot.owner).toBe(active);
+    c.stopOwner(active);
+    expect(e.calls.cancel).toBe(cancellations + 1); expect(snapshot).toMatchObject({phase:'idle',owner:null,error:null});
+  });
+
+  it('the no-end deadline excludes every paused interval', () => {
+    const e = engine(), c = createReadAloudController(e.api);
+    let snapshot = {phase: '', error: null as string | null};
+    c.subscribe(s => { snapshot = s; });
+    c.play(owner(), ['hello'], prefs); e.spoken[0]!.onstart!();
+    vi.advanceTimersByTime(10000); c.pause(); vi.advanceTimersByTime(120000);
+    expect(snapshot.phase).toBe('paused'); c.resume(); vi.advanceTimersByTime(10000);
+    expect(snapshot.phase).toBe('speaking'); c.pause(); vi.advanceTimersByTime(90000); c.resume();
+    vi.advanceTimersByTime(39999); expect(snapshot.phase).toBe('speaking');
+    vi.advanceTimersByTime(1); expect(snapshot).toMatchObject({phase:'idle',error:READ_ALOUD_ERROR_RETRY});
+  });
+
+  it('a missing-voice play attempt clears the prior owner and phase', () => {
+    const e = engine(), c = createReadAloudController(e.api);
+    let snapshot = {phase: '', owner: null as unknown, error: null as string | null};
+    c.subscribe(s => { snapshot = s; });
+    c.play(owner('first'), ['first'], prefs); e.spoken[0]!.onstart!();
+    const cancellations = e.calls.cancel;
+    vi.spyOn(e.api,'getVoices').mockReturnValue([]);
+    c.play(owner('second'), ['second'], prefs);
+    expect(snapshot).toMatchObject({phase:'idle',owner:null,error:READ_ALOUD_ERROR_NO_VOICE});
+    expect(e.spoken).toHaveLength(1); expect(e.calls.cancel).toBe(cancellations + 1);
   });
 
   it('sets voice, language and rate on every utterance', () => {

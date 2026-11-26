@@ -98,6 +98,7 @@ export function createReadAloudController(engine: ReadAloudEngine | null = defau
   let startTimer: ReturnType<typeof setTimeout> | undefined;
   let endTimer: ReturnType<typeof setTimeout> | undefined;
   let endDeadlineStarted = 0;
+  let pausedAt = 0;
   let deferredNext = false;
   const listeners = new Set<(snapshot: ReadAloudSnapshot) => void>();
 
@@ -122,16 +123,19 @@ export function createReadAloudController(engine: ReadAloudEngine | null = defau
     if (generationId !== generation) return;
     generation++;
     clearTimers();
+    const hadSpeech = current !== null, hadOwner = owner !== null;
+    if (current) current.onstart = current.onend = current.onerror = null;
     current = null;
     chunks = [];
     deferredNext = false;
     phase = 'idle';
     owner = null;
-    if (engine) {
+    if (engine && hadSpeech) try { engine.cancel(); } catch { /* best effort */ }
+    if (engine && hadOwner) {
       // Clear a possibly-latched native pause so the next Play is audible.
       try { engine.resume(); } catch { /* ignore */ }
     }
-    if (!silent) error = nextError;
+    error = silent ? null : nextError;
     emit();
   };
 
@@ -165,7 +169,8 @@ export function createReadAloudController(engine: ReadAloudEngine | null = defau
     };
     utterance.onend = () => {
       if (generationId !== generation) return;
-      clearTimeout(endTimer);
+      clearTimeout(endTimer); endTimer = undefined;
+      current = null;
       if (phase === 'paused') { deferredNext = true; return; }
       speakChunk(generationId, index + 1);
     };
@@ -187,9 +192,7 @@ export function createReadAloudController(engine: ReadAloudEngine | null = defau
 
   const play = (nextOwner: ReadAloudOwner, text: string[], prefs: ReadAloudPreferences) => {
     if (!engine) { error = READ_ALOUD_ERROR_NO_VOICE; emit(); return; }
-    generation++;
-    clearTimers();
-    try { engine.cancel(); } catch { /* best effort */ }
+    endSession(generation, null, true);
     refreshVoices();
     resolved = resolveLocalVoice(engine.getVoices(), prefs.voiceURI);
     if (!resolved) { error = READ_ALOUD_ERROR_NO_VOICE; emit(); return; }
@@ -209,6 +212,7 @@ export function createReadAloudController(engine: ReadAloudEngine | null = defau
     pause() {
       if (!engine || (phase !== 'speaking' && phase !== 'starting')) return;
       try { engine.pause(); } catch { /* ignore */ }
+      pausedAt = Date.now();
       phase = 'paused';
       emit();
     },
@@ -217,6 +221,7 @@ export function createReadAloudController(engine: ReadAloudEngine | null = defau
       try { engine.resume(); } catch { /* ignore */ }
       // Extend the end deadline by the time spent paused.
       if (endTimer !== undefined && current) {
+        endDeadlineStarted += Date.now() - pausedAt;
         const elapsed = Date.now() - endDeadlineStarted;
         clearTimeout(endTimer);
         const remaining = Math.max(1000, Math.max(END_DEADLINE_BASE_MS, Math.round(END_DEADLINE_BASE_MS / rate)) - elapsed);

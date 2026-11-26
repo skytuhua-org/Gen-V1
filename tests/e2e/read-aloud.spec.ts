@@ -5,7 +5,7 @@ async function fixture(page: Page) {
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/*', route => {
     const url = new URL(route.request().url());
-    if (url.origin !== 'http://127.0.0.1:5833' || url.pathname.startsWith('/api/')) return route.abort();
+    if (url.origin !== 'http://127.0.0.1:5891' || url.pathname.startsWith('/api/')) return route.abort();
     return route.continue();
   });
   await page.goto('/tests/e2e/fixtures/read-aloud.html');
@@ -15,6 +15,40 @@ async function fixture(page: Page) {
 const reset = (page: Page) => page.evaluate(() => window.readAloud.reset());
 const spoken = (page: Page) => page.evaluate(() =>
   window.readAloud.spoken.map(u => ({ text: u.text, rate: u.rate, lang: u.lang, voice: (u.voice as { voiceURI?: string } | null)?.voiceURI ?? null })));
+
+for (const ending of ['starting Stop','speaking Stop','pagehide']) test(`${ending} cancels owned engine speech before clearing controls`, async ({page}) => {
+  await fixture(page); await reset(page);
+  const row=page.locator('[data-case="settled"]'); await row.getByRole('button',{name:'Read aloud',exact:true}).click();
+  if(ending!=='starting Stop')await page.evaluate(()=>window.readAloud.emit(0,'start'));
+  const cancellations=await page.evaluate(()=>window.readAloud.calls.filter(call=>call==='cancel').length);
+  if(ending==='pagehide')await page.evaluate(()=>window.dispatchEvent(new Event('pagehide')));
+  else await row.getByRole('button',{name:'Stop reading',exact:true}).click();
+  await expect(row.getByRole('button',{name:'Read aloud',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>window.readAloud.calls.filter(call=>call==='cancel').length)).toBe(cancellations+1);
+  await page.evaluate(()=>{window.readAloud.emit(0,'end');window.readAloud.emit(0,'error');});
+  expect((await spoken(page)).length).toBe(1);
+});
+
+test('replacing settled row content stops its old speech without taking another row', async ({page}) => {
+  await fixture(page); await reset(page);
+  const row=page.locator('[data-case="settled"]');
+  await row.getByRole('button',{name:'Read aloud',exact:true}).click();
+  await page.evaluate(()=>window.readAloud.emit(0,'start'));
+  const cancellations=await page.evaluate(()=>window.readAloud.calls.filter(call=>call==='cancel').length);
+  await page.getByRole('button',{name:'Replace settled reply',exact:true}).click();
+  await expect(row.getByRole('button',{name:'Read aloud',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>window.readAloud.calls.filter(call=>call==='cancel').length)).toBe(cancellations+1);
+  expect((await spoken(page)).length).toBe(1);
+  await row.getByRole('button',{name:'Read aloud',exact:true}).click();
+  expect((await spoken(page))[1]?.text).toBe('The replacement reply.');
+  const other=page.locator('[data-case="long"]');
+  await other.getByRole('button',{name:'Read aloud',exact:true}).click();
+  await page.evaluate(()=>window.readAloud.emit(2,'start'));
+  const otherCancellations=await page.evaluate(()=>window.readAloud.calls.filter(call=>call==='cancel').length);
+  await page.getByRole('button',{name:'Replace settled reply',exact:true}).click();
+  await expect(other.getByRole('button',{name:'Pause reading',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>window.readAloud.calls.filter(call=>call==='cancel').length)).toBe(otherCancellations);
+});
 
 test('settled reply has Read aloud before Copy; live, code-only and user rows do not', async ({ page }) => {
   const { errors } = await fixture(page);

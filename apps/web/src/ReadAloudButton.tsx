@@ -54,8 +54,8 @@ export function ReadAloudButton({ threadId, messageId, text, live, active }: {
     if (phase === 'idle' && stopFocused.current) { stopFocused.current = false; primary.current?.focus(); }
   }, [phase]);
 
-  // Stop only this row's own session on unmount, identity change, hiding or live updates.
-  useEffect(() => () => controller.stopOwner(owner), [controller, owner]);
+  // Replaced content invalidates this row's speech without affecting another owner.
+  useEffect(() => () => controller.stopOwner(owner), [controller, owner, text]);
   useEffect(() => { if (!active || live) controller.stopOwner(owner); }, [controller, owner, active, live]);
   useEffect(() => {
     const onHide = () => controller.stopOwner(owner);

@@ -6,5 +6,5 @@ import isolated from './vite.config';
 const root = resolve(import.meta.dirname, '../..');
 export default defineConfig({
   ...isolated, root, cacheDir: resolve(root, '.harness-read-aloud/node_modules/.vite'),
-  server: { ...isolated.server, port: 5833, strictPort: true, fs: { allow: [root, realpathSync(resolve(root, 'node_modules'))] } },
+  server: { ...isolated.server, port: 5891, strictPort: true, fs: { allow: [root, realpathSync(resolve(root, 'node_modules'))] } },
 });

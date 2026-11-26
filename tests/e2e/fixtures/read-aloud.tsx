@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MessageActions } from '../../../apps/web/src/MessageActions.tsx';
 import { ReadAloudRateControl, ReadAloudVoiceControl } from '../../../apps/web/src/ReadAloudSettings.tsx';
@@ -71,10 +72,12 @@ const reply = '## Summary\n\n- Use **Settings** and [Help](https://example.com/h
 const longReply = Array.from({ length: 60 }, (_, index) => `Sentence ${index} keeps going.`).join(' ');
 
 function Fixture() {
+  const [settledReply, setSettledReply] = useState(reply);
   return <main>
+    <button type="button" onClick={() => setSettledReply(value => value === reply ? "The replacement reply." : reply)}>Replace settled reply</button>
     <div className="message message-assistant" data-case="settled">
-      <div className="message-content"><p>{reply}</p>
-        <MessageActions threadId="t1" messageId="m-settled" text={reply} live={false} active={true}/>
+      <div className="message-content"><p>{settledReply}</p>
+        <MessageActions threadId="t1" messageId="m-settled" text={settledReply} live={false} active={true}/>
       </div>
     </div>
     <div className="message message-assistant" data-case="live">
