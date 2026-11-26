@@ -289,3 +289,110 @@ test('a deleted note hands keyboard focus to the next, previous or add control',
   await publish([]);
   await expect.poll(active).toBe('Add memory note');
 });
+
+test('busy copy names the in-flight action for save, delete and add', async ({ page }) => {
+  const pending: Route[] = [];
+  const commands = await mount(page, {}, async route => { pending.push(route); });
+  const settle = async (route: Route, result: unknown = {}) => route.fulfill({ json: { commandId: (route.request().postDataJSON() as { id: string }).id, seq: 2, result } });
+  const editor = page.getByRole('textbox', { name: 'Note decision', exact: true });
+
+  // Saved-note save reads "Saving…".
+  await editor.fill('Unsaved edit.'); await page.getByRole('button', { name: 'Save note', exact: true }).click();
+  const saving = page.getByRole('button', { name: 'Saving…', exact: true });
+  await expect(saving).toBeVisible(); await expect(saving).toBeDisabled();
+  await expect.poll(() => pending.length).toBe(1);
+  await settle(pending.shift()!, { key: 'decision', threadId: 'thread-a', content: 'Unsaved edit.', revision: 4, author: 'user', updatedAt: '2026-11-07T00:00:00Z' });
+  await expect(page.getByRole('button', { name: 'Save note', exact: true })).toBeVisible();
+
+  // Delete reads "Deleting…" and Forget reports the busy state; nothing else starts a command.
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Deleting…', exact: true })).toBeVisible();
+  const forgetting = page.getByRole('button', { name: 'Deleting decision', exact: true });
+  await expect(forgetting).toHaveAttribute('aria-busy', 'true'); await expect(forgetting).toBeDisabled();
+  await expect.poll(() => pending.length).toBe(1); expect(commands.filter(item => item.type === 'memory.delete')).toHaveLength(1);
+  await settle(pending.shift()!);
+  await expect(page.getByRole('button', { name: 'Forget decision', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Save note', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Deleting…', exact: true })).toBeHidden();
+
+  // Fresh-form save reads "Adding…"; a rejection restores the idle copy.
+  await page.getByRole('button', { name: 'Add memory note', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Note key', exact: true }).fill('beta');
+  await page.getByRole('textbox', { name: 'New thread note', exact: true }).fill('Body.');
+  await page.getByRole('button', { name: 'Add note', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Adding…', exact: true })).toBeVisible();
+  await expect.poll(() => pending.length).toBe(1);
+  await pending.shift()!.fulfill({ status: 503, json: { error: { code: 'SYNTHETIC_FAILURE', message: 'Synthetic save failed.' } } });
+  await expect(page.getByRole('button', { name: 'Add note', exact: true })).toBeEnabled();
+  await expect(page.locator('.task-memory [role=status].error-text')).toContainText('Synthetic save failed.');
+});
+
+test('a scheduled delete focus cannot steal focus after the thread changes', async ({ page }) => {
+  const other = note('other', 1, 'thread-b');
+  const commands = await mount(page, { notes: [note(), other] });
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  await expect(page.getByRole('button', { name: 'Forget decision', exact: true })).toBeEnabled();
+  await page.evaluate(other => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    const request = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+    let next = 0;
+    window.requestAnimationFrame = callback => { const id = ++next; callbacks.set(id, callback); return id; };
+    window.cancelAnimationFrame = id => { callbacks.delete(id); };
+    Object.assign(window, { deleteFocusFrames: {
+      count: () => callbacks.size,
+      release: () => { window.requestAnimationFrame = request; window.cancelAnimationFrame = cancel; for (const callback of callbacks.values()) callback(performance.now()); callbacks.clear(); },
+    } });
+    window.memoryFixture.publish([other]);
+  }, other);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { deleteFocusFrames: { count(): number } }).deleteFocusFrames.count())).toBe(1);
+  await page.evaluate(() => window.memoryFixture.change('thread-b'));
+  await expect.poll(() => page.evaluate(() => document.querySelector('textarea')?.getAttribute('value') ?? document.querySelector('textarea')?.value)).toBe(other.content);
+  await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === 'Switch synthetic thread')!.focus());
+  await page.evaluate(() => (window as unknown as { deleteFocusFrames: { release(): void } }).deleteFocusFrames.release());
+  await expect(page.getByRole('button', { name: 'Switch synthetic thread', exact: true })).toBeFocused();
+});
+
+test('delete focus waits for the matching note removal before handing off', async ({ page }) => {
+  const notes = [note(), note('other')];
+  const commands = await mount(page, { notes });
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  await expect(page.getByRole('button', { name: 'Forget decision', exact: true })).toBeEnabled();
+  const switcher = page.getByRole('button', { name: 'Switch synthetic thread', exact: true });
+  await switcher.focus();
+  // An unrelated snapshot still contains the acknowledged deletion's note.
+  await page.evaluate(notes => window.memoryFixture.publish(notes), notes);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(switcher).toBeFocused();
+  await page.evaluate(notes => window.memoryFixture.publish(notes), [notes[1]]);
+  await expect(page.getByRole('button', { name: 'Forget other', exact: true })).toBeFocused();
+});
+
+test('a delete focus frame is fenced during the replacement thread layout', async ({ page }) => {
+  const other = note('other', 1, 'thread-b');
+  const commands = await mount(page, { notes: [note(), other] });
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  await expect(page.getByRole('button', { name: 'Forget decision', exact: true })).toBeEnabled();
+  await page.evaluate(other => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    const request = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+    let next = 0;
+    window.requestAnimationFrame = callback => { const id = ++next; callbacks.set(id, callback); return id; };
+    window.cancelAnimationFrame = id => { callbacks.delete(id); };
+    Object.assign(window, { deleteLayoutFrames: {
+      count: () => callbacks.size,
+      release: () => { window.requestAnimationFrame = request; window.cancelAnimationFrame = cancel; for (const callback of callbacks.values()) callback(performance.now()); callbacks.clear(); },
+    } });
+    window.memoryFixture.publish([other]);
+  }, other);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { deleteLayoutFrames: { count(): number } }).deleteLayoutFrames.count())).toBe(1);
+  await page.evaluate(() => {
+    [...document.querySelectorAll('button')].find(button => button.textContent === 'Switch synthetic thread')!.focus();
+    window.memoryFixture.onNextLayout(() => (window as unknown as { deleteLayoutFrames: { release(): void } }).deleteLayoutFrames.release());
+    window.memoryFixture.change('thread-b');
+  });
+  await expect(page.getByRole('textbox', { name: 'Note other', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Switch synthetic thread', exact: true })).toBeFocused();
+});
