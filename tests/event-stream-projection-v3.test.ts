@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { ServerResponse } from "node:http";
-import { expect, it } from "vitest";
-import { streamEvents } from "../apps/server/event-stream";
+import { expect, it, vi } from "vitest";
+import { registerEventStream, streamEvents } from "../apps/server/event-stream";
 import type { WorkspaceEvent } from "../packages/contracts/index.ts";
 
 // Cost audit for #1960: a live commit must not need a store read+parse per
@@ -106,3 +106,21 @@ it("announces a retention gap before the complete first retained page", async ()
 function f0(seq: number): WorkspaceEvent {
   return { seq, id: String(seq), type: "x", threadId: null, payload: null, occurredAt: "2026-01-01T00:00:00.000Z" };
 }
+
+it.each(['floor', 'sequence'])('closes a reader if its initial %s read fails', read => {
+  const streams = new Map<ServerResponse, () => void>();
+  const destroy = vi.fn(), write = vi.fn(() => true), unsubscribe = vi.fn();
+  const response = Object.assign(new EventEmitter(), { destroy, write }) as unknown as ServerResponse;
+  const store: Parameters<typeof streamEvents>[1] = {
+    get sequence() { if (read === 'sequence') throw new Error('Ledger unavailable'); return 0; },
+    eventsAfter: vi.fn(() => []),
+    subscribe: vi.fn(() => unsubscribe),
+    retentionFloor() { if (read === 'floor') throw new Error('Ledger unavailable'); return 0; },
+  };
+  expect(() => registerEventStream(streams, response, store, 0)).not.toThrow();
+  expect(unsubscribe).toHaveBeenCalledTimes(vi.mocked(store.subscribe).mock.calls.length);
+  expect(destroy).toHaveBeenCalledOnce();
+  expect(streams.size).toBe(0);
+  expect(write).not.toHaveBeenCalled();
+  expect(response.listenerCount('close')).toBe(0);
+});
