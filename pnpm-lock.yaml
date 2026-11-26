@@ -127,6 +127,9 @@ importers:
       react-dom:
         specifier: 19.2.3
         version: 19.2.3(react@19.2.3)
+      remend:
+        specifier: 1.5.1
+        version: 1.5.1
       semver:
         specifier: 7.8.5
         version: 7.8.5
@@ -4796,6 +4799,9 @@ packages:
   redis@5.12.1:
     resolution: {integrity: sha512-LDsoVvb/CpoV9EN3FXvgvSHNJWuCIzl9MiO3ppOevuGLpSGJhwfQjpEwfFJcQvNSddHADDdZaWx0HnmMxRXG7g==}
     engines: {node: '>= 18.19.0'}
+
+  remend@1.5.1:
+    resolution: {integrity: sha512-Mvum2BFoAlLukpqIb5bCzzvjdNQk4w9OasdKEUuVkXTEPlWpiN3pRCbbSgOXWZIxbQFB16YL/s4D7PMnQ3oU5Q==}
 
   require-directory@2.1.1:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
@@ -10821,6 +10827,8 @@ snapshots:
       - '@node-rs/xxhash'
       - '@opentelemetry/api'
     optional: true
+
+  remend@1.5.1: {}
 
   require-directory@2.1.1: {}
 
