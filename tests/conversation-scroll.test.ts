@@ -188,3 +188,18 @@ it('captures earlier-message geometry at insertion and consumes it only for the 
  expect(anchor.consume('two',owner)).toBeUndefined();
  expect(anchor.consume('one',owner)).toBeUndefined();
 });
+
+it('lands a reading jump without reattaching to the tail',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});f.tick(60);
+ expect(f.element.scrollTop).toBe(600);expect(f.scroll.position().tail).toBe(true);
+ expect(f.scroll.jumpToReadingPosition(200)).toEqual({top:200,tail:false});
+ f.element.scrollHeight=1600;f.resize();f.tick(20);
+ expect(f.element.scrollTop).toBe(200);expect(f.frames.size).toBe(0);
+ expect(f.scroll.jump()).toEqual({top:1200,tail:true});f.scroll.dispose();
+});
+
+it('ignores a reading jump after dispose',()=>{
+ const f=fixture();f.scroll.update('one',{top:0,tail:true});f.tick(60);
+ f.scroll.dispose();
+ expect(f.scroll.jumpToReadingPosition(50)).toEqual({top:600,tail:false});
+});

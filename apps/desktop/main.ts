@@ -1,12 +1,13 @@
 import {app,BrowserWindow,WebContentsView,ipcMain,session,screen,dialog,Menu,Tray,nativeImage,powerMonitor,shell,type IpcMainInvokeEvent,type Session} from 'electron';
 import {spawn,type ChildProcess} from 'node:child_process';
-import {randomBytes,randomUUID} from 'node:crypto';
-import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
+import {readFile,writeFile,mkdir,lstat} from 'node:fs/promises';
 import {mkdirSync,existsSync,writeSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {GITHUB_DEVICE_URL,githubDevicePopup} from './github-device-policy.ts';
 import {createDesktopUpdater,type DesktopUpdater,type DesktopUpdateDriver,type UpdateStatus} from './updater.ts';
 import {checkInstalledCompatibility} from '../../packages/plugins/installation.ts';
+import {bindBrowserNavigationFence,createControlBridge,handleRegisterReply,loadWindowsWindowBridge,type BridgeBrowser} from './control-bridge.ts';
 import {resolve,join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {DESKTOP_CHANNELS as channels,desktopId,desktopSurfaceKey,parseDesktopSurface,parseDesktopLayout,parseDesktopWindowControl,type DesktopLayout,type DesktopLayoutEntry,type DesktopSurface,type DesktopWindowInfo,type DesktopContext,type DesktopState,type DesktopBrowserState} from '../../packages/desktop-contract/index.ts';
@@ -30,7 +31,7 @@ const trayMark16='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf
 const trayMark32='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAC/ElEQVR4nOxXS0hVURRd574rKQ3sQwZSg2gifSBNfA2sIAcN1KcEr1kTIYsahIMgPw9uPLWgSRRBRZATR0HlLx2FRT8zHFTD7KeUEUKBqdXz7tYVBO9757zu85OTFlzOuefus/c6+5y997kWVhgWVhgrTsBGhnAcsWZeIMzuFlch3xuzBJ/YvAsVY8BxlJuJPhVUMFYlO8XFSXYP8dlgEPvK57aycCXeoV4hAP5KoLFCSrlPZ0ShHBlACXroivMt3epRWrl0H2OVsp2G+yDYhIVhxFY44HSqNyYB4yFsjEixCB4vwriHzQnqiJXLbmRCoC4qOXThdfonF4uEAJMJCz9M37VRsHoaN9kUwqx1gHv3gHs8ZFnedqMILvaRcDhJ7ombhci5O2rcpCrlDNRXybaQi5fshjTyE7RWF+9WN3TKmirkKDVeYjebbbu9CjXOLfULaZBCoKlSrrI5liLJ1diCI06Peos0qK+UArp1T7xLtSEAfARqayUr7zNG2N2okT3e3KWuYYnhOwN5YygzGP/2PYE2LAN8UcBMt8sg13+5V/3EMsDnAaWwRiul0A8DYhEpZLJaj6AGBe/nJyY7ydC0F7gpEI4b4AouMDLKEBAJMLkBpXPvvi1gHRvTTeIKTVuzEPiSkp1kSEuAK1wyAtxmHwGfB1jfn9LdvzXzShoiklE1NIH1ZdRIoLVTfREL9zXzLMtFu5dksEjQm1NGArMCwEX9TOQyNw/Optt5yMpGdcLFOu/h6k5xaAImCKITOXCS7KWCpbiPTA/CrGiA1B9y8pDrgk5DEYNnf0ox8hvqYHquTh7XVsMsoIbhMshuPvTawiQR9iKWh0obuUmEh0MWTuhVGdBQLjtYavvZDZxkDBhnXQ0331XDuo/GG1Frj3otM/BuMs+wcDwPCYpMxtMS8NByT32ws7m3gjhfM6kFk5zjcO7es93qYzrBwNfypmrZihmcZvcwn7UGsdlruZ1As9OrRoPoDUxgDtGohAqmUIJ//WOyXPj/c/oHAAD//863s6QAAAAGSURBVAMAQjrrdqpvZbAAAAAASUVORK5CYII=';
 const persistence=createPersistenceQueue();
 
-interface BrowserRecord {id:string;view:WebContentsView;state:DesktopBrowserState;owner?:WindowRecord;generation:number;networkReady:Promise<void>}
+interface BrowserRecord {id:string;view:WebContentsView;state:DesktopBrowserState;owner?:WindowRecord;generation:number;navigationGeneration:number;networkReady:Promise<void>}
 interface WindowRecord extends NativeCloseOwner {id:string;surface:DesktopSurface;window:BrowserWindow;url:string;ready:boolean;settled:boolean;visible:boolean;normalBounds:ReturnType<typeof createNormalBounds>;placement?:DesktopPlacement;appliedBounds?:DesktopBounds;monitorRescued?:boolean;recoveries?:number;resolveReady:(value:DesktopWindowInfo)=>void;rejectReady:(error:Error)=>void;readyPromise:Promise<DesktopWindowInfo>;readyTimer:ReturnType<typeof setTimeout>;browser?:BrowserRecord;dockedBrowser?:BrowserRecord}
 interface SavedWindow {surface:DesktopSurface;bounds:DesktopBounds;placement?:DesktopPlacement;open:boolean;visible?:boolean;alwaysOnTop?:boolean;dockedBrowserId?:string}
 const windows=new Map<string,WindowRecord>(),browsers=new Map<string,BrowserRecord>();
@@ -128,10 +129,11 @@ function browserRecord(id:string):BrowserRecord {
  const browserSession=session.fromPartition('persist:harness-browser'),networkReady=secureBrowserSession(browserSession);
  const view=new WebContentsView({webPreferences:{session:browserSession,sandbox:true,contextIsolation:true,nodeIntegration:false,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false}});
  view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
- const record:BrowserRecord={id,view,state:{url:'about:blank',title:'Browser',canGoBack:false,canGoForward:false,loading:false},generation:0,networkReady};void networkReady.catch(error=>{record.state.error='The isolated browser connection could not start: '+String(error instanceof Error?error.message:error).slice(0,200);broadcast();});browsers.set(id,record);
+ const record:BrowserRecord={id,view,state:{url:'about:blank',title:'Browser',canGoBack:false,canGoForward:false,loading:false},generation:0,navigationGeneration:0,networkReady};void networkReady.catch(error=>{record.state.error='The isolated browser connection could not start: '+String(error instanceof Error?error.message:error).slice(0,200);broadcast();});browsers.set(id,record);
  view.webContents.setWindowOpenHandler(()=>({action:'deny'}));view.webContents.on('will-attach-webview',event=>event.preventDefault());
  view.webContents.on('will-navigate',(event,url)=>{try{remoteBrowserUrl(url);}catch{event.preventDefault();record.state.error='Local, private-network and non-HTTP pages are blocked.';broadcast();}});
  view.webContents.on('will-redirect',(event,url)=>{try{remoteBrowserUrl(url);}catch{event.preventDefault();}});
+ bindBrowserNavigationFence(view.webContents,()=>{record.navigationGeneration++;});
  view.webContents.on('did-navigate',()=>browserState(record));view.webContents.on('did-navigate-in-page',()=>browserState(record));view.webContents.on('did-start-loading',()=>browserState(record));view.webContents.on('did-stop-loading',()=>browserState(record));view.webContents.on('page-title-updated',()=>browserState(record));
  view.webContents.on('did-fail-load',(_event,code,description,_url,isMainFrame)=>{if(isMainFrame&&code!==-3){record.state.error=description.slice(0,300);browserState(record);}});
  view.webContents.on('render-process-gone',()=>{record.state.error='The browser page stopped. Reload it to continue.';record.state.loading=false;broadcast();});
@@ -341,9 +343,99 @@ async function startBackend():Promise<void>{
   if(value.nativeLayout!==undefined)try{hostLayout=parseDesktopLayout(value.nativeLayout);}catch{layoutError='The saved host workspace layout is invalid. The local backup is retained.';}
   workspaceRelay=workspaceEvents(backendOrigin,change=>{for(const record of windows.values())if(!record.window.isDestroyed())record.window.webContents.send(channels.workspaceChanged,change);},token);
   child.once('exit',()=>scheduleBackendRestart(child));
+  void attachControlBridge(child,token).catch(error=>{
+   console.warn('Control driver registration failed:',String(error instanceof Error?error.message:error).slice(0,300));
+  });
   backendError=undefined;broadcast();
  },observation=>{if(!quitting)observeStartup(observation);});
  }finally{try{if(output)startupDiagnostic('backend-output',null,output.read().streams);}catch{}}
+}
+
+// M16 C3/C4: the approved first-party bridge registers with the backend over
+// the launch-token channel each time a backend comes up. A failed registration
+// leaves the control surface unavailable — never a fallback driver (D01/D02).
+async function attachControlBridge(child:ChildProcess,token:string){
+ if(!app.isPackaged||root!==join(process.resourcesPath,'host'))return;
+ const adapterModulePath=join(process.resourcesPath,'app.asar');
+ if(app.getAppPath()!==adapterModulePath)return;
+ const trustPath=join(root,'control-driver-trust.json');
+ const trustFile=await lstat(trustPath);
+ if(!trustFile.isFile()||trustFile.size>1024)throw Error('Invalid packaged control driver trust resource.');
+ const trust=JSON.parse(await readFile(trustPath,'utf8')) as {version?:unknown;artifactSha256?:unknown;adapterModuleSha256?:unknown}|null;
+ if(trust?.version!==1||typeof trust.artifactSha256!=='string'||!/^[a-f0-9]{64}$/.test(trust.artifactSha256)||
+    typeof trust.adapterModuleSha256!=='string'||!/^[a-f0-9]{64}$/.test(trust.adapterModuleSha256)||Object.keys(trust).length!==3){
+  throw Error('Invalid packaged control driver trust resource.');
+ }
+ const originalFs=createRequire(import.meta.url)('original-fs') as typeof import('original-fs');
+ if(!(await originalFs.promises.lstat(adapterModulePath)).isFile())throw Error('Invalid packaged app archive.');
+ const adapterModuleSha256=createHash('sha256').update(await originalFs.promises.readFile(adapterModulePath)).digest('hex');
+ if(adapterModuleSha256!==trust.adapterModuleSha256)throw Error('The packaged app archive differs from the build digest.');
+ if(backend!==child||!child.connected)return;
+ const nativePath=join(root,'packages/core/windows-control-bridge.node');
+ const native=loadWindowsWindowBridge(nativePath,trust.artifactSha256);
+ if(!native)throw Error('The packaged control addon did not verify and load.');
+ const bridgeBrowser=(record:BrowserRecord):BridgeBrowser=>{
+  const contents=record.view.webContents;
+  return {
+   id:record.id,
+   get generation(){return record.generation+record.navigationGeneration;},
+   contents:{
+    id:contents.id,
+    isDestroyed:()=>contents.isDestroyed(),
+    isFocused:()=>contents.isFocused(),
+    isLoadingMainFrame:()=>contents.isLoadingMainFrame(),
+    getURL:()=>contents.getURL(),
+    capturePage:async()=>{const image=await contents.capturePage();return {toPNG:()=>image.toPNG(),getSize:()=>image.getSize()};},
+    sendInputEvent:event=>contents.sendInputEvent(event as unknown as Parameters<typeof contents.sendInputEvent>[0]),
+    loadURL:url=>contents.loadURL(url),
+   },
+   geometry(){
+    if(!record.owner||record.owner.window.isDestroyed())return null;
+    const bounds=record.view.getBounds();
+    if(!bounds.width||!bounds.height)return null;
+    return {...bounds,dpiScale:screen.getDisplayMatching(record.owner.window.getBounds()).scaleFactor};
+   },
+   focused(){
+    if(!record.owner||record.owner.window.isDestroyed())return false;
+    return record.owner.window.isFocused()&&!record.owner.window.isMinimized()&&record.owner.window.isVisible()&&contents.isFocused();
+   },
+   title:()=>record.state.title||null,
+   navigated:()=>{record.generation++;},
+  };
+ };
+ const bridge=createControlBridge({
+  browsers:function*(){for(const record of browsers.values())if(record.owner)yield bridgeBrowser(record);},
+  native,
+  ownerWindowHandle(){
+   const main=[...windows.values()].find(record=>record.surface.kind==='main'&&!record.window.isDestroyed());
+   return main?main.window.getNativeWindowHandle():null;
+  },
+  send:value=>new Promise<void>(resolve=>{if(!child.connected){resolve();return;}child.send(value,error=>{if(error)console.warn('Control bridge IPC send failed:',String(error instanceof Error?error.message:error).slice(0,200));resolve();});}),
+  token,
+  artifactPath:nativePath,
+  adapterModulePath,
+  adapterModuleSha256,
+  apiVersion:app.getVersion(),
+  allowNavigateUrl:url=>allowRemoteBrowserUrl(url),
+  now:()=>Date.now(),
+ });
+ const receive=(value:unknown)=>{
+   if(!value||typeof value!=='object'||Array.isArray(value))return;
+   const input=value as Record<string,unknown>;
+   if(handleRegisterReply(input))return;
+   void bridge.handleCall(input).catch(()=>{});
+ };
+ const close=()=>{
+   child.off('message',receive);
+   child.off('disconnect',close);
+   child.off('exit',close);
+   void bridge.close();
+ };
+ child.on('message',receive);
+ child.once('disconnect',close);
+ child.once('exit',close);
+ try { await bridge.register(); }
+ catch(error) { close(); throw error; }
 }
 async function stopBackend():Promise<boolean>{
  let clean=true;

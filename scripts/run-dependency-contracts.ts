@@ -58,6 +58,11 @@ function trackedBlob(root: string, head: string, path: string): string {
 }
 function sourceReceipt(root: string, lock: SourceLockV3, lockBytes: string, testIds: string[]): SourceReceipt {
   requireValue(git(root, 'rev-parse', 'HEAD') === lock.executionBaseSha, 'HEAD must equal executionBaseSha.');
+  // Git status can omit tracked paths marked assume-unchanged or skip-worktree.
+  // Reject those index states rather than accept a misleading clean-source receipt.
+  const indexEntries = git(root, 'ls-files', '-v', '-z').split('\0');
+  requireValue(!indexEntries.some(entry => /^[a-zS] /.test(entry)),
+    'Checkout index must not contain assume-unchanged or skip-worktree entries.');
   requireValue(git(root, 'status', '--porcelain', '--untracked-files=all') === '', 'Checkout must have no changed tracked files or untracked files.');
   for (const sha of [lock.auditAncestorSha, ...lock.acceptedDependencyCommits]) {
     try { git(root, 'merge-base', '--is-ancestor', sha, lock.executionBaseSha); }
