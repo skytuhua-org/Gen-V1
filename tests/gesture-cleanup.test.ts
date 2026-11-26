@@ -224,7 +224,7 @@ describe('gesture cleanup', () => {
   });
 
   for (const type of ['pointercancel', 'lostpointercapture']) it(`foreign ${type} cannot cancel a split corner drag`, async () => {
-    const page = await openPage('?corner&w=900'), corner = page.getByRole('button', { name: 'Split this area' });
+    const page = await openPage('?corner&w=900'), corner = page.getByRole('button', { name: 'Split or open area menu', exact: true });
     const box = (await corner.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
     await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2);
@@ -233,6 +233,25 @@ describe('gesture cleanup', () => {
     await corner.dispatchEvent(type, { pointerId: 77, bubbles: true });
     await pw(page.locator('.split-drop-preview')).toHaveCount(1);
     await page.mouse.up(); await page.close();
+  });
+
+  for (const interruption of ['Escape', 'blur', 'pointercancel', 'lostpointercapture']) for (const activation of ['Enter', 'click']) it(`a corner remains operable after ${interruption} cancellation (${activation})`, async () => {
+    const page = await openPage('?corner&w=900'), corner = page.getByRole('button', { name: 'Split or open area menu', exact: true });
+    try {
+      const box = (await corner.boundingBox())!, x = box.x + box.width / 2, y = box.y + box.height / 2;
+      await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 80, y);
+      await pw(page.locator('.split-drop-preview')).toHaveCount(1);
+      if (interruption === 'Escape') await page.keyboard.press('Escape');
+      else if (interruption === 'blur') await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+      else await corner.dispatchEvent(interruption, { pointerId: await page.evaluate(() => (window as any).lastFloatPointer), bubbles: true });
+      await pw(page.locator('.split-drop-preview')).toHaveCount(0);
+      await page.mouse.move(x + 200, y + 80); await page.mouse.up();
+      await pw(page.getByRole('menu')).toHaveCount(0);
+      if (activation === 'click') await corner.click(); else await corner.press(activation);
+      await pw(page.getByRole('menu', { name: 'Area actions', exact: true })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await pw(corner).toBeFocused();
+    } finally { await page.close(); }
   });
 
   for (const type of ['pointercancel', 'lostpointercapture']) for (const mode of ['move', 'resize'] as const) it(`foreign ${type} cannot cancel a floating split ${mode}`, async () => {
@@ -292,7 +311,7 @@ describe('gesture cleanup', () => {
 
   it('AUD-04: an impossible edge split shows no preview; a fitting one does', async () => {
     async function cornerDrag(page: Page) {
-      const corner = page.getByRole('button', { name: 'Split this area' });
+      const corner = page.getByRole('button', { name: 'Split or open area menu', exact: true });
       await corner.waitFor();
       // Let the ResizeObserver populate slot rects before fit validation runs.
       await page.waitForTimeout(150);
