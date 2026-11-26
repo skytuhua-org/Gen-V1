@@ -364,10 +364,15 @@ async function cleanOwnedCache(cache:OwnedCache){
  if((await readdir(cache.path)).join('\0')!=='installer.exe'||!sameIdentity(await identity(join(cache.path,'installer.exe')),cache.file))throw Error('Installer cache content changed; it is retained.');
  await unlink(join(cache.path,'installer.exe'));await rmdir(cache.path);return {status:'removed-owned-exact-file',sha256:cache.file.sha256};
 }
-async function waitForOwnedExit(child:ChildProcess,timeoutMs=15000){
+export async function waitForOwnedExit(child:Pick<ChildProcess,'exitCode'|'signalCode'>&{once(event:'exit',listener:()=>void):unknown;off(event:'exit',listener:()=>void):unknown},timeoutMs=15000){
  if(child.exitCode!==null||child.signalCode!==null)return;
- let timer:ReturnType<typeof setTimeout>|undefined;
- try{await Promise.race([new Promise<void>(done=>child.once('close',()=>done())),new Promise<never>((_done,reject)=>{timer=setTimeout(()=>reject(Error('Installed application did not exit after closing its last window.')),timeoutMs);})]);}finally{clearTimeout(timer);}
+ // The process can exit before inherited diagnostic pipes finish closing.
+ let timer:ReturnType<typeof setTimeout>|undefined,onExit:(()=>void)|undefined;
+ try{await new Promise<void>((resolve,reject)=>{
+  onExit=()=>resolve();
+  child.once('exit',onExit);
+  timer=setTimeout(()=>reject(Error('Installed application did not exit after closing its last window.')),timeoutMs);
+ });}finally{clearTimeout(timer);if(onExit)child.off('exit',onExit);}
 }
 // Existing production startup permits 60s for the backend and 20s for its native surface.
 // Match that combined publication envelope; production and interactive assertion budgets stay unchanged.
