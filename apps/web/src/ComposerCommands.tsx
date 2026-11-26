@@ -36,6 +36,10 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   // including deleting and retyping a slash at the same position — reopens it.
   const editKey = token ? `${tokenKey}:${token.end}:${token.query}` : '';
   const open = Boolean(token && tokenKey !== dismissed && editKey !== closedAt), query = token?.query.replace(/^skill:/i, '') ?? '';
+  // An outside dismissal is consumed by the first edit diverging from the
+  // dismissed contents: once the palette could reopen, restoring the original
+  // text must not re-close it.
+  useEffect(() => {setClosedAt(previous => previous && previous !== editKey ? '' : previous);}, [editKey]);
 
   const catalogKey = JSON.stringify([threadId, projectId, query]), page = captured?.key === catalogKey ? captured.page : null;
   const unavailableSources = page?.sources.filter(source => source.availability.status === 'unavailable') ?? [];
