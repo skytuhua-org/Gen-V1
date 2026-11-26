@@ -107,6 +107,14 @@ export function createConversationScroll(element:HTMLElement){
   jump():ConversationPosition{
    following=true;follow();return {top:maximum(),tail:true};
   },
+  /** Controller-owned reading jump: interrupts pending tail motion and never
+   * reattaches to the tail; an explicit jump()/user intent resumes normal
+   * behavior. */
+  jumpToReadingPosition(top:number):ConversationPosition{
+   if(disposed)return {top:element.scrollTop,tail:false};
+   interrupt();element.scrollTop=Math.max(0,Math.min(maximum(),top));ownedTop=element.scrollTop;
+   return {top:element.scrollTop,tail:false};
+  },
   dispose(){
    if(disposed)return;disposed=true;scrollControllers.delete(element);spring.dispose();observer.disconnect();observed.clear();
    element.removeEventListener('wheel',wheel);element.removeEventListener('touchstart',touchStart);element.removeEventListener('touchend',touchEnd);element.removeEventListener('touchcancel',touchEnd);element.removeEventListener('pointerdown',pointerDown);element.removeEventListener('keydown',key);

@@ -1,6 +1,6 @@
 import {useCallback,useId,useLayoutEffect,useRef,useState,type RefObject} from 'react';
 import {ArrowDown,ArrowUp,Search,X} from 'lucide-react';
-import {conversationRanges,highlightConversation,nextFindIndex,retainFindIndex,type ConversationMatch} from './conversation-find';
+import {coalescedTranscriptScan,conversationRanges,highlightConversation,nextFindIndex,retainFindIndex,type ConversationMatch} from './conversation-find';
 import {promptClipBoundary,promptClipEntry,rangeClippedBy} from './prompt-clips';
 import {scrollConversation} from './conversation-scroll';
 import {chordFor} from './keyboard-bindings';
@@ -68,8 +68,8 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,onNaviga
    setCount(found.length);setIndex(next);highlightConversation(root.ownerDocument,id,found,next);
    if(changed&&next>=0)jump(next);
   };
-  scan();const observer=new MutationObserver(scan);observer.observe(root,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['hidden','aria-hidden']});
-  return()=>{observer.disconnect();highlightConversation(root.ownerDocument,id,[],-1);};
+  scan();const stopScan=coalescedTranscriptScan(root,()=>Boolean(query),scan);
+  return()=>{stopScan();highlightConversation(root.ownerDocument,id,[],-1);};
  },[open,active,query,ownerKey,transcript,id,jump]);
  if(!active)return null;
  return <div className="conversation-find-owner">
