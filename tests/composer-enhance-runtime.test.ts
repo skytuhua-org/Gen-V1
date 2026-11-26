@@ -1,6 +1,7 @@
 import {expect,it,vi} from 'vitest';
 import {resolve} from 'node:path';
 import {createRuntime} from '../packages/runtime/index.ts';
+import {ComposerEnhance,ENHANCE_LIMITS,enhancePrompt} from '../packages/core/composer-enhance.ts';
 import type {RuntimeAdapter,RuntimeCallbacks,StartRun} from '../packages/contracts/index.ts';
 import {SUBSCRIPTION_PROVIDER_IDS,OFFICIAL_RUNTIME_PROVIDER_IDS} from '../packages/contracts/connections.ts';
 
@@ -40,4 +41,43 @@ it('cannot continue, compact or read a conversation and caps model output',async
   pi.event({content:'x'.repeat(25*1024)});
   expect(callbacks.onEvent).toHaveBeenCalledWith(expect.objectContaining({code:'ENHANCE_OUTPUT_LIMIT'}));
  }finally{await runtime.dispose();}
+});
+
+
+it.each(['capture','factory','cancel','dispose','startup'] as const)('bounds the caller deadline while retaining unfinished %s ownership',async phase=>{
+ vi.useFakeTimers();
+ let release!:()=>void,seenSignal:AbortSignal|undefined,outcome:unknown;
+ const held=new Promise<void>(resolve=>{release=resolve;}),fake=adapter();
+ if(phase==='cancel')fake.value.cancel=async()=>held;
+ if(phase==='dispose')fake.value.dispose=async()=>held;
+ if(phase==='startup')fake.value.start=async()=>held;
+ const controller=new ComposerEnhance({factory:async()=>{if(phase==='factory')await held;return fake.value;},basis:()=>({modelId:'openai/model',accountId:null,assertCurrent:()=>{},capture:async signal=>{seenSignal=signal;if(phase==='capture')await held;return undefined;}})});
+ try{
+  const result=controller.request({draft:'Preserve this draft.',target:{kind:'new',modelId:'openai/model'}});
+  void result.then(value=>{outcome=value;},error=>{outcome=error;});
+  await vi.advanceTimersByTimeAsync(ENHANCE_LIMITS.timeoutMs);
+  expect(outcome).toMatchObject({code:'ENHANCE_TIMEOUT'});
+  expect(controller.busy).toBe(true);
+  expect(()=>controller.request({draft:'Another draft.',target:{kind:'new',modelId:'openai/model'}})).toThrow(expect.objectContaining({code:'ENHANCE_BUSY'}));
+  if(phase==='capture')expect(seenSignal?.aborted).toBe(true);
+ }finally{release();await vi.advanceTimersByTimeAsync(0);await controller.dispose();vi.useRealTimers();}
+ expect(controller.busy).toBe(false);
+});
+
+it('counts the complete serialized frame and rejects an oversized draft frame without clipping',()=>{
+ const draft='d'.repeat(ENHANCE_LIMITS.draftBytes),empty={draft,projectNotes:[{filename:'AGENTS.md',text:''}]};
+ const count=Math.floor((ENHANCE_LIMITS.frameBytes-Buffer.byteLength(JSON.stringify(empty))-8)/6);
+ const notes=[{filename:'AGENTS.md',text:'\u0001'.repeat(count)}];
+ expect(Buffer.byteLength(JSON.stringify({draft,projectNotes:notes}))).toBeLessThan(ENHANCE_LIMITS.frameBytes);
+ expect(Buffer.byteLength(enhancePrompt(draft,notes))).toBeLessThanOrEqual(ENHANCE_LIMITS.frameBytes);
+ expect(()=>enhancePrompt('\u0001'.repeat(ENHANCE_LIMITS.draftBytes),undefined)).toThrow();
+});
+
+it('reports no project context when serialization drops every note',async()=>{
+ let callbacks!:RuntimeCallbacks;
+ const fake=adapter();fake.value.configure=value=>{callbacks=value;};
+ fake.value.start=async run=>{callbacks.onEvent({...run,type:'assistant.message',content:'{"draft":"Retained meaning."}'});callbacks.onEvent({...run,type:'settled'});};
+ const controller=new ComposerEnhance({factory:()=>fake.value,basis:()=>({modelId:'openai/model',accountId:null,assertCurrent:()=>{},capture:async()=>[{filename:'AGENTS.md',text:'\u0001'.repeat(6000)}]})});
+ try{expect(await controller.request({draft:'d'.repeat(ENHANCE_LIMITS.draftBytes),target:{kind:'new',modelId:'openai/model'}})).toEqual({draft:'Retained meaning.',usedProjectContext:false});}
+ finally{await controller.dispose();}
 });

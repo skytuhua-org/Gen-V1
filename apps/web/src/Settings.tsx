@@ -1,4 +1,4 @@
-import {settingsOperation, settleSettingsOperations} from './settings-operations';
+import {persistSettingsChange, SettingsRefreshError, settingsOperation, settleSettingsOperations} from './settings-operations';
 import {registerEditorHandoff} from './editor-handoff';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {notifyAccountAuthChanged,onAccountCatalogChanged,mergeAccountModels} from './account-api';
@@ -140,8 +140,11 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const persist = async (payload: Record<string, unknown>) => {
     if (busy) return false;
     setBusy(true); setSaved(false); setError('');
-    try { await settingsOperation(async () => {await command('settings.update', payload); await refresh();}); setSaved(true); return true; }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Settings could not be saved. Retry your change.'); return false; }
+    try { await persistSettingsChange(() => command('settings.update', payload), refresh); setSaved(true); return true; }
+    catch (cause) {
+      if (cause instanceof SettingsRefreshError) { setSaved(true); setError('Saved, but the view could not refresh. Reopen Settings to resync.'); return true; }
+      setError(cause instanceof Error ? cause.message : 'Settings could not be saved. Retry your change.'); return false;
+    }
     finally { setBusy(false); }
   };
   const update = async (value: Partial<UiPreferences>) => {

@@ -1,5 +1,5 @@
 import {describe,it,expect,vi} from 'vitest';
-import {canLoadConversationHistory, conversationRanges, findTextOffsets, nextFindIndex, retainFindIndex} from '../apps/web/src/conversation-find';
+import {canLoadConversationHistory, coalescedTranscriptScan, conversationRanges, findTextOffsets, nextFindIndex, retainFindIndex} from '../apps/web/src/conversation-find';
 describe('conversation find',()=>{
  it('finds literal phrases without interpreting regex or losing Unicode offsets',()=>{
   expect(findTextOffsets('😀 WorkSPACE workspace [a]. [a].','workspace')).toEqual([{start:3,end:12},{start:13,end:22}]);
@@ -43,4 +43,27 @@ it('offers older history at the end of the local window when the server still ha
  expect(canLoadConversationHistory(0,120,100)).toBe(true);
  expect(canLoadConversationHistory(0,120,120)).toBe(false);
  expect(canLoadConversationHistory(0,0,0)).toBe(false);
+});
+
+it('coalesces transcript mutations into bounded scans with a trailing run', () => {
+  const observers: ((records: unknown[]) => void)[] = [];
+  vi.stubGlobal('MutationObserver', class {
+    constructor(cb: (records: unknown[]) => void) { observers.push(cb); }
+    observe() {} disconnect() {}
+  });
+  const rafQueue: FrameRequestCallback[] = []; const cancelled: number[] = [];
+  const root = {ownerDocument: {defaultView: {
+    requestAnimationFrame: (cb: FrameRequestCallback) => {rafQueue.push(cb); return rafQueue.length;},
+    cancelAnimationFrame: (id: number) => {cancelled.push(id);},
+  }}} as unknown as HTMLElement;
+  let scans = 0; let active = true;
+  const stop = coalescedTranscriptScan(root, () => active, () => {scans++;});
+  // One observer per open find owner; bursts across separate tasks coalesce.
+  for (let i = 0; i < 25; i++) observers[0]!([]);
+  observers[0]!([]); observers[0]!([]);
+  expect(scans).toBe(0);
+  rafQueue.splice(0).forEach(cb => cb(0));
+  expect(scans).toBe(1); // trailing run covers every queued mutation
+  active = false; observers[0]!([]); // empty/inactive query schedules nothing
+  stop(); expect(cancelled.length).toBeLessThanOrEqual(1);
 });

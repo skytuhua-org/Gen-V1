@@ -1,7 +1,7 @@
 import {expect,it,vi} from 'vitest';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {InboxView} from '../apps/web/src/InboxView.tsx';
+import {InboxView,inboxFooterHint} from '../apps/web/src/InboxView.tsx';
 import {InboxItemRow,InboxPane} from '../third-party/vespin/inbox-presentation.tsx';
 import {oneColumn} from '../third-party/vespin/inbox-columns.ts';
 import type {AttentionItem} from '../packages/contracts/attention.ts';
@@ -22,6 +22,14 @@ it('uses the vendored list and reader presentation for canonical Gen items witho
 it('keeps Vespin subject and message structure while the canonical action remains outside vendored code',()=>{
  const html=renderToStaticMarkup(createElement(InboxPane,{title:'Current question',hidden:false,toolbar:createElement('button',null,'Open conversation'),children:createElement('p',null,'Canonical summary')}));
  expect(html).toContain('inbox-subject');expect(html).toContain('data-inbox-title=""');expect(html).toContain('inbox-board');expect(html).toContain('aria-label="Messages"');expect(html).toContain('Canonical summary');
+});
+it('describes the failure and retry path instead of success copy for failed inbox items',()=>{
+ const base:AttentionItem={id:'item',threadId:'thread',kind:'request',title:'A task',summary:'Outcome',state:'completed',createdAt:'2026-11-04T00:00:00.000Z',updatedAt:'2026-11-04T00:00:00.000Z',read:false,popupDismissed:false,actionable:false,notificationKey:'item:completed',destination:{threadId:'thread'}};
+ expect(inboxFooterHint({...base,state:'failed'})).toBe('Read what went wrong, then open the conversation to retry.');
+ expect(inboxFooterHint({...base,state:'completed'})).toBe('Read the result and its supporting evidence.');
+ expect(inboxFooterHint({...base,state:'needs-review'})).toBe('Read the result and its supporting evidence.');
+ expect(inboxFooterHint({...base,actionable:true,state:'needs-input'})).toBe('Answer or review the current request there.');
+ expect(inboxFooterHint({...base,state:'resolved'})).toBe('This request has already been resolved.');
 });
 it('uses the upstream 860/892 container-width hysteresis instead of a redesigned viewport breakpoint',()=>{
  expect(oneColumn(859,false)).toBe(true);expect(oneColumn(860,false)).toBe(false);expect(oneColumn(880,true)).toBe(true);expect(oneColumn(892,true)).toBe(false);

@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {splitWorkspaceLayoutSchema,type SplitWorkspaceLayout} from '../packages/contracts/split-workspace.ts';
+import {splitWorkspaceLayoutSchema,type SplitWorkspaceLayout,type SplitWorkspaceNode} from '../packages/contracts/split-workspace.ts';
 import {applySplitWorkspaceCommand,createSplitWorkspaceLayout,minimumSplitSize,splitDropEdge} from '../packages/core/split-workspace-layout.ts';
 import type {SurfaceRef} from '../packages/contracts/workspace.ts';
 
@@ -103,5 +103,25 @@ describe('durable split workspace',()=>{
   layout=apply(layout,'view.activate',{paneId:'plan-pane',viewId:'plan',preserveFocus:true});expect(layout.focusedPaneId).toBe(focused);
   layout=apply(layout,'view.open',{paneId:'plan-pane',view:{id:'notes',kind:'notes',binding:{authority:{kind:'local'},threadId:'one'}},preserveFocus:true});expect(layout.focusedPaneId).toBe(focused);
   expect(()=>apply(layout,'view.activate',{paneId:'plan-pane',viewId:'plan',preserveFocus:'yes'})).toThrow();
+ });
+ it('bounds resize ratios by the measured span so a pane cannot be starved below its minimum',()=>{
+  let layout=open(createSplitWorkspaceLayout(),'one');
+  layout=split(layout,'right',{view:view('two')});
+  // Two thread panes each need >=320 px; the usable track is span px minus the 6 px divider.
+  const span=800-6;
+  const shrunk=apply(layout,'pane.resize',{splitId:'split-right',ratio:.3,span});
+  const node=shrunk.root as Extract<SplitWorkspaceNode,{kind:'split'}>;
+  expect(node.ratio*span).toBeGreaterThanOrEqual(319.9);
+  expect((1-node.ratio)*span).toBeGreaterThanOrEqual(319.9);
+  const grown=apply(layout,'pane.resize',{splitId:'split-right',ratio:.7,span});
+  const grownNode=grown.root as Extract<SplitWorkspaceNode,{kind:'split'}>;
+  expect((1-grownNode.ratio)*span).toBeGreaterThanOrEqual(319.9);
+  expect(grownNode.ratio).toBeLessThanOrEqual(.95);
+  // A span too narrow for both minimums cannot be resized at all.
+  expect(()=>apply(layout,'pane.resize',{splitId:'split-right',ratio:.5,span:600})).toThrow(/fit|size/i);
+  // Without a measured span the historical absolute bound applies unchanged.
+  const unmeasured=apply(layout,'pane.resize',{splitId:'split-right',ratio:.3});
+  const unmeasuredNode=unmeasured.root as Extract<SplitWorkspaceNode,{kind:'split'}>;
+  expect(unmeasuredNode.ratio).toBe(.3);
  });
 });

@@ -45,8 +45,13 @@ export async function validateSessionPath(dataDir: string, sessionPath: string, 
   const expected = threadId === undefined ? resolve(dataDir, "pi", "tasks") : taskPaths(dataDir, threadId).sessionsDir;
   const path = resolve(sessionPath);
   if (!within(expected, path) || !path.endsWith(".jsonl")) throw new HarnessError("PI_SESSION_MISMATCH", "Pi session does not belong to this task.");
-  const [realRoot, realFile] = await Promise.all([realpath(expected), realpath(path)]);
-  if (!within(realRoot, realFile) || !(await stat(realFile)).isFile()) throw new HarnessError("PI_SESSION_MISMATCH", "Pi session is outside task storage.");
+  const absent = (error: unknown): never => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new HarnessError("PI_SESSION_MISSING", "Pi session history is missing or moved. Restore the session file or start a new session.");
+    throw error;
+  };
+  const [realRoot, realFile] = await Promise.all([realpath(expected), realpath(path)]).catch(absent);
+  const info = await stat(realFile).catch(absent);
+  if (!within(realRoot, realFile) || !info.isFile()) throw new HarnessError("PI_SESSION_MISMATCH", "Pi session is outside task storage.");
   const first = await readSessionHeader(realFile);
   try {
     const header = JSON.parse(first);

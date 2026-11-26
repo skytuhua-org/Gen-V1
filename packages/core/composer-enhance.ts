@@ -9,9 +9,8 @@ export interface ProjectNote {filename:string;text:string}
 /** Admission result resolved server-side. assertCurrent rechecks the exact
  * owner state at capture, dispatch and settlement boundaries. */
 export interface EnhanceBasis {modelId:string;accountId:string|null;assertCurrent():void;capture(signal:AbortSignal):Promise<ProjectNote[]|undefined>}
-interface Owner {context:RunContext;basis?:EnhanceBasis;usedProjectContext:boolean;creating?:Promise<RuntimeAdapter>;startup?:Promise<void>;closed:boolean;timedOut:boolean;closing?:Promise<void>;failure?:HarnessError;text:string;result:Promise<EnhanceResult>;resolve(value:EnhanceResult):void;reject(error:unknown):void;timer:ReturnType<typeof setTimeout>}
+interface Owner {context:RunContext;control:AbortController;basis?:EnhanceBasis;capturing?:Promise<ProjectNote[]|undefined>;usedProjectContext:boolean;creating?:Promise<RuntimeAdapter>;startup?:Promise<void>;closed:boolean;timedOut:boolean;closing?:Promise<void>;failure?:HarnessError;text:string;result:Promise<EnhanceResult>;resolve(value:EnhanceResult):void;reject(error:unknown):void;timer:ReturnType<typeof setTimeout>}
 const same=(left:RunContext,right:RunContext)=>left.threadId===right.threadId&&left.runId===right.runId&&left.epoch===right.epoch;
-const NEVER=new AbortController().signal;
 export const ENHANCE_INVALID_DRAFT='Enhancement requires a nonblank draft of at most 8 KiB.';
 export function assertEnhanceDraft(draft:string):void{if(typeof draft!=='string'||!draft.trim()||Buffer.byteLength(draft)>ENHANCE_LIMITS.draftBytes)throw new HarnessError('ENHANCE_INVALID_DRAFT',ENHANCE_INVALID_DRAFT);}
 
@@ -25,12 +24,17 @@ export function parseEnhancement(text:string):string|null {
  }catch{return null;}
 }
 
-/** Bounded JSON frame; drop trailing notes before ever failing the request. */
-export function enhancePrompt(draft:string,notes:readonly ProjectNote[]|undefined):string {
- let selected=[...(notes??[])];
- while(selected.length&&Buffer.byteLength(JSON.stringify({draft,projectNotes:selected}))>ENHANCE_LIMITS.frameBytes)selected.pop();
- return 'Quoted draft and project notes JSON:\n'+JSON.stringify({draft,projectNotes:selected});
+/** Count the complete frame; drop trailing notes before failing an unchanged draft. */
+function enhancementFrame(draft:string,notes:readonly ProjectNote[]|undefined):{prompt:string;usedProjectContext:boolean} {
+ const selected=[...(notes??[])];
+ for(;;){
+  const prompt='Quoted draft and project notes JSON:\n'+JSON.stringify({draft,projectNotes:selected});
+  if(Buffer.byteLength(prompt)<=ENHANCE_LIMITS.frameBytes)return{prompt,usedProjectContext:selected.length>0};
+  if(!selected.length)throw new HarnessError('ENHANCE_INVALID_DRAFT','The draft cannot fit within the enhancement input limit.');
+  selected.pop();
+ }
 }
+export function enhancePrompt(draft:string,notes:readonly ProjectNote[]|undefined):string{return enhancementFrame(draft,notes).prompt;}
 
 /** One active rewrite per host; runtime disposal is the only slot release. */
 export class ComposerEnhance {
@@ -45,27 +49,29 @@ export class ComposerEnhance {
   if(this.owner)throw new HarnessError('ENHANCE_BUSY','Another enhancement is still running.');
   let resolve!:(value:EnhanceResult)=>void,reject!:(error:unknown)=>void;
   const result=new Promise<EnhanceResult>((yes,no)=>{resolve=yes;reject=no;});
-  const owner:Owner={context:{threadId:'enhance-'+randomUUID(),runId:randomUUID(),epoch:0},usedProjectContext:false,closed:false,timedOut:false,text:'',result,resolve,reject,timer:setTimeout(()=>{owner.timedOut=true;void this.close(owner,false,new HarnessError('ENHANCE_TIMEOUT','Enhancement timed out.')).catch(()=>{});},ENHANCE_LIMITS.timeoutMs)};
+  const owner:Owner={control:new AbortController(),context:{threadId:'enhance-'+randomUUID(),runId:randomUUID(),epoch:0},usedProjectContext:false,closed:false,timedOut:false,text:'',result,resolve,reject,timer:setTimeout(()=>{owner.timedOut=true;const failure=new HarnessError('ENHANCE_TIMEOUT','Enhancement timed out.');owner.reject(failure);void this.close(owner,false,failure).catch(()=>{});},ENHANCE_LIMITS.timeoutMs)};
   owner.timer.unref?.();this.owner=owner;
   const abort=()=>void this.close(owner,false,new HarnessError('ENHANCE_CANCELLED','The enhancement was cancelled.')).catch(()=>{});
   signal?.addEventListener('abort',abort,{once:true});
-  void this.run(owner,input,signal).finally(()=>signal?.removeEventListener('abort',abort));
+  void this.run(owner,input).finally(()=>signal?.removeEventListener('abort',abort));
   return result;
  }
- private async run(owner:Owner,input:EnhanceRequest,signal?:AbortSignal):Promise<void> {
+ private async run(owner:Owner,input:EnhanceRequest):Promise<void> {
   try{
    owner.basis=await this.hooks.basis(input);
    if(owner.closed)return;
-   const notes=await owner.basis.capture(signal??NEVER);
+   owner.capturing=Promise.resolve().then(()=>owner.closed?undefined:owner.basis!.capture(owner.control.signal));
+   const notes=await owner.capturing;
    if(owner.closed)return;
-   owner.usedProjectContext=!!notes?.length;
+   const frame=enhancementFrame(input.draft,notes);
+   owner.usedProjectContext=frame.usedProjectContext;
    owner.basis.assertCurrent();
    // The isolated adapter exists only after full admission succeeded.
    owner.creating=Promise.resolve().then(()=>this.hooks.factory());
    const adapter=await owner.creating;
    if(owner.closed)return;
    adapter.configure({onEvent:event=>this.event(owner,event),onTool:async()=>{void this.close(owner,false,new HarnessError('ENHANCE_PROVIDER','Enhancement attempted a denied tool.')).catch(()=>{});throw new HarnessError('ENHANCE_TOOL_DENIED','Tools are unavailable to composer enhancement.');}});
-   owner.startup=Promise.resolve().then(()=>{if(owner.closed)throw new HarnessError('CANCELLED_RUN','Enhancement context changed.');owner.basis!.assertCurrent();return adapter.start({...owner.context,modelId:owner.basis!.modelId,accountId:owner.basis!.accountId,sessionPath:null,inputId:owner.context.runId,inputIds:[owner.context.runId],resources:[],prompt:enhancePrompt(input.draft,notes)});});
+   owner.startup=Promise.resolve().then(()=>{if(owner.closed)throw new HarnessError('CANCELLED_RUN','Enhancement context changed.');owner.basis!.assertCurrent();return adapter.start({...owner.context,modelId:owner.basis!.modelId,accountId:owner.basis!.accountId,sessionPath:null,inputId:owner.context.runId,inputIds:[owner.context.runId],resources:[],prompt:frame.prompt});});
    await owner.startup;
   }catch(error){if(!owner.closed)await this.close(owner,false,error instanceof HarnessError?error:undefined).catch(()=>{});}
  }
@@ -81,10 +87,13 @@ export class ComposerEnhance {
   if(event.type==='settled')void this.close(owner,!event.aborted).catch(()=>{});
  }
  private close(owner:Owner,success:boolean,failure?:HarnessError):Promise<void> {
-  if(owner.closing)return owner.closing;
   owner.closed=true;
   if(failure&&!owner.failure)owner.failure=failure;
+  if(!success)owner.control.abort();
+  if(owner.closing)return owner.closing;
   owner.closing=Promise.resolve().then(async()=>{
+   // A deadline settles the caller immediately, while guarded capture and native cleanup retain the slot.
+   if(owner.capturing)await Promise.allSettled([owner.capturing]);
    let cleanupFailed=false;
    try{const adapter=await owner.creating;if(adapter){if(!success)try{await adapter.cancel(owner.context);}catch{/* Disposal must still confirm teardown. */}try{await adapter.dispose();}catch{cleanupFailed=true;}}}
    catch(error){success=false;if(!owner.failure&&error instanceof HarnessError)owner.failure=error;}

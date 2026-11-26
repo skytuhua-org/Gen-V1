@@ -1,17 +1,18 @@
 import {createHash} from 'node:crypto';
-import {mkdtemp,mkdir,readFile,writeFile,symlink,rm} from 'node:fs/promises';
+import fs,{mkdtemp,mkdir,readFile,writeFile,symlink,rm} from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {describe,expect,it} from 'vitest';
+import {describe,expect,it,vi} from 'vitest';
 import {installPluginPackage,loadInstalledPlugins,removePlugin,type PluginRegistry} from '../packages/plugins/host.ts';
 import {pluginManifestSchema,pluginSurfaceSchema} from '../packages/plugins/contracts.ts';
 
 const hash=(value:string|Uint8Array)=>createHash('sha256').update(value).digest('hex');
 const manifest={id:'example-company',name:'Example company',version:'1.0.0',apiVersion:1,compatibleGenVersions:'>=0.6.3 <0.7.0',frontendEntry:'frontend/index.html',hostEntry:'host/main.mjs'};
-async function fixture(options:{manifest?:Record<string,unknown>;host?:string}={}){
+async function fixture(options:{manifest?:Record<string,unknown>;host?:string;frontend?:string}={}){
  const directory=await mkdtemp(join(tmpdir(),'gen-plugin-')),source=join(directory,'source'),root=join(directory,'plugins');await mkdir(source);await mkdir(join(source,'frontend'));await mkdir(join(source,'host'));
- const files:Record<string,string>={'plugin.json':JSON.stringify({...manifest,...options.manifest}),'frontend/index.html':'<p>Company records</p>','host/main.mjs':options.host??`export default {async activate(context){return {operations:{echo:async(input,signal)=>({input,keys:Object.keys(context).sort(),aborted:signal.aborted}),write:async()=>{const {writeFile}=await import('node:fs/promises');await writeFile(context.dataDir+'/saved.txt','preserved');return null;}},validateSurface:async(surface)=>surface.scopeId==='approved'&&surface.resourceId==='task',isBusy:async()=>false,close:async()=>{}};}};`};
+ const files:Record<string,string>={'plugin.json':JSON.stringify({...manifest,...options.manifest}),'frontend/index.html':options.frontend??'<p>Company records</p>','host/main.mjs':options.host??`export default {async activate(context){return {operations:{echo:async(input,signal)=>({input,keys:Object.keys(context).sort(),aborted:signal.aborted}),write:async()=>{const {writeFile}=await import('node:fs/promises');await writeFile(context.dataDir+'/saved.txt','preserved');return null;}},validateSurface:async(surface)=>surface.scopeId==='approved'&&surface.resourceId==='task',isBusy:async()=>false,close:async()=>{}};}};`};
  for(const [path,bytes]of Object.entries(files))await writeFile(join(source,path),bytes);
  const inventory={version:1,files:Object.entries(files).map(([path,bytes])=>({path,bytes:Buffer.byteLength(bytes),sha256:hash(bytes)}))};const raw=JSON.stringify(inventory);await writeFile(join(source,'plugin-files.json'),raw);
  return {directory,source,root,digest:hash(raw),inventory};
@@ -30,6 +31,31 @@ describe('trusted separately installed plug-ins',()=>{
   await writeFile(join(g.root,'.registry-lock'),JSON.stringify({pid:process.pid,at:Date.now()}));
   await expect(installPluginPackage(g.source,g.root,g.digest,'0.6.3')).rejects.toThrow(/busy/i);
  });
+ it('recovers an interrupted install whose version was promoted without an index entry',async()=>{
+  const f=await fixture();
+  const installed=await installPluginPackage(f.source,f.root,f.digest,'0.6.3');
+  // Promotion completed but index publication did not: the immutable version
+  // directory exists while active.json has no entry. A retry must recover,
+  // not report "already exists".
+  await writeFile(join(f.root,'active.json'),JSON.stringify({version:1,plugins:[]}));
+  const orphan=join(f.root,'.install-'+crypto.randomUUID());
+  await mkdir(orphan);await writeFile(join(orphan,'partial.txt'),'interrupted staging');
+  await writeFile(join(f.root,'.active-backup.json'),'{"version":1,"plugins":[]}');
+  const recovered=await installPluginPackage(f.source,f.root,f.digest,'0.6.3');
+  expect(recovered.directory).toBe(installed.directory);
+  expect(await readFile(join(recovered.directory,'plugin.json'),'utf8')).toBe(JSON.stringify(manifest));
+  const registry=await loadInstalledPlugins(f.root,'0.6.3');
+  expect(registry.list()).toEqual([manifest]);
+  await registry.close();
+  // An unpromoted staging directory is reclaimed; unrelated files survive.
+  await expect(fs.access(orphan)).rejects.toThrow();
+  expect(await readFile(join(f.root,'.active-backup.json'),'utf8')).toBe('{"version":1,"plugins":[]}');
+  const stale=await fixture();
+  await mkdir(join(stale.root,manifest.id),{recursive:true});
+  await mkdir(join(stale.root,manifest.id,manifest.version));
+  await writeFile(join(stale.root,manifest.id,manifest.version,'plugin.json'),'{"corrupt":true}');
+  await expect(installPluginPackage(stale.source,stale.root,stale.digest,'0.6.3')).rejects.toThrow(/conflicting/i);
+});
  it('rejects undeclared files and inventory traversal',async()=>{const f=await fixture();await writeFile(join(f.source,'unlisted.txt'),'extra');await expect(installPluginPackage(f.source,f.root,f.digest,'0.6.3')).rejects.toThrow(/undeclared/i);const g=await fixture();g.inventory.files[0].path='../outside';const raw=JSON.stringify(g.inventory);await writeFile(join(g.source,'plugin-files.json'),raw);await expect(installPluginPackage(g.source,g.root,hash(raw),'0.6.3')).rejects.toThrow();});
  it('rejects linked package files without following them',async()=>{const f=await fixture();await symlink(f.source,join(f.source,'linked'),'junction');await expect(installPluginPackage(f.source,f.root,f.digest,'0.6.3')).rejects.toThrow(/link/i);});
  it('rechecks installed integrity before loading or serving and never serves host source',async()=>{const f=await fixture(),installed=await installPluginPackage(f.source,f.root,f.digest,'0.6.3');const registry=await loadInstalledPlugins(f.root,'0.6.3');await writeFile(join(installed.directory,'frontend/index.html'),'changed');await expect(registry.readAsset(manifest.id,'frontend/index.html')).rejects.toThrow(/integrity/i);const fresh=await loadInstalledPlugins(f.root,'0.6.3');expect(fresh.list()).toEqual([]);expect(fresh.failures().map(failure=>failure.id)).toEqual([manifest.id]);await fresh.close();await registry.close();});
@@ -64,6 +90,40 @@ describe('trusted separately installed plug-ins',()=>{
 
 it('checks a newly installed plugin against an already loaded registry without activating it twice',async()=>{const f=await fixture();const registry=await loadInstalledPlugins(f.root,'0.6.3');await installPluginPackage(f.source,f.root,f.digest,'0.6.3');expect(await registry.compatibleWith('0.7.0')).toMatchObject({compatible:false});await registry.close();});
 it('counts a dispatch as busy while its package verification is still pending',async()=>{const f=await fixture();await installPluginPackage(f.source,f.root,f.digest,'0.6.3');const registry=await loadInstalledPlugins(f.root,'0.6.3');const result=registry.dispatch(manifest.id,'echo',{},new AbortController().signal);expect(await registry.isBusy()).toBe(true);await result;await registry.close();});
+
+it('verifies payload files twice during dispatch without reading them into whole-file buffers',async()=>{
+ const f=await fixture({frontend:'<p>Company records</p>\n'.repeat(4000)});
+ let registry:PluginRegistry|undefined;
+ try{
+  const installed=await installPluginPackage(f.source,f.root,f.digest,'0.6.3');
+  registry=await loadInstalledPlugins(f.root,'0.6.3');
+  const payloads=[join(installed.directory,manifest.frontendEntry),join(installed.directory,manifest.hostEntry)];
+  const wholeReads=vi.spyOn(fs,'readFile'),opened=vi.spyOn(fs,'open');syncBuiltinESMExports();
+  await expect(registry.dispatch(manifest.id,'echo',{scope:'project'},new AbortController().signal)).resolves.toEqual({input:{scope:'project'},keys:['dataDir','genVersion'],aborted:false});
+  expect(wholeReads.mock.calls.map(([path])=>String(path)).filter(path=>payloads.includes(path))).toHaveLength(0);
+  expect(opened.mock.calls.map(([path])=>String(path)).filter(path=>payloads.includes(path))).toEqual([...payloads,...payloads]);
+ }finally{vi.restoreAllMocks();syncBuiltinESMExports();await registry?.close();await rm(f.directory,{recursive:true,force:true});}
+});
+
+it('refuses to return a dispatch result after a same-length asset change during the operation',async()=>{
+ const f=await fixture({host:`
+  export const started=Promise.withResolvers(),resume=Promise.withResolvers();
+  export default {async activate(){return {operations:{echo:async(input)=>{started.resolve();await resume.promise;return input;}},close:async()=>{}}}};
+ `});
+ let registry:PluginRegistry|undefined,release:(()=>void)|undefined,result:Promise<unknown>|undefined;
+ try{
+  const installed=await installPluginPackage(f.source,f.root,f.digest,'0.6.3');
+  const {started,resume}=await import(/* @vite-ignore */pathToFileURL(join(installed.directory,manifest.hostEntry)).href+'?integrity='+f.digest);
+  release=resume.resolve;
+  registry=await loadInstalledPlugins(f.root,'0.6.3');
+  result=registry.dispatch(manifest.id,'echo',{scope:'project'},new AbortController().signal);
+  await Promise.race([started.promise,result]);
+  await writeFile(join(installed.directory,manifest.frontendEntry),'<p>Company changes</p>');
+  release?.();
+  await expect(result).rejects.toThrow('The plug-in operation could not complete.');
+  await expect(registry.dispatch(manifest.id,'echo',null,new AbortController().signal)).rejects.toThrow('Plug-in integrity verification failed.');
+ }finally{release?.();await result?.catch(()=>{});await registry?.close();await rm(f.directory,{recursive:true,force:true});}
+});
 
 const shutdownError='A plug-in host could not confirm shutdown.';
 const shutdownHost=(synchronousFailure=false)=>`

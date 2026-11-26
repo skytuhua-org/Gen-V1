@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import type { Socket } from "node:net";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile, stat, readdir, lstat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -59,6 +60,24 @@ const assets = fileURLToPath(new URL("../..", import.meta.url));
 
 export async function buildServer(service: Service, options: ServerOptions) {
   const app = Fastify({ logger: false, bodyLimit: 29 * 1024 * 1024 });
+  // Node's server.close() ends only sockets idle after a completed request. A
+  // browser's preconnected socket, or one whose response ends during shutdown,
+  // would otherwise hold close() open until the client drops it.
+  const openRequests = new Map<Socket, number>();
+  let closing = false;
+  app.server.on("connection", (socket: Socket) => {
+    openRequests.set(socket, 0);
+    socket.once("close", () => openRequests.delete(socket));
+  });
+  app.server.on("request", (request, response) => {
+    const socket = request.socket;
+    openRequests.set(socket, (openRequests.get(socket) ?? 0) + 1);
+    response.once("close", () => {
+      const remaining = (openRequests.get(socket) ?? 1) - 1;
+      openRequests.set(socket, remaining);
+      if (closing && remaining === 0) socket.end();
+    });
+  });
   const sessions = new Map<string, { csrf: string; expiresAt: number }>();
   let snapshotCache: { seq: number; json: string } | undefined;
   const credentials=new SessionCredentials(service.store);
@@ -200,6 +219,36 @@ export async function buildServer(service: Service, options: ServerOptions) {
     const { id } = request.params;
     if (!service.store.get('thread', id) || service.store.get('archivedThread', id)) throw new HarnessError('NOT_FOUND', 'Thread unavailable');
     return { seq: service.store.sequence, control: service.controlConsent.surfaceModel(id) };
+  });
+  // M16 C3/C4: driver candidate targets for a pending consent. The desktop
+  // window mode runs the driver's approved OS picker inside this call.
+  app.get<{ Params: { id: string }; Querystring: { mode?: string } }>('/api/threads/:id/control-targets', async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { id } = request.params;
+    if (!service.store.get('thread', id) || service.store.get('archivedThread', id)) throw new HarnessError('NOT_FOUND', 'Thread unavailable');
+    return { seq: service.store.sequence, ...(await service.controlTargets(id, request.query.mode)) };
+  });
+  // M16: consented capture — private task data written under the host
+  // artifact root only; the response carries the record and digest (S05/S08).
+  app.post<{ Params: { id: string } }>('/api/threads/:id/control-capture', { bodyLimit: 1024 }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { id } = request.params;
+    if (!service.store.get('thread', id) || service.store.get('archivedThread', id)) throw new HarnessError('NOT_FOUND', 'Thread unavailable');
+    return { seq: service.store.sequence, ...(await service.controlCapture(id)) };
+  });
+  // M16: fresh observation for pre-dispatch binding (S06).
+  app.post<{ Params: { id: string } }>('/api/threads/:id/control-observe', { bodyLimit: 1024 }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { id } = request.params;
+    if (!service.store.get('thread', id) || service.store.get('archivedThread', id)) throw new HarnessError('NOT_FOUND', 'Thread unavailable');
+    return { seq: service.store.sequence, ...(await service.controlObserve(id)) };
+  });
+  // M16: one consent-admitted input action through the serialized queue.
+  app.post<{ Params: { id: string } }>('/api/threads/:id/control-action', { bodyLimit: 16384 }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { id } = request.params;
+    if (!service.store.get('thread', id) || service.store.get('archivedThread', id)) throw new HarnessError('NOT_FOUND', 'Thread unavailable');
+    return { seq: service.store.sequence, ...(await service.controlAction(id, (request.body ?? {}) as Record<string, unknown>)) };
   });
   app.get<{ Querystring: { q?: string; threads?: string } }>('/api/threads/search', async (request) => {
     if ((request.query.q !== undefined && typeof request.query.q !== 'string') || (request.query.threads !== undefined && typeof request.query.threads !== 'string')) throw new HarnessError('INVALID_INPUT', 'Search parameters must be single values');
@@ -374,6 +423,8 @@ export async function buildServer(service: Service, options: ServerOptions) {
     // SSE responses are hijacked from Fastify's normal lifecycle. Destroy
     // them without waiting for a second close event after a disconnect.
     destroyEventStreams(streams);
+    closing = true;
+    for (const [socket, count] of openRequests) if (count === 0) socket.destroy();
   });
   return app;
 }

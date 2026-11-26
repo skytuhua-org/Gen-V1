@@ -29,7 +29,10 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
  }
  function close(current:Owner):Promise<void> {
   current.closed=true;
-  return current.closing??=(async()=>{await current.adapter.cancel(current.ctx);releaseOwner(current);})();
+  return current.closing??=(async()=>{
+   await current.adapter.cancel(current.ctx);
+   releaseOwner(current);
+  })().catch(error=>{current.closing=undefined;throw error;});
  }
  function pair(account:ConnectionAccount|null):Pair {
   active();const id=account?.id??null,dataDir=account?accountProfileRoot(root,account):root,cached=pairs.get(id);
@@ -90,11 +93,14 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
   for(const [id,value]of pairs)if(value.pi===adapter||value.official===adapter)pairs.delete(id);
   for(const current of affected){releaseOwner(current);if(!disposed)callbacks?.onEvent({...current.ctx,type:'error',message:'The subscription runtime closed after discovery failed. Resume the task to continue.'});}
  }
- async function probe<T>(adapter:RuntimeAdapter,providerIds:readonly ConnectionProviderId[],accountId:string|null,action:()=>Promise<T>):Promise<T> {
-  const leases:AccountUseLease[]=[];
+ async function probe<T>(adapter:RuntimeAdapter,providerIds:readonly ConnectionProviderId[],accountId:string|null,action:(providers:readonly ConnectionProviderId[])=>Promise<T>):Promise<T> {
+  const leases:AccountUseLease[]=[],scoped=accountId!==null||providerIds.length===1;
   const release=()=>{for(const lease of leases){options.accounts?.releaseUse?.(lease);probes.delete(lease.id);}};
-  try{for(const providerId of providerIds){available(providerId,accountId);const lease=options.accounts?.claimUse?.(providerId,accountId);if(lease){leases.push(lease);probes.set(lease.id,{adapter,lease});}}}catch(error){release();throw error;}
-  try{const result=await action();release();return result;}
+  // A scoped query must still fail on a signing-in provider; a broad probe
+  // skips it instead, so one sign-in never blocks a healthy sibling's models.
+  const effective:ConnectionProviderId[]=[];
+  try{for(const providerId of providerIds){if(!scoped&&isConnectionProviderId(providerId)&&options.accounts?.isSigningIn?.(providerId,null))continue;available(providerId,accountId);effective.push(providerId);const lease=options.accounts?.claimUse?.(providerId,accountId);if(lease){leases.push(lease);probes.set(lease.id,{adapter,lease});}}}catch(error){release();throw error;}
+  try{const result=await action(effective);release();return result;}
   catch(error){await retire(adapter);release();throw error;}
  }
  function probeProviders(account:ConnectionAccount|null,official:boolean):ConnectionProviderId[] {return account?[account.providerId]:(official?OFFICIAL_RUNTIME_PROVIDER_IDS:SUBSCRIPTION_PROVIDER_IDS).filter(isConnectionProviderId);}
@@ -107,14 +113,31 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
    if(account)available(account.providerId,account.id);
    const targets=providerId?[isOfficialRuntimeProviderId(providerId)?selected.official:selected.pi]:account?[isOfficialRuntimeProviderId(account.providerId)?selected.official:selected.pi]:[selected.pi,selected.official];
    const refresh=query?.refresh;
-   const results=await withAccountProfile(root,account,async()=>{active();if(account)available(account.providerId,account.id);return Promise.allSettled(targets.map(adapter=>probe(adapter,providerId?[providerId]:probeProviders(account,adapter===selected.official),account?.id??null,async()=>{
-    try{return await adapter.models(providerId?{refresh,providerId}:refresh===undefined?undefined:{refresh});}
+   const results=await withAccountProfile(root,account,async()=>{active();if(account)available(account.providerId,account.id);return Promise.allSettled(targets.map(adapter=>{const requested=providerId?[providerId]:probeProviders(account,adapter===selected.official);return probe(adapter,requested,account?.id??null,async effective=>{
+    try{
+     if(providerId||refresh===undefined)return await adapter.models(providerId?{refresh,providerId}:undefined);
+     // No provider skipped: keep the ordinary whole-adapter refresh so its
+     // catalog cache warms and failures keep their all-or-nothing semantics.
+     if(effective.length===requested.length)return await adapter.models({refresh});
+     // A forced refresh must not reach a profile that is still signing in:
+     // refresh each probeable provider on its own. Pi reports a disconnected
+     // provider per refresh; keep the others instead of retiring the adapter.
+     let authErrors=0;
+     const lists=await Promise.all(effective.map(id=>adapter.models({refresh,providerId:id}).catch(error=>{
+      if((error as {code?:unknown})?.code==='PI_AUTH_REQUIRED'){authErrors++;return [];}
+      throw error;
+     })));
+     // Every probeable provider disconnected: keep the probe rejected so the
+     // caller reports sign-in guidance instead of an empty catalog.
+     if(authErrors&&authErrors===effective.length)throw new HarnessError('PI_AUTH_REQUIRED','No signed-in subscription runtime is available.');
+     return lists.flat();
+    }
     catch(error){
      // Pi reports missing credentials only after its discovery worker has closed; other legacy runs keep their adapter.
      if(providerId&&(error as {code?:unknown})?.code==='PI_AUTH_REQUIRED')return [];
      throw error;
     }
-   })));});active();
+   });}));});active();
    if(account){const current=resolveAccount(account.id);if(current?.providerId!==account.providerId)throw new HarnessError('ACCOUNT_PROVIDER_MISMATCH','This account changed during model discovery.');available(account.providerId,account.id);}
    const models=results.flatMap(result=>result.status==='fulfilled'?result.value:[]).filter(model=>{
     const provider=providerForModel(model.id),providerId=model.id.split('/')[0];

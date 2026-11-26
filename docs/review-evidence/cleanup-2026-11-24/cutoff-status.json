@@ -1,0 +1,85 @@
+{
+  "cutoff": "2026-11-24T12:06:11Z",
+  "open_issues_at_cutoff": 377,
+  "open_prs_at_cutoff": 494,
+  "prs_reviewed": 495,
+  "queued_workflow_runs": 174,
+  "in_progress_workflow_runs": 4,
+  "main": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+  "ci": {
+    "pr": 2000,
+    "head": "b8379a96404d58961c0905e3db71a25b1f35488c",
+    "mergeable": true,
+    "mergeable_state": "blocked",
+    "auto_merge": true,
+    "checks": [
+      {
+        "name": "Installed desktop memory retention and opt-in",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45385974390/job/138416924518"
+      },
+      {
+        "name": "Tests (shard 2/4)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45385974390/job/138416915276"
+      },
+      {
+        "name": "Tests (shard 1/4)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45385974390/job/138416900792"
+      },
+      {
+        "name": "Browser tests",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45385974390/job/138416851303"
+      },
+      {
+        "name": "Tests (shard 3/4)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45385974390/job/138416851222"
+      },
+      {
+        "name": "Tests (shard 4/4)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45385974390/job/138416850702"
+      },
+      {
+        "name": "Classify plan-only changes",
+        "status": "queued",
+        "conclusion": null,
+        "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45385974390/job/138416848804"
+      },
+      {
+        "name": "M05 purge / windows-latest",
+        "status": "queued",
+        "conclusion": null,
+        "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45385974280/job/138416845500"
+      },
+      {
+        "name": "M05 purge / ubuntu-24.04",
+        "status": "queued",
+        "conclusion": null,
+        "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45385974280/job/138416844814"
+      },
+      {
+        "name": "Agents grid UI evidence (Windows, pinned Edge)",
+        "status": "completed",
+        "conclusion": "skipped",
+        "url": "https://github.com/skytuhua-org/Gen-V1/actions/runs/45385974464/job/138416843195"
+      }
+    ]
+  },
+  "docs": {
+    "pr": 1994,
+    "head": "78253df0c9e3b60a321377e315935104a8608adb",
+    "mergeable": true,
+    "mergeable_state": "blocked",
+    "auto_merge": true
+  }
+}

@@ -175,7 +175,20 @@ export async function withIdleApprovedProjectContext<T>(store: Store, input: { t
   const candidates = resources.filter(resource => resource.kind === 'project' || ['file', 'attachment'].includes(resource.kind) && recognizedName(resource.path));
   if (!candidates.length) return action(undefined, assertCurrent);
   const noteBytes = (list: readonly Capture[]) => list.reduce((total, source) => total + Buffer.byteLength(source.filename) + Buffer.byteLength(source.text), 0);
-  return captureApprovedInstructions(store, candidates, assertCurrent, signal, list => noteBytes(list) <= LIMITS.enhanceBytes, async ({ captures }) => {
+  return captureApprovedInstructions(store, candidates, assertCurrent, signal, (list, source) => {
+    if (list.some(previous => previous.physicalId === source.physicalId)) return false;
+    const available = LIMITS.enhanceBytes - noteBytes(list) - Buffer.byteLength(source.filename);
+    if (available <= 0) return false;
+    let text = '', bytes = 0;
+    for (const point of source.text) {
+      const length = Buffer.byteLength(point);
+      if (bytes + length > available) break;
+      text += point; bytes += length;
+    }
+    if (source.text && !text) return false;
+    source.text = text;
+    return true;
+  }, async ({ captures }) => {
     const seen = new Set<string>(), notes: IdleProjectNote[] = [];
     for (const source of captures.toSorted((a, b) => a.precedence - b.precedence || compare(a.filename, b.filename) || compare(a.path, b.path))) {
       if (seen.has(source.physicalId)) continue;

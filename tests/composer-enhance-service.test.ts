@@ -4,6 +4,7 @@ import {mkdtempSync,statSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Service} from '../packages/core/service.ts';
+import {ENHANCE_LIMITS} from '../packages/core/composer-enhance.ts';
 import {Store} from '../packages/storage/store.ts';
 import {buildServer} from '../apps/server/server.ts';
 import type {ResourceGrant,RuntimeAdapter,RuntimeCallbacks,StartRun,Thread} from '../packages/contracts/index.ts';
@@ -77,9 +78,9 @@ it('keeps one rewrite slot per host and cancels an owner on request, timeout and
 
 it('fails the caller deadline and retains teardown before the slot frees',async()=>{
  const x=await fixture(),run=await x.start(),threadId=x.settle(run);
+ vi.useFakeTimers();
  const result=x.service.composerEnhance({draft:'slow',target:{kind:'thread',threadId}});result.catch(()=>{});
  await vi.waitFor(()=>expect(x.enhancements[0]?.starts).toHaveLength(1));
- vi.useFakeTimers();
  await vi.advanceTimersByTimeAsync(15001);
  await expect(result).rejects.toMatchObject({code:'ENHANCE_TIMEOUT'});
  vi.useRealTimers();await vi.waitFor(()=>expect(x.enhancements[0].runtime.dispose).toHaveBeenCalled());
@@ -120,4 +121,69 @@ it('enforces auth, CSRF, the 64 KiB body cap and the documented error envelope s
  const busy=await app.inject({method:'POST',url:path,headers,payload:input});expect(busy.statusCode).toBe(409);expect(busy.json().error.code).toBe('ENHANCE_BUSY');
  enhance(x,x.enhancements[0].starts[0],'{"draft":"Please formally review the release."}');
  const response=await pending;expect(response.statusCode).toBe(200);expect(response.json()).toEqual({draft:'Please formally review the release.',usedProjectContext:false});expect(response.headers['cache-control']).toBe('no-store');
+});
+
+
+async function projectNotes(x:Awaited<ReturnType<typeof fixture>>,threadId:string,files:Record<string,string>){
+ const project=await mkdtemp(join(await realpath(tmpdir()),'harness-enhance-bounded-'));
+ cleanups.push(()=>rm(project,{recursive:true,force:true}));
+ for(const [name,text] of Object.entries(files))writeFileSync(join(project,name),text);
+ const info=statSync(project,{bigint:true});
+ const grant:ResourceGrant={id:'bounded-project',threadId,kind:'project',path:project,label:'Project',writable:false,createdAt:'',identity:{dev:String(info.dev),ino:String(info.ino)}};
+ x.store.internal('fixture.grant',threadId,()=>x.store.put('resource',grant.id,threadId,grant));
+ return grant;
+}
+
+it.each<Record<string,string>>([
+ {'AGENTS.md':'😀'.repeat(9000)},
+ {'AGENTS.md':'a'.repeat(4090),'CLAUDE.md':'😀'.repeat(3000)},
+])('clips admitted project snippets to the total UTF-8 budget without splitting code points',async files=>{
+ const x=await fixture(),run=await x.start(),threadId=x.settle(run);
+ await projectNotes(x,threadId,files);
+ const result=x.service.composerEnhance({draft:'Keep the meaning.',target:{kind:'thread',threadId}});void result.catch(()=>{});
+ await vi.waitFor(()=>expect(x.enhancements[0]?.starts).toHaveLength(1));
+ const prompt=x.enhancements[0].starts[0].prompt,notes=JSON.parse(prompt.slice(prompt.indexOf('\n')+1)).projectNotes as {filename:string;text:string}[];
+ expect(notes.length).toBe(Object.keys(files).length);
+ expect(notes.reduce((sum,note)=>sum+Buffer.byteLength(note.filename)+Buffer.byteLength(note.text),0)).toBeLessThanOrEqual(ENHANCE_LIMITS.projectBytes);
+ for(const note of notes){expect(files[note.filename as keyof typeof files]!.startsWith(note.text)).toBe(true);expect(note.text).not.toContain('\ufffd');expect(note.text).toBe(Buffer.from(note.text).toString('utf8'));}
+ expect(notes.at(-1)!.text.length).toBeGreaterThan(0);
+ enhance(x,x.enhancements[0].starts[0],'{"draft":"Kept the meaning."}');expect((await result).usedProjectContext).toBe(true);
+});
+
+it.each(['epoch','modelId','accountId','projectId','workspaceId','grants'] as const)('rejects settlement after captured %s ownership changes',async field=>{
+ const x=await fixture(),run=await x.start(),threadId=x.settle(run);
+ const saved=(await x.send('account.create',{providerId:'openai',label:'Second synthetic profile'})).result as {id:string};
+ const result=x.service.composerEnhance({draft:'Preserve ownership.',target:{kind:'thread',threadId}});
+ await vi.waitFor(()=>expect(x.enhancements[0]?.starts).toHaveLength(1));
+ x.store.internal('fixture.owner.changed',threadId,()=>{
+  if(field==='grants'){x.store.put('resource','new-resource',threadId,{id:'new-resource',threadId,kind:'file',path:join(x.store.dataDir,'AGENTS.md'),label:'Synthetic',writable:false,createdAt:''});return;}
+  const current=x.store.get<Thread>('thread',threadId)!;
+  const value=field==='epoch'?current.epoch+1:field==='modelId'?'openai/changed':field==='accountId'?saved.id:'changed-owner';
+  x.store.put('thread',threadId,threadId,{...current,[field]:value});
+ });
+ enhance(x,x.enhancements[0].starts[0],'{"draft":"A stale result."}');
+ await expect(result).rejects.toMatchObject({code:'STALE_REQUEST_CONTEXT'});
+});
+
+it('rejects a new-draft result after the selected account changes',async()=>{
+ const x=await fixture(),saved=(await x.send('account.create',{providerId:'openai',label:'Replacement profile'})).result as {id:string};
+ const result=x.service.composerEnhance({draft:'Keep this draft.',target:{kind:'new',modelId:'openai/prediction-test'}});
+ await vi.waitFor(()=>expect(x.enhancements[0]?.starts).toHaveLength(1));
+ x.store.internal('fixture.selection.changed',null,()=>{const settings=x.store.get<Record<string,unknown>>('settings','global')!;x.store.put('settings','global',null,{...settings,selectedAccounts:{openai:saved.id}});});
+ enhance(x,x.enhancements[0].starts[0],'{"draft":"Stale profile."}');
+ await expect(result).rejects.toMatchObject({code:'ENHANCE_STALE'});
+});
+
+
+it('admits an unbound thread using its selected saved account',async()=>{
+ const x=await fixture(),saved=(await x.send('account.create',{providerId:'openai',label:'Selected synthetic profile'})).result as {id:string};
+ await x.send('account.select',{providerId:'openai',accountId:saved.id});
+ const thread=(await x.send('thread.create')).result as Thread;
+ let failure:unknown;
+ const result=x.service.composerEnhance({draft:'Keep the selected account.',target:{kind:'thread',threadId:thread.id,modelId:'openai/prediction-test'}});void result.catch(error=>{failure=error;});
+ await vi.waitFor(()=>expect(x.enhancements.length>0||failure!==undefined).toBe(true));
+ expect(failure).toBeUndefined();
+ await vi.waitFor(()=>expect(x.enhancements[0]?.starts).toHaveLength(1));
+ expect(x.enhancements[0].starts[0].accountId).toBe(saved.id);
+ enhance(x,x.enhancements[0].starts[0],'{"draft":"Selected account retained."}');expect((await result).draft).toBe('Selected account retained.');
 });
