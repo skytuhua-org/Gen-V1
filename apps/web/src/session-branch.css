@@ -47,3 +47,16 @@
 .session-branch-quote input {
   margin-top: 3px;
 }
+
+.session-branch-history {
+  display: inline-flex;
+}
+.session-branch-history.is-compact > .ui-action-trigger {
+  box-sizing: border-box;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  justify-content: center;
+}

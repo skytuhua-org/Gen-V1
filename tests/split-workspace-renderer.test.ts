@@ -7,39 +7,40 @@ import {fileURLToPath} from 'node:url';
 describe.runIf(process.env.GEN_SPLIT_RENDERER_BROWSER==='1')('split renderer browser interaction',()=>{
 let browser:Browser,script:string,css:string;
 const fixture=`
-import React,{useEffect,useState} from 'react';
+import React,{useContext,useEffect,useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {WorkspaceSplitLayout} from './apps/web/src/WorkspaceSplitLayout.tsx';
+import {WorkspaceSplitLayout,PaneCompactContext} from './apps/web/src/WorkspaceSplitLayout.tsx';
+import {SessionBranchMenu} from './apps/web/src/SessionBranchMenu.tsx';
 import {createSplitWorkspaceLayout,applySplitWorkspaceCommand} from './packages/core/split-workspace-layout.ts';
 let initial=createSplitWorkspaceLayout('test-layout');
 initial=applySplitWorkspaceCommand(initial,'view.open',{view:{id:'one',kind:'thread',binding:{authority:{kind:'local'},threadId:'one'}}});
 initial=applySplitWorkspaceCommand(initial,'pane.split',{paneId:'pane-main',newPaneId:'right',splitId:'columns',axis:'horizontal',view:{id:'two',kind:'thread',binding:{authority:{kind:'local'},threadId:'two'}}});
 window.mounts={};window.commands=[];window.editorChoices=[];window.flushRejected=false;window.deferEditorChoice=false;
-function Editor({id,active}){const[value,setValue]=useState('');useEffect(()=>{window.mounts[id]=(window.mounts[id]||0)+1;},[]);return <div><label>{id}<input aria-label={'Draft '+id} value={value} onChange={e=>setValue(e.target.value)}/></label><iframe title={'Frame '+id} srcDoc='<input value="same renderer"/>'/><span>{active?'visible':'hidden'}</span></div>}
-function Fixture(){const[layout,setLayout]=useState(initial);window.currentLayout=layout;window.issue=(type,payload)=>setLayout(current=>applySplitWorkspaceCommand(current,type,payload));return <WorkspaceSplitLayout layout={layout} showHistory={false} emptyMainPaneId={window.emptyMain?'pane-main':undefined} editorOptions={[{id:'thread',title:'Conversation'},{id:'diff',title:'Diff'}]} onSelectEditor={async(kind,paneId)=>{window.editorChoices.push({kind,paneId});if(window.deferEditorChoice)await new Promise(resolve=>{window.finishEditorChoice=resolve;});}} onDropThread={async()=>{window.threadDrops=(window.threadDrops||0)+1;}} title={view=>view.id} prepare={async()=>{if(window.flushRejected)throw Error('Draft flush failed. Keep this view open.');}} onCommand={async(type,payload)=>{window.commands.push({type,payload});if(window.commandFault)throw Error(window.commandFault);setLayout(current=>applySplitWorkspaceCommand(current,type,payload));}} renderView={(view,active)=><Editor id={view.id} active={active}/>}/>}
-createRoot(document.getElementById('root')).render(<Fixture/>);
+function Editor({id,active}){const[value,setValue]=useState('');const compact=useContext(PaneCompactContext);useEffect(()=>{window.mounts[id]=(window.mounts[id]||0)+1;},[]);return <div>{window.compactProbe&&<><output aria-label={'Compact '+id}>{compact?'compact':'wide'}</output><div className="breadcrumb"><span>Project</span><span>/</span><strong>{id}</strong></div><SessionBranchMenu thread={{id}} messages={[]} overview={{enabled:{branch:true,import:false},capabilities:{nativeFork:'UNPROVEN'},captures:[],imports:[]}} reloadOverview={()=>{}} onOpenThread={()=>{}}/></>}<label>{id}<input aria-label={'Draft '+id} value={value} onChange={e=>setValue(e.target.value)}/></label><iframe title={'Frame '+id} srcDoc='<input value="same renderer"/>'/><span>{active?'visible':'hidden'}</span></div>}
+function Fixture(){const[layout,setLayout]=useState(initial);window.currentLayout=layout;window.issue=(type,payload)=>setLayout(current=>applySplitWorkspaceCommand(current,type,payload));return <WorkspaceSplitLayout layout={layout} showHistory={false} emptyMainPaneId={window.emptyMain?'pane-main':undefined} editorOptions={[{id:'thread',title:'Conversation'},{id:'diff',title:'Diff'}]} onSelectEditor={async(kind,paneId)=>{window.editorChoices.push({kind,paneId});if(window.deferEditorChoice)await new Promise(resolve=>{window.finishEditorChoice=resolve;});}} onDropThread={async()=>{window.threadDrops=(window.threadDrops||0)+1;}} title={view=>view.id} prepare={async()=>{if(window.flushRejected)throw Error('Draft flush failed. Keep this view open.');}} onCommand={async(type,payload)=>{window.commands.push({type,payload});if(window.commandFault)throw Error(window.commandFault);if(type==='pane.resize'&&window.holdResize)await new Promise(resolve=>{window.finishResize=resolve;});setLayout(current=>applySplitWorkspaceCommand(current,type,payload));}} renderView={(view,active)=><Editor id={view.id} active={active}/>}/>}
+const fixtureRoot=createRoot(document.getElementById('root'));window.unmountSplit=()=>fixtureRoot.unmount();fixtureRoot.render(<Fixture/>);
 `;
 beforeAll(async()=>{
  const root=fileURLToPath(new URL('../',import.meta.url));
  const bundled=await build({stdin:{contents:fixture,resolveDir:root,sourcefile:'split-renderer-fixture.tsx',loader:'tsx'},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'},loader:{'.css':'empty'},logLevel:'silent'});
- script=bundled.outputFiles[0]!.text;css=(await Promise.all(['packages/ui-shell/tokens.css','packages/ui-shell/controls.css','apps/web/src/workspace-split.css'].map(path=>readFile(new URL('../'+path,import.meta.url),'utf8')))).join('\n').replace("@import './tokens.css';",'');
+ script=bundled.outputFiles[0]!.text;css=(await Promise.all(['packages/ui-shell/tokens.css','packages/ui-shell/controls.css','apps/web/src/workspace-split.css','apps/web/src/session-branch.css'].map(path=>readFile(new URL('../'+path,import.meta.url),'utf8')))).join('\n').replace("@import './tokens.css';",'');
  browser=await chromium.launch({headless:true,...(process.env.GEN_TEST_BROWSER_CHANNEL?{channel:process.env.GEN_TEST_BROWSER_CHANNEL}:{})});
 });
 afterAll(async()=>{await browser?.close();});
-async function page(){const page=await browser.newPage({viewport:{width:1440,height:900}});await page.setContent('<html><head></head><body style="margin:0"><div id="root" style="display:flex;height:100vh"></div></body></html>');await page.addStyleTag({content:css});await page.addScriptTag({content:script});await page.getByRole('textbox',{name:'Draft one'}).waitFor({state:'visible'});return page;}
+async function page(compactProbe=false){const page=await browser.newPage({viewport:{width:1440,height:900}});await page.evaluate(value=>{(window as any).compactProbe=value;},compactProbe);await page.setContent('<html><head></head><body style="margin:0"><div id="root" style="display:flex;height:100vh"></div></body></html>');await page.addStyleTag({content:css});await page.addScriptTag({content:script});await page.getByRole('textbox',{name:'Draft one'}).waitFor({state:'visible'});return page;}
 async function issue(page:Page,type:string,payload:Record<string,unknown>){await page.evaluate(({type,payload})=>(window as unknown as {issue:(type:string,payload:Record<string,unknown>)=>void}).issue(type,payload),{type,payload});}
 
 it('uses the shared area menu for keyboard editor selection, Escape and outside dismissal',async()=>{
  const tab=await page();try{
-  await tab.evaluate(()=>(window as any).deferEditorChoice=true);
+  await tab.evaluate(()=>window.deferEditorChoice=true);
   const trigger=tab.locator('[data-split-pane="right"]').getByLabel('Area actions',{exact:true});await trigger.click();
   expect(await tab.getByRole('menu',{name:'Area actions',exact:true}).count()).toBe(1);
   expect((await trigger.boundingBox())!.width).toBeLessThanOrEqual(34);
   const choice=tab.getByRole('menuitem',{name:'Editor: Diff',exact:true});await choice.focus();await choice.press('Enter');
-  await tab.waitForFunction(()=>(window as any).editorChoices.length===1);
-  expect(await tab.evaluate(()=>(window as any).editorChoices)).toEqual([{kind:'diff',paneId:'right'}]);
+  await tab.waitForFunction(()=>window.editorChoices.length===1);
+  expect(await tab.evaluate(()=>window.editorChoices)).toEqual([{kind:'diff',paneId:'right'}]);
   expect(await tab.getByRole('menu').count()).toBe(0);expect(await trigger.isDisabled()).toBe(true);
-  await tab.evaluate(()=>(window as any).finishEditorChoice());
+  await tab.evaluate(()=>window.finishEditorChoice());
   await expect.poll(()=>trigger.evaluate(node=>node===document.activeElement)).toBe(true);
   expect(await tab.getByRole('menu').count()).toBe(0);expect(await trigger.evaluate(node=>node===document.activeElement)).toBe(true);
   await trigger.press('ArrowDown');await tab.getByRole('menu').waitFor();await tab.keyboard.press('Escape');
@@ -51,7 +52,7 @@ it('uses the shared area menu for keyboard editor selection, Escape and outside 
 
 it('mounts a tool view opened in the empty main pane',async()=>{
  const tab=await page();try{
-  await tab.evaluate(()=>(window as any).emptyMain=true);
+  await tab.evaluate(()=>window.emptyMain=true);
   await issue(tab,'view.open',{paneId:'pane-main',view:{id:'tool:files',kind:'files',binding:{authority:{kind:'local'},projectId:'p1'}}});
   await tab.locator('[data-split-view="tool:files"] span',{hasText:'visible'}).waitFor();
   expect(await tab.locator('[data-split-view="tool:files"]').evaluate(node=>getComputedStyle(node).display)).not.toBe('none');
@@ -64,12 +65,12 @@ it('mounts a tool view opened in the empty main pane',async()=>{
 
 it('keeps editor focus when a pending area action completes',async()=>{
  const tab=await page();try{
-  await tab.evaluate(()=>(window as any).deferEditorChoice=true);
+  await tab.evaluate(()=>window.deferEditorChoice=true);
   const trigger=tab.locator('[data-split-pane="right"]').getByLabel('Area actions',{exact:true});await trigger.click();
   await tab.getByRole('menuitem',{name:'Editor: Diff',exact:true}).click();
-  await tab.waitForFunction(()=>typeof (window as any).finishEditorChoice==='function');expect(await trigger.isDisabled()).toBe(true);
+  await tab.waitForFunction(()=>typeof window.finishEditorChoice==='function');expect(await trigger.isDisabled()).toBe(true);
   const draft=tab.getByRole('textbox',{name:'Draft two'});await draft.fill('Keep typing during the pending action');
-  await tab.evaluate(()=>(window as any).finishEditorChoice());await expect.poll(()=>trigger.isDisabled()).toBe(false);
+  await tab.evaluate(()=>window.finishEditorChoice());await expect.poll(()=>trigger.isDisabled()).toBe(false);
   expect(await draft.evaluate(node=>node===document.activeElement)).toBe(true);expect(await draft.inputValue()).toBe('Keep typing during the pending action');
  }finally{await tab.close();}
 });
@@ -82,7 +83,7 @@ it('uses a shared narrow-area chooser without remounting either editor',async()=
   expect(await tab.getByRole('listbox',{name:'Active workspace area',exact:true}).count()).toBe(1);
   await tab.getByRole('option',{name:'one',exact:true}).click();await tab.getByRole('textbox',{name:'Draft one'}).waitFor({state:'visible'});
   expect(await tab.getByRole('textbox',{name:'Draft one'}).inputValue()).toBe('Retained narrow draft');
-  expect(await tab.evaluate(()=>(window as any).mounts)).toEqual({one:1,two:1});
+  expect(await tab.evaluate(()=>window.mounts)).toEqual({one:1,two:1});
  }finally{await tab.close();}
 });
 
@@ -171,6 +172,58 @@ it('cancels a pending keyboard resize preview on Escape without a command',async
   expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(before);
  }finally{await tab.close();}
 });
+it('cancels unsent keyboard resize when focus leaves the divider',async()=>{
+ const tab=await page();try{
+  await tab.clock.install();await tab.clock.pauseAt(new Date());
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');
+  await tab.getByRole('textbox',{name:'Draft one'}).focus();await tab.clock.runFor(300);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands)).toEqual([]);
+  expect(await divider.getAttribute('aria-valuenow')).toBe('50');
+  expect(await divider.getAttribute('class')).not.toContain('is-dragging');
+ }finally{await tab.close();}
+});
+it('cancels unsent keyboard resize when the component unmounts',async()=>{
+ const tab=await page();try{
+  await tab.clock.install();await tab.clock.pauseAt(new Date());
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');
+  await tab.evaluate(()=>(window as unknown as {unmountSplit:()=>void}).unmountSplit());await tab.clock.runFor(300);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands)).toEqual([]);
+ }finally{await tab.close();}
+});
+it('cancels unsent keyboard resize when its split is removed from the layout',async()=>{
+ const tab=await page();try{
+  await tab.clock.install();await tab.clock.pauseAt(new Date());
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');
+  await issue(tab,'pane.join',{paneId:'right',targetPaneId:'pane-main'});
+  await expect.poll(()=>divider.count()).toBe(0);await tab.clock.runFor(300);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands)).toEqual([]);
+ }finally{await tab.close();}
+});
+it('cancels unsent keyboard resize before a pointer resize takes ownership',async()=>{
+ const tab=await page();try{
+  await tab.clock.install();await tab.clock.pauseAt(new Date());
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');
+  const box=(await divider.boundingBox())!;await tab.mouse.move(box.x+box.width/2,box.y+120);await tab.mouse.down();
+  await tab.clock.runFor(300);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands)).toEqual([]);
+  await tab.mouse.move(box.x+35,box.y+120);await tab.mouse.up();
+  await expect.poll(()=>tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(1);
+ }finally{await tab.close();}
+});
+it('a settled cancelled keyboard resize cannot clear a newer equal-ratio preview',async()=>{
+ const tab=await page();try{
+  await tab.clock.install();await tab.clock.pauseAt(new Date());
+  await tab.evaluate(()=>(window as unknown as {holdResize:boolean}).holdResize=true);
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();await divider.press('ArrowRight');await tab.clock.runFor(150);
+  await expect.poll(()=>tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(1);
+  await divider.press('Escape');await divider.press('ArrowRight');
+  await tab.evaluate(()=>(window as unknown as {finishResize:()=>void}).finishResize());
+  await expect.poll(()=>tab.evaluate(()=>document.querySelector('.split-workspace')?.getAttribute('aria-busy'))).toBe('false');
+  expect(await divider.getAttribute('class')).toContain('is-dragging');
+  await divider.press('Escape');await tab.clock.runFor(300);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(1);
+ }finally{await tab.close();}
+});
 it('retains layout when draft flush fails and restores desktop geometry after narrow mode',async()=>{
  const tab=await page();try{
   await tab.evaluate(()=>(window as unknown as {flushRejected:boolean}).flushRejected=true);
@@ -210,10 +263,83 @@ it('keeps editor and recovery controls reachable inside a short pane',async()=>{
   await issue(tab,'pane.join',{paneId:'right'});await tab.setViewportSize({width:900,height:270});await tab.locator('[data-split-pane="pane-main"]').getByLabel('Area actions',{exact:true}).click();
   const bounds=await tab.getByRole('menu',{name:'Area actions',exact:true}).boundingBox(),pane=await tab.locator('[data-split-pane="pane-main"]').boundingBox();
   expect(bounds).not.toBeNull();expect(pane).not.toBeNull();expect(bounds!.y).toBeGreaterThanOrEqual(0);expect(bounds!.y+bounds!.height).toBeLessThanOrEqual(270);
-  const recovery=tab.getByRole('menuitem',{name:'Recover: two',exact:true});await recovery.focus();await recovery.scrollIntoViewIfNeeded();expect(await recovery.isVisible()).toBe(true);await recovery.press('Enter');await tab.getByRole('textbox',{name:'Draft two'}).waitFor({state:'visible'});expect(await tab.evaluate(()=>(window as any).mounts)).toEqual({one:1,two:1});
+  const recovery=tab.getByRole('menuitem',{name:'Recover: two',exact:true});await recovery.focus();await recovery.scrollIntoViewIfNeeded();expect(await recovery.isVisible()).toBe(true);await recovery.press('Enter');await tab.getByRole('textbox',{name:'Draft two'}).waitFor({state:'visible'});expect(await tab.evaluate(()=>window.mounts)).toEqual({one:1,two:1});
  }finally{await tab.close();}
 });
-it('exposes clipped tabs through scroll controls, an all-tabs menu and arrow-key focus',async()=>{
+
+for(const check of ['breadcrumb','History'] as const)it(`compacts only the narrow owning view's ${check} and restores it without remounting`,async()=>{
+ const tab=await page(true);try{
+  const narrow=tab.locator('[data-split-view="one"]'),wide=tab.locator('[data-split-view="two"]');
+  const span=await tab.locator('.split-node').evaluate(node=>node.getBoundingClientRect().width-6);
+  await tab.getByRole('textbox',{name:'Draft one'}).fill('Retained compact draft');
+  await issue(tab,'pane.resize',{splitId:'columns',ratio:332/span,span});
+  await expect.poll(()=>narrow.getByLabel('Compact one').textContent()).toBe('compact');
+  expect(await narrow.evaluate(node=>node.getBoundingClientRect().width)).toBeCloseTo(330,0);
+  expect(await wide.getByLabel('Compact two').textContent()).toBe('wide');
+  if(check==='breadcrumb'){
+   expect(await narrow.locator('.breadcrumb>span').first().evaluate(node=>getComputedStyle(node).display)).toBe('none');
+   expect(await narrow.locator('.breadcrumb>strong').isVisible()).toBe(true);
+   expect(await wide.locator('.breadcrumb>span').first().isVisible()).toBe(true);
+  }else{
+   const trigger=narrow.getByRole('button',{name:'History',exact:true});
+   expect(await trigger.getAttribute('aria-label')).toBe('History');
+   expect(await trigger.innerText()).toBe('');
+   const rect=await trigger.boundingBox();expect(rect?.width).toBe(32);expect(rect?.height).toBe(32);
+   expect(await wide.getByRole('button',{name:'History',exact:true}).innerText()).toBe('History');
+   await trigger.click();await tab.getByRole('menu',{name:'History',exact:true}).waitFor();
+   await tab.keyboard.press('Escape');await expect.poll(()=>trigger.evaluate(node=>node===document.activeElement)).toBe(true);
+  }
+  await issue(tab,'pane.resize',{splitId:'columns',ratio:483/span,span});
+  await expect.poll(()=>narrow.getByLabel('Compact one').textContent()).toBe('wide');
+  expect(await narrow.evaluate(node=>node.getBoundingClientRect().width)).toBeCloseTo(481,0);
+  expect(await narrow.locator('.breadcrumb>span').first().isVisible()).toBe(true);
+  expect(await narrow.getByRole('button',{name:'History',exact:true}).innerText()).toBe('History');
+  expect(await tab.getByRole('textbox',{name:'Draft one'}).inputValue()).toBe('Retained compact draft');
+  expect(await tab.evaluate(()=>(window as any).mounts)).toEqual({one:1,two:1});
+ }finally{await tab.close();}
+});
+it('activates sibling tabs with arrow keys without replacing either editor',async()=>{
+ const tab=await page();try{
+  const left=tab.getByRole('textbox',{name:'Draft one'}),twoDraft=tab.getByRole('textbox',{name:'Draft two'});
+  await left.fill('Unchanged peer draft');await twoDraft.fill('Retained tab draft');
+  await issue(tab,'view.open',{paneId:'right',view:{id:'t3',kind:'thread',binding:{authority:{kind:'local'},threadId:'t3'}}});
+  await issue(tab,'view.activate',{paneId:'right',viewId:'two'});
+  const right=tab.locator('[data-split-pane="right"]'),two=right.getByRole('tab',{name:'two',exact:true}),three=right.getByRole('tab',{name:'t3',exact:true});
+  await two.focus();await tab.keyboard.press('ArrowRight');
+  await expect.poll(()=>three.getAttribute('aria-selected'),{timeout:1500}).toBe('true');
+  expect(await three.getAttribute('tabindex')).toBe('0');expect(await two.getAttribute('tabindex')).toBe('-1');
+  expect(await three.evaluate(node=>node===document.activeElement)).toBe(true);
+  await tab.getByRole('textbox',{name:'Draft t3'}).waitFor({state:'visible'});
+  expect(await left.inputValue()).toBe('Unchanged peer draft');
+  await tab.keyboard.press('ArrowLeft');await expect.poll(()=>two.getAttribute('aria-selected')).toBe('true');
+  expect(await two.evaluate(node=>node===document.activeElement)).toBe(true);expect(await two.getAttribute('tabindex')).toBe('0');
+  expect(await twoDraft.inputValue()).toBe('Retained tab draft');
+  await tab.keyboard.press('ArrowLeft');await expect.poll(()=>three.getAttribute('aria-selected')).toBe('true');
+  expect(await three.evaluate(node=>node===document.activeElement)).toBe(true);
+  await tab.keyboard.press('ArrowRight');await expect.poll(()=>two.getAttribute('aria-selected')).toBe('true');
+  expect(await two.evaluate(node=>node===document.activeElement)).toBe(true);
+  expect(await tab.evaluate(()=>(window as unknown as {mounts:Record<string,number>}).mounts)).toEqual({one:1,two:1,t3:1});
+ }finally{await tab.close();}
+});
+
+for(const policy of ['reduced','off'])it(`uses instant tab scrolling with app motion ${policy}`,async()=>{
+ const tab=await page();try{
+  await tab.emulateMedia({reducedMotion:'no-preference'});
+  for(const id of ['t3','t4','t5','t6','t7','t8','t9','t10'])await issue(tab,'view.open',{paneId:'right',view:{id,kind:'thread',binding:{authority:{kind:'local'},threadId:id}}});
+  const right=tab.locator('[data-split-pane="right"]');
+  await right.getByRole('button',{name:'Scroll tabs left'}).waitFor();
+  await tab.evaluate(value=>{
+   document.documentElement.dataset.motion=value;
+   const node=document.querySelector<HTMLElement>('[data-split-pane="right"] .split-tab-strip')!,scroll=node.scrollBy.bind(node),calls:ScrollToOptions[]=[];
+   Object.assign(window,{tabScrollCalls:calls});
+   node.scrollBy=((options:ScrollToOptions)=>{calls.push(options);scroll(options);}) as typeof node.scrollBy;
+  },policy);
+  await right.getByRole('button',{name:'Scroll tabs left'}).click();
+  expect(await tab.evaluate(()=>(window as unknown as {tabScrollCalls:ScrollToOptions[]}).tabScrollCalls.at(-1)?.behavior)).toBe('auto');
+ }finally{await tab.close();}
+});
+
+it('exposes clipped tabs through scroll controls, an all-tabs menu and arrow-key activation',async()=>{
  const tab=await page();try{
   for(const id of ['t3','t4','t5','t6','t7','t8','t9','t10'])await issue(tab,'view.open',{paneId:'right',view:{id,kind:'thread',binding:{authority:{kind:'local'},threadId:id}}});
   const right=tab.locator('[data-split-pane="right"]'),strip=right.locator('.split-tab-strip');
@@ -235,7 +361,9 @@ it('exposes clipped tabs through scroll controls, an all-tabs menu and arrow-key
   expect(await active.getAttribute('tabindex')).toBe('0');
   expect(await right.locator('[role="tab"][aria-selected="false"]').first().getAttribute('tabindex')).toBe('-1');
   await active.focus();await tab.keyboard.press('ArrowRight');
-  await tab.waitForFunction(()=>(document.activeElement as HTMLElement|null)?.getAttribute('aria-selected')==='false');
+  const next=right.getByRole('tab',{name:'t3',exact:true});
+  await expect.poll(()=>next.getAttribute('aria-selected')).toBe('true');
+  expect(await next.evaluate(node=>node===document.activeElement)).toBe(true);
   // The newly focused tab is revealed even when it started clipped.
   await tab.waitForFunction(()=>{const node=document.activeElement as HTMLElement;const stripEl=document.querySelector('[data-split-pane="right"] .split-tab-strip') as HTMLElement;return node.offsetLeft+node.offsetWidth>stripEl.scrollLeft&&node.offsetLeft<stripEl.scrollLeft+stripEl.clientWidth;});
  }finally{await tab.close();}
