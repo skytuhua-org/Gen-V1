@@ -1,6 +1,6 @@
 import {copyFile,lstat,mkdir,readdir,readFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
-import {args,hash,json,main,output,required,windows} from './common.ts';
+import {args,hash,json,main,output,required,sha,windows} from './common.ts';
 import {assertManifestVersion,compare,snapshot} from './profile-manifest.ts';
 
 type Inventory={version:1;files:{root:'profile'|'host';path:string;bytes:number;sha256:string}[];directories:{root:'profile'|'host';path:string}[];seedSha256:string;manifestSha256:string};
@@ -10,7 +10,14 @@ async function empty(path:string){try{await ordinary(path,true);if((await readdi
 export async function archiveProfile(profile:string,host:string,seed:string,manifest:string,destination:string){
  await empty(destination);await mkdir(destination,{recursive:true});const inventory:Inventory={version:1,files:[],directories:[],seedSha256:await hash(seed),manifestSha256:await hash(manifest)};
  for(const root of ['profile','host'] as const){const source=root==='profile'?profile:host;await ordinary(source,true);await mkdir(join(destination,root));async function walk(part=''){for(const entry of await readdir(join(source,part),{withFileTypes:true})){const path=relative(part?part+'/'+entry.name:entry.name),from=join(source,path),to=join(destination,root,path);if(entry.isDirectory()){await ordinary(from,true);inventory.directories.push({root,path});await mkdir(to);await walk(path);}else{const info=await ordinary(from,false);await copyFile(from,to);const sha256=await hash(from);if(await hash(to)!==sha256)throw Error('Source changed during archive.');inventory.files.push({root,path,bytes:info.size,sha256});}}}await walk();}
- await copyFile(seed,join(destination,'seed.json'));await copyFile(manifest,join(destination,'pre-upgrade-manifest.json'));await json(join(destination,'archive.json'),inventory);return inventory;
+ const copiedSeed=join(destination,'seed.json'),copiedManifest=join(destination,'pre-upgrade-manifest.json');
+ await copyFile(seed,copiedSeed);await copyFile(manifest,copiedManifest);
+ const manifestBytes=await readFile(copiedManifest);
+ if(await hash(copiedSeed)!==inventory.seedSha256||sha(manifestBytes)!==inventory.manifestSha256)throw Error('Archive metadata changed during copy.');
+ const before=JSON.parse(manifestBytes.toString('utf8')) as Awaited<ReturnType<typeof snapshot>>;assertManifestVersion(before);
+ const copied=new Map(inventory.files.map(file=>[file.root+'/'+file.path,file]));
+ for(const file of before.files){const key=file.root+'/'+file.path,copy=copied.get(key);if(!copy||copy.bytes!==file.bytes||copy.sha256!==file.sha256)throw Error('Archive does not match pre-upgrade manifest: '+key);}
+ await json(join(destination,'archive.json'),inventory);return inventory;
 }
 export async function restoreProfile(archive:string,profile:string,host:string,out:string,install?:string){
  const inventory=JSON.parse(await readFile(join(archive,'archive.json'),'utf8')) as Inventory;if(inventory.version!==1||!Array.isArray(inventory.files)||!Array.isArray(inventory.directories))throw Error('Unsupported archive.');
