@@ -26,8 +26,8 @@ async function fixture(){
  const list=vi.fn(async(projectId:string)=>({repo:repos[projectId],items:[item(99,'Repository-wide fixture',repos[projectId])]}));
  const repo=vi.fn(async(projectId:string)=>({path:root,repo:repos[projectId]}));
  const comparisonReader=()=>vi.fn(async(projectId:string,threadId:string|undefined,input:unknown)=>{await binding(projectId,threadId);return{fixture:input};});
- const comparisons={local:comparisonReader(),localFile:comparisonReader(),remote:comparisonReader(),remoteFile:comparisonReader()};
- const projects={store,binding,gitComparison:comparisons.local,gitComparisonFile:comparisons.localFile,workspace:{migrateProjects:vi.fn()},dispose:async()=>{}} as unknown as ProjectTools,terminals={dispose:async()=>{}} as TerminalHost;
+ const comparisons={local:comparisonReader(),localFile:comparisonReader(),remote:comparisonReader(),remoteFile:comparisonReader(),history:comparisonReader(),historyCommit:comparisonReader(),historyFile:comparisonReader()};
+ const projects={store,binding,gitComparison:comparisons.local,gitComparisonFile:comparisons.localFile,gitHistory:comparisons.history,gitHistoryCommit:comparisons.historyCommit,gitHistoryFile:comparisons.historyFile,workspace:{migrateProjects:vi.fn()},dispose:async()=>{}} as unknown as ProjectTools,terminals={dispose:async()=>{}} as TerminalHost;
  const auth={start:vi.fn(async()=>({id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',userCode:'ABCD-EFGH'})),poll:vi.fn(async()=>({status:'pending'})),cancel:vi.fn(async()=>({status:'cancelled'}))};
  registerWorkspaceHost(service,{projects,terminals,github:{details,list,repo,auth,comparison:comparisons.remote,comparisonFile:comparisons.remoteFile} as unknown as GitHubTools});
  app.setErrorHandler((error,_request,reply)=>reply.code(error instanceof ZodError?400:error instanceof HarnessError?403:500).send({error:{code:error instanceof HarnessError?error.code:'INVALID_INPUT'}}));
@@ -100,6 +100,14 @@ it('routes exact local and remote comparison reads without substituting action r
  for(const [url,reader,input] of reads){const response=await app.inject(url);expect(response.statusCode).toBe(200);expect(response.headers['cache-control']).toBe('no-store');expect(reader).toHaveBeenLastCalledWith('project','alpha',input);}
  for(const url of ['/api/projects/project/git/comparison?scope=unstaged','/api/projects/project/git/comparison?scope=staged&authority=company','/api/projects/project/git/comparison/file?comparisonId=bad&path=file','/api/projects/project/pull-requests/0/comparison'])expect((await app.inject(url)).statusCode).toBe(400);
  expect((await app.inject('/api/projects/project/git/comparison?scope=worktree&threadId=gamma')).statusCode).toBe(403);
+});
+
+it('routes exact git history reads beneath the same ownership and schema hooks',async()=>{
+ const {app,comparisons}=await fixture(),oid='a'.repeat(40),id='b'.repeat(64),snapshotId='c'.repeat(64),path='src/a.ts';
+ const reads=[['/api/projects/project/git/history?threadId=alpha',comparisons.history,{cursor:undefined}],['/api/projects/project/git/history?threadId=alpha&cursor=snap-1%3A50',comparisons.history,{cursor:'snap-1:50'}],['/api/projects/project/git/history/commit?threadId=alpha&snapshotId='+snapshotId+'&oid='+oid,comparisons.historyCommit,{snapshotId,oid}],['/api/projects/project/git/history/file?threadId=alpha&comparisonId='+id+'&path='+path,comparisons.historyFile,{comparisonId:id,path}]] as const;
+ for(const [url,reader,input] of reads){const response=await app.inject(url);expect(response.statusCode).toBe(200);expect(response.headers['cache-control']).toBe('no-store');expect(reader).toHaveBeenLastCalledWith('project','alpha',input);}
+ for(const url of ['/api/projects/project/git/history/commit?oid='+oid,'/api/projects/project/git/history/commit?snapshotId=snap-1&oid=not-an-oid','/api/projects/project/git/history/file?comparisonId='+id,'/api/projects/project/git/history/file?comparisonId=bad&path='+path,'/api/projects/project/git/history?unknown=1'])expect((await app.inject(url)).statusCode).toBe(400);
+ expect((await app.inject('/api/projects/project/git/history?threadId=gamma')).statusCode).toBe(403);
 });
 
 it('protects comparison routes with the actual host, origin and Personal session hooks',async()=>{

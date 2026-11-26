@@ -15,6 +15,7 @@ export interface DomainContext {
   threadId: string;
   signal: AbortSignal;
   resolveResource(id: string, relativePath?: string, write?: boolean): Promise<string>;
+  denyFilePath?(grantRelativePath: string): boolean;
   withResource?<T>(id: string, relativePath: string | undefined, write: boolean, action: (path: string) => Promise<T>): Promise<T>;
   managedGitFamily?(cwd: string): ManagedGitFamily | undefined | Promise<ManagedGitFamily | undefined>;
   publishData(value: unknown, provenance: string): DataRecord;
@@ -91,6 +92,7 @@ export async function handleDomainTool(name: string, rawArgs: unknown, ctx: Doma
           if ([".git", "node_modules"].includes(entry.name) || entry.isSymbolicLink()) continue;
           if (++visited > 10_000 || entries.length >= (a.limit ?? 500)) { truncated = true; return; }
           const child = path ? `${path}/${entry.name}` : entry.name;
+          if (ctx.denyFilePath?.(child)) continue;
           if (entry.isDirectory()) await walk(child);
           else if (entry.isFile()) { const bytes = await access(ctx, a.resourceId, child, false, async resolved => (await stat(resolved)).size); entries.push({ path: child, bytes }); }
           if (truncated) return;
@@ -259,7 +261,7 @@ export async function reconcileDomainOperation(operation: Operation, ctx: Domain
     default: return unknown(`No read-only reconciliation is defined for ${operation.kind}`);
   } } catch (error) {
     const code = error instanceof HarnessError ? error.code : (error as NodeJS.ErrnoException).code;
-    if (["ENOENT", "INVALID_RESOURCE", "DATABASE_ERROR", "DATABASE_TIMEOUT"].includes(code ?? "")) return unknown(`Resource observation is unavailable: ${error instanceof Error ? error.message : String(error)}. Outcome remains unknown; no automatic retry.`);
+    if (["ENOENT", "INVALID_RESOURCE", "CAPABILITY_DENIED", "DATABASE_ERROR", "DATABASE_TIMEOUT"].includes(code ?? "")) return unknown(`Resource observation is unavailable: ${error instanceof Error ? error.message : String(error)}. Outcome remains unknown; no automatic retry.`);
     throw error;
   }
 }

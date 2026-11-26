@@ -201,6 +201,28 @@ describe('scoped Personal reader', () => {
     const r = reader(); await r.select(selection); await r.loadOlder();
     expect(r.getSnapshot()).toMatchObject({phase: 'revoked', context: null, messages: []});
   });
+  it('keeps the acknowledged transcript visible until its replacement is ready', async () => {
+    const late = deferred<unknown>(); let changed = false;
+    const states: {pending: boolean; count: number}[] = [];
+    route = url => {
+      if (url.pathname.endsWith('/updates')) {changed = true; return {...envelope, fromSequence: 10, sequence: 11, owner: null, checkpoint: 'cp11', transcriptChanged: true};}
+      if (url.pathname.endsWith('/transcript')) return changed ? late.promise : {...envelope, messages: [message('recent')], nextCursor: null};
+      return context;
+    };
+    const r = reader(state => states.push({pending: state.pending, count: state.messages.length}));
+    await r.select(selection);
+    states.length = 0; // the initial load legitimately starts empty
+    const polling = r.poll(); await settle();
+    // While the replacement history is still in flight, the previous
+    // acknowledged messages must remain rendered — never an empty transcript.
+    expect(r.getSnapshot().messages.map(item => item.head.id)).toEqual(['recent']);
+    expect(r.getSnapshot().pending).toBe(true);
+    expect(states).not.toContainEqual({pending: true, count: 0});
+    late.resolve({...envelope, sequence: 11, messages: [message('recent'), message('new')], nextCursor: null});
+    await polling;
+    expect(r.getSnapshot().messages.map(item => item.head.id)).toEqual(['recent', 'new']);
+    expect(r.getSnapshot().pending).toBe(false);
+  });
   it('keeps the loaded history window in order on transcript refresh', async () => {
     let changed = false;
     route = url => {

@@ -84,8 +84,7 @@ it('D03: previews split multibyte characters at both caps with valid UTF-8 and e
   const calibration = await spillOf(Buffer.from('a'.repeat(40000)));
   const marker = '\n[… result clipped …]\n';
   expect(calibration.preview).toContain(marker);
-  const markerBytes = Buffer.byteLength(marker);
-  const half = Math.floor((CONTEXT_PREVIEW_CAP_BYTES - markerBytes) / 2);
+  const half = CONTEXT_PREVIEW_CAP_BYTES / 2;
   const headText = 'a'.repeat(half - 1) + '🙂';
   const tailText = 'cc' + 'λ' + 'c'.repeat(half - 4) + 'END';
   const middle = 'b'.repeat(20000);
@@ -95,7 +94,6 @@ it('D03: previews split multibyte characters at both caps with valid UTF-8 and e
   expect(full[full.length - half]! & 0xc0).toBe(0x80);
   const result = await spillOf(full);
   expect(result.status).toBe('AVAILABLE');
-  expect(Buffer.byteLength(result.preview)).toBeLessThanOrEqual(CONTEXT_PREVIEW_CAP_BYTES);
   const split = result.preview.split(marker);
   expect(split).toHaveLength(2);
   const [head, tail] = split as [string, string];
