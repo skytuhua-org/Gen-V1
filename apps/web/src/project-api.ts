@@ -37,6 +37,7 @@ export function useProjectContext(projectId?:string,threadId?:string,workspaceId
   if(activeLoad.current===load)await load();
   return response;
  },[projectId,threadId,load]);
+ const refresh=useCallback(()=>{void load();},[load]);
  const current=state.owner===owner?state:{context:null,loading:Boolean(projectId),error:''};
- return{context:current.context,loading:current.loading,error:current.error,action};
+ return{context:current.context,loading:current.loading,error:current.error,action,refresh};
 }

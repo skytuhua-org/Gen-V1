@@ -33,7 +33,7 @@ function fixture(options: { idleExecutor?: ConstructorParameters<typeof Backgrou
   let clock = 1_700_000_000_000;
   const now = () => clock;
   const advance = (ms: number) => { clock += ms; };
-  // Mirrors Service.publishBackgroundOutput: mints a canonical UUID record in
+  // Mirrors the host publication seam (ServiceContextResults.publishOutput): mints a canonical UUID record in
   // the same private custody the service uses (store.dataDir).
   const publishOutput = options.publishOutput ?? (async (input: BackgroundOutputPublicationV1) => {
     const custody = await openContextResultCustody(store.dataDir);
@@ -1038,8 +1038,9 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     __setCapabilityFlagForTests("context.compilerV1", true); __setCapabilityFlagForTests("tools.deferredV1", true);
     f.store.internal("fixture.live-owner", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-1", epoch: 3, status: "working", accountId: "acct-1", workspaceId: "ws-1", projectId: "proj-1" } as Thread));
     const bytes = new TextEncoder().encode("retained window");
-    const publish = (service as unknown as { publishBackgroundOutput: (i: unknown) => Promise<{ handle: string; digest: string; owner: { workspaceId: string; accountId: string | null } } | null> }).publishBackgroundOutput;
-    const record = await publish.call(service, { workId: "work-1", owner: { threadId: f.thread.id, runId: "run-1", epoch: 3, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-1" }, effectId: "eff-1", bytes, startByte: 0, omittedBytes: 0 });
+    const publishHost = (service as unknown as { contextResultsHost: { publishOutput: (i: unknown) => Promise<{ handle: string; digest: string; owner: { workspaceId: string; accountId: string | null } } | null> } }).contextResultsHost;
+    const publish = publishHost.publishOutput.bind(publishHost) as (i: unknown) => Promise<{ handle: string; digest: string; owner: { workspaceId: string; accountId: string | null } } | null>;
+    const record = await publish( { workId: "work-1", owner: { threadId: f.thread.id, runId: "run-1", epoch: 3, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-1" }, effectId: "eff-1", bytes, startByte: 0, omittedBytes: 0 });
     // Canonical M04 shape: UUID handle accepted by context_result_read and
     // resolvable through the private custody vault, digest over retained bytes.
     expect(record?.handle).toMatch(HANDLE);
@@ -1057,7 +1058,7 @@ describe("M10-T01 canonical output custody reproduction (#2014)", () => {
     f.store.internal("fixture.drift-owner", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-1", epoch: 3, status: "working", accountId: "acct-2", workspaceId: "ws-1", projectId: "proj-1" } as Thread));
     await expect(vault.read({ owner: { ...owner, accountId: "acct-2" }, handle: record!.handle, offset: 0, length: 1 })).resolves.toMatchObject({ status: "UNAVAILABLE" });
     __setCapabilityFlagForTests("tools.deferredV1", undefined);
-    expect(await publish.call(service, { workId: "work-1", owner: { threadId: f.thread.id, runId: "run-1", epoch: 3, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-2" }, effectId: null, bytes, startByte: 0, omittedBytes: 0 })).toBeNull();
+    expect(await publish( { workId: "work-1", owner: { threadId: f.thread.id, runId: "run-1", epoch: 3, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-2" }, effectId: null, bytes, startByte: 0, omittedBytes: 0 })).toBeNull();
   });
 });
 

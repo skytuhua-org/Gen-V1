@@ -2,15 +2,12 @@ import {attestVerificationArtifacts} from './verification-artifacts.ts';
 import { randomUUID, createHash } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
 import { MODEL_ONLY_MAX_PROMPT_BYTES } from '../runtime/model-only.ts';
-import type { ContextRequestObservationV1, ContextResultOwnerV1, ToolResultHandleV1 } from '../contracts/request-context.ts';
-import { createContextResults, encodeContextResult, CONTEXT_PREVIEW_CAP_BYTES, MAX_TRACKED_RESULTS, type ContextResultStorage } from './context-results.ts';
+import type { ContextRequestObservationV1 } from '../contracts/request-context.ts';
+import {ServiceContextResults} from './service-context-results.ts';
 import { createContextResultLineage } from './context-result-lineage.ts';
-import { openContextResultCustody } from './context-result-custody.ts';
 import { contextResultReadArgs } from './context-result-tool.ts';
 import { projectHostRequest } from './host-context-projection.ts';
-import { createHostRelevanceObserver } from './context-relevance-host.ts';
 import { withApprovedProjectContext } from './approved-project-context.ts';
-import { createRepositoryMapReader } from './repository-map-host.ts';
 import type {AccountAuthTarget} from '../contracts/authentication.ts';
 import {privateFamilyForBinding} from '../workspace/git-storage.ts';
 import { mkdir, readFile, writeFile, stat, open } from "node:fs/promises";
@@ -19,6 +16,8 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { Store, digest, compactionOwnerKey, type CompactionAttemptRecord } from "../storage/store.ts";
 import {PersonalResearchRepository} from '../research/repository.ts';
 import { assertNotStorage, canonical, inside, resolveGrant, projectMemoryDeletionLedgerPath } from "./security.ts";
+import { agentFilePolicyMatchers } from "./agent-file-policy-store.ts";
+import { FILE_POLICY_DENIED, FILE_POLICY_DENIED_MESSAGE } from "../contracts/agent-file-policy.ts";
 import { withResourceGrant } from "./file-access.ts";
 import { admitSchema, validateJson, widgetDefinition, GENERATED_APPS_ENABLED } from "./widgets.ts";
 import { patchSpec, protectedFingerprint } from "./presentation.ts";
@@ -83,8 +82,7 @@ import type {MemoryAccess,MemoryAction,MemoryScope} from '../contracts/project-m
 import {BackgroundWorkCoordinator,type BackgroundWorkOptions} from './background-work.ts';
 import {ExternalIntakeCoordinator,type IntakeAuth,type IntakeRecord} from './external-intake.ts';
 import type {ModelRequestGate} from '../runtime/model-capacity.ts';
-import type {BackgroundWorkKind, BackgroundOutputPublicationV1} from '../contracts/background-work.ts';
-import {BACKGROUND_SCHEDULER_LIMITS} from '../contracts/background-work.ts';
+import type {BackgroundWorkKind} from '../contracts/background-work.ts';
 
 type Outbox = WorkbenchQueuedInput & {messageId?:string;completedWrite?:CompletedWriteReceipt;hookClaimed?:boolean;hookDiagnostic?:WriteHookDiagnostic;sendMode?:SendModeV1};
 type Lease = { id: string; threadId: string; clientId: string; fields: string[]; expiresAt: number };
@@ -181,126 +179,31 @@ export class Service {
   private readonly teardowns=new Map<string,RunTeardown>();
   private readonly backgroundSourceOwners=new Map<string,{ctx:RunContext;threadEpoch:number}>();
   private readonly publishingStops=new Set<string>();
+  private readonly runEndHooks=new Set<(threadId:string,status:'cancelled'|'failed'|'interrupted')=>void>();
+
+  /** Subscribes to a thread run ending cancelled, failed or interrupted — the
+   * surfaces owner-scoped registries (edit previews) use to discard run-bound
+   * state. 'review_required' settlements do not fire the hooks. */
+  onRunEnd(hook:(threadId:string,status:'cancelled'|'failed'|'interrupted')=>void):()=>void{
+    this.runEndHooks.add(hook);
+    return ()=>{this.runEndHooks.delete(hook);};
+  }
+  private endRun(ctx:RunContext,status:'cancelled'|'failed'|'interrupted'|'review_required'):void{
+    this.planning.endRun(ctx,status);
+    if(status!=='review_required')for(const hook of this.runEndHooks)try{hook(ctx.threadId,status);}catch{/* run-bound discard hooks never break the run ledger */}
+  }
   private readonly authority:ToolAuthority;
   private readonly hostToolRegistryDigest:string;
   private readonly effects:ToolEffectLedger;
   private readonly effectFlags:ReturnType<typeof createToolEffectFlags>;
-  private contextStorage?: Promise<ContextResultStorage>;
-  private contextResults?: ReturnType<typeof createContextResults>;
-  private activeContextReads = 0;
-  private readonly contextResultAuthorities = new Map<string, { expiresAtMs: number; authorized: () => Promise<boolean> }>();
-  private readonly relevanceObserver = createHostRelevanceObserver();
-  private readonly repositoryMaps = createRepositoryMapReader();
-  private relevanceOwner(thread: Thread) {
-    if (!capabilityEnabled('context.compilerV1') || this.closed || !thread.runId || !thread.modelId || thread.sideParentId || thread.kind === 'delegate') return null;
-    const resources = this.store.db.prepare("SELECT body FROM entities WHERE kind='resource' AND thread_id=? ORDER BY id LIMIT 257").all(thread.id);
-    if (resources.length > 256) return null;
-    return { threadId: thread.id, binding: digest([thread.runId, thread.epoch, thread.modelId, thread.thinkingLevel ?? null,
-      this.binding(thread, modelProvider(thread.modelId)).accountId, thread.projectId ?? null, thread.workspaceId ?? null,
-      thread.projectId ? this.store.get('workspaceProjectRoot', thread.projectId) : null,
-      thread.workspaceId ? this.store.get('workspaceBinding', thread.workspaceId) : null, resources]) };
-  }
-  private observeReadRelevance(thread: Thread, sequence: number) {
-    try {
-      const owner = this.relevanceOwner(thread);
-      if (!owner) return undefined;
-      // Limit both the query and its projection. If history overflows this
-      // window, unknown older work is protected rather than scanned or assumed settled.
-      const unresolved = (kind: string, pending: readonly string[]) => {
-        const rows = this.store.db.prepare("SELECT json_extract(body,'$.status') AS status FROM entities WHERE kind=? AND thread_id=? ORDER BY rowid DESC LIMIT 129").all(kind, thread.id) as { status: unknown }[];
-        return rows.length > 128 || rows.some(row => typeof row.status !== 'string' || pending.includes(row.status));
-      };
-      const protect = unresolved('request', ['pending']) || unresolved('operation', ['prepared', 'running', 'unknown']);
-      return this.relevanceObserver.observe(owner, sequence, protect);
-    } catch { return undefined; } // Read-only diagnostics cannot block a foreground request.
-  }
-  private contextResultsEnabled() { return capabilityEnabled('context.compilerV1') && capabilityEnabled('tools.deferredV1'); }
-  private contextResultOwner(thread: Thread) {
-    return { threadId: thread.id, workspaceId: JSON.stringify([thread.workspaceId ?? null, thread.projectId ?? null]), accountId: thread.accountId ?? null };
-  }
-  private contextResultInvocation(thread: Thread) { return digest([thread.id, thread.epoch, thread.runId, thread.modelId ?? null,
-    thread.accountId ?? null, thread.projectId ?? null, thread.workspaceId ?? null, thread.thinkingLevel ?? null, thread.mode ?? null,
-    this.hostToolRegistryDigest, thread.projectId ? this.store.get('workspaceProjectRoot', thread.projectId) : null,
-    thread.workspaceId ? this.store.get('workspaceBinding', thread.workspaceId) : null]); }
-  private contextResultVault() {
-    const open = () => this.contextStorage ??= openContextResultCustody(this.store.dataDir).catch(cause => { this.contextStorage = undefined; throw cause; });
-    return this.contextResults ??= createContextResults({
-      now: Date.now,
-      isAuthorized: async (owner, invocation) => {
-        const proof = this.contextResultAuthorities.get(invocation);
-        if (!proof || proof.expiresAtMs <= Date.now()) { this.contextResultAuthorities.delete(invocation); return false; }
-        const current = () => {
-          const thread = this.store.get<Thread>('thread', owner.threadId);
-          if (this.closed || !this.contextResultsEnabled() || !thread?.runId || !['working', 'awaiting_input'].includes(thread.status) || thread.kind === 'delegate' || thread.sideParentId || this.store.get('archivedThread', thread.id)) return false;
-          const binding = this.contextResultOwner(thread);
-          return invocation.startsWith(this.contextResultInvocation(thread) + ':') && binding.workspaceId === owner.workspaceId && binding.accountId === owner.accountId;
-        };
-        return current() && await proof.authorized() && current();
-      },
-      storage: {
-        put: async (key, bytes, record) => (await open()).put(key, bytes, record),
-        get: async key => (await open()).get(key),
-        getRecord: async key => (await open()).getRecord?.(key),
-        pruneExpired: async now => (await open()).pruneExpired?.(now) ?? 0,
-      },
-    });
-  }
-  /** M10→M04 seam (#2014 T02): publish the bounded retained output window
-   * into canonical custody and mint a ToolResultHandleV1. The handle is
-   * model-readable only through the normal context_result_read path while
-   * the mint-time authority proof stays valid in a live run; the drawer
-   * keeps its own revalidated read. Returns null when publication is
-   * unavailable — callers then leave outputRef unset rather than widening
-   * legacy access. */
-  private async publishBackgroundOutput(input: BackgroundOutputPublicationV1): Promise<ToolResultHandleV1 | null> {
-    if (this.closed || !this.contextResultsEnabled()) return null;
-    const thread = this.store.get<Thread>("thread", input.owner.threadId);
-    if (!thread || this.store.get("archivedThread", input.owner.threadId)) return null;
-    const owner: ContextResultOwnerV1 = { threadId: input.owner.threadId, workspaceId: JSON.stringify([input.owner.workspaceId ?? null, input.owner.projectId ?? null]), accountId: input.owner.accountBinding };
-    const now = Date.now(), expiresAtMs = now + BACKGROUND_SCHEDULER_LIMITS.outputHandleTtlMs;
-    for (const [id, proof] of this.contextResultAuthorities) if (proof.expiresAtMs <= now) this.contextResultAuthorities.delete(id);
-    if (this.contextResultAuthorities.size >= MAX_TRACKED_RESULTS) return null;
-    const invocationId = this.contextResultInvocation(thread) + ":" + randomUUID();
-    const record: ToolResultHandleV1 = { handle: randomUUID(), owner, sourceInvocationId: invocationId,
-      digest: createHash("sha256").update(input.bytes).digest("hex"), bytes: input.bytes.length,
-      mediaType: "text/plain", expiresAtMs, operation: "read-result-range" };
-    this.contextResultAuthorities.set(invocationId, { expiresAtMs, authorized: async () => {
-      const current = this.store.get<Thread>("thread", input.owner.threadId);
-      if (!current || this.closed || this.store.get("archivedThread", input.owner.threadId)) return false;
-      const binding = this.contextResultOwner(current);
-      return binding.workspaceId === owner.workspaceId && binding.accountId === owner.accountId;
-    } });
-    try {
-      const custody = this.contextStorage ??= openContextResultCustody(this.store.dataDir).catch(cause => { this.contextStorage = undefined; throw cause; });
-      // Same disk hygiene as context-results spill: prune expired files and
-      // refuse when the persisted set is already at the tracked cap, so
-      // background publication cannot grow custody unboundedly.
-      const persisted = await (await custody).pruneExpired?.(now);
-      if (persisted !== undefined && persisted >= MAX_TRACKED_RESULTS) { this.contextResultAuthorities.delete(invocationId); return null; }
-      await (await custody).put(record.handle, input.bytes, record);
-    } catch { this.contextResultAuthorities.delete(invocationId); return null; }
-    return record;
-  }
+  private readonly contextResultsHost: ServiceContextResults;
+  private observeReadRelevance(thread: Thread, sequence: number) { return this.contextResultsHost.observeReadRelevance(thread, sequence); }
+  private contextResultsEnabled() { return this.contextResultsHost.enabled(); }
+  private contextResultOwner(thread: Thread) { return this.contextResultsHost.owner(thread); }
+  private contextResultInvocation(thread: Thread) { return this.contextResultsHost.invocation(thread); }
+  private contextResultVault() { return this.contextResultsHost.vault(); }
   private async deliverContextResult(value: unknown, publicCatalog: boolean, thread: Thread, assertCurrent: () => void, lineage?: ReturnType<typeof createContextResultLineage>) {
-    const encoded = encodeContextResult(value);
-    const absent = { status: 'FULL_RESULT_UNAVAILABLE' as const, handle: null, preview: '', omittedBytes: encoded.totalBytes, totalBytes: encoded.totalBytes };
-    try { assertCurrent(); lineage?.assertCurrent(); } catch { return absent; }
-    if (encoded.bytes && encoded.totalBytes! <= CONTEXT_PREVIEW_CAP_BYTES) return value;
-    if (lineage?.observed && !await lineage.authorized()) return absent;
-    try { assertCurrent(); } catch { return absent; }
-    const fallback = { status: 'FULL_RESULT_UNAVAILABLE' as const, handle: null, preview: encoded.preview, omittedBytes: encoded.omittedBytes, totalBytes: encoded.totalBytes };
-    if (!encoded.bytes || !publicCatalog && !lineage?.observed) return fallback;
-    const now = Date.now();
-    for (const [id, proof] of this.contextResultAuthorities) if (proof.expiresAtMs <= now) this.contextResultAuthorities.delete(id);
-    if (this.contextResultAuthorities.size >= MAX_TRACKED_RESULTS) return fallback;
-    const invocationId = this.contextResultInvocation(thread) + ':' + randomUUID(), expiresAtMs = now + 60 * 60_000;
-    this.contextResultAuthorities.set(invocationId, { expiresAtMs, authorized: async () => {
-      try { assertCurrent(); return publicCatalog || Boolean(lineage && await lineage.authorized()); } catch { return false; }
-    } });
-    const result = await this.contextResultVault().spill({ owner: this.contextResultOwner(thread), invocationId, bytes: encoded.bytes, mediaType: encoded.mediaType, expiresAtMs });
-    if (!result.handle) this.contextResultAuthorities.delete(invocationId);
-    try { assertCurrent(); lineage?.assertCurrent(); } catch { this.contextResultAuthorities.delete(invocationId); return absent; }
-    return { ...result, totalBytes: encoded.totalBytes };
+    return this.contextResultsHost.deliver(value, publicCatalog, thread, assertCurrent, lineage);
   }
   private readonly requestCustody:RequestContextCustody;
   private readonly inferenceOwners = new Map<string, { ctx: RunContext; basis: string; sequence: number }>();
@@ -337,6 +240,8 @@ export class Service {
     });
     this.effectFlags=createToolEffectFlags(options.toolEffectFlags);
     const registry=buildToolRegistry();this.hostToolRegistryDigest=digest(registry.map(tool=>[tool.id,tool.schemaDigest]));
+    this.contextResultsHost=new ServiceContextResults({store,hostToolRegistryDigest:this.hostToolRegistryDigest,
+      isClosed:()=>this.closed,binding:(t,p)=>this.binding(t,p)});
     this.authority=new ToolAuthority(registry);this.effects=new ToolEffectLedger(store,this.authority,this.effectFlags,options.toolEffectAuthenticator);
     this.source=options.source;
     this.research=new PersonalResearchRepository(store,{assertHostActive:()=>{if(this.closed||this.updateClosing)throw new HarnessError('HOST_CLOSING','Gen is closing. Saved work is retained.');}});
@@ -358,7 +263,7 @@ export class Service {
       enqueueFollowUp:input=>{this.enqueueInput({id:input.id,threadId:input.threadId,content:input.content,status:'persisted',runId:null});queueMicrotask(()=>this.background(this.deliverOutbox(input.threadId)));},
       gate:options.background?.gate,executionGate:options.background?.executionGate,idleExecutor:options.background?.idleExecutor,forkApi:options.background?.forkApi,
       revalidateAuthority:work=>{try{const thread=this.store.get<Thread>('thread',work.owner.threadId);if(thread?.modelId)assertAccountAvailable(this.store,modelProvider(thread.modelId),thread.accountId??null);return{ok:true};}catch(error){return{ok:false,blockedReason:error instanceof HarnessError?error.code:'ACCOUNT_UNAVAILABLE'};}},
-      publishOutput:input=>this.publishBackgroundOutput(input),
+      publishOutput:input=>this.contextResultsHost.publishOutput(input),
       onPaused:()=>{this.intake.stop();}});
     this.intake=new ExternalIntakeCoordinator({store,auth:options.background?.intakeAuth,fetchImpl:options.background?.intakeFetch,
       createTask:async request=>{
@@ -1058,7 +963,24 @@ export class Service {
   async resolveResource(threadId: string, id: string, relativePath?: string, write = false): Promise<string> {
     const grant = this.store.get<ResourceGrant>("resource", id);
     if (!grant || grant.threadId !== threadId) throw new HarnessError("CAPABILITY_DENIED", "Resource is not granted to this thread");
-    return resolveGrant(grant, relativePath, write, this.store.dataDir);
+    const candidate = await resolveGrant(grant, relativePath, write, this.store.dataDir);
+    await this.assertAgentFilePolicy(threadId, grant, candidate);
+    return candidate;
+  }
+  private filePolicyGuards = new Map<string, { denies: (path: string) => boolean }>();
+  private agentFilePolicy(threadId: string) {
+    const projectId = this.store.get<Thread>("thread", threadId)?.projectId ?? null;
+    const guard = agentFilePolicyMatchers(this.store, projectId);
+    const key = `${projectId ?? ""}@${guard.revision}`;
+    let cached = this.filePolicyGuards.get(key);
+    if (!cached) { cached = guard; if (this.filePolicyGuards.size > 64) this.filePolicyGuards.clear(); this.filePolicyGuards.set(key, cached); }
+    return cached;
+  }
+  private async assertAgentFilePolicy(threadId: string, grant: ResourceGrant, candidate: string) {
+    const rootRelative = grant.kind === "project"
+      ? relative(await canonical(grant.path), candidate).split(sep).join("/")
+      : basename(candidate);
+    if (this.agentFilePolicy(threadId).denies(rootRelative)) throw new HarnessError(FILE_POLICY_DENIED, FILE_POLICY_DENIED_MESSAGE);
   }
   data(threadId: string, id: string, revision?: number): DataRecord {
     return threadData(this.store, threadId, id, revision);
@@ -1161,8 +1083,9 @@ export class Service {
         assertAuthority();
         const grant = this.store.get<ResourceGrant>("resource", id);
         if (!grant || grant.threadId !== threadId) throw new HarnessError("CAPABILITY_DENIED", "Resource is not granted to this thread");
-        return withResourceGrant(grant, this.store.dataDir, relativePath, write, signal ?? new AbortController().signal, path => { assertAuthority(); return action(path); });
+        return withResourceGrant(grant, this.store.dataDir, relativePath, write, signal ?? new AbortController().signal, async path => { assertAuthority(); await this.assertAgentFilePolicy(threadId, grant, path); return action(path); });
       },
+      denyFilePath: (relativePath: string) => this.agentFilePolicy(threadId).denies(relativePath),
       publishData: (value: unknown, provenance: string) => { assertAuthority(); return this.publishData(threadId, value, provenance); },
       prepareOperation: (kind: string, args: Record<string, unknown>, resourceIds: string[], preconditions: Record<string, string>, description: string) => {
         assertAuthority();
@@ -1350,7 +1273,7 @@ export class Service {
       this.publishingStops.add(thread.id);
       try{
         receipt=this.store.command(command,()=>{
-          this.planning.endRun(ctx,'cancelled');
+          this.endRun(ctx,'cancelled');
           this.failUnansweredDetails(ctx,"The explanation was stopped. Resume the task to retry.");
           this.store.put("thread",thread.id,thread.id,{...thread,epoch:thread.epoch+1,runId:null,status:"stopped",updatedAt:now()});
           return {stopped:true,nativeOwner:ctx};
@@ -1937,7 +1860,7 @@ export class Service {
       const intent = this.store.get<{kind:string;previousStatus:Thread["status"]}>("runtimeIntent", ctx.runId);
       const stamp=now();
       if(intent?.kind!=="compaction"){
-        this.planning.endRun(ctx,"failed");
+        this.endRun(ctx,"failed");
         if(!this.store.get('runFailure',ctx.runId))this.store.put('runFailure',ctx.runId,thread.id,{threadId:ctx.threadId,runId:ctx.runId,epoch:ctx.epoch,projectId:thread.projectId??null,occurredAt:stamp});
       }
       this.store.put("thread", thread.id, thread.id, { ...thread, runId: null, status: intent?.kind === "compaction" ? this.afterMaintenance(thread.id, intent.previousStatus) : "interrupted", error: error instanceof Error ? error.message : String(error), updatedAt: stamp });
@@ -2107,7 +2030,7 @@ export class Service {
         const old = this.store.get<{ value: RuntimeUsage }>("usage", thread.id)?.value ?? EMPTY_USAGE;
         let lastRequest = old.lastRequest;
         if (event.type === 'compaction.end' && event.aborted === false) {
-          this.relevanceObserver.forget(thread.id);
+          this.contextResultsHost.observer.forget(thread.id);
           if (lastRequest) { const { relevance: _retired, ...retained } = lastRequest; lastRequest = retained; }
         }
         const next = { ...old, ...(typeof event.usage === "object" ? event.usage : {}), lastRequest, inferenceBudget: old.inferenceBudget, hostProjection: old.hostProjection, compaction: old.compaction, ...(event.type === "compaction.start" ? { activity: "compacting" } : event.type === "compaction.end" ? { activity: "idle" } : {}) };
@@ -2132,14 +2055,14 @@ export class Service {
       }
       if (event.type === "settled") {
         this.inferenceOwners.delete(thread.id);
-        this.relevanceObserver.forget(thread.id);
+        this.contextResultsHost.observer.forget(thread.id);
         this.failUnansweredDetails(event,event.aborted?'The explanation was stopped. Resume the task to retry.':'The agent finished without updating this option. Try again.');
         const intent = this.store.get<{kind:string;previousStatus:Thread["status"]}>("runtimeIntent", event.runId);
         const finished = this.store.get<FinishRecord>("finish", event.runId), finalized = this.store.get<{inputIds: string[]}>("responseCheckpoint", event.runId);
         const handled = new Set([...(finished?.inputIds ?? []), ...(finalized?.inputIds ?? [])]);
         for (const input of this.store.all<Outbox>("outbox", thread.id).filter(i => i.runId === event.runId && i.status !== "handled" && i.enteredRuntime && handled.has(i.id))) this.store.put("outbox", input.id, thread.id, { ...input, status:"handled" });
         const unresolved = this.store.all<Outbox>("outbox", thread.id).some(i => i.runId === event.runId && i.status !== "handled");
-        if(intent?.kind!=="compaction")this.planning.endRun(event,event.aborted?"cancelled":unresolved?"interrupted":"review_required");
+        if(intent?.kind!=="compaction")this.endRun(event,event.aborted?"cancelled":unresolved?"interrupted":"review_required");
         const queuedNext = this.store.all<Outbox>('outbox', thread.id).some(input => input.status === 'persisted' && (input.sendMode === 'AFTER_CURRENT' || input.sourceFailure || input.sourceRecovery?.resumeRequired));
         this.store.put("thread", thread.id, thread.id, { ...thread, runId: null, status: event.aborted ? "stopped" : unresolved ? "interrupted" : intent?.kind === "compaction" ? this.afterMaintenance(thread.id, intent.previousStatus) : this.hasGate(thread.id) ? "awaiting_input" : finished && !finished.invalidated && !queuedNext ? "completed" : "ready", updatedAt: now() });
         const old = this.store.get<{ value: RuntimeUsage }>("usage", thread.id)?.value ?? EMPTY_USAGE; this.store.put("usage", thread.id, thread.id, { id: thread.id, value: { ...old, activity: "idle" } });
@@ -2155,12 +2078,12 @@ export class Service {
     if(owningThread.kind==='delegate')throw new HarnessError('AGENT_TOOL_DENIED','Delegated tools must use their parent-owned read-only coordinator.');
     if(owningThread.sideParentId&&call.name!=='task_finish')throw new HarnessError('SIDE_CHAT_READ_ONLY','Side conversations answer in text; files, mutations and delegation are unavailable.');
     const limited = capabilityEnabled('context.compilerV1') && this.authority.definition(call.name)?.risk === 'READ';
-    if (limited && this.activeContextReads >= 4) throw new HarnessError('CONTEXT_READ_LIMIT', 'Wait for an admitted context read to finish before requesting another.');
-    if (limited) this.activeContextReads++;
+    if (limited && this.contextResultsHost.activeReads >= 4) throw new HarnessError('CONTEXT_READ_LIMIT', 'Wait for an admitted context read to finish before requesting another.');
+    if (limited) this.contextResultsHost.activeReads++;
     // A revoked call retains its slot until actual read/retention work settles.
     // Releasing on cancellation alone would allow abandoned reads to accumulate.
     try { return await this.admittedTool(call, ctx, owningThread); }
-    finally { if (limited) this.activeContextReads--; }
+    finally { if (limited) this.contextResultsHost.activeReads--; }
   }
   private async admittedTool(call: ToolCall, ctx: RunContext, owningThread: Thread): Promise<unknown> {
     const role:ActorRole=owningThread.sideParentId?'side':'run';
@@ -2174,10 +2097,10 @@ export class Service {
     const readRetryable = definition?.risk === 'READ' && definition.replayClass === 'READ_RETRYABLE';
     const lineage = bound && readRetryable
       ? createContextResultLineage({ store: this.store, threadId: ctx.threadId, signal: this.aborts.get(ctx.threadId)?.signal ?? new AbortController().signal, assertCurrent: assertResultCurrent }) : undefined;
-    let ticket: ReturnType<typeof this.relevanceObserver.begin>;
+    let ticket: ReturnType<typeof this.contextResultsHost.observer.begin>;
     try {
-      const definition = this.authority.definition(call.name), owner = this.relevanceOwner(owningThread);
-      if (owner && definition?.risk === 'READ' && definition.replayClass === 'READ_RETRYABLE') ticket = this.relevanceObserver.begin(owner);
+      const definition = this.authority.definition(call.name), owner = this.contextResultsHost.relevanceOwner(owningThread);
+      if (owner && definition?.risk === 'READ' && definition.replayClass === 'READ_RETRYABLE') ticket = this.contextResultsHost.observer.begin(owner);
     } catch { /* Observation is optional for an otherwise authorized tool result. */ }
     let entered = false;
     const execute = () => { entered = true; return this.toolBody(call,ctx,owningThread,lineage); };
@@ -2190,8 +2113,8 @@ export class Service {
       : { status: 'FULL_RESULT_UNAVAILABLE', handle: null, preview: '', omittedBytes: null, totalBytes: null };
     else if (bound) result = await this.deliverContextResult(result, publicCatalog, owningThread, assertResultCurrent, lineage);
     try {
-      const owner = ticket && this.relevanceOwner(this.assertRun(ctx));
-      if (owner) this.relevanceObserver.complete(ticket, owner, result);
+      const owner = ticket && this.contextResultsHost.relevanceOwner(this.assertRun(ctx));
+      if (owner) this.contextResultsHost.observer.complete(ticket, owner, result);
     } catch { /* Never change the delivered result because diagnostics failed. */ }
     return result;
   }
@@ -2225,7 +2148,7 @@ export class Service {
     }
     if(call.name==='task_delegate')return this.planning.delegate({...ctx},args,controller?.signal??new AbortController().signal);
     if(call.name==='agent_progress')throw new HarnessError('AGENT_TOOL_DENIED','Agent progress belongs to a delegated session');
-    if(call.name==='repository_map')return this.repositoryMaps.read({store:this.store,ctx,signal:controller?.signal??new AbortController().signal,owner:()=>this.assertRun(ctx)},args,(value,provenance)=>this.publishData(ctx.threadId,value,provenance));
+    if(call.name==='repository_map')return this.contextResultsHost.maps.read({store:this.store,ctx,signal:controller?.signal??new AbortController().signal,owner:()=>this.assertRun(ctx)},args,(value,provenance)=>this.publishData(ctx.threadId,value,provenance));
     if (call.name === 'context_result_read') {
       if (!this.contextResultsEnabled()) throw new HarnessError('CAPABILITY_UNAVAILABLE', 'Context result retrieval is disabled');
       const parsed = contextResultReadArgs.safeParse(args);
@@ -2603,7 +2526,7 @@ export class Service {
   }
   async dispose(): Promise<void> {
     for(const key of [...this.deltaBuffers.keys()])this.flushDelta(key);
-    this.closed=true;this.projectTrustHostInstance?.dispose();this.requestCustody.dispose();this.relevanceObserver.clear();this.repositoryMaps.clear();this.inferenceOwners.clear();this.nativeCompactionAdmissions.clear();this.contextResultAuthorities.clear();clearInterval(this.curatorTimer);for(const controller of this.aborts.values())controller.abort();
+    this.closed=true;this.projectTrustHostInstance?.dispose();this.requestCustody.dispose();this.inferenceOwners.clear();this.nativeCompactionAdmissions.clear();;this.contextResultsHost.dispose();clearInterval(this.curatorTimer);for(const controller of this.aborts.values())controller.abort();
     const settled=await Promise.allSettled([this.backgroundWork.drain(),this.intake.drain(),this.agentWork.dispose(),this.memoryHostInstance?.dispose(),this.predictions.dispose(),this.learning.dispose(),this.planning.dispose(),this.sideRuntime.dispose(),this.runtime.dispose()]);
     this.backgroundWork.dispose();
     await Promise.allSettled([...this.pending]);
