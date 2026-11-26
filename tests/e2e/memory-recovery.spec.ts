@@ -285,3 +285,40 @@ test('Discard restores the saved note, clears its draft generation and focuses t
   await expect(editor).toHaveValue('Edited again.');
   await expect(page.getByRole('button', { name: 'Discard unsaved changes to alpha' })).toBeVisible();
 });
+
+test('busy copy names the in-flight action for save, delete and add', async ({ page }) => {
+  const pending: Route[] = [];
+  const commands = await mount(page, {}, async route => { pending.push(route); });
+  const settle = async (route: Route, result: unknown = {}) => route.fulfill({ json: { commandId: (route.request().postDataJSON() as { id: string }).id, seq: 2, result } });
+  const editor = page.getByRole('textbox', { name: 'Note decision', exact: true });
+
+  // Saved-note save reads "Saving…".
+  await editor.fill('Unsaved edit.'); await page.getByRole('button', { name: 'Save note', exact: true }).click();
+  const saving = page.getByRole('button', { name: 'Saving…', exact: true });
+  await expect(saving).toBeVisible(); await expect(saving).toBeDisabled();
+  await expect.poll(() => pending.length).toBe(1);
+  await settle(pending.shift()!, { key: 'decision', threadId: 'thread-a', content: 'Unsaved edit.', revision: 4, author: 'user', updatedAt: '2026-11-07T00:00:00Z' });
+  await expect(page.getByRole('button', { name: 'Save note', exact: true })).toBeVisible();
+
+  // Delete reads "Deleting…" and Forget reports the busy state; nothing else starts a command.
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Deleting…', exact: true })).toBeVisible();
+  const forgetting = page.getByRole('button', { name: 'Deleting decision', exact: true });
+  await expect(forgetting).toHaveAttribute('aria-busy', 'true'); await expect(forgetting).toBeDisabled();
+  await expect.poll(() => pending.length).toBe(1); expect(commands.filter(item => item.type === 'memory.delete')).toHaveLength(1);
+  await settle(pending.shift()!);
+  await expect(page.getByRole('button', { name: 'Forget decision', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Save note', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Deleting…', exact: true })).toBeHidden();
+
+  // Fresh-form save reads "Adding…"; a rejection restores the idle copy.
+  await page.getByRole('button', { name: 'Add memory note', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Note key', exact: true }).fill('beta');
+  await page.getByRole('textbox', { name: 'New thread note', exact: true }).fill('Body.');
+  await page.getByRole('button', { name: 'Add note', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Adding…', exact: true })).toBeVisible();
+  await expect.poll(() => pending.length).toBe(1);
+  await pending.shift()!.fulfill({ status: 503, json: { error: { code: 'SYNTHETIC_FAILURE', message: 'Synthetic save failed.' } } });
+  await expect(page.getByRole('button', { name: 'Add note', exact: true })).toBeEnabled();
+  await expect(page.locator('.task-memory [role=status].error-text')).toContainText('Synthetic save failed.');
+});
