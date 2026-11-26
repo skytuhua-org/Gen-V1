@@ -373,5 +373,11 @@ export class IntegrationManager {
   const skill=item.skills.find(skill=>skill.name===name);if(!skill)throw Error('Integration skill is missing');return {prompt:`Load and follow the native bundled skill \`${id}:${name}\`.${typeof args==='string'&&args.trim()?'\n\nUser arguments: '+args.trim():''}`,skillPath:payloadPath(this.root,skill.path)};
  }
  private closeSession(session:Session):Promise<void>{session.ready=false;session.released=true;return session.closing??=Promise.resolve().then(async()=>{for(const controller of session.controllers)controller.abort();try{const pid=session.transport.pid;if(pid&&process.platform==='win32')await promisify(execFile)(join(process.env.SystemRoot??'C:/Windows','System32/taskkill.exe'),['/PID',String(pid),'/T','/F'],{windowsHide:true,timeout:10000,maxBuffer:65536}).catch(error=>{if(![128,255].includes((error as {code:number}).code))throw error;});await session.client.close();if(session.bridge)await new Promise<void>((accept,reject)=>{session.bridge!.close(error=>error?reject(error):accept());session.bridge!.closeAllConnections();});if(this.sessions.get(session.key)===session)this.sessions.delete(session.key);}catch(error){session.closing=undefined;this.failures.set(session.id,'Integration teardown did not confirm completion');throw error;}});}
- async dispose(){this.disposed=true;for(const id of integrationIds)this.blocked.add(id);await Promise.all([...[...this.sessions.values()].map(session=>this.closeSession(session)),...integrationIds.flatMap(id=>this.stopCommands(id))]);}
+ async dispose(){
+  this.disposed=true;for(const id of integrationIds)this.blocked.add(id);
+  const outcomes=await Promise.allSettled([...[...this.sessions.values()].map(session=>this.closeSession(session)),...integrationIds.flatMap(id=>this.stopCommands(id))]);
+  const errors=outcomes.flatMap(outcome=>outcome.status==='rejected'?[outcome.reason]:[]);
+  if(errors.length===1)throw errors[0];
+  if(errors.length)throw new AggregateError(errors,'Integration manager could not confirm all teardown.');
+ }
 }
