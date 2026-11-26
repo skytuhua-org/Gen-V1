@@ -183,6 +183,18 @@ describe('bounded scoped security findings in the panel read model', () => {
     expect(model.findings.omitted).toBe(5);
   });
 
+  it('orders mixed-precision timestamps chronologically at the cap boundary', () => {
+    const f = fixture();
+    const ledger = new SecurityFindingLedger(f.store);
+    const bytes = Buffer.from('export const ready = true;\n');
+    const base = {version: 1 as const, source: {path: 'app.ts', blobSha: blobSha(bytes), line: null}, authorizedScope: 'fixture', observation: 'o', impact: 'i', status: 'OPEN' as const, reproduction: null};
+    ledger.record({...base, findingId: 'whole-second', createdAt: '2026-01-01T00:00:00Z'}, f.thread.id);
+    ledger.record({...base, findingId: 'fractional-later', createdAt: '2026-01-01T00:00:00.500Z'}, f.thread.id);
+    const rows = verificationPanelModel(f.store, f.thread.id).findings.rows;
+    expect(rows[0].findingId).toBe('fractional-later');
+    expect(rows[1].findingId).toBe('whole-second');
+  });
+
   it('records reproduction as a non-executable presence label', () => {
     const f = fixture();
     const ledger = new SecurityFindingLedger(f.store);

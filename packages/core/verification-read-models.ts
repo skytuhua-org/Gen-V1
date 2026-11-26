@@ -130,7 +130,7 @@ function findingBlobDigest(rootPath: string, relative: string): string | null {
 function findingRows(store: Store, threadId: string, rootPath: string | null): { rows: VerificationFindingRow[]; omitted: number } {
   const all = new SecurityFindingLedger(store).all(threadId)
     .slice()
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || b.updatedAt.localeCompare(a.updatedAt));
   const rows: VerificationFindingRow[] = [];
   for (const finding of all.slice(0, FINDINGS_CAP)) {
     let sourceState: VerificationFindingRow['sourceState'] = 'INDETERMINATE';
