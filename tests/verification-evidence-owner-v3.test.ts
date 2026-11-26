@@ -57,11 +57,11 @@ function fixture() {
   return {store, observation, changeOwner, finish};
 }
 
-it.each(['account', 'project', 'workspace'] as const)('does not grade an earlier %s owner as current in the live panel', kind => {
+it.each(['account', 'project', 'workspace'] as const)('does not grade an earlier %s owner as current in the live panel', async kind => {
   const f = fixture();
-  expect(verificationPanelModel(f.store, ctx.threadId).label).toBe('VERIFIED');
+  expect((await verificationPanelModel(f.store, ctx.threadId)).label).toBe('VERIFIED');
   f.changeOwner(kind);
-  const model = verificationPanelModel(f.store, ctx.threadId);
+  const model = await verificationPanelModel(f.store, ctx.threadId);
   expect(model.label).toBe('COMPLETED_UNVERIFIED');
   expect(model.summary.verified).toBe(0);
   expect(model.rows.find(row => row.checkId === f.observation.checkId)).toMatchObject({outcome: 'PASS', freshness: 'INDETERMINATE'});
@@ -77,16 +77,16 @@ it.each(['account', 'project', 'workspace'] as const)('does not verify an earlie
 
 it('reuses earlier run evidence when the durable owner still matches', async () => {
   const f = fixture();
-  expect(verificationPanelModel(f.store, ctx.threadId).label).toBe('VERIFIED');
+  expect((await verificationPanelModel(f.store, ctx.threadId)).label).toBe('VERIFIED');
   expect((await f.finish()).label).toBe('VERIFIED');
 });
 
-it('keeps previous failures visible without lending them to another owner', () => {
+it('keeps previous failures visible without lending them to another owner', async () => {
   const f = fixture(), failure = {...f.observation, outcome: 'FAIL' as const, exitCode: 1};
   f.store.internal('test.failed', ctx.threadId, () => f.store.put('checkObservation', failure.checkId, ctx.threadId, failure));
-  expect(verificationPanelModel(f.store, ctx.threadId).label).toBe('FAILED');
+  expect((await verificationPanelModel(f.store, ctx.threadId)).label).toBe('FAILED');
   f.changeOwner('account');
-  const model = verificationPanelModel(f.store, ctx.threadId);
+  const model = await verificationPanelModel(f.store, ctx.threadId);
   expect(model.label).toBe('COMPLETED_UNVERIFIED');
   expect(model.rows.find(row => row.checkId === failure.checkId)).toMatchObject({outcome: 'FAIL', freshness: 'INDETERMINATE'});
   expect(f.store.get('checkObservation', failure.checkId)).toEqual(failure);

@@ -131,16 +131,32 @@ test('model selection fits both themes on a phone and removes spatial motion whe
 });
 
 test('the popover stays mounted through the exit animation and rapid cycles do not stick it', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-11-26T00:00:00Z') });
   await mount(page);
   const trigger = page.getByRole('combobox', { name: 'Model', exact: true }), popover = page.locator('.model-picker-popover');
   await trigger.click();
-  await page.getByRole('searchbox', { name: 'Search models', exact: true }).press('Escape');
-  await page.waitForTimeout(80);
-  await expect(popover).toHaveCount(1);
-  await expect(popover).toHaveCount(0, { timeout: 1000 });
-  await trigger.click();
   const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
-  await search.press('Escape'); await page.waitForTimeout(60); await trigger.click();
-  await expect(search).toBeVisible();
+  await expect(search).toBeFocused();
+  // Measure the component's timer, independent of protocol round-trip latency.
+  await page.clock.pauseAt(new Date('2026-11-26T00:10:00Z'));
+  await search.press('Escape');
+  await expect(popover).toHaveAttribute('data-state', 'closed');
+  await expect(popover).toHaveAttribute('aria-hidden', 'true');
+  await page.clock.runFor(139);
+  await expect(popover).toHaveCount(1);
+  await page.clock.runFor(1);
+  await expect(popover).toHaveCount(0);
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await trigger.click();
+    await expect(search).toBeVisible();
+    await search.press('Escape');
+    await expect(popover).toHaveAttribute('data-state', 'closed');
+    await page.clock.runFor(60);
+    await trigger.click();
+    await page.clock.runFor(200);
+    await expect(search).toBeVisible();
+    await search.press('Escape');
+    await page.clock.runFor(140);
+    await expect(popover).toHaveCount(0);
+  }
 });
-
