@@ -119,7 +119,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ui-toast, .ui-tooltip { animation-name: ui-feedback-fade; animation-duration: var(--ui-motion-press); }
-  .ui-toast[data-state="closed"], .ui-tooltip[data-state="closed"] { animation-direction: reverse; }
+  .ui-toast[data-state="closed"], .ui-tooltip[data-state="closed"] { animation-name: ui-feedback-fade; animation-duration: var(--ui-motion-press); animation-direction: reverse; }
   .ui-spinner { animation-duration: 1600ms; }
 }
 @media (forced-colors: active) {

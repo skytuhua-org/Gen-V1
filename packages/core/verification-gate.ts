@@ -48,10 +48,6 @@ export function observationMatchesThreadOwner(observation: Pick<CheckObservation
 
 const QA_ALLOWED_OPERATIONS = new Set(['verification.run', 'verification.observe', 'context.read']);
 
-export interface QaWorkerRequest {
-  operation: 'verification.run' | 'verification.observe';
-  payload: unknown;
-}
 
 export function createQaWorkerRole(owner: ToolOwner) {
   return {
@@ -194,13 +190,23 @@ export class SecurityFindingLedger {
   constructor(private readonly store: Store) {}
   record(finding: Omit<SecurityFindingV1, 'updatedAt'>, threadId: string): SecurityFindingV1 {
     const parsed = securityFindingV1Schema.parse({ ...finding, updatedAt: finding.createdAt });
-    const id = `finding-${digest({ source: parsed.source, findingId: parsed.findingId }).slice(0, 24)}`;
-    return this.store.internal('securityFinding.recorded', threadId, (): SecurityFindingV1 => {
-      const prior = this.store.get<SecurityFindingV1>('securityFinding', id);
-      const merged = prior ? { ...parsed, updatedAt: now() } : parsed;
-      this.store.put('securityFinding', id, threadId, merged);
-      return merged;
-    }) as SecurityFindingV1;
+    // Dedupe binds to the recording owner: the same source path/blob and
+    // findingId under a different thread is a separate finding, never a merge.
+    const id = `finding-${digest({ owner: threadId, source: parsed.source, findingId: parsed.findingId }).slice(0, 24)}`;
+    return this.store.internal('securityFinding.recorded', threadId, (): SecurityFindingV1 =>
+      this.write(parsed, id, threadId)) as SecurityFindingV1;
+  }
+  /** Same write as record() for callers already inside a command transaction. */
+  recordInTransaction(finding: Omit<SecurityFindingV1, 'updatedAt'>, threadId: string): SecurityFindingV1 {
+    const parsed = securityFindingV1Schema.parse({ ...finding, updatedAt: finding.createdAt });
+    const id = `finding-${digest({ owner: threadId, source: parsed.source, findingId: parsed.findingId }).slice(0, 24)}`;
+    return this.write(parsed, id, threadId);
+  }
+  private write(parsed: SecurityFindingV1, id: string, threadId: string): SecurityFindingV1 {
+    const prior = this.store.get<SecurityFindingV1>('securityFinding', id);
+    const merged = prior ? { ...parsed, updatedAt: now() } : parsed;
+    this.store.put('securityFinding', id, threadId, merged);
+    return merged;
   }
   all(threadId?: string): SecurityFindingV1[] {
     return this.store.all<SecurityFindingV1>('securityFinding', threadId);

@@ -74,6 +74,48 @@ describe('M03 cached package screening authority', () => {
     expect(next.exception).toBeUndefined();
   });
 
+  for (const [label, lateResult] of [
+    ['older clean', { status: 'NO_MATCH', asOf: '2026-11-17T00:00:00.000Z' }],
+    ['same-snapshot clean', { status: 'NO_MATCH', asOf: '2026-11-17T00:00:00.500Z' }],
+    ['unavailable', { status: 'UNAVAILABLE' }],
+    ['older match', { status: 'MATCH', asOf: '2026-11-17T00:00:00.000Z' }],
+  ] as const) {
+    it(`retains a concurrently published denial when a ${label} reply settles later`, async () => {
+      const stored = cache();
+      let resolveLate!: (result: Awaited<ReturnType<AdvisoryDatabase['query']>>) => void;
+      const deferred = new Promise<Awaited<ReturnType<AdvisoryDatabase['query']>>>(resolve => { resolveLate = resolve; });
+      const pending = screenPackage(identity, { database: 'current-db', query: () => deferred }, {
+        cache: stored, now, exception,
+      });
+      const denial = await screenPackage(identity, {
+        database: 'current-db',
+        query: async () => ({ status: 'MATCH', asOf: '2026-11-17T00:00:00.500Z', advisoryIds: ['TEST-NEW'] }),
+      }, { cache: stored, now });
+      resolveLate(lateResult);
+      const settled = await pending;
+      expect(settled.record).toMatchObject({ screeningId: denial.record.screeningId, status: 'KNOWN_BAD', decision: 'DENY' });
+      expect(screeningGate(settled.record)).toBe('BLOCK');
+      expect(settled.exception).toBeUndefined();
+      expect(stored.get('unused')).toEqual(denial.record);
+    });
+  }
+
+  it('allows a strictly newer fresh clean reply to supersede a concurrent denial without granting trust', async () => {
+    const stored = cache();
+    let resolveLate!: (result: Awaited<ReturnType<AdvisoryDatabase['query']>>) => void;
+    const deferred = new Promise<Awaited<ReturnType<AdvisoryDatabase['query']>>>(resolve => { resolveLate = resolve; });
+    const pending = screenPackage(identity, { database: 'current-db', query: () => deferred }, { cache: stored, now });
+    await screenPackage(identity, {
+      database: 'current-db',
+      query: async () => ({ status: 'MATCH', asOf: '2026-11-17T00:00:00.500Z' }),
+    }, { cache: stored, now });
+    resolveLate({ status: 'NO_MATCH', asOf: '2026-11-17T00:00:00.750Z' });
+    const settled = await pending;
+    expect(settled.record).toMatchObject({ status: 'NO_KNOWN_MATCH', decision: 'ALLOW' });
+    expect(screeningGate(settled.record)).toBe('NEUTRAL');
+    expect(stored.get('unused')).toEqual(settled.record);
+  });
+
   it('cannot reuse a clean lookup from a different advisory database', async () => {
     const stored = cache(record({ advisory: { database: 'previous-db', asOf: checkedAt } }));
     const next = await screenPackage(identity, knownBad, { cache: stored, now });

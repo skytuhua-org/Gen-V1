@@ -69,7 +69,7 @@ The signing-only descriptions, counts and scoped GO below are preserved from the
 
 The implemented flow combines a granted PDF preview, contextual Steps/ChoiceList/Input controls, typed or drawn visual marks and durable shared state. Preview uses local legacy PDF.js/canvas; it leaves source bytes unchanged and does not export. Export remains a separately prepared, native-approved broker operation. There is no certificate signing, OCR or email step.
 
-The trusted PDF draft worker moves parse/edit/save into terminable work with deadline/cancellation and repeated/cyclic page-tree rejection. Its regressions pass. It is separate from the generated-app opaque worker, whose creation and mount gate remains `GENERATED_APPS_ENABLED=false`.
+The trusted PDF draft worker moves parse/edit/save into terminable work with deadline/cancellation and repeated/cyclic page-tree rejection. Its regressions pass. It is separate from the generated-app opaque worker, whose creation and mount gate was set to `GENERATED_APPS_ENABLED=false` at this milestone.
 
 | Evidence | Verified scope and remaining limit |
 | --- | --- |

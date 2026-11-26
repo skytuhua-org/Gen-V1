@@ -96,6 +96,24 @@ export function bindingChords(binding: KeyboardBinding, keybindings: UiPreferenc
   return binding.preference ? [keybindings[binding.preference]] : binding.chords ?? [];
 }
 
+/** Chords the browser keeps for itself and never delivers to the page; capturing one would save a dead binding. Browser build only — the desktop app registers real accelerators. */
+export const RESERVED_CHORDS: readonly string[] = [
+  'Ctrl+W','Ctrl+T','Ctrl+N','Ctrl+Shift+N','Ctrl+Shift+W','Ctrl+R','Ctrl+Shift+R','Ctrl+L','Ctrl+D','Ctrl+Tab','Ctrl+Shift+Tab',
+  'F5','F11','F12','Alt+Home','Alt+ArrowLeft','Alt+ArrowRight',
+  'Meta+W','Meta+T','Meta+N','Meta+R','Meta+Shift+R','Meta+L','Meta+Q','Meta+Tab','Meta+ArrowLeft','Meta+ArrowRight',
+  ...Array.from({length: 9}, (_, index) => [`Ctrl+${index + 1}`, `Meta+${index + 1}`]).flat(),
+];
+
+const MODIFIER_ORDER = 'ctrl+alt+shift+meta';
+const normalizeChord = (chord: string) => {
+  const {modifiers, key} = readChord(chord);
+  return [...modifiers].sort((left, right) => MODIFIER_ORDER.indexOf(left) - MODIFIER_ORDER.indexOf(right)).join('+') + '+' + key;
+};
+const RESERVED_SET = new Set(RESERVED_CHORDS.map(normalizeChord));
+
+/** True when the chord names a browser-reserved shortcut the page can never receive. */
+export function isReservedChord(chord: string): boolean { return RESERVED_SET.has(normalizeChord(chord)); }
+
 export interface ResolvedKeyboardBinding { id: string; label: string; scope: KeyboardScope; chords: readonly string[]; keys: readonly string[]; hint?: string; rebindable: boolean }
 
 /** Everything a reference row needs, with keys already spelled for the platform. */
