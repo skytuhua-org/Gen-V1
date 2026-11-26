@@ -158,3 +158,28 @@ it("pending, unavailable and billing-blocked provider states are never PASS", as
   expect(observation).toBeDefined();
   expect(JSON.stringify(observation)).not.toMatch(/"pass(ed)?"/i);
 }, 60000);
+
+it("returns the persisted retry attempt immediately while preserving stale evidence", async () => {
+  const { github, projectId, provider, store } = await fixture();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-26T22:00:00Z"));
+  try {
+    const first = await github.details(projectId, "main", 12);
+    provider.mockRejectedValueOnce(new Error("Synthetic provider timeout"));
+    vi.setSystemTime(new Date("2026-11-26T22:00:05Z"));
+    const failed = await github.details(projectId, "main", 12);
+    const [stored] = store.all<{ attempt: number; nextEligibleAt: string }>("prCheckObservation");
+    expect(stored).toMatchObject({ attempt: 1, nextEligibleAt: "2026-11-26T22:00:15.000Z" });
+    expect(failed).toMatchObject({
+      canReview: false,
+      checkObservation: { headOid: headA, observedAt: first.checkObservation.observedAt, stale: true, attempt: stored.attempt },
+    });
+    expect((await github.details(projectId, "main", 12)).checkObservation).toEqual(failed.checkObservation);
+    expect(provider).toHaveBeenCalledTimes(2);
+    vi.setSystemTime(new Date("2026-11-26T22:00:15Z"));
+    expect((await github.details(projectId, "main", 12)).checkObservation).toMatchObject({ stale: false, attempt: 0 });
+    expect(provider).toHaveBeenCalledTimes(3);
+  } finally {
+    vi.useRealTimers();
+  }
+}, 60000);

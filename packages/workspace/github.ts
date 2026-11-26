@@ -95,7 +95,12 @@ export class GitHubTools{
   let item:{headRefOid?:string;statusCheckRollup?:unknown[]};
   try{item=this.parseOutput(await this.run(path,['pr','view',String(number.parse(pullNumber)),'--repo',repo,'--json','number,title,url,state,baseRefOid,headRefOid,headRefName,isDraft,files,reviews,statusCheckRollup'])) as typeof item;}
   catch(error){
-   if(!fresh&&current){const attempt=current.attempt+1;this.projects.store.internal('github.check-observation',null,()=>this.projects.store.put('prCheckObservation',observationId,null,{...current,attempt,nextEligibleAt:new Date(Math.min(Date.now()+GitHubTools.CHECK_BACKOFF_BASE_MS*2**attempt,Date.now()+GitHubTools.CHECK_BACKOFF_MAX_MS)).toISOString()}));return present(current,true);}
+   if(!fresh&&current){
+    const attempt=current.attempt+1,delay=Math.min(GitHubTools.CHECK_BACKOFF_BASE_MS*2**attempt,GitHubTools.CHECK_BACKOFF_MAX_MS);
+    const retry={...current,attempt,nextEligibleAt:new Date(Date.now()+delay).toISOString()};
+    this.projects.store.internal('github.check-observation',null,()=>this.projects.store.put('prCheckObservation',observationId,null,retry));
+    return present(retry,true);
+   }
    throw error;
   }
   const checks=normalizeChecks(item.statusCheckRollup??null),observedAt=new Date().toISOString(),state=checks.length===0?'unknown':checks.some(check=>check.status==='failed')?'failed':checks.some(check=>check.status==='pending'||check.status==='unknown')?'pending':checks.every(check=>check.status==='neutral')?'neutral':checks.every(check=>check.status==='passed'||check.status==='neutral')?'passed':'pending',record:PrCheckObservation={version:1,repo,number:pullNumber,headOid:item.headRefOid??'',observedAt,state,checks,attempt:0,nextEligibleAt:new Date(Date.now()+GitHubTools.CHECK_BACKOFF_BASE_MS).toISOString(),item:item as Record<string,unknown>};
