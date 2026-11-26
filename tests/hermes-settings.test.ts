@@ -17,3 +17,10 @@ it('disables source automatic learning and writes in Plan without removing skill
  const store=await fixture();store.internal('fixture',null,()=>store.put('thread','plan','plan',{id:'plan',mode:'plan'}));
  const settings=await hermesSettings(store,{threadId:'plan'} as StartRun);expect(settings.config).toMatchObject({skills:{creation_nudge_interval:0}});expect(settings.skillPolicy).toMatchObject({enabled:true,allowWrites:false});
 });
+it('refuses typed-child metadata for a stale run owner',async()=>{
+ const store=await fixture();store.internal('fixture',null,()=>{
+  store.put('thread','child','child',{id:'child',kind:'delegate',jobId:'work',runId:'current',epoch:2});
+  store.put('agentWork','work','parent',{role:'PLAN_READ',childOwner:{threadId:'child',runId:'current',epoch:2},expectedOutputSchema:{type:'object'}});
+ });
+ await expect(hermesSettings(store,{threadId:'child',runId:'old',epoch:1} as StartRun)).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+});
