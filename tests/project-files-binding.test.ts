@@ -47,7 +47,7 @@ async function fixture(managed = false) {
   cleanup.push(async () => { await tools.dispose(); store.close(); await rm(root, { recursive: true, force: true }); });
   const receipt = await tools.connect({ id: 'connect', type: 'workspace.project.connect', payload: { name: 'Files', path } });
   const projectId = (receipt.result as { projects: { id: string }[] }).projects[0]!.id;
-  const thread = (id: string): Thread => ({ id, title: id, projectId, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', status: 'ready', epoch: 0, runId: null, modelId: null, sessionPath: null, kind: 'main' });
+  const thread = (id: string): Thread => ({ id, title: id, projectId, projectName: 'Files', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', status: 'ready', epoch: 0, runId: null, modelId: null, sessionPath: null, kind: 'main' });
   store.internal('fixture', null, () => { store.put('thread', 'one', 'one', thread('one')); store.put('thread', 'two', 'two', thread('two')); });
   const bind = async (boundPath: string) => {
     const captured = await identity(boundPath);
