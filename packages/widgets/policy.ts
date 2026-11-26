@@ -1,11 +1,15 @@
 export interface RenderNode { id: number; tag: string; attrs: Record<string, string>; children: RenderNode[]; text?: string; value?: string; checked?: boolean; selectedIndex?: number }
 export interface RenderTree { tree: RenderNode[]; css: string }
 
+// Allowlists are constant: build them once. The worker snapshot path calls
+// validateRender once per node and once per attribute every render tick, and
+// rebuilding two ~150-entry Sets per call dominated that repeated work.
+const ALLOWED_TAGS = new Set('div span p article section header footer main aside nav h1 h2 h3 h4 h5 h6 small strong em b i u s pre code blockquote ul ol li dl dt dd br hr table thead tbody tfoot tr td th caption form label input textarea button select option optgroup fieldset legend output progress meter details summary'.split(' '));
+const ALLOWED_ATTRS = new Set('id class style title role name type placeholder value checked disabled readonly required multiple selected min max step minlength maxlength rows cols for tabindex colspan rowspan open autocomplete'.split(' '));
+
 // Used independently in the host and bundled trusted receiver. Neither the
 // generated program nor its worker is trusted.
 export function validateRender(value: unknown): value is RenderTree {
-  const tags = new Set('div span p article section header footer main aside nav h1 h2 h3 h4 h5 h6 small strong em b i u s pre code blockquote ul ol li dl dt dd br hr table thead tbody tfoot tr td th caption form label input textarea button select option optgroup fieldset legend output progress meter details summary'.split(' '));
-  const attrs = new Set('id class style title role name type placeholder value checked disabled readonly required multiple selected min max step minlength maxlength rows cols for tabindex colspan rowspan open autocomplete'.split(' '));
   if (!value || typeof value !== 'object') return false;
   const render = value as RenderTree;
   if (!Array.isArray(render.tree) || render.tree.length > 800 || typeof render.css !== 'string' || render.css.length > 16384) return false;
@@ -13,11 +17,11 @@ export function validateRender(value: unknown): value is RenderTree {
   function visit(node: RenderNode, depth: number): boolean {
     if (!node || typeof node !== 'object' || depth > 24 || ++nodes > 800 || !Number.isSafeInteger(node.id) || node.id < 1 || ids.has(node.id)) return false;
     ids.add(node.id);
-    if (node.tag !== '#text' && !tags.has(node.tag)) return false;
+    if (node.tag !== '#text' && !ALLOWED_TAGS.has(node.tag)) return false;
     if (!node.attrs || typeof node.attrs !== 'object' || Array.isArray(node.attrs) || Object.keys(node.attrs).length > 32 || !Array.isArray(node.children) || node.children.length > 800) return false;
     if (node.tag === '#text' && (typeof node.text !== 'string' || node.children.length !== 0 || Object.keys(node.attrs).length !== 0)) return false;
     for (const [key, attr] of Object.entries(node.attrs)) {
-      if ((!attrs.has(key) && !/^aria-[a-z-]{1,40}$/.test(key) && !/^data-[a-z0-9-]{1,40}$/.test(key)) || typeof attr !== 'string' || attr.length > 1024) return false;
+      if ((!ALLOWED_ATTRS.has(key) && !/^aria-[a-z-]{1,40}$/.test(key) && !/^data-[a-z0-9-]{1,40}$/.test(key)) || typeof attr !== 'string' || attr.length > 1024) return false;
       if (key === 'type' && !['text', 'number', 'email', 'tel', 'search', 'password', 'url', 'date', 'time', 'datetime-local', 'month', 'week', 'color', 'range', 'checkbox', 'radio', 'button', 'submit', 'reset'].includes(attr)) return false;
       if (['rows', 'cols', 'colspan', 'rowspan', 'maxlength', 'minlength', 'tabindex'].includes(key) && (!/^-?\d{1,4}$/.test(attr) || Math.abs(Number(attr)) > 1000)) return false;
       bytes += attr.length;

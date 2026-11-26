@@ -36,7 +36,10 @@ const summarize=(name:string,samples:number[],extra:Partial<RunResult>={}):RunRe
  return{name,samples_ms:samples.map(v=>Math.round(v*100)/100),p50:Math.round(pick(.5)*100)/100,p95:Math.round(pick(.95)*100)/100,mean:Math.round(samples.reduce((a,b)=>a+b,0)/Math.max(1,samples.length)*100)/100,...extra};
 };
 const freePort=()=>new Promise<number>((accept,reject)=>{const server=createServer();server.once('error',reject);server.listen(0,'127.0.0.1',()=>{const address=server.address(),port=typeof address==='object'&&address?address.port:0;server.close(()=>port?accept(port):reject(Error('No free loopback port.')));});});
-const waitFor=<T>(promise:Promise<T>,ms:number,label:string)=>Promise.race([promise,new Promise<never>((_,reject)=>setTimeout(()=>reject(Error(`${label} timed out after ${ms}ms`)),ms))]);
+const waitFor=<T>(promise:Promise<T>,ms:number,label:string)=>{
+ let timer:ReturnType<typeof setTimeout>;
+ return Promise.race([promise,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error(`${label} timed out after ${ms}ms`)),ms);})]).finally(()=>clearTimeout(timer));
+};
 function seedStore(store:Store){
  const day='2026-11-21T00:00:00.000Z';
  store.internal('bench.seed',null,()=>{
@@ -145,7 +148,7 @@ async function browserMetrics(origin:string,runs:number,selectedThread:string){
  return{first,split,fcp};
 }
 async function main(){
- const args=process.argv.slice(2),flag=(name:string)=>args.includes(name),value=(name:string,fallback:number)=>{const index=args.indexOf(name);return index>=0?Number(args[index+1])||fallback:fallback;};
+ const args=process.argv.slice(2),flag=(name:string)=>args.includes(name),value=(name:string,fallback:number)=>{const index=args.indexOf(name);if(index<0)return fallback;const count=Number(args[index+1]);if(!Number.isSafeInteger(count)||count<=0)throw Error(`${name} requires a positive integer.`);return count;};
  const runs=value('--runs',5),check=flag('--check'),bundle=flag('--bundle'),skipBrowser=flag('--skip-browser');
  const sha=execFileSync('git',['rev-parse','--short=12','HEAD'],{cwd:root,encoding:'utf8'}).trim();
  const results:RunResult[]=[];
