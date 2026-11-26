@@ -178,3 +178,11 @@ for(const settled of [false,true])for(const outcome of ['accepted','rejected'] a
   }
  });
 }
+
+test('empty Pinned group names the keyboard path and the options menu provides it', async ({page}) => {
+  const hint = page.locator('.thread-group-pinned .sidebar-pinned-empty');
+  await expect(hint).toHaveText('Pin a thread from its ⋯ menu, or drag it here.');
+  await expect(hint).toHaveAttribute('role', 'note');
+  await options(page).click();
+  await expect(menu(page).getByRole('menuitem', {name: 'Pin thread', exact: true})).toBeVisible();
+});

@@ -1,0 +1,12 @@
+.git-history-list>li, .git-history-files>li { display:block; }
+button.git-history-row { display:flex; width:100%; align-items:center; justify-content:flex-start; gap:10px; min-height:30px; padding:4px 12px; border:0; border-radius:0; background:transparent; text-align:left; font-size:12px; }
+.git-history-row>svg { flex:none; color:var(--muted); }
+.git-history-row-main { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; min-width:0; flex:1; }
+.git-history-row-main strong { font-weight:550; overflow-wrap:anywhere; }
+.git-history-row-main small { color:var(--muted); font-size:12px; }
+.git-history-badge { flex:none; padding:1px 6px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:11px; line-height:1.5; }
+.git-history-sha { display:flex; align-items:center; gap:8px; }
+.git-history-sha code { overflow-wrap:anywhere; font-size:12px; }
+.git-history-files .file-checkpoints-note { padding:4px 12px 6px; }
+.git-history-files .unified-diff { border-top:1px solid var(--border); }
+@media(hover:hover) and (pointer:fine) { .git-history button.git-history-row:enabled:hover { background:var(--hover); color:var(--text); } }
