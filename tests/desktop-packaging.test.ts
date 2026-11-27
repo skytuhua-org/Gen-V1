@@ -9,6 +9,24 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 describe('desktop distribution custody',()=>{
+ it('rejects invalid wheel configuration without reserving a versioned output or work stage',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'gen-package-preflight-')),argv=process.argv;
+  const platform=Object.getOwnPropertyDescriptor(process,'platform')!,arch=Object.getOwnPropertyDescriptor(process,'arch')!;
+  vi.doMock('electron-builder',()=>({build:vi.fn()}));
+  vi.doMock('../scripts/hermes-assets.ts',()=>({discoverHermesPython:async()=>({}),collectHermesPayload:async()=>({})}));
+  try{
+   Object.defineProperty(process,'platform',{...platform,value:'win32'});
+   Object.defineProperty(process,'arch',{...arch,value:'x64'});
+   process.argv=['node','package-desktop.ts','--output-root',root];
+   vi.stubEnv('HARNESS_INTEGRATION_WHEELS','relative-input');
+   await expect(import('../scripts/package-desktop.ts')).rejects.toThrow('HARNESS_INTEGRATION_WHEELS must name an explicit absolute archive directory');
+   expect(await readdir(root)).toEqual([]);
+  }finally{
+   process.argv=argv;Object.defineProperty(process,'platform',platform);Object.defineProperty(process,'arch',arch);
+   vi.unstubAllEnvs();vi.doUnmock('electron-builder');vi.doUnmock('../scripts/hermes-assets.ts');
+   await rm(root,{recursive:true,force:true,maxRetries:5});
+  }
+ });
  it('never adopts an earlier stage with the same timestamp',async()=>{
   const root=await mkdtemp(join(tmpdir(),'gen-stage-'));
   try{
