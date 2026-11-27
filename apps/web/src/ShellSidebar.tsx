@@ -393,7 +393,24 @@ export function ShellSidebar({
             placeholder="Search"
             value={search}
             onChange={event => setSearch(event.target.value)}
+            onKeyDown={event => {
+              if (event.key !== 'Escape') return;
+              // Keep the keyup from reaching other Escape handlers (mobile sidebar close).
+              event.stopPropagation();
+              if (search) setSearch('');
+              else event.currentTarget.blur();
+            }}
           />
+          {search.trim().length > 0 && (
+            <button
+              type="button"
+              className="icon-button sidebar-search-clear"
+              aria-label="Clear search"
+              onClick={() => { setSearch(''); searchRef.current?.focus(); }}
+            >
+              <X size={12} />
+            </button>
+          )}
         </div>
         <button
           type="button"
@@ -432,6 +449,7 @@ export function ShellSidebar({
       <div className="sr-only" role="status" aria-atomic="true">
         {loaded && !visibleMatching.length
           ? (search ? (filter === 'all' ? 'No matching threads.' : `No matching ${filter} threads.`) : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.')
+          : search.trim() ? `${visibleMatching.length} matching ${visibleMatching.length === 1 ? 'thread' : 'threads'}`
           : filter === 'all' ? 'Showing all threads' : `Showing ${filter} threads`}
       </div>
       {filter !== 'all' && (
