@@ -94,6 +94,7 @@
     "apps/web/src/App.tsx",
     "apps/web/src/AppearanceSettings.tsx",
     "apps/web/src/Artifact.tsx",
+    "apps/web/src/ArtifactImage.tsx",
     "apps/web/src/ArtifactPresentation.tsx",
     "apps/web/src/BackgroundWork.tsx",
     "apps/web/src/ChatScrollIndicator.tsx",
