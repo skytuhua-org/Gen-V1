@@ -20,5 +20,7 @@ export function acquireProfileLease(directory:string):ProfileLease {
   if(!acquired.isFile()||acquired.isSymbolicLink()||acquired.nlink!==1n||identity.dev!==acquired.dev||identity.ino!==acquired.ino||parent.dev!==currentParent.dev||parent.ino!==currentParent.ino||realpathSync(directory)!==dataDir)throw new HarnessError('PROFILE_LEASE_INVALID','The profile directory changed while acquiring ownership.');
  }catch(error){database?.close();if((error as {errcode?:number}).errcode===5||(error as {code?:string}).code==='SQLITE_BUSY')throw new HarnessError('PROFILE_IN_USE','This profile is already open in another harness process. Close that owner before starting another host.');throw error;}
  let closed=false;const owned=database;
- return {dataDir,close(){if(closed)return;owned.exec('ROLLBACK');owned.close();closed=true;}};
+ // Closing the lease-only connection rolls back its exclusive transaction.
+ // Do not gate release on a second SQL operation that can fail before close.
+ return {dataDir,close(){if(closed)return;owned.close();closed=true;}};
 }

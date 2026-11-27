@@ -1,4 +1,5 @@
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
+import {DatabaseSync} from 'node:sqlite';
 import {fork} from 'node:child_process';
 import {mkdtemp,mkdir,writeFile,readFile,link,symlink,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -13,6 +14,19 @@ async function directory(){const root=await mkdtemp(join(tmpdir(),'harness-profi
 it('uses one exclusive canonical profile lock and releases it without deleting the lease file',async()=>{
  const root=await directory(),first=acquireProfileLease(root);expect(()=>acquireProfileLease(join(root,'.'))).toThrow(expect.objectContaining({code:'PROFILE_IN_USE'}));first.close();first.close();
  const next=acquireProfileLease(root);next.close();expect(await readFile(join(root,'.host-lease.sqlite'))).toBeInstanceOf(Buffer);
+});
+it('releases the exclusive connection without a separate rollback command',async()=>{
+ const root=await directory(),first=acquireProfileLease(root);
+ const exec=DatabaseSync.prototype.exec, rollback=vi.spyOn(DatabaseSync.prototype,'exec').mockImplementation(function(this:DatabaseSync,sql:string){
+  if(sql==='ROLLBACK')throw new Error('fixture: standalone rollback failed');
+  return exec.call(this,sql);
+ });
+ try{
+  expect(()=>first.close()).not.toThrow();
+  const successor=acquireProfileLease(root);
+  try{expect(()=>first.close()).not.toThrow();expect(()=>acquireProfileLease(root)).toThrow(expect.objectContaining({code:'PROFILE_IN_USE'}));}
+  finally{rollback.mockRestore();successor.close();}
+ }finally{rollback.mockRestore();first.close();}
 });
 it.skipIf(process.platform!=='win32')('recognizes a second junction spelling as the same live profile',async()=>{
  const root=await directory(),actual=join(root,'actual'),alias=join(root,'alias');await mkdir(actual);await symlink(actual,alias,'junction');const first=acquireProfileLease(actual);
