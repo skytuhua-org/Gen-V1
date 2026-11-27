@@ -4185,6 +4185,7 @@
     "tests/repository-screenshots-cleanup.test.ts",
     "tests/repository-test-binding-check.test.ts",
     "tests/request-preparation-service-v3.test.ts",
+    "tests/receipts_m16_substitution.py",
     "tests/research-fixture.ts",
     "tests/resource-revoke.test.ts",
     "tests/resource-tree.test.ts",
