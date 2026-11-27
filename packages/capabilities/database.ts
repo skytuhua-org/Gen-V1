@@ -54,7 +54,7 @@ async function confirmStableSource(source: string, stable: SourceFingerprint, ex
   if (process.platform !== "win32" && sameFingerprint(stable, fingerprint(currentInfo))) return;
   if (await hashFileContents(source, signal) !== expectedHash) throw new HarnessError("PRECONDITION_FAILED", "Database changed while being inspected");
 }
-async function copyStableSource(source: string, destination: string, signal: AbortSignal): Promise<{ hash: string; identity: { dev: bigint; ino: bigint }; changed: boolean; stable: SourceFingerprint }> {
+async function copyStableSource(source: string, destination: string, signal: AbortSignal, created: (identity: { dev: bigint; ino: bigint }) => void): Promise<{ hash: string; identity: { dev: bigint; ino: bigint }; changed: boolean; stable: SourceFingerprint }> {
   const input = await open(source, "r");
   let output: Awaited<ReturnType<typeof open>> | undefined;
   try {
@@ -63,6 +63,7 @@ async function copyStableSource(source: string, destination: string, signal: Abo
     if (before.size > SQLITE_COPY_LIMIT) throw new HarnessError("RESOURCE_LIMIT", "Resource exceeds its byte limit");
     output = await open(destination, "wx", 0o600);
     const identity = await output.stat({ bigint: true });
+    created({ dev: identity.dev, ino: identity.ino });
     const hash = createHash("sha256"), buffer = Buffer.allocUnsafe(1024 * 1024);
     let offset = 0;
     while (offset < before.size) {
@@ -109,14 +110,16 @@ export async function databaseJob(job: Record<string, unknown>, ctx: DomainConte
     const stageIdentity = await lstat(stage, { bigint: true });
     try {
       return await withPathGuard([{ path: stage, leaf: false }], ctx.signal, async () => {
-        const path = join(stage, "snapshot.sqlite"), copy = await copyStableSource(source, path, ctx.signal);
-        if (copy.changed) await confirmStableSource(source, copy.stable, copy.hash, ctx.signal);
+        const path = join(stage, "snapshot.sqlite");
+        let snapshotIdentity: { dev: bigint; ino: bigint } | undefined;
         try {
+          const copy = await copyStableSource(source, path, ctx.signal, identity => { snapshotIdentity = identity; });
+          if (copy.changed) await confirmStableSource(source, copy.stable, copy.hash, ctx.signal);
           const result = await reserved(path);
           if (result.resourceVersion !== copy.hash) throw new HarnessError("PRECONDITION_FAILED", "Database snapshot changed while being inspected");
           await confirmStableSource(source, copy.stable, copy.hash, ctx.signal);
           return result;
-        } finally { await removeOwnedFile(path, copy.identity, cleanupSignal).catch(() => {}); }
+        } finally { if (snapshotIdentity) await removeOwnedFile(path, snapshotIdentity, cleanupSignal).catch(() => {}); }
       });
     } finally { await removeOwnedFile(stage, stageIdentity, cleanupSignal, false, true).catch(() => {}); }
   });
