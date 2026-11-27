@@ -40,10 +40,10 @@ import { useThreadMove } from './sidebar-thread-move';
 import { useThreadReorder, type SidebarSection } from './sidebar-reorder';
 import './sidebar-thread-move.css';
 
-const threadAge = (value: string) => {
+const threadAge = (value: string, now: number) => {
   const date = Date.parse(value);
   if (!Number.isFinite(date)) return 'Unknown';
-  const minutes = Math.max(0, Math.floor((Date.now() - date) / 60000));
+  const minutes = Math.max(0, Math.floor((now - date) / 60000));
   return minutes < 1 ? 'now' : minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
 };
 
@@ -164,10 +164,27 @@ export function ShellSidebar({
   const [menuId, setMenuId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'working' | 'waiting'>('all');
   const [showAllSettled, setShowAllSettled] = useState(false);
+  const [now, setNow] = useState(Date.now);
   const navRef = useRef<HTMLElement | null>(null);
   const threadMove = useThreadMove(elementRef, matching,
     !mobile && !layout.sidebarCollapsed,
     JSON.stringify([search, filter, showAllSettled, layout.folded, preferences.projectGrouping, preferences.showWorkingSection]));
+
+  useEffect(() => {
+    let timer: number | undefined;
+    const syncClock = () => {
+      window.clearInterval(timer);
+      if (document.hidden) return;
+      setNow(Date.now());
+      timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    };
+    syncClock();
+    document.addEventListener('visibilitychange', syncClock);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', syncClock);
+    };
+  }, []);
 
   const visibleMatching = matching.filter(
     item =>
@@ -240,7 +257,7 @@ export function ShellSidebar({
         data-thread-id={item.id}
         className={`sidebar-thread-row ${compactSettled ? 'sidebar-settled-row' : ''} ${item.id === selectedId ? 'active' : ''} ${item.kind === 'delegate' ? 'sidebar-delegate' : ''} ${reorder.dragging?.id === item.id ? 'sidebar-drag-source' : ''}`}
       >
-        <ThreadHoverCard facts={{scope,title:displayThreadTitle(item),project:item.projectName?{name:item.projectName,monogram:projectMonogram(item.projectName)}:undefined,model:item.modelId??undefined,reasoning:item.thinkingLevel??undefined,activity:threadStatus(item),lastActivity:{label:threadAge(item.updatedAt),at:item.updatedAt},parent:item.parentThreadId?{threadId:item.parentThreadId,title:displayThreadTitle(matching.find(parent=>parent.id===item.parentThreadId), '')||undefined}:undefined}}
+        <ThreadHoverCard facts={{scope,title:displayThreadTitle(item),project:item.projectName?{name:item.projectName,monogram:projectMonogram(item.projectName)}:undefined,model:item.modelId??undefined,reasoning:item.thinkingLevel??undefined,activity:threadStatus(item),lastActivity:{label:threadAge(item.updatedAt, now),at:item.updatedAt},parent:item.parentThreadId?{threadId:item.parentThreadId,title:displayThreadTitle(matching.find(parent=>parent.id===item.parentThreadId), '')||undefined}:undefined}}
           cache={hoverCache} loadFacts={copy&&scope.projectId?loadPersonalThreadHover:undefined} projectColors={preferences.projectColors} onOpenPR={onOpenThreadPR} preferredSide="right"
           blocked={hoverBlocked||Boolean(menuId)||Boolean(reorder.dragging)||(!mobile&&layout.sidebarCollapsed)||(mobile&&!open)}>{trigger=><button {...trigger}
           type="button"
@@ -280,7 +297,7 @@ export function ShellSidebar({
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
                 {isWorking && <span className="thread-run-badge" aria-hidden="true" />}
-                <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
+                <time dateTime={item.updatedAt}>{threadAge(item.updatedAt, now)}</time>
               </span>
             </span>
           ) : (
@@ -300,7 +317,7 @@ export function ShellSidebar({
                     <span>{item.runId ? 'Working' : threadStatus(item)}</span>
                   </span>
                 )}
-                <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
+                <time dateTime={item.updatedAt}>{threadAge(item.updatedAt, now)}</time>
               </span>
               {(branch || item.kind === 'delegate') && (
                 <span className="thread-item-submeta">

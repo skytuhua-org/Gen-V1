@@ -17,7 +17,7 @@ test('the empty composer is compact, grows for multiline work and keeps its draf
 test('desktop navigation becomes inert immediately on collapse and restores on reopen',async({page})=>{
  await serveTaskFixture(page,fixture());await openApp(page);const sidebar=page.getByRole('complementary',{name:'Thread navigation',exact:true});await expect(sidebar).toBeVisible();await page.getByRole('button',{name:'Collapse sidebar',exact:true}).click();
  const collapsed=page.locator('.app-shell > aside.sidebar');await expect(collapsed).toHaveAttribute('inert','');await expect(collapsed).toBeHidden();
- await page.getByRole('button',{name:'Open sidebar',exact:true}).click();await expect(sidebar).toBeVisible();await expect(sidebar).not.toHaveAttribute('inert','');
+ await page.getByRole('button',{name:'Expand sidebar',exact:true}).click();await expect(sidebar).toBeVisible();await expect(sidebar).not.toHaveAttribute('inert','');
 });
 test('a published plan flags the collapsed overview once without replaying on snapshot or theme updates',async({page})=>{
  const snapshot=fixture(),host=await serveTaskFixture(page,snapshot);await openApp(page);

@@ -20,7 +20,7 @@ import {SettingsSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
 import {ShellSidebar} from './ShellSidebar';
 import {getShellNavigationItem} from './shell-read-api';
 import {focusSidebarSearch, matchesShortcut, readShellLayout, useShellLayout} from './shell-layout';
-import {chordFor} from './keyboard-bindings';
+import {ariaKeyShortcuts,chordFor,shortcutKeys} from './keyboard-bindings';
 import {useSidebarCollapse} from './sidebar-collapse';
 import {useShellNavigation} from './shell-navigation';
 import {useAppearance} from './useAppearance';
@@ -327,7 +327,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
       </div>}/>
     {!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={232} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({...value, sidebarWidth}))}/>}
     <div className="workspace-layout-workarea workspace-host-main">
-      {(layout.sidebarCollapsed || mobile) && <button className="icon-button sidebar-recovery" aria-label={mobile ? 'Open navigation' : 'Open sidebar'} onClick={event => {prepareSidebarToggle(event); setLayout(value => ({...value, sidebarCollapsed: false})); if (mobile) setOpen(true); requestAnimationFrame(() => searchRef.current?.focus());}}>{mobile ? <Menu size={18}/> : <PanelLeftOpen size={17}/>}</button>}
+      {(layout.sidebarCollapsed || mobile) && <button type="button" className="icon-button sidebar-recovery" aria-label={mobile ? 'Open navigation' : 'Expand sidebar'} title={mobile ? 'Open navigation' : `Expand sidebar (${shortcutKeys(preferences.keybindings.toggleSidebar)})`} aria-keyshortcuts={ariaKeyShortcuts(['toggle-sidebar'],preferences.keybindings)} aria-expanded={mobile ? open : false} aria-controls="threads-nav" onClick={event => {prepareSidebarToggle(event); setLayout(value => ({...value, sidebarCollapsed: false})); if (mobile) setOpen(true); requestAnimationFrame(() => searchRef.current?.focus());}}>{mobile ? <Menu size={18}/> : <PanelLeftOpen size={17}/>}</button>}
       <WorkspaceControls envelope={workspace.envelope} send={workspace.send} prepare={prepare} panels={[]} title={panel => panel.kind}
         onChoosePreset={choosePreset} toolsVisible={false} pluginWorkspaces={pluginWorkspaces} onSelectPluginWorkspace={(pluginId,workspaceId)=>fail(()=>openConversation(undefined,'plugin-workspace',{pluginId,workspaceId}))} pluginCatalogError={pluginCatalogError} onRetryPluginCatalog={pluginCatalog.retry} addPanel={async () => {throw Error('Choose Workspace to open tools.');}} updatePanel={async () => {throw Error('Choose Workspace to arrange tools.');}}/>
       {error && <div className="workspace-error" role="status">{error}<button className="icon-button" aria-label="Dismiss error" onClick={dismissError}><X size={15}/></button></div>}
