@@ -56,7 +56,7 @@ function trackedBlob(root: string, head: string, path: string): string {
   requireValue(git(root, 'hash-object', '--no-filters', '--', absolute) === match[2], 'Working source differs from locked source: ' + path);
   return match[2]!;
 }
-function sourceReceipt(root: string, lock: SourceLockV3, lockBytes: string, testIds: string[]): SourceReceipt {
+function sourceReceipt(root: string, lock: SourceLockV3, lockBytes: Buffer, testIds: string[]): SourceReceipt {
   requireValue(git(root, 'rev-parse', 'HEAD') === lock.executionBaseSha, 'HEAD must equal executionBaseSha.');
   // Git status can omit tracked paths marked assume-unchanged or skip-worktree.
   // Reject those index states rather than accept a misleading clean-source receipt.
@@ -151,8 +151,11 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
   }
   let lock: SourceLockV3 | undefined;
   try {
-    const lockBytes = readFileSync(sourceLockPath, 'utf8');
-    lock = sourceLockV3Schema.parse(JSON.parse(lockBytes));
+    const lockBytes = readFileSync(sourceLockPath);
+    let lockText: string;
+    try { lockText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(lockBytes); }
+    catch { throw new Error('Source lock must be valid UTF-8.'); }
+    lock = sourceLockV3Schema.parse(JSON.parse(lockText));
     requireValue(lock.publicContracts.length > 0, 'No dependency contracts were declared.');
     const testIds = [...new Set(lock.publicContracts.flatMap(contract => contract.testIds))].sort();
     requireValue(testIds.length > 0 && testIds.length <= 64, 'Declare between 1 and 64 exact test files.');
@@ -200,7 +203,7 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
       receipt.issues.push({ code: 'CURRENT_TEST_RECEIPTS_MISSING', message: error instanceof Error ? error.message : String(error) });
     }
     try {
-      requireValue(readFileSync(sourceLockPath, 'utf8') === lockBytes, 'Source-lock bytes changed during execution.');
+      requireValue(readFileSync(sourceLockPath).equals(lockBytes), 'Source-lock bytes changed during execution.');
       requireValue(readFileSync(configPath, 'utf8') === config, 'Exact test selection changed during execution.');
       const after = sourceReceipt(root, lock, lockBytes, testIds);
       requireValue(JSON.stringify(after) === JSON.stringify(receipt.source), 'Source custody changed during execution.');

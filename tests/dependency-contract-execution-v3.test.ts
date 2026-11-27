@@ -78,7 +78,10 @@ function fixture(body = passingTest) {
 describe('M01 current dependency compatibility execution', () => {
   it('executes exactly the declared files and records current source, commands, and complete assertions', async () => {
     const value = fixture();
-    const originalLock = readFileSync(value.lockPath, 'utf8');
+    const entry = value.lock.inspectedPaths[0]!;
+    value.lock.approvedDrift.push({path: entry.path, fromBlob: entry.blobSha, toBlob: entry.blobSha, note: 'Exact fixture bytes: café 測試 🚲'});
+    value.saveLock();
+    const originalLock = readFileSync(value.lockPath);
     const receipt = await value.run();
     expect(receipt.status, JSON.stringify(receipt.issues)).toBe('PASS');
     expect(receipt.releaseApproved).toBe(false);
@@ -99,8 +102,23 @@ describe('M01 current dependency compatibility execution', () => {
     }
     expect(receipt.report?.digest).toBe(createHash('sha256').update(readFileSync(receipt.report!.path)).digest('hex'));
     expect(JSON.parse(readFileSync(join(value.out, 'compatibility.json'), 'utf8'))).toEqual(receipt);
-    expect(readFileSync(value.lockPath, 'utf8')).toBe(originalLock);
-    expect(readFileSync(join(value.out, 'source-lock.json'), 'utf8')).toBe(originalLock);
+    expect(readFileSync(value.lockPath)).toEqual(originalLock);
+    expect(readFileSync(join(value.out, 'source-lock.json'))).toEqual(originalLock);
+  }, 120_000);
+
+  it('blocks malformed UTF-8 in a source lock rather than hashing substituted bytes', async () => {
+    const value = fixture();
+    const entry = value.lock.inspectedPaths[0]!;
+    value.lock.approvedDrift.push({path: entry.path, fromBlob: entry.blobSha, toBlob: entry.blobSha, note: 'UNICODE_MARKER'});
+    value.saveLock();
+    const raw = readFileSync(value.lockPath);
+    const offset = raw.indexOf('UNICODE_MARKER');
+    expect(offset).toBeGreaterThan(0);
+    raw[offset] = 0xff;
+    writeFileSync(value.lockPath, raw);
+    const receipt = await value.run();
+    expect(receipt).toMatchObject({status: 'BLOCKED', source: null, commands: [], issues: [{code: 'COMPATIBILITY_SETUP_BLOCKED', message: expect.stringContaining('valid UTF-8')}]});
+    expect(existsSync(join(value.out, 'source-lock.json'))).toBe(false);
   }, 120_000);
 
   it('reports a missing evidence parent as blocked before executing tests', async () => {
