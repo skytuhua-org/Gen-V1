@@ -127,9 +127,9 @@ it('handles form reset when the form associates after mount', async () => {
   expect(onValueChange).toHaveBeenCalledWith('b');
 });
 
-// --- ComposerCommands: Enter with the palette open but no active command is normal typing ---
+// --- ComposerCommands: Enter with the palette open but no active command dismisses it ---
 
-it('lets Enter pass through when the palette has no active command', () => {
+it('consumes Enter and dismisses the palette when no command is active', () => {
   const input = { current: { setAttribute() {}, removeAttribute() {}, selectionStart: 2, selectionEnd: 2, ownerDocument: { activeElement: null, getElementById: () => null } } };
   // position is the first useState: caret inside "/zz", focused so the token
   // opens the palette; "/zz" matches no builtin so `selected` is undefined.
@@ -137,6 +137,11 @@ it('lets Enter pass through when the palette has no active command', () => {
   ComposerCommands({ input: input as never, draft: '/zz', onDraft: () => {}, onModel: () => {}, onMode: () => {} });
   const event = { key: 'Enter', preventDefault: vi.fn(), isComposing: false };
   const handled = setup.handle!.keyDown(event);
-  expect(handled).toBe(false);
-  expect(event.preventDefault).not.toHaveBeenCalled();
+  expect(handled).toBe(true);
+  expect(event.preventDefault).toHaveBeenCalledOnce();
+  expect(setup.setters[1]).toHaveBeenCalled();
+
+  const tab = { key: 'Tab', preventDefault: vi.fn(), isComposing: false };
+  expect(setup.handle!.keyDown(tab)).toBe(false);
+  expect(tab.preventDefault).not.toHaveBeenCalled();
 });

@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, createReadStream, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, type BigIntStats } from 'node:fs';
+import { lstat, open, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { HarnessError, type Thread } from '../contracts/index.ts';
 import type { ProjectSummary } from '../contracts/workspace.ts';
 import { approvalSchema, type ApprovalV1, type ToolOwner } from '../contracts/tool-effects.ts';
 import {
   checkObservationV1Schema, verificationRecipeV1Schema, type CheckObservationV1, type RecipePhase,
-  type VerificationRecipeV1, type BrowserChecklistV1,
+  type VerificationRecipeV1, type BrowserChecklistV1, type VerificationDeclarationV1,
 } from '../contracts/verification.ts';
 import { canonical, inside } from './security.ts';
 import { hostFlagEnabled } from './host-flags.ts';
@@ -28,6 +28,7 @@ const MAX_DIGEST_FILE_BYTES = 64 * 1024 * 1024;
 // Shared host limits, including synchronous completion reads inside Store.
 const MAX_DIGEST_TOTAL_BYTES = 128 * 1024 * 1024;
 const DIGEST_CHUNK_BYTES = 64 * 1024;
+const DIGEST_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
 const MAX_DIGEST_FILES = 2048;
 const MAX_LOG_BYTES = 64 * 1024;
 /** A START server must stay alive past this bounded settle window; the
@@ -76,25 +77,67 @@ export interface ListenerProbe {
  * even when the process exited 0; a bare HEAD SHA is never sufficient for a
  * dirty worktree. */
 export async function sourceDigest(root: string, files: readonly string[]): Promise<string> {
-  const base = await canonical(root);
+  return digestSourceFiles(await canonical(root), files);
+}
+
+interface DigestInputVersion {
+  declaredPath: string;
+  canonicalPath: string;
+  info: BigIntStats;
+}
+
+const digestInputChanged = () => new HarnessError('BLOCKED_SOURCE_DRIFT', 'A verification digest input changed during the read.');
+
+function assertSameDigestInput(before: BigIntStats, after: BigIntStats): void {
+  const fields = ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs', 'birthtimeNs', 'nlink'] as const;
+  if (!after.isFile() || fields.some(field => before[field] !== after[field])) throw digestInputChanged();
+}
+
+async function digestSourceFiles(base: string, files: readonly string[], signal?: AbortSignal, versions?: DigestInputVersion[]): Promise<string> {
+  signal?.throwIfAborted();
+  if (files.length > MAX_DIGEST_FILES) throw new HarnessError('RESOURCE_LIMIT', 'Digest input exceeds the file limit');
   const items: { path: string; sha256: string }[] = [];
   let totalBytes = 0;
-  if (files.length > MAX_DIGEST_FILES) throw new HarnessError('RESOURCE_LIMIT', 'Digest input exceeds the file limit');
+  const chunk = Buffer.allocUnsafe(DIGEST_CHUNK_BYTES);
+  const readPathInfo = versions ? lstat : stat;
   for (const relative of files.slice().sort()) {
-    const candidate = await canonical(join(base, ...relative.split('/')));
+    const declaredPath = join(base, ...relative.split('/'));
+    const candidate = await canonical(declaredPath);
+    signal?.throwIfAborted();
     if (!inside(base, candidate)) throw new HarnessError('CAPABILITY_DENIED', 'A digest input leaves the workspace root');
-    const info = await stat(candidate, { bigint: true });
-    if (!info.isFile()) throw new HarnessError('INVALID_RESOURCE', 'Digest inputs must be regular files');
-    assertDigestSize(info.size, totalBytes);
-    const hash = createHash('sha256');
-    let bytes = 0;
-    for await (const chunk of createReadStream(candidate)) {
-      bytes += (chunk as Buffer).length;
-      totalBytes += (chunk as Buffer).length;
-      assertDigestRead(bytes, totalBytes);
-      hash.update(chunk as Buffer);
-    }
-    items.push({ path: relative, sha256: hash.digest('hex') });
+    const pathInfo = await readPathInfo(candidate, { bigint: true });
+    signal?.throwIfAborted();
+    if (!pathInfo.isFile()) throw new HarnessError('INVALID_RESOURCE', 'Digest inputs must be regular files');
+    assertDigestSize(pathInfo.size, totalBytes);
+    const file = await open(candidate, DIGEST_OPEN_FLAGS);
+    try {
+      signal?.throwIfAborted();
+      const info = await file.stat({ bigint: true });
+      signal?.throwIfAborted();
+      if (!info.isFile()) throw new HarnessError('INVALID_RESOURCE', 'Digest inputs must be regular files');
+      assertDigestSize(info.size, totalBytes);
+      if (versions) assertSameDigestInput(pathInfo, info);
+      const hash = createHash('sha256');
+      let bytes = 0;
+      for (;;) {
+        const { bytesRead } = await file.read(chunk, 0, chunk.length, null);
+        signal?.throwIfAborted();
+        if (bytesRead === 0) break;
+        bytes += bytesRead;
+        totalBytes += bytesRead;
+        assertDigestRead(bytes, totalBytes);
+        hash.update(chunk.subarray(0, bytesRead));
+      }
+      if (versions) {
+        const after = await file.stat({ bigint: true });
+        signal?.throwIfAborted();
+        assertSameDigestInput(info, after);
+        if (BigInt(bytes) !== after.size) throw digestInputChanged();
+        versions.push({declaredPath, canonicalPath: candidate, info: after});
+      }
+      items.push({ path: relative, sha256: hash.digest('hex') });
+    } finally { await file.close(); }
+    signal?.throwIfAborted();
   }
   return digest(items);
 }
@@ -110,7 +153,7 @@ export function sourceDigestSync(root: string, files: readonly string[]): string
   for (const relative of files.slice().sort()) {
     const candidate = canonicalSync(join(base, ...relative.split('/')));
     if (!inside(base, candidate)) throw new HarnessError('CAPABILITY_DENIED', 'A digest input leaves the workspace root');
-    const fd = openSync(candidate, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
+    const fd = openSync(candidate, DIGEST_OPEN_FLAGS);
     try {
       const info = fstatSync(fd, { bigint: true });
       if (!info.isFile()) throw new HarnessError('INVALID_RESOURCE', 'Digest inputs must be regular files');
@@ -145,7 +188,7 @@ function canonicalSync(path: string): string {
 
 /** A model-supplied declaration is not a filesystem grant. Validate the
  * current main-thread project and physical working copy before hashing it. */
-export function assertVerificationSourceRoot(store: Store, threadId: string, rootPath: string): void {
+export function assertVerificationSourceRoot(store: Store, threadId: string, rootPath: string): string {
   const denied = () => new HarnessError('CAPABILITY_DENIED', 'Verification sources require the current attested project working copy.');
   try {
     const thread = store.get<Thread>('thread', threadId);
@@ -162,7 +205,36 @@ export function assertVerificationSourceRoot(store: Store, threadId: string, roo
     if (thread.workspaceId && (!workspace || workspace.id !== thread.workspaceId || workspace.threadId !== threadId || workspace.projectId !== project.id)) throw denied();
     if (workspace) attest(workspace);
     if (resolve(rootPath) !== resolve((workspace ?? root).path)) throw denied();
+    return JSON.stringify([project.id, root.path, root.identity, workspace?.id, workspace?.path, workspace?.identity]);
   } catch { throw denied(); }
+}
+
+export async function readVerificationSourceCut(store: Store, threadId: string, declaration: VerificationDeclarationV1, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  const {rootPath, sourceFiles, dependencyFiles, environmentId} = declaration;
+  const rootAuthority = assertVerificationSourceRoot(store, threadId, rootPath);
+  const assertCurrentRoot = () => {
+    signal?.throwIfAborted();
+    if (assertVerificationSourceRoot(store, threadId, rootPath) !== rootAuthority)
+      throw new HarnessError('CAPABILITY_DENIED', 'The verification source authority changed during the read.');
+  };
+  // Anchor both passes to the attested path, even if it is retargeted while
+  // a file path is resolving. Reattest the original authority after awaits.
+  const base = resolve(rootPath);
+  const versions: DigestInputVersion[] = [];
+  const codeDigest = await digestSourceFiles(base, sourceFiles, signal, versions);
+  assertCurrentRoot();
+  const dependencyDigest = await digestSourceFiles(base, dependencyFiles, signal, versions);
+  const assertCurrent = () => {
+    assertCurrentRoot();
+    // Validate only metadata, in the projection's turn, so another host task
+    // cannot edit an already checked input between this check and projection.
+    for (const entry of versions) {
+      if (canonicalSync(entry.declaredPath) !== entry.canonicalPath) throw digestInputChanged();
+      assertSameDigestInput(entry.info, lstatSync(entry.canonicalPath, { bigint: true }));
+    }
+  };
+  return {codeDigest, dependencyDigest, environmentId, assertCurrent};
 }
 
 export function recipeDigest(recipe: VerificationRecipeV1): string {

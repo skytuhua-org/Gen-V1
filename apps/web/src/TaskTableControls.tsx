@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { GripVertical, Search } from 'lucide-react';
 import { Popover } from '../../../packages/ui-shell/Popover';
-import { columnWidth, cycleSort, keyboardWidth, moveColumn, reconcileOrder, tableCellText, tableObject, tableView, type TableColumn, type TableSort } from './task-table-model';
+import { columnWidth, cycleSort, keyboardWidth, moveColumn, reconcileOrder, tableCellText, tableObject, tableView, measuredRowSample, type TableColumn, type TableSort } from './task-table-model';
 
 type Gesture = { kind: 'resize' | 'move'; key: string; scale: number; startX: number; x: number; y: number; startWidth: number; width: number; position: number | null; line: number | null; moved: boolean };
 
@@ -44,12 +44,17 @@ export function useTableControls(sourceColumns: TableColumn[], rows: unknown[], 
     sample.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;font-variant-numeric:tabular-nums';
     sample.style.font = fonts().cell; sample.style.fontVariantNumeric = 'tabular-nums';
     container.append(sample);
-    const next = Object.fromEntries(keys.map(key => [key, rows.reduce<number>((minimum, row) => {
+    // Measuring a text node forces layout, so cap each pass at a strided
+    // sample. Minima are width floors: accumulating the running maximum over
+    // updates is never unsafe — a stale-high floor only keeps a column wide.
+    const measured = measuredRowSample(rows, 600);
+    const next = Object.fromEntries(keys.map(key => [key, measured.reduce<number>((minimum, row) => {
       const value = tableObject(row)[key]; if (typeof value !== 'number') return minimum;
       sample.textContent = tableCellText(value, sourceColumns.find(column => column.key === key)!);
       return Math.max(minimum, sample.scrollWidth + 26);
     }, 90)]));
-    sample.remove(); setMinima(next);
+    sample.remove();
+    setMinima(previous => Object.fromEntries(keys.map(key => [key, Math.max(next[key] ?? 90, previous[key] ?? 90)])));
   }, [rows, keys, fonts, scroll, sourceColumns]);
   const minimum = useCallback((key: string) => minima[key] ?? 90, [minima]);
   const fitColumn = useCallback((key: string) => {

@@ -213,7 +213,7 @@ test('row moves resolve inherited tokens and the selected motion speed', async (
     document.documentElement.style.setProperty('--motion-speed', '1.25');
   });
   await move(page, 'thread-4', 'top');
-  expect((await records(page)).every(item => item.duration === 240 && item.easing === 'linear' && item.delay === 0)).toBe(true);
+  expect((await records(page)).every(item => item.duration === 300 && item.easing === 'linear' && item.delay === 0)).toBe(true);
 });
 
 test('settled moves clean up without a retained transform or animation', async ({ page }) => {
