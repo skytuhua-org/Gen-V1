@@ -88,10 +88,12 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
       .finally(() => setPosting(false));
   };
   const stateLabel = (work: AgentWorkRow) => {
+    if (work.outputStatus === 'missing' || work.outputStatus === 'changed')
+      return work.verification === 'VERIFIED' ? `verified — reported output ${work.outputStatus}` : `reported output ${work.outputStatus} — not verified`;
     if (work.verification === 'VERIFIED') return 'verified — host evidence accepted';
     if (work.verification === 'REPORTED_BLOCKED') return 'reported blocked — not verified';
     if (work.verification === 'REPORTED_INCOMPLETE') return 'reported incomplete — not verified';
-    if (work.verification === 'REPORTED_UNVERIFIED') return 'reported complete — not verified';
+    if (work.verification === 'REPORTED_UNVERIFIED') return work.reportedOutcome === 'COMPLETED' ? 'reported complete — not verified' : 'reported outcome unavailable — not verified';
     return work.state.replaceAll('_', ' ');
   };
   const evidenceLabel = (work: AgentWorkRow) => {
@@ -134,10 +136,12 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
       {output && <section className="agents-work-output" aria-label="Work output evidence">
         <div className="agents-work-output-header"><strong>Evidence for {output.workId}</strong><button type="button" className="agents-disclosure" onClick={closeEvidence}>Close evidence</button></div>
         <p className="agents-work-meta">
-          {output.verification === 'VERIFIED' ? 'Verified — host evidence accepted.' :
+          {output.outputStatus === 'missing' || output.outputStatus === 'changed' ?
+            output.verification === 'VERIFIED' ? `Verified — reported output ${output.outputStatus} after acceptance.` : `Reported output ${output.outputStatus} — not verified.` :
+            output.verification === 'VERIFIED' ? 'Verified — host evidence accepted.' :
             output.verification === 'REPORTED_BLOCKED' ? 'Reported blocked — not verified.' :
             output.verification === 'REPORTED_INCOMPLETE' ? 'Reported incomplete — not verified.' :
-            output.verification === 'REPORTED_UNVERIFIED' ? 'Reported complete — not verified.' : 'No completed output reported.'}
+            output.verification === 'REPORTED_UNVERIFIED' ? output.reportedOutcome === 'COMPLETED' ? 'Reported complete — not verified.' : 'Reported outcome unavailable — not verified.' : 'No completed output reported.'}
         </p>
         {output.outputStatus !== 'current' && output.outputStatus !== 'none' && <p className="agents-error" role="alert">The durable reported output is {output.outputStatus}; raw output and evidence are unavailable rather than verified.</p>}
         {output.evidence.length > 0 ? <ul aria-label="Evidence references" className="agents-work-evidence-list">
