@@ -137,6 +137,24 @@ it('M17-S06/D03 a stale schema resyncs; a verified retention gap returns RESYNC_
   expect(codeOf(() => sync.page(grant, signAs(sync, { ...decoded, afterSeq: 1 })))).toBe('RESYNC_REQUIRED');
 });
 
+it('continues after retention removes the last scanned event but resyncs after an unseen event is removed', () => {
+  const { store, sync } = fixture();
+  const grant = seedGrant(store);
+  seedThread(store, 'first', 'p1');
+  const snapshot = sync.snapshot(grant);
+  expect(snapshot.complete).toBe(true);
+
+  seedThread(store, 'next', 'p1');
+  store.retentionSweep({ keepEvents: 1 });
+  expect(sync.retentionFloor()).toBe(snapshot.afterSeq + 1);
+  expect(sync.advance(grant, snapshot.nextCursor!).deltas.map(delta => delta.threadId)).toEqual(['next']);
+
+  seedThread(store, 'later', 'p1');
+  store.retentionSweep({ keepEvents: 1 });
+  expect(sync.retentionFloor()).toBeGreaterThan(snapshot.afterSeq + 1);
+  expect(codeOf(() => sync.advance(grant, snapshot.nextCursor!))).toBe('RESYNC_REQUIRED');
+});
+
 it('M17-S05 page bounds: 1,000 authorized deltas per page over a fixed cut; paging resumes exactly at the cut', () => {
   const { store, sync } = fixture();
   const grant = seedGrant(store);

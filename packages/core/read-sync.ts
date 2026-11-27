@@ -116,7 +116,8 @@ export class ReadSyncHost {
     if (cursor.schemaVersion !== SYNC_CURSOR_SCHEMA_VERSION) throw resync();
     if (cursor.owner !== grant.grantId || cursor.deviceGrantGeneration !== grant.grantGeneration || cursor.filterDigest !== this.filterDigest(grant)) throw invalidCursor();
     if (cursor.afterSeq > cursor.snapshotUpperSeq) throw invalidCursor();
-    if (cursor.afterSeq < this.retentionFloor()) throw resync();
+    // Continuations read strictly after the cursor, so its own row may have been pruned.
+    if (cursor.afterSeq < this.retentionFloor() - 1) throw resync();
   }
 
   /** Oldest retained source sequence. Anything below it cannot be verified —
