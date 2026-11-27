@@ -49,7 +49,7 @@ import { hostFlagEnabled } from "./host-flags.ts";
 import { OperationProjectTrustHost } from './operation-project-trust.ts';
 import { OperationExecutionAdviceHost } from './operation-execution-advice.ts';
 import { computeAssessment, observationMatchesThreadOwner, SecurityFindingLedger } from "./verification-gate.ts";
-import { assertVerificationSourceRoot, sourceDigestSync } from "./project-verification.ts";
+import { assertVerificationSourceRoot, readVerificationSourceCut } from "./project-verification.ts";
 import { verificationDeclarationV1Schema, securityFindingV1Schema, type CheckObservationV1, type DeliverableAssessmentV1, type VerificationDeclarationV1, type VisualObservationV1 } from "../contracts/verification.ts";
 const securityFindingInput = securityFindingV1Schema.omit({ updatedAt: true });
 import type { ToolEffectRecord, ToolOwner } from "../contracts/tool-effects.ts";
@@ -87,6 +87,12 @@ import type {BackgroundWorkKind} from '../contracts/background-work.ts';
 type Outbox = WorkbenchQueuedInput & {messageId?:string;completedWrite?:CompletedWriteReceipt;hookClaimed?:boolean;hookDiagnostic?:WriteHookDiagnostic;sendMode?:SendModeV1};
 type Lease = { id: string; threadId: string; clientId: string; fields: string[]; expiresAt: number };
 type FinishRecord = { inputIds: string[]; invalidated?: boolean; [key: string]: unknown };
+type CompletionEvidenceFailure = 'changed' | 'unreadable' | 'invalid' | 'unavailable';
+type CompletionEvidence = {
+  declarationDigest: string;
+  cut: Awaited<ReturnType<typeof readVerificationSourceCut>> | null;
+  failure: CompletionEvidenceFailure | null;
+};
 const text = (p: Record<string, unknown>, key: string, max = 128 * 1024): string => {
   if (typeof p[key] !== "string" || !(p[key] as string).trim() || Buffer.byteLength(p[key] as string) > max) throw new HarnessError("INVALID_INPUT", key + " must be a nonempty string within its size limit");
   return p[key] as string;
@@ -2161,7 +2167,7 @@ export class Service {
     }
     if (call.name === "ui_discover") return discoverCapabilities(args);
     if (call.name === "ui_inspect") return inspectTask(this.store, this.thread(ctx.threadId), this.planning.inspect(ctx.threadId), args);
-    if (call.name.startsWith("ui_") || call.name === "task_finish" || call.name === "verification_declare" || call.name === "security_finding_record") return this.uiTool(call, ctx);
+    if (call.name.startsWith("ui_") || call.name === "task_finish" || call.name === "verification_declare" || call.name === "security_finding_record") return this.uiTool(call, ctx, controller?.signal);
     if (call.name === "operation_execute") {
       this.assertMutation(ctx.threadId); const op = this.store.get<Operation>("operation", text(args, "operationId", 200));
       if (!op || op.threadId !== ctx.threadId || !op.approved) throw new HarnessError("APPROVAL_REQUIRED", "The user must approve the exact prepared operation");
@@ -2172,7 +2178,7 @@ export class Service {
     const context = this.context(ctx.threadId, controller?.signal, undefined, { ...ctx });
     return domain.handleDomainTool(call.name, args, lineage ? lineage.wrap(context) : context);
   }
-  private async uiTool(call: ToolCall, ctx: RunContext): Promise<unknown> {
+  private async uiTool(call: ToolCall, ctx: RunContext, signal?: AbortSignal): Promise<unknown> {
     if (call.name === "ui_create_widget" && !GENERATED_APPS_ENABLED) throw new HarnessError("CAPABILITY_UNAVAILABLE", "Generated apps are disabled until execution isolation passes its integrity gates");
     const a = call.args;
     if (Buffer.byteLength(JSON.stringify(a)) > 128 * 1024) throw new HarnessError("INVALID_SPEC", "UI transaction exceeds 128 KiB");
@@ -2190,6 +2196,8 @@ export class Service {
     }
     const widget = call.name === "ui_create_widget" ? widgetDefinition(a) : null;
     this.assertRun(ctx);
+    if (call.name === "task_finish") this.assertCompletionReady(ctx);
+    const completionEvidence = call.name === "task_finish" && hostFlagEnabled("verification.workflowV1") ? await this.prepareCompletionEvidence(ctx, signal) : null;
     const apply = () => {
       this.assertRun(ctx);
       if (["ui_present", "ui_create_widget"].includes(call.name)) {
@@ -2253,13 +2261,10 @@ export class Service {
         return { findingId: recorded.findingId, status: recorded.status };
       }
       if (call.name === "task_finish") {
-        if (this.hasGate(ctx.threadId) || this.store.all<Operation>("operation", ctx.threadId).some(o => ["running", "unknown", "prepared"].includes(o.status))) throw new HarnessError("REQUEST_GATED", "Resolve decisions and outstanding operations before completion");
-        const current = this.store.all<Outbox>("outbox", ctx.threadId).filter(i => i.status !== "handled" && !(i.status === 'persisted' && (i.sendMode === 'AFTER_CURRENT' || i.sourceFailure || i.sourceRecovery?.resumeRequired) && i.runId === null));
-        const pending = current.filter(i => i.runId !== ctx.runId || !i.enteredRuntime);
-        if (pending.length) throw new HarnessError("REQUEST_GATED", "There is unfinished input");
+        const current = this.assertCompletionReady(ctx);
         this.store.put("finish", ctx.runId, ctx.threadId, { outcome: a.outcome ?? a.summary, evidence: a.evidence ?? [], assessment: true, inputIds: current.map(i => i.id) });
         if (hostFlagEnabled("verification.workflowV1")) {
-          const assessment = this.completionAssessment(ctx, call);
+          const assessment = this.completionAssessment(ctx, call, completionEvidence);
           if (assessment) this.store.put("assessment", assessment.assessmentId, ctx.threadId, assessment);
         }
         return { accepted: true, settlesAfterRuntime: true };
@@ -2268,11 +2273,54 @@ export class Service {
     };
     return command ? this.store.command(command, apply).result : this.store.internal(call.name, ctx.threadId, apply);
   }
+  private assertCompletionReady(ctx: RunContext): Outbox[] {
+    if (this.hasGate(ctx.threadId) || this.store.all<Operation>("operation", ctx.threadId).some(o => ["running", "unknown", "prepared"].includes(o.status))) throw new HarnessError("REQUEST_GATED", "Resolve decisions and outstanding operations before completion");
+    const current = this.store.all<Outbox>("outbox", ctx.threadId).filter(i => i.status !== "handled" && !(i.status === 'persisted' && (i.sendMode === 'AFTER_CURRENT' || i.sourceFailure || i.sourceRecovery?.resumeRequired) && i.runId === null));
+    if (current.some(i => i.runId !== ctx.runId || !i.enteredRuntime)) throw new HarnessError("REQUEST_GATED", "There is unfinished input");
+    return current;
+  }
+
+  private completionEvidenceFailure(error: unknown): CompletionEvidenceFailure {
+    if (error instanceof HarnessError) {
+      if (error.code === 'BLOCKED_SOURCE_DRIFT') return 'changed';
+      if (error.code === 'CAPABILITY_DENIED') return 'invalid';
+      if (error.code === 'INVALID_RESOURCE' || error.code === 'RESOURCE_LIMIT') return 'unreadable';
+      throw error;
+    }
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+    if (typeof error === 'object' && error !== null && typeof (error as {code?: unknown}).code === 'string') return 'unreadable';
+    throw error;
+  }
+
+  private async prepareCompletionEvidence(ctx: RunContext, signal?: AbortSignal): Promise<CompletionEvidence | null> {
+    const declaration = this.store.get<VerificationDeclarationV1>("verificationDeclaration", ctx.threadId);
+    if (!declaration) return null;
+    const declarationDigest = digest(declaration);
+    try {
+      signal?.throwIfAborted();
+      this.assertRun(ctx);
+      const cut = await readVerificationSourceCut(this.store, ctx.threadId, declaration, signal);
+      this.assertRun(ctx);
+      return { declarationDigest, cut, failure: null };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return { declarationDigest, cut: null, failure: this.completionEvidenceFailure(error) };
+    }
+  }
+
+  private completionEvidenceMessage(failure: CompletionEvidenceFailure): string {
+    if (failure === 'changed') return 'completion source evidence changed before the completion write';
+    if (failure === 'unreadable') return 'completion source evidence is unreadable or invalid';
+    if (failure === 'invalid') return 'completion source evidence authority is invalid';
+    return 'current authorized source inputs are unavailable';
+  }
+
   /** M06 additive completion projection. Runs synchronously inside the
-   * task_finish store transaction — no awaits. Verified only when every
-   * declared requirement carries a fresh PASS observation against the current
+   * task_finish store transaction after asynchronous source preparation — no
+   * awaits or file-content reads. Verified only when every declared
+   * requirement carries a fresh PASS observation against the current
    * source/environment digests and no external effect is unresolved. */
-  private completionAssessment(ctx: RunContext, call: ToolCall): DeliverableAssessmentV1 | null {
+  private completionAssessment(ctx: RunContext, call: ToolCall, prepared: CompletionEvidence | null = null): DeliverableAssessmentV1 | null {
     const thread = this.assertRun(ctx);
     const declaration = this.store.get<VerificationDeclarationV1>("verificationDeclaration", ctx.threadId);
     const observations: (CheckObservationV1 | VisualObservationV1)[] = [
@@ -2291,18 +2339,27 @@ export class Service {
       .map(effect => effect.invocationId);
     const empty = "0".repeat(64);
     let sourceAvailable = false;
+    let evidenceFailure: CompletionEvidenceFailure = 'unavailable';
     let sourceCut: { headSha: string | null; codeDigest: string; dependencyDigest: string; environmentId: string };
     if (declaration) {
       sourceCut = { headSha: null, codeDigest: empty, dependencyDigest: empty, environmentId: declaration.environmentId };
+      evidenceFailure = prepared?.failure ?? 'unavailable';
       try {
-        assertVerificationSourceRoot(this.store, ctx.threadId, declaration.rootPath);
-        sourceCut = { headSha: null, codeDigest: sourceDigestSync(declaration.rootPath, declaration.sourceFiles), dependencyDigest: sourceDigestSync(declaration.rootPath, declaration.dependencyFiles), environmentId: declaration.environmentId };
-        sourceAvailable = true;
-      } catch { /* Unavailable or revoked sources cannot establish verification. */ }
+        if (!prepared || prepared.declarationDigest !== digest(declaration)) evidenceFailure = 'changed';
+        else if (prepared.cut) {
+          prepared.cut.assertCurrent();
+          sourceCut = { headSha: null, codeDigest: prepared.cut.codeDigest, dependencyDigest: prepared.cut.dependencyDigest, environmentId: prepared.cut.environmentId };
+          sourceAvailable = true;
+        }
+      } catch (error) {
+        evidenceFailure = this.completionEvidenceFailure(error);
+        sourceAvailable = false;
+      }
     } else {
       const last = observations.at(-1)!;
       sourceCut = { headSha: null, codeDigest: last.codeDigest, dependencyDigest: last.dependencyDigest, environmentId: last.environmentId };
     }
+    const evidenceMessage = sourceAvailable ? null : this.completionEvidenceMessage(evidenceFailure);
     const assessment = computeAssessment({
       threadId: ctx.threadId,
       sourceCut,
@@ -2311,12 +2368,12 @@ export class Service {
       artifactAttestations: attestVerificationArtifacts(this.store, observations, declaration?.requirements ?? []),
       unresolvedEffects,
       verifierIdentity: "service/" + ctx.runId,
-      provenance: "task_finish completion projection",
+      provenance: "task_finish completion projection" + (evidenceMessage ? "; " + evidenceMessage : ""),
     });
     if (!sourceAvailable) {
       for (const requirement of assessment.requirements) {
         if (requirement.assessment === 'VERIFIED') requirement.assessment = 'UNVERIFIED';
-        requirement.missing = [...requirement.missing, 'current authorized source inputs are unavailable'].slice(0, 64);
+        requirement.missing = [...requirement.missing, evidenceMessage ?? 'current authorized source inputs are unavailable'].slice(0, 64);
       }
       if (assessment.label === 'VERIFIED') assessment.label = 'COMPLETED_UNVERIFIED';
     }

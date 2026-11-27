@@ -4284,6 +4284,7 @@
     "tests/verification-artifact-routes.test.ts",
     "tests/verification-artifacts-schema.test.ts",
     "tests/verification-artifacts-v3.test.ts",
+    "tests/verification-completion-transaction.test.ts",
     "tests/verification-evidence-owner-v3.test.ts",
     "tests/verification-executor-binding.test.ts",
     "tests/verification-executor.test.ts",
