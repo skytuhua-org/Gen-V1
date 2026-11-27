@@ -196,6 +196,31 @@ test('reduced mid-flight settles the indicator; wrap and a revealed parent settl
   await expectAligned(details);
 });
 
+
+test('an interrupted pointer selection retargets while typing remains responsive', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await recordTabEffects(page, true);
+  const spec = tabsSpec(['Details', 'Preview']); validateSurface(spec);
+  await serveTaskFixture(page, taskFixture(spec, { operation }, { selectedTab: 'Details' }));
+  await page.goto('/');
+  const details = page.locator('.artifact-content').getByRole('tab', { name: 'Details', exact: true });
+  const preview = page.locator('.artifact-content').getByRole('tab', { name: 'Preview', exact: true });
+  const first = page.getByRole('textbox', { name: 'First draft', includeHidden: true });
+  await preview.click();
+  await expect.poll(async () => (await tabEffects(page)).filter(record => record.target === 'task-tab-indicator').length).toBe(1);
+  await page.evaluate(() => { (window as unknown as TabEffectWindow).tabAnimations.at(-1)!.currentTime = 70; });
+  await details.click();
+  await expect(details).toHaveAttribute('aria-selected', 'true');
+  await first.fill('Typing is not held');
+  await expect(first).toHaveValue('Typing is not held');
+  const pointerEffects = (await tabEffects(page)).filter(record => record.target === 'task-tab-indicator');
+  expect(pointerEffects).toHaveLength(2);
+  await details.click();
+  expect((await tabEffects(page)).filter(record => record.target === 'task-tab-indicator')).toHaveLength(2);
+  await page.evaluate(() => { for (const animation of (window as unknown as TabEffectWindow).tabAnimations) animation.finish(); });
+  await expectAligned(details);
+});
+
 test('nested tablists resolve their own indicators', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await recordTabEffects(page);

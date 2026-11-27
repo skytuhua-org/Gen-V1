@@ -170,6 +170,7 @@ function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) 
   const parsed = tabStateData.safeParse(typeof props.statusBinding === 'string' ? store.get(`/inputs/${props.statusBinding}`) : undefined);
   const source = parsed.success ? parsed.data : undefined;
   const selected = source?.items.find(item => item.label === active);
+  const duplicateLabels = new Set(labels).size !== labels.length;
   const tabsId = useId(), tablist = useRef<HTMLDivElement>(null), indicator = useRef<HTMLSpanElement>(null);
   const effectCause = useRef<'pointer' | 'keyboard' | 'restore'>('restore'), pending = useRef<unknown>(undefined), travel = useRef<Animation | undefined>(undefined);
   const scrollPositions = useRef(new Map<number, { element: HTMLElement; left: number; top: number }[]>());
@@ -264,9 +265,9 @@ function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) 
     for (const button of listElement.querySelectorAll('[role="tab"]')) observer.observe(button);
     listElement.addEventListener('scroll', settle, { passive: true });
     return () => { observer.disconnect(); listElement.removeEventListener('scroll', settle); };
-  }, [active, labels.length]);
+  }, [active, labels.length, duplicateLabels]);
   useLayoutEffect(() => () => { travel.current?.cancel(); if (scrollRestoreFrame.current !== undefined) cancelAnimationFrame(scrollRestoreFrame.current); }, []);
-  if (new Set(labels).size !== labels.length) return <p role="alert">This saved tab view is invalid because its labels are not unique.</p>;
+  if (duplicateLabels) return <p role="alert">This saved tab view is invalid because its labels are not unique.</p>;
   return <div className={source ? 'task-tabs-operation' : undefined}>
     {source && (source.title || source.detail || source.status) && <header className="task-tabs-operation-header"><div>{source.title && source.title !== artifactTitle && <strong>{source.title}</strong>}{source.detail && <span>{source.detail}</span>}</div>{source.status && <StatusIcon status={source.status} />}</header>}
     <div ref={tablist} className="surface-tabs" role="tablist" aria-label={string(props.label, 'Views')}>{labels.map((label, i) => {
