@@ -23,3 +23,146 @@ diff --git a/src/windowsPtyAgent.ts b/src/windowsPtyAgent.ts
 +    this._conoutSocketWorker.dispose();
    }
  }
+diff --git a/lib/windowsTerminal.js b/lib/windowsTerminal.js
+--- a/lib/windowsTerminal.js
++++ b/lib/windowsTerminal.js
+@@ -45,6 +45,9 @@
+         var parsedEnv = _this._parseEnv(env);
+         // If the terminal is ready
+         _this._isReady = false;
++        _this._isDataPipeReady = false;
++        _this._killRequested = false;
++        _this._hasExited = false;
+         // Functions that need to run after `ready` event is emitted.
+         _this._deferreds = [];
+         // Create new termal.
+@@ -95,9 +98,11 @@
+             });
+             // Cleanup after the socket is closed.
+             _this._socket.on('close', function () {
++                _this._hasExited = true;
+                 _this.emit('exit', _this._agent.exitCode);
+                 _this._close();
+             });
++            _this._isDataPipeReady = true;
+         });
+         _this._file = file;
+         _this._name = name;
+@@ -146,13 +151,41 @@
+     };
+     WindowsTerminal.prototype.kill = function (signal) {
+         var _this = this;
+-        this._deferNoArgs(function () {
+-            if (signal) {
+-                throw new Error('Signals not supported on windows.');
+-            }
++        if (signal) {
++            throw new Error('Signals not supported on windows.');
++        }
++        if (this._killRequested) {
++            return;
++        }
++        this._killRequested = true;
++        // ConPTY needs a connected reader for teardown, even when the child is silent.
++        var kill = function () {
++            _this._deferreds = [];
+             _this._close();
+-            _this._agent.kill();
+-        });
++            if (_this._hasExited === false) {
++                try {
++                    _this._agent.kill();
++                }
++                catch (error) {
++                    _this._killRequested = false;
++                    throw error;
++                }
++            }
++        };
++        if (this._isDataPipeReady) {
++            kill();
++        }
++        else {
++            this._socket.once('ready_datapipe', function () {
++                try {
++                    kill();
++                }
++                catch (error) {
++                    // The caller still waits for real exit and can retry termination.
++                    console.error('Could not terminate the Windows PTY:', error);
++                }
++            });
++        }
+     };
+     WindowsTerminal.prototype._deferNoArgs = function (deferredFn) {
+         var _this = this;
+diff --git a/src/windowsTerminal.ts b/src/windowsTerminal.ts
+--- a/src/windowsTerminal.ts
++++ b/src/windowsTerminal.ts
+@@ -16,6 +16,9 @@
+ 
+ export class WindowsTerminal extends Terminal {
+   private _isReady: boolean;
++  private _isDataPipeReady = false;
++  private _killRequested = false;
++  private _hasExited = false;
+   private _deferreds: { run: () => void }[];
+   private _agent: WindowsPtyAgent;
+ 
+@@ -103,9 +106,11 @@
+ 
+       // Cleanup after the socket is closed.
+       this._socket.on('close', () => {
++        this._hasExited = true;
+         this.emit('exit', this._agent.exitCode);
+         this._close();
+       });
++      this._isDataPipeReady = true;
+ 
+     });
+ 
+@@ -162,13 +167,38 @@
+   }
+ 
+   public kill(signal?: string): void {
+-    this._deferNoArgs(() => {
+-      if (signal) {
+-        throw new Error('Signals not supported on windows.');
+-      }
++    if (signal) {
++      throw new Error('Signals not supported on windows.');
++    }
++    if (this._killRequested) {
++      return;
++    }
++    this._killRequested = true;
++    // ConPTY needs a connected reader for teardown, even when the child is silent.
++    const kill = () => {
++      this._deferreds = [];
+       this._close();
+-      this._agent.kill();
+-    });
++      if (this._hasExited === false) {
++        try {
++          this._agent.kill();
++        } catch (error) {
++          this._killRequested = false;
++          throw error;
++        }
++      }
++    };
++    if (this._isDataPipeReady) {
++      kill();
++    } else {
++      this._socket.once('ready_datapipe', () => {
++        try {
++          kill();
++        } catch (error) {
++          // The caller still waits for real exit and can retry termination.
++          console.error('Could not terminate the Windows PTY:', error);
++        }
++      });
++    }
+   }
+ 
+   private _deferNoArgs<A>(deferredFn: () => void): void {

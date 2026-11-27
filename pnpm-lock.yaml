@@ -15,7 +15,7 @@ overrides:
 
 patchedDependencies:
   node-pty@1.1.0:
-    hash: cfe6b823ce4327648fe7be1b838baa6644a8538e16745c1f0c7f6a7ba6469013
+    hash: 8f0e6e2f2f253085250a7b90c8813a81737277cc9286fd336cb9c77ab9de88ac
     path: patches/node-pty-1.1.0.patch
 
 importers:
@@ -111,7 +111,7 @@ importers:
         version: 1.78.0(@types/react@19.2.2)(react@19.2.3)
       node-pty:
         specifier: 1.1.0
-        version: 1.1.0(patch_hash=cfe6b823ce4327648fe7be1b838baa6644a8538e16745c1f0c7f6a7ba6469013)
+        version: 1.1.0(patch_hash=8f0e6e2f2f253085250a7b90c8813a81737277cc9286fd336cb9c77ab9de88ac)
       pdf-lib:
         specifier: 1.17.1
         version: 1.17.1
@@ -10211,7 +10211,7 @@ snapshots:
       nan: 2.30.0
     optional: true
 
-  node-pty@1.1.0(patch_hash=cfe6b823ce4327648fe7be1b838baa6644a8538e16745c1f0c7f6a7ba6469013):
+  node-pty@1.1.0(patch_hash=8f0e6e2f2f253085250a7b90c8813a81737277cc9286fd336cb9c77ab9de88ac):
     dependencies:
       node-addon-api: 7.1.1
 
