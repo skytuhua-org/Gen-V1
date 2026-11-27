@@ -346,3 +346,34 @@ test('a required custom choice uses native text validity without weakening optio
   await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit').length).toBe(1);
   expect(fixture.commands.find(command => command.type === 'action.submit')?.payload.payload).toEqual({ choice: 'Pick up in person' });
 });
+
+
+test('a disabled required choice does not block submission', async ({ page }) => {
+  const spec = { root: 'form', elements: {
+    form: { type: 'Form', props: { actionId: 'ask', submitLabel: 'Continue', payloadFromState: { choice: 'delivery' } }, children: ['choice'] },
+    choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Choose delivery', required: true, disabled: true, options: [{ value: 'download', label: 'Prepare a local export' }] } },
+  } };
+  const fixture = await serveTaskFixture(page, taskFixture(spec));
+  await openApp(page);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit').length).toBe(1);
+  await expect(page.getByText('Pick an option first.', { exact: true })).toHaveCount(0);
+});
+
+test('a standalone button validates only its keyed associated choice', async ({ page }) => {
+  const spec = { root: 'stack', elements: {
+    stack: { type: 'Stack', props: {}, children: ['choice', 'unrelated', 'action'] },
+    choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Choose delivery', required: true, options: [{ value: 'download', label: 'Prepare a local export' }] } },
+    unrelated: { type: 'ChoiceList', props: { stateKey: 'witness', label: 'Optional witness', required: true, options: [{ value: 'yes', label: 'Include a witness' }] } },
+    action: { type: 'Button', props: { label: 'Continue', actionId: 'ask', payloadFromState: { choice: 'delivery' } } },
+  } };
+  const fixture = await serveTaskFixture(page, taskFixture(spec));
+  await openApp(page);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  expect(fixture.commands.filter(command => command.type === 'action.submit')).toHaveLength(0);
+  await expect(page.locator('fieldset', { hasText: 'Choose delivery' }).getByText('Pick an option first.', { exact: true })).toBeVisible();
+  await expect(page.locator('fieldset', { hasText: 'Optional witness' }).getByText('Pick an option first.', { exact: true })).toHaveCount(0);
+  await page.getByRole('radio', { name: 'Prepare a local export' }).click();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit').length).toBe(1);
+});
