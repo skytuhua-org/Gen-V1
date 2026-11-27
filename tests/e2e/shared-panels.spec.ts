@@ -256,3 +256,18 @@ for(const outcome of ['success','failure'] as const)test(`retained profile sign-
 test('profile cancellation reports sign-in completion when the host commit already won',async({page})=>{
  const host=await profileAuthFixture(page);host.holdPoll();await host.panel.getByRole('button',{name:'Sign in to GitHub',exact:true}).click();await expect.poll(()=>host.actions.some(item=>item.action==='poll')).toBe(true);await page.route('**/api/github/auth/cancel',route=>route.fulfill({json:{status:'authenticated',login:'completed-user'}}));await host.panel.getByRole('button',{name:'Cancel sign-in',exact:true}).click();await expect(host.panel).toContainText('Sign-in completed as completed-user before cancellation.');await host.releasePoll();await expect(host.panel).not.toContainText('stale-user');await expect(host.panel).not.toContainText('Sign-in cancelled');
 });
+
+test('the selected Workspace tab owns the only rendered tabpanel', async ({page}) => {
+  const panel = page.getByRole('complementary', {name: 'Workspace panel', exact: true});
+  await openSurface(page, panel, 'Terminal');
+  await openSurface(page, panel, 'Files');
+  for (const [label, id] of [['Artifact','artifact'], ['Terminal','terminal'], ['Files','files']]) {
+    const tab = panel.getByRole('tab', {name: label, exact: true});
+    await tab.click();
+    await expect(panel.getByRole('tablist').locator('[role=tab][aria-controls]')).toHaveCount(1);
+    await expect(tab).toHaveAttribute('aria-selected', 'true');
+    await expect(tab).toHaveAttribute('aria-controls', 'workspace-view-' + id);
+    await expect(panel.getByRole('tabpanel')).toHaveAttribute('id', 'workspace-view-' + id);
+    await expect(panel.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'workspace-tab-' + id);
+  }
+});
