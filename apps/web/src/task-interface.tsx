@@ -90,7 +90,7 @@ export function ChoiceList({ element: { props } }: ComponentRenderProps) {
     resize.observe(field);
     window.addEventListener('resize', sync);
     return () => { observer.disconnect(); resize.disconnect(); window.removeEventListener('resize', sync); };
-  }, [scope?.active]);
+  }, [scope?.active, disabled]);
   const describedBy = invalid ? errorId : undefined;
   const choiceInputProps = { 'aria-invalid': invalid || undefined, 'aria-describedby': describedBy } as const;
   return <fieldset ref={fieldset} className="task-choices" disabled={disabled || !eligible} aria-invalid={invalid || undefined} aria-describedby={describedBy}>

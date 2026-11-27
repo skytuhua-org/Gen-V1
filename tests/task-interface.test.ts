@@ -80,7 +80,7 @@ it('does not interrupt bounded-history follow for arrow and caret keys inside co
 
 
 const choiceFixture = `
-import React from 'react';
+import React, {useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {StateProvider, useStateStore} from '@json-render/react';
 import {ChoiceValidationProvider, useChoiceValidation} from './apps/web/src/task-context';
@@ -99,7 +99,13 @@ function Probe(){
 }
 const customChoice = {stateKey: 'delivery', label: 'Choose delivery', required: true, options: [{value: 'download', label: 'Prepare a local export'}], custom: {label: 'Other delivery method'}};
 const hiddenChoice = {stateKey: 'requiredChoice', label: 'Required witness', required: true, options: [{value: 'yes', label: 'Include a witness'}]};
-createRoot(document.getElementById('root')).render(<StateProvider initialState={{values: {delivery: 'Typed freeform value'}}}><ChoiceValidationProvider><Probe/><ChoiceList element={{props: customChoice}}/><div id="boundary"><ChoiceList element={{props: hiddenChoice}}/></div></ChoiceValidationProvider></StateProvider>);
+function Harness(){
+  const [choiceDisabled, setChoiceDisabled] = useState(true);
+  window.setChoiceDisabled = setChoiceDisabled;
+  const dynamicChoice = {stateKey: 'dynamicChoice', label: 'Dynamic witness', required: true, disabled: choiceDisabled, options: [{value: 'yes', label: 'Include dynamic witness'}]};
+  return <StateProvider initialState={{values: {delivery: 'Typed freeform value'}}}><ChoiceValidationProvider><Probe/><ChoiceList element={{props: customChoice}}/><div id="boundary"><ChoiceList element={{props: hiddenChoice}}/></div><div id="dynamic"><ChoiceList element={{props: dynamicChoice}}/></div></ChoiceValidationProvider></StateProvider>;
+}
+createRoot(document.getElementById('root')).render(<Harness/>);
 `;
 
 type ChoiceEvaluation = { valid: boolean; captures: Array<{ valueLabel: string; userEditVersion: number }> };
@@ -118,21 +124,35 @@ describe('required choice registration capture', () => {
     await expect.poll(() => page.evaluate('Boolean(window.choiceValidation && window.stateStore)')).toBe(true);
     return page;
   }
+  const evaluateChoice = async (page: Page, key: string) => (await page.evaluate(`window.evaluateChoice([${JSON.stringify(key)}])`)) as ChoiceEvaluation;
 
   it('captures renderer-approved custom labels and only user edit versions', async () => {
     const page = await open();
-    const initial = (await page.evaluate(`window.evaluateChoice(['delivery'])`)) as ChoiceEvaluation;
+    const initial = await evaluateChoice(page, 'delivery');
     expect(initial.valid).toBe(true);
     expect(initial.captures).toHaveLength(1);
     expect(initial.captures[0].valueLabel).toBe('Other delivery method');
     expect(initial.captures[0].valueLabel).not.toBe('Typed freeform value');
     expect(initial.captures[0].userEditVersion).toBe(0);
     await page.locator('.task-choice-custom-input').fill('Typed replacement');
-    const edited = (await page.evaluate(`window.evaluateChoice(['delivery'])`)) as ChoiceEvaluation;
+    const edited = await evaluateChoice(page, 'delivery');
     expect(edited.captures[0].userEditVersion).toBe(1);
     await page.evaluate(`window.stateStore.set('/values/delivery', 'Programmatic replacement')`);
-    const programmatic = (await page.evaluate(`window.evaluateChoice(['delivery'])`)) as ChoiceEvaluation;
+    const programmatic = await evaluateChoice(page, 'delivery');
     expect(programmatic.captures[0].userEditVersion).toBe(1);
+    await page.close();
+  });
+
+
+
+  it('re-enables an in-place choice when its disabled prop clears', async () => {
+    const page = await open();
+    await expect.poll(() => page.evaluate(`document.querySelector('#dynamic fieldset').disabled`)).toBe(true);
+    await page.evaluate(`window.setChoiceDisabled(false)`);
+    await expect.poll(() => page.evaluate(`document.querySelector('#dynamic fieldset').disabled`)).toBe(false);
+    expect((await evaluateChoice(page, 'dynamicChoice')).valid).toBe(false);
+    await page.getByRole('radio', { name: 'Include dynamic witness' }).click();
+    expect((await evaluateChoice(page, 'dynamicChoice')).valid).toBe(true);
     await page.close();
   });
 
@@ -140,13 +160,13 @@ describe('required choice registration capture', () => {
     const page = await open();
     await page.evaluate(`document.getElementById('boundary').inert = true`);
     await expect.poll(() => page.evaluate(`document.querySelector('#boundary fieldset').disabled`)).toBe(true);
-    expect(await page.evaluate(`window.evaluateChoice(['requiredChoice'])`)).toEqual({valid: true, captures: []});
+    expect(await evaluateChoice(page, 'requiredChoice')).toEqual({valid: true, captures: []});
     await page.evaluate(`document.getElementById('boundary').inert = false; document.getElementById('boundary').setAttribute('aria-hidden', 'true')`);
     await expect.poll(() => page.evaluate(`document.querySelector('#boundary fieldset').disabled`)).toBe(true);
-    expect(await page.evaluate(`window.evaluateChoice(['requiredChoice'])`)).toEqual({valid: true, captures: []});
+    expect(await evaluateChoice(page, 'requiredChoice')).toEqual({valid: true, captures: []});
     await page.evaluate(`document.getElementById('boundary').removeAttribute('aria-hidden')`);
     await expect.poll(() => page.evaluate(`document.querySelector('#boundary fieldset').disabled`)).toBe(false);
-    const active = (await page.evaluate(`window.evaluateChoice(['requiredChoice'])`)) as ChoiceEvaluation;
+    const active = await evaluateChoice(page, 'requiredChoice');
     expect(active.valid).toBe(false);
     expect(active.captures).toEqual([]);
     await expect.poll(() => page.locator('#boundary .task-choice-error').textContent()).toBe('Pick an option first.');
