@@ -35,6 +35,7 @@ export function applyAppearance(preferences: AppearancePreferences): void {
     shell.style.setProperty('--panel-motion', (parsed.panelAnimations && parsed.motion === 'system' ? parsed.motionDuration / parsed.motionSpeed : 0) + 'ms');
   }
   const timings = {hover:120,press:80,'panel-enter':220,'panel-exit':180,tab:140,insert:180,remove:140,stagger:30,status:160,success:240,'popup-enter':180,'popup-exit':140,'toast-enter':200,'toast-exit':160,'tooltip-enter':160,'tooltip-exit':120};
+  // These tokens are already speed-effective durations; imperative consumers use them as-is.
   for (const [name, duration] of Object.entries(timings)) root.style.setProperty('--ui-motion-' + name, (parsed.motion === 'off' ? 0 : duration / parsed.motionSpeed) + 'ms');
   root.style.setProperty('--workspace-image-opacity', String(parsed.backgroundOpacity));
   root.style.setProperty('--workspace-image', parsed.backgroundStyle === 'image' && parsed.backgroundImage ? `url("${parsed.backgroundImage}")` : 'none');

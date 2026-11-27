@@ -14,6 +14,18 @@ it('retains the actual Vespin three-line row, unread gutter and above-title meta
  const onPress=vi.fn(),html=renderToStaticMarkup(createElement(InboxItemRow,{title:'Choose the current project',description:'The current request remains in its canonical conversation.',lead:{icon:createElement('span',null,'A'),label:'Current task'},meta:createElement('time',null,'now'),unread:true,current:true,muted:false,onPress,label:'Choose the current project, unread'}));
  expect(html).toContain('class="ui-list-row"');expect(html).toContain('data-meta="title"');expect(html).toContain('data-lead="above"');expect(html).toContain('ui-list-row-leading');expect(html).toContain('ui-unread-dot');expect(html).toContain('ui-list-row-head');expect(html).toContain('ui-list-row-lead-label');expect(html.indexOf('ui-list-row-lead-label')).toBeLessThan(html.indexOf('ui-list-row-title'));expect(html).toContain('data-current="true"');expect(onPress).not.toHaveBeenCalled();
 });
+it('announces only the selected inbox row as current without page-navigation semantics',()=>{
+ const render=(current:boolean)=>renderToStaticMarkup(createElement(InboxItemRow,{title:'Question',description:'Needs input',lead:{icon:createElement('span',null,'Q'),label:'Request'},meta:createElement('time',null,'now'),unread:true,current,muted:false,onPress:vi.fn(),label:'Question, unread'}));
+ const current=render(true),noncurrent=render(false);
+ expect(current.match(/aria-current=/g)).toHaveLength(1);
+ expect(current).toContain('aria-current="true"');
+ expect(current).not.toContain('aria-current="page"');
+ expect(current).toContain('data-current="true"');
+ expect(current).toContain('Unread. ');
+ expect(noncurrent).not.toContain('aria-current=');
+ expect(noncurrent).not.toContain('data-current=');
+});
+
 it('uses the vendored list and reader presentation for canonical Gen items without adding send authority',()=>{
  const item:AttentionItem={id:'request:a:1',threadId:'thread-a',kind:'request',title:'A real conversation',summary:'Choose a destination',state:'needs-input',createdAt:'2026-11-04T00:00:00.000Z',updatedAt:'2026-11-04T00:00:00.000Z',read:false,popupDismissed:false,actionable:true,notificationKey:'request:a:1:needs-input',destination:{threadId:'thread-a'}},mark=vi.fn(async()=>{}),open=vi.fn();
  const html=renderToStaticMarkup(createElement(InboxView,{attention:{items:[item],unread:1,error:'',refresh:async()=>{},markRead:mark,markUnread:mark},onOpenThread:open}));

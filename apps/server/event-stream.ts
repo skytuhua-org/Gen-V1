@@ -51,9 +51,12 @@ function chunkFor(event: WorkspaceEvent): string {
 export function streamEvents(response: ServerResponse, store: Pick<Store, 'eventsAfter' | 'subscribe' | 'sequence' | 'retentionFloor'>, after: number, onClose: () => void): () => void {
   if (response.destroyed || response.writableEnded) { onClose(); return () => {}; }
   const controller = new AbortController();
-  const floor = store.retentionFloor();
+  const abandonStartup = () => { onClose(); response.destroy(); return () => {}; };
+  let floor: number;
+  try { floor = store.retentionFloor(); } catch { return abandonStartup(); }
   let cursor = after, pumping = false, closed = false, comment = ': connected\n\n', gap: string | null = null;
-  if (cursor < floor) { gap = `event: retention-gap\ndata: ${JSON.stringify({ floor })}\n\n`; cursor = floor - 1; }
+  const gapFrame = (floor: number) => `event: retention-gap\ndata: ${JSON.stringify({ floor })}\n\n`;
+  if (cursor < floor) { gap = gapFrame(floor); cursor = floor - 1; }
   // subscribe() already delivers each parsed commit once, in order, to every
   // listener. Buffer live pushes and reuse them once the backlog is drained so
   // a caught-up reader costs no store read or re-parse per event. The ledger
@@ -68,7 +71,7 @@ export function streamEvents(response: ServerResponse, store: Pick<Store, 'event
     else if (pending.length >= 1024) { pending.length = 0; dropped = true; liveCut = Number.MAX_SAFE_INTEGER; }
     else { pending.push(event); void pump(); }
   });
-  liveCut = store.sequence;
+  try { liveCut = store.sequence; } catch { unsubscribe(); return abandonStartup(); }
   async function pump() {
     if (pumping || closed) return;
     pumping = true;
@@ -78,7 +81,16 @@ export function streamEvents(response: ServerResponse, store: Pick<Store, 'event
         // Every post-subscribe commit lands in pending (and only a pre-subscribe
         // backlog, seq <= liveCut, can precede it), so pending is the ordered
         // suffix once the store has been drained up to liveCut.
-        if (!gap && cursor < liveCut && !backlog.length) backlog.push(...store.eventsAfter(cursor, 64));
+        if (!gap && cursor < liveCut && !backlog.length) {
+          const page = store.eventsAfter(cursor, 64);
+          // Retention can advance while a reader drains an already-cached page.
+          // Check the floor only on a discontinuity, not every replay or live push.
+          if (page.length && page[0].seq > cursor + 1) {
+            const nextFloor = store.retentionFloor();
+            if (nextFloor > cursor + 1) gap = gapFrame(nextFloor);
+          }
+          backlog.push(...page);
+        }
         // The gap marker does not consume the first event of a replay page.
         const event = gap ? undefined : cursor >= liveCut ? pending.shift() : backlog.shift();
         if (!event && !comment && !gap) break;

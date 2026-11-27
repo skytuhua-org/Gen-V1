@@ -27,7 +27,7 @@ jobs:
       # Scheduled and manual sweeps use the default-branch code; no PR checkout.
       # No PR checkout, artifacts, caches, or event interpolation enter the script.
       - name: Cancel obsolete PR runs using current GitHub metadata
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const api = {...context.repo, request: {timeout: 10000}};
