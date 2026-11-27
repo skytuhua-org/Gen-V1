@@ -6,7 +6,7 @@ import {DESKTOP_CHANNELS} from '../packages/desktop-contract/index.ts';
 import {createBrowserProxy,pinnedBrowserTarget} from '../apps/desktop/browser-proxy.ts';
 import {createServer,request as httpRequest} from 'node:http';
 import {createServer as tcpServer,connect} from 'node:net';
-import {nodeSidecarArguments,waitForBackendReady} from '../apps/desktop/backend-policy.ts';
+import {createBackendStderrTail,nodeSidecarArguments,waitForBackendReady} from '../apps/desktop/backend-policy.ts';
 import * as backendPolicy from '../apps/desktop/backend-policy.ts';
 import {execFileSync,spawn,type ChildProcess} from 'node:child_process';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -44,6 +44,16 @@ describe('bounded backend readiness',()=>{
  it('fails immediately on a child error and removes readiness listeners',async()=>{
   const child=fixture(),error=Error('Could not spawn owned backend'),rejected=expect(waitForBackendReady(child,token,4357,()=>'')).rejects.toBe(error);
   child.emit('error',error);await rejected;clean(child);
+ });
+ it('retains localized sidecar exit diagnostics split across stderr chunks',async()=>{
+  const child=fixture(),stderr=createBackendStderrTail(),message='Could not read 測試.txt';
+  const bytes=Buffer.from(message),at=Buffer.from('Could not read ').length+1;
+  const result=waitForBackendReady(child,token,4357,stderr.read);
+  stderr.write(Buffer.alloc(9000,120));stderr.write(bytes.subarray(0,at));stderr.write(bytes.subarray(at));
+  expect(stderr.read()).toHaveLength(8000);
+  child.emit('exit',23);
+  await expect(result).rejects.toThrow(message);
+  clean(child);
  });
  it('fails immediately on child exit with the bounded diagnostic tail',async()=>{
   const child=fixture(),stderr='x'.repeat(700)+'source failure',rejected=expect(waitForBackendReady(child,token,4357,()=>stderr)).rejects.toThrow('The local backend stopped during startup (23). '+stderr.slice(-500));
