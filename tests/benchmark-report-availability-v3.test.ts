@@ -33,6 +33,39 @@ describe('M01 unavailable paired benchmark evidence', () => {
     expectUnavailable(result[1], 'candidate');
   });
 
+  it.each(['open', 'close'])('removes owned review directories when review host %s fails', async phase => {
+    const [{ execFile }, { mkdtemp, readdir, rm }, { tmpdir }, { join }, { promisify }] = await Promise.all([
+      import('node:child_process'), import('node:fs/promises'), import('node:os'), import('node:path'), import('node:util'),
+    ]);
+    const scratch = await mkdtemp(join(tmpdir(), 'startup-review-test-'));
+    try {
+      const source = `
+        import { registerHooks } from 'node:module';
+        const phase = ${JSON.stringify(phase)};
+        const sources = {
+          './review-host.ts': phase === 'open'
+            ? 'export async function openReviewHost() { throw Error("injected review open failure"); }'
+            : 'export async function openReviewHost() { return { async close() { throw Error("injected review close failure"); } }; }',
+          '../apps/desktop/backend-policy.ts': 'export function nodeSidecarArguments() { return ["-e", "process.exit(1)"]; }',
+        };
+        registerHooks({ resolve(specifier, context, next) {
+          if (context.parentURL?.endsWith('/scripts/bench-startup.ts') && Object.hasOwn(sources, specifier)) {
+            return { shortCircuit: true, url: 'data:text/javascript,' + encodeURIComponent(sources[specifier]) };
+          }
+          return next(specifier, context);
+        } });
+        process.argv.splice(1, 0, 'scripts/bench-startup.ts');
+        await import('./scripts/bench-startup.ts');
+      `;
+      await expect(promisify(execFile)(process.execPath, [
+        '--import', 'tsx', '--input-type=module', '--eval', source, '--', '--runs', '1', '--skip-browser',
+      ], { encoding: 'utf8', windowsHide: true, timeout: 15_000, env: { ...process.env, TMPDIR: scratch, TEMP: scratch, TMP: scratch } })).rejects.toMatchObject({
+        code: 1, stdout: '', stderr: expect.stringContaining('injected review ' + phase + ' failure'),
+      });
+      expect((await readdir(scratch)).filter(name => name.startsWith('bench-review-'))).toEqual([]);
+    } finally { await rm(scratch, { recursive: true, force: true }); }
+  }, 20_000);
+
   it('keeps an unavailable candidate beside an observed baseline', () => {
     const baseline: BenchmarkRun = { role: 'baseline', status: 'PASS', measurement: { ...unavailable, inputBytes: 123 } };
     const result = rows(benchmarkReportHtml([record(baseline, null)]));
