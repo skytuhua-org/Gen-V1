@@ -89,6 +89,16 @@
   .model-picker-reasoning-head{display:none}
   .model-picker-efforts{flex-direction:row;gap:4px}
   .model-picker-effort{flex:none;width:auto;min-height:24px;padding:2px 8px}
+  @media (min-height:320px) and (min-width:360px){
+   .model-picker-grid[data-combined=true] .model-picker-scope,
+   .model-picker-grid[data-combined=true] .model-picker-new-task{display:none}
+   .model-picker-grid[data-combined=true] .model-picker-main{min-height:96px}
+   .model-picker-grid[data-combined=true] .model-picker-search input{height:24px;min-height:24px;padding:2px 0;line-height:20px}
+   .model-picker-grid[data-combined=true] .model-picker-list{min-height:66px;padding:6px 12px;scroll-padding-block:6px}
+   .model-picker-grid[data-combined=true] .model-picker-option{min-height:48px;padding-block:5px}
+   .model-picker-grid[data-combined=true] .model-picker-reasoning{flex:none;min-height:30px;max-height:30px}
+   .model-picker-grid[data-combined=true] .model-picker-no-effort{padding-block:2px;line-height:20px;white-space:nowrap}
+  }
  }
 }
 @container (max-width:480px){
