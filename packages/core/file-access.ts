@@ -66,7 +66,11 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
       let output = "";
       const metadataImport = Array.isArray(request.paths) && (request.paths as GuardPath[]).some(path => path.gitMetadataImport);
       const timer = setTimeout(() => finish(denied()), pathGuardRpcDeadline(request.command,metadataImport,startupAcquisition));
-      const failed = () => finish(new HarnessError(/limit exceeded/i.test(diagnostics)?"RESOURCE_LIMIT":"CAPABILITY_DENIED", "File access check failed — the folder could not be opened safely for this action", { nativeCode: /GUARD_NATIVE_ERROR:([-0-9]+)/.exec(diagnostics)?.[1] ?? "unavailable",nativeMessage:/GUARD_NATIVE_MESSAGE:([^\r\n]*)/.exec(diagnostics)?.[1] }));
+      const failed = () => {
+        const nativeMessage = /GUARD_NATIVE_MESSAGE:([^\r\n]*)/.exec(diagnostics)?.[1];
+        const precondition = nativeMessage !== undefined && /Replacement destination (?:bytes|identity) changed/.test(nativeMessage);
+        finish(new HarnessError(precondition ? "PRECONDITION_FAILED" : /limit exceeded/i.test(diagnostics)?"RESOURCE_LIMIT":"CAPABILITY_DENIED", "File access check failed — the folder could not be opened safely for this action", { nativeCode: /GUARD_NATIVE_ERROR:([-0-9]+)/.exec(diagnostics)?.[1] ?? "unavailable",nativeMessage }));
+      };
       const data = (bytes: string) => {
         output += bytes;
         if (output.length > (metadataImport ? 64 : 16) * 1024 * 1024) return finish(denied());
@@ -147,7 +151,7 @@ export async function removeOwnedFile(path: string, identity: { dev: bigint | nu
     await sessions.getStore()!.rpc({ command: "removeOwned", id: randomUUID(), path, dev: String(identity.dev), ino: String(identity.ino), empty, directory });
   });
 }
-export async function replaceOwnedFile(source: string, destination: string, identity: { dev: bigint; ino: bigint }, sha256: string, signal: AbortSignal, expectedDestinationHash?: string): Promise<void> {
+export async function replaceOwnedFile(source: string, destination: string, identity: { dev: bigint; ino: bigint }, sha256: string, signal: AbortSignal, expectedDestinationHash?: string, beforeNativeReplace?: (destination: string) => void | Promise<void>): Promise<void> {
   const target=expectedDestinationHash===undefined?undefined:await lstat(destination,{bigint:true});
   const paths:GuardPath[]=[{path:dirname(source),leaf:false},{path:dirname(destination),leaf:false}];
   await withPathGuard(paths, signal, async () => {
@@ -156,6 +160,8 @@ export async function replaceOwnedFile(source: string, destination: string, iden
     // on one opened handle and denies in-place writes until the rename ends.
     // An external atomic save can still replace the destination pathname.
     if(target&&createHash('sha256').update(await readBoundFile(destination,32*1024*1024)).digest('hex')!==expectedDestinationHash)throw new HarnessError('PRECONDITION_FAILED','File changed before guarded replacement');
+    active(signal);
+    await beforeNativeReplace?.(destination);
     active(signal);
     await sessions.getStore()!.rpc({ command: "replaceOwned", id: randomUUID(), source, destination, dev: String(identity.dev), ino: String(identity.ino), sha256, targetDev:target&&String(target.dev), targetIno:target&&String(target.ino), targetSha256:expectedDestinationHash });
   });

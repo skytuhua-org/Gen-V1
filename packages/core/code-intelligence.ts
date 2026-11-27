@@ -723,11 +723,16 @@ export class CodeIntelligence {
     if (plan.exactApprovalId !== input.approvalId)
       throw new HarnessError("CAPABILITY_DENIED", "The rename approval does not match this plan.");
     return this.underLock(plan.workspaceIdentity, async () => {
-      // Grants are re-validated at apply: a revoked root between plan and
-      // apply must produce no write.
-      for (const target of plan.textEdits)
+      // Grants are re-validated at apply: a revoked root or redirected parent
+      // between plan and apply must produce no write.
+      const canonicalRoots = await Promise.all(input.grantedRoots.map(root => canonical(root)));
+      for (const target of plan.textEdits) {
         if (!input.grantedRoots.some(root => inside(root, target.path)))
           throw new HarnessError("CAPABILITY_DENIED", "A rename target is outside the granted roots.");
+        const resolvedTarget = await canonical(target.path);
+        if (!canonicalRoots.some(root => inside(root, resolvedTarget)))
+          throw new HarnessError("CAPABILITY_DENIED", "A rename target resolves outside the granted roots.");
+      }
       // Validate every target's preimage before the first change.
       const preimages = new Map<string, Buffer>();
       for (const expected of plan.expectedBeforeDigests) {
@@ -769,7 +774,7 @@ export class CodeIntelligence {
           try {
             await replaceVerifiedFile(target.path, Buffer.from(postimage, "utf8"), record.preimage, input.signal);
           } catch (error) {
-            if (error instanceof HarnessError && error.code === "CANCELLED") throw error;
+            if (!(error instanceof HarnessError && error.code === "PRECONDITION_FAILED")) throw error;
             record.disposition = "Conflict";
             entries.push({ path: target.path, disposition: "Conflict", detail: "The file changed while its rename edits were being written." });
             await flush();
@@ -813,6 +818,7 @@ export class CodeIntelligence {
       entries: { path: string; preimage: string; postimage: string | null; backup: string; disposition: RenameRecoveryEntry["disposition"] }[];
     };
     // Recovery never writes outside the current project's granted roots.
+    const canonicalRoots = await Promise.all(input.grantedRoots.map(root => canonical(root)));
     for (const record of journal.entries)
       if (!input.grantedRoots.some(root => inside(root, record.path)))
         throw new HarnessError("CAPABILITY_DENIED", "The recovery journal targets a file outside the granted roots.");
@@ -847,6 +853,9 @@ export class CodeIntelligence {
         const current = await readBoundFile(record.path, 32 * 1024 * 1024).catch(() => null);
         const currentDigest = current ? sha(current) : null;
         if (record.postimage !== null && currentDigest === record.postimage) {
+          const resolvedTarget = await canonical(record.path);
+          if (!canonicalRoots.some(root => inside(root, resolvedTarget)))
+            throw new HarnessError("CAPABILITY_DENIED", "The recovery journal target resolves outside the granted roots.");
           // Restore only when current bytes still match the written postimage.
           const backup = await readBoundFile(record.backup, 32 * 1024 * 1024).catch(() => null);
           if (!backup || sha(backup) !== record.preimage) {
@@ -858,7 +867,7 @@ export class CodeIntelligence {
           try {
             await replaceVerifiedFile(record.path, backup, record.postimage!, input.signal);
           } catch (error) {
-            if (error instanceof HarnessError && error.code === "CANCELLED") throw error;
+            if (!(error instanceof HarnessError && error.code === "PRECONDITION_FAILED")) throw error;
             conflict = true;
             live.entries[index]!.disposition = "Conflict";
             entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed while its recovery was being written." });
