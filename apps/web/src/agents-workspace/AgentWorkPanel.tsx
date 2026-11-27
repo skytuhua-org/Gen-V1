@@ -1,6 +1,7 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {Ban, Eye, Play, Square} from 'lucide-react';
 import {Select} from '../../../../packages/ui-shell/Select';
+import {Modal} from '../../../../packages/ui-shell/Modal';
 import {
   getAgentWork, getAgentWorkInputs, getAgentWorkMessages, getAgentWorkOutput, getAgentWorkPlan,
   createAgentWork, sendAgentInput, stopAgentWork, resumeAgentWork, cancelAgentInput, postAgentMessage,
@@ -129,9 +130,10 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
     if (work.outputStatus === 'changed') return 'reported output changed';
     return work.evidence.refs ? `${work.evidence.stale}/${work.evidence.refs} refs stale` : 'no evidence yet';
   };
-  return <section className="agents-work" aria-label="Agent work">
-    <button type="button" className="agents-disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>Agent work · {list ? list.works.length : '…'}</button>
-    {open && <div className="agents-work-body">
+  return <div className="agents-work" role="group" aria-label="Agent work">
+    <button type="button" className="agents-disclosure" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>Agent work · {list ? list.works.length : '…'}</button>
+    <Modal open={open} title={`Agent work · ${list ? list.works.length : '…'}`} onClose={() => setOpen(false)} className="agents-work-modal">
+    <div className="agents-work-body">
       {!list && !error && <p className="agents-work-meta">Loading agent work…</p>}
       {list && <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ` (unavailable${r.reason ? `: ${r.reason}` : ''})`}`).join(', ')} · budget reserved {list.budget.reservedTokens}tok</div>}
       {progress && <div className="agents-work-progress">
@@ -221,8 +223,9 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
         </div>}
       </details> : null}
       {error && <p className="agents-error" role="alert">{error}</p>}
-    </div>}
-  </section>;
+    </div>
+    </Modal>
+  </div>;
 }
 
 /** M09-U03: weighted task tree. Each node shows its allocated units and its
