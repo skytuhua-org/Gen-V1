@@ -37,17 +37,26 @@ test('unique tabs retain saved selection and mounted drafts', async ({ page }) =
   const preview = page.locator('.artifact-content').getByRole('tab', { name: 'Preview', exact: true });
   const first = page.getByRole('textbox', { name: 'First draft', includeHidden: true });
   const second = page.getByRole('textbox', { name: 'Second draft', includeHidden: true });
+  const relations = await page.locator('.artifact-content').evaluate(root => Array.from(root.querySelectorAll<HTMLElement>('[role="tab"]')).map(tab => {
+    const panel = root.ownerDocument.getElementById(tab.getAttribute('aria-controls') || '');
+    return { id: tab.id, controls: tab.getAttribute('aria-controls'), panelId: panel?.id, labelledBy: panel?.getAttribute('aria-labelledby') };
+  }));
+  expect(relations).toHaveLength(2);
+  expect(new Set(relations.map(pair => pair.id)).size).toBe(2);
+  for (const pair of relations) expect(pair).toMatchObject({ controls: pair.panelId, labelledBy: pair.id });
   const assertSelected = async (label: string, mountedPanels = 2) => {
     await expect(page.locator('.artifact-content').getByRole('tab', { selected: true })).toHaveCount(1);
     await expect(page.locator('.artifact-content').getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('.artifact-content').getByRole('tab', { name: label, exact: true })).toHaveAttribute('tabindex', '0');
     await expect(page.locator('.artifact-content [role="tab"][tabindex="0"]')).toHaveCount(1);
     await expect(page.locator('.artifact-content').getByRole('tabpanel')).toHaveCount(1);
-    await expect(page.locator('.artifact-content').getByRole('tabpanel', { includeHidden: true })).toHaveCount(mountedPanels);
+    await expect(page.locator('.artifact-content').getByRole('tabpanel', { includeHidden: true })).toHaveCount(2);
+    await expect(page.locator('.artifact-content input')).toHaveCount(mountedPanels);
   };
   await assertSelected('Preview', 1);
   await second.fill('Preview draft retained');
   await details.click(); await assertSelected('Details'); await first.fill('Details draft retained');
+  expect(await second.evaluate(node => { node.focus(); return document.activeElement === node; })).toBe(false);
   const firstNode = await first.elementHandle(), secondNode = await second.elementHandle();
   await details.press('ArrowRight'); await assertSelected('Preview'); await expect(preview).toBeFocused();
   await preview.press('ArrowLeft'); await assertSelected('Details'); await expect(details).toBeFocused();
@@ -75,11 +84,226 @@ test('an unknown saved label falls back without rewriting state on render', asyn
   const spec = tabsSpec(['Details', 'Preview']); validateSurface(spec);
   const host = await serveTaskFixture(page, taskFixture(spec, { operation }, { selectedTab: 'Unknown label' }));
   await page.goto('/');
-  await expect(page.locator('.artifact-content').getByRole('tab', { name: 'Details', exact: true })).toHaveAttribute('aria-selected', 'true');
+  const details = page.locator('.artifact-content').getByRole('tab', { name: 'Details', exact: true });
+  await expect(details).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.artifact-content').getByRole('tab', { selected: true })).toHaveCount(1);
   await expect(page.locator('.artifact-content').getByRole('tabpanel')).toHaveCount(1);
   await expect(page.getByRole('textbox', { name: 'First draft' })).toBeVisible();
   expect(await quiescent(page, 800, () => [host.commands.filter(command => ['state.save', 'action.submit'].includes(command.type)).length, JSON.stringify(host.snapshot.userStates[0].values)])).toHaveLength(1);
   expect(host.commands.filter(command => ['state.save', 'action.submit'].includes(command.type))).toEqual([]);
   expect(host.snapshot.userStates[0].values).toEqual({ selectedTab: 'Unknown label' });
+  await details.click();
+  await expect.poll(() => host.snapshot.userStates[0].values.selectedTab).toBe('Details');
+});
+
+test('tabs without children keep valid empty panel relationships', async ({ page }) => {
+  const spec: TaskSpec = { root: 'tabs', elements: {
+    tabs: { type: 'Tabs', props: { labels: ['Details', 'Preview'], stateKey: 'selectedTab' } },
+  } };
+  validateSurface(spec);
+  await serveTaskFixture(page, taskFixture(spec, {}, {}));
+  await page.goto('/');
+  const relations = await page.locator('.artifact-content').evaluate(root => Array.from(root.querySelectorAll<HTMLElement>('[role="tab"]')).map(tab => {
+    const panel = root.ownerDocument.getElementById(tab.getAttribute('aria-controls') || '');
+    return { controls: tab.getAttribute('aria-controls'), panelId: panel?.id, labelledBy: panel?.getAttribute('aria-labelledby'), tabId: tab.id };
+  }));
+  expect(relations).toHaveLength(2);
+  for (const pair of relations) expect(pair).toMatchObject({ controls: pair.panelId, labelledBy: pair.tabId });
+  await expect(page.locator('.artifact-content').getByRole('tabpanel')).toHaveCount(1);
+  await page.locator('.artifact-content').getByRole('tab', { name: 'Preview', exact: true }).click();
+  await expect(page.locator('.artifact-content').getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.artifact-content').getByRole('tabpanel')).toHaveCount(1);
+});
+
+type TabEffectWindow = Window & { tabEffects: { target: string; frames: ComputedKeyframe[] }[]; tabAnimations: Animation[] };
+
+async function recordTabEffects(page: import('@playwright/test').Page, pause = false) {
+  await page.addInitScript(pause => {
+    const records: { target: string; frames: ComputedKeyframe[] }[] = [], animations: Animation[] = [];
+    Object.assign(window, { tabEffects: records, tabAnimations: animations });
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (frames, options) {
+      const animation = animate.call(this, frames, options);
+      if (this.matches('.task-tab-indicator, .task-tab-panel, .task-tab-panel *')) {
+        if (pause) animation.pause();
+        records.push({ target: String(this.className), frames: (animation.effect as KeyframeEffect).getKeyframes() });
+        animations.push(animation);
+      }
+      return animation;
+    };
+  }, pause);
+}
+const tabEffects = (page: import('@playwright/test').Page) => page.evaluate(() => (window as unknown as TabEffectWindow).tabEffects);
+// The indicator's painted box must land on the active tab's box (within 1 CSS px).
+const indicatorDelta = (tab: import('@playwright/test').Locator) => tab.evaluate(button => {
+  const mark = button.parentElement!.querySelector<HTMLElement>('.task-tab-indicator')!;
+  const m = mark.getBoundingClientRect(), b = button.getBoundingClientRect();
+  return { dx: m.left - b.left, dw: m.width - b.width, dy: m.bottom - b.bottom, hidden: mark.hasAttribute('hidden'), width: m.width };
+});
+const expectAligned = async (tab: import('@playwright/test').Locator) => {
+  await expect.poll(() => indicatorDelta(tab)).toMatchObject({ hidden: false });
+  await expect.poll(async () => {
+    const delta = await indicatorDelta(tab);
+    return Math.max(Math.abs(delta.dx), Math.abs(delta.dw), Math.abs(delta.dy));
+  }, { message: 'indicator settles on the selected tab within 1 CSS px' }).toBeLessThanOrEqual(1);
+  expect((await indicatorDelta(tab)).width).toBeGreaterThan(0);
+};
+
+test('pointer selection travels one indicator; source updates keep it still', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await recordTabEffects(page);
+  const spec = tabsSpec(['Details', 'Preview']); validateSurface(spec);
+  const host = await serveTaskFixture(page, taskFixture(spec, { operation }, { selectedTab: 'Preview' }));
+  await page.goto('/');
+  const details = page.locator('.artifact-content').getByRole('tab', { name: 'Details', exact: true });
+  const preview = page.locator('.artifact-content').getByRole('tab', { name: 'Preview', exact: true });
+  const first = page.getByRole('textbox', { name: 'First draft', includeHidden: true });
+  const second = page.getByRole('textbox', { name: 'Second draft', includeHidden: true });
+  await expectAligned(preview);
+  await second.fill('Preview draft kept');
+  await details.click();
+  await expect(first).toBeVisible();
+  await expect.poll(() => indicatorDelta(details)).toMatchObject({ hidden: false });
+  await expectAligned(details);
+  const pointerEffects = (await tabEffects(page)).filter(record => record.target === 'task-tab-indicator');
+  expect(pointerEffects.length).toBeGreaterThan(0);
+  for (const record of pointerEffects) for (const frame of record.frames) expect(Object.keys(frame)).toContain('transform');
+  await first.fill('Details draft kept');
+  const firstNode = await first.elementHandle(), secondNode = await second.elementHandle();
+  await preview.click(); await expectAligned(preview);
+  await details.click(); await expectAligned(details);
+  expect(await first.evaluate((node, old) => node === old, firstNode)).toBe(true);
+  expect(await second.evaluate((node, old) => node === old, secondNode)).toBe(true);
+  await expect(first).toHaveValue('Details draft kept');
+  await expect(second).toHaveValue('Preview draft kept');
+  // Arrow navigation and repeated identical snapshots never travel the indicator.
+  const baseline = (await tabEffects(page)).length;
+  await details.press('ArrowRight'); await expectAligned(preview); await expect(preview).toBeFocused();
+  await preview.press('Home'); await expectAligned(details); await expect(details).toBeFocused();
+  await details.press('End'); await expectAligned(preview); await expect(preview).toBeFocused();
+  for (let i = 0; i < 3; i++) await host.publish();
+  expect((await tabEffects(page)).length).toBe(baseline);
+  // A source-status update on the inactive tab keeps selection, draft and geometry.
+  host.setInput('operation', { title: 'Review drafts', status: 'running', items: [{ label: 'Details', status: 'running' }, { label: 'Preview', status: 'neutral' }] });
+  await host.publish();
+  await expect(details.locator('.task-tab-status-slot')).toHaveClass('task-tab-status-slot status-running');
+  await expect(preview).toHaveAttribute('aria-selected', 'true');
+  await expect(second).toHaveValue('Preview draft kept');
+  await expectAligned(preview);
+  expect((await tabEffects(page)).length).toBe(baseline);
+});
+
+test('reduced mid-flight settles the indicator; wrap and a revealed parent settle without travel', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await recordTabEffects(page, true);
+  const spec = tabsSpec(['Details', 'Preview']); validateSurface(spec);
+  await serveTaskFixture(page, taskFixture(spec, { operation }, { selectedTab: 'Details' }));
+  await page.goto('/');
+  const details = page.locator('.artifact-content').getByRole('tab', { name: 'Details', exact: true });
+  const preview = page.locator('.artifact-content').getByRole('tab', { name: 'Preview', exact: true });
+  await preview.click();
+  const paused = () => page.evaluate(() => (window as unknown as TabEffectWindow).tabAnimations.filter(animation => animation.playState === 'paused').length);
+  await expect.poll(paused).toBe(1);
+  await page.evaluate(() => { document.documentElement.dataset.motion = 'reduced'; });
+  await expect.poll(paused).toBe(0);
+  await expectAligned(preview);
+  await page.evaluate(() => { document.documentElement.dataset.motion = 'system'; });
+  // A row wrap lands on a different line: paint the final rect without travel.
+  await page.locator('.surface-tabs').evaluate(node => { const el = node as HTMLElement; el.style.flexWrap = 'wrap'; el.style.maxWidth = '140px'; });
+  await details.click();
+  await expectAligned(details);
+  // A hidden parent revealed again recomputes the static rect via ResizeObserver.
+  await page.locator('.artifact-content').evaluate(node => { (node as HTMLElement).style.display = 'none'; });
+  await page.locator('.artifact-content').evaluate(node => { (node as HTMLElement).style.display = ''; });
+  await expectAligned(details);
+});
+
+
+test('an interrupted pointer selection retargets while typing remains responsive', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await recordTabEffects(page, true);
+  const spec = tabsSpec(['Details', 'Preview']); validateSurface(spec);
+  await serveTaskFixture(page, taskFixture(spec, { operation }, { selectedTab: 'Details' }));
+  await page.goto('/');
+  const details = page.locator('.artifact-content').getByRole('tab', { name: 'Details', exact: true });
+  const preview = page.locator('.artifact-content').getByRole('tab', { name: 'Preview', exact: true });
+  const first = page.getByRole('textbox', { name: 'First draft', includeHidden: true });
+  await preview.click();
+  await expect.poll(async () => (await tabEffects(page)).filter(record => record.target === 'task-tab-indicator').length).toBe(1);
+  await page.evaluate(() => { (window as unknown as TabEffectWindow).tabAnimations.at(-1)!.currentTime = 70; });
+  await details.click();
+  await expect(details).toHaveAttribute('aria-selected', 'true');
+  await first.fill('Typing is not held');
+  await expect(first).toHaveValue('Typing is not held');
+  const pointerEffects = (await tabEffects(page)).filter(record => record.target === 'task-tab-indicator');
+  expect(pointerEffects).toHaveLength(2);
+  await details.click();
+  expect((await tabEffects(page)).filter(record => record.target === 'task-tab-indicator')).toHaveLength(2);
+  await page.evaluate(() => { for (const animation of (window as unknown as TabEffectWindow).tabAnimations) animation.finish(); });
+  await expectAligned(details);
+});
+
+test('nested tablists resolve their own indicators', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await recordTabEffects(page);
+  const nested: TaskSpec = { root: 'outer', elements: {
+    outer: { type: 'Tabs', props: { labels: ['Outer first', 'Outer second'], stateKey: 'outerTab' }, children: ['inner', 'outerB'] },
+    inner: { type: 'Tabs', props: { labels: ['Inner first', 'Inner second'], stateKey: 'innerTab' }, children: ['innerA', 'innerB'] },
+    innerA: { type: 'Input', props: { label: 'Inner first draft', stateKey: 'innerFirst' } },
+    innerB: { type: 'Input', props: { label: 'Inner second draft', stateKey: 'innerSecond' } },
+    outerB: { type: 'Input', props: { label: 'Outer second draft', stateKey: 'outerSecond' } },
+  } };
+  validateSurface(nested);
+  await serveTaskFixture(page, taskFixture(nested, {}, { outerTab: 'Outer first', innerTab: 'Inner first' }));
+  await page.goto('/');
+  const innerFirst = page.getByRole('tab', { name: 'Inner first', exact: true });
+  const innerSecond = page.getByRole('tab', { name: 'Inner second', exact: true });
+  const outerFirst = page.getByRole('tab', { name: 'Outer first', exact: true });
+  const outerSecond = page.getByRole('tab', { name: 'Outer second', exact: true });
+  await expect(page.locator('.task-tab-indicator')).toHaveCount(2);
+  expect(new Set(await page.locator('.artifact-content [role="tab"]').evaluateAll(tabs => tabs.map(tab => tab.id))).size).toBe(4);
+  await expectAligned(innerFirst); await expectAligned(outerFirst);
+  const outerBefore = await indicatorDelta(outerFirst);
+  await innerSecond.click();
+  await expectAligned(innerSecond);
+  const outerAfter = await indicatorDelta(outerFirst);
+  expect(outerAfter.dx).toBeCloseTo(outerBefore.dx, 0);
+  // Each control resolves its own ref: the outer selection still works alone.
+  await outerSecond.click();
+  await expectAligned(outerSecond);
+  await expect(page.getByRole('textbox', { name: 'Outer second draft' })).toBeVisible();
+});
+
+test('tab switches preserve nested disclosure state and panel scroll', async ({ page }) => {
+  const spec: TaskSpec = { root: 'tabs', elements: {
+    tabs: { type: 'Tabs', props: { labels: ['Details', 'Preview'], stateKey: 'selectedTab' }, children: ['detailsPanel', 'second'] },
+    detailsPanel: { type: 'Disclosure', props: { title: 'Nested answer', text: 'Retained answer', stateKey: 'detailsOpen' }, children: ['first'] },
+    first: { type: 'Input', props: { label: 'Nested draft', stateKey: 'nestedDraft' } },
+    second: { type: 'Input', props: { label: 'Second draft', stateKey: 'secondDraft' } },
+  } };
+  validateSurface(spec);
+  await serveTaskFixture(page, taskFixture(spec, {}, { selectedTab: 'Details' }));
+  await page.goto('/');
+  const details = page.getByRole('tab', { name: 'Details', exact: true });
+  const preview = page.getByRole('tab', { name: 'Preview', exact: true });
+  const trigger = page.getByRole('button', { name: 'Nested answer', exact: true });
+  const nestedInput = page.getByRole('textbox', { name: 'Nested draft', includeHidden: true });
+  const secondInput = page.getByRole('textbox', { name: 'Second draft', includeHidden: true });
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await nestedInput.fill('Nested draft retained');
+  await preview.click();
+  await secondInput.evaluate(node => { node.style.marginBottom = '160px'; });
+  const panel = page.locator('.artifact-content .task-tab-panel').nth(1);
+  await panel.evaluate(node => { node.style.maxHeight = '70px'; node.style.overflowY = 'auto'; node.scrollTop = 32; });
+  expect(await panel.evaluate(node => node.scrollTop)).toBe(32);
+  const panelNode = await panel.elementHandle(), secondNode = await secondInput.elementHandle();
+  await details.click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await preview.click();
+  await expect(trigger).toBeHidden();
+  expect(await panel.evaluate((node, old) => node === old, panelNode)).toBe(true);
+  expect(await secondInput.evaluate((node, old) => node === old, secondNode)).toBe(true);
+  await expect(nestedInput).toHaveValue('Nested draft retained');
+  await expect.poll(() => panel.evaluate(node => node.scrollTop)).toBe(32);
 });
