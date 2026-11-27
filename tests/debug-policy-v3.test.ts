@@ -147,3 +147,28 @@ it('dispose retains a session whose teardown was not confirmed',async()=>{
  expect(registry.get(session.sessionId,'acct-1')).not.toBeNull();
  expect(await registry.revoke('acct-1',signal())).toEqual({terminated:0,failed:1});
 });
+
+// Issue #2023 T02 boundary freeze: these desired-contract regressions are
+// expected to fail on the current head until the T03 core contract repair.
+it.fails('effectful commands after launch require a fresh effect admission, not only launch ownership',async()=>{
+ const adapter=new FakeDebug();
+ const registry=new DebugRegistry([backend('ok')],'ok',()=>adapter);
+ const session=await registry.launch({owner:'acct-1',recipe,signal:signal()});
+ // The current API accepts this call with no per-effect approval/admission at
+ // all. The frozen boundary requires an explicit APPROVAL_REQUIRED denial and
+ // zero adapter effects until T03 adds that contract.
+ await expect(registry.effect(session.sessionId,'acct-1','continue',{},signal())).rejects.toMatchObject({code:'APPROVAL_REQUIRED'});
+ expect(adapter.effects).toEqual([]);
+});
+
+it.fails('bounded Unicode variable values never expose a split surrogate pair',async()=>{
+ const adapter=new FakeDebug();
+ adapter.vars=[{name:'unicode-\u{1f600}',value:'a'.repeat(4095)+'\u{1f600}',variablesReference:0}];
+ const registry=new DebugRegistry([backend('ok')],'ok',()=>adapter);
+ const session=await registry.launch({owner:'acct-1',recipe,signal:signal()});
+ const result=await registry.inspect(session.sessionId,'acct-1','variables',{},signal()) as {variables:{value:string}[]};
+ expect(result.variables[0]!.value.length).toBeLessThanOrEqual(4096);
+ // A bounded string must remain valid Unicode scalar text. Truncating between
+ // UTF-16 surrogates would silently corrupt the value instead of bounding it.
+ expect(result.variables[0]!.value).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
+});
