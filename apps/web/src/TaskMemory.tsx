@@ -45,6 +45,7 @@ function MemoryNote({ note, threadId, fresh = false, expanded = true, onExpanded
   const blocked = recovery !== 'ready';
   const edit = (nextKey: string, nextContent: string) => {
     if (blocked || inFlight.current === 'delete') return;
+    if (error) setError('');
     if (fresh && nextKey !== key) baseRevision.current = 0;
     dirty.current = true; setKey(nextKey); setContent(nextContent);
     draft.current = { key: nextKey, content: nextContent, baseRevision: baseRevision.current };
