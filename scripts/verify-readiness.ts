@@ -7,7 +7,7 @@ import {spawn,spawnSync,type ChildProcess} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {once} from 'node:events';
 import {finished} from 'node:stream/promises';
-import {createWriteStream,existsSync,mkdirSync,readdirSync,readFileSync,statSync,writeFileSync} from 'node:fs';
+import {createWriteStream,existsSync,mkdirSync,readdirSync,readFileSync,realpathSync,statSync,writeFileSync} from 'node:fs';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {resolvePackageManager,type PackageManagerResolution} from './research-baseline.ts';
@@ -152,7 +152,16 @@ export function aggregateStatus(results:CheckResult[]): 'PASS'|'FAIL'{
   return required.length>0&&required.every(result=>result.status==='PASS')?'PASS':'FAIL';
 }
 
+const readinessRevisionPattern=/^[0-9a-f]{40}$/;
+export function readinessRevision(root:string):string{
+  const git=spawnSync('git',['rev-parse','--show-toplevel','HEAD^{commit}'],{cwd:root,encoding:'utf8',shell:false,windowsHide:true,timeout:30_000});
+  const [top,sha,...extra]=(git.stdout??'').trimEnd().split(/\r?\n/);
+  if(git.status!==0||!top||!sha||extra.length||!readinessRevisionPattern.test(sha)||realpathSync(top)!==realpathSync(root))throw Error('Cannot verify the readiness repository revision.');
+  return sha;
+}
+
 export function buildManifest(input:{repositorySha:string;platform:string;runId:string;startedAt:string;endedAt:string;results:CheckResult[]}):Manifest{
+  if(!readinessRevisionPattern.test(input.repositorySha))throw Error('Readiness evidence requires a verified repository revision.');
   return {schemaVersion:1,repositorySha:input.repositorySha,platform:input.platform,runId:input.runId,
     startedAt:input.startedAt,endedAt:input.endedAt,aggregate:aggregateStatus(input.results),
     checks:input.results.map(result=>({...result,repositorySha:input.repositorySha,platform:input.platform}))};
@@ -193,8 +202,7 @@ export function readinessPackageChecks(root:string):(spec:CheckSpec)=>Promise<Ch
 async function main(){
   const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
   const startedAt=new Date().toISOString();
-  const git=spawnSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8',shell:false,windowsHide:true});
-  const repositorySha=git.status===0?git.stdout.trim():'unknown';
+  const repositorySha=readinessRevision(root);
   const platform=`${process.platform}-${process.arch}`;
   const runId=`run-${Date.now()}-${randomUUID()}`;
   const artifactRoot=resolve(root,'test-results','readiness',runId);
@@ -255,6 +263,7 @@ async function main(){
     }
   }
 
+  if(readinessRevision(root)!==repositorySha)throw Error('The readiness repository revision changed during the run.');
   const manifest=buildManifest({repositorySha,platform,runId,startedAt,endedAt:new Date().toISOString(),results});
   const manifestPath=resolve(artifactRoot,'manifest.json');
   writeFileSync(manifestPath,JSON.stringify(manifest,null,2));

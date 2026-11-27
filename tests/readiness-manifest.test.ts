@@ -1,11 +1,12 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
+import {execFileSync} from 'node:child_process';
 import {existsSync,mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {reserveDesktopRelease} from '../scripts/desktop-assets.ts';
 import {
   aggregateStatus,blockedResult,buildManifest,childEnvironment,detectBrowserPrerequisite,
-  redactSecrets,runCheck,readinessPackageChecks,windowsVerificationPlan,type CheckResult,type CheckSpec,
+  redactSecrets,runCheck,readinessPackageChecks,readinessRevision,windowsVerificationPlan,type CheckResult,type CheckSpec,
 } from '../scripts/verify-readiness.ts';
 
 // Negative-case contract for scripts/verify-readiness.ts (WO-F01 spec step 5).
@@ -224,6 +225,30 @@ describe('aggregate and manifest',()=>{
     expect(aggregateStatus([resultWith('PASS',false)])).toBe('FAIL');
     expect(aggregateStatus([])).toBe('FAIL');
     expect(aggregateStatus([resultWith('PASS'),resultWith('SKIP',false)])).toBe('PASS');
+  });
+
+  it('requires an actual Git commit and observes a changed HEAD in a disposable checkout',()=>{
+    const directory=temporaryDirectory();
+    expect(()=>readinessRevision(directory)).toThrow('repository revision');
+    const git=(...args:string[])=>execFileSync('git',args,{cwd:directory,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+    git('init');
+    expect(()=>readinessRevision(directory)).toThrow('repository revision');
+    const commit=(message:string)=>git('-c','user.name=Readiness fixture','-c','user.email=readiness@example.invalid','-c','commit.gpgSign=false','commit','--allow-empty','-m',message);
+    commit('baseline');
+    const initial=readinessRevision(directory);
+    expect(initial).toBe(git('rev-parse','HEAD'));
+    const nested=join(directory,'exported-copy');mkdirSync(nested);
+    expect(()=>readinessRevision(nested)).toThrow('repository revision');
+    commit('changed');
+    expect(readinessRevision(directory)).toBe(git('rev-parse','HEAD'));
+    expect(readinessRevision(directory)).not.toBe(initial);
+  });
+
+  it('refuses to publish passing command results without a valid source SHA',()=>{
+    const results=[resultWith('PASS')];
+    const base={platform:'linux-x64',runId:'synthetic',startedAt:'2026-11-14T11:00:00.000Z',endedAt:'2026-11-14T11:01:00.000Z',results};
+    for(const repositorySha of ['unknown','abc123','z'.repeat(40),''])expect(()=>buildManifest({...base,repositorySha})).toThrow('repository revision');
+    expect(buildManifest({...base,repositorySha:'a'.repeat(40)}).aggregate).toBe('PASS');
   });
 
   it('manifest is keyed by SHA, platform, command, timestamps, exitCode, errorKind and artifact',()=>{
