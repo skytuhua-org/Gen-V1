@@ -1,6 +1,6 @@
 import {cleanTempDirs,tempDir} from './fixtures/temp-dir.ts';
 import {it,expect,afterEach,vi} from 'vitest';
-import {writeFileSync,readFileSync,readdirSync,existsSync,mkdirSync,renameSync,symlinkSync,unlinkSync} from 'node:fs';
+import {writeFileSync,readFileSync,readdirSync,existsSync,mkdirSync,renameSync,symlinkSync,unlinkSync,watch} from 'node:fs';
 
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -9,16 +9,18 @@ import {CodeIntelligence,type LanguageServerAdapter,type LspWorkspaceEdit} from 
 import {renamePlanV1Schema} from '../packages/contracts/code-intelligence.ts';
 
 const sha=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
-const race=vi.hoisted(()=>({beforeReplace:undefined as undefined|((destination:string)=>void)}));
+const race=vi.hoisted(()=>({beforeReplace:undefined as undefined|((destination:string)=>void),beforeNative:undefined as undefined|((destination:string)=>void),failReplace:undefined as undefined|((destination:string)=>boolean)}));
 vi.mock('../packages/core/file-access.ts',async importActual=>{
  const actual=await importActual<typeof import('../packages/core/file-access.ts')>();
- return {...actual,replaceOwnedFile:async(source:string,destination:string,identity:{dev:bigint;ino:bigint},sha256:string,signal:AbortSignal,expectedDestinationHash?:string)=>{
+ return {...actual,replaceOwnedFile:async(source:string,destination:string,identity:{dev:bigint;ino:bigint},sha256:string,signal:AbortSignal,expectedDestinationHash?:string,beforeNativeReplace?:(destination:string)=>void|Promise<void>)=>{
+  if(race.failReplace?.(destination))throw new Error('injected native replacement failure');
   if(race.beforeReplace){const inject=race.beforeReplace;race.beforeReplace=undefined;inject(destination);}
-  return actual.replaceOwnedFile(source,destination,identity,sha256,signal,expectedDestinationHash);
+  const inject=race.beforeNative;race.beforeNative=undefined;
+  return actual.replaceOwnedFile(source,destination,identity,sha256,signal,expectedDestinationHash,inject??beforeNativeReplace);
  }};
 });
 const disposables:{dispose():Promise<void>}[]=[];
-afterEach(async()=>{race.beforeReplace=undefined;for(const d of disposables.splice(0))await d.dispose();cleanTempDirs();});
+afterEach(async()=>{race.beforeReplace=undefined;race.beforeNative=undefined;race.failReplace=undefined;for(const d of disposables.splice(0))await d.dispose();cleanTempDirs();});
 
 const descriptor={language:'typescript',executable:'/approved/tsserver',argv:['--stdio'],configDigest:'a'.repeat(64)};
 
@@ -213,6 +215,207 @@ it('an external edit of a renamed file stops recovery with PARTIAL_RECOVERY_REQU
  expect(readdirSync(join(journal,'code-intelligence','rename',plan.planId)).filter(n=>n.startsWith('backup-')).length).toBe(2);
 });
 
+it('a redirected target parent is rejected before apply stages content',async()=>{
+ const root=tempDir('rename-root-');
+ const outside=tempDir('rename-outside-');
+ const journal=tempDir('rename-journal-');
+ const directory=join(root,'linked');
+ mkdirSync(directory);
+ const target=join(directory,'a.ts');
+ const text='const alpha = 1;\n';
+ writeFileSync(target,text);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{[uri(target)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}]}};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,target,text));
+ renameSync(directory,join(root,'original'));
+ writeFileSync(join(outside,'a.ts'),text);
+ symlinkSync(outside,directory,process.platform==='win32'?'junction':'dir');
+ const staged:string[]=[];
+ let watchError:Error|undefined;
+ const watcher=watch(outside,(_event,filename)=>{if(filename&&String(filename).startsWith('.gen-rename-'))staged.push(String(filename));});
+ watcher.on('error',error=>{watchError=error;});
+ try{
+  await expect(ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()})).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+  await new Promise(resolve=>setTimeout(resolve,100));
+ }finally{watcher.close();}
+ expect(watchError).toBeUndefined();
+ expect(staged).toEqual([]);
+ expect(readFileSync(join(outside,'a.ts'),'utf8')).toBe(text);
+ expect(readdirSync(journal)).toEqual([]);
+});
+
+it('a resolved recovery journal remains readable after workspace removal',async()=>{
+ const root=tempDir('rename-root-');
+ const journal=tempDir('rename-journal-');
+ const target=file(root,'a.ts');
+ const text='const alpha = 1;\n';
+ writeFileSync(target,text);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{[uri(target)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}]}};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,target,text));
+ await ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()});
+ const moved=root+'.moved';
+ renameSync(root,moved);
+ try{
+  const result=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
+  expect(result.state).toBe('APPLIED');
+ }finally{renameSync(moved,root);}
+});
+
+it('a deleted target keeps the stale-plan precondition',async()=>{
+ const root=tempDir('rename-root-');
+ const journal=tempDir('rename-journal-');
+ const target=file(root,'a.ts');
+ const text='const alpha = 1;\n';
+ writeFileSync(target,text);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{[uri(target)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}]}};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,target,text));
+ unlinkSync(target);
+ await expect(ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()})).rejects.toMatchObject({code:'PRECONDITION_FAILED'});
+ expect(readdirSync(journal)).toEqual([]);
+});
+
+it('a redirected recovery parent conflicts before restoring content',async()=>{
+ const root=tempDir('rename-root-');
+ const outside=tempDir('rename-outside-');
+ const journal=tempDir('rename-journal-');
+ const directory=join(root,'linked');
+ mkdirSync(directory);
+ const target=join(directory,'a.ts');
+ const text='const alpha = 1;\n',postimage='const beta2 = 1;\n';
+ writeFileSync(target,text);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{[uri(target)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}]}};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,target,text));
+ await ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()});
+ const journalPath=join(journal,'code-intelligence','rename',plan.planId,'journal.json');
+ const recorded=JSON.parse(readFileSync(journalPath,'utf8'));
+ recorded.resolved=false;
+ writeFileSync(journalPath,JSON.stringify(recorded));
+ renameSync(directory,join(root,'original'));
+ writeFileSync(join(outside,'a.ts'),postimage);
+ symlinkSync(outside,directory,process.platform==='win32'?'junction':'dir');
+ const staged:string[]=[];
+ let watchError:Error|undefined;
+ const watcher=watch(outside,(_event,filename)=>{if(filename&&String(filename).startsWith('.gen-rename-'))staged.push(String(filename));});
+ watcher.on('error',error=>{watchError=error;});
+ try{
+  const result=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
+  expect(result.state).toBe('PARTIAL_RECOVERY_REQUIRED');
+  expect(result.entries.map(entry=>entry.disposition)).toEqual(['Conflict']);
+  await new Promise(resolve=>setTimeout(resolve,100));
+ }finally{watcher.close();}
+ expect(watchError).toBeUndefined();
+ expect(staged).toEqual([]);
+ expect(readFileSync(join(outside,'a.ts'),'utf8')).toBe(postimage);
+});
+
+it('an operational replacement failure leaves recovery available for earlier writes',async()=>{
+ const root=tempDir('rename-root-');
+ const journal=tempDir('rename-journal-');
+ const a=file(root,'a.ts'),b=file(root,'b.ts');
+ const aText='const alpha = 1;\n',bText='const alpha = 2;\n';
+ writeFileSync(a,aText);writeFileSync(b,bText);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{
+  [uri(a)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}],
+  [uri(b)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}],
+ }};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,a,aText));
+ race.failReplace=destination=>destination===b;
+ const applied=await ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()});
+ expect(applied.state).toBe('PARTIAL_RECOVERY_REQUIRED');
+ const journalPath=join(journal,'code-intelligence','rename',plan.planId,'journal.json');
+ expect(JSON.parse(readFileSync(journalPath,'utf8')).resolved).toBe(false);
+ race.failReplace=undefined;
+ const recovered=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
+ expect(recovered.state).toBe('RECOVERED');
+ expect(recovered.entries.map(entry=>entry.disposition)).toEqual(['Restored','Unchanged']);
+ expect(readFileSync(a,'utf8')).toBe(aText);
+ expect(readFileSync(b,'utf8')).toBe(bText);
+});
+
+it('an operational restore failure preserves earlier progress for retry',async()=>{
+ const root=tempDir('rename-root-');
+ const journal=tempDir('rename-journal-');
+ const a=file(root,'a.ts'),b=file(root,'b.ts');
+ const aText='const alpha = 1;\n',bText='const alpha = 2;\n';
+ const aPost='const beta2 = 1;\n',bPost='const beta2 = 2;\n';
+ writeFileSync(a,aText);writeFileSync(b,bText);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{
+  [uri(a)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}],
+  [uri(b)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}],
+ }};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,a,aText));
+ await ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()});
+ const journalPath=join(journal,'code-intelligence','rename',plan.planId,'journal.json');
+ const recorded=JSON.parse(readFileSync(journalPath,'utf8'));
+ recorded.resolved=false;
+ writeFileSync(journalPath,JSON.stringify(recorded));
+ race.failReplace=destination=>destination===b;
+ const interrupted=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
+ expect(interrupted.state).toBe('PARTIAL_RECOVERY_REQUIRED');
+ expect(readFileSync(a,'utf8')).toBe(aText);
+ expect(readFileSync(b,'utf8')).toBe(bPost);
+ const persisted=JSON.parse(readFileSync(journalPath,'utf8'));
+ expect(persisted.resolved).toBe(false);
+ expect(persisted.entries.map((entry:{disposition:string})=>entry.disposition)).toEqual(['Restored','Applied']);
+ race.failReplace=undefined;
+ writeFileSync(a,aPost);
+ const retried=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
+ expect(retried.state).toBe('RECOVERED');
+ expect(retried.entries.map(entry=>entry.disposition)).toEqual(['Restored','Restored']);
+ expect(readFileSync(a,'utf8')).toBe(aPost);
+ expect(readFileSync(b,'utf8')).toBe(bText);
+});
+
+it('a redirected recovery target does not block later workspace restores',async()=>{
+ const root=tempDir('rename-root-');
+ const outside=tempDir('rename-outside-');
+ const journal=tempDir('rename-journal-');
+ const directory=join(root,'linked');
+ mkdirSync(directory);
+ const a=join(directory,'a.ts'),b=file(root,'b.ts');
+ const aText='const alpha = 1;\n',bText='const alpha = 2;\n';
+ const aPost='const beta2 = 1;\n';
+ writeFileSync(a,aText);writeFileSync(b,bText);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{
+  [uri(a)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}],
+  [uri(b)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}],
+ }};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,a,aText));
+ await ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()});
+ const journalPath=join(journal,'code-intelligence','rename',plan.planId,'journal.json');
+ const recorded=JSON.parse(readFileSync(journalPath,'utf8'));
+ recorded.resolved=false;
+ writeFileSync(journalPath,JSON.stringify(recorded));
+ renameSync(directory,join(root,'original'));
+ writeFileSync(join(outside,'a.ts'),aPost);
+ symlinkSync(outside,directory,process.platform==='win32'?'junction':'dir');
+ const result=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
+ expect(result.state).toBe('PARTIAL_RECOVERY_REQUIRED');
+ expect(result.entries.map(entry=>entry.disposition)).toEqual(['Conflict','Restored']);
+ expect(readFileSync(join(outside,'a.ts'),'utf8')).toBe(aPost);
+ expect(readFileSync(b,'utf8')).toBe(bText);
+});
+
 it('an external write at replacement time survives apply and reconciles as a conflict',async()=>{
  const root=tempDir('rename-root-');
  const journal=tempDir('rename-journal-');
@@ -224,7 +427,7 @@ it('an external write at replacement time survives apply and reconciles as a con
  const ci=new CodeIntelligence(()=>adapter);
  disposables.push(ci);
  const plan=await ci.planRename(planInput(root,a,aText));
- race.beforeReplace=destination=>{expect(destination).toBe(a);writeFileSync(a,external);};
+ race.beforeNative=destination=>{expect(destination).toBe(a);writeFileSync(a,external);};
  const applied=await ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()});
  expect(applied.state).toBe('PARTIAL_RECOVERY_REQUIRED');
  expect(applied.entries).toEqual([{path:a,disposition:'Conflict',detail:'The file changed while its rename edits were being written.'}]);
@@ -273,7 +476,7 @@ it('an external write during recovery replacement is never overwritten',async()=
  const recorded=JSON.parse(readFileSync(journalPath,'utf8'));
  recorded.resolved=false;
  writeFileSync(journalPath,JSON.stringify(recorded));
- race.beforeReplace=destination=>{expect(destination).toBe(a);writeFileSync(a,external);};
+ race.beforeNative=destination=>{expect(destination).toBe(a);writeFileSync(a,external);};
  const result=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
  expect(result.state).toBe('PARTIAL_RECOVERY_REQUIRED');
  expect(result.entries).toEqual([{path:a,disposition:'Conflict',detail:'The file changed while its recovery was being written.'}]);
