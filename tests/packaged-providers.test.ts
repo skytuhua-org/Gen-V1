@@ -27,6 +27,26 @@ async function cursorFixture(directory:string){
 async function syntheticStdout(script:string){const chunks:Buffer[]=[],child=spawn(process.execPath,['-e',script],{stdio:['ignore','pipe','ignore']});await new Promise<void>((accept,reject)=>{child.stdout.on('data',chunk=>chunks.push(chunk));child.once('error',reject);child.once('close',code=>code===0?accept():reject(Error('Synthetic stdout spawn exited '+code)));});return chunks;}
 
 describe('packaged provider custody',()=>{
+ it.each(['stdout','stderr'] as const)('reports an outer probe %s error through the verification promise',async stream=>{
+  const directory=await mkdtemp(join(tmpdir(),'harness-probe-pipe-'));
+  try{
+   await cursorFixture(directory);
+   const failure=new Error('Synthetic read failure');
+   const observed=new Promise<unknown>(resolve=>{
+    vi.mocked(spawn).mockImplementationOnce(()=>{
+     const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stderr:new PassThrough(),exitCode:1});
+     queueMicrotask(()=>{
+      try{child[stream].emit('error',failure);resolve(null);}catch(error){resolve(error);}
+      child.emit('close',1);
+     });
+     return child as unknown as ReturnType<typeof spawn>;
+    });
+   });
+   const outcome=probeCursorBootstrap(directory,process.execPath,directory).catch(error=>error);
+   expect(await observed).toBeNull();
+   expect(await outcome).toMatchObject({message:'Packaged runtime verification could not read '+stream+'.',cause:failure});
+  }finally{vi.mocked(spawn).mockClear();await rm(directory,{recursive:true,force:true});}
+ });
  it('rejects malformed UTF-8 in version evidence but keeps valid Unicode including literal U+FFFD',async()=>{
   expect(decodeProbeStdout(await syntheticStdout("process.stdout.write('1.0.38\\n')"))).toBe('1.0.38');
   expect(decodeProbeStdout(await syntheticStdout("process.stdout.write('v\\uFFFD\\n')"))).toBe('v�');
@@ -49,26 +69,6 @@ describe('packaged provider custody',()=>{
    const outcome=probeCursorBootstrap(directory,process.execPath,directory).then(value=>({value}),error=>({error}));
    expect(await Promise.race([closed,outcome])).toBeNull();
    expect(await outcome).toEqual({error:expect.objectContaining({message:'Probe stdout is not well-formed UTF-8.'})});
-  }finally{vi.mocked(spawn).mockClear();await rm(directory,{recursive:true,force:true});}
- });
- it.each(['stdout','stderr'] as const)('reports an outer probe %s error through the verification promise',async stream=>{
-  const directory=await mkdtemp(join(tmpdir(),'harness-probe-pipe-'));
-  try{
-   await cursorFixture(directory);
-   const failure=new Error('Synthetic read failure');
-   const observed=new Promise<unknown>(resolve=>{
-    vi.mocked(spawn).mockImplementationOnce(()=>{
-     const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stderr:new PassThrough(),exitCode:1});
-     queueMicrotask(()=>{
-      try{child[stream].emit('error',failure);resolve(null);}catch(error){resolve(error);}
-      child.emit('close',1);
-     });
-     return child as unknown as ReturnType<typeof spawn>;
-    });
-   });
-   const outcome=probeCursorBootstrap(directory,process.execPath,directory).catch(error=>error);
-   expect(await observed).toBeNull();
-   expect(await outcome).toMatchObject({message:'Packaged runtime verification could not read '+stream+'.',cause:failure});
   }finally{vi.mocked(spawn).mockClear();await rm(directory,{recursive:true,force:true});}
  });
  it('validates the bundled probe version captures with a fatal UTF-8 decode',async()=>{
