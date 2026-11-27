@@ -1,3 +1,4 @@
+import * as fsPromises from 'node:fs/promises';
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtemp,mkdir,writeFile,rm,copyFile,readFile,readdir,truncate,symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -15,7 +16,21 @@ import {compareNativeGeometry} from '../scripts/rc-review/upgrade-check.ts';
 import {closeInstalledSession,withInstalledSessionCleanup} from '../scripts/rc-review/installed-session.ts';
 import type {ChildProcess} from 'node:child_process';
 
+vi.mock('node:fs/promises',async importOriginal=>({...await importOriginal<typeof import('node:fs/promises')>()}));
+
 const roots:string[]=[];
+it.each([1,2])('does not publish a profile snapshot if a listed directory disappears on pass %s',async(pass)=>{
+ const root=await mkdtemp(join(tmpdir(),'rc-snapshot-race-'));roots.push(root);
+ const profile=join(root,'profile'),host=join(root,'host'),sub=join(host,'captured');
+ await mkdir(profile);await mkdir(sub,{recursive:true});await writeFile(join(sub,'note.txt'),'fixture');
+ const original=fsPromises.readdir;let visits=0;
+ const spy=vi.spyOn(fsPromises,'readdir').mockImplementation(((...args:Parameters<typeof fsPromises.readdir>)=>{
+  if(args[0]===sub&&++visits===pass)return Promise.reject(Object.assign(new Error('Listed directory disappeared'),{code:'ENOENT'}));
+  return original(...args);
+ }) as typeof fsPromises.readdir);
+ try{await expect(snapshot(profile,host)).rejects.toMatchObject({code:'ENOENT'});}
+ finally{spy.mockRestore();}
+});
 it('rejects overflowed interruption delays before scheduling and keeps supported positive integers',()=>{for(const value of ['2147483648','999999999999','0','-5','1.5','abc'])expect(()=>parseInterruptMs(value)).toThrow('Invalid --interrupt-ms');for(const value of ['1','500','2147483647'])expect(parseInterruptMs(value)).toBe(Number(value));});
 it('proves Node coerces an overflowed timer delay to 1 ms with a synthetic timer-only probe',async()=>{const started=Date.now(),output=await run(process.execPath,['-e','setTimeout(()=>console.log("fired"),2147483648)'],{capture:true});expect(output).toBe('fired');expect(Date.now()-started).toBeLessThan(15000);});
 const runningChild=()=>({exitCode:null,signalCode:null}) as ChildProcess;
