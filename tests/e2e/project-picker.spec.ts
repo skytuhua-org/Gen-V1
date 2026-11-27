@@ -45,7 +45,7 @@ test('hover does not select; arrows announce an active row and explicit selectio
   const search = page.getByRole('combobox', { name: 'Search projects' });
   await search.press('ArrowDown');
   await expect(search).toHaveAttribute('aria-activedescendant', await beta.getAttribute('id') ?? '');
-  await search.press('Enter'); await search.press('Enter');
+  await search.press('Enter'); await page.keyboard.press('Enter');
   await expect(page.getByLabel('Created threads')).toHaveText('1');
 });
 
@@ -102,13 +102,36 @@ test('custom and palette overrides update the actual sidebar badge, survive relo
   await expect(page.getByLabel('Created threads')).toHaveText('0');
 });
 
+test('the color editor distinguishes automatic from a stored override',async({page})=>{
+ await page.getByRole('button',{name:'Open project picker',exact:true}).click();
+ const color=page.getByRole('button',{name:'Color for Alpha',exact:true});
+ const panel=page.getByRole('group',{name:'Project color',exact:true});
+ const input=panel.getByRole('textbox',{name:'Custom color'});
+ const save=panel.getByRole('button',{name:'Save color',exact:true});
+ const automatic=panel.getByRole('button',{name:'Use automatic color',exact:true});
+ await color.press('Enter');
+ await expect(panel.getByText(/^Current: Automatic \(#[0-9A-F]{6}\)$/)).toBeVisible();
+ await expect(input).toHaveValue('');await expect(input).toHaveAttribute('placeholder','#4F6EFF');
+ await expect(automatic).toHaveAttribute('aria-pressed','true');await expect(save).toBeDisabled();
+ await input.press('Enter');await expect(panel).toBeVisible();
+ expect(await page.evaluate(()=>localStorage.getItem('synthetic-project-colors'))).toBeNull();
+ await panel.getByRole('button',{name:'rose',exact:true}).click();
+ await expect(panel).toHaveCount(0);await expect(color).toBeFocused();
+ await color.press('Enter');
+ await expect(panel.getByText('Current: Custom #E84876',{exact:true})).toBeVisible();
+ await expect(panel.getByRole('button',{name:'rose',exact:true})).toHaveAttribute('aria-pressed','true');
+ await expect(automatic).toHaveAttribute('aria-pressed','false');await expect(save).toBeDisabled();
+ await automatic.click();await expect(color).toBeFocused();await color.press('Enter');
+ await expect(automatic).toHaveAttribute('aria-pressed','true');await expect(input).toHaveValue('');
+});
+
 test('invalid custom data and host save failure retain the picker and previous badge', async ({ page }) => {
   await page.goto('/project-picker?fail-color=1');
   const badge = page.locator('.thread-project-monogram').first(), before = await badge.evaluate(node => getComputedStyle(node).color);
   await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
   await page.getByRole('button', { name: 'Color for Alpha' }).click();
   await page.getByRole('textbox', { name: 'Custom color' }).fill('url(bad)');
-  await page.getByRole('button', { name: 'Save color', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save color', exact: true })).toBeDisabled();
   await expect(page.getByRole('alert')).toContainText('six-digit');
   await page.getByRole('textbox', { name: 'Custom color' }).fill('#123abc');
   await page.getByRole('button', { name: 'Save color', exact: true }).click();
@@ -127,7 +150,7 @@ test('color validation error keeps the popover actions inside the fixed bounds',
   const input = page.getByRole('textbox', { name: 'Custom color' });
   expect(await grid.evaluate(node => node.scrollHeight <= node.clientHeight)).toBe(true);
   await input.fill('url(bad)');
-  await page.getByRole('button', { name: 'Save color', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save color', exact: true })).toBeDisabled();
   await expect(page.getByRole('alert')).toHaveText('Choose a six-digit hex color, such as #4F6EFF.');
   await expect(input).toHaveAttribute('aria-invalid', 'true');
   await expect(input).toHaveAttribute('aria-describedby', 'project-picker-color-error');
@@ -174,7 +197,7 @@ for (const theme of ['dark', 'light']) test(`first-open selected row, scrolling 
 
 test('compact rows and actions remain reachable in a 320 by 280 window', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 280 });
-  await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
+  await page.getByRole('button', { name: 'Open project picker', exact: true }).press('Enter');
   const search = page.getByRole('combobox', { name: 'Search projects' });
   await search.fill('No project');
   const row = page.getByRole('option', { name: 'No project', exact: true });

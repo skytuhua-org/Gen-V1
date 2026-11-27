@@ -35,6 +35,7 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
   title = 'Select project', onClose, onSelect, onAddProject, onColorChange }: ProjectPickerProps) {
   const id = useId(), search = useRef<HTMLInputElement>(null), list = useRef<HTMLDivElement>(null);
   const colorAnchor = useRef<HTMLButtonElement>(null), colorInput = useRef<HTMLInputElement>(null);
+  const restoreColorFocus = useRef(false);
   const pending = useRef(false);
   const [working, setWorking] = useState(false), [failure, setFailure] = useState('');
   const [query, setQuery] = useState(''), [activeKey, setActiveKey] = useState(selectedProjectId ? projectColorKey(authority, selectedProjectId) : '');
@@ -56,6 +57,10 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
   const activeIdentity = choices.length ? keyOf(active) : undefined;
   const choiceOrder = choices.map(keyOf).join('\n');
   const editing = choices.find(project => project && keyOf(project) === colorKey);
+  const override = editing ? colors[keyOf(editing)] : undefined;
+  const customValue = projectColorSchema.safeParse(custom.trim());
+  const canSaveCustom = !locked && customValue.success && customValue.data.toLowerCase() !== override?.toLowerCase();
+  const shownColorError = custom.trim() && !customValue.success ? customValue.error.issues[0]?.message : colorError;
   const optionId = (index: number) => `${id}-project-${index}`;
 
   useLayoutEffect(() => { search.current?.focus({ preventScroll: true }); }, []);
@@ -74,11 +79,17 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
     catch (cause) { const message = cause instanceof Error ? cause.message : String(cause); if (color) setColorError(message); else setFailure(message); }
     finally { pending.current = false; setWorking(false); }
   };
+  useLayoutEffect(() => {
+    if (!locked && !colorKey && restoreColorFocus.current) {
+      restoreColorFocus.current = false;
+      colorAnchor.current?.focus({preventScroll:true});
+    }
+  }, [locked, colorKey]);
   const closeColor = () => { if (!pending.current && !busy) { setColorKey(null); colorAnchor.current?.focus(); } };
   const saveColor = (value: string | null) => {
     if (!editing || locked) return;
     if (value !== null && !projectColorSchema.safeParse(value).success) { setColorError('Choose a six-digit hex color, such as #4F6EFF.'); return; }
-    void run(async () => { await onColorChange(editing, value); setColorKey(null); colorAnchor.current?.focus(); }, true);
+    void run(async () => { await onColorChange(editing, value); restoreColorFocus.current = true; setColorKey(null); }, true);
   };
 
   return <Modal open title={title} className="project-picker" onClose={() => { if (!busy && !pending.current) onClose(); }}>
@@ -123,28 +134,29 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
     <footer className="project-picker-footer">
       <button type="button" disabled={locked} onClick={() => void run(onAddProject)}><FolderPlus size={15} />Add project</button>
       <button type="button" ref={colorAnchor} disabled={locked || !active} aria-label={active ? `Color for ${active.name}` : 'Project color'} aria-expanded={Boolean(editing)} onClick={() => { if (!active) return;
-        setColorKey(keyOf(active)); setCustom(projectColor(active.authority, active.id, colors) ?? ''); setColorError('');
+        setColorKey(keyOf(active)); setCustom(colors[keyOf(active)] ?? ''); setColorError('');
       }}><Palette size={15} /><span>Color</span></button>
       <button type="button" disabled={locked} onClick={onClose}>Cancel</button>
     </footer>
     <p className="project-picker-hint">↑↓ navigate · Enter select · Esc cancel</p>
-    <Popover anchor={colorAnchor} open={Boolean(editing)} width={280} height={230} initialFocus={colorInput} onDismiss={closeColor}
-      role="group" aria-label="Project color" className="ui-control-popup project-picker-colors" onKeyDown={event => {
+    <Popover anchor={colorAnchor} open={Boolean(editing)} width={280} height={248} initialFocus={colorInput} onDismiss={closeColor}
+      role="group" aria-label="Project color" tabIndex={-1} className="ui-control-popup project-picker-colors" onKeyDown={event => {
         if (isComposing(event) && event.key === 'Escape') { event.preventDefault(); return; }
         if (event.key === 'Escape' && locked) { event.preventDefault(); event.stopPropagation(); }
       }}>
       <div className="project-picker-color-grid">
         <div className="project-picker-swatches">{Object.entries(PROJECT_PALETTE).map(([name, value]) => <button type="button" key={name} disabled={locked} aria-label={name}
-          aria-pressed={Boolean(editing && colors[projectColorKey(editing.authority, editing.id)]?.toLowerCase() === value.toLowerCase())} onClick={() => saveColor(value)}>
+          aria-pressed={override?.toLowerCase() === value.toLowerCase()} onClick={() => saveColor(value)}>
           <span style={{ backgroundColor: value }} aria-hidden="true" /></button>)}</div>
-        <form id="project-picker-color-form" onSubmit={event => { event.preventDefault(); saveColor(custom); }}><label>Custom color<input ref={colorInput} aria-label="Custom color" value={custom} maxLength={80} disabled={locked}
-          aria-invalid={Boolean(colorError)} aria-describedby={colorError ? 'project-picker-color-error' : undefined}
+        {editing && <p className="project-picker-current">{override ? `Current: Custom ${override.toUpperCase()}` : `Current: Automatic (${projectColor(editing.authority, editing.id, colors)?.toUpperCase() ?? '—'})`}</p>}
+        <form id="project-picker-color-form" onSubmit={event => { event.preventDefault(); if (canSaveCustom) saveColor(customValue.data); }}><label>Custom color<input ref={colorInput} aria-label="Custom color" value={custom} maxLength={80} readOnly={locked}
+          aria-invalid={Boolean(shownColorError)} aria-describedby={shownColorError ? 'project-picker-color-error' : undefined}
           onChange={event => { setCustom(event.target.value); setColorError(''); }} onKeyDown={event => { if (isComposing(event) && event.key === 'Enter') event.preventDefault(); }} placeholder="#4F6EFF" spellCheck={false} /></label></form>
       </div>
-      {colorError && <p role="alert" id="project-picker-color-error" className="project-picker-color-error">{colorError}</p>}
-      <div className="project-picker-color-footer" data-has-error={Boolean(colorError) || undefined}>
-        <button type="submit" form="project-picker-color-form" disabled={locked}>Save color</button>
-        <button type="button" disabled={locked} onClick={() => saveColor(null)}>Use automatic color</button>
+      {shownColorError && <p role="alert" id="project-picker-color-error" className="project-picker-color-error">{shownColorError}</p>}
+      <div className="project-picker-color-footer" data-has-error={Boolean(shownColorError) || undefined}>
+        <button type="submit" form="project-picker-color-form" disabled={!canSaveCustom}>Save color</button>
+        <button type="button" disabled={locked} aria-pressed={!override} onClick={() => {if (override) saveColor(null);}}>Use automatic color</button>
       </div>
     </Popover>
   </Modal>;
