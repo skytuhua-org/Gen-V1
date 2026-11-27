@@ -19,6 +19,52 @@ export interface ConversationFindProps {
  historyLimited?:boolean;
  historyError?:string|null;
 }
+interface FindShortcutOwner {
+ scope:HTMLElement;
+ transcript:RefObject<HTMLElement|null>;
+ empty:boolean;
+ show: (opener:HTMLElement|null)=>void;
+}
+interface FindShortcutRegistry {
+ owners:Set<FindShortcutOwner>;
+ key:(event:KeyboardEvent)=>void;
+}
+const findShortcuts=new WeakMap<Document,FindShortcutRegistry>();
+function focusedSplitPane(scope:HTMLElement):boolean {
+ const view=scope.closest<HTMLElement>('[data-split-view]');
+ const paneId=view?.dataset.paneId;
+ return Boolean(paneId&&view?.closest('.split-workspace')
+  ?.querySelector(`.split-pane.is-focused[data-split-pane="${CSS.escape(paneId)}"]`));
+}
+function registerFindShortcut(owner:FindShortcutOwner){
+ const document=owner.scope.ownerDocument;
+ let registry=findShortcuts.get(document);
+ if(!registry){
+  const owners=new Set<FindShortcutOwner>();
+  const key=(event:KeyboardEvent)=>{
+   if(event.defaultPrevented||event.isComposing||event.keyCode===229||!matchesShortcut(event,chordFor('find-in-conversation')))return;
+   if(document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]:not([hidden])'))return;
+   const opener=document.activeElement as HTMLElement|null;
+   const visible=[...owners].filter(({scope,transcript})=>scope.isConnected&&!scope.closest('[hidden],[inert]')&&Boolean(transcript.current?.getClientRects().length));
+   const local=visible.findLast(candidate=>candidate.scope.contains(opener));
+   const available=visible.filter(candidate=>!candidate.empty);
+   const target=local??available.find(candidate=>focusedSplitPane(candidate.scope))??available[0];
+   if(!target)return;
+   event.preventDefault();
+   if(!target.empty)target.show(opener);
+  };
+  registry={owners,key};
+  document.addEventListener('keydown',key);
+  findShortcuts.set(document,registry);
+ }
+ const {owners,key}=registry;
+ owners.add(owner);
+ return()=>{
+  owners.delete(owner);
+  if(!owners.size){document.removeEventListener('keydown',key);findShortcuts.delete(document);}
+ };
+}
+
 /** Reusable by ordinary, canvas and scoped transcript owners. No command/draft authority. */
 export function ConversationFind({ownerKey,transcript,scope,active=true,empty=false,onNavigate,onLoadEarlier,historyPending,historyLimited,historyError}:ConversationFindProps){
  const id=useId(),input=useRef<HTMLInputElement>(null),trigger=useRef<HTMLButtonElement>(null),restoreFocus=useRef(false),opener=useRef<HTMLElement|null>(null);
@@ -33,16 +79,16 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,empty=fa
  },[transcript,id]);
  const close=useCallback(()=>{restoreFocus.current=true;setOpen(false);},[]);
  useLayoutEffect(()=>{setOpen(false);setQuery('');selected.current=null;matches.current=[];setCount(0);setIndex(-1);},[ownerKey]);
+ const showFromShortcut=useRef<(element:HTMLElement|null)=>void>(()=>{});
+ showFromShortcut.current=element=>{
+  if(!open){opener.current=element;setOpen(true);return;}
+  input.current?.focus();input.current?.select();
+ };
  useLayoutEffect(()=>{
-  const root=scope.current;if(!root||!active)return;
-  const key=(event:KeyboardEvent)=>{
-   if(event.isComposing||event.keyCode===229)return;
-   if(matchesShortcut(event,chordFor('find-in-conversation'))&&root.contains(root.ownerDocument.activeElement)){
-    event.preventDefault();if(empty)return;if(!open)opener.current=root.ownerDocument.activeElement as HTMLElement;setOpen(true);input.current?.focus();input.current?.select();
-   }
-  };
-  root.ownerDocument.addEventListener('keydown',key);return()=>root.ownerDocument.removeEventListener('keydown',key);
- },[active,open,empty,scope]);
+  const root=scope.current;
+  if(!root||!active)return;
+  return registerFindShortcut({scope:root,transcript,empty,show:element=>showFromShortcut.current(element)});
+ },[active,empty,scope,transcript]);
  useLayoutEffect(()=>{
   if(open){input.current?.focus();return;}
   if(!restoreFocus.current)return;

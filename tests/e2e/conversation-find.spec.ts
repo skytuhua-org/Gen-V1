@@ -111,3 +111,33 @@ test('find input keeps a readable width at desktop and narrow widths',async({pag
  expect(await phrase(page).evaluate(el=>el.getBoundingClientRect().width)).toBeGreaterThanOrEqual(160);
  for(const width of [400,360]){await page.setViewportSize({width,height:900});await expect(phrase(page)).toBeVisible();expect(await phrase(page).evaluate(el=>el.getBoundingClientRect().width)).toBeGreaterThanOrEqual(96);}
 });
+
+test('the Find shortcut opens from workspace chrome and restores the original focus',async({page})=>{
+ await setup(page);
+ const outside=page.getByRole('button',{name:'Collapse sidebar',exact:true});
+ await outside.focus();await page.keyboard.press('Control+f');
+ const find=phrase(page);
+ await expect(find).toBeFocused();
+ await find.fill('workspace');
+ await page.keyboard.press('Control+f');
+ await expect(find).toBeFocused();
+ expect(await find.evaluate((input:HTMLInputElement)=>[input.selectionStart,input.selectionEnd])).toEqual([0,9]);
+ await page.keyboard.press('Escape');
+ await expect(find).toHaveCount(0);await expect(outside).toBeFocused();
+});
+
+test('the shortcut remains inactive from chrome when the conversation is empty',async({page})=>{
+ await setup(page,0);
+ const outside=page.getByRole('button',{name:'Collapse sidebar',exact:true});
+ await outside.focus();await page.keyboard.press('Control+f');
+ await expect(phrase(page)).toHaveCount(0);await expect(outside).toBeFocused();
+});
+
+test('the shortcut leaves an active modal in control',async({page})=>{
+ await setup(page);
+ await page.getByRole('button',{name:'Settings',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Settings',exact:true});
+ await expect(dialog).toBeVisible();
+ await page.keyboard.press('Control+f');
+ await expect(phrase(page)).toHaveCount(0);await expect(dialog).toBeVisible();
+});
