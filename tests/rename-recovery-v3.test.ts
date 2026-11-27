@@ -238,8 +238,8 @@ it('a redirected target parent is rejected before apply stages content',async()=
  watcher.on('error',error=>{watchError=error;});
  try{
   await expect(ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()})).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+  await new Promise(resolve=>setTimeout(resolve,100));
  }finally{watcher.close();}
- await new Promise(resolve=>setTimeout(resolve,100));
  expect(watchError).toBeUndefined();
  expect(staged).toEqual([]);
  expect(readFileSync(join(outside,'a.ts'),'utf8')).toBe(text);
@@ -312,8 +312,8 @@ it('a redirected recovery parent conflicts before restoring content',async()=>{
   const result=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
   expect(result.state).toBe('PARTIAL_RECOVERY_REQUIRED');
   expect(result.entries.map(entry=>entry.disposition)).toEqual(['Conflict']);
+  await new Promise(resolve=>setTimeout(resolve,100));
  }finally{watcher.close();}
- await new Promise(resolve=>setTimeout(resolve,100));
  expect(watchError).toBeUndefined();
  expect(staged).toEqual([]);
  expect(readFileSync(join(outside,'a.ts'),'utf8')).toBe(postimage);
@@ -351,7 +351,7 @@ it('an operational restore failure preserves earlier progress for retry',async()
  const journal=tempDir('rename-journal-');
  const a=file(root,'a.ts'),b=file(root,'b.ts');
  const aText='const alpha = 1;\n',bText='const alpha = 2;\n';
- const bPost='const beta2 = 2;\n';
+ const aPost='const beta2 = 1;\n',bPost='const beta2 = 2;\n';
  writeFileSync(a,aText);writeFileSync(b,bText);
  const adapter=new RenameAdapter();
  adapter.edit={changes:{
@@ -375,10 +375,11 @@ it('an operational restore failure preserves earlier progress for retry',async()
  expect(persisted.resolved).toBe(false);
  expect(persisted.entries.map((entry:{disposition:string})=>entry.disposition)).toEqual(['Restored','Applied']);
  race.failReplace=undefined;
+ writeFileSync(a,aPost);
  const retried=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
  expect(retried.state).toBe('RECOVERED');
- expect(retried.entries.map(entry=>entry.disposition)).toEqual(['Unchanged','Restored']);
- expect(readFileSync(a,'utf8')).toBe(aText);
+ expect(retried.entries.map(entry=>entry.disposition)).toEqual(['Restored','Restored']);
+ expect(readFileSync(a,'utf8')).toBe(aPost);
  expect(readFileSync(b,'utf8')).toBe(bText);
 });
 

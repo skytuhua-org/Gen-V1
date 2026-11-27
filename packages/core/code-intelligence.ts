@@ -859,6 +859,10 @@ export class CodeIntelligence {
       let conflict = false;
       let incomplete = false;
       for (const [index, record] of live.entries.entries()) {
+        if (record.disposition === "Restored") {
+          entries.push({ path: record.path, disposition: "Restored" });
+          continue;
+        }
         const current = await readBoundFile(record.path, 32 * 1024 * 1024).catch(() => null);
         const currentDigest = current ? sha(current) : null;
         if (record.postimage !== null && currentDigest === record.postimage) {
