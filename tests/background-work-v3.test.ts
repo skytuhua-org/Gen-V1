@@ -3,14 +3,17 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import * as childProcess from "node:child_process";
 import { Store } from "../packages/storage/store.ts";
 import { Service } from "../packages/core/service.ts";
 import { BackgroundWorkCoordinator, captureCreationToken, verifyProcessIdentity, type BackgroundWorkRecord } from "../packages/core/background-work.ts";
 import { DurableWakeupScheduler } from "../packages/core/durable-wakeups.ts";
 import { ModelCapacity } from "../packages/runtime/model-capacity.ts";
 import { __setCapabilityFlagForTests, registeredCapabilityFlags } from "../packages/core/capability-flags.ts";
-import type { RuntimeAdapter, Thread } from "../packages/contracts/index.ts";
+import type { RuntimeAdapter, StartRun, Thread } from "../packages/contracts/index.ts";
 import { BACKGROUND_HOLD_REASONS, backgroundWorkV1Schema, humanStepV1Schema, intakeV1Schema, occurrenceKeyForEvent, occurrenceKeyForTime, wakeupV1Schema, type BackgroundOccurrenceV1 } from "../packages/contracts/background-work.ts";
+
+vi.mock("node:child_process", { spy: true });
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
@@ -39,9 +42,9 @@ function fixture(options: { idleExecutor?: ConstructorParameters<typeof Backgrou
 const command = (type: string, payload: Record<string, unknown> = {}, threadId?: string) => ({ id: randomUUID(), type, payload, ...(threadId ? { threadId } : {}) });
 
 async function waitFor(assertion: () => boolean, timeoutMs = 8_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = performance.now() + timeoutMs;
   while (!assertion()) {
-    if (Date.now() > deadline) throw new Error("Timed out waiting for condition");
+    if (performance.now() > deadline) throw new Error("Timed out waiting for condition");
     await new Promise(resolve => setTimeout(resolve, 20));
   }
 }
@@ -641,18 +644,209 @@ describe("M10-G03 rollback", () => {
 });
 
 describe("M10 host command binding", () => {
-  function serviceFixture() {
+  function serviceFixture(background?: NonNullable<ConstructorParameters<typeof Service>[2]>["background"]) {
     const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-service-"));
     const store = new Store(join(root, "state"));
-    const runtime: RuntimeAdapter = {
+    const runtime = {
       configure: () => {}, models: async () => [{ id: "test/model", provider: "test", name: "Test" }],
-      start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {},
+      start: vi.fn(async (_input: StartRun) => {}), followUp: vi.fn(async (_input: StartRun) => {}), cancel: async () => {}, compact: async () => {},
       history: async () => [], dispose: async () => {},
-    };
-    const service = new Service(store, runtime);
+    } satisfies RuntimeAdapter;
+    const service = new Service(store, runtime, { background });
     cleanups.push(async () => { await service.dispose().catch(() => {}); store.close(); rmSync(root, { recursive: true, force: true }); });
-    return { store, service, root };
+    return { store, service, root, runtime };
   }
+  it("reconciles an uncertain COMMAND through Service without replacing its work or effect", async () => {
+    enable("jobs.backgroundV1");
+    let stamp = 1_735_689_600_123;
+    vi.spyOn(Date, "now").mockImplementation(() => stamp);
+    const spawn = vi.mocked(childProcess.spawn).mockClear().mockReturnValueOnce(new childProcess.ChildProcess());
+    const background = { executionGate: vi.fn(async () => ({ allowed: true as const })) };
+    const { service, store, root, runtime } = serviceFixture(background);
+    const thread = (await service.command(command("thread.create", { title: "Command custody" }))).result as Thread;
+    const effectId = "fixture-command-effect";
+    const work = (await service.command(command("background.work.admit", {
+      kind: "COMMAND", title: "Fixture command", effectId,
+      command: { executable: "fixture-command", argv: [], cwd: root, profileId: "fixture" },
+    }, thread.id))).result as BackgroundWorkRecord;
+    const scheduler = service.backgroundWork.scheduler;
+    const wakeup = scheduler.register(command("background.wakeup.register"), {
+      wakeupId: "command-custody", taskId: work.workId, trigger: { kind: "AT_UTC", dueAtMs: stamp },
+    });
+    const key = '["command-custody",1,1735689600123]';
+    await scheduler.tick();
+    await waitFor(() => scheduler.occurrences(wakeup.wakeupId)[0]?.state === "UNKNOWN");
+    const before = scheduler.occurrences(wakeup.wakeupId)[0]!;
+    const admissions = store.all("backgroundAdmission");
+    expect(before).toMatchObject({ occurrenceKey: key, wakeupId: "command-custody", scheduleRevision: 1, dispatch: "DISPATCHED_UNCONFIRMED" });
+    expect(before.admissionId).toEqual(expect.any(String));
+    expect(admissions).toHaveLength(1);
+    expect(spawn).toHaveBeenCalledTimes(1);
+
+    stamp += 30_001;
+    scheduler.stop();
+    const reopened = new Store(join(root, "state"));
+    const replacement = new Service(reopened, runtime, { background });
+    cleanups.push(async () => { await replacement.dispose(); reopened.close(); });
+    replacement.backgroundWork.recover();
+    const next = replacement.backgroundWork.scheduler;
+    await next.tick();
+    expect(next.occurrences(wakeup.wakeupId)[0]).toEqual(before);
+    expect(replacement.backgroundWork.work(work.workId)).toMatchObject({ workId: work.workId, effectId, state: "UNKNOWN", processIdentity: null });
+    expect(reopened.all("backgroundAdmission")).toEqual(admissions);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    await replacement.command(command("background.occurrence.reconcile", { occurrenceKey: key, receipt: { observed: "DELIVERED" } }, thread.id));
+    await replacement.command(command("background.command.start", { workId: work.workId }, thread.id));
+    expect(next.occurrences(wakeup.wakeupId)[0]).toMatchObject({ occurrenceKey: key, admissionId: before.admissionId, state: "DELIVERED", dispatch: "RECEIPT_CONFIRMED" });
+    expect(replacement.backgroundWork.work(work.workId)).toMatchObject({ workId: work.workId, effectId, state: "UNKNOWN", processIdentity: null });
+    expect(reopened.all("backgroundExitReceipt")).toEqual([]);
+    expect(reopened.all("backgroundAdmission")).toEqual(admissions);
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+  it("retries a proven undispatched COMMAND under the original Service admission", async () => {
+    enable("jobs.backgroundV1");
+    const spawn = vi.mocked(childProcess.spawn).mockClear().mockReturnValueOnce(new childProcess.ChildProcess());
+    const executionGate = vi.fn(async () => ({ allowed: true as const })).mockRejectedValueOnce(new Error("Fixture gate stopped before spawn."));
+    const { service, store, root } = serviceFixture({ executionGate });
+    const thread = (await service.command(command("thread.create", { title: "Proven no submission" }))).result as Thread;
+    const effectId = "fixture-retry-effect";
+    const work = (await service.command(command("background.work.admit", {
+      kind: "COMMAND", title: "Fixture retry", effectId,
+      command: { executable: "fixture-command", argv: [], cwd: root, profileId: "fixture" },
+    }, thread.id))).result as BackgroundWorkRecord;
+    const scheduler = service.backgroundWork.scheduler;
+    const wakeup = scheduler.register(command("background.wakeup.register"), {
+      taskId: work.workId, trigger: { kind: "AT_UTC", dueAtMs: Date.now() },
+    });
+    const internal = store.internal.bind(store);
+    const commit = vi.spyOn(store, "internal").mockImplementation((type, threadId, apply) => {
+      if (type === "background.occurrence.blocked") throw new Error("Fixture cuts before recording the local failure.");
+      return internal(type, threadId, apply);
+    });
+    await scheduler.tick();
+    await waitFor(() => commit.mock.calls.some(([type]) => type === "background.occurrence.blocked"));
+    commit.mockRestore();
+    expect(spawn).not.toHaveBeenCalled();
+    expect(scheduler.busy).toBe(false);
+    const before = scheduler.occurrences(wakeup.wakeupId)[0]!;
+    expect(before).toMatchObject({ state: "CLAIMED", dispatch: "DISPATCHED_UNCONFIRMED" });
+    const admissions = store.all("backgroundAdmission");
+    expect(admissions).toHaveLength(1);
+    await service.command(command("background.occurrence.reconcile", {
+      occurrenceKey: before.occurrenceKey, receipt: { observed: "NOT_DISPATCHED" },
+    }, thread.id));
+    await scheduler.tick();
+    await waitFor(() => scheduler.occurrences(wakeup.wakeupId)[0]?.state === "UNKNOWN");
+    expect(scheduler.occurrences(wakeup.wakeupId)[0]).toMatchObject({
+      occurrenceKey: before.occurrenceKey, scheduleRevision: before.scheduleRevision, admissionId: before.admissionId,
+    });
+    expect(service.backgroundWork.work(work.workId)).toMatchObject({ workId: work.workId, effectId, state: "UNKNOWN" });
+    expect(store.all("backgroundAdmission")).toEqual(admissions);
+    expect(executionGate).toHaveBeenCalledTimes(2);
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+  it("revalidates COMMAND ownership after a shared pending Service execution gate", async () => {
+    enable("jobs.backgroundV1");
+    const spawn = vi.mocked(childProcess.spawn).mockClear();
+    let allow!: (decision: { allowed: true }) => void;
+    const decision = new Promise<{ allowed: true }>(resolve => { allow = resolve; });
+    const executionGate = vi.fn(() => decision);
+    const { service, store, root } = serviceFixture({ executionGate });
+    const thread = (await service.command(command("thread.create", { title: "Owner before gate" }))).result as Thread;
+    const effectId = "fixture-revoked-effect";
+    const work = (await service.command(command("background.work.admit", {
+      kind: "COMMAND", title: "Revoked fixture command", effectId,
+      command: { executable: "fixture-command", argv: [], cwd: root, profileId: "fixture" },
+    }, thread.id))).result as BackgroundWorkRecord;
+    const scheduler = service.backgroundWork.scheduler;
+    const wakeup = scheduler.register(command("background.wakeup.register"), {
+      taskId: work.workId, trigger: { kind: "AT_UTC", dueAtMs: Date.now() },
+    });
+    await scheduler.tick();
+    const repeat = service.command(command("background.command.start", { workId: work.workId }, thread.id));
+    expect(executionGate).toHaveBeenCalledTimes(1);
+    store.internal("fixture.owner-revoked", thread.id, () => {
+      store.put("thread", thread.id, thread.id, { ...thread, projectId: "moved-project" });
+    });
+    allow({ allowed: true });
+    await repeat;
+    await waitFor(() => scheduler.occurrences(wakeup.wakeupId)[0]?.state === "CANCELLED");
+    expect(service.backgroundWork.work(work.workId)).toMatchObject({ effectId, state: "BLOCKED", blockedReason: "SCOPE_CHANGED" });
+    expect(store.all("backgroundAdmission")).toHaveLength(1);
+    expect(executionGate).toHaveBeenCalledTimes(1);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+  it.each(["persistence cut", "normal runtime delivery"])("preserves the approved EXTERNAL_TASK input identity through %s", async mode => {
+    enable("jobs.backgroundV1", "integrations.intakeV1");
+    let stamp = 1_735_689_600_123;
+    vi.spyOn(Date, "now").mockImplementation(() => stamp);
+    const { service, store, root, runtime } = serviceFixture();
+    const thread = (await service.command(command("thread.create", { title: "External input custody" }))).result as Thread;
+    const effectId = "fixture-external-effect";
+    const cut = mode === "persistence cut";
+    store.internal("fixture.approved-intake", null, () => {
+      store.put("intakeRecord", "fixture-approval", null, {
+        disposition: "APPROVED", proposedTask: { title: "Fixture task", sourceUrl: "https://example.invalid/issues/1" },
+      });
+      if (!cut) store.put("thread", thread.id, thread.id, { ...thread, modelId: "test/model" });
+    });
+    const work = (await service.command(command("background.work.admit", {
+      kind: "EXTERNAL_TASK", title: "Approved fixture task", effectId, intakeId: "fixture-approval",
+    }, thread.id))).result as BackgroundWorkRecord;
+    const scheduler = service.backgroundWork.scheduler;
+    const wakeup = scheduler.register(command("background.wakeup.register"), {
+      wakeupId: "external-custody", taskId: work.workId, trigger: { kind: "AT_UTC", dueAtMs: stamp },
+    });
+    const key = '["external-custody",1,1735689600123]';
+    const inputId = `external:${work.workId}`;
+    const internal = store.internal.bind(store);
+    const commit = vi.spyOn(store, "internal").mockImplementation((type, threadId, apply) => {
+      if (cut && type === "background.occurrence.delivered") throw new Error("Fixture cuts after input commit and before occurrence receipt.");
+      return internal(type, threadId, apply);
+    });
+    await scheduler.tick();
+    await waitFor(() => commit.mock.calls.some(([type]) => type === "background.occurrence.delivered"));
+    const input = store.get<{ id: string; content: string }>("outbox", inputId)!;
+    expect(input).toMatchObject({ id: inputId, threadId: thread.id });
+    expect(input.content).toContain("Fixture task");
+    const admissions = store.all("backgroundAdmission");
+    expect(admissions).toHaveLength(1);
+    const before = scheduler.occurrences(wakeup.wakeupId)[0]!;
+    expect(before).toMatchObject({
+      occurrenceKey: key, wakeupId: "external-custody", scheduleRevision: 1,
+      dispatch: cut ? "DISPATCHED_UNCONFIRMED" : "RECEIPT_CONFIRMED",
+    });
+    expect(before.admissionId).toEqual(expect.any(String));
+    if (!cut) {
+      await waitFor(() => runtime.start.mock.calls.length === 1);
+      expect(runtime.start).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ inputId, inputIds: [inputId] }));
+      expect(runtime.followUp).not.toHaveBeenCalled();
+      return;
+    }
+
+    expect(runtime.start).not.toHaveBeenCalled();
+    expect(runtime.followUp).not.toHaveBeenCalled();
+    const savedBytes = JSON.stringify(input);
+    stamp += 30_001;
+    scheduler.stop();
+    const reopened = new Store(join(root, "state"));
+    const replacement = new Service(reopened, runtime);
+    cleanups.push(async () => { await replacement.dispose(); reopened.close(); });
+    replacement.backgroundWork.recover();
+    const next = replacement.backgroundWork.scheduler;
+    await next.tick();
+    expect(next.occurrences(wakeup.wakeupId)[0]).toMatchObject({ occurrenceKey: key, admissionId: before.admissionId, state: "UNKNOWN" });
+    expect(replacement.backgroundWork.work(work.workId)).toMatchObject({ workId: work.workId, effectId, state: "UNKNOWN" });
+    await replacement.command(command("background.wakeup.cancel", { wakeupId: wakeup.wakeupId }, thread.id));
+    await replacement.command(command("background.occurrence.reconcile", { occurrenceKey: key, receipt: { observed: "DELIVERED" } }, thread.id));
+    await next.tick();
+    expect(next.occurrences(wakeup.wakeupId)[0]).toMatchObject({ occurrenceKey: key, admissionId: before.admissionId, state: "DELIVERED" });
+    expect(next.allSchedules()[0]).toMatchObject({ state: "CANCELLED", occurrenceKey: null });
+    expect(reopened.all("backgroundAdmission")).toEqual(admissions);
+    expect(reopened.all("outbox").map(row => JSON.stringify(row))).toEqual([savedBytes]);
+    expect(runtime.start).not.toHaveBeenCalled();
+    expect(runtime.followUp).not.toHaveBeenCalled();
+  });
   it("admits background work through Service.command with host-derived ownership", async () => {
     enable("jobs.backgroundV1");
     const { service } = serviceFixture();
@@ -666,6 +860,55 @@ describe("M10 host command binding", () => {
     expect(replay.eventSeq).toBe(receipt.eventSeq);
     const view = service.backgroundWork.works(thread.id);
     expect(view).toHaveLength(1);
+  });
+  it("rejects unsupported schedule shapes through Service without writes or dispatch and preserves UTC identity", async () => {
+    enable("jobs.backgroundV1");
+    const { service, store, runtime } = serviceFixture();
+    const thread = (await service.command(command("thread.create", { title: "Schedule binding" }))).result as Thread;
+    const work = (await service.command(command("background.work.admit", { kind: "MAINTENANCE", title: "audit" }, thread.id))).result as BackgroundWorkRecord;
+    const scheduler = service.backgroundWork.scheduler;
+    const state = () => ({
+      seq: store.sequence,
+      projections: ["backgroundWakeup", "backgroundOccurrence", "backgroundAdmission", "backgroundWork", "outbox"].map(kind => store.all(kind)),
+    });
+    const before = state();
+    for (const trigger of [
+      { kind: "CRON", expression: "0 * * * *" },
+      { kind: "LOCAL_WALL_CLOCK", localTime: "2026-11-01T01:30:00", timeZone: "America/New_York" },
+      { kind: "UNSUPPORTED_KIND" },
+      { kind: "HOST_EVENT", eventKind: "arbitrary.event", correlationKey: "thread-fixed" },
+      { kind: "INTERVAL_UTC", anchorMs: 1735689600123, intervalMs: 0 },
+      { kind: "INTERVAL_UTC", anchorMs: 1735689600123, intervalMs: -1 },
+    ]) {
+      const registration = command("background.wakeup.register", { taskId: work.workId, trigger }, thread.id);
+      await expect(service.command(registration)).rejects.toMatchObject({ code: "SCHEDULE_KIND_UNSUPPORTED" });
+      expect(store.receipt(registration)).toBeNull();
+      expect(state()).toEqual(before);
+    }
+    expect(() => scheduler.hostEvent("arbitrary.event", "thread-fixed", "event-fixed"))
+      .toThrowError(expect.objectContaining({ code: "SCHEDULE_KIND_UNSUPPORTED" }));
+    expect(state()).toEqual(before);
+    expect(runtime.start).not.toHaveBeenCalled();
+    expect(runtime.followUp).not.toHaveBeenCalled();
+
+    const schedulerNow = Date.now();
+    for (const scheduleTimezone of [null, "UTC", "America/New_York", "Europe/Berlin"]) {
+      const anchorMs = 8_000_000_000_123, intervalMs = 2500;
+      expect(anchorMs).toBeGreaterThan(schedulerNow);
+      for (const trigger of [{ kind: "AT_UTC", dueAtMs: anchorMs }, { kind: "INTERVAL_UTC", anchorMs, intervalMs }]) {
+        const result = (await service.command(command("background.wakeup.register", { taskId: work.workId, trigger, scheduleTimezone }, thread.id))).result;
+        expect(result).toMatchObject({ trigger, scheduleTimezone, nextDueAtMs: anchorMs, occurrenceKey: null });
+      }
+    }
+    for (const [eventKind, correlationKey] of [["runtime.settled", "thread-fixed"], ["humanStep.answered", "human-fixed"]]) {
+      const trigger = { kind: "HOST_EVENT", eventKind, correlationKey };
+      const result = (await service.command(command("background.wakeup.register", { taskId: work.workId, trigger }, thread.id))).result as { wakeupId: string };
+      expect(result).toMatchObject({ trigger, nextDueAtMs: null });
+      expect(scheduler.hostEvent(eventKind, "different-owner", "event-fixed")).toEqual([]);
+      const claimed = scheduler.hostEvent(eventKind, correlationKey, "event-fixed");
+      expect(claimed.map(item => item.occurrence.occurrenceKey)).toEqual([JSON.stringify([result.wakeupId, 1, "event-fixed"])]);
+      expect(scheduler.hostEvent(eventKind, correlationKey, "event-fixed")).toEqual([]);
+    }
   });
   it("routes human respond/decline and intake configuration through the same command path", async () => {
     enable("jobs.backgroundV1", "integrations.intakeV1");
@@ -777,6 +1020,208 @@ describe("M10 v6 completeness regressions", () => {
     expect(scheduler.schedules()[0]!.skippedTotal).toBe(59);
     expect(occurrences.filter(item => item.state === "DELIVERED")).toHaveLength(1);
   });
+  it.each([100_002, 100_005])("accounts for all skipped slots after a %i interval jump with bounded projection writes", async (slots) => {
+    const f = fixture(), anchor = f.now(), delivered: string[] = [];
+    const scheduler = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver: async ({ occurrence }) => {
+      delivered.push(occurrence.occurrenceKey);
+      return { status: "DELIVERED" as const };
+    } });
+    cleanups.push(() => scheduler.stop());
+    const { wakeupId } = scheduler.register(command("background.wakeup.register"), {
+      taskId: "t", trigger: { kind: "INTERVAL_UTC", anchorMs: anchor, intervalMs: 1 },
+    });
+    let writes = 0;
+    const counts: number[] = [];
+    const put = f.store.put.bind(f.store), remove = f.store.remove.bind(f.store), internal = f.store.internal.bind(f.store);
+    vi.spyOn(f.store, "put").mockImplementation((...args) => { writes++; return put(...args); });
+    vi.spyOn(f.store, "remove").mockImplementation((...args) => { writes++; return remove(...args); });
+    vi.spyOn(f.store, "internal").mockImplementation((...args) => {
+      writes = 0;
+      try { return internal(...args); } finally { counts.push(writes); }
+    });
+    f.advance(slots);
+    await scheduler.tick();
+    const latest = JSON.stringify([wakeupId, 1, anchor + slots]);
+    expect(delivered).toEqual([latest]);
+    expect(scheduler.schedules()[0]).toMatchObject({ skippedTotal: slots - 1, nextDueAtMs: anchor + slots + 1 });
+    expect(f.store.all("backgroundOccurrenceBackfill")).toHaveLength(1);
+    for (let batch = 0; batch < 400 && f.store.all("backgroundOccurrenceBackfill").length; batch++) {
+      await scheduler.tick();
+    }
+    expect(f.store.all("backgroundOccurrenceBackfill")).toHaveLength(0);
+    expect(Math.max(...counts)).toBeLessThanOrEqual(257);
+    const rows = f.store.all<BackgroundOccurrenceV1>("backgroundOccurrence");
+    const skipped = rows.filter(row => row.state === "SKIPPED").sort((a,b) => a.scheduledDueAtMs! - b.scheduledDueAtMs!);
+    expect(skipped).toHaveLength(slots - 1);
+    expect(skipped.map(row => row.occurrenceKey)).toEqual(Array.from({ length: slots - 1 }, (_, index) => JSON.stringify([wakeupId, 1, anchor + index + 1])));
+    expect(skipped.every(row => row.dispatch === "NOT_DISPATCHED" && row.admissionId === null)).toBe(true);
+    expect(rows.filter(row => row.state === "DELIVERED").map(row => row.occurrenceKey)).toEqual([latest]);
+    expect(f.store.all("backgroundAdmission")).toHaveLength(1);
+    expect(delivered).toEqual([latest]);
+  });
+
+  it("keeps interval identity exact when elapsed time exceeds safe integer precision", async () => {
+    const f = fixture();
+    const reached = 8_000_000_000_000_000;
+    let clock = reached;
+    const deliver = vi.fn(async () => ({ status: "DELIVERED" as const }));
+    const scheduler = new DurableWakeupScheduler({ store: f.store, now: () => clock, deliver });
+    cleanups.push(() => scheduler.stop());
+    const wakeup = scheduler.register(command("background.wakeup.register"), {
+      wakeupId: "wide-elapsed", taskId: "t",
+      trigger: { kind: "INTERVAL_UTC", anchorMs: -8_000_000_000_000_001, intervalMs: 2 },
+    });
+    expect(wakeup.nextDueAtMs).toBe(8_000_000_000_000_001);
+    expect(await scheduler.tick()).toEqual([]);
+    clock++;
+    await scheduler.tick();
+    expect(scheduler.occurrences(wakeup.wakeupId)[0]?.occurrenceKey).toBe('["wide-elapsed",1,8000000000000001]');
+    expect(scheduler.allSchedules()[0]).toMatchObject({ nextDueAtMs: 8_000_000_000_000_003, skippedTotal: 0 });
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls back a failed skipped batch and resumes exactly after Store restart and cancellation", async () => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-backfill-restart-"));
+    let store = new Store(root), clock = 1_700_000_000_000;
+    const anchor = clock, delivered: string[] = [];
+    const start = () => new DurableWakeupScheduler({ store, now: () => clock, deliver: async ({ occurrence }) => {
+      delivered.push(occurrence.occurrenceKey);
+      return { status: "DELIVERED" as const };
+    } });
+    let scheduler = start();
+    cleanups.push(() => { scheduler.stop(); store.close(); rmSync(root, { recursive: true, force: true }); });
+    const { wakeupId } = scheduler.register(command("background.wakeup.register"), {
+      taskId: "t", trigger: { kind: "INTERVAL_UTC", anchorMs: anchor, intervalMs: 1 },
+    });
+    clock += 700;
+    await scheduler.tick();
+    const rangesBefore = store.all("backgroundOccurrenceBackfill");
+    const rowsBefore = store.all("backgroundOccurrence");
+    expect(rangesBefore).toHaveLength(1);
+    const put = store.put.bind(store);
+    let attempted = 0;
+    const write = vi.spyOn(store, "put").mockImplementation((...args) => {
+      put(...args);
+      if (args[0] === "backgroundOccurrence" && ++attempted === 2) throw new Error("synthetic interrupted skipped batch");
+    });
+    await expect(scheduler.tick()).rejects.toThrow("synthetic interrupted skipped batch");
+    expect(store.all("backgroundOccurrenceBackfill")).toEqual(rangesBefore);
+    expect(store.all("backgroundOccurrence")).toEqual(rowsBefore);
+    write.mockRestore();
+    scheduler.stop();
+    const priorAdmissions = store.all("backgroundAdmission");
+    store.close();
+    store = new Store(root);
+    scheduler = start();
+    scheduler.cancel(command("background.wakeup.cancel"), wakeupId);
+    clock = anchor + 120; // the replayed reading of time cannot admit the old slots
+    const competing = new DurableWakeupScheduler({ store, now: () => clock, deliver: async () => { throw new Error("skipped slot was dispatched"); } });
+    cleanups.push(() => competing.stop());
+    await Promise.all([scheduler.tick(), competing.tick()]);
+    expect(store.all("backgroundOccurrenceBackfill")).toHaveLength(0);
+    const rows = store.all<BackgroundOccurrenceV1>("backgroundOccurrence");
+    expect(rows.filter(row => row.state === "SKIPPED").map(row => row.occurrenceKey).sort())
+      .toEqual(Array.from({ length: 699 }, (_, index) => JSON.stringify([wakeupId, 1, anchor + index + 1])).sort());
+    expect(store.all("backgroundAdmission")).toEqual(priorAdmissions);
+    expect(delivered).toEqual([JSON.stringify([wakeupId, 1, anchor + 700])]);
+    expect(scheduler.allSchedules()[0]?.state).toBe("CANCELLED");
+  });
+
+  it("retains a legacy skipped-count shortfall without creating historical admissions or guessed rows", async () => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-legacy-backfill-"));
+    const anchor = 1_700_000_000_000;
+    let clock = anchor;
+    let store = new Store(root);
+    const deliver = vi.fn(async () => ({ status: "DELIVERED" as const }));
+    let scheduler = new DurableWakeupScheduler({ store, now: () => clock, deliver });
+    cleanups.push(() => { scheduler.stop(); store.close(); rmSync(root, { recursive: true, force: true }); });
+    const wakeup = scheduler.register(command("background.wakeup.register"), {
+      wakeupId: "legacy-capped", taskId: "t", trigger: { kind: "INTERVAL_UTC", anchorMs: anchor, intervalMs: 1 },
+    });
+    const knownKey = '["legacy-capped",1,1700000100001]';
+    store.internal("fixture.legacy-cap", null, () => {
+      store.put("backgroundWakeup", wakeup.wakeupId, null, {
+        ...wakeup, skippedTotal: 100_001, lastProcessedDueAtMs: 1_700_000_100_002, nextDueAtMs: 1_700_000_100_003,
+      });
+      store.put("backgroundOccurrence", knownKey, null, {
+        occurrenceKey: knownKey, wakeupId: wakeup.wakeupId, scheduleRevision: 1, scheduledDueAtMs: 1_700_000_100_001,
+        hostEventId: null, state: "SKIPPED", dispatch: "NOT_DISPATCHED", claimGeneration: 0, admissionId: null,
+        leaseExpiresAtMs: null, createdAt: wakeup.createdAt, updatedAt: wakeup.createdAt,
+      } satisfies BackgroundOccurrenceV1);
+    });
+    scheduler.stop();
+    store.close();
+    store = new Store(root);
+    scheduler = new DurableWakeupScheduler({ store, now: () => clock, deliver });
+    scheduler.recover();
+    clock = 1_700_000_000_001;
+    await scheduler.tick();
+    expect(scheduler.occurrences(wakeup.wakeupId).map(row => row.occurrenceKey)).toEqual([knownKey]);
+    expect(scheduler.allSchedules()[0]!.skippedTotal - scheduler.occurrences(wakeup.wakeupId).length).toBe(100_000);
+    expect(store.all("backgroundOccurrenceBackfill")).toEqual([]);
+    expect(store.all("backgroundAdmission")).toEqual([]);
+    expect(deliver).not.toHaveBeenCalled();
+    clock = 1_700_000_100_003;
+    await scheduler.tick();
+    expect(scheduler.occurrences(wakeup.wakeupId).map(row => row.occurrenceKey)).toEqual([knownKey, '["legacy-capped",1,1700000100003]']);
+    expect(scheduler.allSchedules()[0]!.skippedTotal).toBe(100_001);
+    expect(store.all("backgroundAdmission")).toHaveLength(1);
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an occurrence behind the persisted cadence ineligible while its skipped row is pending", async () => {
+    const f = fixture(), anchor = f.now(), sent: string[] = [];
+    const deliver = async ({ occurrence }: { occurrence: BackgroundOccurrenceV1 }) => {
+      sent.push(occurrence.occurrenceKey);
+      return { status: "DELIVERED" as const };
+    };
+    const stale = new DurableWakeupScheduler({ store: f.store, now: () => anchor + 700, deliver });
+    const current = new DurableWakeupScheduler({ store: f.store, now: () => anchor + 1_000, deliver });
+    const registration = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver });
+    cleanups.push(() => { stale.stop(); current.stop(); registration.stop(); });
+    registration.register(command("background.wakeup.register"), {
+      wakeupId: "stale-cadence", taskId: "t", trigger: { kind: "INTERVAL_UTC", anchorMs: anchor, intervalMs: 1 },
+    });
+    const internal = f.store.internal.bind(f.store);
+    let racing = false;
+    vi.spyOn(f.store, "internal").mockImplementation((type, thread, run) => {
+      if (type === "background.occurrence.claimed" && !racing) {
+        racing = true;
+        void current.tick();
+        expect(f.store.get("backgroundOccurrence", JSON.stringify(["stale-cadence", 1, anchor + 700]))).toBeNull();
+      }
+      return internal(type, thread, run);
+    });
+    await stale.tick();
+    expect(sent).toEqual([JSON.stringify(["stale-cadence", 1, anchor + 1000])]);
+    expect(f.store.all("backgroundAdmission")).toHaveLength(1);
+  });
+
+  it("rotates unfinished skipped ranges after admitting a newly due live schedule", async () => {
+    const f = fixture(), anchor = f.now(), sent: string[] = [];
+    const scheduler = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver: async ({ wakeup }) => {
+      sent.push(wakeup.wakeupId);
+      return { status: "DELIVERED" as const };
+    } });
+    cleanups.push(() => scheduler.stop());
+    for (const wakeupId of ["first-range", "second-range"]) scheduler.register(command("background.wakeup.register"), {
+      wakeupId, taskId: "t", trigger: { kind: "INTERVAL_UTC", anchorMs: anchor, intervalMs: 1 },
+    });
+    f.advance(900);
+    await scheduler.tick();
+    const cursor = (id: string) => f.store.all<{ wakeupId: string; nextDueAtMs: number }>("backgroundOccurrenceBackfill")
+      .find(record => record.wakeupId === id)?.nextDueAtMs;
+    const first = cursor("first-range"), second = cursor("second-range");
+    expect(first).toBeGreaterThan(second!);
+    scheduler.register(command("background.wakeup.register"), {
+      wakeupId: "ready-live", taskId: "t", trigger: { kind: "AT_UTC", dueAtMs: f.now() },
+    });
+    await scheduler.tick();
+    expect(sent).toEqual(["first-range", "second-range", "ready-live"]);
+    expect(cursor("first-range")).toBe(first);
+    expect(cursor("second-range")).toBeGreaterThan(second!);
+  });
+
   it("S08: a confirmed successful idle teardown releases its permit", async () => {
     const gate = new ModelCapacity(1);
     const f = fixture({ gate, idleExecutor: async () => ({ outcome: "SUCCEEDED", teardownConfirmed: true }) });

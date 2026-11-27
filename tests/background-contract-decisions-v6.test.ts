@@ -223,6 +223,74 @@ describe("M10-D03 clock movement", () => {
   });
 });
 
+describe("M10 interval identity with a literal clock", () => {
+  it.each([null, "UTC", "America/New_York", "Europe/Berlin"])("keeps the literal cadence through clock jumps and Store restart (%s)", async scheduleTimezone => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-literal-slots-"));
+    let store = new Store(root), clock = 1735689600122;
+    const delivered: string[] = [];
+    const start = () => new DurableWakeupScheduler({ store, now: () => clock, deliver: async ({ occurrence }) => {
+      delivered.push(occurrence.occurrenceKey);
+      return { status: "DELIVERED" as const };
+    } });
+    let scheduler = start();
+    cleanups.push(() => { scheduler.stop(); store.close(); rmSync(root, { recursive: true, force: true }); });
+    const trigger = { kind: "INTERVAL_UTC", anchorMs: 1735689600123, intervalMs: 2500 };
+    const tick = async (stamp: number) => { clock = stamp; await scheduler.tick(); };
+    const keys = () => store.all<BackgroundOccurrenceV1>("backgroundOccurrence").map(row => row.occurrenceKey).sort();
+    const beforeSix = [
+      '["anchored-fixed",1,1735689600123]',
+      '["anchored-fixed",1,1735689602623]',
+      '["anchored-fixed",1,1735689605123]',
+      '["anchored-fixed",1,1735689607623]',
+      '["anchored-fixed",1,1735689610123]',
+      '["anchored-fixed",1,1735689612623]',
+    ];
+    const schedule = scheduler.register(command("background.wakeup.register"), {
+      wakeupId: "anchored-fixed", taskId: "literal-clock", trigger, scheduleTimezone, deadlineMs: 1735689700000,
+    });
+    expect(schedule.nextDueAtMs).toBe(1735689600123);
+    await tick(1735689600122);
+    expect(keys()).toEqual([]);
+    await tick(1735689600123);
+    expect(keys()).toEqual([beforeSix[0]]);
+    expect(scheduler.allSchedules()[0]?.nextDueAtMs).toBe(1735689602623);
+    await tick(1735689602622);
+    expect(delivered).toEqual([beforeSix[0]]);
+    await tick(1735689612999);
+    expect(keys()).toEqual(beforeSix);
+    expect(delivered).toEqual([beforeSix[0], beforeSix[5]]);
+    expect(scheduler.allSchedules()[0]).toMatchObject({ nextDueAtMs: 1735689615123, skippedTotal: 4 });
+    const admissions = store.all("backgroundAdmission");
+    await tick(1735689602623);
+    expect(keys()).toEqual(beforeSix);
+    scheduler.stop();
+    store.close();
+    store = new Store(root);
+    scheduler = start();
+    scheduler.recover();
+    await tick(1735689605123);
+    expect(keys()).toEqual(beforeSix);
+    expect(store.all("backgroundAdmission")).toEqual(admissions);
+    await tick(1735689615122);
+    expect(store.all("backgroundAdmission")).toEqual(admissions);
+    await tick(1735689615123);
+    expect(delivered).toEqual([beforeSix[0], beforeSix[5], '["anchored-fixed",1,1735689615123]']);
+    expect(store.all("backgroundAdmission")).toHaveLength(3);
+    expect(scheduler.allSchedules()[0]).toMatchObject({ nextDueAtMs: 1735689617623, skippedTotal: 4 });
+
+    clock = 1735689604000;
+    const between = scheduler.register(command("background.wakeup.register"), {
+      wakeupId: "between-fixed", taskId: "literal-clock", trigger, scheduleTimezone, deadlineMs: 1735689700000,
+    });
+    expect(between.nextDueAtMs).toBe(1735689605123);
+    await tick(1735689605122);
+    expect(store.all("backgroundAdmission")).toHaveLength(3);
+    await tick(1735689605123);
+    expect(delivered.at(-1)).toBe('["between-fixed",1,1735689605123]');
+    expect(store.all("backgroundAdmission")).toHaveLength(4);
+  });
+});
+
 describe("M10-D04 human answer replay", () => {
   it("replays one delivery for the identical answer, conflicts on changed content, and grants no new approval", () => {
     const f = storeFixture("m10-d04-");

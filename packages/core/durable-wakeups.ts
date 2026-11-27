@@ -39,7 +39,32 @@ export interface WakeupSchedulerOptions {
   limits?: Partial<Pick<typeof BACKGROUND_SCHEDULER_LIMITS, "tickMs" | "dueBatchLimit" | "leaseMs" | "heartbeatMs" | "retryAttempts" | "retryDelaysMs">>;
 }
 
+interface SkippedRange {
+  wakeupId: string;
+  scheduleRevision: number;
+  firstDueAtMs: number;
+  lastDueAtMs: number;
+  intervalMs: number;
+  nextDueAtMs: number;
+  createdAt: string;
+  turn: number;
+}
+
+const SKIPPED_RANGE_KIND = "backgroundOccurrenceBackfill";
+const CLAIM_SKIP_LIMIT = 64;
+const BACKFILL_SKIP_LIMIT = 256;
+
 const iso = (ms: number) => new Date(ms).toISOString();
+
+/** Subtracting two safe timestamps can exceed safe integer precision. */
+function anchoredDue(anchorMs: number, intervalMs: number, stamp: number, next: boolean): number | null {
+  if (stamp <= anchorMs) return anchorMs;
+  const anchor = BigInt(anchorMs), interval = BigInt(intervalMs);
+  const elapsed = BigInt(stamp) - anchor;
+  const slots = (elapsed + (next ? interval - 1n : 0n)) / interval;
+  const due = Number(anchor + slots * interval);
+  return Number.isSafeInteger(due) ? due : null;
+}
 
 export async function waitForBackgroundDrain(work: Promise<unknown>, boundedMs: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -97,7 +122,7 @@ export class DurableWakeupScheduler {
       const stamp = this.now(), wakeupId = input.wakeupId ?? randomUUID();
       if (this.store.get("backgroundWakeup", wakeupId)) throw new HarnessError("DUPLICATE_COMMAND", "Wakeup already registered.");
       const nextDueAtMs = trigger.kind === "AT_UTC" ? trigger.dueAtMs
-        : trigger.kind === "INTERVAL_UTC" ? (stamp <= trigger.anchorMs ? trigger.anchorMs : trigger.anchorMs + Math.ceil((stamp - trigger.anchorMs) / trigger.intervalMs) * trigger.intervalMs)
+        : trigger.kind === "INTERVAL_UTC" ? anchoredDue(trigger.anchorMs, trigger.intervalMs, stamp, true)
         : null;
       const v1 = wakeupV1Schema.parse({
         wakeupId, taskId: input.taskId, scheduleRevision: 1, trigger,
@@ -152,7 +177,8 @@ export class DurableWakeupScheduler {
       // only the latest missed occurrence; earlier missed occurrences are
       // persisted as skipped, never burst-replayed. A backward jump cannot
       // redeliver a consumed key.
-      const latestDue = trigger.anchorMs + Math.floor((stamp - trigger.anchorMs) / trigger.intervalMs) * trigger.intervalMs;
+      const latestDue = anchoredDue(trigger.anchorMs, trigger.intervalMs, stamp, false);
+      if (latestDue === null) continue;
       const delivery = this.claimOccurrence(wakeup.wakeupId, occurrenceKeyForTime(wakeup.wakeupId, wakeup.scheduleRevision, latestDue), { scheduledDueAtMs: latestDue, hostEventId: null, intervalAnchor: trigger });
       if (delivery) claimed.push(delivery);
     }
@@ -161,12 +187,7 @@ export class DurableWakeupScheduler {
     // expiry after an uncertain dispatch never authorizes a second submit.
     // S01: at most 50 due records inspected per tick, shared across new due
     // wakeups and expired claims needing reconciliation.
-    const recoverable = new Set(this.store.all<WakeupRecord>("backgroundWakeup")
-      .filter(wakeup => !wakeup.paused && wakeup.state !== "CANCELLED" && wakeup.state !== "DELIVERED" && wakeup.state !== "BLOCKED")
-      .map(wakeup => wakeup.wakeupId));
-    const expired = this.store.all<BackgroundOccurrenceV1>("backgroundOccurrence")
-      .filter(item => item.state === "CLAIMED" && item.leaseExpiresAtMs !== null && item.leaseExpiresAtMs <= stamp && recoverable.has(item.wakeupId))
-      .slice(0, Math.max(0, this.limits.dueBatchLimit - due.length));
+    const expired = this.expiredOccurrences(stamp, this.limits.dueBatchLimit - due.length);
     for (const occurrence of expired) {
       const wakeup = this.store.get<WakeupRecord>("backgroundWakeup", occurrence.wakeupId);
       if (!wakeup || wakeup.paused || wakeup.state === "CANCELLED" || wakeup.state === "DELIVERED" || wakeup.state === "BLOCKED") continue;
@@ -187,7 +208,56 @@ export class DurableWakeupScheduler {
       });
       if (delivery) { claimed.push(delivery); this.dispatch(delivery); }
     }
+    this.materializeSkippedRange();
     return claimed;
+  }
+
+  /** The skipped ledger can be large. Limit lease reads before decoding rows. */
+  private expiredOccurrences(stamp: number, limit: number): BackgroundOccurrenceV1[] {
+    if (limit <= 0) return [];
+    const rows = this.store.db.prepare(`
+      SELECT occurrence.body FROM entities AS occurrence INDEXED BY wakeup_expired_claims
+      JOIN entities AS wakeup ON wakeup.kind = 'backgroundWakeup'
+        AND wakeup.id = json_extract(occurrence.body, '$.wakeupId')
+      WHERE occurrence.kind = 'backgroundOccurrence'
+        AND json_extract(occurrence.body, '$.state') = 'CLAIMED'
+        AND json_extract(occurrence.body, '$.leaseExpiresAtMs') <= ?
+        AND COALESCE(json_extract(wakeup.body, '$.paused'), 0) = 0
+        AND json_extract(wakeup.body, '$.state') NOT IN ('CANCELLED', 'DELIVERED', 'BLOCKED')
+      ORDER BY occurrence.rowid LIMIT ?
+    `).all(stamp, limit) as { body: string }[];
+    return rows.map(row => JSON.parse(row.body) as BackgroundOccurrenceV1);
+  }
+
+  /** Materialize one bounded slice. The cursor and its rows share the transaction. */
+  private materializeSkippedRange(): void {
+    const next = this.store.db.prepare(`
+      SELECT id FROM entities INDEXED BY wakeup_backfill_turn WHERE kind = 'backgroundOccurrenceBackfill'
+      ORDER BY json_extract(body, '$.turn'), rowid LIMIT 1
+    `).get() as { id: string } | undefined;
+    if (!next) return;
+    this.store.internal("background.occurrence.backfill", null, () => {
+      const range = this.store.get<SkippedRange>(SKIPPED_RANGE_KIND, next.id);
+      if (!range) return;
+      const cursor = this.writeSkipped(range, BACKFILL_SKIP_LIMIT);
+      if (cursor === null) this.store.remove(SKIPPED_RANGE_KIND, next.id);
+      else this.store.put(SKIPPED_RANGE_KIND, next.id, null, { ...range, nextDueAtMs: cursor, turn: this.store.sequence + 1 });
+    });
+  }
+
+  private writeSkipped(range: SkippedRange, limit: number): number | null {
+    const { wakeupId, scheduleRevision, lastDueAtMs, intervalMs, createdAt } = range;
+    let due = range.nextDueAtMs;
+    for (let count = 0; count < limit && due <= lastDueAtMs; count++, due += intervalMs) {
+      const key = occurrenceKeyForTime(wakeupId, scheduleRevision, due);
+      if (this.store.get("backgroundOccurrence", key)) continue;
+      this.store.put("backgroundOccurrence", key, null, backgroundOccurrenceV1Schema.parse({
+        occurrenceKey: key, wakeupId, scheduleRevision, scheduledDueAtMs: due, hostEventId: null,
+        state: "SKIPPED", dispatch: "NOT_DISPATCHED", claimGeneration: 0, admissionId: null,
+        leaseExpiresAtMs: null, createdAt, updatedAt: createdAt,
+      }));
+    }
+    return due <= lastDueAtMs ? due : null;
   }
 
   /** One synchronous claim transaction per occurrence. Re-reads inside the
@@ -196,8 +266,16 @@ export class DurableWakeupScheduler {
     return this.store.internal("background.occurrence.claimed", null, () => {
       const wakeup = this.store.get<WakeupRecord>("backgroundWakeup", wakeupId);
       if (!wakeup || wakeup.paused || wakeup.state === "CANCELLED" || wakeup.state === "DELIVERED" || wakeup.state === "BLOCKED") return null;
+      const expectedKey = input.scheduledDueAtMs !== null
+        ? occurrenceKeyForTime(wakeupId, wakeup.scheduleRevision, input.scheduledDueAtMs)
+        : input.hostEventId !== null ? occurrenceKeyForEvent(wakeupId, wakeup.scheduleRevision, input.hostEventId) : null;
+      if (key !== expectedKey) return null;
       const stamp = this.now();
       let occurrence = this.store.get<BackgroundOccurrenceV1>("backgroundOccurrence", key);
+      // An expired existing lease may be reclaimed. Creating a new row behind
+      // the durable cadence would instead revive an occurrence already skipped.
+      if (!occurrence && input.intervalAnchor && input.scheduledDueAtMs !== null
+        && wakeup.nextDueAtMs !== null && input.scheduledDueAtMs < wakeup.nextDueAtMs) return null;
       if (occurrence) {
         if (occurrence.state === "DELIVERED" || occurrence.state === "SKIPPED" || occurrence.state === "CANCELLED" || occurrence.state === "UNKNOWN") return null;
         if (occurrence.state === "CLAIMED") {
@@ -232,27 +310,30 @@ export class DurableWakeupScheduler {
       if (input.intervalAnchor && input.scheduledDueAtMs !== null) {
         const { anchorMs, intervalMs } = input.intervalAnchor;
         const previousDue = Math.max(wakeup.nextDueAtMs ?? anchorMs, wakeup.lastProcessedDueAtMs !== null ? wakeup.lastProcessedDueAtMs + intervalMs : anchorMs);
-        // Persist missed occurrences between the previous due instant and the
-        // latest admitted one (bounded per tick; the count is always exact).
-        // The initial anchor does not count as a skipped interval. For a
-        // previously active cadence, previousDue is itself still unprocessed.
-        const firstMissableDue = Math.max(previousDue, anchorMs + intervalMs);
-        const missed = Math.max(0, Math.round((input.scheduledDueAtMs - firstMissableDue) / intervalMs));
-        skippedTotal += missed;
-        // S11: persist every intended missed occurrence; the hard cap is only
-        // a host memory guard for pathological multi-year jumps.
-        const persist = Math.min(missed, 100_000);
-        for (let index = 0; index < persist; index++) {
-          const skippedDue = input.scheduledDueAtMs - (index + 1) * intervalMs;
-          const skippedKey = occurrenceKeyForTime(wakeupId, wakeup.scheduleRevision, skippedDue);
-          if (this.store.get("backgroundOccurrence", skippedKey)) continue;
-          this.store.put("backgroundOccurrence", skippedKey, null, backgroundOccurrenceV1Schema.parse({
-            occurrenceKey: skippedKey, wakeupId, scheduleRevision: wakeup.scheduleRevision,
-            scheduledDueAtMs: skippedDue, hostEventId: null, state: "SKIPPED", dispatch: "NOT_DISPATCHED",
-            claimGeneration: 0, admissionId: null, leaseExpiresAtMs: null, createdAt: iso(stamp), updatedAt: iso(stamp),
-          }));
+        // The initial anchor does not count as a skipped interval.
+        const firstDueAtMs = Math.max(previousDue, anchorMs + intervalMs);
+        if (firstDueAtMs < input.scheduledDueAtMs) {
+          const missed = Number((BigInt(input.scheduledDueAtMs) - BigInt(firstDueAtMs)) / BigInt(intervalMs));
+          if (!Number.isSafeInteger(skippedTotal + missed)) {
+            this.store.put("backgroundWakeup", wakeupId, null, {
+              ...wakeup, state: "BLOCKED", blockedReason: "SCHEDULE_OCCURRENCE_LIMIT", updatedAt: iso(stamp),
+            });
+            return null;
+          }
+          skippedTotal += missed;
+          const range: SkippedRange = {
+            wakeupId, scheduleRevision: wakeup.scheduleRevision, firstDueAtMs,
+            lastDueAtMs: input.scheduledDueAtMs - intervalMs, intervalMs,
+            nextDueAtMs: firstDueAtMs, createdAt: iso(stamp), turn: this.store.sequence + 1,
+          };
+          const cursor = this.writeSkipped(range, CLAIM_SKIP_LIMIT);
+          if (cursor !== null) {
+            const rangeId = occurrenceKeyForTime(wakeupId, wakeup.scheduleRevision, firstDueAtMs);
+            this.store.put(SKIPPED_RANGE_KIND, rangeId, null, { ...range, nextDueAtMs: cursor });
+          }
         }
-        nextDueAtMs = input.scheduledDueAtMs + intervalMs;
+        const next = input.scheduledDueAtMs + intervalMs;
+        nextDueAtMs = Number.isSafeInteger(next) ? next : null;
         lastProcessedDueAtMs = input.scheduledDueAtMs;
       } else if (wakeup.trigger.kind === "AT_UTC") {
         nextDueAtMs = null;
