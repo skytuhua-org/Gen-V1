@@ -48,6 +48,15 @@ describe('HookSettings',()=>{
   // A fresh instance reads the file and sees the persisted document.
   expect((await settings().read()).revision).toBe(1);
  });
+ it('refreshes the cached snapshot after the preferences document is reset',async()=>{
+  const s=settings();
+  await s.setEnabled({enabled:false,baseRevision:0});
+  expect(s.snapshot()).toMatchObject({revision:1,enabled:false,hooks:[]});
+  rmSync(join(dir,'hooks','hooks.json'));
+  const defaults=await s.read();
+  expect(defaults).toEqual({version:1,revision:0,enabled:true,hooks:[]});
+  expect(s.snapshot()).toEqual(defaults);
+ });
  it('rejects a stale baseRevision on save, remove and setEnabled',async()=>{
   const s=settings();
   await s.save({hook:hook(),baseRevision:0});
