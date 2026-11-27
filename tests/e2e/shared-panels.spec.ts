@@ -277,3 +277,18 @@ test('Add surface distinguishes open tabs from the Usage dialog action', async (
  await expect(tab).toHaveCount(1);
  await expect(tab).toHaveAttribute('aria-selected','true');
 });
+
+test('the selected Workspace tab owns the only rendered tabpanel', async ({page}) => {
+  const panel = page.getByRole('complementary', {name: 'Workspace panel', exact: true});
+  await openSurface(page, panel, 'Terminal');
+  await openSurface(page, panel, 'Files');
+  for (const [label, id] of [['Artifact','artifact'], ['Terminal','terminal'], ['Files','files']]) {
+    const tab = panel.getByRole('tab', {name: label, exact: true});
+    await tab.click();
+    await expect(panel.getByRole('tablist').locator('[role=tab][aria-controls]')).toHaveCount(1);
+    await expect(tab).toHaveAttribute('aria-selected', 'true');
+    await expect(tab).toHaveAttribute('aria-controls', 'workspace-view-' + id);
+    await expect(panel.getByRole('tabpanel')).toHaveAttribute('id', 'workspace-view-' + id);
+    await expect(panel.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'workspace-tab-' + id);
+  }
+});
