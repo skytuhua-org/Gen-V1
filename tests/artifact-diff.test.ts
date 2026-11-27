@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {classifyArtifactDiff} from '../apps/web/src/artifact-diff';
+import {splitDiffLines} from '../apps/web/src/diff-line-kind';
 import {validateSurface} from '../packages/ui-catalog';
 import {catalogSpec} from '../scripts/review-fixtures';
 
@@ -9,17 +9,17 @@ it('separates file headers from header-shaped content and resets across files', 
     '--- literal content', '+++ literal content', '\\ No newline at end of file',
     '--- a/b', '+++ b/b', '@@ -1,2 +1,2 @@', ' shared context', '+added', '-removed', '',
   ];
-  const result = classifyArtifactDiff(lines.join('\r\n'));
+  const result = splitDiffLines(lines.join('\r\n'));
   expect(result.map(line => line.text)).toEqual(lines);
-  expect(result.map(line => line.className)).toEqual([
-    'diff-header', 'diff-header', 'diff-header', 'diff-header', 'diff-hunk',
-    'removed', 'added', 'diff-hunk', 'diff-header', 'diff-header', 'diff-hunk',
-    '', 'added', 'removed', '',
+  expect(result.map(line => line.kind)).toEqual([
+    'header', 'header', 'header', 'header', 'hunk',
+    'remove', 'add', 'hunk', 'header', 'header', 'hunk',
+    'context', 'add', 'remove', 'context',
   ]);
 });
 
 it('retains ordinary prefixes and accepts both direct unified inputs in the catalog', () => {
-  expect(classifyArtifactDiff('- prior\n+ current').map(line => line.className)).toEqual(['removed', 'added']);
+  expect(splitDiffLines('- prior\n+ current').map(line => line.kind)).toEqual(['remove', 'add']);
   for (const field of ['diff','content']) {
     expect(() => validateSurface({root:'view',elements:{view:{type:'Diff',props:{[field]:'--- a/a\n+++ b/a'}}}})).not.toThrow();
   }

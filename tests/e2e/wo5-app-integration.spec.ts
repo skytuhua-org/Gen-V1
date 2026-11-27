@@ -118,3 +118,33 @@ test('fixture blocks foreign canonical workspace requests',async({page})=>{
  expect(await page.evaluate(url=>fetch(url).then(()=>true,()=>false),url)).toBe(false);
  expect(h.unexpected).toEqual(['https://outside.invalid/api/split-workspace']);
 });
+
+test('live Current patch styles unified lines and announces the staged selection', async ({page}, info) => {
+ await page.setViewportSize({width:390,height:850});
+ await host(page);
+ const diff=['--- a/capture.txt','+++ b/capture.txt','@@ -1 +1 @@','-Original line','+Replacement line with enough text to scroll at a narrow viewport width.'].join('\n');
+ await page.route('**/api/projects/capture-project/git?*',route=>route.fulfill({json:{
+  head:'a'.repeat(40),revision:'b'.repeat(64),branch:'audit',files:[],diff,stagedDiff:'',gitWrite:false,truncated:false,
+ }}));
+ await page.getByRole('button',{name:'Inspect changes',exact:true}).click();
+ const patch=page.locator('.live-diff');
+ await expect(patch.locator('[data-kind=hunk]')).toHaveText('@@ -1 +1 @@');
+ await expect(patch.locator('[data-kind=remove]')).toHaveText('-Original line');
+ const added=patch.locator('[data-kind=add]');
+ await expect(added).toContainText('+Replacement line');
+ await expect(patch.locator('[data-kind=header]')).toHaveCount(2);
+ expect(await patch.evaluate(node=>node.scrollWidth>node.clientWidth)).toBe(true);
+ const original=await added.evaluate(node=>getComputedStyle(node).backgroundColor);
+ await page.evaluate(()=>document.documentElement.classList.add('diff-colors-blue-orange'));
+ await expect.poll(()=>added.evaluate(node=>getComputedStyle(node).backgroundColor)).not.toBe(original);
+ await page.screenshot({path:info.outputPath('live-current-diff.png')});
+ const staged=page.getByRole('checkbox',{name:'Staged',exact:true});
+ await staged.check();
+ await expect(page.locator('.live-diff-announcement')).toHaveText('Staged diff. No tracked changes in this view.');
+ await expect(patch).toHaveCount(0);
+ await expect(page.locator('.live-review .file-checkpoints-note')).toHaveText('No tracked changes in this view.');
+ await staged.uncheck();
+ await expect(page.locator('.live-diff-announcement')).toHaveText(/Unstaged diff/);
+ await expect(patch).toBeVisible();
+ await expect(staged).toBeFocused();
+});

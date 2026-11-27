@@ -4,7 +4,7 @@ import { Children, createContext, lazy, Suspense, useContext, useId, useRef, use
 import { useStateStore, type ComponentRegistry, type ComponentRenderProps } from '@json-render/react';
 import { ExternalLink, FileText, Check, AlertTriangle, CornerDownLeft } from 'lucide-react';
 import { Markdown } from './Markdown';
-import {classifyArtifactDiff} from './artifact-diff';
+import {splitDiffLines} from './diff-line-kind';
 import { ArtifactTitle, ChoiceList, RelationshipGraph, Status, Steps } from './task-interface';
 export { ArtifactTitle } from './task-interface';
 import type { DocumentPreviewProps, SignaturePadProps } from '../../../packages/ui-catalog/documents';
@@ -155,13 +155,14 @@ function TreeNode({ value, depth = 0 }: { value: unknown; depth?: number }) {
 }
 function Tree({ element: { props } }: ComponentRenderProps) { const data = useData(props) ?? props.items; return <ul className="tree">{list(data).map((node, i) => <TreeNode key={i} value={node} />)}</ul>; }
 function Code({ element: { props } }: ComponentRenderProps) { const data = useData(props); return <figure className="code-block">{props.title ? <figcaption>{string(props.title)}</figcaption> : null}<pre><code>{typeof data === 'string' ? data : string(props.code, string(props.content, data ? display(data) : ''))}</code></pre></figure>; }
+const artifactDiffClass = {context:'',add:'added',remove:'removed',header:'diff-header',hunk:'diff-hunk'};
 function Diff({ element: { props } }: ComponentRenderProps) {
   const data = useData(props);
   const pair = data && typeof data === 'object' ? obj(data) : props;
   const code = typeof data === 'string' ? data : typeof pair.before === 'string' || typeof pair.after === 'string'
     ? [...string(pair.before).split('\n').map(line => `- ${line}`), ...string(pair.after).split('\n').map(line => `+ ${line}`)].join('\n')
     : string(pair.diff, string(pair.content, string(props.diff, string(props.content))));
-  return <pre className="diff">{classifyArtifactDiff(code).map((line, index) => <span key={index} className={line.className}>{line.text || ' '}</span>)}</pre>;
+  return <pre className="diff">{splitDiffLines(code).map((line, index) => <span key={index} className={artifactDiffClass[line.kind]}>{line.text || ' '}</span>)}</pre>;
 }
 function Document({ element: { props }, children }: ComponentRenderProps) { const data = useData(props); const text=typeof props.text==='string'?props.text:typeof data==='string'?data:undefined;const path = typeof props.resourcePath === 'string' ? '?' + new URLSearchParams({ path: props.resourcePath }) : '';if(props.presentation==='window')return <WindowDocument props={props} text={text}/>; return <section className={`document${props.download ? ' document-download' : ''}`}><div className="document-heading"><FileText size={16} />{string(props.title, 'Document')}</div>{props.text || props.content || typeof data === 'string' ? <Markdown text={string(props.text, string(props.content, string(data)))} /> : null}{children}{typeof props.resourceId === 'string' && <a href={`/api/resources/${encodeURIComponent(props.resourceId)}/content${path}`} download={props.download === true || undefined} target={props.download ? undefined : '_blank'} rel="noreferrer">{string(props.linkLabel, props.download ? 'Download PDF' : 'Open granted document')}<ExternalLink size={12} /></a>}</section>; }
 function Progress({ element: { props } }: ComponentRenderProps) { const source = useData(props); const value = Number(source ?? props.value); const max = Number(props.max) || 100; return <div className="surface-progress"><div>{string(props.label)}{Number.isFinite(value) && <span>{value} / {max}</span>}</div><progress aria-label={string(props.label, 'Progress')} value={Number.isFinite(value) ? value : undefined} max={max} /></div>; }
