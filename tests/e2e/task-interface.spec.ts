@@ -1,8 +1,56 @@
 import { test, expect } from '@playwright/test';
-import { branchGraphData, branchGraphSpec, growingQaSpec, linkedMapData, linkedMapSpec, migrationTableSpec, serveTaskFixture, taskFixture } from './task-interface-fixture';
+import { branchGraphData, branchGraphSpec, growingQaSpec, linkedMapData, linkedMapSpec, migrationTableSpec, serveTaskFixture, taskFixture, type TaskSpec } from './task-interface-fixture';
 import { validateSurface } from '../../packages/ui-catalog';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { openApp } from './app-ready';
+
+test('a hidden artifact status announces directly in its header and clears only on reveal or expiry',async({page})=>{
+ const spec:TaskSpec={root:'views',elements:{
+  views:{type:'Tabs',props:{labels:['Content','Controls','Details'],stateKey:'statusView'},children:['status','save','details']},
+  status:{type:'Status',props:{dataBinding:'result'}},
+  save:{type:'Button',props:{label:'Save choice',actionId:'ask'}},
+  details:{type:'Text',props:{text:'Other details'}},
+ }};
+ const snapshot=taskFixture(spec,{result:{status:'neutral',label:'Waiting for a choice'}});
+ let saved=0;
+ const fixture=await serveTaskFixture(page,snapshot,async command=>{
+  if(command.payload.actionId==='ask')fixture.setInput('result',{status:'success',label:'Choice saved locally '+(++saved)});
+ });
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.emulateMedia({reducedMotion:'reduce'});await page.setViewportSize({width:560,height:800});
+ await openApp(page);
+ const artifact=page.getByRole('region',{name:'Task surface',exact:true});
+ await expect(artifact.getByText('Waiting for a choice',{exact:true})).toBeVisible();
+ const chip=artifact.locator('.artifact-header').getByRole('status');
+ await expect(artifact.locator('.artifact-header .artifact-flash')).toHaveCount(0);
+ await artifact.getByRole('tab',{name:'Controls',exact:true}).click();
+ await page.clock.install();
+ const save=artifact.getByRole('button',{name:'Save choice',exact:true});
+ await save.click();
+ await expect(chip).toHaveText('Choice saved locally 1');
+ expect(await chip.locator('.artifact-flash').evaluate(node=>parseFloat(getComputedStyle(node).animationDuration))).toBeLessThanOrEqual(.001);
+ expect(await artifact.locator('.artifact-header').evaluate(node=>node.scrollWidth<=node.clientWidth)).toBe(true);
+ await page.clock.runFor(2500);
+ await save.click();
+ await expect(chip).toHaveText('Choice saved locally 2');
+ await page.clock.runFor(2000);
+ await expect(chip).toHaveText('Choice saved locally 2');
+ await artifact.getByRole('tab',{name:'Details',exact:true}).click();
+ await expect(chip).toHaveText('Choice saved locally 2');
+ await artifact.getByRole('tab',{name:'Content',exact:true}).click();
+ await expect(chip).toHaveText('');
+ await expect(artifact.getByText('Choice saved locally 2',{exact:true})).toBeVisible();
+ fixture.setInput('result',{status:'error',label:'Choice needs another attempt'});
+ await fixture.publish();
+ await expect(artifact.getByText('Choice needs another attempt',{exact:true})).toBeVisible();
+ await expect(chip).toHaveText('');
+ await artifact.getByRole('tab',{name:'Controls',exact:true}).click();
+ await save.click();
+ await expect(chip).toHaveText('Choice saved locally 3');
+ await page.clock.runFor(4100);
+ await expect(chip).toHaveText('');
+ expect(errors).toEqual([]);
+});
 
 test('settings writes broadcast a named workspace event and refresh the app', async ({ page }) => {
   const snapshot = taskFixture(branchGraphSpec('vertical'), { graph: branchGraphData });
