@@ -1969,12 +1969,12 @@
   },
   {
    "id": "m10.issue-2049-t04-postmerge-windows-live-intake",
-   "status": "PASS",
+   "status": "FAIL",
    "requiredCases": [
     {
      "id": "#2049-A01",
-     "status": "PASS",
-     "evidence": "43/43 focused vitest on current main; merged durable claim/replay regressions"
+     "status": "FAIL",
+     "evidence": "Post-merge review falsified the earlier PASS: unresolved intakeApprovalClaim rows did not pin thread/message command receipts, so retention could expire thread.create to result:null while the claim survived; recovery then dereferenced null and could not redispatch safely. The prior focused suite did not cover that cross-integration collision. Corrective repair and post-merge re-verification are required."
     },
     {
      "id": "#2049-A02",
@@ -2375,6 +2375,7 @@
   }
  ],
  "remainingGates": [
+  "#2049-A01 retention/recovery collision: unresolved intakeApprovalClaim command receipts were not pinned on the verified main cut; corrective repair requires post-merge re-verification before PASS.",
   "HOLD_SUPERVISOR: APPROVED_SERVICE lifetime unavailable; no installed supervisor with target-platform PASS evidence.",
   "HOLD_FORK_API: pinned Hermes wrapper exposes no callable fork API; review forks and idle model review remain UNSUPPORTED_FORK.",
   "HOLD_EXECUTION_PROFILE: production command launch requires an operator-approved M03 profile, trust and installed backend; none is configured on this host.",
