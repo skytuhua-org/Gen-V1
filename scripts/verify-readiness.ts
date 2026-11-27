@@ -7,7 +7,7 @@ import {spawn,spawnSync,type ChildProcess} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {once} from 'node:events';
 import {finished} from 'node:stream/promises';
-import {createWriteStream,existsSync,mkdirSync,readdirSync,readFileSync,statSync,writeFileSync} from 'node:fs';
+import {createWriteStream,existsSync,mkdirSync,readFileSync,statSync,writeFileSync} from 'node:fs';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {resolvePackageManager,type PackageManagerResolution} from './research-baseline.ts';
@@ -190,6 +190,16 @@ export function readinessPackageChecks(root:string):(spec:CheckSpec)=>Promise<Ch
   return spec=>runCheck({...spec,command:manager.file,args:[...manager.prefix,...spec.args]});
 }
 
+export async function runInstalledVerification(spec:CheckSpec,packageStatus:ReadinessStatus,run:(spec:CheckSpec)=>Promise<CheckResult>):Promise<CheckResult>{
+  if(packageStatus!=='PASS')return blockedResult(spec,'prerequisite-unavailable','Packaging did not pass; installed verification was not run.');
+  // Use the installer's exact planned version, not the first matching release-directory entry.
+  const installer=spec.args[3];
+  let usable=false;
+  try{usable=installer!==undefined&&statSync(installer).isFile();}catch{/* Missing or unreadable output is a blocked gate, not a failed manifest. */}
+  if(!usable)return blockedResult(spec,'prerequisite-unavailable',`No usable expected setup executable at ${installer??'(missing planned path)'}.`);
+  return run(spec);
+}
+
 async function main(){
   const root=resolve(fileURLToPath(new URL('../',import.meta.url)));
   const startedAt=new Date().toISOString();
@@ -205,13 +215,16 @@ async function main(){
     logPath:resolve(artifactRoot,`${id.replaceAll(':','-')}.log`)});
   const results:CheckResult[]=[];
   const runPackageCheck=readinessPackageChecks(root);
-  const run=async(check:CheckSpec)=>{
-    console.log(`RUN ${check.id}: ${check.command} ${check.args.join(' ')}`);
-    const result=await runPackageCheck(check);
-    console.log(`${result.status} ${check.id} exit=${result.exitCode??'-'} ${result.errorKind??''} (${result.durationMs}ms)`);
+  const record=(result:CheckResult)=>{
+    console.log(`${result.status} ${result.id} exit=${result.exitCode??'-'} ${result.errorKind??''} (${result.durationMs}ms)`);
     results.push(result);
     return result;
   };
+  const execute=(check:CheckSpec)=>{
+    console.log(`RUN ${check.id}: ${check.command} ${check.args.join(' ')}`);
+    return runPackageCheck(check);
+  };
+  const run=async(check:CheckSpec)=>record(await execute(check));
 
   await run(spec('typecheck',['typecheck'],600_000));
   await run(spec('test',['test'],3_600_000));
@@ -244,15 +257,7 @@ async function main(){
     const packageResult=await run(windowsSpec);
     const verifyCommand=plan.commands[1]!;
     const verifySpec=spec('windows-installed-verification',verifyCommand.args,1_800_000);
-    if(packageResult.status!=='PASS'){
-      results.push(blockedResult(verifySpec,'prerequisite-unavailable','Packaging did not pass; installed verification was not run.'));
-    }else{
-      const releaseDirectory=resolve(packageOutput,`desktop-release-${version}`);
-      const setup=readdirSync(releaseDirectory).find(name=>/^Gen-V1-Setup-.*-win-x64\.exe$/.test(name));
-      if(!setup)results.push(blockedResult(verifySpec,'prerequisite-unavailable',`No setup executable found in ${releaseDirectory}`));
-      else await run({...verifySpec,args:['exec','tsx','scripts/verify-installed-desktop.ts',
-        resolve(releaseDirectory,setup),resolve(releaseDirectory,'win-unpacked')]});
-    }
+    record(await runInstalledVerification(verifySpec,packageResult.status,execute));
   }
 
   const manifest=buildManifest({repositorySha,platform,runId,startedAt,endedAt:new Date().toISOString(),results});
