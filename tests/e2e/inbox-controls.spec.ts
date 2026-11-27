@@ -60,6 +60,52 @@ for(const width of [280,1100])test(`short Inbox controls remain reachable at ${w
   expect(await calls(page)).toEqual([{type:'open',id:'thread-review'}]);
 });
 
+test('an Inbox action failure reserves space below the list and reader',async({page})=>{
+ await page.setViewportSize({width:1100,height:380});
+ await fixture(page,true);
+ await page.evaluate(()=>{window.inboxControls.refreshMode='reject';});
+ await page.getByRole('button',{name:'Refresh inbox',exact:true}).click();
+ const error=page.getByRole('alert').filter({hasText:'Refresh failed.'});
+ await expect(error).toHaveAttribute('data-tone','danger');
+ const scroll=page.locator('.inbox-tasks-scroll');
+ const reader=page.locator('.inbox-view-items');
+ const last=rows(page).last();
+ await last.scrollIntoViewIfNeeded();
+ const bottom=async(locator:typeof scroll)=>(await locator.boundingBox())!.y+(await locator.boundingBox())!.height;
+ const errorTop=(await error.boundingBox())!.y;
+ expect(await bottom(scroll)).toBeLessThanOrEqual(errorTop);
+ expect(await bottom(reader)).toBeLessThanOrEqual(errorTop);
+ expect(await last.evaluate(node=>{const {x,y,width,height}=node.getBoundingClientRect();return node.contains(document.elementFromPoint(x+width/2,y+height/2));})).toBe(true);
+});
+
+test('Inbox reconnect is polite and clears when the real client resynchronizes',async({page})=>{
+ await page.addInitScript(()=>{
+  window.EventSource=class extends EventTarget{
+   onopen:()=>void=()=>{};
+   onerror:()=>void=()=>{};
+   constructor(){super();queueMicrotask(()=>this.onopen());window.addEventListener('fixture-disconnect',()=>this.onerror(),{once:true});}
+   close(){}
+  } as unknown as typeof EventSource;
+ });
+ await page.route('**/api/bootstrap',route=>route.fulfill({json:{csrfToken:'fixture-csrf',widgetOrigin:'http://127.0.0.1:5802'}}));
+ let snapshots=0, release!:()=>void;
+ const gate=new Promise<void>(resolve=>{release=resolve;});
+ await page.route('**/api/attention',async route=>{
+  if(++snapshots>1)await gate;
+  return route.fulfill({json:{items:[],unread:0,sequence:snapshots}});
+ });
+ await page.goto('/tests/e2e/fixtures/inbox-controls.html?network');
+ await expect.poll(()=>snapshots).toBe(1);
+ await page.evaluate(()=>window.dispatchEvent(new Event('fixture-disconnect')));
+ const status=page.getByRole('status').filter({hasText:'Inbox is reconnecting…'});
+ try{
+  await expect(status).toHaveAttribute('data-tone','info');
+  await expect(status).toHaveAttribute('aria-atomic','true');
+  await expect.poll(()=>snapshots).toBe(2);
+ }finally{release();}
+ await expect(status).toHaveCount(0);
+});
+
 test('overflowing Inbox list and reader expose native scrollbars', async ({page}) => {
   await page.setViewportSize({width: 1100, height: 350});
   await fixture(page);
@@ -165,7 +211,7 @@ for (const mode of ['reject', 'throw', 'source-error'] as const) {
     await page.evaluate(mode => {window.inboxControls.refreshMode = mode;}, mode);
     await choose(page, 'Unread'); await page.getByRole('button', {name: 'Refresh inbox', exact: true}).click();
     await expect(page.locator('.inbox-refresh-status')).toHaveText('Refresh failed');
-    await expect(page.getByRole('status').filter({hasText:mode === 'source-error' ? 'Inbox could not load.' : 'Refresh failed.'})).toBeVisible();
+    await expect(page.getByRole('alert').filter({hasText:mode === 'source-error' ? 'Inbox could not load.' : 'Refresh failed.'})).toBeVisible();
     await expect(filter(page)).toHaveText('Unread'); await expect(rows(page)).toHaveCount(3);
     expect(await calls(page)).toEqual([{type: 'refresh'}]); expect(errors).toEqual([]);
   });
@@ -178,7 +224,7 @@ test('reading and failed canonical navigation never approve or falsely mark an u
   await readToolbar(page).getByRole('button', {name: 'Mark as unread'}).click();
   await page.evaluate(() => {window.inboxControls.openMode = 'reject';});
   await page.getByRole('button', {name: 'Open conversation'}).click();
-  await expect(page.getByRole('status').filter({hasText:'Navigation failed.'})).toBeVisible();
+  await expect(page.getByRole('alert').filter({hasText:'Navigation failed.'})).toBeVisible();
   await expect(page.getByRole('button', {name: 'Question, Needs your input, unread', exact: true})).toHaveAttribute('aria-current', 'true');
   expect(await calls(page)).toEqual([{type: 'read', id: 'question'}, {type: 'unread', id: 'question'}, {type: 'open', id: 'thread-question'}]);
   expect(await page.evaluate(() => window.inboxControls.items.find(item => item.id === 'question'))).toMatchObject({read: false, state: 'needs-input', actionable: true});
@@ -188,7 +234,7 @@ test('reading and failed canonical navigation never approve or falsely mark an u
 test('read-state rejection remains visible without changing read state or invoking navigation', async ({page}) => {
   await fixture(page); await page.evaluate(() => {window.inboxControls.readMode = 'reject';});
   await rows(page).filter({hasText: 'Question'}).first().click();
-  await expect(page.getByRole('status').filter({hasText:'Read state could not save.'})).toBeVisible();
+  await expect(page.getByRole('alert').filter({hasText:'Read state could not save.'})).toBeVisible();
   expect(await calls(page)).toEqual([{type: 'read', id: 'question'}]);
   expect(await page.evaluate(() => window.inboxControls.items[0])).toMatchObject({read: false, state: 'needs-input', actionable: true});
 });

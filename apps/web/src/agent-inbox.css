@@ -5,7 +5,7 @@
  --ui-type-label-size:13px;--ui-type-label-leading:18px;--ui-type-label-weight:500;
  --ui-type-toolbar-title-size:14px;--ui-type-toolbar-title-leading:20px;--ui-type-emphasis-weight:600;--ui-type-body-weight:400;
  --ui-type-caption-size:12px;--ui-type-caption-leading:16px;--ui-color-text:var(--text);--ui-color-text-muted:var(--muted);--ui-color-fill-current:var(--selection-bg);
- display:grid;grid-template-columns:minmax(300px,35%) minmax(0,1fr);grid-template-rows:minmax(0,1fr);height:100%;min-height:0;min-width:0;overflow:hidden;position:relative;background:var(--surface);color:var(--text);container:agent-inbox / size;
+ display:grid;grid-template-columns:minmax(300px,35%) minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;height:100%;min-height:0;min-width:0;overflow:hidden;position:relative;background:var(--surface);color:var(--text);container:agent-inbox / size;
 }
 .agent-inbox[data-columns=list],.agent-inbox[data-columns=item]{grid-template-columns:minmax(0,1fr)}
 .agent-inbox [hidden]{display:none!important}
@@ -70,7 +70,8 @@
 .agent-inbox .agent-inbox-empty{display:flex;align-items:center;justify-content:center;text-align:center;flex-direction:column;gap:12px;min-height:180px;flex:1;color:var(--muted);padding:24px}
 .agent-inbox .agent-inbox-empty h3{font-size:14px;font-weight:500;color:var(--text)}
 .agent-inbox .agent-inbox-empty p{font-size:12px;max-width:240px;line-height:1.6}
-.agent-inbox .agent-inbox-error{position:absolute;bottom:8px;left:8px;right:8px;padding:8px 12px;border:1px solid var(--danger);border-radius:7px;background:var(--surface);color:var(--danger);font-size:11px}
+.agent-inbox .agent-inbox-error{grid-column:1/-1;grid-row:2;margin:0 8px 8px;padding:8px 12px;border:1px solid var(--danger);border-radius:7px;background:var(--surface);color:var(--danger);font-size:11px;overflow-wrap:anywhere}
+.agent-inbox .agent-inbox-error[data-tone=info]{color:var(--muted);background:var(--subtle);border-color:var(--border)}
 .agent-inbox button:focus-visible{outline-offset:-2px}
 .agent-inbox :is(.inbox-tasks,.inbox-tasks-scroll,.inbox-view-items,.desktop-inbox){scrollbar-width:thin;scrollbar-color:var(--border) transparent;scrollbar-gutter:auto}
 .agent-inbox :is(.inbox-tasks,.inbox-tasks-scroll,.inbox-view-items,.desktop-inbox):hover{scrollbar-color:var(--muted) transparent}
