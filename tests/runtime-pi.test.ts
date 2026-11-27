@@ -921,9 +921,15 @@ it("distinguishes missing, torn and oversized Pi history on resume reads", async
     await fileSystem.rm(path);
     await expect(runtime.history(path)).rejects.toMatchObject({ code: "PI_SESSION_MISSING" });
     await expect(validateSessionPath(root, path, "thread")).rejects.toMatchObject({ code: "PI_SESSION_MISSING" });
-    // Transcript size alone never blocks resume; a single oversized entry does.
+    // Many valid entries inside the byte bound still resume and dedupe.
     await fileSystem.writeFile(path, header + "\n" + Array.from({ length: 2000 }, () => delivered).join("\n"));
     expect(await runtime.history(path)).toEqual(["input-1"]);
+    // The total transcript read is bounded too; many individually small entries
+    // cannot force resume to scan unbounded history.
+    const oneMegabyteEntry = "x".repeat(1024 * 1024);
+    await fileSystem.writeFile(path, header + "\n" + Array.from({ length: 33 }, () => oneMegabyteEntry).join("\n"));
+    await expect(runtime.history(path)).rejects.toMatchObject({ code: "PI_HISTORY_LIMIT" });
+    // A single oversized entry also fails closed.
     await fileSystem.writeFile(path, header + "\n" + "x".repeat(33 * 1024 * 1024));
     await expect(runtime.history(path)).rejects.toMatchObject({ code: "PI_HISTORY_LIMIT" });
   } finally { await runtime.dispose(); await fileSystem.rm(root, { recursive: true, force: true }); }
