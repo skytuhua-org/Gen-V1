@@ -133,7 +133,7 @@ public static class HarnessPathGuard {
       if (!GetFileInformationByHandle(handle, out info)) throw new Win32Exception(Marshal.GetLastWin32Error());
       ulong identity = ((ulong)info.IndexHigh << 32) | info.IndexLow;
       if ((info.Attributes & 0x410) != 0 || info.Links != 1 || info.Volume.ToString() != volume || identity.ToString() != index) throw new IOException("Replacement destination identity changed");
-      if (info.SizeHigh != 0 || info.SizeLow > 8 * 1024 * 1024) throw new IOException("Replacement destination exceeds its byte limit");
+      if (info.SizeHigh != 0 || info.SizeLow > 32 * 1024 * 1024) throw new IOException("Replacement destination exceeds its byte limit");
       stream = new FileStream(handle, FileAccess.Read);
       using (var hash = SHA256.Create()) {
         string actual = BitConverter.ToString(hash.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
