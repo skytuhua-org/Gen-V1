@@ -28,21 +28,26 @@ test('options open a shared menu without selecting or detaching its thread', asy
   await options(page).click();
   await expect(menu(page)).toBeVisible();
   await expect(options(page)).toHaveAttribute('aria-haspopup', 'menu');
-  await expect(menu(page).getByRole('menuitem')).toHaveText(['Place in workspaceAlt Enter', 'Detach thread', 'Rename thread', 'Pin thread', 'Mark as unread', 'Settle thread', 'Archive thread']);
+  const items=menu(page).getByRole('menuitem');
+  const names=['Place in workspace','Detach thread','Rename thread','Pin thread','Mark as unread','Settle thread','Archive thread'];
+  await expect(items).toHaveCount(names.length);
+  for(const [index,name] of names.entries())await expect(items.nth(index)).toHaveAccessibleName(name);
   await expect(menu(page).getByRole('menuitem', {name: 'Place in workspace'}).locator('kbd')).toHaveText('Alt Enter');
   expect(await calls(page)).toEqual([]);
   await expect(page.locator('.thread-item[aria-current="page"]')).toHaveAttribute('aria-label', 'Selected conversation Ready');
 });
 
-test('keyboard navigation skips disabled archive, supports typeahead and ignores IME', async ({page}) => {
+test('keyboard navigation reaches disabled archive, supports typeahead and ignores IME', async ({page}) => {
   const trigger = options(page);
   await trigger.focus(); await page.keyboard.press('ArrowUp');
-  await expect(menu(page).getByRole('menuitem', {name: 'Settle thread'})).toBeFocused();
   const archive = menu(page).getByRole('menuitem', {name: 'Archive thread'});
+  await expect(archive).toBeFocused();
   await expect(archive).toBeDisabled();
+  await expect(archive).toHaveAccessibleDescription('Stop the task before archiving.');
   await expect(archive).toHaveAttribute('title', 'Stop the task before archiving.');
   await archive.dispatchEvent('click'); expect(await calls(page)).toEqual([]);
   await page.keyboard.press('Home'); await expect(menu(page).getByRole('menuitem', {name: 'Place in workspace'})).toBeFocused();
+  await page.keyboard.press('ArrowUp'); await expect(archive).toBeFocused();
   await page.keyboard.press('ArrowUp'); await expect(menu(page).getByRole('menuitem', {name: 'Settle thread'})).toBeFocused();
   await page.keyboard.press('r'); const rename = menu(page).getByRole('menuitem', {name: 'Rename thread'}); await expect(rename).toBeFocused();
   for (const key of ['Enter', ' ', 'Escape', 'ArrowDown', 'p']) await rename.dispatchEvent('keydown', {key, isComposing: true});
