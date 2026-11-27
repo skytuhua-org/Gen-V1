@@ -73,7 +73,17 @@ function run(executable: string, args: string[], stdin?: string) {
     child.stdin.end(stdin);
   });
 }
-export async function recordWindow(_server: BrowserServer, page: Page, filename: string) {
+export type RecordWindowOptions = { cursor?: 'synthetic' | 'none' };
+const cursorInstrumentedPages = new WeakSet<Page>();
+
+export async function recordWindow(_server: BrowserServer, page: Page, filename: string, options: RecordWindowOptions = {}) {
+  const cursorMode = options.cursor ?? 'synthetic';
+  if (cursorMode !== 'synthetic' && cursorMode !== 'none') throw new Error('Record cursor mode must be synthetic or none.');
+  if (cursorMode === 'none') {
+    if (cursorInstrumentedPages.has(page) || await page.evaluate(() => document.getElementById('review-capture-cursor') !== null)) {
+      throw new Error('Cannot record without a cursor on an already instrumented page; use a fresh context.');
+    }
+  }
   await page.bringToFront();
   // Capture this page's compositor only. GDI returned black surfaces in this
   // Windows session, and desktop-wide capture could expose unrelated windows.
@@ -87,7 +97,10 @@ export async function recordWindow(_server: BrowserServer, page: Page, filename:
     cursor.style.cssText = 'position:fixed;left:0;top:0;width:15px;height:21px;background:white;clip-path:polygon(0 0,0 90%,26% 68%,48% 100%,66% 90%,44% 59%,80% 59%);filter:drop-shadow(0 0 1px black);pointer-events:none;z-index:2147483647;transform:translate(-30px,-30px)';
     document.body.append(cursor); document.addEventListener('mousemove', event => { cursor.style.transform = `translate(${event.clientX}px,${event.clientY}px)`; });
   }
-  await page.addInitScript(installCursor); await page.evaluate(installCursor);
+  if (cursorMode === 'synthetic') {
+    await page.addInitScript(installCursor); await page.evaluate(installCursor);
+    cursorInstrumentedPages.add(page);
+  }
   session.on('Page.screencastFrame', event => {
     latest = Buffer.from(event.data, 'base64'); sourceFrames++; timestamps.push(event.metadata.timestamp ?? 0);
     void session.send('Page.screencastFrameAck', { sessionId: event.sessionId }).catch(() => {});
@@ -124,7 +137,7 @@ export async function recordWindow(_server: BrowserServer, page: Page, filename:
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, 'Recording teardown failed');
     const probe = JSON.parse(await run('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name,width,height,r_frame_rate,avg_frame_rate:format=duration,size', '-of', 'json', filename]));
-    return { ...probe, capture: { method: 'Chromium compositor JPEG frames sampled against wall time at 30fps; unchanged or delayed frames held; no interpolation', sourceFrames, writtenFrames, elapsedSeconds, startedWallTimeMilliseconds, firstTimestamp: timestamps[0], lastTimestamp: timestamps.at(-1) } };
+    return { ...probe, capture: { method: 'Chromium compositor JPEG frames sampled against wall time at 30fps; unchanged or delayed frames held; no interpolation', sourceFrames, writtenFrames, elapsedSeconds, startedWallTimeMilliseconds, firstTimestamp: timestamps[0], lastTimestamp: timestamps.at(-1), cursorMode } };
   })();
 }
 export async function closeCapture(value: { context: BrowserContext; browser: Browser; server: BrowserServer }) {

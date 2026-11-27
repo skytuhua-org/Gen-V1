@@ -31,7 +31,7 @@ const composers: SharedAgentComposers = {
   prepare: async () => {},
   edit: async (agent, value) => {drafts.set(agent.agentId, value); notify(agent.agentId);},
   addSkill: async () => {}, removeSkill: async () => {}, addExcerpt: async () => {}, editExcerpt: async () => {}, removeExcerpt: async () => {},
-  submit: async () => {}, clearError: () => {}, stop: async () => {},
+  submit: async () => {}, clearError: () => {}, cancel: () => {}, stop: async () => {},
   canSend: () => true,
   supports: agent => !agent.parentId,
   dispose: () => {},

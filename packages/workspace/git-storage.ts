@@ -25,6 +25,14 @@ export function privateFamilyForBinding(store:Store,binding:ManagedGitFamily&{fa
 const nullFile=process.platform==='win32'?'NUL':'/dev/null';
 const bareConfig='[core]\nrepositoryformatversion = 0\nbare = true\nfilemode = false\nsymlinks = false\n[gc]\nauto = 0\n[maintenance]\nauto = false\n';
 const viewConfig=bareConfig.replace('bare = true','bare = false');
+/** `status -b` header → branch name; empty on a detached HEAD. */
+export function statusBranch(header:string):string{
+ if(!header.startsWith('## '))throw new HarnessError('GIT_ERROR','Git status did not report a branch header.');
+ if(header.startsWith('## HEAD (no branch)'))return '';
+ if(header.startsWith('## No commits yet on '))return header.slice('## No commits yet on '.length);
+ return header.slice(3).split('...')[0]!.split(' ')[0]!;
+}
+
 export async function nativeGit(executable:string,metadata:string,worktree:string|undefined,args:string[],signal:AbortSignal,environment:NodeJS.ProcessEnv={}){
  const prefix=['--no-pager','--no-replace-objects','--git-dir='+metadata,...(worktree?['--work-tree='+worktree]:[]),'-c','core.hooksPath='+nullFile,'-c','core.fsmonitor=false','-c','core.untrackedCache=false','-c','submodule.recurse=false','-c','diff.external=','-c','core.attributesFile=','-c','core.excludesFile=','-c','credential.helper=','-c','gc.auto=0','-c','maintenance.auto=false'];
  const result=await runProcess(executable,[...prefix,...args],worktree??metadata,signal,()=>{},120000,environment,4*1024*1024);

@@ -1,4 +1,5 @@
 import {describe,it,expect,vi} from 'vitest';
+import {writeFileSync} from 'node:fs';
 import {mkdtemp,mkdir,writeFile,readFile,realpath,rename,symlink,rm,lstat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -26,6 +27,23 @@ describe('installed subscription readiness',()=>{
  });
 });
 
+describe('installed app exit wait',()=>{
+ it('recognizes process exit without requiring diagnostic pipes to close',async()=>{
+  const child=Object.assign(new EventEmitter(),{exitCode:null as number|null,signalCode:null as NodeJS.Signals|null});
+  const result=installedVerification.waitForOwnedExit(child,20);
+  child.exitCode=0;
+  child.emit('exit',0,null);
+  await expect(result).resolves.toBeUndefined();
+  expect(child.listenerCount('exit')).toBe(0);
+  expect(child.listenerCount('close')).toBe(0);
+ });
+ it('retains the timeout and detaches its waiter when the process does not exit',async()=>{
+  const child=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null});
+  await expect(installedVerification.waitForOwnedExit(child,10)).rejects.toThrow('Installed application did not exit');
+  expect(child.listenerCount('exit')).toBe(0);
+  expect(child.listenerCount('close')).toBe(0);
+ });
+});
 describe('installed desktop verification custody',()=>{
  it('creates a separate ordinary ownership receipt for the enabled phase before its native Save lease',async()=>{
   const root=await realpath(await mkdtemp(join(tmpdir(),'installed-memory-phase-owner-')));
@@ -39,8 +57,66 @@ describe('installed desktop verification custody',()=>{
    const {prepareInstalledNativeSave}=await import('../scripts/installed-native-save.ts');
    expect((await prepareInstalledNativeSave(directory)).directory.path).toBe(directory);
    await expect(installedVerification.prepareInstalledMemoryPhaseDirectory(root,owner)).rejects.toMatchObject({code:'EEXIST'});
+   const flagFree=await installedVerification.prepareInstalledMemoryPhaseDirectory(root,owner,'flag-free');
+   expect(flagFree).not.toBe(directory);
+   expect(JSON.parse(await readFile(join(flagFree,'owner.json'),'utf8'))).toEqual(owner);
+   await expect(installedVerification.prepareInstalledMemoryPhaseDirectory(root,owner,'flag-free')).rejects.toMatchObject({code:'EEXIST'});
    expect(JSON.parse(await readFile(receipt,'utf8'))).toEqual(owner);
    expect(JSON.parse(await readFile(join(root,'owner.json'),'utf8'))).toEqual(owner);
+  }finally{await rm(root,{recursive:true,force:true});}
+ });
+ it('preserves split UTF-8 in the owned subprocess report and progress text',async()=>{
+  const cwd=await mkdtemp(join(tmpdir(),'installed-stream-fixture-'));
+  const script=`const fs=require('node:fs');const out=Buffer.from(JSON.stringify({path:'é漢'})),err=Buffer.from('first=é漢');
+  process.stdout.write(out.subarray(0,out.indexOf(195)+1),()=>process.stderr.write(err.subarray(0,err.indexOf(195)+1),()=>{
+   const poll=setInterval(()=>{if(!fs.existsSync('continue'))return;clearInterval(poll);
+    setTimeout(()=>{process.stdout.end(out.subarray(out.indexOf(195)+1));process.stderr.end(Buffer.concat([err.subarray(err.indexOf(195)+1),Buffer.from([195])]));},65);
+   },5);
+  }));`;
+  const logs:string[]=[];
+  try{
+   const result=await installedVerification.runOwned(process.execPath,['-e',script],{cwd,env:{},timeoutMs:5000,onStderr:stderr=>{
+    logs.push(stderr);
+    if(logs.length===1)writeFileSync(join(cwd,'continue'),'ready');
+   }});
+   expect(JSON.parse(result.stdout)).toEqual({path:'é漢'});
+   expect(logs[0]).toBe('first=');
+   expect(result.stderr).toBe('first=é漢�');
+  }finally{await rm(cwd,{recursive:true,force:true});}
+ });
+ it('uses six launches with one executable and stable, disjoint port sets across three profiles',async()=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'installed-acceptance-launches-')));
+  try{
+   const executable=join(root,'Gen V1.exe');
+   await writeFile(executable,'owned fixture');
+   const stat=await lstat(executable,{bigint:true});
+   const executableIdentity={dev:String(stat.dev),ino:String(stat.ino),sha256:createHash('sha256').update('owned fixture').digest('hex')};
+   const usedPorts=new Set<number>(),portsByPhase:number[][]=[];
+   for(const phase of ['retention','enabled-memory','flag-free']){
+    const directory=join(root,phase);await mkdir(directory);
+    const launch=vi.fn(async(_iteration:number,_ports:readonly[number,number,number])=>{});
+    await installedVerification.runInstalledAcceptanceLaunches({directory,executable,executableIdentity,usedPorts,launch});
+    expect(launch.mock.calls.map(([iteration])=>iteration)).toEqual([1,2]);
+    expect(launch.mock.calls[1]?.[1]).toEqual(launch.mock.calls[0]?.[1]);
+    portsByPhase.push([...launch.mock.calls[0]![1]]);
+   }
+   expect(new Set(portsByPhase.flat()).size).toBe(9);
+  }finally{await rm(root,{recursive:true,force:true});}
+ });
+ it.each(['executable','profile','launch error'])('does not restart a scenario after %s failure',async change=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'installed-acceptance-custody-')));
+  try{
+   const executable=join(root,'Gen V1.exe'),directory=join(root,'profile');
+   await mkdir(directory);await writeFile(executable,'owned fixture');
+   const stat=await lstat(executable,{bigint:true});
+   const executableIdentity={dev:String(stat.dev),ino:String(stat.ino),sha256:createHash('sha256').update('owned fixture').digest('hex')};
+   const launch=vi.fn(async()=>{
+    if(change==='executable')await writeFile(executable,'mutated');
+    else if(change==='profile'){await rename(directory,directory+'-previous');await mkdir(directory);}
+    else throw Error('first launch failed');
+   });
+   await expect(installedVerification.runInstalledAcceptanceLaunches({directory,executable,executableIdentity,usedPorts:new Set(),launch})).rejects.toThrow(/identity changed|first launch failed/);
+   expect(launch).toHaveBeenCalledTimes(1);
   }finally{await rm(root,{recursive:true,force:true});}
  });
  it('records installer exit separately from close and never copies child text into lifecycle evidence',()=>{
@@ -196,6 +272,8 @@ describe('installed project memory retention fixture',()=>{
   expect(installedVerification.readInstalledVerificationArguments(['setup','unpacked'])).toEqual({setup:'setup',unpacked:'unpacked',memoryRetention:false,memoryEnabled:false});
   expect(installedVerification.readInstalledVerificationArguments(['setup','unpacked','--project-memory-retention'])).toEqual({setup:'setup',unpacked:'unpacked',memoryRetention:true,memoryEnabled:false});
   expect(installedVerification.readInstalledVerificationArguments(['setup','unpacked','--project-memory-retention','--project-memory-enabled'])).toEqual({setup:'setup',unpacked:'unpacked',memoryRetention:true,memoryEnabled:true});
+  expect(installedVerification.readInstalledVerificationArguments(['setup','unpacked','--project-memory-retention','--project-memory-enabled','--single-install-acceptance'])).toEqual({setup:'setup',unpacked:'unpacked',memoryRetention:true,memoryEnabled:true,singleInstallAcceptance:true});
+  expect(()=>installedVerification.readInstalledVerificationArguments(['setup','unpacked','--single-install-acceptance'])).toThrow(/usage/i);
   for(const args of [[],['setup'],['setup','unpacked','--enable-memory'],['setup','unpacked','--project-memory-enabled'],['setup','unpacked','--project-memory-retention','--project-memory-retention'],['setup','unpacked','--project-memory-retention','--project-memory-enabled','--project-memory-enabled']])expect(()=>installedVerification.readInstalledVerificationArguments(args)).toThrow(/usage|pass|option/i);
  });
  it('activates only project memory for explicit enabled launches and never inherits ambient feature flags',()=>{
@@ -441,5 +519,64 @@ describe('bounded installed startup output custody',()=>{
   state.child.emit('error',Object.assign(Error('PRIVATE_LATE_ERROR'),{code:'EACCES'}));state.child.emit('exit',1,null);state.advance(3);state.child.emit('close',1,null);
   const value=state.capture.read();expect(value.firstFailure).toMatchObject({stage:'backend-error',error:{category:'error',code:'ENOENT'}});
   expect(value.exit).toEqual({elapsedMs:10,code:1,signal:null});expect(value.close).toEqual({elapsedMs:13,code:1,signal:null});expect(JSON.stringify(value)).not.toContain('PRIVATE_LATE_ERROR');
+ });
+});
+
+describe('installed verifier integration seam',()=>{
+ const manifestFile={files:[{path:'resources/host/packages/core/windows-control-bridge.node',bytes:1,sha256:'a'.repeat(64)},{path:'resources/host/package.json',bytes:2,sha256:'b'.repeat(64)}],bytes:3,sha256:'c'.repeat(64)};
+ const provenanceInput=async()=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'installed-seam-')));
+  const executable=join(root,'Gen V1.exe');
+  await writeFile(executable,Buffer.from('synthetic-exe'));
+  const setupSha256=createHash('sha256').update('synthetic-setup').digest('hex');
+  return{root,cleanup:()=>rm(root,{recursive:true,force:true}),input:{setupSha256,executable,expected:manifestFile,packageVersion:'0.6.5'}};
+ };
+ const buildBinding=(installerSha256:string,overrides:Record<string,unknown>={})=>({reference:'ci-run/44418295418',sourceSha:'4110b56a3fc0b7cc81be0af7712bb90933f13428',installerSha256,payloadSha256:'c'.repeat(64),...overrides});
+ it('binds provenance only through a caller-supplied build binding matching both verified digests',async()=>{
+  const {input,cleanup}=await provenanceInput();
+  try{
+   const resolution=await installedVerification.resolveInstalledVerifierProvenance({...input,buildBinding:buildBinding(input.setupSha256)});
+   expect(resolution.status).toBe('bound');
+   if(resolution.status!=='bound')throw Error('unreachable');
+   expect(resolution.provenance).toEqual({sourceSha:'4110b56a3fc0b7cc81be0af7712bb90933f13428',packageVersion:'0.6.5',installerSha256:input.setupSha256,executableSha256:createHash('sha256').update('synthetic-exe').digest('hex'),payloadSha256:'c'.repeat(64)});
+   expect(resolution.buildReference).toBe('ci-run/44418295418');
+  }finally{await cleanup();}
+ });
+ it('stays unbound without a caller-supplied binding — an adjacent record naming the installer and a sourceSha is consistency evidence only',async()=>{
+  const {root,input,cleanup}=await provenanceInput();
+  try{
+   await writeFile(join(root,'build-manifest.json'),JSON.stringify({files:[{file:'desktop-release-0.6.5/Gen-V1-Setup-0.6.5-win-x64.exe',bytes:14,sha256:input.setupSha256}],sourceSha:'4110b56a3fc0b7cc81be0af7712bb90933f13428'}));
+   const resolution=await installedVerification.resolveInstalledVerifierProvenance(input);
+   expect(resolution.status).toBe('unbound');
+   expect(resolution.missing).toEqual([expect.stringContaining('caller-supplied build binding')]);
+  }finally{await cleanup();}
+ });
+ it('refuses incomplete or mismatched bindings outright',async()=>{
+  const {input,cleanup}=await provenanceInput();
+  try{
+   await expect(installedVerification.resolveInstalledVerifierProvenance({...input,buildBinding:buildBinding('d'.repeat(64))})).rejects.toThrow(/installerSha256 does not match/);
+   await expect(installedVerification.resolveInstalledVerifierProvenance({...input,buildBinding:buildBinding(input.setupSha256,{payloadSha256:'e'.repeat(64)})})).rejects.toThrow(/payloadSha256 does not match/);
+   await expect(installedVerification.resolveInstalledVerifierProvenance({...input,buildBinding:buildBinding(input.setupSha256,{sourceSha:'1234'})})).rejects.toThrow(/sourceSha is malformed/);
+   await expect(installedVerification.resolveInstalledVerifierProvenance({...input,buildBinding:buildBinding(input.setupSha256,{reference:''})})).rejects.toThrow(/build\/run reference/);
+   await expect(installedVerification.resolveInstalledVerifierProvenance({...input,buildBinding:{installerSha256:input.setupSha256,payloadSha256:'c'.repeat(64)} as never})).rejects.toThrow(/build\/run reference/);
+  }finally{await cleanup();}
+ });
+ it('locates the installed control addon digest at its verified package-relative path only when the manifest lists it',()=>{
+  expect(installedVerification.installedControlAddon(manifestFile)).toEqual({packageRelativePath:'resources/host/packages/core/windows-control-bridge.node',sha256:'a'.repeat(64)});
+  expect(installedVerification.installedControlAddon({...manifestFile,files:manifestFile.files.slice(1)})).toBeNull();
+ });
+ it('invokes the opt-in callback with the verified-owned page, provenance and addon, and merges its receipt',async()=>{
+  const receipt:Record<string,unknown>={},seen:unknown[]=[];
+  const provenance={sourceSha:'4'.repeat(40),packageVersion:'0.6.5',installerSha256:'5'.repeat(64),executableSha256:'6'.repeat(64),payloadSha256:'7'.repeat(64)};
+  const controlAddon={packageRelativePath:'resources/host/packages/core/windows-control-bridge.node',sha256:'8'.repeat(64)};
+  const page={url:()=>'http://127.0.0.1:4100/'} as unknown as Parameters<typeof installedVerification.invokeInstalledVerifierIntegration>[0]['page'];
+  await installedVerification.invokeInstalledVerifierIntegration({offer:{callback:async context=>{seen.push(context);return{kind:'synthetic',ok:true};},provenance,buildReference:'ci-run/44418295418',controlAddon},page,directory:'C:\\owned-profile',origin:'http://127.0.0.1:4100',iteration:2,receipt});
+  expect(seen).toEqual([{page,directory:'C:\\owned-profile',origin:'http://127.0.0.1:4100',iteration:2,provenance,buildReference:'ci-run/44418295418',controlAddon}]);
+  expect(receipt.integrations).toEqual([{iteration:2,kind:'installed-verifier-integration',receipt:{kind:'synthetic',ok:true}}]);
+ });
+ it('lets callback refusals propagate so the launch fails closed before cleanup',async()=>{
+  const provenance={sourceSha:'4'.repeat(40),packageVersion:'0.6.5',installerSha256:'5'.repeat(64),executableSha256:'6'.repeat(64),payloadSha256:'7'.repeat(64)};
+  const page={url:()=>'http://127.0.0.1:4100/'} as unknown as Parameters<typeof installedVerification.invokeInstalledVerifierIntegration>[0]['page'];
+  await expect(installedVerification.invokeInstalledVerifierIntegration({offer:{callback:async()=>{throw Error('refused-input');},provenance,buildReference:'ci-run/44418295418',controlAddon:null},page,directory:'d',origin:'o',iteration:1,receipt:{}})).rejects.toThrow('refused-input');
  });
 });
