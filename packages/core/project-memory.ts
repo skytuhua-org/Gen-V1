@@ -1,4 +1,4 @@
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, writeSync } from 'node:fs';
+import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, writeSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
@@ -129,26 +129,51 @@ export class ProjectMemory {
     for (const entry of this.deletions.values()) this.writeDeletion(this.fencePath, entry, this.fenceIdentity);
     this.store.internal('project.memory.ledger.enrolled', null, () => { this.store.put('projectMemoryLedger', this.profileId, null, this.fenceIdentity); return { enrolled: true }; });
   }
-  private loadDeletions(): void {
-    for (const path of [this.deletionPath, this.fencePath]) {
-    if (!existsSync(path)) continue;
+  private readDeletionLedger(path: string): { entries: Deletion[]; corrupt: boolean } {
     this.ordinaryLedger(path);
     const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     let data: string;
     try { this.ledgerIdentity(path, fd); data = readFileSync(fd, 'utf8'); } finally { closeSync(fd); }
+    const entries: Deletion[] = [];
     for (const line of data.split('\n').filter(Boolean)) {
-      let entry: Deletion;
-      try { entry = z.strictObject({ profileId: z.string(), projectId: z.string(), accountId: z.string().nullable(), tombstone: memoryTombstoneV1Schema }).parse(JSON.parse(line)); }
-      catch { fail('The memory deletion ledger needs recovery before memory can be used.', 'MEMORY_DELETION_LEDGER'); }
-      const old = this.deletions.get(entry!.tombstone.itemId);
-      if (!old || old.tombstone.deletionRevision < entry!.tombstone.deletionRevision) this.deletions.set(entry!.tombstone.itemId, entry!);
-      else if (old.tombstone.deletionRevision === entry!.tombstone.deletionRevision) this.deletions.set(entry!.tombstone.itemId, { ...old, tombstone: memoryTombstoneV1Schema.parse({ ...old.tombstone,
-        sourceExclusions: [...new Map([...old.tombstone.sourceExclusions, ...entry!.tombstone.sourceExclusions].map(ref => [digest(ref), ref])).values()],
-        affectedDerivedArtifacts: [...new Set([...old.tombstone.affectedDerivedArtifacts, ...entry!.tombstone.affectedDerivedArtifacts])],
-        purgeStatus: old.tombstone.purgeStatus === 'COMPLETE' || entry!.tombstone.purgeStatus === 'COMPLETE' ? 'COMPLETE' : 'PENDING',
-      }) });
+      try { entries.push(z.strictObject({ profileId: z.string(), projectId: z.string(), accountId: z.string().nullable(), tombstone: memoryTombstoneV1Schema }).parse(JSON.parse(line))); }
+      catch { return { entries, corrupt: true }; }
     }
+    return { entries, corrupt: false };
+  }
+  private mergeDeletion(entry: Deletion): void {
+    const old = this.deletions.get(entry.tombstone.itemId);
+    if (!old || old.tombstone.deletionRevision < entry.tombstone.deletionRevision) this.deletions.set(entry.tombstone.itemId, entry);
+    else if (old.tombstone.deletionRevision === entry.tombstone.deletionRevision) this.deletions.set(entry.tombstone.itemId, { ...old, tombstone: memoryTombstoneV1Schema.parse({ ...old.tombstone,
+      sourceExclusions: [...new Map([...old.tombstone.sourceExclusions, ...entry.tombstone.sourceExclusions].map(ref => [digest(ref), ref])).values()],
+      affectedDerivedArtifacts: [...new Set([...old.tombstone.affectedDerivedArtifacts, ...entry.tombstone.affectedDerivedArtifacts])],
+      purgeStatus: old.tombstone.purgeStatus === 'COMPLETE' || entry.tombstone.purgeStatus === 'COMPLETE' ? 'COMPLETE' : 'PENDING',
+    }) });
+  }
+  private quarantineDamagedDeletionMirror(): void {
+    const suffix = `${stamp().replace(/[:.]/g, '-')}-${randomUUID()}`;
+    renameSync(this.deletionPath, `${this.deletionPath}.damaged-${suffix}`);
+    this.syncLedgerDirectory(this.deletionPath);
+  }
+  private deletionFenceEnrolled(): boolean {
+    return Boolean(this.fenceIdentity && digest(this.store.get('projectMemoryLedger', this.profileId)) === digest(this.fenceIdentity));
+  }
+  private loadDeletions(): void {
+    const fence = existsSync(this.fencePath) ? this.readDeletionLedger(this.fencePath) : { entries: [], corrupt: false };
+    // The sibling fence is authoritative. If it cannot be parsed, the local
+    // mirror cannot prove that the externally acknowledged history is complete.
+    if (fence.corrupt) fail('The memory deletion ledger needs recovery before memory can be used.', 'MEMORY_DELETION_LEDGER');
+    let mirrorEntries: Deletion[] = [], recoverMirror = false;
+    if (existsSync(this.deletionPath)) {
+      const mirror = this.readDeletionLedger(this.deletionPath);
+      if (mirror.corrupt) {
+        if (!this.deletionFenceEnrolled()) fail('The memory deletion ledger needs recovery before memory can be used.', 'MEMORY_DELETION_LEDGER');
+        this.quarantineDamagedDeletionMirror();
+        recoverMirror = true;
+      } else mirrorEntries = mirror.entries;
     }
+    for (const entry of [...mirrorEntries, ...fence.entries]) this.mergeDeletion(entry);
+    if (recoverMirror) for (const entry of fence.entries) this.writeDeletion(this.deletionPath, entry);
     // The sibling fence survives SQLite-only and in-place whole-profile restoration.
     const missing = [...this.deletions.values()].filter(entry => entry.profileId === this.profileId).map(entry => this.reconcileArtifacts(entry));
     if (missing.length) this.store.internal('project.memory.deletions.reconciled', null, () => {

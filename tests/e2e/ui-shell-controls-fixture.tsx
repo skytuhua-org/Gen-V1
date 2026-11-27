@@ -45,6 +45,12 @@ function Fixture() {
     <button type="button" onClick={() => setDisabled(!disabled)}>Toggle disabled</button>
     <output aria-label="Result">{action}</output>
   </>;
+  if (query.has('labels')) return <main style={{ padding: '60px 16px' }}>
+    <Select aria-label="Wrap check" value="all" onValueChange={() => {}} options={[
+      { value: 'all', label: 'All' }, { value: 'needs', label: 'Needs you' }, { value: 'unread', label: 'Unread' },
+      { value: 'done', label: 'Completed' }, { value: 'long', label: 'A forty character option label to ellipsize' },
+    ]} />
+  </main>;
   if (query.has('primitives')) return <main style={{ padding: '60px 16px' }}>
     <button type="button" onClick={() => setOpen(true)}>Open controls dialog</button>
     {query.has('modal') ? <Modal title="Controls dialog" open={open} onClose={() => setOpen(false)}>{controls}</Modal> : controls}

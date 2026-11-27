@@ -1,10 +1,25 @@
-import {useLayoutEffect, useRef, useState, type ReactNode} from 'react';
+import {useEffect, useLayoutEffect, useRef, useState, type ReactNode} from 'react';
 import type {ConversationReadState} from './reader';
 import type {ScopedConversation} from './useScopedConversation';
 import './conversation-pane.css';
 import {ConversationFind} from '../ConversationFind';
 import {ErrorState} from '../../../../packages/ui-shell/Feedback';
 
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+/** Relative age under 24h, absolute local time past it; '' on unparseable input. */
+export function formatMessageTime(iso:string,now:number):string{
+ const t=Date.parse(iso);if(!Number.isFinite(t))return '';
+ const age=now-t;
+ if(age<60000)return 'now';
+ if(age<3600000)return Math.floor(age/60000)+'m ago';
+ if(age<86400000)return Math.floor(age/3600000)+'h ago';
+ return formatAbsoluteTime(iso);
+}
+export function formatAbsoluteTime(iso:string):string{
+ const d=new Date(Date.parse(iso));if(!Number.isFinite(d.getTime()))return '';
+ const p=(n:number)=>String(n).padStart(2,'0');
+ return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 export interface ConversationPaneProps {
   conversation: ScopedConversation;
   hidden?: boolean;
@@ -29,6 +44,8 @@ export function ConversationPane({conversation: {state, reader}, hidden = false,
     return () => {document.removeEventListener('focusin', rememberFocus); document.removeEventListener('pointerdown', releaseFocus, true);};
   }, []);
   const [atBottom, setAtBottom] = useState(true), [newMessages, setNewMessages] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {const i = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(i);}, []);
   const latest = state.messages.at(-1)?.head.id ?? null;
   function remember() {
     const element = viewport.current;
@@ -79,11 +96,11 @@ export function ConversationPane({conversation: {state, reader}, hidden = false,
     <div ref={viewport} className="scoped-conversation-transcript" role="region" aria-label="Conversation transcript" aria-busy={pending} tabIndex={0} onScroll={remember}>
       <div className="scoped-conversation-messages">
         {state.nextCursor && <button type="button" className="ui-action-trigger" disabled={pending || state.historyLimited} onClick={() => {focusAfterRead.current = reading.current.anchor?.id ?? state.messages[0]?.head.id ?? null; void reader.loadOlder();}}>{state.historyLimited ? 'History limit reached' : state.historyPending ? 'Loading older messages…' : 'Load older messages'}</button>}
-        {state.messages.map(message => <article key={message.head.id} data-message-id={message.head.id} className="scoped-conversation-message" tabIndex={-1} aria-label={message.head.role === 'user' ? 'You' : message.head.role === 'assistant' ? 'Assistant' : 'Activity'}>
-          <span className="scoped-conversation-role">{message.head.role === 'user' ? 'You' : message.head.role === 'assistant' ? 'Assistant' : 'Activity'}</span>
+        {state.messages.map(message => {const roleLabel=message.head.role==='user'?'You':message.head.role==='assistant'?'Assistant':'Activity',t=formatMessageTime(message.head.createdAt,now);return <article key={message.head.id} data-message-id={message.head.id} className="scoped-conversation-message" tabIndex={-1} aria-label={roleLabel+', '+(formatAbsoluteTime(message.head.createdAt)||'time unknown')}>
+          <span className="scoped-conversation-role">{roleLabel}{t?' · '+t:''}</span>
           <div className="scoped-conversation-text">{message.text}</div>
           {message.tail.nextContentCursor && <button type="button" className="ui-action-trigger" disabled={message.pending || message.limited} onClick={() => {focusAfterRead.current = message.head.id; void reader.loadContent(message.head.id);}}>{message.limited ? 'Content limit reached' : message.pending ? 'Loading text…' : 'Read more'}</button>}
-        </article>)}
+        </article>;})}
         {state.pending && <p role="status">{state.phase === 'resync' ? 'Refreshing conversation…' : 'Loading conversation…'}</p>}
         {!state.pending && state.phase === 'ready' && !state.messages.length && <p>No messages yet.</p>}
         {state.error && <ErrorState message={state.error} onRetry={state.phase === 'error' ? () => {void reader.retry();} : undefined} />}
