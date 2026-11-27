@@ -79,7 +79,7 @@ async function snapshotCopyStarted(existing: Set<string>) {
   if (!stage) throw new Error("Timed out waiting for snapshot staging");
   const snapshot = join(tmpdir(), stage, "snapshot.sqlite");
   while (Date.now() < deadline) {
-    try { if ((await stat(snapshot)).size > 0) return; } catch {}
+    try { if ((await stat(snapshot)).size > 0) return join(tmpdir(), stage); } catch {}
     await new Promise(done => setImmediate(done));
   }
   throw new Error("Timed out waiting for snapshot copy");
@@ -117,11 +117,26 @@ it("rejects an ordinary fixture record mutation without returning partial inspec
   try {
     const existing = new Set((await readdir(tmpdir())).filter(name => name.startsWith("harness-db-read-")));
     const running = databaseJob({ mode: "inspect", path: large.path, table: "items", limit: 0 }, context());
-    await snapshotCopyStarted(existing);
+    const stageRoot = await snapshotCopyStarted(existing);
     editor.exec("UPDATE items SET payload=zeroblob(32) WHERE id=1");
     editor.close(); closed = true;
     await expect(running).rejects.toThrow(/changed|precondition/i);
+    await expect(stat(stageRoot)).rejects.toMatchObject({ code: "ENOENT" });
   } finally { if (!closed) editor.close(); }
+});
+
+it("cleans the staged snapshot when cancellation interrupts copying", async () => {
+  const large = await fixture();
+  const setup = new DatabaseSync(large.path);
+  setup.prepare("INSERT INTO items VALUES(2, zeroblob(?))").run(128 * 1024 * 1024);
+  setup.close();
+  const controller = new AbortController();
+  const existing = new Set((await readdir(tmpdir())).filter(name => name.startsWith("harness-db-read-")));
+  const running = databaseJob({ mode: "inspect", path: large.path, table: "items", limit: 0 }, context(controller.signal));
+  const stageRoot = await snapshotCopyStarted(existing);
+  controller.abort();
+  await expect(running).rejects.toThrow(/cancel|denied/i);
+  await expect(stat(stageRoot)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("cancels cleanly without partial inspection output", async () => {
