@@ -4199,6 +4199,7 @@
     "tests/secret-custody-v3.test.ts",
     "tests/selective-commit-staged-v3.test.ts",
     "tests/selective-commit-v3.test.ts",
+    "tests/server-environment-routes.test.ts",
     "tests/server-tool-effect-read.test.ts",
     "tests/server.test.ts",
     "tests/service-workspace-admission.test.ts",
