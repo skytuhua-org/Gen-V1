@@ -22,6 +22,42 @@ async function choose(page: Page, label: string) {
   await expect(filter(page)).toBeFocused(); await expect(filter(page)).toHaveText(label);
 }
 
+for(const width of [280,1100])test(`short Inbox controls remain reachable at ${width} pixels`,async({page})=>{
+  await page.setViewportSize({width:width+16,height:720});
+  await fixture(page);
+  const host=page.locator('.fixture-inbox');
+  await host.evaluate(element=>{(element as HTMLElement).style.height='120px';});
+  const inbox=page.getByRole('region',{name:'Agent inbox',exact:true});
+  await expect.poll(()=>inbox.evaluate(node=>node.getBoundingClientRect().height)).toBe(120);
+  await expect(inbox).toHaveAttribute('data-columns',width===280?'list':'both');
+  const hit=(control:ReturnType<Page['getByRole']>)=>control.evaluate(node=>{
+    const {x,y,width,height}=node.getBoundingClientRect();
+    return node.contains(document.elementFromPoint(x+width/2,y+height/2));
+  });
+  for(const control of [filter(page),page.getByRole('button',{name:'Refresh inbox'}),page.getByRole('searchbox',{name:'Search Inbox'})]){
+    await control.scrollIntoViewIfNeeded();
+    await expect.poll(()=>hit(control)).toBe(true);
+  }
+  const row=rows(page).filter({hasText:'Review'});
+  await row.scrollIntoViewIfNeeded();
+  await expect.poll(()=>hit(row)).toBe(true);
+  await row.click();
+  await expect(inbox).toHaveAttribute('data-columns',width===280?'item':'both');
+  await host.evaluate(element=>{
+    const wrapper=element as HTMLElement;
+    wrapper.style.position='relative';
+    const summary=document.createElement('div');
+    Object.assign(summary.style,{position:'absolute',left:'0',right:'0',bottom:'0',height:'56px',zIndex:'2',background:'var(--surface)'});
+    summary.textContent='Project overview';
+    wrapper.append(summary);
+  });
+  const open=page.getByRole('button',{name:'Open conversation',exact:true});
+  await open.evaluate(node=>node.scrollIntoView({block:'end'}));
+  await expect.poll(()=>hit(open)).toBe(true);
+  await open.click();
+  expect(await calls(page)).toEqual([{type:'open',id:'thread-review'}]);
+});
+
 test('overflowing Inbox list and reader expose native scrollbars', async ({page}) => {
   await page.setViewportSize({width: 1100, height: 350});
   await fixture(page);
