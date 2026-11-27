@@ -189,10 +189,13 @@ test('the empty conversation and composer fit short viewports while messages rem
   await expect(page.getByRole('button',{name:'Send message',exact:true})).toBeInViewport({ratio:1});
   await expect.poll(()=>scroll.evaluate(element=>element.scrollHeight-element.clientHeight),{message:JSON.stringify(viewport)}).toBeLessThanOrEqual(1);
  }
- await page.setViewportSize({width:400,height:500});
+ await page.setViewportSize({width:360,height:360});
+ const dock=page.locator('.composer-dock:visible');
+ const before=(await dock.boundingBox())!.y;
  snapshot.messages=Array.from({length:16},(_,index)=>({id:'short-chat-'+index,threadId:'task-thread',role:'assistant',content:'Short layout history '+index+' '+('Meaningful conversation content. '.repeat(9)),createdAt:'2026-11-01T20:00:00.000Z',runId:null}));
  await host.publish();
  await expect(hero).toHaveCount(0);
+ expect(Math.abs((await dock.boundingBox())!.y-before)).toBeLessThan(1);
  await expect.poll(()=>scroll.evaluate(element=>element.scrollHeight-element.clientHeight)).toBeGreaterThan(150);
  await scroll.evaluate(element=>{element.scrollTop=40;});
  await expect.poll(()=>scroll.evaluate(element=>element.scrollTop)).toBe(40);

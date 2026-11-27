@@ -116,15 +116,15 @@ button:has(>svg.lucide-x):hover:not(:disabled),button:has(>svg.lucide-circle-x):
   .conversation-scroll:has(> :not([hidden]) > .conversation-empty > .empty-state) { padding-block:0; }
   .conversation-empty > .empty-state { padding-block:0; }
   .conversation-empty > .empty-state p { margin-top:4px; }
-  .chat-view-surface:has(.conversation-scroll > :not([hidden]) > .conversation-empty > .empty-state) .composer-dock { padding-block:4px max(4px,env(safe-area-inset-bottom)); }
-  .chat-view-surface:has(.conversation-scroll > :not([hidden]) > .conversation-empty > .empty-state) .composer { padding-block:6px; }
-  .chat-view-surface:has(.conversation-scroll > :not([hidden]) > .conversation-empty > .empty-state) .composer-toolbar { margin-top:4px; }
-  .chat-view-surface:has(.conversation-scroll > :not([hidden]) > .conversation-empty > .empty-state) .composer-toolbar > .composer-secondary-actions { margin-bottom:2px; }
-  .shell-workarea[data-tool-layout=stacked] > .summary-layout-owner:has(.conversation-scroll > :not([hidden]) > .conversation-empty > .empty-state) { flex:1 1 0; min-height:0; }
-  .summary-layout:has(.conversation-scroll > :not([hidden]) > .conversation-empty > .empty-state):not(:has(> .summary-dock > .docked-summary:not([hidden])[data-collapsed=false])) { gap:0; }
-  .summary-layout:has(.conversation-scroll > :not([hidden]) > .conversation-empty > .empty-state) > .summary-dock:not(:has(> .docked-summary:not([hidden])[data-collapsed=false])) { padding-block:0; }
-  .summary-layout:has(.conversation-scroll > :not([hidden]) > .conversation-empty > .empty-state) .docked-summary[data-collapsed=true] { min-height:30px; }
-  .summary-layout:has(.conversation-scroll > :not([hidden]) > .conversation-empty > .empty-state) .docked-summary[data-collapsed=true] .docked-summary-toggle { min-height:28px; padding-block:4px; }
+  .app-shell .chat-view-surface[data-chat-mode=full] .composer-dock { padding-block:4px max(4px,env(safe-area-inset-bottom)); }
+  .app-shell .chat-view-surface[data-chat-mode=full] .composer { padding-block:6px; }
+  .app-shell .chat-view-surface[data-chat-mode=full] .composer-toolbar { margin-top:4px; }
+  .app-shell .chat-view-surface[data-chat-mode=full] .composer-toolbar > .composer-secondary-actions { margin-bottom:2px; }
+  .shell-workarea[data-tool-layout=stacked] > .summary-layout-owner:has(.chat-view-surface[data-chat-mode=full]) { flex:1 1 0; min-height:0; }
+  .summary-layout:has(.chat-view-surface[data-chat-mode=full]):not(:has(> .summary-dock > .docked-summary:not([hidden])[data-collapsed=false])) { gap:0; }
+  .summary-layout:has(.chat-view-surface[data-chat-mode=full]) > .summary-dock:not(:has(> .docked-summary:not([hidden])[data-collapsed=false])) { padding-block:0; }
+  .summary-layout:has(.chat-view-surface[data-chat-mode=full]) .docked-summary[data-collapsed=true] { min-height:30px; }
+  .summary-layout:has(.chat-view-surface[data-chat-mode=full]) .docked-summary[data-collapsed=true] .docked-summary-toggle { min-height:28px; padding-block:4px; }
 }
 @media (max-height:520px) {
   .conversation-empty .empty-symbol { display:none; }
