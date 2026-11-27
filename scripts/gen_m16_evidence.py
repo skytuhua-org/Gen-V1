@@ -13,7 +13,7 @@ def sha(path):
     return hashlib.sha256(open(path, 'rb').read()).hexdigest()
 
 def git(*args):
-    return subprocess.run(['git', '-c', 'core.longpaths=true'] + list(args), cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(['git', '-c', 'core.longpaths=true'] + list(args), cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
 
 records = json.load(open(sys.argv[1], encoding='utf-8'))
 by_log = {}
