@@ -62,7 +62,7 @@ for(const width of [1440,1024,768])test(`actual App keeps Files, find, Changes a
  await panel(page,'Files');await page.getByRole('button',{name:'capture.txt',exact:true}).click();await expect(page.locator('.files-preview')).toContainText('Synthetic integration file preview');
  await page.getByRole('button',{name:'Inspect changes',exact:true}).click();await expect(page.locator('.live-diff')).toContainText('Live same-owner diff');
  await page.getByRole('tab',{name:'Recorded',exact:true}).click();await expect(page.locator('.workspace-diffs')).toContainText('Recorded comparison');
- await page.getByRole('tab',{name:'History',exact:true}).click();await expect(page.getByRole('tabpanel').last()).toContainText('Checkpoint history unavailable.');
+ await expect(page.getByRole('tab',{name:'History',exact:true})).toBeDisabled();
  await expect(page.getByRole('button',{name:'Restore selected files'})).toHaveCount(0);
  await panel(page,'Notes');const note=page.getByRole('textbox',{name:'Note decision',exact:true});await expect(note).toBeEnabled();await note.fill('Retain this unsaved owner note.');
  await panel(page,'Output');await expect(page.getByRole('region',{name:'Thread memory'})).toHaveCount(0);
@@ -70,6 +70,42 @@ for(const width of [1440,1024,768])test(`actual App keeps Files, find, Changes a
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);expect(h.unexpected).toEqual([]);expect(h.commands.filter(c=>c.type==='message.send')).toEqual([]);
  const out=info.outputPath('screenshots');await mkdir(out,{recursive:true});await page.screenshot({path:`${out}/notes-${width}.png`,fullPage:true});
 });
+test('Changes waits for checkpoint support and skips unavailable History',async({page})=>{
+ await host(page);
+ let finishProbe!:()=>void;
+ const probe=new Promise<void>(resolve=>{finishProbe=resolve;});
+ await page.route('**/checkpoints/capability?*',async route=>{
+  await probe;
+  await route.fulfill({json:{available:false,restore:false}});
+ });
+ await page.getByRole('button',{name:'Inspect changes',exact:true}).click();
+ const source=page.getByRole('tablist',{name:'Changes source'});
+ const current=source.getByRole('tab',{name:'Current',exact:true});
+ const recorded=source.getByRole('tab',{name:'Recorded',exact:true});
+ const history=source.getByRole('tab',{name:'History',exact:true});
+ const gitHistory=source.getByRole('tab',{name:'Git history',exact:true});
+ await expect(history).toBeEnabled();
+ await history.click();
+ await expect(page.getByRole('tabpanel',{name:'History',exact:true})).toHaveText('Checking checkpoint support…');
+ const historyPanelId=await history.getAttribute('aria-controls');
+ finishProbe();
+ await expect(history).toBeDisabled();
+ await expect(history).toHaveAttribute('title','Checkpoint history is unavailable: no checkpoint service is connected');
+ await expect(history).toHaveAttribute('aria-disabled','true');
+ await expect(history).not.toHaveAttribute('aria-controls');
+ await expect(page.locator(`[id="${historyPanelId}"]`)).toHaveCount(0);
+ await expect(recorded).toHaveAttribute('aria-selected','true');
+ await expect(recorded).toBeFocused();
+ await page.keyboard.press('ArrowRight');
+ await expect(gitHistory).toBeFocused();
+ await page.keyboard.press('ArrowLeft');
+ await expect(recorded).toBeFocused();
+ await page.keyboard.press('Home');
+ await expect(current).toBeFocused();
+ await page.keyboard.press('End');
+ await expect(gitHistory).toBeFocused();
+});
+
 test('actual terminal selection reaches the same unsent composer and is serialized once by normal Send',async({page})=>{
  const h=await host(page);await panel(page,'Terminal');await expect(page.locator('.xterm-screen')).toBeVisible();
  await page.locator('.xterm-helper-textarea').focus();await page.keyboard.press('Control+Shift+a');

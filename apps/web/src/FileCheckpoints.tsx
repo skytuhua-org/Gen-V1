@@ -1,4 +1,4 @@
-import {useEffect,useId,useRef,useState,type ReactNode} from 'react';
+import {useEffect,useId,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
 import {AlertTriangle,CheckCircle2,ChevronLeft,ChevronRight,Clock3,Info,RotateCw} from 'lucide-react';
 import type {UiPreferences} from '../../../packages/contracts/preferences';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
@@ -10,27 +10,61 @@ import {ErrorState} from '../../../packages/ui-shell/Feedback';
 const sources=['Current','Recorded','History','Git history'] as const;
 type Source=typeof sources[number];
 const sourceId=(source:Source)=>source.toLowerCase().replaceAll(' ','-');
+type CheckpointSupport='loading'|'available'|'unavailable';
 export interface FileCheckpointsProps {
   owner?:CheckpointOwner;preferences:UiPreferences;current:ReactNode;recorded:ReactNode;
-  adapter?:FileCheckpointAdapter;initialSource?:Source;history?:ReactNode;
+  adapter?:FileCheckpointAdapter;initialSource?:Source;history?:ReactNode;checkpointSupport?:CheckpointSupport;
 }
-export function FileCheckpoints({owner,preferences,current,recorded,adapter=disabledCheckpointAdapter,initialSource='Current',history}:FileCheckpointsProps){
+export function FileCheckpoints({owner,preferences,current,recorded,adapter=disabledCheckpointAdapter,initialSource='Current',history,checkpointSupport='available'}:FileCheckpointsProps){
   const [source,setSource]=useState<Source>(initialSource),id=useId();
+  const recordedTab=useRef<HTMLButtonElement>(null);
+  const historyFocused=useRef(false);
+  const historyUnavailable=checkpointSupport==='unavailable';
+  const selected=source==='History'&&historyUnavailable?'Recorded':source;
+  const enabledSources=sources.filter(name=>name!=='History'||!historyUnavailable);
+  const panelId=(name:Source)=>`${id}-panel-${sourceId(name)}`;
+  const tabId=(name:Source)=>`${id}-tab-${sourceId(name)}`;
+  useLayoutEffect(()=>{
+    if(source===selected)return;
+    setSource(selected);
+    if(historyFocused.current)recordedTab.current?.focus();
+    historyFocused.current=false;
+  },[source,selected]);
   const panels:Record<Source,ReactNode>={
     Current:current,
     Recorded:recorded,
-    History:source==='History'&&(owner?<CheckpointHistory key={checkpointOwnerKey(owner)} owner={owner} adapter={adapter} preferences={preferences}/>:<p className="file-checkpoints-note">Checkpoint history unavailable.</p>),
-    'Git history':source==='Git history'&&(history??<p className="file-checkpoints-note">Git history unavailable.</p>),
+    History:selected==='History'&&(checkpointSupport==='loading'
+      ? <p role="status" className="file-checkpoints-note">Checking checkpoint support…</p>
+      : owner
+        ? <CheckpointHistory key={checkpointOwnerKey(owner)} owner={owner} adapter={adapter} preferences={preferences}/>
+        : <p className="file-checkpoints-note">Checkpoint history unavailable.</p>),
+    'Git history':selected==='Git history'&&(history??<p className="file-checkpoints-note">Git history unavailable.</p>),
   };
-  return <div className="file-checkpoints">
+  return <div className="file-checkpoints" onFocusCapture={event=>{
+    historyFocused.current=event.target.id===tabId('History')||Boolean(event.target.closest(`[id="${panelId('History')}"]`));
+  }} onBlurCapture={event=>{
+    if(event.relatedTarget&&!event.currentTarget.contains(event.relatedTarget))historyFocused.current=false;
+  }}>
     <div className="file-checkpoints-toolbar"><strong>Changes</strong>
-      <div role="tablist" aria-label="Changes source">{sources.map((name,index)=><button key={name} type="button" role="tab" id={`${id}-tab-${sourceId(name)}`} aria-controls={`${id}-panel-${sourceId(name)}`} aria-selected={source===name} tabIndex={source===name?0:-1} onClick={()=>setSource(name)} onKeyDown={event=>{
-        if(isComposing(event))return;
-        const next=event.key==='ArrowRight'?(index+1)%sources.length:event.key==='ArrowLeft'?(index+sources.length-1)%sources.length:event.key==='Home'?0:event.key==='End'?sources.length-1:null;
-        if(next===null)return;event.preventDefault();setSource(sources[next]);event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
-      }}>{name}</button>)}</div>
+      <div role="tablist" aria-label="Changes source">{sources.map(name=>{
+        const disabled=name==='History'&&historyUnavailable;
+        const index=enabledSources.indexOf(name);
+        return <button key={name} type="button" role="tab" id={tabId(name)} ref={name==='Recorded'?recordedTab:undefined}
+          aria-controls={disabled?undefined:panelId(name)} aria-selected={selected===name} tabIndex={selected===name?0:-1}
+          disabled={disabled} aria-disabled={disabled||undefined}
+          title={disabled?'Checkpoint history is unavailable: no checkpoint service is connected':undefined}
+          onClick={()=>setSource(name)} onKeyDown={event=>{
+            if(isComposing(event))return;
+            const last=enabledSources.length-1;
+            const next=event.key==='ArrowRight'?(index+1)%(last+1):event.key==='ArrowLeft'?(index+last)%(last+1):event.key==='Home'?0:event.key==='End'?last:null;
+            if(next===null)return;
+            event.preventDefault();
+            setSource(enabledSources[next]);
+            event.currentTarget.ownerDocument.getElementById(tabId(enabledSources[next]))?.focus();
+          }}>{name}</button>;
+      })}</div>
     </div>
-    {sources.map(name=><div key={name} className="file-checkpoints-panel" role="tabpanel" id={`${id}-panel-${sourceId(name)}`} aria-labelledby={`${id}-tab-${sourceId(name)}`} hidden={source!==name} tabIndex={source===name?0:-1}>
+    {enabledSources.map(name=><div key={name} className="file-checkpoints-panel" role="tabpanel" id={panelId(name)} aria-labelledby={tabId(name)} hidden={selected!==name} tabIndex={selected===name?0:-1}>
       {panels[name]}
     </div>)}
   </div>;
