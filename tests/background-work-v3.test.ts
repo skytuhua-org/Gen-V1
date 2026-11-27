@@ -445,6 +445,39 @@ describe("M10 review regressions", () => {
     expect(scheduler.occurrences(wakeup.wakeupId)).toMatchObject([{ state: "CANCELLED", dispatch: "NOT_DISPATCHED", leaseExpiresAtMs: null }]);
     expect(deliver).not.toHaveBeenCalled();
   });
+  it("preserves a held host event without admitting it during shutdown", async () => {
+    const f = fixture();
+    let finishActive!: () => void;
+    const active = new Promise<{ status: "DELIVERED" }>(resolve => { finishActive = () => resolve({ status: "DELIVERED" }); });
+    let park = true;
+    const deliver = vi.fn(async ({ wakeup }: { wakeup: { taskId: string } }) =>
+      wakeup.taskId === "active" ? active : { status: "DELIVERED" as const });
+    const scheduler = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver,
+      revalidate: ({ wakeup }) => wakeup.taskId === "held" && park ? { ok: false, blockedReason: "WAITING_HUMAN" } : { ok: true } });
+    const register = (taskId: string) => scheduler.register(command("background.wakeup.register"),
+      { taskId, trigger: { kind: "HOST_EVENT", eventKind: "runtime.settled", correlationKey: taskId } });
+    const held = register("held");
+    register("active");
+    scheduler.hostEvent("runtime.settled", "held", "held-event");
+    scheduler.hostEvent("runtime.settled", "active", "active-event");
+    expect(scheduler.schedules().find(item => item.wakeupId === held.wakeupId)?.state).toBe("BLOCKED");
+    expect(deliver).toHaveBeenCalledTimes(1);
+    const draining = scheduler.drain(1_000);
+    park = false;
+    try {
+      scheduler.resume(command("background.wakeup.resume"), held.wakeupId);
+      expect(deliver).toHaveBeenCalledTimes(1);
+      expect(scheduler.occurrences(held.wakeupId)).toMatchObject([{ state: "PENDING", dispatch: "NOT_DISPATCHED" }]);
+    } finally {
+      finishActive();
+      await draining;
+    }
+    const replacement = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver });
+    replacement.recover();
+    await waitFor(() => !replacement.busy);
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(replacement.occurrences(held.wakeupId)).toMatchObject([{ state: "DELIVERED", dispatch: "RECEIPT_CONFIRMED" }]);
+  });
   it("a held firing stranded before resume redelivers through recover()", async () => {
     const f = fixture({ executionGate: async () => ({ allowed: true }), enqueueFollowUp: input => { f.store.put("outbox", input.id, input.threadId, { id: input.id, threadId: input.threadId, content: input.content, status: "persisted", runId: null }); } });
     enable("jobs.backgroundV1");
