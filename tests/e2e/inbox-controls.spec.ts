@@ -1,6 +1,6 @@
 import {test, expect, type Page} from '@playwright/test';
 
-async function fixture(page: Page) {
+async function fixture(page: Page, long = false) {
   const requests: string[] = [], errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/*', route => {
@@ -10,8 +10,8 @@ async function fixture(page: Page) {
     }
     return route.continue();
   });
-  await page.goto('/tests/e2e/fixtures/inbox-controls.html');
-  await expect(page.locator('.ui-list-row')).toHaveCount(5);
+  await page.goto('/tests/e2e/fixtures/inbox-controls.html'+(long?'?long':''));
+  await expect(page.locator('.ui-list-row')).toHaveCount(long?40:5);
   return {requests, errors};
 }
 const filter = (page: Page) => page.getByRole('combobox', {name: 'Inbox filter', exact: true});
@@ -348,6 +348,57 @@ async function flushFrames(page: Page) {
     for (const entry of entries) if (!entry.cancelled) entry.callback(performance.now());
   });
 }
+
+test('wide Inbox keyboard moves directly between a selected row and its reader',async({page})=>{
+  await fixture(page,true);
+  const inbox=page.getByRole('region',{name:'Agent inbox',exact:true});
+  const review=rows(page).filter({hasText:'Review'}).first();
+  await review.click();
+  const reader=page.getByRole('region',{name:'Review',exact:true});
+  await expect(inbox).toHaveAttribute('data-columns','both');
+  await expect(reader).toHaveAttribute('tabindex','-1');
+  await page.keyboard.press('ArrowRight');
+  await expect(reader).toBeFocused();
+  await expect(reader).toHaveCSS('outline-style','solid');
+  await page.keyboard.press('Tab');
+  await expect(reader.getByRole('button',{name:'Mark as unread',exact:true})).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(review).toBeFocused();
+  await expect(review).toHaveAttribute('aria-current','true');
+  await expect(reader).toBeVisible();
+  await page.keyboard.press('l');
+  await expect(reader).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(review).toBeFocused();
+  await expect(reader).toBeVisible();
+
+  const search=page.getByRole('searchbox',{name:'Search Inbox'});
+  await search.focus();
+  await search.press('ArrowRight');
+  await search.press('l');
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('l');
+  await search.press('Escape');
+  await expect(review).toHaveAttribute('aria-current','true');
+});
+
+test('narrow Inbox Right advances inside the reader and Escape returns to the list',async({page})=>{
+  await page.setViewportSize({width:390,height:760});
+  await fixture(page);
+  const inbox=page.getByRole('region',{name:'Agent inbox',exact:true});
+  const review=rows(page).filter({hasText:'Review'}).first();
+  await review.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(review).toBeFocused();
+  await expect(inbox).toHaveAttribute('data-columns','list');
+  await review.click();
+  await expect(page.getByRole('region',{name:'Review',exact:true})).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('region',{name:'Failed task',exact:true})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(rows(page).filter({hasText:'Failed task'})).toBeFocused();
+  await expect(inbox).toHaveAttribute('data-columns','list');
+});
 
 test('wide Escape dismisses the reader to a full list and returns focus to the same row', async ({page}) => {
   await fixture(page); await page.setViewportSize({width: 1100, height: 760});

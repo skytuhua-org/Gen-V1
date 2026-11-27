@@ -19,7 +19,7 @@ const age=(value:string)=>{const minutes=Math.max(0,Math.floor((Date.now()-Date.
 export interface InboxViewProps {attention:{items:AttentionItem[];unread:number;error:string;refresh():Promise<void>;markRead(id:string):Promise<void>;markUnread(id:string):Promise<void>};onOpenThread:(threadId:string)=>void|Promise<void>;emptyTitle?:string;emptyMessage?:string;projectColorFor?:(projectId?:string)=>string|undefined;timeFormat?:TimeFormat}
 export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projectColorFor,timeFormat='system'}:InboxViewProps){
  const [filter,setFilter]=useState<Filter>('all'),[query,setQuery]=useState(''),[chosen,setChosen]=useState<string>(),[explicitDismissed,setExplicitDismissed]=useState(false),[single,setSingle]=useState(false),[actionError,setActionError]=useState(''),root=useRef<HTMLElement>(null),reader=useRef<HTMLElement>(null),rows=useRef(new Map<string,HTMLButtonElement>()),heading=useId(),actionVersion=useRef(0),markTimer=useRef<ReturnType<typeof setTimeout>>(undefined);
- type FocusRequest={instance:number;intent:number;interaction:number;kind:'return'|'reader';requestedId:string;source:'back'|'escape'|'choose';priorVisibleIds:string[];priorIndex:number;expectedNode?:HTMLElement};
+ type FocusRequest={instance:number;intent:number;interaction:number;kind:'return'|'reader';requestedId:string;source:'back'|'escape'|'choose'|'shortcut';priorVisibleIds:string[];priorIndex:number;expectedNode?:HTMLElement};
  const chosenRef=useRef<string|undefined>(undefined),instanceGeneration=useRef(0),intentGeneration=useRef(0),interactionGeneration=useRef(0),focusFrame=useRef<number|undefined>(undefined),focusRequest=useRef<FocusRequest|undefined>(undefined),committedVisibleIds=useRef<string[]>([]),committedListSignature=useRef<string|undefined>(undefined);
  const [refreshing,setRefreshing]=useState(false),[refreshFeedback,setRefreshFeedback]=useState<{text:string}>();
  const refreshPending=useRef(false);
@@ -56,6 +56,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
    if(request.kind==='reader'&&chosenRef.current!==request.requestedId)return;
    focusRequest.current=undefined;
    target.focus({preventScroll:true});
+   if(request.kind==='return'&&request.source==='shortcut')target.scrollIntoView({block:'nearest',behavior:'instant'});
   });
  };
  const activeReadWrites=useRef(new Map<string,Promise<void>>());
@@ -121,11 +122,30 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
   if(focusReader&&single)requestFocus('reader',item.id,'choose');
  };
  const back=(source:'back'|'escape'='back')=>{const id=chosenRef.current;actionVersion.current++;chosenRef.current=undefined;clearTimeout(markTimer.current);setChosen(undefined);setExplicitDismissed(true);setActionError('');if(id)requestFocus('return',id,source);};
- const keyboard=(event:KeyboardEvent<HTMLElement>)=>{const native=event.nativeEvent;if(event.defaultPrevented||native.isComposing||native.keyCode===229||(event.target as HTMLElement).closest('input,textarea,select,[role=combobox],[role=listbox],[contenteditable=true]'))return;
+ const keyboard=(event:KeyboardEvent<HTMLElement>)=>{
+  const native=event.nativeEvent,target=event.target as HTMLElement;
+  if(event.defaultPrevented||native.isComposing||native.keyCode===229||target.closest('input,textarea,select,[role=combobox],[role=listbox],[contenteditable]:not([contenteditable="false"])'))return;
+  const right=event.key==='ArrowRight'||event.key==='l';
+  if(columns==='both'&&selected){
+   if((event.key==='Escape'||event.key==='ArrowLeft')&&reader.current?.contains(target)){
+    event.preventDefault();event.stopPropagation();requestFocus('return',selected.id,'shortcut');return;
+   }
+   if(right&&rows.current.get(selected.id)?.contains(target)){
+    event.preventDefault();event.stopPropagation();requestFocus('reader',selected.id,'shortcut');return;
+   }
+  }
   if(event.key==='Escape'){if(chosenRef.current){event.preventDefault();event.stopPropagation();back('escape');}return;}
-  const direction=event.key==='ArrowDown'||event.key==='j'?1:event.key==='ArrowUp'||event.key==='k'?-1:0;if(!direction&&event.key!=='Home'&&event.key!=='End')return;event.preventDefault();
-  const pressed=(event.target as HTMLElement).closest('.ui-list-row-main'),focusedId=pressed?[...rows.current.entries()].find(([,node])=>node===pressed)?.[0]:undefined;
-  const index=visible.findIndex(item=>item.id===(focusedId??chosenRef.current)),next=event.key==='Home'?0:event.key==='End'?visible.length-1:Math.max(0,Math.min(visible.length-1,index<0?direction>0?0:visible.length-1:index+direction)),item=visible[next];if(item){choose(item);const row=rows.current.get(item.id);if(columns!=='item'){row?.focus();row?.scrollIntoView({block:'nearest'});}}};
+  const direction=event.key==='ArrowDown'||event.key==='j'||(columns==='item'&&right)?1:event.key==='ArrowUp'||event.key==='k'?-1:0;
+  if(!direction&&event.key!=='Home'&&event.key!=='End')return;
+  event.preventDefault();
+  const pressed=target.closest('.ui-list-row-main'),focusedId=pressed?[...rows.current.entries()].find(([,node])=>node===pressed)?.[0]:undefined;
+  const index=visible.findIndex(item=>item.id===(focusedId??chosenRef.current));
+  const next=event.key==='Home'?0:event.key==='End'?visible.length-1:Math.max(0,Math.min(visible.length-1,index<0?direction>0?0:visible.length-1:index+direction));
+  const item=visible[next];
+  if(!item||columns==='item'&&right&&item.id===chosenRef.current)return;
+  choose(item);
+  if(columns!=='item'){const row=rows.current.get(item.id);row?.focus();row?.scrollIntoView({block:'nearest'});}
+ };
  const sourceLabels:Record<AttentionItem['kind'],string>={request:'Question',operation:'Change review','thread-completed':'Task result','thread-failed':'Task needs attention'};
  const hasItems=attention.items.length>0;
  const empty=<div className="agent-inbox-empty"><Inbox size={27}/><h3>{hasItems?'Nothing matches':emptyTitle??'You are all caught up'}</h3><p>{hasItems?'Try another view or search.':emptyMessage??'Questions, reviews and task results will appear here.'}</p>{hasItems&&<button type="button" className="quiet inbox-filter-reset" onClick={()=>{setFilter('all');clearSearch();}}>Clear search and filter</button>}</div>;

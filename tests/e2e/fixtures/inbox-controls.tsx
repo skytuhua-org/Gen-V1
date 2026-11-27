@@ -17,7 +17,12 @@ const initial: AttentionItem[] = [
 ].map(item => ({...item, createdAt: '2026-11-06T12:00:00Z', updatedAt: '2026-11-06T12:00:00Z', popupDismissed: false, notificationKey: item.id + ':' + item.state, destination: {threadId: item.threadId}} as AttentionItem));
 
 function Fixture() {
-  const [items, setItems] = useState(() => new URLSearchParams(location.search).has('empty') ? [] : initial), [error, setError] = useState('');
+  const [items, setItems] = useState(()=>{
+    const params=new URLSearchParams(location.search);
+    if(params.has('empty'))return [];
+    if(!params.has('long'))return initial;
+    return [...initial,...Array.from({length:35},(_,index)=>({...initial[1],id:'extra-'+index,title:'Extra item '+index}))];
+  }), [error, setError] = useState('');
   window.inboxControls.items = items;
   const result = (mode: Mode, message: string, succeed: () => void) => {
     if (mode === 'throw') throw Error(message);

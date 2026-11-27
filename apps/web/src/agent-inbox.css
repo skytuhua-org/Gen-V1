@@ -47,6 +47,7 @@
 .agent-inbox .inbox-row-line>svg{margin-inline-end:4px;vertical-align:-1px;color:var(--pending)}
 .agent-inbox .inbox-holder-mark{display:inline-flex;color:var(--inbox-project,var(--muted))}
 .agent-inbox .inbox-view-items{display:flex;flex-direction:column;min-width:0;min-height:0}
+.agent-inbox .inbox-view-items:focus-visible{outline:2px solid var(--ui-focus-ring);outline-offset:-2px}
 .agent-inbox .inbox-item-toolbar{border-bottom:1px solid var(--border);flex-wrap:wrap}
 .agent-inbox .inbox-item-toolbar button{font-size:11px;min-height:26px;padding:4px 6px}
 .agent-inbox .inbox-item-crumb{display:inline-flex;align-items:center;gap:6px;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
