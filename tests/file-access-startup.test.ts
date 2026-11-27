@@ -231,6 +231,18 @@ it('still returns the action value when the close is confirmed after one kill at
   expect(g.child.unref).not.toHaveBeenCalled();
 });
 
+it('classifies native diagnostics that arrive after exit grace but before close', async () => {
+  const g = guard({ closeOnEnd: false, closeOnKill: false }), action = vi.fn(async () => undefined);
+  const observed = observe(startupGuard([path], signal(), action));
+  await vi.advanceTimersByTimeAsync(0);
+  g.child.emit('exit', 1, null);
+  await vi.advanceTimersByTimeAsync(250);
+  g.child.stderr.write('GUARD_NATIVE_ERROR:32\nGUARD_NATIVE_MESSAGE:Replacement destination bytes changed\n');
+  g.close(1);
+  expect((await observed.result).error).toMatchObject({ code: 'PRECONDITION_FAILED', details: { nativeCode: '32' } });
+  expect(action).not.toHaveBeenCalled();
+});
+
 it('keeps the denied error and its native details through an unconfirmed close', async () => {
   const g = guard({ closeOnEnd: false, closeOnKill: false }), action = vi.fn(async () => undefined);
   const observed = observe(startupGuard([path], signal(), action));

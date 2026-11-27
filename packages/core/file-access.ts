@@ -12,6 +12,12 @@ export interface GuardEntry { readonly path: string; readonly directory: boolean
 interface GuardSession { rpc(request: Record<string, unknown>, startupAcquisition?: boolean): Promise<readonly GuardEntry[]>; exited: boolean; loss:Set<()=>void> }
 const sessions = new AsyncLocalStorage<GuardSession>();
 const denied = () => new HarnessError("CAPABILITY_DENIED", "File access check failed — the folder could not be opened safely for this action");
+const nativeGuardFailure = (diagnostics: string) => {
+  const nativeMessage = /GUARD_NATIVE_MESSAGE:([^\r\n]*)/.exec(diagnostics)?.[1];
+  const precondition = nativeMessage !== undefined && /Replacement destination (?:bytes|identity) changed/.test(nativeMessage);
+  return new HarnessError(precondition ? "PRECONDITION_FAILED" : /limit exceeded/i.test(diagnostics)?"RESOURCE_LIMIT":"CAPABILITY_DENIED", "File access check failed — the folder could not be opened safely for this action", { nativeCode: /GUARD_NATIVE_ERROR:([-0-9]+)/.exec(diagnostics)?.[1] ?? "unavailable",nativeMessage });
+};
+const guardRpcFailures = new WeakSet<HarnessError>();
 // Process exit can precede stderr flush, but a never-closing child must still
 // fail its pending RPC promptly enough for bounded teardown to run.
 const exitDiagnosticsGraceMs = 250;
@@ -73,9 +79,9 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
       const failed = () => {
         if (exitFailureTimer) clearTimeout(exitFailureTimer);
         exitFailureTimer = undefined;
-        const nativeMessage = /GUARD_NATIVE_MESSAGE:([^\r\n]*)/.exec(diagnostics)?.[1];
-        const precondition = nativeMessage !== undefined && /Replacement destination (?:bytes|identity) changed/.test(nativeMessage);
-        finish(new HarnessError(precondition ? "PRECONDITION_FAILED" : /limit exceeded/i.test(diagnostics)?"RESOURCE_LIMIT":"CAPABILITY_DENIED", "File access check failed — the folder could not be opened safely for this action", { nativeCode: /GUARD_NATIVE_ERROR:([-0-9]+)/.exec(diagnostics)?.[1] ?? "unavailable",nativeMessage }));
+        const error = nativeGuardFailure(diagnostics);
+        guardRpcFailures.add(error);
+        finish(error);
       };
       const exited = () => { exitFailureTimer ??= setTimeout(failed, exitDiagnosticsGraceMs); };
       const data = (bytes: string) => {
@@ -111,6 +117,7 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
   };
   const onError = () => {}; child.stdin.on("error", onError);
   let fulfilled = false;
+  let rpcFailure: HarnessError | undefined;
   try {
     child.stderr.resume();
     const manifest = await current.rpc({ command: "acquire", id: randomUUID(), paths },options?.startupAcquisition===true);
@@ -119,6 +126,9 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
     if (current.exited) throw denied();
     fulfilled = true;
     return value;
+  } catch (error) {
+    if (error instanceof HarnessError && guardRpcFailures.has(error)) rpcFailure = error;
+    throw error;
   } finally {
     releasing=true;current.loss.clear();
     // Shutdown can still deliver pipe or process errors after a timeout.
@@ -132,6 +142,11 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
       const bound = setTimeout(() => finish(false), 4000);
       closed.then(() => { clearTimeout(kill); clearTimeout(bound); finish(true); });
     });
+    if (rpcFailure) {
+      const final = nativeGuardFailure(diagnostics);
+      rpcFailure.code = final.code;
+      rpcFailure.details = final.details;
+    }
     if (!confirmed) {
       // Invalidate the session and remove only our listeners. Node's stream
       // close handlers still account for the child process's stdio teardown.
