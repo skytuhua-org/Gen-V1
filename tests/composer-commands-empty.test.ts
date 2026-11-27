@@ -20,19 +20,20 @@ window.fetch = (input) => {
  return Promise.resolve(new Response('null', {status: 404}));
 };
 function Fixture() {
- const input = useRef(null), [draft, setDraft] = useState('');
+ const input = useRef(null), commands = useRef(null), [draft, setDraft] = useState('');
+ window.keyResults = [];
  window.type = (value) => flushSync(() => {
   const element = input.current;
   element.focus(); element.value = value; element.setSelectionRange(value.length, value.length);
   element.dispatchEvent(new Event('input', {bubbles: true}));
   setDraft(value);
  });
- return <><textarea ref={input} aria-label="Message"/><ComposerCommands input={input} draft={draft} onDraft={setDraft} onModel={() => {}} onMode={() => {}}/></>;
+ return <><textarea ref={input} aria-label="Message" onKeyDown={event => window.keyResults.push(commands.current?.keyDown(event))}/><ComposerCommands ref={commands} input={input} draft={draft} onDraft={setDraft} onModel={() => {}} onMode={() => {}}/></>;
 }
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 
-type HarnessWindow = Window & {catalogMode: string; type(value: string): void};
+type HarnessWindow = Window & {catalogMode: string; keyResults: boolean[]; type(value: string): void};
 
 describe('slash-command palette empty state', () => {
   let browser: Browser, script: string;
@@ -68,6 +69,21 @@ describe('slash-command palette empty state', () => {
     expect(await page.getByText('No commands or skills found').count()).toBe(0);
     await page.close();
   });
+
+  it('consumes Enter with no selectable command, closes the palette, and preserves the draft', async () => {
+    const page = await type('empty', '/xyz');
+    await page.getByText('No commands or skills found').waitFor({state: 'visible'});
+    const box = page.locator('textarea[aria-label="Message"]');
+    await box.press('Enter');
+    await page.getByText('No commands or skills found').waitFor({state: 'hidden'});
+    expect(await box.inputValue()).toBe('/xyz');
+    expect(await page.evaluate(() => document.querySelector('textarea')!.selectionStart)).toBe(4);
+    expect(await page.evaluate(() => (window as unknown as HarnessWindow).keyResults)).toEqual([true]);
+    await box.press('Enter');
+    expect(await page.evaluate(() => (window as unknown as HarnessWindow).keyResults)).toEqual([true, false]);
+    await page.close();
+  });
+
   it('prefers the error state over the empty state', async () => {
     const page = await type('error', '/xyz');
     await page.getByText('The catalog failed.').waitFor({state: 'visible'});

@@ -982,10 +982,9 @@
         },
         {
           "path": "third-party/integrations/impeccable/skills/impeccable/scripts/impeccable.cmd",
-          "bytes": 10817,
-          "sha256": "5d36d9b48e050e20ac5b3823db4d49fd4e84086d4acae6630cade81fd971b68d",
-          "source": "https://raw.githubusercontent.com/pbakaus/impeccable/414603bf14c7a344edb466bb1f85690c77ce8b7d/.hermes/skills/impeccable/scripts/impeccable.cmd",
-          "gitBlob": "5f2039ec9ed66a899809b3becdc660089b68fa7f"
+          "bytes": 11704,
+          "sha256": "75a6a041635b46dd88d207116e522eb7683f76220cb62cd63339848c4b419e19",
+          "source": "https://raw.githubusercontent.com/pbakaus/impeccable/414603bf14c7a344edb466bb1f85690c77ce8b7d/.hermes/skills/impeccable/scripts/impeccable.cmd"
         },
         {
           "path": "third-party/integrations/impeccable/skills/impeccable/scripts/live-browser-dom.js",
@@ -2059,5 +2058,5 @@
       }
     }
   ],
-  "bytes": 23700634
+  "bytes": 23701521
 }

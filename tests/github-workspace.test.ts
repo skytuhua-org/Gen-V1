@@ -7,6 +7,7 @@ import {dirname,join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {GitHubAuth} from '../packages/workspace/github-auth.ts';
 import {GitHubTools} from '../packages/workspace/github.ts';
+import {Store} from '../packages/storage/store.ts';
 import type {ProjectTools} from '../packages/workspace/tools.ts';
 import type {TerminalHost} from '../packages/workspace/terminal.ts';
 const cleanup:(()=>Promise<void>)[]=[];afterEach(async()=>{vi.restoreAllMocks();syncBuiltinESMExports();for(const close of cleanup.splice(0).reverse())await close();});
@@ -42,11 +43,11 @@ it('refuses to create a PR when the GitHub branch differs from the reviewed loca
  await expect(github.create('project',undefined,{title:'Review',head:status.head,revision:status.revision,push:false})).rejects.toThrow(/GitHub branch/);expect(run.mock.calls[0]).toBeDefined();expect(run).toHaveBeenCalledTimes(1);
 });
 async function createdPullRequest(readCreated:()=>Promise<string>,access:{gitWrite?:boolean;mode?:'managed'|'legacy'}={gitWrite:true,mode:'managed'}){
- const root=await mkdtemp(join(tmpdir(),'gen-gh-pr-'));cleanup.push(async()=>{if(!root.startsWith(join(tmpdir(),'gen-gh-pr-')))throw Error('Unexpected PR fixture cleanup path');await rm(root,{recursive:true,force:true,maxRetries:5});});
+ const root=await mkdtemp(join(tmpdir(),'gen-gh-pr-')),store=new Store(root);cleanup.push(async()=>{store.close();if(!root.startsWith(join(tmpdir(),'gen-gh-pr-')))throw Error('Unexpected PR fixture cleanup path');await rm(root,{recursive:true,force:true,maxRetries:5});});
  const status={head:'a'.repeat(40),branch:'gen/review',revision:'c'.repeat(64),files:[],...access},url='https://github.com/example/fixture/pull/12';
  const payloads:{path:string;bytes:Buffer}[]=[];
  const git=vi.fn(async(_path:string,_args:string[])=>'https://github.com/example/fixture.git'),gitStatus=vi.fn(async()=>status);
- const projects={store:{dataDir:root},binding:async()=>({path:root}),git,gitStatus} as unknown as ProjectTools;
+ const projects={store,binding:async()=>({path:root}),git,gitStatus} as unknown as ProjectTools;
  const github=new GitHubTools(projects,{} as TerminalHost),run=vi.fn(async(_path:string,args:string[])=>{
   await mkdir(join(root,'github','config'),{recursive:true});
   for(const flag of ['--body-file','--input'])if(args.includes(flag)){const path=args[args.indexOf(flag)+1];payloads.push({path,bytes:await readFile(path)});}

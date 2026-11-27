@@ -11,12 +11,22 @@ import {TooltipLayer} from './packages/ui-shell/Tooltip';
 import {ErrorState, BusyButton} from './packages/ui-shell/Feedback';
 
 window.toast = toast;
+function BusyProbe(){
+ const [state,setState] = React.useState('idle');
+ return <>
+  <button id="probe-busy" onClick={() => setState('busy')}>Start</button>
+  <button id="probe-ack" onClick={() => setState('acknowledged')}>Acknowledge</button>
+  <button id="probe-idle" onClick={() => setState('idle')}>Reset</button>
+  <BusyButton id="probe" busy={state === 'busy'} acknowledged={state === 'acknowledged'}>Send the report</BusyButton>
+ </>;
+}
 function Fixture(){
  return <>
   <Toaster/><TooltipLayer/>
   <button id="tip" title="Save the current draft">Save</button>
   <ErrorState message="The save did not finish. Retry." onRetry={() => {window.retried = true;}} />
   <BusyButton id="busy" busy>Sending</BusyButton>
+  <BusyProbe/>
  </>;
 }
 createRoot(document.getElementById('root')).render(<Fixture/>);
@@ -218,4 +228,69 @@ describe('feedback primitives', () => {
     await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
     await page.close();
   });
+  it('keeps a BusyButton label and bounding box stable across busy and acknowledged states', async () => {
+    const page = await open();
+    const probe = page.locator('#probe');
+    await probe.waitFor();
+    const measure = async () => {
+      const box = await probe.boundingBox();
+      return {width: box?.width, height: box?.height, text: await probe.innerText()};
+    };
+    const idle = await measure();
+    await page.locator('#probe-busy').click();
+    const busy = await measure();
+    await page.locator('#probe-ack').click();
+    const acknowledged = await measure();
+    expect(busy.text).toBe(idle.text);
+    expect(acknowledged.text).toBe(idle.text);
+    expect(Math.abs(busy.width! - idle.width!)).toBeLessThanOrEqual(1);
+    expect(Math.abs(acknowledged.width! - idle.width!)).toBeLessThanOrEqual(1);
+    expect(Math.abs(busy.height! - idle.height!)).toBeLessThanOrEqual(1);
+    expect(Math.abs(acknowledged.height! - idle.height!)).toBeLessThanOrEqual(1);
+    await page.close();
+  });
+
+  it('delays the busy spinner for 150ms and cancels it on settle', async () => {
+    const page = await open();
+    await page.clock.install();
+    const spinner = page.locator('#probe .ui-action-indicator-busy[data-current="true"]');
+    await page.locator('#probe-busy').click();
+    await page.clock.runFor(149);
+    expect(await spinner.count()).toBe(0);
+    await page.clock.runFor(1);
+    expect(await spinner.count()).toBe(1);
+    await page.locator('#probe-ack').click();
+    await page.clock.runFor(300);
+    expect(await spinner.count()).toBe(0);
+    expect(await page.locator('#probe .ui-action-indicator-acknowledged[data-current="true"]').count()).toBe(1);
+    await page.locator('#probe-idle').click();
+    await page.locator('#probe-busy').click();
+    await page.clock.runFor(100);
+    await page.locator('#probe-idle').click();
+    await page.clock.runFor(300);
+    expect(await spinner.count()).toBe(0);
+    await page.close();
+  });
+
+  it('uses opacity-only status motion and disables rotation under reduced or off motion', async () => {
+    const page = await open();
+    await page.clock.install();
+    await page.locator('#probe-busy').click();
+    await page.clock.runFor(160);
+    const busyLayer = page.locator('#probe .ui-action-indicator-busy');
+    const timing = await busyLayer.evaluate(el => ({transition: getComputedStyle(el).transitionDuration, property: getComputedStyle(el).transitionProperty, animation: getComputedStyle(el.querySelector('svg')!).animationName}));
+    expect(timing.transition).toBe('0.16s');
+    expect(timing.property).toBe('opacity');
+    expect(timing.animation).toBe('ui-spin');
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    const reduced = await busyLayer.evaluate(el => ({transition: getComputedStyle(el).transitionDuration, animation: getComputedStyle(el.querySelector('svg')!).animationName}));
+    expect(reduced.transition).toBe('0.08s');
+    expect(reduced.animation).toBe('none');
+    await page.evaluate(() => { document.documentElement.dataset.motion = 'off'; });
+    const off = await busyLayer.evaluate(el => ({transition: getComputedStyle(el).transitionDuration, animation: getComputedStyle(el.querySelector('svg')!).animationName}));
+    expect(off.transition).toBe('0s');
+    expect(off.animation).toBe('none');
+    await page.close();
+  });
+
 });

@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { setImmediate as yieldToHost } from 'node:timers/promises';
 import type { ServerResponse } from 'node:http';
 import type { Store } from '../../packages/storage/store.ts';
+import type { WorkspaceEvent } from '../../packages/contracts/index.ts';
 
 /** Release hijacked SSE responses during Fastify preClose without waiting for
  * a second 'close' event. The client's disconnect can race with shutdown,
@@ -22,7 +23,7 @@ export function destroyEventStreams(streams: Map<ServerResponse, () => void>): v
 export function registerEventStream(
   streams: Map<ServerResponse, () => void>,
   response: ServerResponse,
-  store: Pick<Store, 'eventsAfter' | 'subscribe' | 'retentionFloor'>,
+  store: Pick<Store, 'eventsAfter' | 'subscribe' | 'sequence' | 'retentionFloor'>,
   after: number,
 ): void {
   if (closedRegistries.has(streams)) { response.destroy(); return; }
@@ -38,26 +39,63 @@ export function registerEventStream(
   }
 }
 
-/** The durable ledger is the queue. Retain only one event while a reader drains. */
-export function streamEvents(response: ServerResponse, store: Pick<Store, 'eventsAfter' | 'subscribe' | 'retentionFloor'>, after: number, onClose: () => void): () => void {
+/** Serialize an event once per commit; every subscriber writes the same chunk. */
+const chunkCache = new WeakMap<WorkspaceEvent, string>();
+function chunkFor(event: WorkspaceEvent): string {
+  let chunk = chunkCache.get(event);
+  if (!chunk) { chunk = `id: ${event.seq}\nevent: workspace\ndata: ${JSON.stringify(event)}\n\n`; chunkCache.set(event, chunk); }
+  return chunk;
+}
+
+/** The durable ledger backs bounded live and replay buffers while a reader drains. */
+export function streamEvents(response: ServerResponse, store: Pick<Store, 'eventsAfter' | 'subscribe' | 'sequence' | 'retentionFloor'>, after: number, onClose: () => void): () => void {
   if (response.destroyed || response.writableEnded) { onClose(); return () => {}; }
   const controller = new AbortController();
-  // A replay cursor below the retention floor lost the (cursor, floor) range;
-  // announce the gap once, then resume from the oldest retained event instead
-  // of silently skipping it.
-  const floor = store.retentionFloor();
+  const abandonStartup = () => { onClose(); response.destroy(); return () => {}; };
+  let floor: number;
+  try { floor = store.retentionFloor(); } catch { return abandonStartup(); }
   let cursor = after, pumping = false, closed = false, comment = ': connected\n\n', gap: string | null = null;
-  if (cursor < floor) { gap = `event: retention-gap\ndata: ${JSON.stringify({ floor })}\n\n`; cursor = floor - 1; }
+  const gapFrame = (floor: number) => `event: retention-gap\ndata: ${JSON.stringify({ floor })}\n\n`;
+  if (cursor < floor) { gap = gapFrame(floor); cursor = floor - 1; }
+  // subscribe() already delivers each parsed commit once, in order, to every
+  // listener. Buffer live pushes and reuse them once the backlog is drained so
+  // a caught-up reader costs no store read or re-parse per event. The ledger
+  // stays the durable queue: a stalled reader drops the buffer past the cap
+  // and serves everything from the store instead of retaining every commit.
+  const pending: WorkspaceEvent[] = [];
+  // Fetched ledger pages: one store read serves up to 64 replayed events.
+  const backlog: WorkspaceEvent[] = [];
+  let liveCut = 0, dropped = false;
+  const unsubscribe = store.subscribe((event) => {
+    if (dropped) void pump(); // ledger-only mode: pushes are not buffered
+    else if (pending.length >= 1024) { pending.length = 0; dropped = true; liveCut = Number.MAX_SAFE_INTEGER; }
+    else { pending.push(event); void pump(); }
+  });
+  try { liveCut = store.sequence; } catch { unsubscribe(); return abandonStartup(); }
   async function pump() {
     if (pumping || closed) return;
     pumping = true;
     let written = 0;
     try {
       while (!closed) {
-        const event = store.eventsAfter(cursor, 1)[0];
+        // Every post-subscribe commit lands in pending (and only a pre-subscribe
+        // backlog, seq <= liveCut, can precede it), so pending is the ordered
+        // suffix once the store has been drained up to liveCut.
+        if (!gap && cursor < liveCut && !backlog.length) {
+          const page = store.eventsAfter(cursor, 64);
+          // Retention can advance while a reader drains an already-cached page.
+          // Check the floor only on a discontinuity, not every replay or live push.
+          if (page.length && page[0].seq > cursor + 1) {
+            const nextFloor = store.retentionFloor();
+            if (nextFloor > cursor + 1) gap = gapFrame(nextFloor);
+          }
+          backlog.push(...page);
+        }
+        // The gap marker does not consume the first event of a replay page.
+        const event = gap ? undefined : cursor >= liveCut ? pending.shift() : backlog.shift();
         if (!event && !comment && !gap) break;
-        // A pending retention-gap marker precedes the replayed events.
-        const chunk = gap ?? (event ? `id: ${event.seq}\nevent: workspace\ndata: ${JSON.stringify(event)}\n\n` : comment);
+        if (event && event.seq <= cursor) continue; // already written via store replay
+        const chunk = gap ?? (event ? chunkFor(event) : comment);
         if (gap) gap = null; else if (event) cursor = event.seq; else comment = '';
         if (!response.write(chunk)) {
           await once(response, 'drain', { signal: controller.signal });
@@ -72,7 +110,6 @@ export function streamEvents(response: ServerResponse, store: Pick<Store, 'event
     } catch { if (!closed) shutdown(); }
     finally { pumping = false; }
   }
-  const unsubscribe = store.subscribe(() => { void pump(); });
   const heartbeat = setInterval(() => { comment = ': heartbeat\n\n'; void pump(); }, 15000);
   heartbeat.unref();
   const close = () => {

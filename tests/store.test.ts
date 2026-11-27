@@ -227,6 +227,34 @@ describe('bounded transcript paging', () => {
     } finally { decode.mockRestore(); }
   });
 
+  it('reconciles a failed retention batch without masking the original failure', () => {
+    const store = setup();
+    for (let i = 0; i < 8; i++) store.internal('fixture.event', null, () => i);
+    const connection = store.db, exec = connection.exec.bind(connection);
+    const cause = new Error('injected retention batch commit failure');
+    let commits = 0, failRollback = true;
+    const injection = vi.spyOn(connection, 'exec').mockImplementation(sql => {
+      if (sql === 'COMMIT' && ++commits === 2) throw cause;
+      if (sql === 'ROLLBACK' && failRollback) throw new Error('injected rollback failure');
+      return exec(sql);
+    });
+    try {
+      let failure: unknown;
+      try { store.retentionSweep({ keepEvents: 2, batchSize: 2 }); } catch (error) { failure = error; }
+      expect(failure).toBe(cause);
+      expect(connection.isTransaction).toBe(true);
+      expect(() => store.eventsAfter(0)).toThrow(expect.objectContaining({ code: 'STORE_INCONSISTENT' }));
+      failRollback = false;
+      expect(store.eventsAfter(0).map(event => event.seq)).toEqual([3, 4, 5, 6, 7, 8]);
+      expect(connection.isTransaction).toBe(false);
+      expect(store.retentionSweep({ keepEvents: 2, batchSize: 2 }).removedEvents).toBe(4);
+      expect(store.eventsAfter(0).map(event => event.seq)).toEqual([7, 8, 9]);
+    } finally {
+      injection.mockRestore();
+      if (connection.isTransaction) exec('ROLLBACK');
+    }
+  });
+
   it('sweeps event history above durable watermarks, keeps live receipts, and records an audit event', () => {
     const store = setup();
     const commands = Array.from({ length: 20 }, (_, i) => store.command({ id: `sweep-command-${i}`, type: 'fixture.command', payload: { i } }, () => ({ i })));
