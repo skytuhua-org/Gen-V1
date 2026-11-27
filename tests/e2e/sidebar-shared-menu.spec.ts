@@ -139,13 +139,13 @@ test('fold, hide, collapse and removed owners dismiss without leaving a popup', 
   }
 });
 
-test('short viewport keeps the portalled menu bounded and its last enabled item reachable', async ({page}, info) => {
+test('short viewport keeps the portalled menu bounded and its last item reachable', async ({page}, info) => {
   await page.setViewportSize({width: 760, height: 240}); await options(page).click();
   const popup = menu(page); await expect(popup).toBeVisible();
   const box = (await popup.boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(8); expect(box.y).toBeGreaterThanOrEqual(8);
   expect(box.x + box.width).toBeLessThanOrEqual(752); expect(box.y + box.height).toBeLessThanOrEqual(232);
-  await page.keyboard.press('End'); const last = popup.getByRole('menuitem', {name: 'Settle thread'}); await expect(last).toBeFocused();
+  await page.keyboard.press('End'); const last = popup.getByRole('menuitem', {name: 'Archive thread'}); await expect(last).toBeFocused();
   const lastBox = (await last.boundingBox())!; expect(lastBox.y).toBeGreaterThanOrEqual(box.y); expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(box.y + box.height);
   await page.screenshot({path: info.outputPath('short-sidebar-menu.png')});
 });
