@@ -100,3 +100,50 @@ it('keeps a launch whose cleanup failed reachable for revocation',async()=>{
  expect(await registry.revoke('acct-1',signal())).toEqual({terminated:1,failed:0});
  expect(adapter.terminated).toBe(1);
 });
+
+it('re-validates the backend platform proof on every effectful command',async()=>{
+ const adapter=new FakeDebug();
+ const approved=backend('ok');
+ const registry=new DebugRegistry([approved],'ok',()=>adapter);
+ const session=await registry.launch({owner:'acct-1',recipe,signal:signal()});
+ await registry.effect(session.sessionId,'acct-1','next',{},signal());
+ expect(adapter.effects).toContain('next');
+ // The backend's proof is revoked mid-session: further effects are denied,
+ // they do not ride the stale launch admission.
+ approved.proof={...approved.proof!,status:'FAIL'};
+ await expect(registry.effect(session.sessionId,'acct-1','continue',{},signal())).rejects.toThrowError(/proven platform admission|CAPABILITY/i);
+ expect(adapter.effects).not.toContain('continue');
+});
+
+it('inspect requires a paused process, not a stopped one',async()=>{
+ const adapter=new FakeDebug();
+ const registry=new DebugRegistry([backend('ok')],'ok',()=>adapter);
+ const session=await registry.launch({owner:'acct-1',recipe,signal:signal()});
+ adapter.state=()=>'STOPPED';
+ await expect(registry.inspect(session.sessionId,'acct-1','stackTrace',{},signal())).rejects.toThrowError(/paused/i);
+});
+
+it('bounds threads and scopes like frames and variables',async()=>{
+ const adapter=new FakeDebug();
+ adapter.inspect=(async(command:string)=>{
+  if(command==='threads')return{threads:Array.from({length:150},(_,i)=>({id:i}))};
+  if(command==='scopes')return{scopes:Array.from({length:150},(_,i)=>({name:`s${i}`}))};
+  return{};}) as typeof adapter.inspect;
+ const registry=new DebugRegistry([backend('ok')],'ok',()=>adapter);
+ const session=await registry.launch({owner:'acct-1',recipe,signal:signal()});
+ const threads=await registry.inspect(session.sessionId,'acct-1','threads',{},signal()) as {threads:unknown[]};
+ expect(threads.threads.length).toBe(100);
+ const scopes=await registry.inspect(session.sessionId,'acct-1','scopes',{},signal()) as {scopes:unknown[]};
+ expect(scopes.scopes.length).toBe(100);
+});
+
+it('dispose retains a session whose teardown was not confirmed',async()=>{
+ const adapter=new FakeDebug();
+ adapter.terminate=async()=>{throw new Error('Termination was not confirmed');};
+ const registry=new DebugRegistry([backend('ok')],'ok',()=>adapter);
+ const session=await registry.launch({owner:'acct-1',recipe,signal:signal()});
+ await registry.dispose(signal());
+ // The possibly-still-running process stays addressable for revocation.
+ expect(registry.get(session.sessionId,'acct-1')).not.toBeNull();
+ expect(await registry.revoke('acct-1',signal())).toEqual({terminated:0,failed:1});
+});

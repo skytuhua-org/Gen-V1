@@ -24,6 +24,6 @@ The GIFs are scaled and palette-optimized for the earlier README embed. Still im
 
 ## Repository branding
 
-[The Gen banner](gen-banner.svg) is original vector artwork for the repository landing page. Its connected conversation and work surfaces are abstract branding, separate from the application captures. It contains no scripts, external resources or captured user data.
+[The Gen banner](gen-banner.svg) is original vector artwork for the repository landing page, with the frosted purple halftone logo centered on a dark background. It contains no scripts, external resources or captured user data.
 
 The earlier [gallery and its capture notes](README.md) remain available as historical examples. All media remains subject to the repository [license](../../../LICENSE) and [third-party notices](../../../THIRD_PARTY_NOTICES.md).
