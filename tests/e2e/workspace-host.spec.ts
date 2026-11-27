@@ -15,13 +15,13 @@ declare global { interface Window {
   releaseSettingsGuard?: () => void;
 } }
 
-async function fixture(page: Page, {native = false, delayed = false, unavailable = false, invalidOwner = false, working = true, pinned = false, archiveConfirmation = true, emptyAgents = false, retiredActive = '', retiredSelectionFailsOnce = false, plugins = {} as {fail?: boolean; manifests?: unknown[]; error?: string}} = {}) {
+async function fixture(page: Page, {native = false, delayed = false, unavailable = false, invalidOwner = false, working = true, pinned = false, archiveConfirmation = true, sameThreadTitles = false, emptyAgents = false, retiredActive = '', retiredSelectionFailsOnce = false, plugins = {} as {fail?: boolean; manifests?: unknown[]; error?: string}} = {}) {
   const snapshot = taskFixture({root: 'text', elements: {text: {type: 'Text', props: {text: 'Synthetic host fixture'}}}});
   snapshot.threads[0] = {...snapshot.threads[0], id: 'parent-a', title: 'Project investigation', projectId: 'project-a', projectName: 'Alpha', status: working ? 'working' : 'ready', runId: working ? 'run-a' : null};
   snapshot.activeThreadId = 'parent-a'; snapshot.artifacts = []; snapshot.userStates = []; snapshot.data = []; snapshot.messages = [];
   snapshot.settings = {theme: 'dark', modelId: 'test/model', preferences: {showUsageFooter: false, archiveConfirmation, unpinConfirmation: true}};
   if (pinned) snapshot.threads[0].presentation = {pinned: true};
-  const emptyDraft = {...snapshot.threads[0], id: 'empty-draft', title: 'Empty draft stays in navigation', status: 'ready' as const, runId: null};
+  const emptyDraft = {...snapshot.threads[0], id: 'empty-draft', title: sameThreadTitles ? snapshot.threads[0].title : 'Empty draft stays in navigation', status: 'ready' as const, runId: null};
   snapshot.threads.push(emptyDraft);
   const {commands,publish} = await serveTaskFixture(page, snapshot);
   await page.addInitScript(({native}) => {
@@ -322,6 +322,70 @@ test('monitor honors disabled archive confirmation without creating an extra dia
   await page.getByRole('menuitem', {name: 'Archive thread', exact: true}).click();
   await expect.poll(() => h.commands.filter(command => command.type === 'thread.archive').length).toBe(1);
   await expect(page.getByRole('dialog', {name: 'Archive thread', exact: true})).toHaveCount(0);
+});
+
+for(const preset of ['All Agents','Workspace'])test(`${preset} offers Undo only after accepting an archive`,async({page})=>{
+ const h=await fixture(page,{working:false});
+ if(preset==='Workspace'){
+  await page.getByRole('button',{name:'Workspace',exact:true}).click();
+  await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeVisible();
+ }
+ const options=page.getByRole('button',{name:'Options for Project investigation',exact:true});
+ const chooseArchive=async()=>{await options.click();await page.getByRole('menuitem',{name:'Archive thread',exact:true}).click();};
+ const dialog=page.getByRole('dialog',{name:/^Archive thread/});
+ const archived=page.getByRole('region',{name:'Notifications',exact:true}).getByRole('status').filter({hasText:'Archived "Project investigation"'});
+ await chooseArchive();
+ await expect(dialog).toBeVisible();await expect(archived).toHaveCount(0);
+ await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);
+ expect(h.commands.filter(command=>command.type==='thread.archive')).toHaveLength(0);
+ await chooseArchive();
+ await dialog.getByRole('button',{name:preset==='Workspace'?'Archive thread':'Archive',exact:true}).click();
+ await expect(dialog).toHaveCount(0);
+ await expect(archived).toBeVisible();
+ await archived.getByRole('button',{name:'Undo',exact:true}).click();
+ await expect.poll(()=>h.commands.filter(command=>command.type==='thread.archive'||command.type==='thread.restore').map(({type,threadId,payload})=>({type,threadId,payload}))).toEqual([
+  {type:'thread.archive',threadId:'parent-a',payload:{}},
+  {type:'thread.restore',threadId:'parent-a',payload:{}},
+ ]);
+ await expect(archived).toHaveCount(0);
+});
+
+test('same-title conversations retain separate Archive Undo targets',async({page})=>{
+ const h=await fixture(page,{archiveConfirmation:false,working:false,sameThreadTitles:true});
+ for(const id of ['parent-a','empty-draft']){
+  await page.locator('[data-thread-id="'+id+'"]').getByRole('button',{name:'Options for Project investigation',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Archive thread',exact:true}).click();
+  await expect.poll(()=>h.commands.filter(command=>command.type==='thread.archive').at(-1)?.threadId).toBe(id);
+ }
+ const notices=page.getByRole('region',{name:'Notifications',exact:true}).getByRole('status').filter({hasText:'Archived "Project investigation"'});
+ await expect(notices).toHaveCount(2);
+ await notices.first().getByRole('button',{name:'Undo',exact:true}).click();
+ await expect.poll(()=>h.commands.filter(command=>command.type==='thread.restore').map(command=>command.threadId)).toEqual(['parent-a']);
+ await expect(notices).toHaveCount(1);
+ await notices.getByRole('button',{name:'Undo',exact:true}).click();
+ await expect.poll(()=>h.commands.filter(command=>command.type==='thread.restore').map(command=>command.threadId)).toEqual(['parent-a','empty-draft']);
+});
+
+test('a rejected archive stays silent and a rejected Undo gives the archive recovery path',async({page})=>{
+ const h=await fixture(page,{archiveConfirmation:false,working:false});
+ let rejectArchive=true;
+ await page.route('**/api/commands',async route=>{
+  const {type}=route.request().postDataJSON();
+  if(type==='thread.restore'||(type==='thread.archive'&&rejectArchive))return route.fulfill({status:409,json:{error:{code:'CONFLICT',message:'Synthetic archive failure'}}});
+  return route.fallback();
+ });
+ const selectArchive=async()=>{
+  await page.getByRole('button',{name:'Options for Project investigation',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Archive thread',exact:true}).click();
+ };
+ const stack=page.getByRole('region',{name:'Notifications',exact:true});
+ await selectArchive();
+ await expect(page.getByText('Synthetic archive failure',{exact:true})).toBeVisible();
+ await expect(stack.getByText('Archived "Project investigation"',{exact:true})).toHaveCount(0);
+ rejectArchive=false;await selectArchive();
+ await stack.getByRole('button',{name:'Undo',exact:true}).click();
+ await expect(stack.getByRole('alert')).toHaveText('The thread could not be restored. Restore it from Settings → Archive.');
+ expect(h.commands.filter(command=>command.type==='thread.archive')).toHaveLength(1);
 });
 
 test('a consumed New thread intent is not replayed after returning through the monitor', async ({page}) => {

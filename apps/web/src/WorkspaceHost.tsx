@@ -6,6 +6,7 @@ import {isSupportedWorkspacePreset} from '../../../packages/contracts/workspace'
 import {getPreferences} from '../../../packages/contracts/preferences';
 import {Modal} from '../../../packages/ui-shell/Modal';
 import {Toaster} from '../../../packages/ui-shell/Toast';
+import {notifyThreadArchived} from './archive-notification';
 import {TooltipLayer} from '../../../packages/ui-shell/Tooltip';
 import {ResizeHandle} from './WorkspacePanel';
 import {bootstrap, command, getShellSettings} from './api';
@@ -307,7 +308,12 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
     if (!accepted) {pending.decide(false); return;}
     void mutate(async () => {await command('thread.presentation', pending.patch, pending.row.id); await navigation.refresh();}).then(pending.decide);
   };
-  const archiveRow = (row: ThreadNavigationRow) => mutate(async () => {await command('thread.archive', {}, row.id); await navigation.refresh(); setArchive(undefined);});
+  const archiveRow = (row: ThreadNavigationRow) => mutate(async () => {
+    await command('thread.archive', {}, row.id);
+    setArchive(undefined);
+    notifyThreadArchived(row.id, row.title, navigation.refresh);
+    await navigation.refresh();
+  });
   return <div className="app-shell workspace-host" data-sidebar-collapsed={layout.sidebarCollapsed} data-panel-animations={preferences.panelAnimations} style={{'--sidebar-width': layout.sidebarWidth + 'px'} as CSSProperties} inert={desktop?.closing}>
     {open && <button ref={scrim} className="sidebar-scrim" aria-label="Close navigation" onClick={() => setOpen(false)}/>}
     <ShellSidebar hoverBlocked={settingsOpen||Boolean(rename||archive||unpin)} onOpenThreadPR={(target,scope)=>fail(()=>openReview(target,scope))} elementRef={sidebar} searchRef={searchRef} mobile={mobile} open={open} layout={layout} preferences={preferences}

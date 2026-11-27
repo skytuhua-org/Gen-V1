@@ -74,6 +74,7 @@ import {WorkspaceCanvas} from './WorkspaceCanvas';
 import {DelegatedAgentTranscript} from './DelegatedAgentTranscript';
 import {WorkspaceControls,panelLabels} from './WorkspaceControls';
 import {WorkspaceHost,type ConversationHost} from './WorkspaceHost';
+import {notifyThreadArchived} from './archive-notification';
 import type {SharedAgentComposers, ComposerState, ConversationComposerTarget} from './agents-workspace/composer';
 import {ComposerCommands,ComposerSkillBindings,type ComposerCommandsHandle} from './ComposerCommands';
 import type {ModelPickerHandle} from './ModelPicker';
@@ -811,7 +812,8 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const archive = async (id: string, discard = false, confirmed = false) => {
     if (!discard && Object.values(dirtyWidgets).includes(id)) { setArchiveThread(id);  return; }
     if (!discard && !confirmed && preferences.archiveConfirmation) { setConfirmArchive(id);  return; }
-    try { if(discard)for(const artifactId of Object.keys(dirtyWidgets).filter(key=>dirtyWidgets[key]===id)){const release=widgetDiscards.current.get(artifactId);if(!release)throw Error('Reopen the owning conversation before discarding its widget edits.');await release();} await command('thread.archive', {}, id); setDirtyWidgets(previous => Object.fromEntries(Object.entries(previous).filter(([, threadId]) => threadId !== id))); setArchiveThread(null); if (id === thread?.id) select(null); await refresh(); } catch (error) { reportError(messageOf(error)); }
+    const title = snapshotRef.current.threads.find(item => item.id === id)?.title ?? 'thread';
+    try { if(discard)for(const artifactId of Object.keys(dirtyWidgets).filter(key=>dirtyWidgets[key]===id)){const release=widgetDiscards.current.get(artifactId);if(!release)throw Error('Reopen the owning conversation before discarding its widget edits.');await release();} await command('thread.archive', {}, id); setDirtyWidgets(previous => Object.fromEntries(Object.entries(previous).filter(([, threadId]) => threadId !== id))); setArchiveThread(null); if (id === thread?.id) select(null); notifyThreadArchived(id,title,refresh); await refresh(); } catch (error) { reportError(messageOf(error)); }
   };
   // Windowed threads' older messages are not in the snapshot; ask the server
   // which of them still match the query.

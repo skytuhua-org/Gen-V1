@@ -212,6 +212,7 @@
     "apps/web/src/appearance-draft.ts",
     "apps/web/src/appearance-settings.css",
     "apps/web/src/appearance.css",
+    "apps/web/src/archive-notification.ts",
     "apps/web/src/artifact-inputs.ts",
     "apps/web/src/artifact-source.ts",
     "apps/web/src/artifact-state.ts",
