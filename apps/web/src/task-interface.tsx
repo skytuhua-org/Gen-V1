@@ -30,9 +30,9 @@ export function ChoiceList({ element: { props } }: ComponentRenderProps) {
   const customInput = useRef<HTMLInputElement>(null);
   const editVersion = useRef(0);
   const customSelected = Boolean(custom && (choosingCustom || typeof value === 'string' && !options.some(option => option.value === value)));
-  const current = useRef({ value, options, customSelected, customLabel: custom?.label, required, disabled, label });
+  const current = useRef({ value, options, customSelected, customLabel: custom?.label, hasCustom: Boolean(custom), required, disabled, label });
   const secureScope = useRef(scope);
-  current.current = { value, options, customSelected, customLabel: custom?.label, required, disabled, label };
+  current.current = { value, options, customSelected, customLabel: custom?.label, hasCustom: Boolean(custom), required, disabled, label };
   secureScope.current = scope;
   const computeEligible = () => {
     if (secureScope.current?.active === false || current.current.disabled) return false;
@@ -62,7 +62,9 @@ export function ChoiceList({ element: { props } }: ComponentRenderProps) {
       isValid: () => {
         if (current.current.required !== true) return true;
         if (current.current.customSelected) return typeof current.current.value === 'string' && current.current.value.length > 0;
-        return current.current.options.some(option => !option.disabled && option.value === current.current.value);
+        const enabledOptions = current.current.options.filter(option => !option.disabled);
+        if (enabledOptions.length === 0 && !current.current.hasCustom) return true;
+        return enabledOptions.some(option => option.value === current.current.value);
       },
       capture: () => {
         const selected = current.current.options.find(option => option.value === current.current.value);

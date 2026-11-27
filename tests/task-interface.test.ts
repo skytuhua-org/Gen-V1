@@ -99,11 +99,12 @@ function Probe(){
 }
 const customChoice = {stateKey: 'delivery', label: 'Choose delivery', required: true, options: [{value: 'download', label: 'Prepare a local export'}], custom: {label: 'Other delivery method'}};
 const hiddenChoice = {stateKey: 'requiredChoice', label: 'Required witness', required: true, options: [{value: 'yes', label: 'Include a witness'}]};
+const allDisabledChoice = {stateKey: 'allDisabled', label: 'Unavailable witness', required: true, options: [{value: 'yes', label: 'Include a witness', disabled: true}]};
 function Harness(){
   const [choiceDisabled, setChoiceDisabled] = useState(true);
   window.setChoiceDisabled = setChoiceDisabled;
   const dynamicChoice = {stateKey: 'dynamicChoice', label: 'Dynamic witness', required: true, disabled: choiceDisabled, options: [{value: 'yes', label: 'Include dynamic witness'}]};
-  return <StateProvider initialState={{values: {delivery: 'Typed freeform value'}}}><ChoiceValidationProvider><Probe/><ChoiceList element={{props: customChoice}}/><div id="boundary"><ChoiceList element={{props: hiddenChoice}}/></div><div id="dynamic"><ChoiceList element={{props: dynamicChoice}}/></div></ChoiceValidationProvider></StateProvider>;
+  return <StateProvider initialState={{values: {delivery: 'Typed freeform value'}}}><ChoiceValidationProvider><Probe/><ChoiceList element={{props: customChoice}}/><div id="boundary"><ChoiceList element={{props: hiddenChoice}}/></div><div id="dynamic"><ChoiceList element={{props: dynamicChoice}}/></div><ChoiceList element={{props: allDisabledChoice}}/></ChoiceValidationProvider></StateProvider>;
 }
 createRoot(document.getElementById('root')).render(<Harness/>);
 `;
@@ -153,6 +154,12 @@ describe('required choice registration capture', () => {
     expect((await evaluateChoice(page, 'dynamicChoice')).valid).toBe(false);
     await page.getByRole('radio', { name: 'Include dynamic witness' }).click();
     expect((await evaluateChoice(page, 'dynamicChoice')).valid).toBe(true);
+    await page.close();
+  });
+
+  it('does not require a choice when every option is disabled and no custom entry exists', async () => {
+    const page = await open();
+    expect((await evaluateChoice(page, 'allDisabled')).valid).toBe(true);
     await page.close();
   });
 
