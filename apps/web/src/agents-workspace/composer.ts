@@ -192,7 +192,8 @@ export function createSharedAgentComposers(actions: {sendParent(input: ParentSen
    const sendAborted = new Promise<never>((_, reject) => {if (sendAbort.signal.aborted) reject(new DOMException('canceled', 'AbortError')); else sendAbort.signal.addEventListener('abort', () => reject(new DOMException('canceled', 'AbortError')), {once: true});});
    try {
     // Persist before transport; retries after disconnect/reload keep the same command identity.
-    await journalWrite(pendingKey(agent), pending);
+    await Promise.race([journalWrite(pendingKey(agent), pending), sendAborted]);
+    sendAbort.signal.throwIfAborted();
     if (ownership(agent) !== owner) {emit(value, {retry: true, error: 'The conversation owner changed. Message retained for retry.'}); return;}
     if (value.stopEpoch !== stopEpoch) {emit(value, {retry: true, error: 'Message retained after Stop. Retry when ready.'}); return;}
     if (inventoryAgent(agent) && agent.parentId) {

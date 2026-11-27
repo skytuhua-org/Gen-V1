@@ -43,6 +43,7 @@ export const KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
   {id: 'settings-first-section', label: 'First settings section', scope: 'Settings', chords: ['Home'], handlers: [module('Settings.tsx')]},
   {id: 'settings-last-section', label: 'Last settings section', scope: 'Settings', chords: ['End'], handlers: [module('Settings.tsx')]},
   {id: 'settings-clear-search', label: 'Clear the settings search', scope: 'Settings', chords: ['Escape'], handlers: [module('Settings.tsx')]},
+  {id: 'show-shortcuts', label: 'Show keyboard shortcuts', scope: 'Global', chords: ['Shift+?'], handlers: [module('App.tsx'), module('WorkspaceHost.tsx')]},
   {id: 'window-move', label: 'Move the focused window', scope: 'Workspace', chords: ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'], hint: 'Hold Shift to resize it, or Alt for 2 px steps', handlers: [module('FloatingWindow.tsx')]},
   {id: 'window-restore', label: 'Return the focused window to its edge position', scope: 'Workspace', chords: ['Home'], handlers: [module('FloatingWindow.tsx')]},
   {id: 'window-close', label: 'Close or collapse the focused window', scope: 'Workspace', chords: ['Escape'], handlers: [module('FloatingWindow.tsx')]},

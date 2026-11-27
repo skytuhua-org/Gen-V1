@@ -39,6 +39,10 @@ packages. Each package is published under the MIT license and ships its own
 LICENSE file in the installed package; copyright belongs to Marijn Haverbeke and
 contributors.
 
+The isolated streaming-Markdown repair trial uses `remend` 1.5.1, published by
+Vercel, Inc. under the Apache-2.0 license. The package ships its own LICENSE in
+the installed artifact; copyright and license rights remain with their authors.
+
 Historical comparison frames under `docs/reference/` depict their original
 owners' products and are identified in [the reference inventory](docs/reference-videos.md).
 They are reference material, not Gen V1 product screenshots. Current product
