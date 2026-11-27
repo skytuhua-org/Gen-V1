@@ -22,6 +22,26 @@ async function choose(page: Page, label: string) {
   await expect(filter(page)).toBeFocused(); await expect(filter(page)).toHaveText(label);
 }
 
+test('overflowing Inbox list and reader expose native scrollbars', async ({page}) => {
+  await page.setViewportSize({width: 1100, height: 350});
+  await fixture(page);
+  await page.locator('.fixture-inbox').evaluate(node => { (node as HTMLElement).style.height = '240px'; });
+  const list = page.locator('.inbox-tasks-scroll');
+  const reader = page.locator('.desktop-inbox');
+  await rows(page).filter({hasText: 'Review'}).click();
+  await reader.locator('.inbox-canonical-message > p').evaluate(node => { node.textContent = 'A long Inbox result. '.repeat(250); });
+  for (const scroller of [list, reader]) {
+    await expect(scroller).toHaveCSS('scrollbar-width', 'thin');
+    await expect(scroller).toHaveCSS('scrollbar-gutter', 'auto');
+    const scrollTop = await scroller.evaluate(node => {
+      node.scrollTop = node.scrollHeight;
+      return node.scrollTop;
+    });
+    expect(scrollTop).toBeGreaterThan(0);
+  }
+  await test.info().attach('Overflowing Inbox list and reader with synthetic items', {body: await page.screenshot(), contentType: 'image/png'});
+});
+
 test('filter keyboard owns its listbox without selecting or reading Inbox rows', async ({page}) => {
   const {requests, errors} = await fixture(page);
   await filter(page).focus(); await page.keyboard.press('Home'); await page.keyboard.press('End');
@@ -270,4 +290,41 @@ test('single-column: a filtered-out open item does not linger when the pane narr
   await page.setViewportSize({width: 400, height: 800});
   await expect(page.getByRole('region', {name: 'Review', exact: true})).toHaveCount(0);
   await expect(rows(page)).toHaveCount(2);
+});
+
+test('search and filter reset controls restore results and focus', async ({page}) => {
+  await page.setViewportSize({width: 320, height: 760});
+  await page.emulateMedia({reducedMotion: 'reduce'});
+  await fixture(page);
+  const search = page.getByRole('searchbox', {name: 'Search Inbox'});
+  const clear = page.getByRole('button', {name: 'Clear search', exact: true});
+  const reset = page.getByRole('button', {name: 'Clear search and filter'});
+  await choose(page, 'Unread');
+  await search.fill('no matching inbox item');
+  await expect(page.getByRole('heading', {name: 'Nothing matches'})).toBeVisible();
+  await search.press('Tab');
+  await expect(clear).toBeFocused();
+  await clear.press('Enter');
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('');
+  await expect(filter(page)).toHaveText('Unread');
+  await expect(rows(page)).toHaveCount(3);
+  await search.fill('no matching inbox item');
+  await test.info().attach('Filtered Inbox at 320 px with synthetic items', {body: await page.screenshot(), contentType: 'image/png'});
+  await reset.click();
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('');
+  await expect(filter(page)).toHaveText('All');
+  await expect(rows(page)).toHaveCount(5);
+  await expect(clear).toHaveCount(0);
+  await expect(reset).toHaveCount(0);
+  expect(await calls(page)).toEqual([]);
+});
+
+test('a genuinely empty Inbox offers search clear without a filter reset', async ({page}) => {
+  await page.goto('/tests/e2e/fixtures/inbox-controls.html?empty');
+  await page.getByRole('searchbox', {name: 'Search Inbox'}).fill('no matching inbox item');
+  await expect(page.getByRole('heading', {name: 'You are all caught up'})).toBeVisible();
+  await expect(page.getByRole('button', {name: 'Clear search', exact: true})).toBeVisible();
+  await expect(page.getByRole('button', {name: 'Clear search and filter'})).toHaveCount(0);
 });

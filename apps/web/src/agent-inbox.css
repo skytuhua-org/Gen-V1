@@ -19,10 +19,16 @@
 .agent-inbox .inbox-view-controls{display:flex;align-items:center;gap:8px;margin-inline-start:auto;min-width:0}
 .agent-inbox .inbox-view-controls>.icon-button{width:32px;min-height:32px;padding:6px;flex-shrink:0}
 .agent-inbox .inbox-search{display:block;padding:0 16px 8px}
-.agent-inbox .inbox-search>label{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 9px;border:1px solid var(--control-border);border-radius:7px;color:var(--muted)}
+.agent-inbox .inbox-search-field{display:flex;align-items:center;gap:8px;position:relative;min-height:32px;padding:0 9px;border:1px solid var(--control-border);border-radius:7px;color:var(--muted)}
 .agent-inbox .inbox-search input{background:transparent;border:0;outline:0;width:100%;font-size:12px;padding:7px 0}
-.agent-inbox .inbox-search>label:focus-within{outline:2px solid var(--ui-focus-ring,#808080);outline-offset:1px}
-.agent-inbox .inbox-tasks-scroll{overflow-y:auto;min-height:0;flex:1;scrollbar-width:none}
+.agent-inbox .inbox-search input::-webkit-search-cancel-button{appearance:none}
+.agent-inbox .inbox-search-field:has(.inbox-search-clear) input{padding-inline-end:26px}
+.agent-inbox .inbox-search-clear{position:absolute;inset-inline-end:6px;top:50%;translate:0 -50%;display:grid;place-items:center;width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--muted)}
+.agent-inbox .inbox-search-clear:hover{background:var(--hover);color:var(--text)}
+.agent-inbox .inbox-filter-reset.quiet{min-height:26px;font-size:11px;color:var(--muted)}
+.agent-inbox .inbox-filter-reset.quiet:hover{color:var(--text)}
+.agent-inbox .inbox-search-field:focus-within{outline:2px solid var(--ui-focus-ring,#808080);outline-offset:1px}
+.agent-inbox .inbox-tasks-scroll{overflow-y:auto;min-height:0;flex:1}
 .agent-inbox .inbox-tasks-body{padding:8px 16px 16px;min-height:100%}
 .agent-inbox .inbox-tasks-body[data-empty=true]{display:flex;flex-direction:column}
 .agent-inbox .sidebar-tasks{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
@@ -45,7 +51,7 @@
 .agent-inbox .inbox-item-toolbar button{font-size:11px;min-height:26px;padding:4px 6px}
 .agent-inbox .inbox-item-crumb{display:inline-flex;align-items:center;gap:6px;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .agent-inbox .inbox-item-toolbar-actions{margin-left:auto;flex-shrink:0}
-.agent-inbox .desktop-inbox{display:flex;flex:1;min-height:0;overflow-y:auto;scrollbar-width:none}
+.agent-inbox .desktop-inbox{display:flex;flex:1;min-height:0;overflow-y:auto}
 .agent-inbox .inbox-board{display:flex;flex-direction:column;width:100%;max-width:760px;margin:0 auto;padding:28px 30px}
 .agent-inbox .inbox-subject{display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--border);padding-bottom:18px}
 .agent-inbox .inbox-subject-title{font-size:22px;line-height:1.4;font-weight:550;overflow-wrap:anywhere;letter-spacing:-.015em}
@@ -62,7 +68,13 @@
 .agent-inbox .agent-inbox-empty p{font-size:12px;max-width:240px;line-height:1.6}
 .agent-inbox .agent-inbox-error{position:absolute;bottom:8px;left:8px;right:8px;padding:8px 12px;border:1px solid var(--danger);border-radius:7px;background:var(--surface);color:var(--danger);font-size:11px}
 .agent-inbox button:focus-visible{outline-offset:-2px}
-.agent-inbox .inbox-tasks-scroll::-webkit-scrollbar,.agent-inbox .desktop-inbox::-webkit-scrollbar{display:none}
+.agent-inbox :is(.inbox-tasks-scroll,.desktop-inbox){scrollbar-width:thin;scrollbar-color:var(--border) transparent;scrollbar-gutter:auto}
+.agent-inbox :is(.inbox-tasks-scroll,.desktop-inbox):hover{scrollbar-color:var(--muted) transparent}
+.agent-inbox :is(.inbox-tasks-scroll,.desktop-inbox)::-webkit-scrollbar{display:initial;width:6px;height:6px}
+.agent-inbox :is(.inbox-tasks-scroll,.desktop-inbox)::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.agent-inbox :is(.inbox-tasks-scroll,.desktop-inbox)::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+.agent-inbox :is(.inbox-tasks-scroll,.desktop-inbox)::-webkit-scrollbar-track,
+.agent-inbox :is(.inbox-tasks-scroll,.desktop-inbox)::-webkit-scrollbar-corner{background:transparent}
 @media(hover:hover){.agent-inbox .ui-list-row:has(>button.ui-list-row-main):hover:not([data-current=true]){background:var(--hover)}}
 @media(prefers-reduced-motion:reduce){.agent-inbox .ui-list-row{transition:none}.agent-inbox .inbox-view-controls .spinning{animation:none}}
 @container(max-width:420px){.agent-inbox .ui-toolbar{padding:8px 12px}.agent-inbox .inbox-search{padding-inline:12px}.agent-inbox .inbox-tasks-body{padding-inline:8px}.agent-inbox .inbox-board{padding:20px 16px}.agent-inbox .inbox-subject-title{font-size:20px}.agent-inbox .inbox-item-crumb{max-width:140px}}
