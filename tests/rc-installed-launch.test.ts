@@ -4,9 +4,11 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { installedSession } from '../scripts/rc-review/installed-session.ts';
 
 vi.mock('node:child_process', { spy: true });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 it('reports a signal-terminated launch without polling its CDP endpoint', async () => {
+  // Hosted test jobs set HARNESS_HERMES_PYTHON; this isn't a real-profile launch.
+  for (const key of Object.keys(process.env)) if (/^HARNESS_/i.test(key)) vi.stubEnv(key, undefined);
   const child = Object.assign(new EventEmitter(), { exitCode: null as number | null, signalCode: 'SIGTERM' });
   vi.mocked(spawn).mockReturnValueOnce(child as unknown as ChildProcess);
   const fetchProbe = vi.fn(async () => {
