@@ -1,3 +1,6 @@
+import Fastify from 'fastify';
+import type { ServerResponse } from 'node:http';
+import { registerAgentInventoryRoutes } from '../apps/server/agent-inventory-routes.ts';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -95,4 +98,31 @@ it('keeps delegated transcript reads read-only through the existing command and 
   const before = store.sequence, grants = store.all('resource');
   const denied = await app.inject({ method: 'POST', url: '/api/commands', headers: { ...headers, 'x-harness-csrf': bootstrap.csrfToken }, payload: { id: 'no-child-send', type: 'message.send', threadId: 'child', payload: { content: 'Try to send' } } });
   expect(denied.json().error.code).toBe('DELEGATE_READ_ONLY'); expect(store.sequence).toBe(before); expect(store.all('resource')).toEqual(grants);
+});
+
+
+it('releases the inventory subscription before preClose destroys the response', async () => {
+  const app = Fastify(), cleanup = vi.fn();
+  let raw!: ServerResponse;
+  app.addHook('onRequest', async (_request, reply) => { raw = reply.raw; });
+  registerAgentInventoryRoutes(app, {
+    authority: 'personal', inventory: vi.fn(), history: vi.fn(), content: vi.fn(), dispose: vi.fn(),
+    updates: () => ({ authority: 'personal', scopeKey: 'scope', fromSequence: 0, sequence: 0, resync: false, upserts: [], removed: [], ancestors: [], transcripts: [] }),
+    subscribe: () => cleanup,
+  });
+  const address = await app.listen({ host: '127.0.0.1', port: 0 }), controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  let releasedWhenDestroyed: number | undefined;
+  try {
+    await new Promise<void>((done, reject) => {
+      get(address + '/api/agents/events?after=0&scopeKey=scope', { signal: controller.signal }, response => {
+        response.once('data', () => done()); response.once('error', reject);
+      }).once('error', reject);
+    });
+    const destroy = raw.destroy.bind(raw);
+    vi.spyOn(raw, 'destroy').mockImplementation(error => { releasedWhenDestroyed ??= cleanup.mock.calls.length; return destroy(error); });
+    await app.close();
+    expect(releasedWhenDestroyed).toBe(1);
+    expect(cleanup).toHaveBeenCalledOnce();
+  } finally { clearTimeout(timeout); controller.abort(); await app.close(); }
 });
