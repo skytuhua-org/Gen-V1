@@ -4,7 +4,7 @@ import {Popover} from '../../../packages/ui-shell/Popover';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import {workareaBoundary} from './popover-boundary';
 import type {SkillCatalogEntry, SkillCatalogPage} from '../../../packages/contracts/skill-catalog';
-import {builtinOptions, commandToken, replaceCommandToken, type BuiltinCommand, type CommandMode, type SkillBinding} from './composer-commands';
+import {builtinOptions, commandToken, replaceCommandToken, type BuiltinCommand, type CommandMode, type CommandToken, type SkillBinding} from './composer-commands';
 import {getSkillCatalog, mergeSkillCatalogPages} from './skill-catalog-api';
 import './composer-commands.css';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
@@ -26,30 +26,72 @@ const reason = (item: SkillCatalogEntry) => item.availability.status === 'unavai
 export function ComposerCommands({ref, input, draft, threadId, projectId, disabled = false, mode, onDraft, onModel, onMode}: Props) {
   const id = useId(), content = useRef<HTMLDivElement>(null), request = useRef(0), loadingMore = useRef(false);
   const [position, setPosition] = useState({caret: 0, end: 0, focused: false, composing: false});
-  const [dismissed, setDismissed] = useState(''), [captured, setCaptured] = useState<{key: string; page: SkillCatalogPage} | null>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [active, setActive] = useState('model'), [reload, setReload] = useState(0);
+  const [dismissed, setDismissed] = useState(''), [closedAt, setClosedAt] = useState(''), [captured, setCaptured] = useState<{key: string; page: SkillCatalogPage} | null>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [active, setActive] = useState('model'), [reload, setReload] = useState(0);
   const token = position.focused && !position.composing && !disabled ? commandToken(draft, position.caret, position.end) : null;
-  const signature = token ? `${threadId ?? ''}:${projectId ?? ''}:${token.start}:${token.end}:${token.query}` : '';
-  const open = Boolean(token && signature !== dismissed), query = token?.query.replace(/^skill:/i, '') ?? '';
+  // Sticky dismissal (Escape, choosing an option) keys on the token's identity:
+  // editing inside the same token keeps it closed; a new token start reopens it.
+  const keyFor = (current: CommandToken | null) => current ? `${threadId ?? ''}:${projectId ?? ''}:${current.start}` : '';
+  const tokenKey = keyFor(token);
+  // The transient outside-dismissal keys on the token's contents, so any edit —
+  // including deleting and retyping a slash at the same position — reopens it.
+  const editKey = token ? `${tokenKey}:${token.end}:${token.query}` : '';
+  const open = Boolean(token && tokenKey !== dismissed && editKey !== closedAt), query = token?.query.replace(/^skill:/i, '') ?? '';
+  // An outside dismissal is consumed by the first edit diverging from the
+  // dismissed contents: once the palette could reopen, restoring the original
+  // text must not re-close it.
+  useEffect(() => {setClosedAt(previous => previous && previous !== editKey ? '' : previous);}, [editKey]);
+
   const catalogKey = JSON.stringify([threadId, projectId, query]), page = captured?.key === catalogKey ? captured.page : null;
   const unavailableSources = page?.sources.filter(source => source.availability.status === 'unavailable') ?? [];
   const options: Option[] = [...(token?.query.toLowerCase().startsWith('skill:') ? [] : builtinOptions(query, mode).map(builtin => ({id: builtin.id, builtin}))), ...(page?.skills ?? []).map(skill => ({id: skill.id, skill}))];
   const selected = options.find(option => option.id === active && available(option)) ?? options.find(available);
-  const close = () => setDismissed(signature);
-  useEffect(() => {setDismissed(previous => previous && previous !== signature ? '' : previous);}, [signature]);
+  const close = () => setDismissed(tokenKey);
+  // The dismissal keys on the token's start; read the live DOM here because a
+  // caret update can render before `draft` catches up, and the transient
+  // null-token key would otherwise clear the dismissal mid-keystroke.
+  // A non-collapsed selection also yields a null token, so fall back to the
+  // selection start: selecting inside the dismissed token must not clear it.
+  useEffect(() => {
+    setDismissed(previous => {
+      if (!previous) return previous;
+      const element = input.current, live = element ? (commandToken(element.value, element.selectionStart, element.selectionEnd) ?? commandToken(element.value, element.selectionStart)) : null;
+      return previous !== keyFor(live) ? '' : previous;
+    });
+  }, [tokenKey, input, threadId, projectId]);
   useLayoutEffect(() => {
     const element = input.current; if (!element) return;
-    const update = () => setPosition(previous => {
+    // Invalidation must run in the native listener, not only in a keyed effect:
+    // when caret leaps out and back within one render batch (Home then End in
+    // quick succession), the intermediate commit can be skipped, and an effect
+    // would never observe the exit. Functional updates still execute in order.
+    const invalidate = () => {
+      // Snapshot this event's selection before React can defer the updater.
+      const live = commandToken(element.value, element.selectionStart, element.selectionEnd) ?? commandToken(element.value, element.selectionStart);
+      const key = keyFor(live);
+      setDismissed(previous => previous && previous !== key ? '' : previous);
+    };
+    const track = () => setPosition(previous => {
       const next = {...previous, caret: element.selectionStart, end: element.selectionEnd, focused: element.ownerDocument.activeElement === element};
       return Object.keys(next).every(key => next[key as keyof typeof next] === previous[key as keyof typeof next]) ? previous : next;
     });
+    const update = () => {invalidate(); track();};
     const start = () => setPosition(previous => ({...previous, composing: true}));
     const finish = () => {setPosition(previous => ({...previous, composing: false})); update();};
-    const focus = () => {setDismissed(''); update();};
+    // On refocus, re-dismiss only when the caret is already inside a token:
+    // keep the dismissal when it is the same token, drop it for a different
+    // token so that one can open. Outside any token there is nothing to open,
+    // so the dismissal is preserved for the next edit in place.
+    // Invalidation is skipped here: at focus time the browser has not yet
+    // restored the selection, which transiently reads as caret zero.
+    const focus = () => {
+      const key = keyFor(commandToken(element.value, element.selectionStart, element.selectionEnd));
+      setDismissed(previous => key && key !== previous ? '' : previous); setClosedAt(''); track();
+    };
     for (const name of ['select', 'click', 'keyup', 'input']) element.addEventListener(name, update);
     element.addEventListener('focus', focus);
     element.addEventListener('compositionstart', start); element.addEventListener('compositionend', finish); update();
     return () => {for (const name of ['select', 'click', 'keyup', 'input']) element.removeEventListener(name, update); element.removeEventListener('focus', focus); element.removeEventListener('compositionstart', start); element.removeEventListener('compositionend', finish);};
-  }, [input]);
+  }, [input, threadId, projectId]);
   useLayoutEffect(() => {const element = input.current; if (element) setPosition(previous => ({...previous, caret: element.selectionStart, end: element.selectionEnd, focused: element.ownerDocument.activeElement === element}));}, [draft, input]);
   useEffect(() => {
     const generation = ++request.current, controller = new AbortController(); loadingMore.current = false; setCaptured(null); setError('');
@@ -121,7 +163,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
     return () => {element.removeAttribute('aria-haspopup'); element.removeAttribute('aria-controls'); element.removeAttribute('aria-autocomplete'); element.removeAttribute('aria-activedescendant');};
   }, [open, selected?.id, id, input]);
   return <>
-    <Popover anchor={input} contentRef={content} open={open} getBoundary={()=>workareaBoundary(input.current)} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={close} className="composer-command-popover">
+    <Popover anchor={input} contentRef={content} open={open} getBoundary={()=>workareaBoundary(input.current)} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={() => setClosedAt(editKey)} className="composer-command-popover">
       <div id={id} role="listbox" aria-label="Commands and skills" className="composer-command-list" onScroll={event => {const list = event.currentTarget; if (list.scrollHeight - list.scrollTop - list.clientHeight < 80) void loadMore();}}>
         {options.map(option => <div key={option.id} id={id + '-' + option.id} role="option" aria-selected={selected?.id === option.id} aria-disabled={!available(option)} className="composer-command-option" onPointerMove={() => {if (available(option)) setActive(option.id);}} onPointerDown={event => event.preventDefault()} onClick={() => void choose(option)}>
           {'builtin' in option ? <><span className="composer-command-name">/{option.builtin.id}</span><span className="composer-command-description">{option.builtin.description}</span></> : <><span className="composer-command-name">/skill:{option.skill.name}</span><span className="composer-command-description" title={option.skill.description}>{reason(option.skill) || option.skill.description}</span><span className="composer-command-source">{page?.sources.find(source => source.id === option.skill.sourceId)?.label}</span></>}
