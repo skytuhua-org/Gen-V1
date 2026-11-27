@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BenchmarkMeasurement, BenchmarkRecord, BenchmarkRun } from '../packages/contracts/implementation-evidence.ts';
 import { benchmarkReportHtml } from '../scripts/research-baseline.ts';
+import {startupBudgetFailures} from '../scripts/bench-startup.ts';
 
 const unavailable: BenchmarkMeasurement = {
   elapsedMs: null, coldStartMs: null, firstPublicResponseMs: null, requests: null,
@@ -59,4 +60,30 @@ describe('M01 unavailable paired benchmark evidence', () => {
     expect(result.map(row => row[4])).toEqual(['SETUP_FAILED', 'EXPECTED_NEGATIVE']);
     for (const row of result) expect(row.slice(6, 17)).toEqual(Array(11).fill('unavailable'));
   });
+});
+
+const measurement=(name:string,value:number,samples_ms=[value])=>({name,samples_ms,p50:value,p95:value});
+const host=()=>[measurement('review_host_boot_ms',100),measurement('snapshot_serialize_ms',10),measurement('store_snapshot_ms',10)];
+const browser=()=>[measurement('first_render_ms',600),measurement('split_interaction_ms',150)];
+
+describe('startup benchmark budget gate',()=>{
+ it('refuses both zero-sample and omitted required metrics',()=>{
+  const reports=[...host(),measurement('first_render_ms',0,[])];
+  expect(startupBudgetFailures(reports,false)).toEqual(['BUDGET first_render_ms has no samples.','BUDGET split_interaction_ms has no samples.']);
+ });
+
+ it('does not treat a host or browser arm as measured just because its zero summary meets the ceiling',()=>{
+  const reports=[...host().slice(1),...browser()];
+  expect(startupBudgetFailures(reports,false)).toEqual(['BUDGET review_host_boot_ms has no samples.']);
+ });
+
+ it('excludes browser budgets only for an explicit host-only run',()=>{
+  expect(startupBudgetFailures(host(),true)).toEqual([]);
+  expect(startupBudgetFailures(host(),false)).toHaveLength(2);
+ });
+
+ it('preserves performance checks on observed metrics and ignores unbudgeted arms',()=>{
+  expect(startupBudgetFailures([...host(),...browser(),measurement('host_boot_ms',0,[])],false)).toEqual([]);
+  expect(startupBudgetFailures([...host(),measurement('first_render_ms',755),browser()[1]!],false)).toEqual(['BUDGET first_render_ms p95 755ms > 754.51ms']);
+ });
 });
