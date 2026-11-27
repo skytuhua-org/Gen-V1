@@ -24,6 +24,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('browser-action'),
   suite('background-work'),
   suite('compact-model-picker', ['compact-model-picker.spec.ts', 'model-composer-refinement.spec.ts', 'subscription-accounts.spec.ts']),
+  suite('prompt-snippets', ['prompt-snippets.spec.ts']),
   suite('ui-shell-overlays'),
   suite('file-checkpoints'),
   suite('m08-restore', ['m08-restore-ui.spec.ts', 'm08-pr-checks.spec.ts']),
