@@ -504,7 +504,7 @@ export class DurableWakeupScheduler {
    * its firing held until the explicit resume, and a disabled feature never
    * executes — the occurrence stays durable for an enabled resume/recover. */
   private deliverHeld(wakeup: WakeupRecord): void {
-    if (!this.enabled() || wakeup.paused || wakeup.state !== "PENDING") return;
+    if (this.draining || !this.enabled() || wakeup.paused || wakeup.state !== "PENDING") return;
     for (const occurrence of this.store.all<BackgroundOccurrenceV1>("backgroundOccurrence").filter(item => item.wakeupId === wakeup.wakeupId && item.state === "PENDING" && item.dispatch === "NOT_DISPATCHED")) {
       const delivery = this.claimOccurrence(wakeup.wakeupId, occurrence.occurrenceKey, {
         scheduledDueAtMs: occurrence.scheduledDueAtMs, hostEventId: occurrence.hostEventId,
