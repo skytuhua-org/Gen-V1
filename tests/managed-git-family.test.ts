@@ -1,4 +1,15 @@
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
+const cleanupControl = vi.hoisted(() => ({ failures: 0 }));
+// Inject one cleanup removal failure per armed snapshot: the read-only guard
+// deliberately blocks in-place substitution inside the action, so a post-hoc
+// corrupted removal cannot be simulated through the filesystem on Windows.
+vi.mock('../packages/core/file-access.ts', async importOriginal => {
+  const original = await importOriginal<typeof import('../packages/core/file-access.ts')>();
+  return { ...original, removeOwnedFile: async (...args: Parameters<typeof original.removeOwnedFile>) => {
+    if (cleanupControl.failures > 0 && args[4] === false) { cleanupControl.failures -= 1; throw new Error('injected cleanup failure'); }
+    return original.removeOwnedFile(...args);
+  } };
+});
 import {execFileSync} from 'node:child_process';
 import {lstat,mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -87,4 +98,18 @@ it.each(['identity','common identity','git identity','pointer','backref','common
  if(change==='config')await writeFile(join(f.family.commonDirectory,'config'),'[include]\npath = elsewhere\n');
  if(change==='alternates')await writeFile(join(f.family.commonDirectory,'objects','info','alternates'),'elsewhere\n');
  await expect(snapshot(f.path,f.family,async()=>true)).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+});
+
+it('keeps cleaning a snapshot when one removal fails, without hiding the real outcome',async()=>{
+ const f=await fixture();
+ // One injected removal failure per snapshot: remaining removals still run.
+ cleanupControl.failures=1;
+ const warn=vi.spyOn(process.stderr,'write').mockImplementation(()=>true);
+ await expect(snapshot(f.base,undefined,async()=> 'done')).resolves.toBe('done');
+ expect(warn).toHaveBeenCalledWith(expect.stringContaining('Git snapshot temporary entry'));
+ expect(cleanupControl.failures).toBe(0);
+ // The operation's own failure wins; cleanup errors ride as `suppressed`.
+ cleanupControl.failures=1;
+ await expect(snapshot(f.base,undefined,async()=>{throw Error('primary failure');})).rejects.toMatchObject({message:'primary failure',suppressed:expect.objectContaining({name:'AggregateError'})});
+ expect(cleanupControl.failures).toBe(0);
 });

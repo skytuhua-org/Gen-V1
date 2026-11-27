@@ -30,6 +30,15 @@ it('treats the write as the acknowledgment: a failing refresh is not a failed sa
  await expect(settleSettingsOperations()).resolves.toBeUndefined();
 });
 
+it('retries a transient refresh failure once without repeating the write', async () => {
+ const write = vi.fn(async () => 'saved');
+ let failures = 1;
+ const refresh = vi.fn(async () => { if (failures) { failures--; throw Error('refresh unavailable'); } });
+ await expect(persistSettingsChange(write, refresh)).resolves.toBeUndefined();
+ expect(write).toHaveBeenCalledOnce();
+ expect(refresh).toHaveBeenCalledTimes(2);
+});
+
 it('does not hold the handoff on a pending refresh once the write settled', async () => {
  let release!: () => void;
  const action = persistSettingsChange(async () => 'saved', () => new Promise<void>(resolve => { release = resolve; }));

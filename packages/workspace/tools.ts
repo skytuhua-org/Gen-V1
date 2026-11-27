@@ -11,7 +11,7 @@ import {WorkspaceRepository} from '../core/workspace-layout.ts';
 import {assertNotStorage,canonical,inside} from '../core/security.ts';
 import {gitExecutable} from '../capabilities/process.ts';
 import {readBoundFile,withPathGuard} from '../core/file-access.ts';
-import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
+import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,statusBranch,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead,type GitHistoryCommitDetail,type GitHistoryPage,type GitHistoryPatch} from '../contracts/code-review.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
 import {GitHistorySnapshots,readHistoryCommit,readHistoryFile,readHistoryPage} from './git-history.ts';
@@ -27,14 +27,34 @@ const equal=(a:Identity,b:Identity)=>a.dev===b.dev&&a.ino===b.ino;
 const pathName=z.string().min(1).max(1024).refine(path=>!path.includes('\0')&&!path.includes(':')&&!/^[\\/]|(?:^|[\\/])\.\.(?:[\\/]|$)/.test(path),'Choose a file inside the project.');
 // Git metadata is never project content, whatever its case or nesting depth.
 const gitSegment=(value:string)=>value.split(/[\\/]/).some(part=>part.toLowerCase()==='.git');
-async function untrackedDigest(path:string,signal:AbortSignal){
- return withPathGuard([{path,leaf:true,readOnly:true}],signal,async()=>{
-  const file=await open(path,'r');try{const info=await file.stat({bigint:true});if(!info.isFile()||info.nlink!==1n)throw new HarnessError('CAPABILITY_DENIED','Changed paths must be ordinary files.');
-   const digest=createHash('sha256'),buffer=Buffer.alloc(1024*1024);let offset=0,binary=false;
-   while(offset<Number(info.size)){if(signal.aborted)throw new HarnessError('CANCELLED','Git review cancelled.');const part=await file.read(buffer,0,Math.min(buffer.length,Number(info.size)-offset),offset);if(!part.bytesRead)throw new HarnessError('CAPABILITY_DENIED','Changed file changed during review.');const bytes=buffer.subarray(0,part.bytesRead);digest.update(bytes);binary ||= bytes.includes(0);offset+=part.bytesRead;}
-   return{hash:digest.digest('hex'),binary};
-  }finally{await file.close();}
- });
+async function untrackedDigestBytes(path:string,signal:AbortSignal){
+ const file=await open(path,'r');try{const info=await file.stat({bigint:true});if(!info.isFile()||info.nlink!==1n)throw new HarnessError('CAPABILITY_DENIED','Changed paths must be ordinary files.');
+  const digest=createHash('sha256'),buffer=Buffer.alloc(1024*1024);let offset=0,binary=false;
+  while(offset<Number(info.size)){if(signal.aborted)throw new HarnessError('CANCELLED','Git review cancelled.');const part=await file.read(buffer,0,Math.min(buffer.length,Number(info.size)-offset),offset);if(!part.bytesRead)throw new HarnessError('CAPABILITY_DENIED','Changed file changed during review.');const bytes=buffer.subarray(0,part.bytesRead);digest.update(bytes);binary ||= bytes.includes(0);offset+=part.bytesRead;}
+  return{hash:digest.digest('hex'),binary};
+ }finally{await file.close();}
+}
+// Digest each untracked path under as few guard acquisitions as the broker
+// allows: at most 256 paths and ~48 KiB of JSON per acquire — a request over
+// the broker's 64 KiB line limit makes it exit mid-session. Order and error
+// propagation match the previous per-file loop.
+async function untrackedDigests(paths:string[],signal:AbortSignal){
+ const results:{hash:string,binary:boolean}[]=[];
+ let i=0;
+ while(i<paths.length){
+  let bytes=0,j=i;
+  while(j<paths.length&&j-i<256){
+   const next=paths[j].length+64;
+   if(j>i&&bytes+next>48*1024)break;
+   bytes+=next;j++;
+  }
+  const batch=paths.slice(i,j);
+  await withPathGuard(batch.map(path=>({path,leaf:true,readOnly:true})),signal,async()=>{
+   for(const path of batch)results.push(await untrackedDigestBytes(path,signal));
+  });
+  i=j;
+ }
+ return results;
 }
 
 /** Remove a working copy that preparation did not bind. The branch is deleted only when this call created it. */
@@ -143,19 +163,43 @@ export class ProjectTools{
  }
  private async status(metadata:string,path:string,signal:AbortSignal,managed:boolean):Promise<GitStatus>{
   const git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
-  const head=(await git(['rev-parse','HEAD'])).trim(),branch=(await git(['branch','--show-current'])).trim(),raw=await git(['status','--porcelain=v1','-z',managed?'--untracked-files=all':'--untracked-files=no']),diff=await git(['diff','--full-index','--no-ext-diff','--no-textconv']),stagedDiff=await git(['diff','--cached','--full-index','--no-ext-diff','--no-textconv']),files:GitFile[]=[],untracked:string[]=[];
-  const entries=raw.split('\0');for(let i=0;i<entries.length;i++){
-   const entry=entries[i];if(!entry)continue;const index=entry[0]!,worktree=entry[1]!,name=entry.slice(3),oldPath=/[RC]/.test(index+worktree)?entries[++i]:undefined;
+  const head=(await git(['rev-parse','HEAD'])).trim(),raw=await git(['status','--porcelain=v1','-b','-z',managed?'--untracked-files=all':'--untracked-files=no']),diff=await git(['diff','--full-index','--no-ext-diff','--no-textconv']),stagedDiff=await git(['diff','--cached','--full-index','--no-ext-diff','--no-textconv']),files:GitFile[]=[],untracked:string[]=[];
+  const entries=raw.split('\0'),header=entries[0]??'';entries.shift();
+  const branch=statusBranch(header);
+  const pending:{name:string,item:GitFile}[]=[];for(let i=0;i<entries.length;i++){
+   const entry=entries[i]!;if(!entry)continue;const index=entry[0]!,worktree=entry[1]!,name=entry.slice(3),oldPath=/[RC]/.test(index+worktree)?entries[++i]:undefined;
    if(!pathName.safeParse(name).success)throw new HarnessError('UNSUPPORTED_PATH',`The Git entry ${JSON.stringify(name.slice(0,80))} is not a supported project path.`);
    if(name.split('/').at(-1)==='.harness-directory-guard')continue;
    const item:GitFile={path:name,...(oldPath?{oldPath}:{}),index,worktree,staged:index!==' '&&index!=='?',untracked:index==='?',binary:false,added:null,removed:null};files.push(item);
-   if(item.untracked){const data=await untrackedDigest(join(path,name),signal);item.binary=data.binary;untracked.push(name+':'+data.hash);}
+   if(item.untracked)pending.push({name,item});
   }
+  const digests=await untrackedDigests(pending.map(({name})=>join(path,name)),signal);
+  pending.forEach(({name,item},i)=>{const data=digests[i]!;item.binary=data.binary;untracked.push(name+':'+data.hash);});
   const stats=(await git(['diff','--numstat','-z','--no-ext-diff','--no-textconv','HEAD'])).split('\0');
   for(let i=0;i<stats.length;i++){const row=stats[i];if(!row)continue;const[added,removed,...parts]=row.split('\t');let name=parts.join('\t');if(!name){i++;name=stats[++i]??'';}const item=files.find(item=>item.path===name);if(item){item.binary=added==='-';item.added=item.binary?null:Number(added);item.removed=item.binary?null:Number(removed);}}
   return{head,branch,revision:hash(JSON.stringify([head,branch,raw,diff,stagedDiff,untracked])),files,diff,stagedDiff,truncated:false,mode:managed?'managed':'legacy',gitWrite:managed,untrackedIncluded:managed};
  }
  async gitStatus(projectId:string,threadId?:string):Promise<GitStatus>{return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed)=>this.status(metadata,path,signal,managed)));}
+ /** Read-only undo eligibility shared by the context preview and the write-time recheck. */
+ private async undoEligibility(git:(args:string[])=>Promise<string>,managed:boolean,busy:boolean):Promise<{eligible:boolean;reason?:string;head?:string;branch?:string;subject?:string}>{
+  if(!managed)return{eligible:false,reason:'Undo needs a managed working copy.'};
+  let head='';try{head=(await git(['rev-parse','--verify','HEAD'])).trim();}catch{return{eligible:false,reason:'Refresh project details to check the last commit.'};}
+  const branch=(await git(['branch','--show-current'])).trim();
+  if(!branch)return{eligible:false,reason:'Detached HEAD cannot be undone here.'};
+  const parents=(await git(['rev-list','--parents','-n','1','HEAD'])).trim().split(/\s+/);
+  if(parents.length===1)return{eligible:false,reason:"The first commit can't be undone."};
+  if(parents.length>2)return{eligible:false,reason:"Merge commits can't be undone."};
+  // Local-only: any remote-tracking ref containing HEAD blocks undo, whatever its name.
+  if((await git(['for-each-ref','--format=%(refname)','--contains',head,'refs/remotes'])).trim())return{eligible:false,reason:'This commit is on a remote-tracking branch.'};
+  if(busy)return{eligible:false,reason:'Wait for the run to finish.'};
+  const subject=(await git(['log','-1','--format=%s',head])).trim().slice(0,500);
+  return{eligible:true,head,branch,subject};
+ }
+ private workspaceBusy(binding:{workspace?:WorkspaceBinding}):boolean{
+  const workspace=binding.workspace;if(!workspace)return false;
+  const owner=this.store.get<Thread>('thread',workspace.threadId);
+  return Boolean(owner&&(owner.runId||owner.status==='working'));
+ }
  /** Read-only origin through the same attested managed/legacy Git boundary. */
  async gitReviewOrigin(projectId:string,threadId?:string){return this.exclusive(projectId,async()=>{
   const binding=await this.binding(projectId,threadId),signal=new AbortController().signal;
@@ -204,12 +248,27 @@ export class ProjectTools{
   }));
  }
  async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string}){
+  const binding=await this.binding(projectId,threadId);
   return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
    const current=await this.status(metadata,path,signal,managed);if(input.revision!==current.revision)throw new HarnessError('REVISION_CHANGED','The worktree changed. Refresh the review before applying this action.');const paths=z.array(pathName).min(1).max(1000).optional().parse(input.paths),git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
    if(input.type==='stage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to stage.');await git(['add','--',...paths]);}
    else if(input.type==='unstage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to unstage.');await git(['restore','--staged','--',...paths]);}
    else if(input.type==='commit')await git(['-c','commit.gpgsign=false','commit','-m',z.string().trim().min(1).max(4000).parse(input.message)]);
    else if(input.type==='branch'){const branch=z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]{0,150}$/).refine(value=>!value.endsWith('/')&&!value.includes('//')).parse(input.name);await git(['switch','-c',branch]);}
+   else if(input.type==='undo'){
+    const eligibility=await this.undoEligibility(git,managed,this.workspaceBusy(binding));
+    if(!eligibility.eligible)throw new HarnessError('CAPABILITY_DENIED',eligibility.reason??'The last commit cannot be undone.');
+    const message=(await git(['log','-1','--format=%B',eligibility.head!])).trim();
+    // Runs are admitted without this lock, so re-fence right before and right
+    // after the reset; a run that landed in between rolls the pointer back.
+    if(this.workspaceBusy(binding))throw new HarnessError('RUN_ACTIVE','Wait for the run to finish.');
+    await git(['reset','--soft','HEAD^']);
+    if(this.workspaceBusy(binding)){await git(['reset','--soft',eligibility.head!]).catch(()=>{});throw new HarnessError('RUN_ACTIVE','Wait for the run to finish.');}
+    // A patch larger than the read cap would fail status after the write;
+    // keep the confirmed receipt with the fresh head instead.
+    let after:GitStatus;try{after=await this.status(metadata,path,signal,managed);}catch{after={...current,head:(await git(['rev-parse','--verify','HEAD'])).trim()};}
+    return{...after,undo:{undoneHead:eligibility.head!,head:after.head,message}};
+   }
    else throw new HarnessError('INVALID_INPUT','Unknown Git action.');return this.status(metadata,path,signal,managed);
   }));
  }
@@ -217,14 +276,21 @@ export class ProjectTools{
   const admitted=await this.binding(projectId,threadId),project=admitted.project,captured=threadId?this.store.get<Thread>('thread',threadId):undefined,threadRevision=captured?threadNavigationRevision(captured):undefined;
   const lineage=this.store.all<Thread>('thread').filter(item=>item.projectId===project.id).map(item=>({id:item.id,title:item.title,status:item.status,parentThreadId:item.parentThreadId,kind:item.kind})),scripts=this.store.all<{id:string;name:string;command:string;projectId:string}>('projectScript').filter(item=>item.projectId===project.id);
   let status:GitStatus|undefined,error:string|undefined;try{status=await this.gitStatus(projectId,threadId);}catch(reason){error=reason instanceof Error?reason.message:'Project status is unavailable.';}
+  let undo:ProjectContext['undo'];if(status?.gitWrite){try{undo=await this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,async(metadata,path,signal,managed)=>this.undoEligibility(args=>nativeGit(this.gitExecutable(),metadata,path,args,signal),managed,this.workspaceBusy(admitted))));}catch{undo={eligible:false,reason:'Refresh project details to check the last commit.'};}}
   const current=await this.binding(projectId,threadId),latest=threadId?this.store.get<Thread>('thread',threadId):undefined;
   if(current.path!==admitted.path||current.workspace?.id!==admitted.workspace?.id||threadId&&(!captured||!latest||threadNavigationRevision(latest)!==threadRevision))throw new HarnessError('REVISION_CHANGED','Conversation metadata changed. Retry the current thread.');
-  return{project,...(threadId?{threadId,threadRevision}:{}),...(admitted.workspace?{workingCopy:{id:admitted.workspace.id,path:admitted.path}}:{}),machineName:hostname(),editor:{available:true,label:'Default editor'},branch:status?.branch??null,head:status?.head??null,...(status?{revision:status.revision}:{}),changes:{added:status?status.files.reduce((sum,file)=>sum+(file.added??0),0):null,removed:status?status.files.reduce((sum,file)=>sum+(file.removed??0),0):null,files:status?.files.length??null},lineage,scripts,capabilities:{git:!!status,gitWrite:status?.gitWrite??false,untrackedIncluded:status?.untrackedIncluded??false,terminal:!!project.rootPath,pullRequests:!!status?.gitWrite},...(error?{error}:{})};
+  return{project,...(threadId?{threadId,threadRevision}:{}),...(admitted.workspace?{workingCopy:{id:admitted.workspace.id,path:admitted.path}}:{}),machineName:hostname(),editor:{available:true,label:'Default editor'},branch:status?.branch??null,head:status?.head??null,...(status?{revision:status.revision}:{}),changes:{added:status?status.files.reduce((sum,file)=>sum+(file.added??0),0):null,removed:status?status.files.reduce((sum,file)=>sum+(file.removed??0),0):null,files:status?.files.length??null},lineage,scripts,...(undo?{undo}:{}) ,capabilities:{git:!!status,gitWrite:status?.gitWrite??false,untrackedIncluded:status?.untrackedIncluded??false,terminal:!!project.rootPath,pullRequests:!!status?.gitWrite},...(error?{error}:{})};
  }
  async files(projectId:string,threadId:string|undefined,relativePath=''){
-  const{path}=await this.binding(projectId,threadId),target=relativePath?join(path,pathName.parse(relativePath)):path,resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Files stay inside the selected worktree.');
-  return withPathGuard([{path:target,leaf:false}],new AbortController().signal,async()=>{const{readdir}=await import('node:fs/promises'),entries=[];for(const item of(await readdir(target,{withFileTypes:true})).slice(0,500)){if(item.name.toLowerCase()==='.git'||item.name==='.harness-directory-guard'||item.isSymbolicLink())continue;entries.push({name:item.name,path:relativePath?relativePath+'/'+item.name:item.name,kind:item.isDirectory()?'directory':'file'});}return{path:relativePath,entries};});
+  const admitted=await this.binding(projectId,threadId),path=admitted.path,target=relativePath?join(path,pathName.parse(relativePath)):path,resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Files stay inside the selected worktree.');
+  const bindingId=this.filesBindingId(admitted);
+  return withPathGuard([{path:target,leaf:false}],new AbortController().signal,async()=>{const{readdir}=await import('node:fs/promises'),entries=[];for(const item of(await readdir(target,{withFileTypes:true})).slice(0,500)){if(item.name.toLowerCase()==='.git'||item.name==='.harness-directory-guard'||item.isSymbolicLink())continue;entries.push({name:item.name,path:relativePath?relativePath+'/'+item.name:item.name,kind:item.isDirectory()?'directory':'file'});}return{path:relativePath,bindingId,entries};});
  }
- async file(projectId:string,threadId:string|undefined,relativePath:string){const{path}=await this.binding(projectId,threadId),target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data)};});}
+ /** Opaque digest of the admitted checkout binding: managed worktree identity or the enrolled root identity. Excludes HEAD, content and browsed directory so ordinary edits and browsing do not change it. */
+ private filesBindingId(admitted:{project:ProjectSummary;workspace?:WorkspaceBinding}):string{
+  const root=this.store.get<{identity:Identity}>('workspaceProjectRoot',admitted.project.id);
+  return hash('gen-files-binding:v1\0'+JSON.stringify(admitted.workspace?['managed',admitted.project.id,admitted.workspace.id,admitted.workspace.identity.dev,admitted.workspace.identity.ino]:['legacy',admitted.project.id,root?.identity.dev??'',root?.identity.ino??'']));
+ }
+ async file(projectId:string,threadId:string|undefined,relativePath:string){const admitted=await this.binding(projectId,threadId),path=admitted.path,target=join(path,pathName.parse(relativePath)),resolved=await realpath(target);if(!inside(path,resolved)||gitSegment(relative(path,resolved))||gitSegment(relativePath))throw new HarnessError('CAPABILITY_DENIED','Choose a source file inside this worktree.');const bindingId=this.filesBindingId(admitted);return withPathGuard([{path:target,leaf:true,readOnly:true}],new AbortController().signal,async()=>{const data=await readBoundFile(target,1024*1024);return{text:data.includes(0)?null:data.toString('utf8'),binary:data.includes(0),sha256:hash(data),bindingId};});}
  async dispose(){await Promise.allSettled([...this.queues.values()]);}
 }
