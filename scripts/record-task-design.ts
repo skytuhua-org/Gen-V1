@@ -15,6 +15,7 @@ import {taskDesignScenes,TASK_DESIGN_SELECTORS,TASK_DESIGN_PROVENANCE,type TaskD
 
 const argument=(name:string)=>{const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1];};
 const requestedTheme=captureTheme(argument('--theme'));
+const cursorMode:'synthetic'|'none'=process.argv.includes('--no-cursor')?'none':'synthetic';
 const scenes=taskDesignScenes(),advertised=CAPABILITIES.map(item=>item.name).sort();
 const componentNames=(scene:TaskDesignScene)=>[...new Set(Object.values(scene.spec.elements).map(node=>node.type))].sort();
 for(const scene of scenes)validateSurface(scene.spec);
@@ -22,7 +23,7 @@ const missing=advertised.filter(name=>!scenes.some(scene=>componentNames(scene).
 if(missing.length)throw new Error('Recording scenes omit advertised components: '+missing.join(', '));
 for(const name of advertised)if(!TASK_DESIGN_SELECTORS[name])throw new Error('No visible selector for '+name);
 if(process.argv.includes('--list')||process.argv.includes('--dry-run')){
- console.log(JSON.stringify({provenance:TASK_DESIGN_PROVENANCE,advertised,missing,scenes:scenes.map(scene=>({id:scene.id,title:scene.title,components:componentNames(scene)})),command:'pnpm exec tsx scripts/record-task-design.ts --output <fresh-directory> [--stills-only] [--scenes id,id] [--variants light,dark,narrow]'},null,2));
+ console.log(JSON.stringify({provenance:TASK_DESIGN_PROVENANCE,advertised,missing,scenes:scenes.map(scene=>({id:scene.id,title:scene.title,components:componentNames(scene)})),command:'pnpm exec tsx scripts/record-task-design.ts --output <fresh-directory> [--stills-only] [--scenes id,id] [--variants light,dark,narrow] [--no-cursor]'},null,2));
 }else await record();
 
 type Fixture=Awaited<ReturnType<typeof serveTaskFixture>>;
@@ -83,7 +84,7 @@ async function record(){
  const variants=stills?(argument('--variants')??'light,dark,narrow').split(','):['recording'];if(variants.some(value=>!['light','dark','narrow','recording'].includes(value)))throw new Error('Variants: light,dark,narrow');
  const output=resolve(argument('--output')??`docs/evidence/task-specific-ui-${new Date().toISOString().replace(/[:.]/g,'-')}`);await mkdir(output,{recursive:true});
  try{await access(join(output,'manifest.json'));throw new Error('Choose a fresh output directory; prior evidence will not be overwritten.');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
- const manifest={provenance:TASK_DESIGN_PROVENANCE,renderer:'Actual Vite source renderer on an exclusively owned loopback server; HTTP/SSE protocol is intercepted by explicit fixtures.',mode:stills?'stills':'video',createdAt:new Date().toISOString(),advertised,sourceCompositionPairs:[['time-offered','time-visits'],['review-copy','review-patch'],['investigation-failure','investigation-latency']].filter(pair=>pair.every(id=>selected.some(scene=>scene.id===id))),captures:[] as SceneResult[],coverage:[] as Observation[],missing:advertised.slice()};
+ const manifest={provenance:TASK_DESIGN_PROVENANCE,cursorMode,renderer:'Actual Vite source renderer on an exclusively owned loopback server; HTTP/SSE protocol is intercepted by explicit fixtures.',mode:stills?'stills':'video',createdAt:new Date().toISOString(),advertised,sourceCompositionPairs:[['time-offered','time-visits'],['review-copy','review-patch'],['investigation-failure','investigation-latency']].filter(pair=>pair.every(id=>selected.some(scene=>scene.id===id))),captures:[] as SceneResult[],coverage:[] as Observation[],missing:advertised.slice()};
  const save=async()=>{manifest.coverage=manifest.captures.flatMap(result=>result.observations);manifest.missing=advertised.filter(name=>!manifest.coverage.some(row=>row.component===name));await writeFile(join(output,'manifest.json'),JSON.stringify(manifest,null,2));};
  const owned=await startVite();let browser:Awaited<ReturnType<typeof openCaptureBrowser>>|undefined;
  try{
@@ -96,7 +97,7 @@ async function record(){
    let stop:undefined|(()=>Promise<Record<string,unknown>>);let started=performance.now();const base=scene.id+'-'+variant,observed=new Set<string>(),interactions=new Map<string,string>();
    try{
     const host=await installFixture(page,scene,theme,stills);await page.goto('http://127.0.0.1:5465/');await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeVisible();
-    if(stills){audit.reset();}else{result.video=base+'.mp4';stop=await recordWindow(browser.server,page,join(output,result.video));started=performance.now();await delay(900);await host.publishInitial();}
+    if(stills){audit.reset();}else{result.video=base+'.mp4';stop=await recordWindow(browser.server,page,join(output,result.video),{cursor:cursorMode});started=performance.now();await delay(900);await host.publishInitial();}
     await expect(page.locator('.artifact')).toBeVisible();if(stills)audit.reset();await audit.assert();
     if(scene.id==='document')await expect(page.locator('.document-preview')).toHaveAttribute('data-preview-state','ready',{timeout:25000});
     if(scene.id==='image-work')await expect(page.locator('.image-compare-stage')).toHaveAttribute('data-ready','true');
@@ -126,7 +127,7 @@ async function record(){
    finally{try{await context.close();}finally{await save();}}
   }
   if(!wanted)expect(manifest.missing,'Every advertised component has visible chapter evidence').toEqual([]);
-  await writeFile(join(output,'index.html'),reviewIndex(manifest));await writeFile(join(output,'README.md'),`# Task-specific interface review\n\n${TASK_DESIGN_PROVENANCE}\n\nOpen index.html for chaptered recordings or captures. manifest.json records per-component visible selector evidence, state interactions and failures. No fixture is claimed as genuine generation, approved execution or production-host acceptance.\n\nCommand: pnpm exec tsx scripts/record-task-design.ts --output <fresh-directory>${stills?' --stills-only':''}\n`);console.log('REVIEW_OUTPUT '+output);
+  await writeFile(join(output,'index.html'),reviewIndex(manifest));await writeFile(join(output,'README.md'),`# Task-specific interface review\n\n${TASK_DESIGN_PROVENANCE}\n\nOpen index.html for chaptered recordings or captures. manifest.json records per-component visible selector evidence, state interactions, cursor mode and failures. Cursor mode is ${cursorMode}; pass --no-cursor to omit the synthetic cursor overlay in a fresh recording context. No fixture is claimed as genuine generation, approved execution or production-host acceptance.\n\nCommand: pnpm exec tsx scripts/record-task-design.ts --output <fresh-directory>${stills?' --stills-only':''}${cursorMode==='none'?' --no-cursor':''}\n`);console.log('REVIEW_OUTPUT '+output);
  }finally{try{await browser?.browser.close();}finally{try{await browser?.server.close();}finally{await owned.stop();await save();}}}
 }
 

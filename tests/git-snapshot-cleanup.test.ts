@@ -38,7 +38,7 @@ vi.mock('../packages/core/file-access.ts',async importOriginal=>{
 const {withGitMetadata}=await import('../packages/capabilities/git-access.ts');
 
 const roots:string[]=[];
-afterEach(async()=>{for(const root of roots.splice(0))await rm(root,{recursive:true,force:true,maxRetries:5});});
+afterEach(async()=>{vi.restoreAllMocks();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true,maxRetries:5});});
 const git=(cwd:string,...args:string[])=>execFileSync('git',['-c','core.hooksPath=NUL','-c','core.fsmonitor=false','-c','user.name=Fixture','-c','user.email=fixture@example.invalid',...args],{cwd,windowsHide:true,encoding:'utf8',env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_OPTIONAL_LOCKS:'0'}});
 async function fixture(){
  const root=await mkdtemp(join(tmpdir(),'harness-git-cleanup-'));roots.push(root);
@@ -62,6 +62,26 @@ it('attempts every owned cleanup after a removal failure and preserves an action
  const failure=new Error('sentinel');
  const outcome=await snapshot(f.base,async()=>{throw failure;}).then(()=>{throw new Error('unreachable')},(error:unknown)=>error);
  expect(outcome).toBe(failure);
+ expect(probe.removed.length).toBeGreaterThan(1);
+});
+
+it.each([
+ ['frozen',()=>Object.freeze(new Error('sentinel'))],
+ ['non-writable suppression',()=>Object.defineProperty(new Error('sentinel'),'suppressed',{value:null,writable:false})],
+] as const)('preserves a %s action error when cleanup diagnostics cannot be attached',async(_kind,createFailure)=>{
+ const f=await fixture();probe.removed.length=0;probe.failFirst=true;
+ const diagnostic=vi.spyOn(process.stderr,'write').mockReturnValue(true);
+ const failure=createFailure();
+ const outcome=await snapshot(f.base,async()=>{throw failure;}).then(()=>{throw new Error('unreachable')},(error:unknown)=>error);
+ expect(outcome).toBe(failure);
+ expect(probe.removed.length).toBeGreaterThan(1);
+ expect(diagnostic).toHaveBeenCalledWith('Gen V1 retained 1 Git snapshot temporary entry because cleanup could not be confirmed.\n');
+});
+
+it('preserves the successful result when the cleanup diagnostic sink throws',async()=>{
+ const f=await fixture();probe.removed.length=0;probe.failFirst=true;
+ vi.spyOn(process.stderr,'write').mockImplementation(()=>{throw new Error('diagnostic sink unavailable');});
+ await expect(snapshot(f.base,async()=>'primary-result')).resolves.toBe('primary-result');
  expect(probe.removed.length).toBeGreaterThan(1);
 });
 

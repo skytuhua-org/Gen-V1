@@ -4,7 +4,7 @@ Pinned source: ReviewStage/vespin commit `7f0bfe954a958858235b91d82293043ab55414
 
 ## Retained implementation
 
-- `inbox-presentation.tsx` selectively adapts actual `ListRow` JSX, `InboxItemRow` composition, `InboxList` wrappers, and `InboxPane`/`Subject` JSX. It retains the three-line mail row, leading unread gutter, metadata beside the above-title lead, muted/completed and unread states, native list/button semantics, list/reader layout and ordered reader content.
+- `inbox-presentation.tsx` selectively adapts actual `ListRow` JSX, `InboxItemRow` composition, `InboxList` wrappers, and `InboxPane`/`Subject` JSX. It retains the three-line mail row, leading unread gutter, metadata beside the above-title lead, muted/completed and unread states, native list/button semantics, list/reader layout and ordered reader content. The selected row button uses `aria-current="true"` because selecting it controls the detail reader; it is not page navigation.
 - `inbox-presentation.css` contains only selected upstream `list-row.css` blocks, with selectors scoped to `.agent-inbox`.
 - `inbox-columns.ts` retains the upstream column selector and container-width hysteresis (enter one column below860px, split again at892px), plus35%list share.
 - `provenance.json` records exact source files, raw SHA-256 values, copied/adapted source ranges and modifications. The range identifies the selected original branch; excluded branches/dependencies are listed in modifications.

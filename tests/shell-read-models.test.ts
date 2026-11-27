@@ -153,6 +153,31 @@ it('pages a separate complete Personal archive including side conversations with
   expect(f.snapshot).not.toHaveBeenCalled();
 });
 
+it('keeps valid shell rows usable when stored projections contain legacy or malformed records', async () => {
+ const f = await fixture();
+ f.store.internal('malformed.fixture', null, () => {
+  const base = f.store.get<Thread>('thread', 'empty')!;
+  const legacy = {id: 'legacy-valid', title: 'Legacy valid', projectName: null, createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-02T00:00:00Z', status: 'ready', runId: null, sessionPath: null} as Thread;
+  f.store.put('thread', 'legacy-valid', 'legacy-valid', legacy);
+  f.store.put('thread', 'incomplete', 'incomplete', {id: 'incomplete', title: 'Incomplete legacy row', status: 'ready'});
+  f.store.put('thread', 'bad-presentation', 'bad-presentation', {...base, id: 'bad-presentation', title: 'Bad presentation', presentation: 'malformed'});
+  f.store.put('archivedThread', 'legacy-valid', 'legacy-valid', true);
+  f.store.put('learningStatus', 'global', null, {supported: true, status: 'idle', lastReview: {status: 'completed', usage: {inputTokens: 12, contextBreakdown: {bad: true}}}});
+ });
+ const navigation = await f.app.inject({url: '/api/shell/navigation', headers: f.headers});
+ expect(navigation.statusCode).toBe(200);
+ expect(navigation.json()).toMatchObject({total: 3});
+ expect(navigation.json().items.map((item: {id: string}) => item.id)).toEqual(expect.arrayContaining(['second', 'empty', 'bad-presentation']));
+ expect(navigation.body).not.toContain('incomplete');
+ const archive = await f.app.inject({url: '/api/shell/archive', headers: f.headers});
+ expect(archive.statusCode).toBe(200); expect(archive.json()).toMatchObject({total: 2}); expect(archive.json().items.map((item: {id: string}) => item.id)).toContain('legacy-valid');
+ const settings = await f.app.inject({url: '/api/shell/settings', headers: f.headers});
+ expect(settings.statusCode).toBe(200); expect(settings.json().learning.lastReview.usage).toMatchObject({inputTokens: 12}); expect(settings.json().learning.lastReview.usage).not.toHaveProperty('contextBreakdown'); expect(settings.json().counts).toMatchObject({threads: 3, archivedThreads: 2});
+ const retry = await f.app.inject({url: '/api/shell/navigation', headers: f.headers});
+ expect(retry.statusCode).toBe(200); expect(retry.json()).toMatchObject({total: navigation.json().total});
+ expect(f.store.get<{title: string}>('thread', 'incomplete')).toMatchObject({title: 'Incomplete legacy row'});
+});
+
 it('projects exact hover metadata and changes its revision when a copy is assigned without a timestamp change',async()=>{
  const f=await fixture(),thread=f.store.get<Thread>('thread','empty')!;
  f.store.internal('fixture',null,()=>{f.store.put('workspaceProject','local-project',null,{id:'local-project',authority:{kind:'local'},name:'Local'});f.store.put('thread',thread.id,thread.id,{...thread,projectId:'local-project',workspaceId:'copy-one',modelId:'exact/model',thinkingLevel:'high'});});

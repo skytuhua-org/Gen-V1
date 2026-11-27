@@ -158,26 +158,47 @@ export class CheckpointService {
     const ref = sha256hex(data);
     const target = join(this.blobRoot, ref);
     await mkdir(this.blobRoot, { recursive: true });
+    let previousHash: string | undefined;
+    try {
+      await lstat(target);
+      previousHash = await withPathGuard(
+        [{ path: this.blobRoot, leaf: false }, { path: target, leaf: true, readOnly: true }],
+        signal,
+        async () => sha256hex(await readBoundFile(target, CHECKPOINT_V1_LIMITS.fileBytes + 1)),
+      );
+      // Reuse verified bytes without a write lease or replacement. Another
+      // checkpoint reader may still hold a deny-delete pin on this blob.
+      if (previousHash === ref) return ref;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const staging = join(this.blobRoot, `.${ref}.${randomUUID()}.tmp`);
     await withPathGuard(
-      [
-        { path: this.blobRoot, leaf: false, allowChildWrites: true },
-        // A new blob does not exist yet — the directory guard covers its creation.
-        ...(await lstat(target).then(() => [{ path: target, leaf: true as const, allowChildWrites: true, childWriteRoot: this.blobRoot }], () => [])),
-      ],
+      // Release the read pin before publication. The replacement primitive
+      // rechecks the old digest and the staged object's identity and bytes.
+      [{ path: this.blobRoot, leaf: false, allowChildWrites: true }],
       signal,
       async () => {
         try {
-          const file = await open(target, "wx", 0o600);
+          const file = await open(staging, "wx", 0o600);
+          let identity: { dev: bigint; ino: bigint };
           try {
             await file.writeFile(data);
+            await file.sync();
+            const info = await file.stat({ bigint: true });
+            identity = { dev: info.dev, ino: info.ino };
           } finally {
             await file.close();
           }
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          // Publish only a fully verified blob: a torn or tampered write can
+          // never sit at the digest name, and the atomic rename heals a stale
+          // partial file left by an older non-atomic writer.
+          const check = await readBoundFile(staging, CHECKPOINT_V1_LIMITS.fileBytes + 1);
+          if (sha256hex(check) !== ref) throw new HarnessError("CAPABILITY_DENIED", "Checkpoint blob verification failed.");
+          await replaceOwnedFile(staging, target, identity, ref, signal, previousHash);
+        } finally {
+          await rm(staging, { force: true });
         }
-        const check = await readBoundFile(target, CHECKPOINT_V1_LIMITS.fileBytes + 1);
-        if (sha256hex(check) !== ref) throw new HarnessError("CAPABILITY_DENIED", "Checkpoint blob verification failed.");
       },
     );
     return ref;
@@ -192,9 +213,19 @@ export class CheckpointService {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
     }
-    return withPathGuard([{ path: this.blobRoot, leaf: false }, { path: target, leaf: true, readOnly: true }], signal, async () =>
-      readBoundFile(target, CHECKPOINT_V1_LIMITS.fileBytes + 1),
-    );
+    try {
+      return await withPathGuard([{ path: this.blobRoot, leaf: false }, { path: target, leaf: true, readOnly: true }], signal, async () => {
+        const bytes = await readBoundFile(target, CHECKPOINT_V1_LIMITS.fileBytes + 1);
+        // Stored bytes are untrusted until they hash back to their own name:
+        // a torn or tampered blob reports as missing, never as content.
+        if (sha256hex(bytes) !== ref) return null;
+        return bytes;
+      });
+    } catch (error) {
+      // Native custody can fail before the callback, for example on hardlinks.
+      if (error instanceof HarnessError && error.code === "CAPABILITY_DENIED") return null;
+      throw error;
+    }
   }
 
   /** Read a file that may be absent, returning null instead of failing the guard. */
@@ -793,7 +824,15 @@ export class CheckpointService {
     let removed = 0;
     try {
       for (const name of await readdir(this.blobRoot)) {
-        if (!/^[a-f0-9]{64}$/.test(name) || referenced.has(name)) continue;
+        const staged = /^\.[a-f0-9]{64}\..+\.tmp$/.test(name);
+        const unreferenced = /^[a-f0-9]{64}$/.test(name) && !referenced.has(name);
+        if (!staged && !unreferenced) continue;
+        // A fresh staging file may belong to a write still in flight; only
+        // abandon-and-sweep files left behind by a dead writer.
+        if (staged) {
+          const stats = await lstat(join(this.blobRoot, name)).catch(() => null);
+          if (!stats || Date.now() - stats.mtimeMs < 60_000) continue;
+        }
         await rm(join(this.blobRoot, name), { force: true });
         removed++;
       }
@@ -808,9 +847,12 @@ export class CheckpointService {
    * entry is digest- and size-pinned; .env material, keys, credentials,
    * session files and symlinks are refused before a single byte is copied.
    */
-  async provisionManifest(manifest: ProvisionManifestV1, sourceRoot: string, targetRoot: string, signal = new AbortController().signal): Promise<{ copied: string[] }> {
+  async provisionManifest(manifest: ProvisionManifestV1, sourceRoot: string, targetRoot: string, signal = new AbortController().signal): Promise<{ copied: string[]; entries: { path: string; copied: boolean; error?: string }[] }> {
     const reviewed = provisionManifestV1Schema.parse(manifest);
-    const copied: string[] = [];
+    // Validate the whole manifest before any copy: every entry must name a
+    // non-secret regular file inside both roots and still match its pinned
+    // size and digest, so a denied or stale entry leaves zero effects.
+    const staged: { path: string; destination: string; data: Buffer }[] = [];
     for (const entry of reviewed.entries) {
       const name = entry.path.split("/").at(-1) ?? entry.path;
       if (SECRET_NAME.test(name) || SECRET_EXT.test(name)) throw new HarnessError("CAPABILITY_DENIED", `Provisioning refuses secret material at ${entry.path}.`);
@@ -823,10 +865,20 @@ export class CheckpointService {
       const data = await withPathGuard([{ path: source, leaf: true, readOnly: true }], signal, async () => readBoundFile(source, 1024 * 1024));
       if (data.length !== entry.bytes || sha256hex(data) !== entry.digest)
         throw new HarnessError("REVISION_CHANGED", `Provisioned file ${entry.path} no longer matches the reviewed manifest.`);
-      await this.writeRestored(destination, data, null, signal);
-      copied.push(entry.path);
+      staged.push({ path: entry.path, destination, data });
     }
-    return { copied };
+    const copied: string[] = [];
+    const entries: { path: string; copied: boolean; error?: string }[] = [];
+    for (const item of staged) {
+      try {
+        await this.writeRestored(item.destination, item.data, null, signal);
+        copied.push(item.path);
+        entries.push({ path: item.path, copied: true });
+      } catch (error) {
+        entries.push({ path: item.path, copied: false, error: error instanceof HarnessError ? error.code : "FAILED" });
+      }
+    }
+    return { copied, entries };
   }
 
   /** One repository per operation, or an approved multi-root recipe. */

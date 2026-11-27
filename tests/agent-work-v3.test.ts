@@ -180,6 +180,40 @@ describe('AgentWorkV1 admission and role gates', () => {
 });
 
 describe('output schema, repair and verification', () => {
+  it('settles the work even when child teardown rejects', async () => {
+    const rejecting: AgentWorkChild = {supportsLiveSteer: false, send: async () => {}, cancel: async () => { throw new Error('unconfirmed broker close'); }, dispose: async () => { throw new Error('unconfirmed broker close'); }};
+    const f = fixture({runtimeFactory: () => rejecting});
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    f.coordinator.onChildEvent(work.workId, {type: 'error', threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch, message: 'upstream failed'});
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(f.coordinator.inspect(work.workId)).toMatchObject({state: 'FAILED', failureReason: 'RUNTIME_FAILURE'});
+  });
+
+  it('fails work when the child run settles without submitting a result', async () => {
+    const f = fixture();
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    expect(work.state).toBe('RUNNING');
+    f.coordinator.onChildEvent(work.workId, {type: 'settled', threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch});
+    expect(f.coordinator.inspect(work.workId)).toMatchObject({state: 'FAILED', failureReason: 'RUNTIME_FAILURE'});
+  });
+  it('fails work on a runtime error event and keeps terminal work settled', async () => {
+    const f = fixture();
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    f.coordinator.onChildEvent(work.workId, {type: 'error', threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch, message: 'upstream failed'});
+    expect(f.coordinator.inspect(work.workId)).toMatchObject({state: 'FAILED', failureReason: 'RUNTIME_FAILURE'});
+    // A second event for the already-terminal work is ignored, not re-failed.
+    const revision = f.coordinator.inspect(work.workId)!.revision;
+    f.coordinator.onChildEvent(work.workId, {type: 'error', threadId: work.childOwner.threadId, runId: work.childOwner.runId!, epoch: work.childOwner.epoch, message: 'late'});
+    expect(f.coordinator.inspect(work.workId)!.revision).toBe(revision);
+  });
+  it('ignores child events whose run binding does not match the live run', async () => {
+    const f = fixture();
+    const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);
+    f.coordinator.onChildEvent(work.workId, {type: 'settled', threadId: work.childOwner.threadId, runId: 'stale-run', epoch: work.childOwner.epoch});
+    f.coordinator.onChildEvent(work.workId, {type: 'error', threadId: 'other-thread', runId: work.childOwner.runId!, epoch: work.childOwner.epoch, message: 'x'});
+    expect(f.coordinator.inspect(work.workId)!.state).toBe('RUNNING');
+  });
+
   it('repairs invalid output exactly once, then fails with OUTPUT_SCHEMA_INVALID and a private bounded artifact', async () => {
     const f = fixture();
     const work = await f.coordinator.admit(f.ctx, f.admission(), new AbortController().signal);

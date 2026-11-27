@@ -98,7 +98,9 @@ for (const events of targets) {
     const bytes = dirSize(dir);
     const swept = sweepKeep === null ? null : (() => {
       const result = ms(() => store.retentionSweep({ keepEvents: sweepKeep }));
-      store.db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM;');
+      // VACUUM writes the compacted pages into WAL. Checkpoint them before
+      // comparing the on-disk footprint with the already-checkpointed baseline.
+      store.db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);');
       return { sweepMs: result, ...measure() };
     })();
     console.log(JSON.stringify({ events, seededInMs: seededIn, counts, bytes, timingsMs: timings, plans, swept }));
