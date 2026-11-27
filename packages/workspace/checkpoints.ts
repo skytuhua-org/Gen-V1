@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { link, lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -83,6 +84,10 @@ const exclusionReason = (path: string, data: Buffer | null, statBytes?: number):
 // adapter's 128 KiB response limit and reports truncation.
 export function unifiedDiff(path: string, before: Buffer | null, after: Buffer | null): { diff: string | null; truncated: boolean } {
   if (before !== null && after !== null && before.equals(after)) return { diff: null, truncated: false };
+  // A lossy decode can map different byte revisions to the same text. Keep
+  // the original checkpoint intact and report that its preview is unavailable.
+  if ((before !== null && !isUtf8(before)) || (after !== null && !isUtf8(after)))
+    return { diff: `Text preview unavailable for non-UTF-8 file ${path}.`, truncated: true };
   // Split without the phantom empty line a trailing newline produces. A last
   // line that lacks one is a different line from the same text that ends with
   // one, so it carries a sentinel: the sentinel is compared, never printed.
