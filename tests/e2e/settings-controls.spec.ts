@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { resolve } from 'node:path';
 import type { HostCommand } from '../../packages/contracts';
-import { getPreferences, type UiPreferences } from '../../packages/contracts/preferences';
+import { getPreferences, PROJECT_PALETTE, type UiPreferences } from '../../packages/contracts/preferences';
 import { serveTaskFixture, taskFixture } from './task-interface-fixture';
 
 async function openSettings(page: Page, theme: 'dark' | 'light' = 'dark') {
@@ -45,6 +45,49 @@ test('font sizes accept individual keystrokes and commit only bounded values',as
   await expect.poll(()=>commands.filter(command=>command.type==='settings.update').at(-1)?.payload.preferences).toMatchObject({chatFontSize:20});
   await size.focus();await size.press('Control+a');await size.press('Backspace');await size.press('Tab');await expect(size).toHaveValue('20');
   await size.focus();await size.press('Control+a');await size.pressSequentially('99');await size.press('Tab');await expect(size).toHaveValue('20');
+});
+
+test('provider, accent and project pickers each have one keyboard stop and move selection',async({page})=>{
+ const host=await openSettings(page);
+ const {dialog,nav}=host;
+ const oneStop=(group:Locator)=>expect(group.locator('button[tabindex="0"]')).toHaveCount(1);
+ await nav.getByRole('button',{name:'Models & Accounts',exact:true}).click();
+ const providers=dialog.getByRole('radiogroup',{name:'Subscription providers',exact:true});
+ await oneStop(providers);
+ const firstProvider=providers.getByRole('radio').first(),lastProvider=providers.getByRole('radio').last();
+ await providers.getByRole('radio',{checked:true}).focus();
+ await page.keyboard.press('End');
+ await expect(lastProvider).toBeFocused();await expect(lastProvider).toBeChecked();
+ await page.keyboard.press('ArrowRight');
+ await expect(firstProvider).toBeFocused();await expect(firstProvider).toBeChecked();
+ await page.keyboard.press('Tab');
+ expect(await providers.evaluate(node=>node.contains(document.activeElement))).toBe(false);
+
+ host.snapshot.threads[0].projectId='keyboard-project';
+ host.snapshot.threads[0].projectName='Keyboard project';
+ host.snapshot.settings.preferences={projectColors:{'["local","keyboard-project"]':'#123abc'}};
+ await host.publish();
+ await nav.getByRole('button',{name:'Appearance',exact:true}).click();
+ const accent=dialog.getByRole('radiogroup',{name:'Accent',exact:true});
+ await oneStop(accent);
+ const accentFirst=accent.getByRole('radio').first(),accentLast=accent.getByRole('radio').last();
+ await accent.getByRole('radio',{checked:true}).focus();
+ await page.keyboard.press('Home');
+ await expect(accentFirst).toBeFocused();await expect(accentFirst).toBeChecked();
+ await page.keyboard.press('ArrowUp');
+ await expect(accentLast).toBeFocused();await expect(accentLast).toBeChecked();
+
+ const project=dialog.getByRole('radiogroup',{name:'Keyboard project',exact:true});
+ await oneStop(project);
+ await expect(project.getByRole('radio',{checked:true})).toHaveCount(0);
+ await project.getByRole('radio').first().focus();
+ await page.keyboard.press('ArrowDown');
+ const next=project.getByRole('radio').nth(1);
+ await expect(next).toBeChecked();await expect(next).toBeFocused();
+ await expect.poll(()=>getPreferences(host.snapshot.settings).projectColors['["local","keyboard-project"]']).toBe(Object.values(PROJECT_PALETTE)[1]);
+ await oneStop(project);
+ await page.keyboard.press('Tab');
+ await expect(dialog.getByRole('textbox',{name:'Custom color for Keyboard project',exact:true})).toBeFocused();
 });
 
 test('saving a project color preserves the active appearance preview',async({page})=>{
@@ -150,7 +193,7 @@ test('provider search selects its detail and repeats without probing unrelated p
     await search.fill(provider.query);await dialog.getByRole('button',{name:new RegExp('^'+provider.query)}).click();
     const target=dialog.locator(`[data-setting-id="provider-${provider.id}"]`);await expect(target).toBeVisible();
     await expect(target.locator('.connection-account-auth')).toHaveAttribute('data-state','unknown');await expect(target.locator('.connection-auth-summary strong')).toHaveText('Status unknown');await expect(dialog.locator('.connection-row')).toHaveCount(1);
-    await expect(dialog.getByRole('navigation',{name:'Subscription providers'}).getByRole('button',{name:provider.query,exact:true})).toHaveAttribute('aria-pressed','true');
+    await expect(dialog.getByRole('radiogroup',{name:'Subscription providers'}).getByRole('radio',{name:provider.query,exact:true})).toBeChecked();
     await expect.poll(()=>target.evaluate(node=>node===document.activeElement||node.contains(document.activeElement))).toBe(true);
   }
   expect(reads).toEqual(['gemini-cli','cursor-sdk','gemini-cli']);
