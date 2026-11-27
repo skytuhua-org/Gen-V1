@@ -36,6 +36,59 @@ const held = (page: Page, key = savedKey) => expect.poll(() => page.evaluate(key
 const release = (page: Page, key = savedKey, fail = false) => page.evaluate(({ key, fail }) => window.memoryFixture.release(key, fail), { key, fail });
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
+for(const mode of ['normal','reduce','off'] as const)test(`Thread memory entry motion follows the ${mode} policy`,async({page})=>{
+  await page.setViewportSize({width:480,height:700});
+  await page.emulateMedia({reducedMotion:mode==='reduce'?'reduce':'no-preference'});
+  let attempts=0;
+  await mount(page,{notes:[]},async(route,command)=>{
+    if(command.type==='memory.save'&&++attempts===1){
+      await route.fulfill({status:503,json:{error:{code:'SYNTHETIC_SAVE',message:'Synthetic note could not be saved.'}}});
+      return;
+    }
+    await route.fulfill({json:{commandId:command.id,seq:2,result:note('created',1)}});
+  });
+  if(mode==='off')await page.evaluate(()=>{document.documentElement.dataset.motion='off';});
+  await page.evaluate(()=>{
+    let entries=0;
+    window.addEventListener('animationstart',event=>{
+      if(event.animationName==='memory-in'&&event.target instanceof Element&&event.target.matches('.memory-note'))document.documentElement.dataset.noteEntries=String(++entries);
+    });
+  });
+  const add=page.getByRole('button',{name:'Add memory note',exact:true});
+  await add.click();
+  const text=page.getByRole('textbox',{name:'New thread note',exact:true});
+  const form=page.locator('.memory-note').filter({has:text});
+  await expect(form).toHaveCSS('animation-name',mode==='normal'?'memory-in':'none');
+  if(mode==='normal'){
+    await expect(form).toHaveCSS('animation-duration','0.18s');
+    await expect(page.locator('html')).toHaveAttribute('data-note-entries','1');
+  }
+  await page.getByRole('textbox',{name:'Note key',exact:true}).fill('created');
+  await text.fill('Draft retained');
+  await page.getByRole('button',{name:'Add note',exact:true}).click();
+  const error=form.getByRole('status').filter({hasText:'Synthetic note could not be saved.'});
+  await expect(error).toHaveCSS('animation-name',mode==='normal'?'memory-fade':'none');
+  if(mode==='normal'){
+    await expect(error).toHaveCSS('animation-duration','0.16s');
+    await expect(error).toHaveCSS('transform','none');
+    await expect(page.locator('html')).toHaveAttribute('data-note-entries','1');
+  }
+  await text.press('Escape');
+  await expect(form).toHaveCount(0);
+  const resume=page.getByRole('button',{name:'Resume unsaved note',exact:true});
+  await expect(resume).toHaveCSS('animation-name',mode==='normal'?'memory-in':'none');
+  await resume.click();
+  await text.fill('Updated note');
+  await page.getByRole('button',{name:'Add note',exact:true}).click();
+  await expect.poll(()=>attempts).toBe(2);
+  await page.evaluate(saved=>window.memoryFixture.publish([saved]),note('created',1));
+  const row=page.locator('.memory-note').filter({has:page.getByRole('textbox',{name:'Note created',exact:true})});
+  await expect(row).toHaveCSS('animation-name',mode==='normal'?'memory-in':'none');
+  await row.getByRole('button',{name:'Forget created',exact:true}).click();
+  await page.evaluate(()=>window.memoryFixture.publish([]));
+  await expect(row).toHaveCount(0);
+});
+
 test('Delete keeps the existing editor lock until its exact-revision acknowledgment', async ({ page }) => {
   const gate = deferred();
   const commands = await mount(page, {}, async (route, command) => { await gate.promise; await route.fulfill({ json: { commandId: command.id, seq: 2, result: {} } }); });
