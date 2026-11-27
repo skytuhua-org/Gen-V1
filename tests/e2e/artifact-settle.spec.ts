@@ -233,13 +233,13 @@ for (const width of [1024, 1440, 768]) {
 test('entrance resolves inherited panel tokens and the existing motion speed', async ({ page }) => {
   await recordEntrances(page); await fixture(page);
   await page.evaluate(() => {
-    document.documentElement.style.setProperty('--motion-speed', '2');
+    document.documentElement.style.setProperty('--motion-speed', '1.25');
     const host = document.querySelector('main')!;
     host.style.setProperty('--ui-motion-panel-enter', '.48s');
     host.style.setProperty('--ui-ease-enter', 'cubic-bezier(.2,.8,.4,1)');
   });
   await publish(page);
-  expect((await records(page))[0]).toMatchObject({ duration: 240, easing: 'cubic-bezier(0.2, 0.8, 0.4, 1)', durationToken: '.48s' });
+  expect((await records(page))[0]).toMatchObject({ duration: 480, easing: 'cubic-bezier(0.2, 0.8, 0.4, 1)', durationToken: '.48s' });
   await page.evaluate(async () => {
     const animation = (window as unknown as EntranceWindow).artifactAnimations[0];
     animation.play(); await animation.finished;

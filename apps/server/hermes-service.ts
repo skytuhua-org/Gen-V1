@@ -1,7 +1,7 @@
 import {Service,type ServiceOptions} from '../../packages/core/service.ts';
 import {accountResolver} from '../../packages/core/accounts.ts';
 import type {Store} from '../../packages/storage/store.ts';
-import type {Message,RuntimeAdapter} from '../../packages/contracts/index.ts';
+import {HarnessError,type Message,type RuntimeAdapter,type Thread} from '../../packages/contracts/index.ts';
 import {createHermesRuntime} from '../../packages/runtime-hermes/index.ts';
 import {HermesSourceLibrary} from '../../packages/runtime-hermes/library.ts';
 import {hermesSettings} from '../../packages/runtime-hermes/settings.ts';
@@ -43,7 +43,20 @@ export function createHermesService(store:Store,native:RuntimeAdapter,effectOpti
    const decision=await evaluateExecution({profile,request:{kind:'executable',executable:spec.executable,argv:spec.argv,cwd:spec.cwd},env:process.env,backends:[]});
    return decision.status==='ALLOW'?{allowed:true}:{allowed:false,reason:decision.status==='BLOCKED'?decision.code:'HOLD_EXECUTION_PROFILE'};
   },
-  intakeAuth:{token:()=>backgroundAuth.token()}},memoryExtractionAdmission:async(job,signal)=>{assertMemoryExtractionModel(job.modelId);const permit=await hermesRequestScheduler.acquire(job.modelId.split('/')[0],job.access.accountId,signal,{requestClass:'background'});return permit.release;},memoryExtractionRuntimeFactory:job=>{assertMemoryExtractionModel(job.modelId);return createRuntime({dataDir:store.dataDir,accounts,modelOnly:true,purpose:'memory-extraction'});},source:{runtime,library},planningRuntimeFactory:()=>runtime.createTaskRuntime(),prepareWorkspace:thread=>projects.prepareWorkspace(thread),additionalTool:(call,ctx,host)=>integrations!.additionalTool(call,ctx,host),hostOperationExecutors:integrations.operationExecutors,sideRuntimeFactory:()=>createRuntime({dataDir:store.dataDir,accounts}),predictionRuntimeFactory:()=>createRuntime({dataDir:store.dataDir,accounts,modelOnly:true,purpose:'prediction'})});
+  intakeAuth:{token:()=>backgroundAuth.token()}},memoryExtractionAdmission:async(job,signal)=>{assertMemoryExtractionModel(job.modelId);const permit=await hermesRequestScheduler.acquire(job.modelId.split('/')[0],job.access.accountId,signal,{requestClass:'background'});return permit.release;},memoryExtractionRuntimeFactory:job=>{assertMemoryExtractionModel(job.modelId);return createRuntime({dataDir:store.dataDir,accounts,modelOnly:true,purpose:'memory-extraction'});},source:{runtime,library},planningRuntimeFactory:()=>runtime.createTaskRuntime(),agentWorkRuntimeFactory:(work,spec)=>{const adapter=runtime.createTaskRuntime();
+    // Typed child over the task runtime: START opens the run, STEER/FOLLOW_UP
+    // continue it; no demonstrated live-steer channel is claimed. ctx() is
+    // read lazily so the minted child runId/epoch bind the native run.
+    // Hermes rejects start() without configure(): route the child's tool calls
+    // back through the coordinator's role-gated invokeTool — the same effect
+    // gate the coordinator enforces for every dispatch surface.
+    adapter.configure({onEvent:event=>service!.agentWork.onChildEvent(work.workId,event),onTool:(call,supplied)=>service!.agentWork.invokeTool(work.workId,supplied,call)});
+    return {supportsLiveSteer:false,
+      send:async input=>{const ctx=spec.ctx();const thread=store.get<Thread>('thread',ctx.threadId);
+        if(!thread?.modelId)throw new HarnessError('MODEL_REQUIRED','The child thread has no bound model');
+        const run={...ctx,prompt:input.text,modelId:thread.modelId,thinkingLevel:thread.thinkingLevel,sessionPath:thread.sessionPath??null,accountId:thread.accountId??null,inputId:input.inputId,inputIds:[input.inputId],resources:spec.grants};
+        if(input.kind==='START')await adapter.start(run);else await adapter.followUp(run);},
+      cancel:async()=>{await adapter.cancel(spec.ctx());},dispose:async()=>{await adapter.dispose();}};},prepareWorkspace:thread=>projects.prepareWorkspace(thread),additionalTool:(call,ctx,host)=>integrations!.additionalTool(call,ctx,host),hostOperationExecutors:integrations.operationExecutors,sideRuntimeFactory:()=>createRuntime({dataDir:store.dataDir,accounts}),predictionRuntimeFactory:()=>createRuntime({dataDir:store.dataDir,accounts,modelOnly:true,purpose:'prediction'})});
  const terminals=new TerminalHost(projects);registerWorkspaceHost(service,{projects,terminals,integrations:integrations.manager,secretReferences:()=>integrations!.secretReferences(),context7Key:async key=>{await integrations!.configurePrivate({context7ApiKey:key});}});
  const dispose=service.dispose.bind(service);let closing:Promise<void>|undefined;
  service.dispose=()=>closing??=(async()=>{const results=await Promise.allSettled([dispose(),integrations!.close(),terminals.dispose(),projects.dispose()]);const failures=results.flatMap(result=>result.status==='rejected'?[result.reason]:[]);if(failures.length)throw new AggregateError(failures,'Workspace shutdown could not be confirmed.');})();

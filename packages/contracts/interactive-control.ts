@@ -24,7 +24,6 @@ export const controlModeSchema = z.enum(['FRESH_VERIFICATION_BROWSER', 'CONSENTE
 export type ControlMode = z.infer<typeof controlModeSchema>;
 
 export const controlTargetKindSchema = z.enum(['APPLICATION', 'BROWSER_TAB']);
-export type ControlTargetKind = z.infer<typeof controlTargetKindSchema>;
 
 /** Interact operations. CAPTURE is deliberately absent: observation is a
  * separate permission from input (D03). */
@@ -41,7 +40,6 @@ export const controlGeometryV1Schema = z.strictObject({
   height: z.number().positive(),
   dpiScale: z.number().positive(),
 });
-export type ControlGeometryV1 = z.infer<typeof controlGeometryV1Schema>;
 
 /** Exact selected target identity. `creationIdentity` is a non-reused
  * process/session creation identity issued by the approved driver (a browser
@@ -115,7 +113,6 @@ export const captureScopeV1Schema = z.strictObject({
   kind: z.enum(['WINDOW', 'TAB', 'REGION']),
   region: controlGeometryV1Schema.nullable(),
 });
-export type CaptureScopeV1 = z.infer<typeof captureScopeV1Schema>;
 
 export const captureV1Schema = z.strictObject({
   artifactId: nonEmpty,
@@ -125,7 +122,6 @@ export const captureV1Schema = z.strictObject({
   sourceOwner: nonEmpty,
   captureScope: captureScopeV1Schema,
 });
-export type CaptureV1 = z.infer<typeof captureV1Schema>;
 
 /** D02: approved driver registration. A driver must name one immutable
  * executable/package digest, its API protocol, backend/profile proof, the
@@ -143,6 +139,36 @@ export const controlDriverRegistrationV1Schema = z.strictObject({
   stopRoute: z.enum(['DRIVER_STOP', 'KEYBOARD', 'HOST_CANCEL']),
 });
 export type ControlDriverRegistrationV1 = z.infer<typeof controlDriverRegistrationV1Schema>;
+
+/** Build manifest shipped beside the first-party control bridge artifact.
+ * The manifest binds the exact built binary: `packageDigest` is the SHA-256
+ * of the immutable artifact named by `artifact`, and `backendProofRef`
+ * identifies which backend/profile produced it (D02). The manifest itself is
+ * data — the host recomputes the artifact digest before registering, so a
+ * stale or edited manifest cannot qualify a different binary. */
+export const controlDriverManifestV1Schema = z.strictObject({
+  driverId: nonEmpty,
+  artifact: nonEmpty,
+  artifactSha256: sha256,
+  adapterModule: nonEmpty.nullable(),
+  adapterModuleSha256: sha256.nullable(),
+  apiProtocols: z.array(z.enum(['browser-tab', 'native-window'])).min(1),
+  backendProofRef: nonEmpty,
+  targetIdentityFormat: nonEmpty,
+  captureBounds: controlDriverRegistrationV1Schema.shape.captureBounds,
+  stopRoute: controlDriverRegistrationV1Schema.shape.stopRoute,
+});
+export type ControlDriverManifestV1 = z.infer<typeof controlDriverManifestV1Schema>;
+
+/** Stored capture record (store kind 'controlCapture'). Extends CaptureV1
+ * with the host-owned artifact location and content digest; the image bytes
+ * live only under the host artifact root and never leave it (S05/S08). */
+export const storedCaptureV1Schema = captureV1Schema.extend({
+  artifactRef: nonEmpty,
+  sha256: sha256,
+  mimeType: z.literal('image/png'),
+});
+export type StoredCaptureV1 = z.infer<typeof storedCaptureV1Schema>;
 
 /** D05/S07: host-classified effect risk for a control action. CAPTURE is
  * observation, admitted by the separate capture permission. CLICK and
@@ -170,7 +196,6 @@ export function classifyControlAction(action: ControlActionKind, redactedParamet
  * what makes the disabled capability presentation visible; it grants nothing
  * by itself. */
 export const consentRequestStateSchema = z.enum(['PENDING', 'GRANTED', 'DENIED', 'UNAVAILABLE', 'EXPIRED']);
-export type ConsentRequestState = z.infer<typeof consentRequestStateSchema>;
 
 export const consentRequestV1Schema = z.strictObject({
   consentId: nonEmpty,

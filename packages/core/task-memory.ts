@@ -1,5 +1,6 @@
 import { HarnessError, type TaskMemory } from '../contracts/index.ts';
 import type { Store } from '../storage/store.ts';
+import { memoryContainsSecret, redactMemorySecrets } from './memory-publication.ts';
 
 export const MEMORY_LIMITS = { entries: 12, entryBytes: 768, totalBytes: 4096 } as const;
 const idFor = (threadId: string, key: string) => `${threadId}:${key}`;
@@ -15,7 +16,7 @@ export function changeTaskMemory(store: Store, threadId: string, action: 'save' 
   if (!Number.isSafeInteger(args.baseRevision) || args.baseRevision !== (old?.revision ?? 0)) throw new HarnessError('STALE_MEMORY', 'This note changed. Inspect it before saving again.');
   if (action === 'delete') { store.put('memoryVersion', idFor(threadId, key), threadId, { revision: old!.revision }); store.remove('taskMemory', idFor(threadId, key)); return { deleted: true }; }
   const content = args.content;
-  if (typeof content !== 'string' || !content.trim() || Buffer.byteLength(content) > MEMORY_LIMITS.entryBytes || /\b(?:sk-(?:proj-|ant-)?[a-zA-Z0-9_-]{20,}|gh[pousr]_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{25,})\b|-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)) throw new HarnessError('INVALID_MEMORY', 'Keep notes brief and omit passwords, tokens and private keys.');
+  if (typeof content !== 'string' || !content.trim() || Buffer.byteLength(content) > MEMORY_LIMITS.entryBytes || memoryContainsSecret(content)) throw new HarnessError('INVALID_MEMORY', 'Keep notes brief and omit passwords, tokens and private keys.');
   const normalized = content.trim();
   const others = taskMemories(store, threadId).filter(note => note.key !== key);
   if (others.length >= MEMORY_LIMITS.entries || Buffer.byteLength(JSON.stringify([...others.map(({ key, content }) => ({ key, content })), { key, content: normalized }])) > MEMORY_LIMITS.totalBytes) throw new HarnessError('MEMORY_FULL', 'Thread notes are full. Shorten or forget an older note first.');
@@ -26,5 +27,5 @@ export function changeTaskMemory(store: Store, threadId: string, action: 'save' 
 }
 export function taskMemoryContext(store: Store, threadId: string): string | undefined {
   const notes = taskMemories(store, threadId);
-  return notes.length ? JSON.stringify(notes.map(({ key, content }) => ({ key, content }))) : undefined;
+  return notes.length ? JSON.stringify(notes.map(({ key, content }) => ({ key, content: redactMemorySecrets(content) }))) : undefined;
 }
