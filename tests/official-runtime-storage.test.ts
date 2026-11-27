@@ -74,6 +74,27 @@ describe('official runtime storage and subprocess isolation', () => {
     expect(JSON.parse(await readFile(state.path, 'utf8')).provider).toBe('claude-code');
   });
 
+  it.each(['resume', 'save'] as const)('refuses malformed manifest bytes during %s without rewriting them', async mode => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'official-encoding-'));
+    try {
+      const state = await openManifest(dataDir, 'claude-code', 'thread-a', null);
+      state.value.inputs['client-uuid'] = { inputIds: ['Café 輸入'], runId: 'run-a', epoch: 1, observed: true };
+      await saveManifest(state);
+      expect((await readManifest(dataDir, state.path)).value.inputs['client-uuid'].inputIds).toEqual(['Café 輸入']);
+      const disk = await readFile(state.path), damaged = Buffer.from(disk);
+      const index = damaged.indexOf(Buffer.from('Café 輸入'));
+      expect(index).toBeGreaterThan(0);
+      damaged[index + 3] = 0xff;
+      await writeFile(state.path, damaged);
+      // A separately held stale writer has no observed record to compare with disk.
+      const stale = { ...state, value: { ...state.value, inputs: {} } };
+      const operation = mode === 'resume' ? readManifest(dataDir, state.path) : saveManifest(stale);
+      await expect(operation).rejects.toMatchObject({code:'OFFICIAL_SESSION_MISMATCH'});
+      expect(await readFile(state.path)).toEqual(damaged);
+      expect(await readdir(dirname(state.path))).toEqual(['session.json']);
+    } finally { await rm(dataDir, {recursive:true, force:true}); }
+  });
+
   it('rejects edited identity and paths outside canonical task storage', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'official-storage-'));
     const state = await openManifest(dataDir, 'claude-code', 'thread-a', null);
