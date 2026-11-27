@@ -67,7 +67,6 @@ export const SETTINGS_ROWS: SettingsInventoryRow[] = [
   row('harness-local-models', 'Available models', 'providers', 'refresh runtime'), row('default-model', 'Default model', 'providers'), row('harness-accounts', 'Accounts', 'providers', 'subscriptions sign in credentials'), row('harness-runtime', 'Local runtime & environments', 'providers', 'environment variables secret local host'),
   ...SUBSCRIPTION_CONNECTIONS.map(connection => row(`provider-${connection.id}`, connection.label, 'providers', `${connection.id} ${connection.description}`)),
   ...APPEARANCE_FIELDS.filter(field => field.id !== 'chat-width' && field.id !== 'word-wrap').map(field => row(field.id, field.label, 'appearance', field.terms)),
-  row('project-overview', 'Granted resources', 'projects', 'project folder working copies permissions access'),
   row('agent-file-protection', 'Agent file protection', 'projects', 'secret deny agent file .env rules blocked pattern privacy'),
   row('project-overview', 'Granted resources', 'projects', 'project folder working copies permissions access'), row('project-model-defaults', 'Project model defaults', 'projects', 'model reasoning effort default per project new thread'),
   row('diff-layout', 'Diff layout', 'diffs'), row('hide-whitespace-changes', 'Hide whitespace changes', 'diffs'), row('default-diff-file-state', 'Expand diffs', 'diffs'), row('diff-color-scheme', 'Diff colors', 'diffs'),
