@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import Ajv from 'ajv';
 import {Store, digest} from '../storage/store.ts';
-import {HarnessError, type DataRecord, type ResourceGrant, type RunContext, type Thread, type ToolCall} from '../contracts/index.ts';
+import {HarnessError, type DataRecord, type ResourceGrant, type RunContext, type RuntimeEvent, type Thread, type ToolCall} from '../contracts/index.ts';
 import type {CapabilityFlagKey} from './capability-flags.ts';
 import {AgentInbox} from './agent-inbox.ts';
 import {
@@ -35,7 +35,7 @@ export interface AgentWorkHooks {
   isEnabled: (key: CapabilityFlagKey) => boolean;
   /** Registered host capabilities proving a role may run. Absent => ROLE_UNAVAILABLE. */
   roleProofs?: {
-    codeWorktree?: (ctx: RunContext) => Promise<CodeWorktreeProof> | CodeWorktreeProof;
+    codeWorktree?: (ctx: RunContext) => Promise<CodeWorktreeProof | null> | CodeWorktreeProof | null;
     qa?: (ctx: RunContext) => Promise<QaProof> | QaProof;
   };
   /** Effect entry points scoped to each gated role. Read roles never reach these. */
@@ -52,7 +52,10 @@ export interface AgentWorkHooks {
   resourceResolver?: (grant: ResourceGrant, write: boolean, call: ToolCall) => Promise<unknown> | unknown;
   /** Global reservation limits; failed and cancelled work still counts. */
   globalBudget?: {tokens: number | null; ms: number | null};
-  runtimeFactory?: (work: AgentWorkV1, spec: {prompt: string; grants: ResourceGrant[]; allowSpawn: false}) => Promise<AgentWorkChild> | AgentWorkChild;
+  /** Typed native runtime factory. `ctx` resolves the work's current child
+   * run context (threadId/runId/epoch) at call time — the runId is minted
+   * only when the work records RUNNING, so it must be read lazily. */
+  runtimeFactory?: (work: AgentWorkV1, spec: {prompt: string; grants: ResourceGrant[]; allowSpawn: false; ctx: () => RunContext}) => Promise<AgentWorkChild> | AgentWorkChild;
 }
 
 interface LiveWork { child: AgentWorkChild; runId: string; delivery: Promise<void> }
@@ -86,6 +89,12 @@ const ajv = new Ajv({allErrors: true, strict: false, validateFormats: false});
 const READ_TOOLS = new Set(['repository_files', 'repository_read', 'repository_status', 'repository_diff', 'repository_log', 'text_import', 'knowledge_publish', 'skills_list', 'skill_view']);
 const QA_TOOLS = new Set(['verification.run', 'verification.observe', 'context.read']);
 const WORKTREE_TOOLS = new Set(['worktree.read', 'worktree.write', 'worktree.git']);
+
+/** Metadata uses the same role allowlists as the effect gate below. */
+export function agentWorkToolNames(role: AgentWorkRole): readonly string[] {
+  const tools = role === 'CODE_WORKTREE' ? WORKTREE_TOOLS : role === 'QA' ? QA_TOOLS : READ_TOOLS;
+  return ['agent_result', 'agent_progress', ...tools];
+}
 
 const EMPTY_LEDGER: BudgetLedger = {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0};
 
@@ -145,9 +154,14 @@ export class AgentWorkCoordinator {
     });
     const readOnly = spec.role === 'PLAN_READ' || spec.role === 'RESEARCH_READ';
     const proofMeta: Record<string, unknown> = {};
-    const worktreeProof = spec.role === 'CODE_WORKTREE' ? await this.hooks.roleProofs!.codeWorktree!(ctx) : null;
+    const worktreeProof = spec.role === 'CODE_WORKTREE' ? await this.hooks.roleProofs?.codeWorktree?.(ctx) ?? null : null;
+    if (spec.role === 'CODE_WORKTREE' && worktreeProof === null) throw new HarnessError('ROLE_UNAVAILABLE', 'Role CODE_WORKTREE is unavailable: no managed-worktree profile proof');
     if (worktreeProof) proofMeta.worktree = worktreeProof;
-    if (spec.role === 'QA') proofMeta.qa = await this.hooks.roleProofs!.qa!(ctx);
+    if (spec.role === 'QA') {
+      const qaProof = await this.hooks.roleProofs?.qa?.(ctx) ?? null;
+      if (qaProof === null) throw new HarnessError('ROLE_UNAVAILABLE', 'Role QA is unavailable: no verification capability proof');
+      proofMeta.qa = qaProof;
+    }
     const grants = selected.map(grant => (readOnly || (worktreeProof !== null && !pathWithin(grant.path, worktreeProof.path))) ? {...grant, writable: false} : grant);
     return {grants, proofMeta};
   }
@@ -239,8 +253,19 @@ export class AgentWorkCoordinator {
 
   private async dispatch(work: AgentWorkV1, spec: AgentWorkAdmissionV1, grants: ResourceGrant[]): Promise<AgentWorkV1> {
     try {
-      const child = await (this.hooks.runtimeFactory?.(work, {prompt: spec.prompt, grants, allowSpawn: false})
-        ?? Promise.resolve<AgentWorkChild>({supportsLiveSteer: false, send: async () => {}, cancel: async () => {}, dispose: async () => {}}));
+      // No typed runtime registered => nothing can receive START. Record an
+      // honest FAILED instead of minting a phantom RUNNING behind a no-op.
+      const factory = this.hooks.runtimeFactory;
+      if (!factory) {
+        this.finish(work.workId, 'FAILED', {failureReason: 'RUNTIME_FAILURE'});
+        throw new HarnessError('RUNTIME_FAILURE', 'No typed agent-work runtime is registered on this host; the admission cannot record RUNNING');
+      }
+      const child = await factory(work, {prompt: spec.prompt, grants, allowSpawn: false,
+        ctx: () => {
+          const current = this.stored(work.workId);
+          if (!current?.childOwner.runId) throw new HarnessError('RUNTIME_FAILURE', 'The child run context is unavailable before RUNNING is recorded');
+          return {threadId: current.childOwner.threadId, runId: current.childOwner.runId, epoch: current.childOwner.epoch};
+        }});
       // A stop/revocation landing while the runtime started cancels the work;
       // a late startup must never overwrite that terminal state or send START.
       const current = this.stored(work.workId);
@@ -283,7 +308,10 @@ export class AgentWorkCoordinator {
     const live = this.live.get(workId);
     if (!live) return;
     this.live.delete(workId);
-    void (cancel ? live.child.cancel() : Promise.resolve()).finally(() => void live.child.dispose());
+    // Teardown is best-effort: a rejected cancel/dispose (e.g. an unconfirmed
+    // broker close) must not surface as an unhandled rejection on the host.
+    const release = (): void => { void live.child.dispose().catch(() => {}); };
+    void (cancel ? live.child.cancel() : Promise.resolve()).then(release, release);
   }
 
   private artifact(workId: string, kind: WorkArtifact['kind'], value: unknown): WorkArtifact {
@@ -400,6 +428,34 @@ export class AgentWorkCoordinator {
     const next: AgentWorkV1 = {...work, state: 'WAITING_HUMAN', updatedAt: new Date().toISOString(), revision: work.revision + 1};
     this.hooks.store.internal('agentWork.waiting', work.parentOwner.threadId, () => this.hooks.store.put(WORK_KIND, workId, work.parentOwner.threadId, next));
     return next;
+  }
+
+  /** Runtime events from the live child adapter. An `error` or a `settled`
+   * run that never submitted a result fails the work instead of leaving it
+   * RUNNING with its slot and budget reservation held forever; `session`
+   * keeps the child thread's persisted session path current for resume. */
+  onChildEvent(workId: string, event: RuntimeEvent): void {
+    const work = this.stored(workId);
+    const live = this.live.get(workId);
+    if (!work || !live) return;
+    if (event.threadId !== work.childOwner.threadId || event.runId !== live.runId || event.epoch !== work.childOwner.epoch) return;
+    if (event.type === 'session' && typeof event.sessionPath === 'string') {
+      const sessionPath = event.sessionPath;
+      this.hooks.store.internal('agentWork.session', work.childOwner.threadId, () => {
+        const thread = this.hooks.store.get<Thread>('thread', work.childOwner.threadId);
+        if (thread) this.hooks.store.put('thread', thread.id, thread.id, {...thread, sessionPath});
+      });
+      return;
+    }
+    if (event.type === 'error') {
+      this.releaseLive(workId, true);
+      this.finish(workId, 'FAILED', {failureReason: 'RUNTIME_FAILURE'});
+      return;
+    }
+    if (event.type === 'settled' && !AGENT_WORK_TERMINAL_STATES.has(work.state) && work.state !== 'COMPLETED_REPORTED') {
+      this.releaseLive(workId, true);
+      this.finish(workId, 'FAILED', {failureReason: 'RUNTIME_FAILURE'});
+    }
   }
 
   /** Tool dispatch for a live child. Everything outside the role's allowlist

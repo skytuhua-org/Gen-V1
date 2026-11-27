@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Apply first-pass labels to new issue
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const issue = context.payload.issue;
@@ -54,7 +54,10 @@ jobs:
             // never contradict an axis the author or template already labeled
             const TYPES = new Set(['bug', 'enhancement', 'documentation']);
             const axis = name => (name.includes(':') ? name.split(':')[0] : (TYPES.has(name) ? 'type' : name));
-            const held = new Set((issue.labels || []).map(l => (l.name || l).toString()));
+            // Queued jobs can see labels added after the opened event.
+            const issueKey = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number };
+            const { data: liveIssue } = await github.rest.issues.get(issueKey);
+            const held = new Set((liveIssue.labels || []).map(l => (l.name || l).toString()));
             const heldAxes = new Set([...held].map(axis));
             for (const name of [...labels]) {
               if (heldAxes.has(axis(name))) labels.delete(name);
@@ -62,8 +65,6 @@ jobs:
             if (!labels.size) return;
 
             await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issue.number,
+              ...issueKey,
               labels: [...labels],
             });

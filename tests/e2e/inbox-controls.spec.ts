@@ -120,7 +120,7 @@ test('reading and failed canonical navigation never approve or falsely mark an u
   await page.evaluate(() => {window.inboxControls.openMode = 'reject';});
   await page.getByRole('button', {name: 'Open conversation'}).click();
   await expect(page.getByRole('status').filter({hasText:'Navigation failed.'})).toBeVisible();
-  await expect(page.getByRole('button', {name: 'Question, Needs your input, unread', exact: true})).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('button', {name: 'Question, Needs your input, unread', exact: true})).toHaveAttribute('aria-current', 'true');
   expect(await calls(page)).toEqual([{type: 'read', id: 'question'}, {type: 'unread', id: 'question'}, {type: 'open', id: 'thread-question'}]);
   expect(await page.evaluate(() => window.inboxControls.items.find(item => item.id === 'question'))).toMatchObject({read: false, state: 'needs-input', actionable: true});
   expect(requests).toEqual([]); expect(errors).toEqual([]);

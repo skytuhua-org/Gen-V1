@@ -115,6 +115,30 @@ it('supports keyboard divider movement and cancels pointer previews without a co
   expect(await divider.getAttribute('aria-valuenow')).toBe('51');
  }finally{await tab.close();}
 });
+it('accumulates rapid keyboard divider presses into one debounced commit',async()=>{
+ const tab=await page();try{
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();
+  for(let i=0;i<10;i++)await divider.press('ArrowRight');
+  // Optimistic: aria-valuenow and the % tooltip already reflect the preview.
+  expect(await divider.getAttribute('aria-valuenow')).toBe('60');
+  await tab.locator('.split-divider span').waitFor({state:'visible'});expect(await tab.locator('.split-divider span').innerText()).toMatch(/60% width/);
+  await tab.waitForFunction(()=>Math.abs((window as unknown as {currentLayout:{root:{ratio:number}}}).currentLayout.root.ratio-.6)<.001);
+  const resizes=await tab.evaluate(()=>(window as unknown as {commands:{type:string;payload:{ratio:number}}[]}).commands.filter(command=>command.type==='pane.resize'));
+  expect(resizes).toHaveLength(1);expect(resizes[0]!.payload.ratio).toBeCloseTo(.6,3);
+  expect(await divider.getAttribute('aria-valuenow')).toBe('60');
+ }finally{await tab.close();}
+});
+it('cancels a pending keyboard resize preview on Escape without a command',async()=>{
+ const tab=await page();try{
+  const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();
+  const before=await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length);
+  await divider.press('ArrowRight');await divider.press('ArrowRight');
+  await tab.keyboard.press('Escape');
+  expect(await divider.getAttribute('aria-valuenow')).toBe('50');
+  await tab.waitForTimeout(400);
+  expect(await tab.evaluate(()=>(window as unknown as {commands:unknown[]}).commands.length)).toBe(before);
+ }finally{await tab.close();}
+});
 it('retains layout when draft flush fails and restores desktop geometry after narrow mode',async()=>{
  const tab=await page();try{
   await tab.evaluate(()=>(window as unknown as {flushRejected:boolean}).flushRejected=true);

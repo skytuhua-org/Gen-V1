@@ -7,6 +7,11 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   merge_group:
   workflow_dispatch:
+    inputs:
+      installed_single_install:
+        description: Use one install for Windows acceptance (false selects the two-install control)
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -465,6 +470,7 @@ jobs:
         run: pnpm desktop:package --output-root .harness-installed-package
 
       - name: Verify installed default-off retention and separate enabled opt-in
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.installed_single_install == false }}
         run: |
           $ErrorActionPreference = 'Stop'
           $version = (Get-Content -Raw -LiteralPath package.json | ConvertFrom-Json).version
@@ -476,14 +482,9 @@ jobs:
           & pnpm @verifyArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # The declared installed lane is also valid without memory options: the
-      # verifier launches the exact installed executable with ambient feature
-      # activation suppressed, so a flag-less run is the default-off installed
-      # acceptance. The M16 wrapper reuses this job's already pinned and
-      # packaged artifacts, binds the checked-out source to the actual setup and
-      # payload digests, and adds one direct module-load smoke. Packaging is not
-      # duplicated, and no production flag, live driver or control action is used.
       - name: Verify installed default-off identity and direct module load
+        env:
+          INSTALLED_SINGLE_INSTALL: ${{ github.event_name != 'workflow_dispatch' || inputs.installed_single_install == true }}
         run: |
           $ErrorActionPreference = 'Stop'
           $version = (Get-Content -Raw -LiteralPath package.json | ConvertFrom-Json).version
@@ -491,6 +492,7 @@ jobs:
           $setup = (Resolve-Path -LiteralPath (Join-Path $release ('Gen-V1-Setup-' + $version + '-win-x64.exe'))).Path
           $unpacked = (Resolve-Path -LiteralPath (Join-Path $release 'win-unpacked')).Path
           $verifyArgs = @('exec', 'tsx', 'scripts/m16-installed-identity.ts', $setup, $unpacked)
+          if ($env:INSTALLED_SINGLE_INSTALL -eq 'true') { $verifyArgs += '--single-install-acceptance' }
           Write-Output ('HARNESS_INSTALLED_VERIFY_ARGV=' + (@{executable='pnpm'; args=$verifyArgs} | ConvertTo-Json -Compress))
           & pnpm @verifyArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -511,8 +513,12 @@ jobs:
             .harness-desktop-installed/run-*/m16-identity-receipt.json
             .harness-desktop-installed/run-*/*.png
             .harness-desktop-installed/run-*/installed-memory-redacted-export.json
+            .harness-desktop-installed/run-*/enabled-memory/owner.json
             .harness-desktop-installed/run-*/enabled-memory/*.png
             .harness-desktop-installed/run-*/enabled-memory/installed-memory-redacted-export.json
+            .harness-desktop-installed/run-*/scenario-*.json
+            .harness-desktop-installed/run-*/flag-free/owner.json
+            .harness-desktop-installed/run-*/flag-free/*.png
             .harness-packaged-providers/run-*/verification.json
 
   # Lists the tests the pull request diff can reach (vitest.config.ts
