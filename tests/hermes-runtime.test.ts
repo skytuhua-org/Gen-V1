@@ -766,3 +766,37 @@ it('retries only cleanup not confirmed by the first Hermes pool shutdown',async(
  expect(healthy).toHaveBeenCalledTimes(1);
  expect(catalog).toHaveBeenCalledTimes(1);
 });
+
+it('retries real engine source cleanup without reopening the task pool or releasing the lease early',async()=>{
+ const f=await fixture();
+ await f.runtime.start(run());
+ const source=f.source().client;
+ let confirm!:()=>void;
+ const retry=new Promise<void>(done=>{confirm=done;});
+ const failure=Error('synthetic source exit not yet confirmed');
+ const close=vi.mocked(source.dispose).mockRejectedValueOnce(failure).mockImplementationOnce(()=>retry);
+ try{
+  const first=f.runtime.dispose();
+  expect(f.runtime.dispose()).toBe(first);
+  await expect(first).rejects.toMatchObject({errors:[{errors:[{errors:[failure]}]}]});
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(f.catalog.dispose).toHaveBeenCalledTimes(1);
+  expect(f.accounts.releaseUse).not.toHaveBeenCalled();
+  await expect(f.runtime.start(run({runId:'refused'}))).rejects.toMatchObject({code:'HERMES_DISPOSED'});
+
+  const second=f.runtime.dispose();
+  expect(f.runtime.dispose()).toBe(second);
+  const outcome=second.then(()=>null,(error:unknown)=>error);
+  await vi.waitFor(()=>expect(close).toHaveBeenCalledTimes(2));
+  expect(f.accounts.releaseUse).not.toHaveBeenCalled();
+  await expect(f.runtime.start(run({runId:'still-refused'}))).rejects.toMatchObject({code:'HERMES_DISPOSED'});
+  confirm();
+  expect(await outcome).toBeNull();
+  await f.runtime.dispose();
+  expect(close).toHaveBeenCalledTimes(2);
+  expect(f.source().calls.filter(call=>call.method==='agent.dispose')).toHaveLength(1);
+  expect(f.catalog.dispose).toHaveBeenCalledTimes(1);
+  expect(f.accounts.releaseUse).toHaveBeenCalledTimes(1);
+  await expect(f.runtime.start(run({runId:'after-close'}))).rejects.toMatchObject({code:'HERMES_DISPOSED'});
+ }finally{confirm();await f.runtime.dispose().catch(()=>{});}
+});
