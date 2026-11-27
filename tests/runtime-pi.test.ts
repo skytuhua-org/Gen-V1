@@ -584,6 +584,22 @@ describe("isolated process adapter", () => {
     }
   });
 
+  it("reports Pi settlement after confirmed cancel even when usage observation throws", async () => {
+    const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
+    const events: RuntimeEvent[] = [];
+    runtime.configure({ onTool: async () => null, onEvent: event => {
+      events.push(event);
+      if (event.type === "usage") throw new Error("synthetic usage observer failure");
+    } });
+    try {
+      await runtime.start(input);
+      await expect(runtime.cancel(ctx)).resolves.toBeUndefined();
+      expect(workers.terminate).toHaveBeenCalledOnce();
+      expect(events).toContainEqual({ ...ctx, type: "settled", aborted: true });
+      await expect(runtime.start({ ...input, runId: "successor" })).resolves.toBeUndefined();
+    } finally { await runtime.dispose(); }
+  });
+
   it("retains worker custody after a transport error without confirmed native exit", async () => {
     const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
     const onEvent = vi.fn();
