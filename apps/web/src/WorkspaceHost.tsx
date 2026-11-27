@@ -257,10 +257,32 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   const restoreSettingsFocus = () => {
     const invoker = settingsInvoker.current;
     settingsInvoker.current = null;
-    if (invoker && invoker !== document.body && invoker !== document.documentElement && invoker.isConnected && invoker.getClientRects().length) { invoker.focus({preventScroll: true}); return; }
-    (sidebar.current?.querySelector<HTMLElement>('button[aria-label="Settings"]') ?? searchRef.current)?.focus({preventScroll: true});
+    // A candidate must be a real visible control: a disconnected, hidden,
+    // inert or aria-hidden target swallows focus without receiving it.
+    const usable = (element: HTMLElement | null | undefined): element is HTMLElement =>
+      !!element && element !== document.body && element !== document.documentElement &&
+      element.isConnected && element.getClientRects().length > 0 &&
+      !element.matches(':disabled') && !element.closest('[inert], [hidden], [aria-hidden="true"]');
+    if (usable(invoker)) { invoker.focus({preventScroll: true}); return; }
+    for (const candidate of [sidebar.current?.querySelector<HTMLElement>('button[aria-label="Settings"]'), searchRef.current]) {
+      if (usable(candidate)) { candidate.focus({preventScroll: true}); return; }
+    }
   };
-  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]); requestAnimationFrame(restoreSettingsFocus);});
+  // Focus restoration is synchronous with the close commit: chaining it behind
+  // the async settings/navigation refresh lets a slow refresh steal focus back.
+  // Covers every close path, not only closeSettings.
+  useLayoutEffect(() => {
+    if (settingsOpen || !settingsInvoker.current) return;
+    restoreSettingsFocus();
+  }, [settingsOpen]);
+  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]);
+    // The close-commit restoration can land on a control the refreshed
+    // preferences then remove (e.g. the user disabled the section holding the
+    // invoker). Once the refresh settles, custody of the focused control is
+    // re-verified and lost focus falls back to a surviving control.
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || active === document.body || !active.isConnected || !active.getClientRects().length || active.closest('[inert], [hidden], [aria-hidden="true"]')) restoreSettingsFocus();
+  });
   const openBrowser = desktop?.context.surface.kind === 'main' ? async (url: string) => {
     const owner = desktop.context.windowId;
     await prepare();
