@@ -7,6 +7,7 @@ import {GripVertical,MoreHorizontal} from 'lucide-react';
 import {ActionMenu} from '../../../packages/ui-shell/ActionMenu';
 import {Popover} from '../../../packages/ui-shell/Popover';
 import {Select} from '../../../packages/ui-shell/Select';
+import {readMotionPolicy} from './motion-policy';
 import './workspace-split.css';
 
 export const GEN_THREAD_DRAG_TYPE='application/x-gen-thread';
@@ -45,6 +46,8 @@ function keepFloatVisible(rect:ChatRect,viewport:ChatViewport):ChatRect{
 /** View bodies keep one stable DOM parent; layout changes only reposition their slots. */
 export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsChange,title=defaultTitle,onDropThread,editorOptions=[],onSelectEditor,prepare,toolDock=false,className='',floating,onReturnFloat,onDetachView,onMoveFloat,onDockFloat,emptyMainPaneId}:WorkspaceSplitLayoutProps){
  const root=useRef<HTMLDivElement>(null),slots=useRef(new Map<string,HTMLDivElement>()),resize=useRef<ResizeGesture|null>(null),corner=useRef<CornerGesture|null>(null),pending=useRef(false),draggingView=useRef<SurfaceRef|null>(null);
+ const splitHeaderAnimation=useRef<Animation|null>(null),cancelHeaderMotion=useRef<(()=>void)|null>(null);
+ useEffect(()=>()=>{cancelHeaderMotion.current?.();splitHeaderAnimation.current?.cancel();},[]);
  const keyPreview=useRef<{splitId:string;ratio:number}|null>(null),keyTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
  const[rects,setRects]=useState<Record<string,SlotRect>>({}),[size,setSize]=useState({width:0,height:0}),[previewRatio,setPreviewRatio]=useState<{id:string;ratio:number}|null>(null),[drop,setDrop]=useState<{paneId:string;edge:SplitDropEdge;outer?:boolean;joinFrom?:string}|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[menuPane,setMenuPane]=useState<string|null>(null);
  const[floatRects,setFloatRects]=useState<Record<string,ChatRect>>({});
@@ -102,7 +105,30 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  };
  const splitPane=(paneId:string,edge:SplitDropEdge='right',view?:SurfaceRef,outer=false)=>{
   if(!fitSplit(paneId,edge,outer,view)){setError('Make this area larger before splitting it.');return Promise.resolve();}
-  return send('pane.split',{paneId,newPaneId:'pane-'+crypto.randomUUID(),splitId:'split-'+crypto.randomUUID(),axis:edge==='left'||edge==='right'?'horizontal':'vertical',before:edge==='left'||edge==='top',...(view?{view}:{}),...(outer?{outer:true}:{})});
+  const viewId=layout.panes[paneId]?.activeViewId;
+  const findHeader=()=>viewId?root.current?.querySelector<HTMLElement>(`[data-split-view="${CSS.escape(viewId)}"] .chat-view-header[aria-label]`):null;
+  const previousWidth=findHeader()?.getBoundingClientRect().width??0;
+  return run(async()=>{
+   await onCommand('pane.split',{paneId,newPaneId:'pane-'+crypto.randomUUID(),splitId:'split-'+crypto.randomUUID(),axis:edge==='left'||edge==='right'?'horizontal':'vertical',before:edge==='left'||edge==='top',...(view?{view}:{}),...(outer?{outer:true}:{}),baseRevision:layout.revision});
+   if(!previousWidth||(edge!=='left'&&edge!=='right')||readMotionPolicy()!=='full')return;
+   const header=findHeader();
+   if(!header)return;
+   cancelHeaderMotion.current?.();
+   // The command settles before the slot observer applies the new pane width.
+   const observer=new ResizeObserver(()=>{
+    if(!header.isConnected||resize.current||readMotionPolicy()!=='full'){cancel();return;}
+    const width=header.getBoundingClientRect().width;
+    if(!width||width>=previousWidth)return;
+    cancel();
+    if(![440,520].some(threshold=>previousWidth>=threshold&&width<threshold))return;
+    splitHeaderAnimation.current?.cancel();
+    splitHeaderAnimation.current=header.querySelector('.breadcrumb')?.animate([{opacity:.78},{opacity:1}],{duration:150,easing:'ease-out'})??null;
+   });
+   const timer=setTimeout(()=>cancel(),1500);
+   const cancel=()=>{clearTimeout(timer);observer.disconnect();cancelHeaderMotion.current=null;};
+   cancelHeaderMotion.current=cancel;
+   observer.observe(header);
+  });
  };
  const locateDropAt=(clientX:number,clientY:number)=>{
   const host=root.current;if(!host)return null;const box=host.getBoundingClientRect(),x=clientX-box.left,y=clientY-box.top;
@@ -130,6 +156,7 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  };
  const beginResize=(event:ReactPointerEvent<HTMLDivElement>,node:Extract<SplitWorkspaceNode,{kind:'split'}>)=>{
   if(event.button!==0||busy||resize.current||corner.current||floatGesture.current)return;const region=event.currentTarget.parentElement?.getBoundingClientRect();if(!region)return;const horizontal=node.axis==='horizontal',span=(horizontal?region.width:region.height)-6,first=minimumSplitSize(layout,node.first),second=minimumSplitSize(layout,node.second),low=(horizontal?first.width:first.height)/span,high=1-(horizontal?second.width:second.height)/span;if(low>high)return;
+  cancelHeaderMotion.current?.();splitHeaderAnimation.current?.cancel();
   event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);resize.current={pointerId:event.pointerId,splitId:node.id,axis:node.axis,start:horizontal?event.clientX:event.clientY,span,ratio:node.ratio,minimum:Math.max(.05,low),maximum:Math.min(.95,high),revision:layout.revision,element:event.currentTarget};setPreviewRatio({id:node.id,ratio:node.ratio});
  };
  const moveResize=(event:ReactPointerEvent<HTMLDivElement>)=>{const gesture=resize.current;if(!gesture||gesture.pointerId!==event.pointerId)return;const delta=((gesture.axis==='horizontal'?event.clientX:event.clientY)-gesture.start)/gesture.span;setPreviewRatio({id:gesture.splitId,ratio:Math.max(gesture.minimum,Math.min(gesture.maximum,gesture.ratio+delta))});};
