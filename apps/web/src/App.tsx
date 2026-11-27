@@ -895,12 +895,12 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const updateModel = (id: string) => {
     setModelId(id);
     const ownerKey=thread?.id??'new';
-    void journalWrite(modelChoiceKey(ownerKey),id).catch(()=>setError('The model choice could not be saved.'));
+    void journalWrite(modelChoiceKey(ownerKey),id).catch(()=>reportError('The model choice could not be saved.'));
     const resolution=modelResolutionRef.current;
     // R05: a composer pick under a project default never rewrites the global default.
     if(!pickWritesGlobalDefault(resolution)){const next={...resolution,source:'explicit' as ModelSource,reasoningDropped:false};modelResolutionRef.current=next;setModelResolution(next);return;}
     if(resolution.source&&resolution.source!=='bound'){const next={...resolution,source:'explicit' as ModelSource};modelResolutionRef.current=next;setModelResolution(next);}
-    void command('settings.update', { modelId: id }).then(() => refresh()).catch(error => setError(messageOf(error)));
+    void command('settings.update', { modelId: id }).then(() => refresh()).catch(error => reportError(messageOf(error)));
   };
 
   const detachedPlan=useDetachedSurface(thread?{kind:'plan',threadId:thread.id}:null),detachedNavigation=useDetachedSurface({kind:'navigation'});
