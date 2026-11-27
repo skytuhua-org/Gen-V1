@@ -73,8 +73,14 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,empty=fa
  const navigateRef=useRef(onNavigate);navigateRef.current=onNavigate;
  const jump=useCallback((value:number)=>{
   const match=matches.current[value],root=transcript.current;if(!match||!root)return;
-  const rect=match.range.getBoundingClientRect(),bounds=root.getBoundingClientRect();
-  root.scrollTop+=rect.top-bounds.top-root.clientHeight/2+rect.height/2;
+  const node=match.range.startContainer.parentElement;
+  if(node?.closest('[data-conversation-text^="artifact:"]')){
+   const reduced=root.ownerDocument.defaultView?.matchMedia('(prefers-reduced-motion: reduce)').matches;
+   node.scrollIntoView({block:'nearest',inline:'nearest',behavior:reduced?'auto':'smooth'});
+  }else{
+   const rect=match.range.getBoundingClientRect(),bounds=root.getBoundingClientRect();
+   root.scrollTop+=rect.top-bounds.top-root.clientHeight/2+rect.height/2;
+  }
   selected.current=match.key;setIndex(value);highlightConversation(root.ownerDocument,id,matches.current,value);navigateRef.current?.();
  },[transcript,id]);
  const close=useCallback(()=>{restoreFocus.current=true;setOpen(false);},[]);

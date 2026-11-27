@@ -4,7 +4,7 @@ import {shellInit,shellRoute,shellSnapshot} from '../../scripts/capture-ui/shell
 
 
 import {scopedContext,scopedEnvelope,scopedMessage} from '../scoped-conversation-fixture';
-import {serveTaskFixture,serveTaskSplitLayout} from './task-interface-fixture';
+import {growingQaSpec,serveTaskFixture,serveTaskSplitLayout,taskFixture} from './task-interface-fixture';
 async function setup(page:Page,count=3){
  const snapshot=shellSnapshot();snapshot.messages=Array.from({length:count},(_,i)=>({...snapshot.messages[0],id:'m'+i,content:i===0?'Review the **work**space, sidebar and composer.':i===1?'I reviewed the workspace and found two areas to check.':'The workspace panel starts closed.',role:i===0?'user':'assistant'}));
  await page.addInitScript(shellInit);await page.route('**/api/**',r=>shellRoute(r,snapshot,false));await serveTaskSplitLayout(page,snapshot);await page.goto('/fixture');await page.locator('.composer textarea').waitFor();return snapshot;
@@ -27,6 +27,53 @@ test('find skips screen-reader-only labels without removing them from the transc
  await expect(page.locator('.message-content .sr-only').first()).toHaveText('Assistant role label');
  await phrase(page).fill('workspace');
  await expect(page.getByRole('status').filter({hasText:'1 of 3'})).toBeVisible();
+});
+for(const [width,theme] of [[1280,'dark'],[560,'light']] as const){
+ test(`indexes and scrolls to visible artifact text at ${width}px in ${theme} mode`,async({page})=>{
+  await page.setViewportSize({width,height:640});
+  await page.emulateMedia({reducedMotion:width===560?'reduce':'no-preference'});
+  const spec=structuredClone(growingQaSpec);
+  for(let i=0;i<12;i++){
+   const id='before-'+i;
+   spec.elements.history.children!.splice(i,0,id);
+   spec.elements[id]={type:'Disclosure',props:{title:'Previous item '+i,text:'Detailed notes for an earlier item.',defaultOpen:true}};
+  }
+  spec.elements.tracking.props.text='Payment receipt for this package.';
+  const snapshot=taskFixture(spec,{}, {trackingOpen:true});
+  snapshot.settings.theme=theme;
+  snapshot.messages[0].content='Payment information in the conversation.';
+  await serveTaskFixture(page,snapshot);
+  await page.goto('/fixture');
+  const target=page.getByText('Payment receipt for this package.',{exact:true});
+  const body=page.getByLabel('Delivery questions',{exact:true});
+  await expect(target).toBeAttached();
+  // The inline app expands this region by default. Force a bounded body to exercise nested scrolling too.
+  await body.evaluate(el=>{el.style.maxHeight='180px';el.style.overflow='auto';el.scrollTop=0;});
+  expect(await body.evaluate(el=>el.scrollHeight>el.clientHeight)).toBe(true);
+  await open(page);
+  await phrase(page).fill('payment');
+  await expect(page.getByRole('status').filter({hasText:'1 of 2'})).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('status').filter({hasText:'2 of 2'})).toBeVisible();
+  await expect(target).toBeInViewport();
+  expect(await body.evaluate(el=>el.scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(()=>[...CSS.highlights.get('conversation-find-current')??[]].map(range=>range.startContainer.parentElement?.closest('.artifact')!==null))).toEqual([true]);
+  await page.keyboard.press('Shift+Enter');
+  await expect(page.getByRole('status').filter({hasText:'1 of 2'})).toBeVisible();
+  for(const excluded of ['Can delivery be split?','Your confirmation shows the fee','Task surface']){
+   await phrase(page).fill(excluded);
+   await expect(page.getByRole('status').filter({hasText:'0 results'})).toBeVisible();
+  }
+ });
+}
+test('a rendered artifact is searchable when no transcript messages are loaded',async({page})=>{
+ const snapshot=taskFixture(growingQaSpec,{}, {trackingOpen:true});
+ snapshot.messages=[];
+ await serveTaskFixture(page,snapshot);
+ await page.goto('/fixture');
+ await page.getByRole('button',{name:'Find in conversation',exact:true}).click();
+ await phrase(page).fill('tracking entry');
+ await expect(page.getByRole('status').filter({hasText:'1 of 1'})).toBeVisible();
 });
 test('wraps both directions; Escape restores opener and draft caret',async({page})=>{
  await setup(page);const draft=page.locator('.composer textarea');await draft.fill('Retained draft workspace');await draft.evaluate((el:HTMLTextAreaElement)=>el.setSelectionRange(3,3));await open(page);await phrase(page).fill('workspace');await page.keyboard.press('Enter');await expect(page.getByRole('status').filter({hasText:'2 of 3'})).toBeVisible();await page.keyboard.press('Shift+Enter');await page.keyboard.press('Shift+Enter');await expect(page.getByRole('status').filter({hasText:'3 of 3'})).toBeVisible();await page.keyboard.press('Escape');await expect(draft).toBeFocused();await expect(draft).toHaveValue('Retained draft workspace');expect(await draft.evaluate((el:HTMLTextAreaElement)=>el.selectionStart)).toBe(3);
