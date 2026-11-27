@@ -80,3 +80,13 @@ it('preserves original teardown errors and their order', async () => {
  expect(failure.errors[1]).toBe(stopError);
  expect(terminate).toHaveBeenCalledTimes(2);
 });
+
+it('keeps the previous RC build receipt out of the current path when a retry fails',async()=>{
+ const {root}=await fixture(),receipt=join(root,'rc-build.json'),previous=join(root,'rc-build.last-success.json'),unrelated=join(root,'flags-phase.json');
+ await writeFile(receipt,'{"commit":"prior-build"}');await writeFile(unrelated,'{"passed":true}');
+ const windowsFixture="data:text/javascript,Object.defineProperty(process,'platform',{value:'win32'});Object.defineProperty(process,'arch',{value:'x64'})";
+ await expect(promisify(execFile)(process.execPath,['--import',windowsFixture,'scripts/rc-review/build-candidate.ts','--commit','HEAD','--label','invalid','--out',root],{timeout:8000})).rejects.toMatchObject({code:1,stderr:expect.stringContaining('Label must be freeze or dry-run.')});
+ await expect(readFile(receipt,'utf8')).rejects.toMatchObject({code:'ENOENT'});
+ expect(await readFile(previous,'utf8')).toBe('{"commit":"prior-build"}');
+ expect(await readFile(unrelated,'utf8')).toBe('{"passed":true}');
+});
