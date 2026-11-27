@@ -10,6 +10,7 @@ import {Store} from '../packages/storage/store.ts';
 import type {PlanRecord, PlanStep} from '../packages/contracts/planning.ts';
 import {planDataId, PLANNING_PROVENANCE} from '../packages/contracts/planning.ts';
 import {PlanExtensionStore} from '../packages/core/plan-extension.ts';
+import type {AgentWorkV1} from '../packages/contracts/agent-work.ts';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -65,7 +66,24 @@ describe('PlanExtensionV1 integrity', () => {
     expect(() => f.extensions.put(f.extension({weights: [{nodeId: 's1', units: 1.5}, {nodeId: 's2', units: 1}, {nodeId: 's3', units: 1}, {nodeId: 'ag1', units: 1}]}))).toThrow(/weight/i);
     expect(() => f.extensions.put(f.extension({weights: [{nodeId: 's1', units: 1}, {nodeId: 's2', units: 1}, {nodeId: 's3', units: 1}, {nodeId: 'ag1', units: 1}, {nodeId: 'ghost', units: 1}]}))).toThrow(/unknown|weight/i);
   });
-  it('requires conservation: child units may not exceed the parent allocation', () => {
+  it('rejects a later extension revision that grows the total root allocation', () => {
+  const f = fixture();
+  const saved = f.extensions.put(f.extension());
+  // Roots s1+s2+s3 hold 4 units. Revision 2 may not create extra work by
+  // raising any root's allocation, even while child sums stay in-budget.
+  expect(() => f.extensions.put(f.extension({
+    extensionRevision: 2,
+    weights: [{nodeId: 's1', units: 10}, {nodeId: 's2', units: 1}, {nodeId: 's3', units: 1}, {nodeId: 'ag1', units: 2}],
+  }))).toThrow(/conservation|allocation|root|extra work/i);
+  // Same total, redistributed between roots, stays valid.
+  const rebalanced = f.extensions.put(f.extension({
+    extensionRevision: 2,
+    weights: [{nodeId: 's1', units: 1}, {nodeId: 's2', units: 2}, {nodeId: 's3', units: 1}, {nodeId: 'ag1', units: 1}],
+  }));
+  expect(rebalanced.extensionRevision).toBe(2);
+  void saved;
+ });
+ it('requires conservation: child units may not exceed the parent allocation', () => {
     const f = fixture();
     // ag1 claims 2 units under s1 but s1 only holds 1 unit here -> over-budget.
     expect(() => f.extensions.put(f.extension({weights: [{nodeId: 's1', units: 1}, {nodeId: 's2', units: 1}, {nodeId: 's3', units: 1}, {nodeId: 'ag1', units: 2}]}))).toThrow(/conservation|allocation|budget/i);
@@ -92,7 +110,7 @@ describe('PlanExtensionV1 integrity', () => {
     const second = f.extensions.split(saved.planId, 's2', 'ag3', 2);
     expect(second.parentRelationships).toContainEqual({parentId: 's2', childId: 'ag3'});
     // Residual s2 = 1; leaves: ag1(2), ag2(1), ag3(2), s3(1) -> total 7.
-    const progress = f.extensions.progress(saved.planId, {s2: 'completed', ag1: 'completed'});
+    const progress = f.extensions.progress(saved.planId, {s2: 'completed', ag1: 'completed', ag2: 'pending', ag3: 'pending', s3: 'pending'});
     expect(progress).toEqual({completed: 3, pending: 4, unknown: 0, total: 7});
   });
 });
@@ -102,15 +120,16 @@ describe('progress and report watermark', () => {
     const f = fixture();
     const planId = f.extensions.put(f.extension()).planId;
     // ag1 partitions s1's 2 units; leaves are ag1(2), s2(1), s3(1) — total 4.
-    const partial = f.extensions.progress(planId, {s1: 'completed', ag1: 'completed'});
+    const partial = f.extensions.progress(planId, {s1: 'completed', ag1: 'completed', s2: 'pending', s3: 'pending'});
     expect(partial).toEqual({completed: 2, pending: 2, unknown: 0, total: 4});
-    const unsure = f.extensions.progress(planId, {ag1: 'unknown'});
+    const unsure = f.extensions.progress(planId, {ag1: 'unknown', s2: 'pending', s3: 'pending'});
     expect(unsure).toEqual({completed: 0, pending: 2, unknown: 2, total: 4});
     const allDone = f.extensions.progress(planId, {s1: 'completed', ag1: 'completed', s2: 'completed', s3: 'completed'});
     expect(allDone).toEqual({completed: 4, pending: 0, unknown: 0, total: 4});
     // No fabricated endpoints: units are exact integers, progress is a ratio of them.
+    // A node with no reported status is unknown work, not assumed pending.
     const none = f.extensions.progress(planId, {});
-    expect(none).toEqual({completed: 0, total: 4, pending: 4, unknown: 0});
+    expect(none).toEqual({completed: 0, total: 4, pending: 0, unknown: 4});
   });
   it('does not calculate current progress with weights pinned to an older plan', () => {
     const f = fixture();
@@ -229,4 +248,51 @@ it('returns no plan extension when the canonical record is stale, missing, or no
     expect(response.statusCode, name).toBe(200);
     expect(response.json(), name).toEqual({extension: false, planId: f.planId});
   }
+});
+
+it('agent work rows and output evidence expose reported outcome and per-ref freshness without calling it acceptance', async () => {
+  const f = fixture();
+  const now = new Date().toISOString(), workId = 'work-evidence-detail', outputRef = {id: `out:${workId}`, revision: 1};
+  const thread: Thread = {id: f.threadId, title: 'Task', createdAt: now, updatedAt: now, kind: 'main', projectName: null, status: 'working', epoch: 1, runId: 'run', modelId: null, sessionPath: null};
+  const work: AgentWorkV1 = {
+    version: 1, workId,
+    parentOwner: {threadId: f.threadId, runId: 'run', epoch: 1},
+    childOwner: {threadId: 'child-evidence', runId: 'child-run', epoch: 1},
+    role: 'QA', inputContractDigest: 'a'.repeat(64), expectedOutputSchema: {type: 'object'}, grantSubset: [], budget: {tokens: 10, ms: 1000},
+    state: 'COMPLETED_REPORTED', outputRef, repairAttempts: 0, createdSeq: 1, createdAt: now, updatedAt: now, revision: 2,
+  };
+  const output = {outcome: 'BLOCKED', summary: 'Blocked by the missing proof.', requirementIds: ['r1'], observations: [],
+    evidenceRefs: [{id: 'ev-current', revision: 1}, {id: 'ev-stale', revision: 1}, {id: 'ev-missing', revision: 1}, {id: 'ev-foreign', revision: 1}]};
+  f.store.internal('agent evidence fixture', f.threadId, () => {
+    f.store.put('thread', f.threadId, f.threadId, thread);
+    f.store.put('agentWork', workId, f.threadId, work);
+    f.store.put('data', outputRef.id, f.threadId, {id: outputRef.id, threadId: f.threadId, revision: 1, value: output, provenance: 'harness:agent-output', createdAt: now});
+    f.store.put('data', 'ev-current', f.threadId, {id: 'ev-current', threadId: f.threadId, revision: 1, value: {outcome: 'PASS', requirementId: 'r1'}, provenance: 'harness:verification', createdAt: now});
+    f.store.put('data', 'ev-stale', f.threadId, {id: 'ev-stale', threadId: f.threadId, revision: 2, value: {outcome: 'PASS', requirementId: 'r1'}, provenance: 'harness:verification', createdAt: now});
+    f.store.put('data', 'ev-foreign', 'other-thread', {id: 'ev-foreign', threadId: 'other-thread', revision: 1, value: {outcome: 'PASS', requirementId: 'r1'}, provenance: 'harness:verification', createdAt: now});
+  });
+  const app = Fastify();
+  cleanups.push(() => app.close());
+  registerAgentWorkRoutes(app, {
+    store: f.store,
+    planExtensions: f.extensions,
+    agentWork: {
+      listForParent: () => [work], inspect: () => work, lateArtifacts: () => [], dispatchedGrants: () => [], supportsLiveSteer: () => false,
+      roleAvailability: () => ({available: true}), budgetLedger: () => ({reservedTokens: 0, spentTokens: 0, admitted: 1, completed: 0, failed: 0, cancelled: 0, interrupted: 0}),
+      inbox: {text: () => null, messages: () => []},
+    },
+  } as unknown as Service);
+
+  const list = await app.inject({url: '/api/agent-work?taskId=' + f.threadId});
+  expect(list.statusCode).toBe(200);
+  expect(list.json().works[0]).toMatchObject({workId, state: 'COMPLETED_REPORTED', reportedOutcome: 'BLOCKED', verification: 'REPORTED_BLOCKED'});
+  const detail = await app.inject({url: `/api/agent-work/output?taskId=${f.threadId}&workId=${workId}`});
+  expect(detail.statusCode).toBe(200);
+  expect(detail.json()).toMatchObject({workId, reportedOutcome: 'BLOCKED', verification: 'REPORTED_BLOCKED', outputStatus: 'current'});
+  expect(detail.json().evidence).toEqual([
+    expect.objectContaining({id: 'ev-current', revision: 1, currentRevision: 1, status: 'current', outcome: 'PASS', requirementIds: ['r1'], reason: null}),
+    expect.objectContaining({id: 'ev-stale', revision: 1, currentRevision: 2, status: 'stale', reason: 'durable revision is 2, not claimed revision 1'}),
+    expect.objectContaining({id: 'ev-missing', revision: 1, currentRevision: null, status: 'missing', reason: 'no durable evidence record exists at the claimed reference'}),
+    expect.objectContaining({id: 'ev-foreign', revision: 1, currentRevision: 1, status: 'wrong-owner', reason: 'evidence belongs outside the parent task'}),
+  ]);
 });

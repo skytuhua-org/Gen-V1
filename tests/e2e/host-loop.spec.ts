@@ -1,8 +1,11 @@
+import { once } from 'node:events';
+import { connect } from 'node:net';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import type { Frame, Page, TestInfo } from '@playwright/test';
 import { AFTER, BEFORE, browserCommand, documentSpec, evidence, FIXTURE_LABEL, grantFixtureFile, HOST_URL, openHost, sendFixture, test, expect } from '../host-fixture.ts';
 import { GENERATED_APPS_ENABLED } from '../../packages/core/widgets.ts';
+import type { AgentWorkV1 } from '../../packages/contracts/agent-work.ts';
 
 // Integration verification only. No route interception, mocked fetch/EventSource,
 // real-provider calls, user projects, production setup data, or shell effects.
@@ -71,6 +74,43 @@ async function bounded<T>(promise: Promise<T>, label: string, milliseconds = 300
   try { return await Promise.race([promise, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(`${label} did not respond within ${milliseconds}ms`)), milliseconds); })]); }
   finally { clearTimeout(timer); }
 }
+
+test('agent work evidence reaches the supported all-agents UI through the real host', async ({ page, host }, info) => {
+  await openHost(page);
+  await sendFixture(page, 'document');
+  const parent = host.snapshot().threads.find(thread => thread.kind !== 'delegate');
+  if (!parent) throw new Error('Fixture did not create a parent thread');
+  const now = new Date().toISOString(), workId = 'agent-evidence-integration', outputRef = { id: `out:${workId}`, revision: 1 };
+  const work: AgentWorkV1 = {
+    version: 1, workId,
+    parentOwner: { threadId: parent.id, runId: parent.runId, epoch: parent.epoch },
+    childOwner: { threadId: 'evidence-child', runId: 'child-run', epoch: 1 },
+    role: 'QA', inputContractDigest: 'b'.repeat(64), expectedOutputSchema: { type: 'object' }, grantSubset: [], budget: { tokens: 10, ms: 1000 },
+    state: 'COMPLETED_REPORTED', outputRef, repairAttempts: 0, createdSeq: 1, createdAt: now, updatedAt: now, revision: 2,
+  };
+  host.store.internal('fixture.agentWorkEvidence', parent.id, () => {
+    host.store.put('agentWork', workId, parent.id, work);
+    host.store.put('data', outputRef.id, parent.id, { id: outputRef.id, threadId: parent.id, revision: 1, provenance: 'harness:agent-output', createdAt: now,
+      value: { outcome: 'BLOCKED', summary: 'Missing current proof.', requirementIds: ['r1'], observations: [], evidenceRefs: [{ id: 'ev-current', revision: 1 }, { id: 'ev-stale', revision: 1 }, { id: 'ev-missing', revision: 1 }] } });
+    host.store.put('data', 'ev-current', parent.id, { id: 'ev-current', threadId: parent.id, revision: 1, provenance: 'harness:verification', createdAt: now, value: { outcome: 'PASS', requirementId: 'r1' } });
+    host.store.put('data', 'ev-stale', parent.id, { id: 'ev-stale', threadId: parent.id, revision: 2, provenance: 'harness:verification', createdAt: now, value: { outcome: 'PASS', requirementId: 'r1' } });
+  });
+  await page.getByRole('button', { name: 'All Agents', exact: true }).click();
+  await page.getByRole('button', { name: 'Agent work · 1', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Agent work', exact: true });
+  await expect(panel).toContainText('reported blocked — not verified');
+  await expect(panel).toContainText('2/3 refs stale');
+  const outputRequest = page.waitForResponse(response => response.url().includes('/api/agent-work/output?') && response.url().includes(`workId=${workId}`) && response.ok());
+  await panel.getByRole('button', { name: `Open evidence for ${workId}`, exact: true }).click();
+  await outputRequest;
+  const detail = page.getByRole('region', { name: 'Work output evidence', exact: true });
+  await expect(detail).toContainText('Reported blocked — not verified.');
+  await expect(detail).toContainText('durable revision is 2, not claimed revision 1');
+  await expect(detail).toContainText('no durable evidence record exists at the claimed reference');
+  await expect(detail).toContainText('Verification remains a separate host decision.');
+  await expect(detail).not.toContainText('100% accepted');
+  await evidence(page, info, 'agent-work-evidence-real-host');
+});
 
 test('actual create/send, cookies/CSRF/SSE and structured host autosave survive reload', async ({ page, host }, info) => {
   const started = performance.now();
@@ -156,6 +196,23 @@ test('durable decision validation and acceptance continue the same owning runtim
   expect(host.snapshot().requests[0]?.response).toEqual({ choice: 'Keep', reason: 'Verified source evidence.' });
   await evidence(page, info, 'durable-decision');
   await performanceEvidence(info, { decisionAcceptanceToFollowUpVisibleMs: followUpMs });
+});
+
+test('host fixture restart releases an unused connection', async ({ host }) => {
+  const accepted = once(host.host.server, 'connection');
+  const client = connect({ host: '127.0.0.1', port: Number(new URL(HOST_URL).port) });
+  const closed = once(client, 'close');
+  void closed.catch(() => {});
+  let restart: Promise<void> | undefined;
+  try {
+    await Promise.all([accepted, once(client, 'connect')]);
+    restart = host.restart();
+    await bounded(Promise.all([restart, closed]), 'Host restart with an unused connection', 5000);
+    expect(host.generations).toHaveLength(2);
+  } finally {
+    client.destroy();
+    await restart;
+  }
 });
 
 test('generated operation button requires native approval; restart restores without repeating effects', async ({ page, host }, info) => {

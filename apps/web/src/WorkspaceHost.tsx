@@ -19,7 +19,7 @@ import {LoadingState, PendingStatus} from './LoadingState';
 import {SettingsSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
 import {ShellSidebar} from './ShellSidebar';
 import {getShellNavigationItem} from './shell-read-api';
-import {matchesShortcut, readShellLayout, useShellLayout} from './shell-layout';
+import {focusSidebarSearch, matchesShortcut, readShellLayout, useShellLayout} from './shell-layout';
 import {useSidebarCollapse} from './sidebar-collapse';
 import {useShellNavigation} from './shell-navigation';
 import {useAppearance} from './useAppearance';
@@ -207,10 +207,12 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   const pluginCatalogError = pluginCatalog.error || (pluginCatalog.failed ? 'Plug-ins could not be loaded.' : '');
   const [search, setSearch] = useState(''), navigation = useShellNavigation(search), [open, setOpen] = useState(false);
   const [mobile, setMobile] = useState(() => matchMedia('(max-width: 700px)').matches);
+  const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const [rename, setRename] = useState<ThreadNavigationRow>(), [title, setTitle] = useState('');
   const [archive, setArchive] = useState<ThreadNavigationRow>();
   const [unpin, setUnpin] = useState<{ row: ThreadNavigationRow; patch: NonNullable<ThreadNavigationRow['presentation']>; decide: (accepted: boolean) => void }>();
   const mutationPending = useRef(false), [mutationBusy, setMutationBusy] = useState(false);
+  const renameInput = useRef<HTMLInputElement>(null), renameSelected = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const sidebar = useRef<HTMLElement>(null), scrim = useRef<HTMLButtonElement>(null), searchRef = useRef<HTMLInputElement>(null);
   const prepareSidebarToggle = useSidebarCollapse(sidebar, layout.sidebarCollapsed, preferences.panelAnimations && preferences.motionDuration > 0, mobile);
@@ -224,8 +226,10 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
     const query = matchMedia('(prefers-color-scheme: dark)'), update = () => {document.documentElement.dataset.theme = settings.theme === 'system' ? query.matches ? 'dark' : 'light' : settings.theme;};
     update(); query.addEventListener('change', update); return () => query.removeEventListener('change', update);
   }, [settings.theme]);
+  useLayoutEffect(() => {if (searchFocusRequest) focusSidebarSearch(searchRef.current);}, [searchFocusRequest]);
   const action = (kind: ConversationIntent) => fail(() => openConversation(undefined, kind));
-  const openSettings = () => fail(async () => {await prepare(); setSettingsOpen(true);});
+  const settingsInvoker = useRef<HTMLElement | null>(null);
+  const openSettings = () => fail(async () => {settingsInvoker.current = document.activeElement as HTMLElement | null; await prepare(); setSettingsOpen(true);});
   const stopFocused = () => {const card=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('[data-agent-id]');const agent=card?controller.getSnapshot().agents.find(item=>item.agentId===card.dataset.agentId):undefined;if(agent&&agent.status==='working')void composers.stop(agent);};
   const shortcuts = useRef({action, openSettings, stopFocused}); shortcuts.current = {action, openSettings, stopFocused};
   const keybindings = JSON.stringify(preferences.keybindings);
@@ -234,13 +238,19 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
       if (event.defaultPrevented || document.querySelector('dialog[open]')) return;
       if (matchesShortcut(event, preferences.keybindings.openSettings)) {event.preventDefault(); shortcuts.current.openSettings();}
       else if (matchesShortcut(event, preferences.keybindings.newThread)) {event.preventDefault(); shortcuts.current.action('new-thread');}
-      else if (matchesShortcut(event, preferences.keybindings.search)) {event.preventDefault(); setOpen(true); setLayout(value => ({...value, sidebarCollapsed: false})); requestAnimationFrame(() => searchRef.current?.focus());}
+      else if (matchesShortcut(event, preferences.keybindings.search)) {event.preventDefault(); setOpen(true); setLayout(value => ({...value, sidebarCollapsed: false})); setSearchFocusRequest(value => value + 1);}
       else if (matchesShortcut(event, preferences.keybindings.toggleSidebar)) {event.preventDefault(); if (mobile) setOpen(value => !value); else setLayout(value => ({...value, sidebarCollapsed: !value.sidebarCollapsed}));}
       else if (matchesShortcut(event, preferences.keybindings.stop)) {event.preventDefault(); shortcuts.current.stopFocused();}
     };
     window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key);
   }, [keybindings, mobile]);
-  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]);});
+  const restoreSettingsFocus = () => {
+    const invoker = settingsInvoker.current;
+    settingsInvoker.current = null;
+    if (invoker && invoker !== document.body && invoker !== document.documentElement && invoker.isConnected && invoker.getClientRects().length) { invoker.focus({preventScroll: true}); return; }
+    (sidebar.current?.querySelector<HTMLElement>('button[aria-label="Settings"]') ?? searchRef.current)?.focus({preventScroll: true});
+  };
+  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]); requestAnimationFrame(restoreSettingsFocus);});
   const openBrowser = desktop?.context.surface.kind === 'main' ? async (url: string) => {
     const owner = desktop.context.windowId;
     await prepare();
@@ -276,14 +286,14 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
       setFolded={(key, folded) => setLayout(value => ({...value, folded: {...value.folded, [key]: folded}}))}
       select={id => fail(() => openConversation(id))} create={() => action('new-thread')} settings={openSettings}
       onConnectProject={() => action('connect-project')} onOpenPullRequests={() => action('linked-pull-requests')} onOpenUsage={() => action('usage')}
-      rename={row => {setRename(row); setTitle(row.title);}} archive={id => {const row = navigation.page?.items.find(value => value.id === id); if (row) {if (preferences.archiveConfirmation) setArchive(row); else archiveRow(row);}}} presentation={present}
+      rename={row => {renameSelected.current = false; setRename(row); setTitle(row.title);}} archive={id => {const row = navigation.page?.items.find(value => value.id === id); if (row) {if (preferences.archiveConfirmation) setArchive(row); else archiveRow(row);}}} presentation={present}
       ensureManualOrder={() => mutate(async () => {await command('settings.update', {preferences: {projectOrder: 'manual'}}); await refreshSettings(); fail(navigation.refresh);})}
       pageControls={<div className="workspace-host-navigation-page">
         {navigation.error && <ErrorState message={navigation.error} retryLabel="Retry threads" onRetry={() => fail(navigation.refresh)}/>}
         <PendingStatus pending={navigation.pending} label="Loading threads…"/>
         {navigation.page?.nextCursor && <button disabled={navigation.pending} onClick={() => fail(navigation.more)}>Load more threads ({navigation.page.items.length} of {navigation.page.total})</button>}
       </div>}/>
-    {!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={200} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({...value, sidebarWidth}))}/>}
+    {!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={232} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({...value, sidebarWidth}))}/>}
     <div className="workspace-layout-workarea workspace-host-main">
       {(layout.sidebarCollapsed || mobile) && <button className="icon-button sidebar-recovery" aria-label={mobile ? 'Open navigation' : 'Open sidebar'} onClick={event => {prepareSidebarToggle(event); setLayout(value => ({...value, sidebarCollapsed: false})); if (mobile) setOpen(true); requestAnimationFrame(() => searchRef.current?.focus());}}>{mobile ? <Menu size={18}/> : <PanelLeftOpen size={17}/>}</button>}
       <WorkspaceControls envelope={workspace.envelope} send={workspace.send} prepare={prepare} panels={[]} title={panel => panel.kind}
@@ -296,8 +306,8 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
     <Modal open={settingsOpen} title="Settings" className="settings-dialog" onClose={closeSettings}>
       {settingsOpen && <CompactSettingsContent scopeKey="personal-main" close={closeSettings} addResource={() => action('resources')} openBrowser={openBrowser}/>}
     </Modal>
-    <Modal open={Boolean(rename)} title="Rename thread" onClose={() => {if (!mutationPending.current) setRename(undefined);}}><form onSubmit={event => {event.preventDefault(); if (rename && title.trim()) mutate(async () => {await command('thread.rename', {title: title.trim()}, rename.id); await navigation.refresh(); setRename(undefined);});}}>
-      <label>Thread name<input autoFocus disabled={mutationBusy} value={title} maxLength={180} onChange={event => setTitle(event.target.value)}/></label><button disabled={mutationBusy || !title.trim()}>Save name</button>
+    <Modal open={Boolean(rename)} title="Rename thread" initialFocusRef={renameInput} onClose={() => {if (!mutationPending.current) setRename(undefined);}}><form onSubmit={event => {event.preventDefault(); if (rename && title.trim()) mutate(async () => {await command('thread.rename', {title: title.trim()}, rename.id); await navigation.refresh(); setRename(undefined);});}}>
+      <label>Thread name<input ref={el => { renameInput.current = el; if (el && !renameSelected.current) { renameSelected.current = true; el.select(); } }} autoFocus disabled={mutationBusy} value={title} maxLength={180} onChange={event => setTitle(event.target.value)}/></label><button disabled={mutationBusy || !title.trim()}>Save name</button>
     </form></Modal>
     <Modal open={Boolean(archive)} title="Archive thread" onClose={() => {if (!mutationPending.current) setArchive(undefined);}}><p>{archive?.title}</p><button disabled={mutationBusy} onClick={() => {if (archive) archiveRow(archive);}}>Archive</button></Modal>
     <Modal open={Boolean(unpin)} title="Unpin thread" onClose={() => {if (unpin && !mutationPending.current) answerUnpin(unpin, false);}}><p>{unpin?.row.title}</p><button disabled={mutationBusy} onClick={() => {if (unpin) answerUnpin(unpin, false);}}>Keep pinned</button><button disabled={mutationBusy} onClick={() => {if (unpin) answerUnpin(unpin, true);}}>Unpin</button></Modal>

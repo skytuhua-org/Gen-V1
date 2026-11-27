@@ -19,8 +19,8 @@ workspace presets and settings are application state, not separate URL routes.
 
 UI owning files above are under `apps/web/src/` unless a package path is given.
 Test paths are repository-relative. The built-in choices are Workspace and All Agents;
-Code Review, Research and Custom are retired presets with retained saved records,
-not new workspace choices. Review now uses the shared linked-pull-requests surface.
+Code Review, Research, Custom and Visuals are retired presets with retained
+saved records, not new workspace choices. Review now uses the shared linked-pull-requests surface.
 The complete fixture/state registry is [screen-map.ts](../scripts/capture-ui/screen-map.ts).
 The exact suite-to-config mapping is [browser-suites.ts](../scripts/browser-suites.ts).
 
