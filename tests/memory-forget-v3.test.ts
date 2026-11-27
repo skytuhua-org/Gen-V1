@@ -123,6 +123,19 @@ it('recovers memory availability when only the profile deletion mirror is corrup
   expect(readdirSync(dataDir).filter(name => name.startsWith('project-memory-deletions.jsonl.damaged-'))).toHaveLength(1);
 });
 
+it('repairs a missing local deletion mirror without replaying forgotten memory', async () => {
+  const f = await fixture(), item = f.accept('Retain only the deletion');
+  f.act({ action: 'forget', itemId: item.id, baseRevision: item.revision });
+  const dataDir = f.store.dataDir, mirror = join(dataDir, 'project-memory-deletions.jsonl');
+  const expected = readFileSync(projectMemoryDeletionLedgerPath(dataDir), 'utf8');
+  f.store.close(); rmSync(mirror); f.store = new Store(dataDir);
+  const memory = new ProjectMemory(f.store, { enabled: () => true }), access = await memory.access('project', 'thread');
+  expect(memory.accepted(access)).toEqual([]);
+  expect(memory.read(access).tombstones[0].sourceExclusions.map(ref => ref.digest)).toContain(f.ref.digest);
+  expect(readFileSync(mirror, 'utf8')).toBe(expected);
+  expect(readdirSync(dataDir).some(name => name.startsWith('project-memory-deletions.jsonl.damaged-'))).toBe(false);
+});
+
 it('fails closed when the authoritative deletion fence is corrupt even if the profile mirror is valid', async () => {
   const f = await fixture(), item = f.accept('Uncertain deletion history');
   f.act({ action: 'forget', itemId: item.id, baseRevision: item.revision });

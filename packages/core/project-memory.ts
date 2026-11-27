@@ -171,6 +171,10 @@ export class ProjectMemory {
         this.quarantineDamagedDeletionMirror();
         recoverMirror = true;
       } else mirrorEntries = mirror.entries;
+    } else if (fence.entries.length && this.deletionFenceEnrolled()) {
+      // A restart after quarantine can observe no mirror at all. Rebuild only
+      // from the already validated, enrolled fence, without touching the fence.
+      recoverMirror = true;
     }
     for (const entry of [...mirrorEntries, ...fence.entries]) this.mergeDeletion(entry);
     if (recoverMirror) for (const entry of fence.entries) this.writeDeletion(this.deletionPath, entry);
