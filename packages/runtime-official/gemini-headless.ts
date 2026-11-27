@@ -53,6 +53,9 @@ export async function openGeminiHeadless(context: DriverContext, spawnProcess: t
   let draining = false;
   const queue: WireInput[] = [];
   const assert = () => { if (closed || !context.current()) throw new HarnessError('OFFICIAL_RUN_ABORTED', 'Official run authority was revoked.'); };
+  function notify(type: string, value?: Record<string, unknown>) {
+    try { context.event(type, value); } catch { /* An observer cannot change the result of a verified native turn or prevent teardown. */ }
+  }
   async function execute(wire: WireInput): Promise<void> {
     assert();
     const command = officialRuntimeCommand('gemini-cli');
@@ -120,16 +123,16 @@ export async function openGeminiHeadless(context: DriverContext, spawnProcess: t
     await writes; assert();
     if (failure) throw failure;
     if (code !== 0 || !terminal || status !== 'success') throw new HarnessError('OFFICIAL_TURN_FAILED', 'Official Gemini did not confirm a successful terminal turn. Native history will determine input delivery.');
-    if (content) context.event('assistant.message', { messageId: randomUUID(), content, inputIds: context.inputIds([wire.uuid]) });
-    context.event('usage', { usage: { contextTokens: null, contextWindow: null, inputTokens: finite(usage?.input_tokens), outputTokens: finite(usage?.output_tokens), cost: null, sessionPercent: null, weeklyPercent: null, activity: queue.length ? 'running' : 'idle' } });
+    if (content) notify('assistant.message', { messageId: randomUUID(), content, inputIds: context.inputIds([wire.uuid]) });
+    notify('usage', { usage: { contextTokens: null, contextWindow: null, inputTokens: finite(usage?.input_tokens), outputTokens: finite(usage?.output_tokens), cost: null, sessionPercent: null, weeklyPercent: null, activity: queue.length ? 'running' : 'idle' } });
   }
   async function drain(): Promise<void> {
     if (draining) return;
     draining = true;
     try {
       while (queue.length) await execute(queue.shift()!);
-      context.event('settled', { aborted: false });
-    } catch (error) { if (context.current() && !closed) { context.event('error', { message: error instanceof Error ? error.message : 'Official Gemini turn failed.' }); context.event('settled', { aborted: false }); } }
+      notify('settled', { aborted: false });
+    } catch (error) { if (context.current() && !closed) { notify('error', { message: error instanceof Error ? error.message : 'Official Gemini turn failed.' }); notify('settled', { aborted: false }); } }
     finally { draining = false; }
   }
   const driver: OfficialDriver = {
