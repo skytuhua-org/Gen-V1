@@ -5,9 +5,10 @@ import {shellInit,shellRoute,shellSnapshot} from '../../scripts/capture-ui/shell
 import {projectContext} from '../../scripts/capture-ui/browser-data';
 import {serveTaskSplitLayout} from './task-interface-fixture';
 
-async function host(page:Page){
+async function host(page:Page,legacyTitle?:string){
  const snapshot=shellSnapshot(),commands:{type:string;threadId:string;payload:{content?:string}}[]=[],unexpected:string[]=[];
  const workingCopy={id:'copy-one',path:'/synthetic/copy-one'};
+ if(legacyTitle!==undefined)snapshot.threads[0].title=legacyTitle;
  snapshot.threads[0].projectId='capture-project';snapshot.threads[0].projectName='Audit project';
  snapshot.messages=Array.from({length:125},(_,i)=>({...snapshot.messages[0],id:'message-'+i,content:'Workspace integration evidence '+i}));
  snapshot.memory=[{id:'note',threadId:'one',key:'decision',content:'Keep this owner note.',revision:1,author:'user',updatedAt:'2026-11-10T00:00:00Z'}];
@@ -111,6 +112,20 @@ test('QA r1 actual App fences named libraries by thread account and working copy
  h.workingCopy.id='copy-one';h.snapshot.threads[0].accountId='other-account';await page.reload();await expect(drafts).toBeEnabled();await drafts.click();await expect(page.getByRole('dialog',{name:'Saved drafts',exact:true})).toContainText('No saved drafts yet.');await page.keyboard.press('Escape');
  h.snapshot.threads[0].accountId=null;await page.reload();await expect(drafts).toBeEnabled();await drafts.click();await expect(page.getByRole('dialog',{name:'Saved drafts',exact:true})).toContainText('Owner library');await page.keyboard.press('Escape');
  await page.getByRole('button',{name:'Review keyboard navigation Ready',exact:true}).click();await expect(drafts).toBeEnabled();await drafts.click();await expect(page.getByRole('dialog',{name:'Saved drafts',exact:true})).toContainText('No saved drafts yet.');expect(h.commands.filter(command=>command.type==='message.send')).toEqual([]);expect(h.unexpected).toEqual([]);
+});
+
+test('legacy thread title is a single line in navigation, the conversation and Rename',async({page})=>{
+ const title='Legacy conversation with a multiline title';
+ await host(page,'  Legacy conversation\nwith a\t multiline   title  ');
+ const row=page.getByRole('button',{name:new RegExp('^'+title)});
+ await expect(row).toHaveAttribute('aria-label',new RegExp('^'+title));
+ const header=page.locator('.breadcrumb strong').first();
+ await expect(header).toHaveText(title);
+ expect(await header.textContent()).toBe(title);
+ await expect(page.locator('.split-tab-strip [role=tab]').first()).toHaveAttribute('title',title);
+ await page.getByRole('button',{name:'Options for '+title,exact:true}).click();
+ await page.getByRole('menuitem',{name:'Rename thread',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'Rename thread'}).getByRole('textbox')).toHaveValue(title);
 });
 
 test('fixture blocks foreign canonical workspace requests',async({page})=>{
