@@ -714,6 +714,11 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const projectConnectTarget=useRef<{threadId?:string;projectId?:string;opener:HTMLElement|null}|null>(null);
   const [projectConnecting,setProjectConnecting]=useState(false);
   const projectConnectPending=useRef(false),projectConnectName=useRef<HTMLInputElement>(null),projectConnectPath=useRef<HTMLInputElement>(null);
+  useLayoutEffect(()=>{
+    if(!projectConnectOpen)return;
+    const name=projectConnectName.current;
+    name?.setSelectionRange(0,name.value.length);
+  },[projectConnectOpen]);
   const projectConnectScope=useRef<HTMLDivElement>(null),projectFocusFrame=useRef(0);
   const mainProjectThread=useRef(resolvedMainId);
   mainProjectThread.current=resolvedMainId;
@@ -1265,9 +1270,9 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
       recentProjectIds={[...new Set([...snapshot.threads].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).flatMap(value=>value.projectId?[value.projectId]:[]))]}
       colors={preferences.projectColors} busy={projectPicking} error={projectPickerError} onClose={closeProjectSelection} onSelect={pickProject} onColorChange={saveProjectColor}
       onAddProject={()=>{projectConnectPicker.current=projectPicker;setProjectPicker(null);openProjectConnect({});}}/>}
-    {projectConnectOpen&&<Dialog title="Connect project" close={closeProjectConnect} closeDisabled={projectConnecting}>
+    {projectConnectOpen&&<Dialog title="Connect project" close={closeProjectConnect} closeDisabled={projectConnecting} initialFocusRef={projectConnectName}>
       <form aria-busy={projectConnecting} onSubmit={event=>{event.preventDefault();void connectProject();}}>
-        <label className="field">Project name<input ref={projectConnectName} required maxLength={100} readOnly={projectConnecting}
+        <label className="field">Project name<input ref={projectConnectName} required maxLength={100} placeholder="My project" readOnly={projectConnecting}
           value={projectName} aria-describedby="connect-project-name-hint" onChange={event=>setProjectName(event.target.value)}/></label>
         <small id="connect-project-name-hint" className="field-hint">Shown in the project picker · up to 100 characters</small>
         <label className="field">Local folder<input ref={projectConnectPath} required maxLength={4096} readOnly={projectConnecting}

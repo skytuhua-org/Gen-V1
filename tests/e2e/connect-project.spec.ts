@@ -65,6 +65,27 @@ test('Connect project opens from Project overview with POSIX placeholder and nam
   await expect(dialog.locator('#connect-project-name-hint')).toHaveText('Shown in the project picker · up to 100 characters');
 });
 
+test('Connect project focuses and selects the retained name on reopen',async({page})=>{
+ await host(page);
+ const opener=page.getByRole('complementary',{name:'Thread navigation'}).getByRole('button',{name:'Connect project',exact:true});
+ await opener.click();
+ const dialog=page.getByRole('dialog',{name:'Connect project',exact:true});
+ const name=dialog.getByLabel('Project name',{exact:true});
+ await expect(name).toHaveAttribute('placeholder','My project');
+ await expect(name).toBeFocused();
+ expect(await name.evaluate((input:HTMLInputElement)=>input.selectionStart)).toBe(0);
+ await page.keyboard.type('Draft project name');
+ await page.keyboard.press('Escape');
+ await expect(opener).toBeFocused();
+ await opener.press('Enter');
+ await expect(name).toBeFocused();
+ expect(await name.evaluate((input:HTMLInputElement)=>[input.selectionStart,input.selectionEnd])).toEqual([0,'Draft project name'.length]);
+ await page.keyboard.type('Replacement');
+ await expect(name).toHaveValue('Replacement');
+ await page.keyboard.press('Tab');
+ await expect(dialog.getByLabel('Local folder',{exact:true})).toBeFocused();
+});
+
 test('Connect project name field caps input at 100 characters',async({page})=>{
   await host(page);
   const dialog=await openDialog(page);
