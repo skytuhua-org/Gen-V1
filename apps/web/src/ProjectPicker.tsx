@@ -41,7 +41,9 @@ function ProjectPickerDialog({ authority, projects, selectedProjectId, recentPro
   const [colorKey, setColorKey] = useState<string | null>(null), [custom, setCustom] = useState(''), [colorError, setColorError] = useState('');
   const locked = busy || working;
   const choices = useMemo(() => {
-    const scoped = projects.filter(project => projectColorKey(project.authority, project.id) === projectColorKey(authority, project.id));
+    const scoped = projects.filter(project =>
+      projectColorKey(project.authority, project.id) === projectColorKey(authority, project.id) &&
+      (authority.kind !== 'local' || Boolean(project.rootPath)));
     const rank = (project: ProjectSummary) => { const index = recentProjectIds.indexOf(project.id); return index < 0 ? Infinity : index; };
     const ordered = [...scoped].sort((a, b) => rank(a) - rank(b));
     const all: (ProjectSummary | null)[] = authority.kind === 'local' ? [null, ...ordered] : ordered;
