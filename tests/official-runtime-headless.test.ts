@@ -73,6 +73,17 @@ describe('Gemini official headless native continuation', () => {
     } finally { await rm(dataDir, { recursive: true, force: true }); }
   });
 
+  it('rejects two native files claiming the same owned session and ignores a valid prefix collision', async () => {
+    const { dataDir, manifest, nativeFile, header } = await fixture();
+    const backup = join(dirname(nativeFile), 'session-2026-10-30T00-00-12345678.jsonl');
+    try {
+      await writeFile(backup, JSON.stringify({ ...header, sessionId: '12345678-abcd-4000-8000-123456789001' }) + '\n');
+      await expect(readGeminiNativeHistory(dataDir, manifest)).resolves.toEqual([{ uuid: 'old-client-uuid', inputIds: ['old-input'] }]);
+      await writeFile(backup, JSON.stringify(header) + '\n');
+      await expect(readGeminiNativeHistory(dataDir, manifest)).rejects.toMatchObject({ code: 'OFFICIAL_SESSION_MISMATCH' });
+    } finally { await rm(dataDir, { recursive: true, force: true }); }
+  });
+
   it('classifies a damaged native history header instead of throwing a raw parsing exception', async () => {
     const { dataDir, manifest, nativeFile } = await fixture();
     await writeFile(nativeFile, 'null\n');
