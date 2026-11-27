@@ -12,6 +12,9 @@ export interface GuardEntry { readonly path: string; readonly directory: boolean
 interface GuardSession { rpc(request: Record<string, unknown>, startupAcquisition?: boolean): Promise<readonly GuardEntry[]>; exited: boolean; loss:Set<()=>void> }
 const sessions = new AsyncLocalStorage<GuardSession>();
 const denied = () => new HarnessError("CAPABILITY_DENIED", "File access check failed — the folder could not be opened safely for this action");
+// Process exit can precede stderr flush, but a never-closing child must still
+// fail its pending RPC promptly enough for bounded teardown to run.
+const exitDiagnosticsGraceMs = 250;
 // A cold, app-owned Hermes guard may need PowerShell startup and C# initialization.
 // Extend only its first acquire, not unrelated reads, writes, or lease releases.
 export function pathGuardRpcDeadline(command: unknown, metadataImport: boolean, startupAcquisition: boolean): number {
@@ -66,11 +69,15 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
       let output = "";
       const metadataImport = Array.isArray(request.paths) && (request.paths as GuardPath[]).some(path => path.gitMetadataImport);
       const timer = setTimeout(() => finish(denied()), pathGuardRpcDeadline(request.command,metadataImport,startupAcquisition));
+      let exitFailureTimer: NodeJS.Timeout | undefined;
       const failed = () => {
+        if (exitFailureTimer) clearTimeout(exitFailureTimer);
+        exitFailureTimer = undefined;
         const nativeMessage = /GUARD_NATIVE_MESSAGE:([^\r\n]*)/.exec(diagnostics)?.[1];
         const precondition = nativeMessage !== undefined && /Replacement destination (?:bytes|identity) changed/.test(nativeMessage);
         finish(new HarnessError(precondition ? "PRECONDITION_FAILED" : /limit exceeded/i.test(diagnostics)?"RESOURCE_LIMIT":"CAPABILITY_DENIED", "File access check failed — the folder could not be opened safely for this action", { nativeCode: /GUARD_NATIVE_ERROR:([-0-9]+)/.exec(diagnostics)?.[1] ?? "unavailable",nativeMessage }));
       };
+      const exited = () => { exitFailureTimer ??= setTimeout(failed, exitDiagnosticsGraceMs); };
       const data = (bytes: string) => {
         output += bytes;
         if (output.length > (metadataImport ? 64 : 16) * 1024 * 1024) return finish(denied());
@@ -88,14 +95,16 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
       };
       const finish = (error?: Error, manifest: readonly GuardEntry[] = []) => {
         clearTimeout(timer);
+        if (exitFailureTimer) clearTimeout(exitFailureTimer);
         cancelPendingRpc = undefined;
         child.stdout.removeListener("data", data);
         child.removeListener("error", failed);
         child.removeListener("close", failed);
+        child.removeListener("exit", exited);
         error ? reject(error) : accept(manifest);
       };
       cancelPendingRpc = () => finish(denied());
-      child.once("error", failed); child.once("close", failed); child.stdout.on("data", data);
+      child.once("error", failed); child.once("close", failed); child.once("exit", exited); child.stdout.on("data", data);
       child.stdin.write(JSON.stringify(request) + "\n");
     }));
     queue = pending.then(() => {}, () => {}); return pending;
