@@ -65,3 +65,10 @@ describe('parseOpenProjectArgs',()=>{
   expect(parseOpenProjectArgs(['--open-project',path])).toEqual(open(path));
  });
 });
+
+it('rejects a mixed inline and separate open-project request in either order',()=>{
+ for(const args of [
+  ['--open-project=C:\\a','--open-project','C:\\b'],
+  ['--open-project','C:\\b','--open-project=C:\\a'],
+ ])expect(parseOpenProjectArgs(args).kind).toBe('invalid');
+});
