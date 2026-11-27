@@ -96,7 +96,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       event.preventDefault();
       const index = selectable.findIndex(option => option.id === selected?.id);
       if (event.key === 'Home') setActive(selectable[0]!.id);
-      else if (event.key === 'End') {setActive(selectable[selectable.length - 1]!.id); if (page?.nextCursor) void loadMore();}
+      else if (event.key === 'End') {if (page?.nextCursor) {void loadMore(); return true;} setActive(selectable[selectable.length - 1]!.id);}
       else {
         const rows = Math.max(1, Math.floor((content.current?.querySelector('.composer-command-list')?.clientHeight ?? 168) / 42));
         const next = event.key === 'PageDown' ? Math.min(selectable.length - 1, index + rows) : Math.max(0, index - rows);
@@ -106,6 +106,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       return true;
     }
     if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (event.key === 'Enter' && error) {event.preventDefault(); setReload(value => value + 1); return true;}
       if (selected) {event.preventDefault(); void choose(selected); return true;}
       if (event.key === 'Enter') {event.preventDefault(); close(); return true;}
     }
@@ -132,7 +133,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       {error ? <ErrorState className="composer-command-status" message={error} retryLabel="Reload" onRetry={() => {setReload(value => value + 1);}}/> : !loading && !options.length && <div role="status" className="composer-command-status"><Search size={14}/>No commands or skills found</div>}
       {Boolean(unavailableSources.length) && <div role="status" aria-label="Unavailable skill sources" className="composer-command-unavailable">{unavailableSources.map(source => <div key={source.id}><span>{source.label}</span><span>{source.availability.status === 'unavailable' ? availabilityLabel[source.availability.reason] : ''}</span></div>)}</div>}
       {!loading && page?.nextCursor && <button type="button" className="composer-command-more" onPointerDown={event => event.preventDefault()} onClick={() => void loadMore()}>Load more skills</button>}
-      <div className="composer-command-hint" aria-hidden="true">↑ ↓ Navigate · <span>Enter/Tab Select · Esc Close</span></div>
+      <div className="composer-command-hint" aria-hidden="true">{error ? <span>Enter Retry · Esc Close</span> : !options.length ? <span>Esc Close</span> : !loading && page?.nextCursor ? <span>↑↓ PgUp PgDn Navigate · Enter Tab Select · End Load more · Esc Close</span> : <span>↑↓ PgUp PgDn Navigate · Enter Tab Select · Esc Close</span>}</div>
     </Popover>
     {!open && error && <div role="status" className="composer-command-error">{error}<button type="button" aria-label="Dismiss command error" onClick={() => setError('')}><X size={13}/></button></div>}
   </>;
