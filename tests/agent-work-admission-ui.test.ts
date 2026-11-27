@@ -71,10 +71,13 @@ describe('AgentWorkPanel admission UI', () => {
     await page.getByLabel('Resource access').getByRole('checkbox').check();
     await page.getByLabel('Token budget').fill('1000');
     await page.getByLabel('Minute budget').fill('10');
-    await page.getByLabel('New work prompt').fill('Inspect the plan evidence');
+    await page.getByLabel('Prompt').fill('Inspect the plan evidence');
     await page.evaluate(() => { (window as unknown as FixtureWindow).__failCreate = true; });
     await page.getByRole('button', {name: 'Admit work'}).click();
     await expect.poll(() => page.evaluate(() => (window as unknown as FixtureWindow).__sent.length), {timeout: 8000}).toBe(1);
+    await expect(page.getByRole('alert')).toContainText('synthetic uncertain failure');
+    await page.waitForTimeout(4300);
+    await expect(page.getByRole('alert')).toContainText('synthetic uncertain failure');
     await page.evaluate(() => { (window as unknown as FixtureWindow).__failCreate = false; });
     await page.getByRole('button', {name: 'Admit work'}).click();
     await expect.poll(() => page.evaluate(() => (window as unknown as FixtureWindow).__sent.length)).toBe(2);

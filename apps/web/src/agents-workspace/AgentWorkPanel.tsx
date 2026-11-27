@@ -102,7 +102,7 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
         setCreateIds(null);
         return refresh();
       })
-      .catch(e => setError(e instanceof Error ? e.message : 'Create failed'))
+      .catch(e => setCreateError(e instanceof Error ? e.message : 'Create failed'))
       .finally(() => setCreating(false));
   };
   const submitPost = () => {
@@ -141,13 +141,15 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
       {list && list.works.length === 0 && <p className="agents-empty">No admitted agent work yet.</p>}
       {list && <details className="agents-work-create">
         <summary>Admit agent work</summary>
-        <div className="agents-board-post">
-          <Select aria-label="New work role" value={create.role} onValueChange={value => setCreate(current => ({...current, role: value as AgentWorkRow['role']}))}
-            options={(['PLAN_READ', 'RESEARCH_READ', 'CODE_WORKTREE', 'QA'] as const).filter(role => list.roles[role]?.available).map(role => ({value: role, label: role}))}/>
-          <input aria-label="Token budget" placeholder="Tokens" inputMode="numeric" value={create.tokens} onChange={e => setCreate(current => ({...current, tokens: e.target.value}))}/>
-          <input aria-label="Minute budget" placeholder="Minutes" inputMode="numeric" value={create.minutes} onChange={e => setCreate(current => ({...current, minutes: e.target.value}))}/>
+        <div className="agents-work-create-fields">
+          <label className="agents-work-field"><span>Role</span><Select aria-label="New work role" value={create.role} onValueChange={value => setCreate(current => ({...current, role: value as AgentWorkRow['role']}))}
+            options={(['PLAN_READ', 'RESEARCH_READ', 'CODE_WORKTREE', 'QA'] as const).filter(role => list.roles[role]?.available).map(role => ({value: role, label: role}))}/></label>
+          <div className="agents-work-budgets">
+            <label className="agents-work-field"><span>Token budget</span><input placeholder="Tokens" inputMode="numeric" value={create.tokens} onChange={e => setCreate(current => ({...current, tokens: e.target.value}))}/></label>
+            <label className="agents-work-field"><span>Minute budget</span><input placeholder="Minutes" inputMode="numeric" value={create.minutes} onChange={e => setCreate(current => ({...current, minutes: e.target.value}))}/></label>
+          </div>
         </div>
-        <textarea aria-label="New work prompt" placeholder="Task for the child…" value={create.prompt} onChange={e => setCreate(current => ({...current, prompt: e.target.value}))}/>
+        <label className="agents-work-field"><span>Prompt</span><textarea placeholder="Task for the child…" rows={4} value={create.prompt} onChange={e => setCreate(current => ({...current, prompt: e.target.value}))}/></label>
         {list.resources.length > 0 && <div className="agents-work-grants" aria-label="Resource access">
           {list.resources.map(grant => <label key={grant.id} className="agents-work-meta"><input type="checkbox" checked={selectedGrants.has(grant.id)} onChange={event => setSelectedGrants(current => {
             const next = new Set(current);
