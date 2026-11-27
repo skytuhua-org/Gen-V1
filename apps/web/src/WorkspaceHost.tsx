@@ -26,8 +26,7 @@ import {useShellNavigation} from './shell-navigation';
 import {useAppearance} from './useAppearance';
 import {useWorkspaceState} from './workspace-api';
 import {WorkspaceControls} from './WorkspaceControls';
-import {usePluginCatalog} from './PluginFrame';
-import {ShellNotice} from './ShellNotice';
+import {usePluginCatalog,usePluginCatalogNotice} from './PluginFrame';
 import type {ThreadHoverPRTarget} from './thread-hover/host';
 import type {ThreadHoverScope} from './thread-hover/facts';
 import './workspace-host.css';
@@ -79,7 +78,6 @@ export function WorkspaceHost({conversation}: {conversation: (host: Conversation
   // The catalog lives above the preset switch so plug-in tabs stay reachable from
   // every canvas (All Agents included), not only the Workspace conversation owner.
   const pluginCatalog = usePluginCatalog(true);
-  const [dismissedPluginError, setDismissedPluginError] = useState('');
   const [settings, setSettings] = useState<Awaited<ReturnType<typeof getShellSettings>>>(), [error, setError] = useState('');
   const [intent, setIntent] = useState<ConversationHost['intent']>(), intentSequence = useRef(0), selected = useRef<string | undefined>(undefined), pending = useRef(false), alive = useRef(true);
   const [controller] = useState(() => new AgentsWorkspaceController());
@@ -181,7 +179,7 @@ export function WorkspaceHost({conversation}: {conversation: (host: Conversation
     setWorkspaceRetry(attempt => attempt + 1);
   });
   const pluginErrorMessage = pluginCatalog.error || (pluginCatalog.failed ? 'Plug-ins could not be loaded. Check the host connection, then retry.' : '');
-  const pluginNotice = pluginErrorMessage && pluginErrorMessage !== dismissedPluginError ? <ShellNotice message={pluginErrorMessage} onDismiss={() => setDismissedPluginError(pluginErrorMessage)}/> : null;
+  usePluginCatalogNotice(workspace.envelope && settings && preset && !retiredActive ? pluginErrorMessage : undefined);
   if (!workspace.envelope || !settings || !preset) return <main className="workspace-host-bootstrap" style={{'--sidebar-width': readShellLayout().sidebarWidth + 'px'} as CSSProperties}>
     {!failure && <LoadingState pending hasContent={false} label="Opening workspace…" skeleton={<WorkspaceSkeleton/>} className="view-loading-state"/>}
     {failure && <ErrorState message={failure} retryLabel="Retry workspace" onRetry={retry}/>}
@@ -189,9 +187,9 @@ export function WorkspaceHost({conversation}: {conversation: (host: Conversation
   if (retiredActive) return <main className="workspace-host-bootstrap" style={{'--sidebar-width': readShellLayout().sidebarWidth + 'px'} as CSSProperties}>
     {failure ? <ErrorState message={failure} retryLabel="Retry workspace" onRetry={retry}/> : <LoadingState pending hasContent={false} label="Opening Workspace…" skeleton={<WorkspaceSkeleton/>} className="view-loading-state"/>}
   </main>;
-  if (preset !== 'all-agents' && (retainedCanvasMode || (preset !== 'research' && preset !== 'code-review'))) return <>{conversation({workspace, choosePreset, initialThreadId: selected.current, selectThread: id => {selected.current = id;}, intent, consumeIntent: id => setIntent(current => current?.id === id ? undefined : current), composers, pluginCatalog, openReview})}{pluginNotice}</>;
-  return <><MonitorShell workspace={workspace} settings={settings} controller={controller} composers={composers} choosePreset={choosePreset}
-    refreshSettings={loadSettings} openConversation={openConversation} openReview={openReview} error={error} dismissError={() => setError('')} fail={fail} pluginCatalog={pluginCatalog}/>{pluginNotice}</>;
+  if (preset !== 'all-agents' && (retainedCanvasMode || (preset !== 'research' && preset !== 'code-review'))) return conversation({workspace, choosePreset, initialThreadId: selected.current, selectThread: id => {selected.current = id;}, intent, consumeIntent: id => setIntent(current => current?.id === id ? undefined : current), composers, pluginCatalog, openReview});
+  return <MonitorShell workspace={workspace} settings={settings} controller={controller} composers={composers} choosePreset={choosePreset}
+    refreshSettings={loadSettings} openConversation={openConversation} openReview={openReview} error={error} dismissError={() => setError('')} fail={fail} pluginCatalog={pluginCatalog}/>;
 }
 
 function MonitorShell({workspace, settings, controller, composers, choosePreset, refreshSettings, openConversation, openReview, error, dismissError, fail, pluginCatalog}: {

@@ -59,7 +59,7 @@ import {dedupeReplayedFrames} from './thread-messages';
 import {TooltipLayer} from '../../../packages/ui-shell/Tooltip';
 import {reducedMotion} from './task-motion';
 import {Select} from '../../../packages/ui-shell/Select';
-import {PluginFrame,usePluginCatalog} from './PluginFrame';
+import {PluginFrame,usePluginCatalog,usePluginCatalogNotice} from './PluginFrame';
 import {recordedChangeSummary} from './composer-evidence';
 import {useDesktop,useDesktopCloseGuard,useDesktopReady,useDetachedSurface,usePendingSurface,detachedSurface,pendingSurface} from './desktop-context';
 import {DesktopBrowserDock} from './DesktopBrowser';
@@ -433,7 +433,7 @@ export function App(props:AppProps={}) {
 }
 function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,embeddedThreadId,embeddedActive=true,onRequestThread,liveUsage,modelPickerRequest:externalModelPicker,hostWorkspaceContext,onRequestWorkspaceTool,onDirtyWidgetChange,host}:AppProps&{host?:ConversationHost}={}) {
   const ownPluginCatalog=usePluginCatalog(!host&&!embeddedThreadId),pluginCatalog=host?.pluginCatalog??ownPluginCatalog,plugins=pluginCatalog.plugins,[selectedPluginId,setSelectedPluginId]=useState<string|null>(null),[openedPlugins,setOpenedPlugins]=useState<string[]>([]);
-  useEffect(()=>{if(pluginCatalog.error)toast(pluginCatalog.error,{tone:'error'});},[pluginCatalog.error]);
+  usePluginCatalogNotice(host ? undefined : ownPluginCatalog.error);
   const [selectedPluginWorkspace,setSelectedPluginWorkspace]=useState<string|null>(null),[openedPluginWorkspaces,setOpenedPluginWorkspaces]=useState<{pluginId:string;workspaceId:string}[]>([]);
   const pluginWorkspaces=plugins.flatMap(plugin=>(plugin.workspaces??[]).map(contribution=>({pluginId:plugin.id,contribution})));
   const selectPluginWorkspace=async(pluginId:string,workspaceId:string)=>{await journalFlush();await prepareEditorHandoff();const key=pluginId+':'+workspaceId;setOpenedPluginWorkspaces(items=>items.some(item=>item.pluginId===pluginId&&item.workspaceId===workspaceId)?items:[...items,{pluginId,workspaceId}]);setSelectedPluginWorkspace(key);setSelectedPluginId(pluginId);};
