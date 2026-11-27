@@ -59,7 +59,7 @@ function ToastItem({ entry, paused }: { entry: ToastEntry; paused: boolean }) {
 }
 
 /** Mount once per window. Timers pause while the stack is hovered or holds focus. */
-export function Toaster() {
+export function Toaster({ composerDock }: { composerDock?: HTMLElement | null } = {}) {
   const list = useSyncExternalStore(subscribe, () => entries, () => entries);
   const modal = useSyncExternalStore(subscribeTopModal, topModal, () => null);
   const [portal, setPortal] = useState<HTMLDivElement>();
@@ -78,6 +78,33 @@ export function Toaster() {
     setHovered(false);
     setFocused(portal.contains(portal.ownerDocument.activeElement));
   }, [modal, portal]);
+  useLayoutEffect(() => {
+    const root = stack.current, view = root?.ownerDocument.defaultView;
+    if (!root || !view || modal || !composerDock) return;
+    const update = () => {
+      const rect = composerDock.getBoundingClientRect();
+      if (!composerDock.isConnected || !rect.height) {
+        root.style.removeProperty('bottom');
+        return;
+      }
+      const clearance = Math.max(24, Math.ceil(view.innerHeight - rect.top + 12));
+      root.style.bottom = `max(${clearance}px, env(safe-area-inset-bottom))`;
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    // An enclosing layout can move a dock that kept the same dimensions.
+    for (let owner: HTMLElement | null = composerDock; owner && owner !== root.ownerDocument.body; owner = owner.parentElement) {
+      observer.observe(owner);
+    }
+    view.addEventListener('resize', update);
+    view.visualViewport?.addEventListener('resize', update);
+    return () => {
+      observer.disconnect();
+      view.removeEventListener('resize', update);
+      view.visualViewport?.removeEventListener('resize', update);
+      root.style.removeProperty('bottom');
+    };
+  }, [composerDock, modal, portal]);
   useEffect(() => { if (!list.length) setHovered(false); }, [list.length]);
   useLayoutEffect(() => {
     // Removing or replacing a focused toast can happen without a blur event.
