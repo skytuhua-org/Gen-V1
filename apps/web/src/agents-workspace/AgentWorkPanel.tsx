@@ -3,7 +3,7 @@ import {Ban, Eye, Play, Square} from 'lucide-react';
 import {Select} from '../../../../packages/ui-shell/Select';
 import {
   getAgentWork, getAgentWorkInputs, getAgentWorkMessages, getAgentWorkOutput, getAgentWorkPlan,
-  sendAgentInput, stopAgentWork, resumeAgentWork, cancelAgentInput, postAgentMessage,
+  createAgentWork, sendAgentInput, stopAgentWork, resumeAgentWork, cancelAgentInput, postAgentMessage,
   type AgentWorkList, type AgentInputRow, type AgentMessageRow, type PlanProgress, type AgentWorkRow,
 } from '../agent-work-api.ts';
 
@@ -23,6 +23,9 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
   const [post, setPost] = useState({recipientThreadId: '', topic: '', text: ''});
   const [posting, setPosting] = useState(false);
   const [open, setOpen] = useState(false);
+  const [create, setCreate] = useState({role: 'PLAN_READ' as AgentWorkRow['role'], prompt: '', tokens: '1000', minutes: '10'});
+  const [createIds, setCreateIds] = useState<{commandId: string; workId: string; childThreadId: string} | null>(null);
+  const [creating, setCreating] = useState(false);
   const busy = useRef(false);
   const evidenceRequest = useRef(0);
   const refresh = useCallback(async () => {
@@ -40,8 +43,6 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
     finally { busy.current = false; }
   }, [threadId]);
   useEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 4000); return () => clearInterval(timer); }, [refresh]);
-  if (error && !list) return null;
-  if (!list || list.works.length === 0) return null;
   const progress = plan?.extension ? plan.progress : undefined;
   const progressLabel = progress ? `${progress.total ? Math.round(progress.completed / progress.total * 100) : 0}% known complete · ${progress.total ? Math.round(progress.unknown / progress.total * 100) : 0}% unknown` : undefined;
 
@@ -75,6 +76,27 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
         return next;
       }));
   };
+  const submitCreate = () => {
+    if (!list || creating) return;
+    const prompt = create.prompt.trim();
+    const tokens = create.tokens.trim() ? Number(create.tokens) : null;
+    const ms = create.minutes.trim() ? Number(create.minutes) * 60_000 : null;
+    if (!prompt || !Number.isInteger(tokens) && tokens !== null || !Number.isInteger(ms) && ms !== null || tokens === null && ms === null) return;
+    const ids = createIds ?? {commandId: crypto.randomUUID(), workId: crypto.randomUUID(), childThreadId: crypto.randomUUID()};
+    setCreateIds(ids);
+    setCreating(true);
+    void createAgentWork(threadId, {
+      role: create.role, prompt, grantSubset: list.resources.slice(0, 16).map(grant => grant.id),
+      budget: {tokens, ms}, workId: ids.workId, childThreadId: ids.childThreadId,
+    }, ids.commandId)
+      .then(() => {
+        setCreate(current => current.prompt === prompt ? {...current, prompt: ''} : current);
+        setCreateIds(null);
+        return refresh();
+      })
+      .catch(e => setError(e instanceof Error ? e.message : 'Create failed'))
+      .finally(() => setCreating(false));
+  };
   const submitPost = () => {
     if (posting || !post.recipientThreadId || !post.topic || !post.text) return;
     const submitted = post;
@@ -100,14 +122,28 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
     return work.evidence.refs ? `${work.evidence.stale}/${work.evidence.refs} refs stale` : 'no evidence yet';
   };
   return <section className="agents-work" aria-label="Agent work">
-    <button type="button" className="agents-disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>Agent work · {list.works.length}</button>
+    <button type="button" className="agents-disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>Agent work · {list ? list.works.length : '…'}</button>
     {open && <div className="agents-work-body">
-      <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ' (unavailable)'}`).join(', ')} · budget reserved {list.budget.reservedTokens}tok</div>
+      {!list && !error && <p className="agents-work-meta">Loading agent work…</p>}
+      {list && <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ' (unavailable)'}`).join(', ')} · budget reserved {list.budget.reservedTokens}tok</div>}
       {progress && <div className="agents-work-progress">
         <progress aria-label="Task progress" aria-valuetext={progressLabel} max={progress.total || 1} value={progress.completed}/><span>{progressLabel}</span>
         <PlanTree plan={plan!}/>
       </div>}
-      {list.works.map(work => <article key={work.workId} className="agents-work-row" data-state={work.state}>
+      {list && list.works.length === 0 && <p className="agents-empty">No admitted agent work yet.</p>}
+      {list && <details className="agents-work-create">
+        <summary>Admit read work</summary>
+        <div className="agents-board-post">
+          <Select aria-label="New work role" value={create.role} onValueChange={value => setCreate(current => ({...current, role: value as AgentWorkRow['role']}))}
+            options={(['PLAN_READ', 'RESEARCH_READ'] as const).filter(role => list.roles[role]?.available).map(role => ({value: role, label: role}))}/>
+          <input aria-label="Token budget" inputMode="numeric" value={create.tokens} onChange={e => setCreate(current => ({...current, tokens: e.target.value}))}/>
+          <input aria-label="Minute budget" inputMode="numeric" value={create.minutes} onChange={e => setCreate(current => ({...current, minutes: e.target.value}))}/>
+        </div>
+        <textarea aria-label="New work prompt" placeholder="Read-only task for the child…" value={create.prompt} onChange={e => setCreate(current => ({...current, prompt: e.target.value}))}/>
+        <p className="agents-work-meta">Uses all {list.resources.length} current parent resources read-only{list.resources.length > 16 ? '; only the first 16 fit one admission' : ''}. Retrying keeps the same admission identity.</p>
+        <button type="button" disabled={creating || !create.prompt.trim() || !(list.roles[create.role]?.available) || list.resources.length > 16} onClick={submitCreate}>{creating ? 'Admitting…' : 'Admit work'}</button>
+      </details>}
+      {list?.works.map(work => <article key={work.workId} className="agents-work-row" data-state={work.state}>
         <header>
           <strong>{work.role}</strong>
           <span className="agents-work-meta" title={work.owner.threadId}>owner {work.owner.threadId.slice(0, 8)}</span>
@@ -151,7 +187,7 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
         </ul> : <p className="agents-work-meta">No usable evidence references are attached to this report.</p>}
         <pre>{JSON.stringify(output.output, null, 2).slice(0, 4000)}</pre>
       </section>}
-      {messages.length > 0 || list.works.length ? <details className="agents-work-board">
+      {list && (messages.length > 0 || list.works.length) ? <details className="agents-work-board">
         <summary>Message board · {messages.length}</summary>
         {messages.map(message => <div key={message.messageId} className="agents-board-row">
           <span className="agents-work-meta">{message.senderTitle} → {message.recipientTitle}</span>
