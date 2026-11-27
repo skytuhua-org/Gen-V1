@@ -73,6 +73,30 @@ test('a fieldset disabling an open ActionMenu blocks queued actions and closes t
   await expect(page.getByLabel('Result')).toHaveText('alpha');
 });
 
+test('an entirely disabled ActionMenu supports exploration without activating any item',async({page})=>{
+ await page.goto('/ui-shell-controls?primitives=1&all-actions-disabled');
+ const trigger=page.getByRole('button',{name:'Actions',exact:true});
+ await trigger.press('ArrowDown');
+ const menu=page.getByRole('menu',{name:'Actions',exact:true});
+ const first=menu.getByRole('menuitem',{name:'Unavailable',exact:true});
+ const middle=menu.getByRole('menuitem',{name:'Alpha',exact:true});
+ const last=menu.getByRole('menuitemcheckbox',{name:'Delta',exact:true});
+ await expect(first).toBeFocused();
+ await expect(first).toHaveAttribute('aria-disabled','true');
+ await expect(first).toHaveAccessibleDescription('Connect a project to continue');
+ await expect(first.getByText('Connect a project to continue',{exact:true})).toBeVisible();
+ await page.keyboard.press('ArrowDown');await expect(middle).toBeFocused();
+ await page.keyboard.press('End');await expect(last).toBeFocused();
+ await expect(last).toBeChecked();
+ await page.keyboard.press('ArrowDown');await expect(first).toBeFocused();
+ await page.keyboard.press('Enter');await page.keyboard.press('Space');
+ await first.evaluate(button=>(button as HTMLButtonElement).click());
+ await expect(page.getByLabel('Result')).toHaveText('');
+ await expect(menu).toBeVisible();
+ await page.keyboard.press('Escape');
+ await expect(menu).toHaveCount(0);await expect(trigger).toBeFocused();
+});
+
 test('Panels supports keyboard typeahead, invokes the existing tool owner and returns focus', async ({ page }) => {
   const trigger = page.getByRole('button', { name: 'Panels', exact: true });
   await trigger.focus();
@@ -110,7 +134,7 @@ test('Select skips disabled choices, preserves form name/disabled semantics and 
   await expect(page.getByRole('status', { name: 'Result' })).toHaveText('[]');
 });
 
-test('menu arrows wrap enabled rows, typeahead and checkbox selection do not submit a form', async ({ page }) => {
+test('menu arrows wrap all rows, typeahead and checkbox selection do not submit a form', async ({ page }) => {
   await page.goto('/ui-shell-controls?primitives=1');
   const trigger = page.getByRole('button', { name: 'Actions', exact: true });
   await trigger.focus();
@@ -118,6 +142,8 @@ test('menu arrows wrap enabled rows, typeahead and checkbox selection do not sub
   const delta = page.getByRole('menuitemcheckbox', { name: 'Delta' });
   await expect(delta).toBeFocused();
   await expect(delta).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitem', { name: 'Unavailable', exact: true })).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(page.getByRole('menuitem', { name: 'Alpha', exact: true })).toBeFocused();
   await page.keyboard.press('d');
