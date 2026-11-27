@@ -29,11 +29,11 @@ const remove = (id: number) => publish(entries.filter(entry => entry.id !== id))
 const icons = { info: Info, success: CheckCircle2, error: AlertCircle };
 
 function ToastItem({ entry, paused }: { entry: ToastEntry; paused: boolean }) {
-  const element = useRef<HTMLDivElement>(null), remaining = useRef(entry.durationMs ?? VISIBLE_MS);
+  const element = useRef<HTMLDivElement>(null), remaining = useRef(entry.durationMs ?? (entry.tone === 'error' ? Infinity : VISIBLE_MS));
   useEffect(() => {
-    if (paused || entry.leaving) return;
+    if (paused || entry.leaving || remaining.current === Infinity) return;
     const started = Date.now(), timer = setTimeout(() => dismissToast(entry.id), remaining.current);
-    return () => { clearTimeout(timer); remaining.current = Math.max(1000, remaining.current - (Date.now() - started)); };
+    return () => { clearTimeout(timer); remaining.current = Math.max(0, remaining.current - (Date.now() - started)); };
   }, [paused, entry.leaving, entry.id]);
   useEffect(() => {
     if (!entry.leaving) return;
