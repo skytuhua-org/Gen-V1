@@ -54,8 +54,8 @@
         }
       ],
       "local": "third-party/vespin/inbox-presentation.tsx",
-      "modifications": "Extract ABOVE lead/TITLE metadata branch into InboxItemRow. Keep native list item/button, leading unread gutter, lead/head/title/description/end structure and state attributes. Replace utility classes/providers with scoped CSS and supplied React nodes; omit unavailable menus/folds/attachments/selection services. Replace VisuallyHidden/UnreadMark with native sr-only text/span, remove measurement/provider hooks, and retain only the single press and supplied Gen nodes; no backend callbacks are introduced. Local semantic adaptation: the selected row button uses aria-current=\"true\" because it controls the detail reader rather than page navigation.",
-      "localSha256": "14ac89a31855437c7521f50cee5d28eb5f3ff94c54fff2fcf1dedbf72a2bd911"
+      "modifications": "Extract ABOVE lead/TITLE metadata branch into InboxItemRow. Keep native list item/button, leading unread gutter, lead/head/title/description/end structure and state attributes. Replace utility classes/providers with scoped CSS and supplied React nodes; omit unavailable menus/folds/attachments/selection services. Replace VisuallyHidden/UnreadMark with native sr-only text/span, remove measurement/provider hooks, and retain the row press and supplied Gen nodes. A supplied row action renders as a sibling to the row button to avoid nested controls; no backend callbacks are introduced. Local semantic adaptation: the selected row button uses aria-current=\"true\" because it controls the detail reader rather than page navigation.",
+      "localSha256": "ce9677e451b688b9aa072bb8e5bf8db21ababc5af2cdfaccf17f932f564296b2"
     },
     {
       "source": "packages/panel/src/tasks/inbox-list.tsx",
@@ -72,7 +72,7 @@
       ],
       "local": "third-party/vespin/inbox-presentation.tsx",
       "modifications": "Keep InboxItemRow composition and InboxList nav/head/search/row-body/scroll order. Inject Gen-owned items and callbacks; omit Effect/cloud stores, virtual-run and multi-select infrastructure. Keep 72px row estimate and4px gap. Local semantic adaptation: the selected row button uses aria-current=\"true\" because it controls the detail reader rather than page navigation.",
-      "localSha256": "14ac89a31855437c7521f50cee5d28eb5f3ff94c54fff2fcf1dedbf72a2bd911"
+      "localSha256": "ce9677e451b688b9aa072bb8e5bf8db21ababc5af2cdfaccf17f932f564296b2"
     },
     {
       "source": "packages/panel/src/tasks/inbox-pane.tsx",
@@ -93,7 +93,7 @@
       ],
       "local": "third-party/vespin/inbox-presentation.tsx",
       "modifications": "Extract reader section, Subject header and ordered message body. Replace Text/Fill/Conversation/Stack wrappers with semantic HTML, retaining classes. Display canonical summary and injected Open conversation action; do not add a send box or fictitious author/messages. Local semantic adaptation: the selected row button uses aria-current=\"true\" because it controls the detail reader rather than page navigation.",
-      "localSha256": "14ac89a31855437c7521f50cee5d28eb5f3ff94c54fff2fcf1dedbf72a2bd911"
+      "localSha256": "ce9677e451b688b9aa072bb8e5bf8db21ababc5af2cdfaccf17f932f564296b2"
     },
     {
       "source": "packages/ui/src/components/list-row/list-row.css",
