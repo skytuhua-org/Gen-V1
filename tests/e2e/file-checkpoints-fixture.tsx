@@ -12,10 +12,10 @@ import '../../apps/web/src/shell.css';
 import '../../apps/web/src/workspace-tools.css';
 import './file-checkpoints-fixture.css';
 
+const query=new URLSearchParams(location.search),state=query.get('state');
 const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic example'}}}});
 snapshot.artifacts=[];
-snapshot.data=[{id:'recorded',threadId:'task-thread',revision:1,createdAt:'2026-11-10T18:42:00Z',provenance:'Synthetic recorded executor comparison',value:{title:'src/workspace-layout.ts',before:'const panelWidth = 360;',after:'const panelWidth = 420;'}}];
-const query=new URLSearchParams(location.search),state=query.get('state');
+snapshot.data=[{id:'recorded',threadId:'task-thread',revision:1,createdAt:'2026-11-10T18:42:00Z',provenance:'Synthetic recorded executor comparison',value:{title:'src/workspace-layout.ts',before:'const panelWidth = 360;',after:query.has('long-pair')?'const sample = '+ 'wideText'.repeat(48):'const panelWidth = 420;'}}];
 // T07: controlled display-preference variants for the recorded comparison renderer.
 const prefs=query.get('prefs');
 const recordedPreferences={...DEFAULT_PREFERENCES,diffDefaultExpanded:true,
