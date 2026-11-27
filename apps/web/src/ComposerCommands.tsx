@@ -2,8 +2,9 @@ import {useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState
 import {Bot, LoaderCircle, Search, X} from 'lucide-react';
 import {Popover} from '../../../packages/ui-shell/Popover';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
+import {workareaBoundary} from './popover-boundary';
 import type {SkillCatalogEntry, SkillCatalogPage} from '../../../packages/contracts/skill-catalog';
-import {commandToken, replaceCommandToken, type SkillBinding} from './composer-commands';
+import {builtinOptions, commandToken, replaceCommandToken, type BuiltinCommand, type CommandMode, type SkillBinding} from './composer-commands';
 import {getSkillCatalog, mergeSkillCatalogPages} from './skill-catalog-api';
 import './composer-commands.css';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
@@ -12,18 +13,17 @@ export interface ComposerCommandsHandle {keyDown(event: KeyboardEvent<HTMLTextAr
 interface Props {
   ref?: Ref<ComposerCommandsHandle>; input: RefObject<HTMLTextAreaElement | null>; draft: string;
   threadId?: string; projectId?: string; disabled?: boolean;
+  mode?: CommandMode;
   onDraft(text: string): void;
   onModel(): void | Promise<void>; onMode(mode: 'plan' | 'build'): void | Promise<void>;
 }
-type Builtin = {id: 'model' | 'plan' | 'default'; description: string};
-const builtins: Builtin[] = [{id: 'model', description: 'Choose a model'}, {id: 'plan', description: 'Switch to Plan'}, {id: 'default', description: 'Switch to Build'}];
-type Option = {id: string; builtin: Builtin} | {id: string; skill: SkillCatalogEntry};
+type Option = {id: string; builtin: BuiltinCommand} | {id: string; skill: SkillCatalogEntry};
 const available = (option: Option) => 'builtin' in option;
 const availabilityLabel = {disabled: 'Disabled', disconnected: 'Disconnected', unsupported: 'Unavailable', denied: 'No access', changed: 'Changed', limit: 'Limit reached', invalid: 'Unavailable', missing: 'Not installed'};
 const reason = (item: SkillCatalogEntry) => item.availability.status === 'unavailable' ? availabilityLabel[item.availability.reason] : '';
 
 /** Readable catalog metadata does not imply that the runtime admits selected skills. */
-export function ComposerCommands({ref, input, draft, threadId, projectId, disabled = false, onDraft, onModel, onMode}: Props) {
+export function ComposerCommands({ref, input, draft, threadId, projectId, disabled = false, mode, onDraft, onModel, onMode}: Props) {
   const id = useId(), content = useRef<HTMLDivElement>(null), request = useRef(0), loadingMore = useRef(false);
   const [position, setPosition] = useState({caret: 0, end: 0, focused: false, composing: false});
   const [dismissed, setDismissed] = useState(''), [captured, setCaptured] = useState<{key: string; page: SkillCatalogPage} | null>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [active, setActive] = useState('model'), [reload, setReload] = useState(0);
@@ -32,7 +32,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   const open = Boolean(token && signature !== dismissed), query = token?.query.replace(/^skill:/i, '') ?? '';
   const catalogKey = JSON.stringify([threadId, projectId, query]), page = captured?.key === catalogKey ? captured.page : null;
   const unavailableSources = page?.sources.filter(source => source.availability.status === 'unavailable') ?? [];
-  const options: Option[] = [...(token?.query.toLowerCase().startsWith('skill:') ? [] : builtins.filter(item => item.id.includes(query.toLowerCase())).map(builtin => ({id: builtin.id, builtin}))), ...(page?.skills ?? []).map(skill => ({id: skill.id, skill}))];
+  const options: Option[] = [...(token?.query.toLowerCase().startsWith('skill:') ? [] : builtinOptions(query, mode).map(builtin => ({id: builtin.id, builtin}))), ...(page?.skills ?? []).map(skill => ({id: skill.id, skill}))];
   const selected = options.find(option => option.id === active && available(option)) ?? options.find(available);
   const close = () => setDismissed(signature);
   useEffect(() => {setDismissed(previous => previous && previous !== signature ? '' : previous);}, [signature]);
@@ -83,26 +83,45 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   };
   useImperativeHandle(ref, () => ({keyDown(event) {
     if (!open || isComposing(event)) return false;
-    if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); close(); return true;}
+    if (event.key === 'Escape' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {event.preventDefault(); event.stopPropagation(); close(); return true;}
     if (['ArrowUp', 'ArrowDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault(); const selectable = options.filter(available), index = selectable.findIndex(option => option.id === selected?.id);
       if (selectable.length) setActive(selectable[(index + (event.key === 'ArrowDown' ? 1 : -1) + selectable.length) % selectable.length].id);
       if (event.key === 'ArrowDown' && index === selectable.length - 1 && page?.nextCursor) void loadMore();
       return true;
     }
-    if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && selected) {event.preventDefault(); void choose(selected); return true;}
-    if (event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {event.preventDefault(); return true;}
+    if (['Home', 'End', 'PageUp', 'PageDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (event.shiftKey) return false;
+      const selectable = options.filter(available); if (!selectable.length) return false;
+      event.preventDefault();
+      const index = selectable.findIndex(option => option.id === selected?.id);
+      if (event.key === 'Home') setActive(selectable[0]!.id);
+      else if (event.key === 'End') {setActive(selectable[selectable.length - 1]!.id); if (page?.nextCursor) void loadMore();}
+      else {
+        const rows = Math.max(1, Math.floor((content.current?.querySelector('.composer-command-list')?.clientHeight ?? 168) / 42));
+        const next = event.key === 'PageDown' ? Math.min(selectable.length - 1, index + rows) : Math.max(0, index - rows);
+        setActive(selectable[next]!.id);
+        if (event.key === 'PageDown' && next === selectable.length - 1 && page?.nextCursor) void loadMore();
+      }
+      return true;
+    }
+    if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (selected) {event.preventDefault(); void choose(selected); return true;}
+      if (event.key === 'Enter') {event.preventDefault(); close(); return true;}
+    }
     return false;
   }}));
   useEffect(() => {
     if (open && selected) content.current?.ownerDocument.getElementById(id + '-' + selected.id)?.scrollIntoView({block: 'nearest'});
-    const element = input.current; if (!element || !open) return;
+    const element = input.current; if (!element) return;
+    if (!open) return;
+    element.setAttribute('aria-haspopup', 'listbox');
     element.setAttribute('aria-controls', id); element.setAttribute('aria-autocomplete', 'list');
     if (selected) element.setAttribute('aria-activedescendant', id + '-' + selected.id); else element.removeAttribute('aria-activedescendant');
-    return () => {element.removeAttribute('aria-controls'); element.removeAttribute('aria-autocomplete'); element.removeAttribute('aria-activedescendant');};
+    return () => {element.removeAttribute('aria-haspopup'); element.removeAttribute('aria-controls'); element.removeAttribute('aria-autocomplete'); element.removeAttribute('aria-activedescendant');};
   }, [open, selected?.id, id, input]);
   return <>
-    <Popover anchor={input} contentRef={content} open={open} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={close} className="composer-command-popover">
+    <Popover anchor={input} contentRef={content} open={open} getBoundary={()=>workareaBoundary(input.current)} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={close} className="composer-command-popover">
       <div id={id} role="listbox" aria-label="Commands and skills" className="composer-command-list" onScroll={event => {const list = event.currentTarget; if (list.scrollHeight - list.scrollTop - list.clientHeight < 80) void loadMore();}}>
         {options.map(option => <div key={option.id} id={id + '-' + option.id} role="option" aria-selected={selected?.id === option.id} aria-disabled={!available(option)} className="composer-command-option" onPointerMove={() => {if (available(option)) setActive(option.id);}} onPointerDown={event => event.preventDefault()} onClick={() => void choose(option)}>
           {'builtin' in option ? <><span className="composer-command-name">/{option.builtin.id}</span><span className="composer-command-description">{option.builtin.description}</span></> : <><span className="composer-command-name">/skill:{option.skill.name}</span><span className="composer-command-description" title={option.skill.description}>{reason(option.skill) || option.skill.description}</span><span className="composer-command-source">{page?.sources.find(source => source.id === option.skill.sourceId)?.label}</span></>}
@@ -110,10 +129,10 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       </div>
       {Boolean(page?.skills.length) && <div role="status" aria-label="Skill selection unavailable" className="composer-command-status">Skill selection is unavailable for this runtime. You can still browse installed skills.</div>}
       {loading && <div role="status" className="composer-command-status"><LoaderCircle size={13} className="spinning"/>Loading skills…</div>}
-      {error ? <ErrorState className="composer-command-status" message={error} retryLabel="Reload" onRetry={() => {setReload(value => value + 1);}}/> : !loading && !options.length && !unavailableSources.length && <div role="status" className="composer-command-status"><Search size={14}/>No commands or skills found</div>}
+      {error ? <ErrorState className="composer-command-status" message={error} retryLabel="Reload" onRetry={() => {setReload(value => value + 1);}}/> : !loading && !options.length && <div role="status" className="composer-command-status"><Search size={14}/>No commands or skills found</div>}
       {Boolean(unavailableSources.length) && <div role="status" aria-label="Unavailable skill sources" className="composer-command-unavailable">{unavailableSources.map(source => <div key={source.id}><span>{source.label}</span><span>{source.availability.status === 'unavailable' ? availabilityLabel[source.availability.reason] : ''}</span></div>)}</div>}
       {!loading && page?.nextCursor && <button type="button" className="composer-command-more" onPointerDown={event => event.preventDefault()} onClick={() => void loadMore()}>Load more skills</button>}
-      <div className="composer-command-hint" aria-hidden="true">↑ ↓ Navigate <span>Enter Select · Esc Close</span></div>
+      <div className="composer-command-hint" aria-hidden="true">↑ ↓ Navigate · <span>Enter/Tab Select · Esc Close</span></div>
     </Popover>
     {!open && error && <div role="status" className="composer-command-error">{error}<button type="button" aria-label="Dismiss command error" onClick={() => setError('')}><X size={13}/></button></div>}
   </>;

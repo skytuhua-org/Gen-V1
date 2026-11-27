@@ -127,3 +127,18 @@ it('does not turn a rejected side context into project facts after catching Git 
  const f=await fixture(),now=new Date().toISOString();f.store.internal('fixture',null,()=>{f.store.put('thread','hover-side','hover-side',{id:'hover-side',title:'Side',projectId:f.projectId,createdAt:now,updatedAt:now,status:'ready',epoch:0,runId:null,modelId:null,sessionPath:null,kind:'side'});});
  await expect(f.tools.context(f.projectId,'hover-side')).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
 });
+
+it('returns a stable opaque bindingId on folder and file reads per admitted copy',async()=>{
+ const f=await fixture(),one=await f.add('bind-one');
+ await f.add('bind-two');await mkdir(join(one.path,'sub'));await writeFile(join(one.path,'one.txt'),'data\n');
+ const folderA=await f.tools.files(f.projectId,'bind-one'),fileA=await f.tools.file(f.projectId,'bind-one','one.txt');
+ expect(folderA.bindingId).toEqual(expect.any(String));expect(fileA.bindingId).toBe(folderA.bindingId);
+ const folderB=await f.tools.files(f.projectId,'bind-two');
+ expect(folderB.bindingId).not.toBe(folderA.bindingId);
+ const legacy=await f.tools.files(f.projectId,undefined);
+ expect(legacy.bindingId).toEqual(expect.any(String));expect(legacy.bindingId).not.toBe(folderA.bindingId);
+ // Edits, commits and subdirectory browsing do not change the digest.
+ f.git('-C',one.path,'add','one.txt');f.git('-C',one.path,'commit','-qm','edit');
+ const again=await f.tools.files(f.projectId,'bind-one'),sub=await f.tools.files(f.projectId,'bind-one','sub');
+ expect(again.bindingId).toBe(folderA.bindingId);expect(sub.bindingId).toBe(folderA.bindingId);
+},60000);

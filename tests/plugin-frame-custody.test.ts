@@ -161,6 +161,19 @@ it('closes the document port when an already-hidden Suspense tree is unmounted',
  }finally{await page.close();}
 });
 
+it('lets the workspace close a plug-in view that failed before connecting',async()=>{
+ const page=await browser.newPage();
+ try{
+  // The frame document loads but never bootstraps the protocol port, so it can
+  // hold no accepted work or pending saves; the close guard must not block.
+  await page.route('**/plugins/sample-plugin/frame?*',route=>route.fulfill({contentType:'text/html',body:'<p>failed before startup</p>'}));
+  await page.goto(`${origin}/${documentName}`);
+  await expect.poll(()=>page.locator('[role="alert"]').textContent()).toContain('Reload');
+  await page.locator('#flush').click();
+  await expect.poll(()=>page.locator('#saved').textContent()).toBe('saved');
+ }finally{await page.close();}
+});
+
 it('rejects a redirected replacement before the initial trusted bootstrap can connect',async()=>{
  const page=await browser.newPage();const previousLoads=externalLoads;
  try{

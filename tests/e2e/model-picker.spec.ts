@@ -35,6 +35,25 @@ test('model search groups the advertised catalog and keyboard selection reaches 
   await expect.poll(() => host.commands.find(command => command.type === 'message.send')?.payload.modelId).toBe('openai/terra');
 });
 
+test('Home, End and Page keys move and clamp the active model row', async ({ page }) => {
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await trigger.click();
+  const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
+  const options = page.getByRole('listbox', { name: 'Available models', exact: true }).getByRole('option');
+  await search.press('End');
+  await expect(options.last()).toHaveAttribute('data-active', 'true');
+  await expect(options.last()).toBeInViewport();
+  await search.press('Home');
+  await expect(options.first()).toHaveAttribute('data-active', 'true');
+  await search.press('End'); await search.press('PageDown');
+  await expect(options.last()).toHaveAttribute('data-active', 'true');
+  await search.press('PageUp');
+  await expect(options.first()).toHaveAttribute('data-active', 'true');
+  await search.press('Escape');
+  await expect(trigger).toBeFocused();
+});
+
 test('model search has an empty state, Escape and outside click dismiss, and Tab stays in the combined dialog', async ({ page }) => {
   const host = await mount(page), trigger = page.getByRole('combobox', { name: 'Model', exact: true });
   await trigger.click(); const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
@@ -51,6 +70,30 @@ test('model search has an empty state, Escape and outside click dismiss, and Tab
   await page.keyboard.press('Escape');await expect(trigger).toBeFocused();
   await expect(trigger).toHaveAttribute('aria-expanded', 'false'); await expect(search).not.toBeVisible();
   await expect(trigger).toContainText('GPT-6.1 Sol'); expect(host.commands).toHaveLength(0);
+});
+
+test('model picker empty states render inside the results list before the scope hint and CTA', async ({ page }) => {
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await trigger.click();
+  const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
+  const list = page.getByRole('listbox', { name: 'Available models', exact: true });
+  const checkOrder = () => page.evaluate(() => {
+    const empty = document.querySelector('.model-picker-empty'), scope = document.querySelector('.model-picker-scope'), cta = document.querySelector('.model-picker-new-task'), listEl = document.querySelector('.model-picker-list');
+    if (!empty || !listEl?.contains(empty)) return 'empty state is not inside the results list';
+    for (const [label, node] of [['scope hint', scope], ['new-task CTA', cta]] as const)
+      if (node && !(empty.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) return `empty state does not precede the ${label}`;
+    return 'ok';
+  });
+  await search.fill('zz');
+  await expect(list.getByRole('status')).toContainText('No models found');
+  await expect(list.getByRole('status')).toContainText('Try another model or provider name.');
+  expect(await checkOrder()).toBe('ok');
+  await page.getByRole('button', { name: 'Favorites' }).click();
+  await expect(list.getByRole('status')).toContainText('No favorites yet');
+  await expect(list.getByRole('status')).toContainText('Star a model to keep it here.');
+  expect(await checkOrder()).toBe('ok');
+  await search.press('Escape');
 });
 
 test('a first send keeps a usable model when the account pin lands before the bound model id', async ({ page }) => {
@@ -107,6 +150,97 @@ test('model selection fits both themes on a phone and removes spatial motion whe
     const spatial = await popover.evaluate(node => node.getAnimations().some(animation => (animation.effect as KeyframeEffect).getKeyframes().some(frame => frame.transform && frame.transform !== 'none')));
     if (motion === 'reduce') expect(spatial).toBe(false);
     await page.screenshot({ path: testInfo.outputPath(`model-picker-${width}-${theme}-${motion}.png`) });
+    await page.getByRole('searchbox', { name: 'Search models', exact: true }).press('Escape');
+  }
+});
+
+test('the popover stays mounted through the exit animation and rapid cycles do not stick it', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-11-26T00:00:00Z') });
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true }), popover = page.locator('.model-picker-popover');
+  await trigger.click();
+  const search = page.getByRole('searchbox', { name: 'Search models', exact: true });
+  await expect(search).toBeFocused();
+  // Measure the component's timer, independent of protocol round-trip latency.
+  await page.clock.pauseAt(new Date('2026-11-26T00:10:00Z'));
+  await search.press('Escape');
+  await expect(popover).toHaveAttribute('data-state', 'closed');
+  await expect(popover).toHaveAttribute('aria-hidden', 'true');
+  await page.clock.runFor(139);
+  await expect(popover).toHaveCount(1);
+  await page.clock.runFor(1);
+  await expect(popover).toHaveCount(0);
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await trigger.click();
+    await expect(search).toBeVisible();
+    await search.press('Escape');
+    await expect(popover).toHaveAttribute('data-state', 'closed');
+    await page.clock.runFor(60);
+    await trigger.click();
+    await page.clock.runFor(200);
+    await expect(search).toBeVisible();
+    await search.press('Escape');
+    await page.clock.runFor(140);
+    await expect(popover).toHaveCount(0);
+  }
+});
+
+test('an unnamed provider renders a title-cased label in the rail and group header', async ({ page }) => {
+  const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic model selection fixture' } } } });
+  snapshot.settings = { theme: 'dark', modelId: 'recording-fixture/alpha' };
+  snapshot.threads[0].modelId = 'recording-fixture/alpha';
+  await serveTaskFixture(page, snapshot);
+  await page.route('**/api/models*', route => route.fulfill({ json: { models: [{ id: 'recording-fixture/alpha', provider: 'recording-fixture', name: 'Alpha' }] } }));
+  await page.goto('/');
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await trigger.click();
+  await expect(page.getByRole('button', { name: /Recording Fixture/ })).toBeVisible();
+  await expect(page.getByRole('listbox', { name: 'Available models', exact: true }).getByRole('group', { name: 'Recording Fixture', exact: true })).toBeVisible();
+});
+
+test('reopening resets a picked type filter back to All', async ({ page }) => {
+  await mount(page);
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  const listbox = page.getByRole('listbox', { name: 'Available models', exact: true });
+  await trigger.click();
+  await page.locator('.model-picker-rail-item', { hasText: 'ChatGPT / Codex' }).click();
+  await expect(listbox.getByRole('option')).toHaveCount(2);
+  await page.getByRole('searchbox', { name: 'Search models', exact: true }).press('Escape');
+  await trigger.click();
+  await expect(listbox.getByRole('option')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: /All models/ })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('an empty catalog disables the chip with a stated reason', async ({ page }) => {
+  const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic model selection fixture' } } } });
+  snapshot.settings = { theme: 'dark', modelId: null };
+  await serveTaskFixture(page, snapshot);
+  await page.route('**/api/models*', route => route.fulfill({ json: { models: [] } }));
+  await page.goto('/');
+  const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
+  await expect(trigger).toBeDisabled();
+  await expect(trigger).toHaveAttribute('title', 'No models available — check the provider connection');
+});
+
+test('the model picker never paints over the sidebar at supported widths', async ({ page }, testInfo) => {
+  await mount(page);
+  for (const width of [1280, 900, 700, 500]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const trigger = page.getByRole('combobox', { name: 'Model', exact: true }); await trigger.click();
+    const popover = page.locator('.model-picker-popover'); await expect(popover).toHaveAttribute('data-state', 'open');
+    await popover.evaluate(node => Promise.all(node.getAnimations().map(animation => animation.finished.catch(() => {}))));
+    const bounds = (await popover.boundingBox())!;
+    const column = await trigger.evaluate(el => el.closest('.workspace-layout-workarea')?.getBoundingClientRect().toJSON() ?? null);
+    if (column) {
+      expect(bounds.x).toBeGreaterThanOrEqual(column.x + 8 - 0.5);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(column.x + column.width - 8 + 0.5);
+    }
+    const sidebar = await page.locator('.sidebar:visible').first().boundingBox();
+    if (sidebar) {
+      const overlap = Math.max(0, Math.min(bounds.x + bounds.width, sidebar.x + sidebar.width) - Math.max(bounds.x, sidebar.x));
+      expect(overlap).toBe(0);
+    }
+    await page.screenshot({ path: testInfo.outputPath(`model-picker-column-${width}.png`) });
     await page.getByRole('searchbox', { name: 'Search models', exact: true }).press('Escape');
   }
 });

@@ -27,7 +27,6 @@ const codeRangeSchema = z.strictObject({
 export type CodeRange = z.infer<typeof codeRangeSchema>;
 
 const diagnosticSeveritySchema = z.enum(["error", "warning", "information", "hint"]);
-export type DiagnosticSeverity = z.infer<typeof diagnosticSeveritySchema>;
 
 const codeDiagnosticSchema = z.strictObject({
   path: nonEmpty,
@@ -171,4 +170,6 @@ export const CODE_INTELLIGENCE_LIMITS = Object.freeze({
   renameFiles: 256,
   debugStackFrames: 100,
   debugVariables: 100,
+  debugThreads: 100,
+  debugScopes: 100,
 });

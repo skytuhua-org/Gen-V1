@@ -36,6 +36,8 @@ async function fixture() {
 }
 
 describe('Gemini official headless native continuation', () => {
+  const scratchFiles = async (manifestPath: string) => (await fs.readdir(dirname(manifestPath))).filter(name => /^(?:runtime-settings|system|headless-settings)-/.test(name));
+
   it('reconciles receipts from the same native transcript read that established session identity', async () => {
     const {dataDir, manifest, nativeFile, header} = await fixture();
     const transcriptPath = await fs.realpath(nativeFile);
@@ -121,6 +123,7 @@ describe('Gemini official headless native continuation', () => {
         expect(child.kill).toHaveBeenCalledWith('SIGINT');
         expect(child.listenerCount('exit')).toBe(authorityListeners);
         expect(events.filter(event => event.type === 'settled')).toEqual([expect.objectContaining({aborted: true})]);
+        expect(await scratchFiles(manifest.path)).not.toEqual([]);
       } finally {
         child.exitCode = 0;
         child.emit('exit', 0, null);
@@ -162,6 +165,7 @@ describe('Gemini official headless native continuation', () => {
         if (exit === 0) expect(error?.message).toMatch(/JSON|Unexpected/i);
         else expect(error?.message).toContain('did not confirm a successful terminal turn');
         expect(events.some(event => event.type === 'assistant.message' || event.type === 'input.processing' || event.type === 'usage')).toBe(false);
+        expect(await scratchFiles(manifest.path)).toEqual([]);
       } finally { await runtime.dispose(); }
       return;
     }
@@ -174,6 +178,7 @@ describe('Gemini official headless native continuation', () => {
     expect(events.find(event => event.type === 'assistant.message')).toMatchObject({ content: 'current response', inputIds: ['input-new'] });
     expect(events.filter(event => event.type === 'input.processing').flatMap(event => event.inputIds)).toEqual(['input-new']);
     expect(JSON.parse(await readFile(manifest.path, 'utf8')).sessionId).toBe(manifest.value.sessionId);
+    expect(await scratchFiles(manifest.path)).toEqual([]);
     await runtime.dispose();
   });
 });

@@ -20,7 +20,10 @@ it('measures full result custody versus an authorized bounded range over the sam
     const issued = await initial.spill({ owner, invocationId: 'owned-oversized-output', bytes: source,
       mediaType: 'text/plain', expiresAtMs: 1000 });
     expect(issued.status).toBe('AVAILABLE'); expect(issued.handle).toBeTruthy();
-    expect(Buffer.byteLength(issued.preview)).toBeLessThanOrEqual(CONTEXT_PREVIEW_CAP_BYTES);
+    const windows = issued.preview.split('\n[… result clipped …]\n');
+    expect(windows).toHaveLength(2);
+    expect(Buffer.byteLength(windows[0]!)).toBeLessThanOrEqual(CONTEXT_PREVIEW_CAP_BYTES / 2);
+    expect(Buffer.byteLength(windows[1]!)).toBeLessThanOrEqual(CONTEXT_PREVIEW_CAP_BYTES / 2);
     expect(issued.omittedBytes).toBeGreaterThan(0);
     // Reopen the real durable vault. Count the payload bytes returned by its
     // actual get method, without replacing filesystem custody with a mock.

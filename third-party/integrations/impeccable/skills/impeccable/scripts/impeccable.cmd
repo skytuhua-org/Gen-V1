@@ -22,12 +22,29 @@ if not defined IMPECCABLE_SKILL_DIR set "IMPECCABLE_SKILL_DIR=%~dp0.."
 if not defined IMPECCABLE_SELF set "IMPECCABLE_SELF=%~f0"
 set "arch=x64"
 if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "arch=arm64"
+set "version="
+if exist "%~dp0VERSION" set /p version=<"%~dp0VERSION"
+set "manifest=%~dp0engine-checksums.txt"
 
 if not defined IMPECCABLE_BIN goto no_env_bin
 if not exist "%IMPECCABLE_BIN%" goto no_env_bin
 set "run=%IMPECCABLE_BIN%"
 goto run
 :no_env_bin
+
+set "vendored=%~dp0..\..\..\engine\impeccable.exe"
+if not exist "%vendored%" goto no_sibling
+set "expected_vendored="
+if exist "%manifest%" for /f "usebackq tokens=1-3" %%a in ("%manifest%") do if "%%a"=="%version%" if /I "%%b"=="impeccable-windows-x64.exe" if not defined expected_vendored set "expected_vendored=%%c"
+set "actual="
+set "vendored_hash=%TEMP%\impeccable-vendored-hash-%RANDOM%%RANDOM%.txt"
+certutil -hashfile "%vendored%" SHA256 >"%vendored_hash%" 2>nul
+if not errorlevel 1 for /f "usebackq skip=1 delims=" %%h in ("%vendored_hash%") do if not defined actual set "actual=%%h"
+del "%vendored_hash%" >nul 2>nul
+set "actual=%actual: =%"
+if defined expected_vendored if defined actual if /I "%actual%"=="%expected_vendored%" set "run=%vendored%"
+if defined run goto run
+echo impeccable: cannot verify the packaged engine "%vendored%" against "%manifest%"; not using it 1>&2
 
 set "bin=%~dp0bin\windows-%arch%\impeccable.exe"
 if not exist "%bin%" goto no_sibling
@@ -44,12 +61,9 @@ set "run=%home_bin%"
 goto run
 :no_home_bin
 
-set "version="
-if exist "%~dp0VERSION" set /p version=<"%~dp0VERSION"
 if not defined IMPECCABLE_HOME set "IMPECCABLE_HOME=%USERPROFILE%\.impeccable"
 set "cached=%IMPECCABLE_HOME%\bin\%version%\impeccable.exe"
 set "asset=impeccable-windows-%arch%.exe"
-set "manifest=%~dp0engine-checksums.txt"
 if not defined version goto no_cache
 if not exist "%cached%" goto no_cache
 if exist "%cached%.verified" goto cache_trusted

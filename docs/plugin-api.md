@@ -143,6 +143,18 @@ Use `GenPluginUI.pluginRequest(operation, input, signal?)` for host calls. The p
 
 The runtime's journal helpers call the plug-in's `state.read` and `state.write` operations; implement these against its own durable storage if used. Register editor handoffs and await journal writes before calling `pluginReady()`. Native child windows remain hidden until recovery completes. Flush failures retain the working window and defer installation.
 
+The frame client exports the helpers a plug-in uses directly:
+
+- `pluginReady()` announces a loaded frame to the host. Call it after registering editor handoffs and awaiting journal writes.
+- `pluginFlush()` runs every registered editor guard, awaits outstanding journal writes and close-blocking requests, and rejects while a draft intent remains unsaved. `prepareEditorHandoff` and `journalFlush` are aliases of it.
+- `registerEditorHandoff(id, guard)` registers an async save guard run by every flush and returns a disposer.
+- `journalRead(key)` reads through the plug-in's `state.read` operation. `journalReadRetainingIntent(key)` returns a pending local intent's value when one exists instead of the stored record.
+- `journalLocalIntent(key)` returns the pending unsaved intent for a key (`{value, pending, identity}`) or `undefined`.
+- `journalWrite(key, value)` records a local intent and serializes one `state.write` request per key, resolving when that write settles. `retryJournalWrites()` retries each outstanding local intent.
+- `journalSubscribe(key, listener)` calls the listener when the host reports changed plug-in state and returns a disposer.
+- `pluginPresentation()` reads the host-owned presentation record (`{introDismissed}`) and `onPluginPresentation(listener)` observes it; `presentation.set` writes it.
+- `onPluginSurfaceFocus(listener)` is called with the `PluginSurface` the host asks this plug-in to focus and returns a disposer.
+
 Saved identities must include the plug-in and scope. Preserve source-origin caches and uncertain request records. Any cross-profile import must be explicit and additive, with conflicts retained for review; do not silently combine unrelated drafts.
 
 ## Native windows
@@ -183,8 +195,11 @@ views that share a draft key must yield their editor while inactive and recover
 canonical saved state on activation, or implement an equivalent conflict-aware
 single-writer protocol. A flush alone cannot refresh a stale retained editor.
 
-New desktop detachment is unavailable. Existing typed references and guarded
-child return remain only for recovery; workspace contributions do not bypass it.
+Workspace contributions follow the same window rules as conversation surfaces:
+desktop detachment is available subject to current host authorization and
+surface-identity validation, and browser sessions report the explicit
+unavailable reason. Existing typed references and guarded child return are
+preserved; a workspace contribution does not bypass either.
 
 ## Verification boundaries
 
