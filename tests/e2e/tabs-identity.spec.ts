@@ -96,6 +96,25 @@ test('an unknown saved label falls back without rewriting state on render', asyn
   await expect.poll(() => host.snapshot.userStates[0].values.selectedTab).toBe('Details');
 });
 
+test('tabs without children keep valid empty panel relationships', async ({ page }) => {
+  const spec: TaskSpec = { root: 'tabs', elements: {
+    tabs: { type: 'Tabs', props: { labels: ['Details', 'Preview'], stateKey: 'selectedTab' } },
+  } };
+  validateSurface(spec);
+  await serveTaskFixture(page, taskFixture(spec, {}, {}));
+  await page.goto('/');
+  const relations = await page.locator('.artifact-content').evaluate(root => Array.from(root.querySelectorAll<HTMLElement>('[role="tab"]')).map(tab => {
+    const panel = root.ownerDocument.getElementById(tab.getAttribute('aria-controls') || '');
+    return { controls: tab.getAttribute('aria-controls'), panelId: panel?.id, labelledBy: panel?.getAttribute('aria-labelledby'), tabId: tab.id };
+  }));
+  expect(relations).toHaveLength(2);
+  for (const pair of relations) expect(pair).toMatchObject({ controls: pair.panelId, labelledBy: pair.tabId });
+  await expect(page.locator('.artifact-content').getByRole('tabpanel')).toHaveCount(1);
+  await page.locator('.artifact-content').getByRole('tab', { name: 'Preview', exact: true }).click();
+  await expect(page.locator('.artifact-content').getByRole('tab', { name: 'Preview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.artifact-content').getByRole('tabpanel')).toHaveCount(1);
+});
+
 type TabEffectWindow = Window & { tabEffects: { target: string; frames: ComputedKeyframe[] }[]; tabAnimations: Animation[] };
 
 async function recordTabEffects(page: import('@playwright/test').Page, pause = false) {

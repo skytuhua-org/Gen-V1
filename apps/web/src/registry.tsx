@@ -171,6 +171,7 @@ function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) 
   const source = parsed.success ? parsed.data : undefined;
   const selected = source?.items.find(item => item.label === active);
   const duplicateLabels = new Set(labels).size !== labels.length;
+  const panelChildren = Children.toArray(children);
   const tabsId = useId(), tablist = useRef<HTMLDivElement>(null), indicator = useRef<HTMLSpanElement>(null);
   const effectCause = useRef<'pointer' | 'keyboard' | 'restore'>('restore'), pending = useRef<unknown>(undefined), travel = useRef<Animation | undefined>(undefined);
   const scrollPositions = useRef(new Map<number, { element: HTMLElement; left: number; top: number }[]>());
@@ -274,9 +275,9 @@ function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) 
       const status = source?.items.find(item => item.label === label)?.status;
       return <button type="button" key={i} id={`${tabsId}-tab-${i}`} role="tab" tabIndex={active === label ? 0 : -1} aria-selected={active === label} aria-controls={`${tabsId}-panel-${i}`} onKeyDown={event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const index = event.key === 'Home' ? 0 : event.key === 'End' ? labels.length - 1 : (i + (event.key === 'ArrowRight' ? 1 : -1) + labels.length) % labels.length; select(labels[index], 'keyboard'); buttonAt(index)?.focus(); } }} onClick={event => select(label, event.detail > 0 ? 'pointer' : 'keyboard')}>{source && <span className={`task-tab-status-slot status-${status??'neutral'}`} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:14,height:14,flex:'0 0 14px'}} aria-hidden="true">{status && status !== 'neutral' && <StatusIcon status={status} />}</span>}<span className="task-tab-label">{display(label)}</span></button>;
     })}<span ref={indicator} className="task-tab-indicator" aria-hidden="true" hidden /></div>
-    {Children.toArray(children).map((child, i) => {
-      const label = labels[i];
-      return <div role="tabpanel" className="task-tab-panel" id={`${tabsId}-panel-${i}`} aria-labelledby={`${tabsId}-tab-${i}`} key={i} hidden={active !== label}>{active === label || visited.has(label) ? child : null}</div>;
+    {labels.map((label, i) => {
+      const child = panelChildren[i];
+      return <div role="tabpanel" className="task-tab-panel" id={`${tabsId}-panel-${i}`} aria-labelledby={`${tabsId}-tab-${i}`} key={i} hidden={active !== label}>{child !== undefined && (active === label || visited.has(label)) ? child : null}</div>;
     })}
     {source?.footer && <footer className="task-tabs-operation-footer"><span>{source.footer.label}</span><div>{(selected?.code ?? source.footer.code) && <code>{selected?.code ?? source.footer.code}</code>}{(selected?.detail ?? source.footer.detail) && <small>{selected?.detail ?? source.footer.detail}</small>}</div></footer>}
     {typeof props.statusBinding === 'string' && !parsed.success && <small className="muted">Operation details unavailable.</small>}
