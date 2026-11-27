@@ -167,8 +167,8 @@ export async function readHistoryPage(
   const page = GIT_HISTORY_LIMITS.page;
   let entry: HistoryEntry;
   let offset = 0;
-  const state = await headState(context);
   if (!cursor) {
+    const state = await headState(context);
     if (!state.headOid)
       return {
         snapshotId: null,
@@ -196,12 +196,7 @@ export async function readHistoryPage(
     if (!parsed) throw new HarnessError("INVALID_INPUT", "The history cursor is unavailable.");
     entry = snapshots.get(context.owner, parsed[1]);
     offset = Number(parsed[2]);
-    const current = await headState(context).catch(() => null);
-    if (!current || current.headOid !== entry.headOid || current.branch !== entry.branch)
-      throw new HarnessError("HISTORY_CHANGED", "History changed. Refresh history to continue.");
-    const { upstreamRef, upstreamOid } = await upstreamState(context, current.branch);
-    if (upstreamRef !== entry.upstreamRef || upstreamOid !== entry.upstreamOid)
-      throw new HarnessError("HISTORY_CHANGED", "History changed. Refresh history to continue.");
+    await assertPinned(context, entry);
   }
   const raw = await run(context, [
     "log",
@@ -305,6 +300,9 @@ function numstat(raw: string): Map<string, { additions: number | null; deletions
 async function assertPinned(context: HistoryContext, entry: HistoryEntry) {
   const current = await headState(context).catch(() => null);
   if (!current || current.headOid !== entry.headOid || current.branch !== entry.branch)
+    throw new HarnessError("HISTORY_CHANGED", "History changed. Refresh history to continue.");
+  const { upstreamRef, upstreamOid } = await upstreamState(context, current.branch);
+  if (upstreamRef !== entry.upstreamRef || upstreamOid !== entry.upstreamOid)
     throw new HarnessError("HISTORY_CHANGED", "History changed. Refresh history to continue.");
 }
 // The raw commit object keeps the parent a shallow graft hides from rev-list.
