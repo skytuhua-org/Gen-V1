@@ -2,9 +2,11 @@ import {deferred} from './fixtures/deferred.ts';
 import {fakeSecretCodec} from './fixtures/secret-codec.ts';
 import {afterEach,expect,it,vi} from 'vitest';
 import {syncBuiltinESMExports} from 'node:module';
+import {inspect} from 'node:util';
 import {lstat,mkdir,mkdtemp,readFile,readdir,rm,writeFile} from 'node:fs/promises';
 import {dirname,join} from 'node:path';
 import {tmpdir} from 'node:os';
+import {HarnessError} from '../packages/contracts/index.ts';
 import {GitHubAuth} from '../packages/workspace/github-auth.ts';
 import {GitHubTools} from '../packages/workspace/github.ts';
 import {Store} from '../packages/storage/store.ts';
@@ -78,6 +80,32 @@ it.each([
  await expect(github.create('project','thread',input)).rejects.toMatchObject({code:'PR_VERIFICATION_FAILED',message:expect.stringContaining(url),details:{url,head:status.head,revision:status.revision,repo:'example/fixture'}});
  expect(run.mock.calls.filter(([,args])=>args[0]==='pr'&&args[1]==='create')).toHaveLength(1);
 });
+it.each(['short','1234567'])('denies an untrackable %s token before credential-bearing push',async token=>{
+ const {github,run,git,input}=await createdPullRequest(async()=>JSON.stringify({headRefOid:'a'.repeat(40)}));
+ vi.spyOn(github.auth,'token').mockResolvedValue(token);
+ await expect(github.create('project','thread',{...input,push:true})).rejects.toMatchObject({code:'GITHUB_CLI_TOKEN_REDACTION_UNSUPPORTED'});
+ expect(git.mock.calls.some(([,args])=>args.includes('push'))).toBe(false);
+ expect(run).not.toHaveBeenCalled();
+});
+it('redacts supported-token variants from a failed credential-bearing push',async()=>{
+ const {github,git,input}=await createdPullRequest(async()=>JSON.stringify({headRefOid:'a'.repeat(40)}));
+ const token='ghp_fixture/only+synthetic=20261117';
+ vi.spyOn(github.auth,'token').mockResolvedValue(token);
+ const encoded=encodeURIComponent(token),base64=Buffer.from(token,'utf8').toString('base64');
+ git.mockImplementation(async(_path,args)=>{
+  if(args.includes('push'))throw new HarnessError('GIT_ERROR','Git operation did not complete.',{status:'failed',exitCode:1,stdout:'stdout '+token,stderr:'stderr '+encoded+'\n'+base64+'\n'+token.slice(0,10)+String.fromCharCode(27)+'[31m'+token.slice(10)});
+  return 'https://github.com/example/fixture.git';
+ });
+ let failure:unknown;
+ try{await github.create('project','thread',{...input,push:true});}catch(error){failure=error;}
+ if(!(failure instanceof Error))throw Error('Expected push failure');
+ const fields=Object.fromEntries(Object.getOwnPropertyNames(failure).map(key=>[key,(failure as unknown as Record<string,unknown>)[key]]));
+ const outward=JSON.stringify(fields);
+ expect(outward).not.toContain(token);expect(outward).not.toContain(encoded);expect(outward).not.toContain(base64);
+ expect(outward).toContain('[REDACTED]');expect(inspect(failure)).not.toContain(token);expect(inspect(failure)).toContain('[REDACTED]');
+ expect(failure).toMatchObject({code:'GIT_ERROR'});
+});
+
 it.each([
  ['legacy read-only',{gitWrite:false,mode:'legacy'}],
  ['managed read-only',{gitWrite:false,mode:'managed'}],

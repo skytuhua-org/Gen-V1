@@ -27,6 +27,16 @@ interface PullRequest{number:number;title:string;url:string;state:string;headRef
  * next eligible provider read. Pending, unavailable and billing-blocked
  * provider states are never recorded as a pass. */
 interface PrCheckObservation{version:1;repo:string;number:number;headOid:string;observedAt:string;state:ComparisonCheck['status'];checks:ComparisonCheck[];attempt:number;nextEligibleAt:string;item:Record<string,unknown>;}
+function redactCredentialValue(value:unknown,redactor:ReturnType<typeof createSecretRedactor>):unknown{
+ if(typeof value==='string')return redactor.redact(value).text;
+ if(Array.isArray(value))return value.map(item=>redactCredentialValue(item,redactor));
+ if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,redactCredentialValue(entry,redactor)]));
+ return value;
+}
+function redactCredentialError(error:unknown,redactor:ReturnType<typeof createSecretRedactor>):unknown{
+ if(error instanceof HarnessError)return new HarnessError(error.code,redactor.redact(error.message).text,redactCredentialValue(error.details,redactor));
+ return error;
+}
 /** Bundled GitHub CLI with a private sign-in profile and exact reviewed revisions. */
 export class GitHubTools{
  readonly auth:GitHubAuth;
@@ -76,8 +86,12 @@ export class GitHubTools{
   const title=z.string().trim().min(1).max(200).refine(value=>!value.includes('\0')&&Buffer.from(value,'utf8').toString('utf8')===value,'Pull request title must be valid text.').parse(input.title),body=bodyText.parse(input.body??''),base=z.string().regex(/^[A-Za-z0-9][A-Za-z0-9/_-]{0,150}$/).parse(input.base??'main');if(!status.branch)throw new HarnessError('BRANCH_REQUIRED','Create a branch before opening a pull request.');
   const created={url:'',head:status.head,revision:status.revision,repo};return this.withInput(body,created,async bodyFile=>{
   if(input.push===true){
-   const helper='!'+quote(this.executable)+' auth git-credential',environment={...this.environment(),GH_TOKEN:await this.auth.token()};
-   beforeWrite?.();await this.projects.git(path,['-c','credential.https://github.com.helper='+helper,'push','--','https://github.com/'+repo+'.git',status.head+':refs/heads/'+status.branch],undefined,environment);
+   const token=await this.auth.token(),redactor=createSecretRedactor([token]);
+   if(redactor.tracked===0)throw new HarnessError('GITHUB_CLI_TOKEN_REDACTION_UNSUPPORTED','The GitHub credential cannot be safely redacted from CLI output.');
+   const helper='!'+quote(this.executable)+' auth git-credential',environment={...this.environment(),GH_TOKEN:token};
+   beforeWrite?.();
+   try{redactor.redact(await this.projects.git(path,['-c','credential.https://github.com.helper='+helper,'push','--','https://github.com/'+repo+'.git',status.head+':refs/heads/'+status.branch],undefined,environment));}
+   catch(error){throw redactCredentialError(error,redactor);}
   }
   const remote=this.parseOutput(await this.run(path,['api',`repos/${repo}/git/ref/heads/${encodeURIComponent(status.branch)}`])) as {object?:{sha?:string}};if(remote.object?.sha!==status.head)throw new HarnessError('REVISION_CHANGED','The GitHub branch does not match the reviewed local commit. Push the reviewed branch first.');
   const after=await this.projects.gitStatus(projectId,threadId);if(after.gitWrite!==true)throw new HarnessError('PROJECT_READ_ONLY','The working copy is no longer writable.');if(after.head!==status.head||after.revision!==status.revision)throw new HarnessError('REVISION_CHANGED','The working copy changed while preparing publication.');
