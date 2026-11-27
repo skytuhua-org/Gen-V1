@@ -298,9 +298,9 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       if(purpose==='prediction')throw new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot read conversations.');
       const file = await validateSessionPath(storage, sessionPath);
       const absent = (error: unknown): never => { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new HarnessError("PI_SESSION_MISSING", "Pi session history is missing or moved. Restore the session file or start a new session."); throw error; };
-      // Stream line by line: memory stays bounded on arbitrarily large
-      // transcripts, a torn final append is still skipped, and a single
-      // record over the limit fails closed instead of blocking resume.
+      // Stream line by line: memory stays bounded, a torn final append is
+      // still skipped, and total or per-record overruns fail closed instead
+      // of blocking resume.
       const handle = await open(file, "r").catch(absent);
       try {
         const ids = new Set<string>(), decoder = new TextDecoder("utf-8"), buffer = Buffer.alloc(1024 * 1024);
@@ -310,6 +310,7 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
           const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
           if (!bytesRead) break;
           position += bytesRead;
+          if (position > 32 * 1024 * 1024) throw new HarnessError("PI_HISTORY_LIMIT", "Pi session history exceeds the bounded reader limit.");
           pending += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
           let newline: number;
           while ((newline = pending.indexOf("\n")) >= 0) { const line = pending.slice(0, newline); pending = pending.slice(newline + 1); if (line.length > 32 * 1024 * 1024) throw new HarnessError("PI_HISTORY_LIMIT", "Pi session history entry exceeds the bounded reader limit."); record(line); }
