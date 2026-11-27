@@ -22,6 +22,26 @@ async function choose(page: Page, label: string) {
   await expect(filter(page)).toBeFocused(); await expect(filter(page)).toHaveText(label);
 }
 
+test('overflowing Inbox list and reader expose native scrollbars', async ({page}) => {
+  await page.setViewportSize({width: 1100, height: 350});
+  await fixture(page);
+  await page.locator('.fixture-inbox').evaluate(node => { (node as HTMLElement).style.height = '240px'; });
+  const list = page.locator('.inbox-tasks-scroll');
+  const reader = page.locator('.desktop-inbox');
+  await rows(page).filter({hasText: 'Review'}).click();
+  await reader.locator('.inbox-canonical-message > p').evaluate(node => { node.textContent = 'A long Inbox result. '.repeat(250); });
+  for (const scroller of [list, reader]) {
+    await expect(scroller).toHaveCSS('scrollbar-width', 'thin');
+    await expect(scroller).toHaveCSS('scrollbar-gutter', 'auto');
+    const scrollTop = await scroller.evaluate(node => {
+      node.scrollTop = node.scrollHeight;
+      return node.scrollTop;
+    });
+    expect(scrollTop).toBeGreaterThan(0);
+  }
+  await test.info().attach('Overflowing Inbox list and reader with synthetic items', {body: await page.screenshot(), contentType: 'image/png'});
+});
+
 test('filter keyboard owns its listbox without selecting or reading Inbox rows', async ({page}) => {
   const {requests, errors} = await fixture(page);
   await filter(page).focus(); await page.keyboard.press('Home'); await page.keyboard.press('End');
