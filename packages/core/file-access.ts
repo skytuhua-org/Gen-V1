@@ -91,11 +91,11 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
         cancelPendingRpc = undefined;
         child.stdout.removeListener("data", data);
         child.removeListener("error", failed);
-        child.removeListener("exit", failed);
+        child.removeListener("close", failed);
         error ? reject(error) : accept(manifest);
       };
       cancelPendingRpc = () => finish(denied());
-      child.once("error", failed); child.once("exit", failed); child.stdout.on("data", data);
+      child.once("error", failed); child.once("close", failed); child.stdout.on("data", data);
       child.stdin.write(JSON.stringify(request) + "\n");
     }));
     queue = pending.then(() => {}, () => {}); return pending;
