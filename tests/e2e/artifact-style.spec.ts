@@ -89,6 +89,59 @@ async function host(page: Page, snapshot: Snapshot) {
   return { snapshot, commands };
 }
 
+test('tall inline artifact chrome stays within its own scroll bounds',async({page})=>{
+  const lines=Array.from({length:38},(_,index)=>'line-'+index);
+  const elements:Spec['elements']={
+    root:{type:'Tabs',props:{labels:['Details','Summary'],stateKey:'view'},children:['details','summary']},
+    details:{type:'Stack',props:{gap:'md'},children:lines},
+    summary:{type:'Text',props:{text:'Short summary'}},
+  };
+  for(const [index,line] of lines.entries())elements[line]={type:'Text',props:{text:'Long artifact details, row '+index}};
+  const snapshot=fixture({root:'root',elements},'First inline report');
+  snapshot.messages.push({...snapshot.messages[0],id:'second-assistant',content:'Second artifact follows.',createdAt:'2026-10-29T23:01:00.000Z'});
+  snapshot.artifacts.push({...snapshot.artifacts[0],id:'second-object',messageId:'second-assistant',stateId:'second-state',title:'Second inline report'});
+  snapshot.userStates.push({...snapshot.userStates[0],id:'second-state'});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await host(page,snapshot);
+  await openApp(page);
+  const conversation=page.locator('.conversation-scroll:visible').first();
+  const first=page.locator('[data-artifact-id="task-object"]');
+  const second=page.locator('[data-artifact-id="second-object"]');
+  const header=first.locator('.artifact-header'),views=first.getByRole('tablist',{name:'Views',exact:true});
+  const move=async(id:string,offset:number)=>conversation.evaluate((scroll,{id,offset})=>{
+    const target=scroll.querySelector(`[data-artifact-id="${id}"]`)!;
+    scroll.scrollTop+=target.getBoundingClientRect().top-scroll.getBoundingClientRect().top+offset;
+  },{id,offset});
+  for(const width of [960,360]){
+    await page.setViewportSize({width,height:800});
+    await expect(views).toBeVisible();
+    await move('task-object',340);
+    await expect.poll(async()=>{
+      const top=await conversation.evaluate(node=>node.getBoundingClientRect().top+Number.parseFloat(getComputedStyle(node).paddingTop));
+      const box=(await header.boundingBox())!;
+      return Math.abs(box.y-top);
+    }).toBeLessThan(3);
+    await expect.poll(async()=>{
+      const title=(await header.boundingBox())!,strip=(await views.boundingBox())!;
+      return Math.abs(strip.y-title.y-title.height);
+    }).toBeLessThan(3);
+    expect(await header.getByRole('button',{name:'Expand artifact',exact:true}).evaluate(node=>{
+      const {x,y,width,height}=node.getBoundingClientRect();
+      return node.contains(document.elementFromPoint(x+width/2,y+height/2));
+    })).toBe(true);
+  }
+  await move('second-object',300);
+  const viewport=(await conversation.boundingBox())!,outgoing=(await header.boundingBox())!;
+  expect(outgoing.y+outgoing.height).toBeLessThanOrEqual(viewport.y+2);
+  await expect(second.getByRole('tablist',{name:'Views',exact:true})).toBeVisible();
+  await move('task-object',340);
+  await header.getByRole('button',{name:'Expand artifact',exact:true}).click();
+  const expanded=page.getByRole('dialog',{name:'First inline report',exact:true});
+  await expect(expanded).toBeVisible();
+  await expect(expanded.locator('.artifact-header')).toHaveCSS('position','static');
+  await expect(expanded.getByRole('tablist',{name:'Views',exact:true})).toBeVisible();
+});
+
 test('artifact views use one scrollable row and keep keyboard selection in view',async({page})=>{
   const labels=['Controls','Data and visuals','Documents','Content','Development','Everyday','Interactions','Explore','Work objects'];
   const panes=labels.map((_,index)=>'view-'+index);
