@@ -14,7 +14,9 @@ export function commandToken(text: string, caret: number, selectionEnd = caret):
 }
 export function replaceCommandToken(text: string, token: CommandToken) {
   if (token.start < 0 || token.end > text.length || !/^\/[^\s/\\]*$/u.test(text.slice(token.start, token.end))) throw Error('The command token changed.');
-  return {text: text.slice(0, token.start) + text.slice(token.end), caret: token.start};
+  const head = text.slice(0, token.start), tail = text.slice(token.end);
+  const collapse = tail.startsWith(' ') && (head.endsWith(' ') || head === '');
+  return {text: head + (collapse ? tail.slice(1) : tail), caret: token.start};
 }
 export type CommandMode = 'plan' | 'build';
 export interface BuiltinCommand {id: 'model' | 'plan' | 'default'; description: string}
