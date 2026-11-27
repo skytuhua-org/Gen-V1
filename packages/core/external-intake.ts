@@ -352,17 +352,19 @@ export class ExternalIntakeCoordinator {
       }
       return this.store.command(command, () => {
         const current = this.store.get<IntakeRecord>("intakeRecord", input.intakeId)!;
-        if (current.disposition === "APPROVED") return current;
+        if (current.disposition === "APPROVED") { this.store.remove("intakeApprovalClaim", claimKey); return current; }
         if (current.disposition !== "PROPOSED") {
           // A rejection landed while task creation was in flight; that decision
           // stays authoritative, but the thread that was already created keeps
           // a visible link so the leftover task is never lost or duplicated.
           const next: IntakeRecord = { ...current, updatedAt: iso(this.now()), decision: { commandId: command.id, at: iso(this.now()), threadId: created.threadId } };
           this.store.put("intakeRecord", next.intakeId, null, next);
+          this.store.remove("intakeApprovalClaim", claimKey);
           return next;
         }
         const next: IntakeRecord = { ...current, disposition: "APPROVED", updatedAt: iso(this.now()), decision: { commandId: command.id, at: iso(this.now()), threadId: created.threadId } };
         this.store.put("intakeRecord", next.intakeId, null, next);
+        this.store.remove("intakeApprovalClaim", claimKey);
         return next;
       }).result as IntakeRecord;
     } finally {

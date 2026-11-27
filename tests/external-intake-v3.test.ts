@@ -451,6 +451,92 @@ describe("M10 durable approval identity across crash and rejection races", () =>
     expect(f.store.get("intakeApprovalClaim", `approve:${record.intakeId}`)).toBeTruthy();
     await expect(f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "other/model" })).rejects.toMatchObject({ code: "STALE_REVISION" });
   });
+  const realServiceFixture = () => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-intake-retention-"));
+    let store = new Store(join(root, "state"));
+    const runtime: RuntimeAdapter = {
+      configure: () => {}, models: async () => [{ id: "test/model", provider: "test", name: "Test" }],
+      start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {},
+      history: async () => [], dispose: async () => {},
+    };
+    const options = { background: { intakeAuth: { token: async () => "gh-token", login: "octocat" }, intakeFetch: (async () => jsonResponse([issue()])) as typeof fetch } };
+    let service = new Service(store, runtime, options);
+    cleanups.push(async () => { await service.dispose().catch(() => {}); try { store.close(); } catch {} rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); });
+    __setCapabilityFlagForTests("integrations.intakeV1", true);
+    service.intake.configure(command("intake.configure"), { repositoryId: REPO, enabled: true });
+    return {
+      root,
+      get store() { return store; },
+      get service() { return service; },
+      async reopen() {
+        await service.dispose().catch(() => {});
+        store.close();
+        store = new Store(join(root, "state"));
+        service = new Service(store, runtime, options);
+      },
+    };
+  };
+  const receiptBody = (store: Store, id: string) => {
+    const row = store.db.prepare("SELECT body FROM receipts WHERE id=?").get(id) as { body: string } | undefined;
+    return row ? JSON.parse(row.body) as { result: unknown; expired?: boolean; eventSeq: number } : null;
+  };
+  it("pins an unresolved intake claim's command receipts through retention and replays them once", async () => {
+    const f = realServiceFixture();
+    await f.service.intake.pollOnce();
+    const record = f.service.intake.records()[0]!;
+    const original = f.service.command.bind(f.service);
+    const interrupt = vi.spyOn(f.service, "command").mockImplementation(async cmd => {
+      const receipt = await original(cmd);
+      if (cmd.type === "thread.create") throw new Error("simulated host loss after durable thread creation");
+      return receipt;
+    });
+    await expect(f.service.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" })).rejects.toThrow("simulated host loss");
+    interrupt.mockRestore();
+    const claimKey = `approve:${record.intakeId}`;
+    const claim = f.store.get<{ threadCommandId: string; messageCommandId: string }>("intakeApprovalClaim", claimKey)!;
+    expect(claim).toBeTruthy();
+    const createdReceipt = receiptBody(f.store, claim.threadCommandId)!;
+    for (let i = 0; i < 8; i++) f.store.internal("fixture.event", null, () => i);
+    f.store.retentionSweep({ keepEvents: 1, batchSize: 100 });
+    const retained = receiptBody(f.store, claim.threadCommandId)!;
+    expect(retained.expired).not.toBe(true);
+    expect(retained.result).toMatchObject({ id: expect.any(String) });
+    await f.reopen();
+    const approved = await f.service.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" });
+    expect(approved.disposition).toBe("APPROVED");
+    expect(approved.decision?.threadId).toBe((createdReceipt.result as Thread).id);
+    expect(f.store.all("thread")).toHaveLength(1);
+    expect(f.store.all("message")).toHaveLength(1);
+    expect(f.store.get("intakeApprovalClaim", claimKey)).toBeNull();
+    for (let i = 0; i < 8; i++) f.store.internal("fixture.after-settlement", null, () => i);
+    f.store.retentionSweep({ keepEvents: 1, batchSize: 100 });
+    expect(receiptBody(f.store, claim.threadCommandId)?.expired).toBe(true);
+    expect(receiptBody(f.store, claim.messageCommandId)?.expired).toBe(true);
+  });
+  it("treats an already-expired thread receipt as uncertain recovery instead of dereferencing or redispatching", async () => {
+    const f = realServiceFixture();
+    await f.service.intake.pollOnce();
+    const record = f.service.intake.records()[0]!;
+    const original = f.service.command.bind(f.service);
+    const interrupt = vi.spyOn(f.service, "command").mockImplementation(async cmd => {
+      const receipt = await original(cmd);
+      if (cmd.type === "thread.create") throw new Error("simulated host loss after durable thread creation");
+      return receipt;
+    });
+    await expect(f.service.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" })).rejects.toThrow("simulated host loss");
+    interrupt.mockRestore();
+    const claimKey = `approve:${record.intakeId}`;
+    const claim = f.store.get<{ threadCommandId: string; messageCommandId: string }>("intakeApprovalClaim", claimKey)!;
+    const old = receiptBody(f.store, claim.threadCommandId)!;
+    f.store.db.prepare("UPDATE receipts SET body=? WHERE id=?").run(JSON.stringify({ commandId: claim.threadCommandId, eventSeq: old.eventSeq, result: null, expired: true }), claim.threadCommandId);
+    await f.reopen();
+    await expect(f.service.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" })).rejects.toMatchObject({ code: "INTAKE_RECOVERY_UNCERTAIN" });
+    expect(f.store.get("intakeApprovalClaim", claimKey)).toBeTruthy();
+    expect(f.store.all("thread")).toHaveLength(1);
+    expect(f.store.all("message")).toHaveLength(0);
+    const altered = { id: claim.threadCommandId, type: "thread.create", payload: { title: "altered" } };
+    await expect(f.service.command(altered)).rejects.toMatchObject({ code: "DUPLICATE_COMMAND" });
+  });
   it("recovery re-delivers a persisted input that a crash left on an approved task", async () => {
     const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-intake-recover-"));
     const store = new Store(join(root, "state"));

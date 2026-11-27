@@ -269,7 +269,8 @@ export class Service {
         // S10: the approved external task enters the same project, role and
         // execution gates as a manual task; external text carries no authority.
         const created=await this.command({id:request.threadCommandId,type:'thread.create',payload:{title:request.title.slice(0,140),...(request.projectId?{projectId:request.projectId}:{})}});
-        const thread=created.result as Thread;
+        const thread=created.result as Thread|null;
+        if(created.expired||!thread||typeof thread.id!=='string')throw new HarnessError('INTAKE_RECOVERY_UNCERTAIN','The approved task may already exist, but its durable creation result is unavailable; manual recovery is required.',{commandId:request.threadCommandId});
         await this.command({id:request.messageCommandId,type:'message.send',threadId:thread.id,payload:{content:request.content,modelId:request.modelId}});
         return {threadId:thread.id};
       }});
