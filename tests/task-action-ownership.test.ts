@@ -96,6 +96,11 @@ describe('task action ownership', () => {
     await expect.poll(() => result(page, 'currentB')).toBe(false);
     await expect.poll(() => page.locator('#owned').getAttribute('data-error')).toBe('The request failed. Try again.');
     await expect.poll(() => page.locator('#owned').getAttribute('data-busy')).toBe('false');
+    await page.evaluate(`window.results.currentError = undefined; window.currentHook.run('act').then(value => { window.results.currentError = value; }); undefined;`);
+    expect(await calls(page)).toBe(3);
+    await page.evaluate(`window.deferreds[2].reject(new Error('Owned source failed exactly.'))`);
+    await expect.poll(() => result(page, 'currentError')).toBe(false);
+    await expect.poll(() => page.locator('#owned').getAttribute('data-error')).toBe('Owned source failed exactly.');
     await page.close();
   });
 
