@@ -227,3 +227,23 @@ describe('contracts', () => {
     expect(() => dependencyScanResultSchema.parse({...result, status: 'clean'})).toThrow();
   });
 });
+
+it('does not label an unrelated pnpm package sharing a direct dependency version as direct', async () => {
+  await put('pnpm-lock.yaml', `lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      synthetic-direct:
+        specifier: ^1.2.3
+        version: 1.2.3
+packages:
+  synthetic-direct@1.2.3:
+    resolution: {integrity: sha512-abc}
+  synthetic-transitive@1.2.3:
+    resolution: {integrity: sha512-def}
+`);
+  const snapshot = await inventoryDependencies(root);
+  expect(snapshot.occurrences.find(item => item.name === 'synthetic-direct' && item.importerPath === '.')?.directness).toBe('direct');
+  expect(snapshot.occurrences.find(item => item.name === 'synthetic-direct' && item.importerPath === undefined)?.directness).toBe('direct');
+  expect(snapshot.occurrences.find(item => item.name === 'synthetic-transitive')?.directness).toBe('transitive');
+});
