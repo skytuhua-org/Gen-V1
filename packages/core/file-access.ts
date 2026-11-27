@@ -161,6 +161,7 @@ export async function replaceOwnedFile(source: string, destination: string, iden
     // An external atomic save can still replace the destination pathname.
     if(target&&createHash('sha256').update(await readBoundFile(destination,32*1024*1024)).digest('hex')!==expectedDestinationHash)throw new HarnessError('PRECONDITION_FAILED','File changed before guarded replacement');
     active(signal);
+    // Race regression coverage injects inside custody, immediately before native commit.
     await beforeNativeReplace?.(destination);
     active(signal);
     await sessions.getStore()!.rpc({ command: "replaceOwned", id: randomUUID(), source, destination, dev: String(identity.dev), ino: String(identity.ino), sha256, targetDev:target&&String(target.dev), targetIno:target&&String(target.ino), targetSha256:expectedDestinationHash });

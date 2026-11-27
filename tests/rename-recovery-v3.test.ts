@@ -219,17 +219,29 @@ it('a redirected target parent is rejected before apply stages content',async()=
  const root=tempDir('rename-root-');
  const outside=tempDir('rename-outside-');
  const journal=tempDir('rename-journal-');
- const link=join(root,'linked');
- symlinkSync(outside,link,process.platform==='win32'?'junction':'dir');
- const target=join(link,'a.ts');
+ const directory=join(root,'linked');
+ mkdirSync(directory);
+ const target=join(directory,'a.ts');
  const text='const alpha = 1;\n';
- writeFileSync(join(outside,'a.ts'),text);
+ writeFileSync(target,text);
  const adapter=new RenameAdapter();
  adapter.edit={changes:{[uri(target)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}]}};
  const ci=new CodeIntelligence(()=>adapter);
  disposables.push(ci);
  const plan=await ci.planRename(planInput(root,target,text));
- await expect(ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()})).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+ renameSync(directory,join(root,'original'));
+ writeFileSync(join(outside,'a.ts'),text);
+ symlinkSync(outside,directory,process.platform==='win32'?'junction':'dir');
+ const staged:string[]=[];
+ let watchError:Error|undefined;
+ const watcher=watch(outside,(_event,filename)=>{if(filename&&String(filename).startsWith('.gen-rename-'))staged.push(String(filename));});
+ watcher.on('error',error=>{watchError=error;});
+ try{
+  await expect(ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()})).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+ }finally{watcher.close();}
+ await new Promise(resolve=>setTimeout(resolve,100));
+ expect(watchError).toBeUndefined();
+ expect(staged).toEqual([]);
  expect(readFileSync(join(outside,'a.ts'),'utf8')).toBe(text);
  expect(readdirSync(journal)).toEqual([]);
 });
