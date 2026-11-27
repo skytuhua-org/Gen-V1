@@ -24,6 +24,78 @@ async function choose(page: Page, label: string) {
   await expect(filter(page)).toBeFocused(); await expect(filter(page)).toHaveText(label);
 }
 
+for(const motion of ['no-preference','reduce','off'] as const)test(`inbox status and new arrivals respect ${motion} motion`,async({page})=>{
+  await page.setViewportSize({width:1116,height:720});
+  await page.emulateMedia({reducedMotion:motion==='reduce'?'reduce':'no-preference'});
+  if(motion==='off')await page.addInitScript(()=>{
+    const apply=()=>{document.documentElement.dataset.motion='off';};
+    if(document.documentElement){apply();return;}
+    const observer=new MutationObserver(()=>{if(document.documentElement){observer.disconnect();apply();}});
+    observer.observe(document,{childList:true});
+  });
+  await page.addInitScript(()=>{
+    const events:string[]=[];
+    Object.defineProperty(window,'inboxMotionEvents',{value:events});
+    document.addEventListener('animationstart',event=>{
+      if(event.target instanceof Element&&event.target.closest('.agent-inbox'))events.push(event.animationName);
+    });
+    document.addEventListener('transitionrun',event=>{
+      if(event.target instanceof Element&&event.target.matches('.ui-unread-dot'))events.push(event.propertyName);
+    });
+  });
+  const events=()=>page.evaluate(()=>Reflect.get(window,'inboxMotionEvents') as string[]);
+  await fixture(page);
+  const row=page.getByRole('listitem').filter({has:page.getByRole('button',{name:/^Review, Review change/})});
+  const dot=row.locator('.ui-unread-dot');
+  await expect(dot).toHaveCSS('opacity','0');
+  const originalDot=await dot.elementHandle();
+  await row.hover();
+  await row.getByRole('button',{name:'Mark as unread'}).click();
+  await expect(dot).toHaveCSS('opacity','1');
+  expect(await dot.evaluate((node,prior)=>node===prior,originalDot)).toBe(true);
+  expect(await events()).not.toContain('inbox-row-in');
+  await page.evaluate(()=>window.inboxControls.arrive?.());
+  await expect(rows(page).first()).toContainText('New result');
+  await page.getByRole('button',{name:/^New result,/}).click();
+  await expect(page.getByRole('heading',{name:'New result',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:/^Review, Review change/}).click();
+  await expect(page.getByRole('heading',{name:'Review',exact:true})).toBeVisible();
+  await choose(page,'Needs you');
+  await choose(page,'All');
+  await expect(rows(page).first()).toContainText('New result');
+  if(motion!=='no-preference'){
+    expect(await events()).toEqual([]);
+    await expect(dot).toHaveCSS('transition-property','none');
+  }else{
+    expect(await events()).toEqual(expect.arrayContaining(['opacity','inbox-count-in','inbox-row-in','inbox-item-in']));
+    expect((await events()).filter(name=>name==='inbox-row-in')).toHaveLength(1);
+    expect((await events()).filter(name=>name==='inbox-item-in')).toHaveLength(2);
+  }
+});
+
+test('the first asynchronous attention snapshot establishes the row animation baseline',async({page})=>{
+  const stamp='2026-11-06T12:00:00.000Z';
+  const initial:AttentionItem={id:'initial',threadId:'initial',kind:'thread-completed',title:'Existing result',
+    summary:'Loaded from the incoming snapshot',state:'completed',createdAt:stamp,updatedAt:stamp,read:false,
+    popupDismissed:false,actionable:false,notificationKey:'initial',destination:{threadId:'initial'}};
+  const items=[initial];
+  await page.addInitScript(()=>{
+    window.EventSource=class extends EventTarget{onopen:()=>void=()=>{};constructor(){super();queueMicrotask(()=>this.onopen());}close(){}} as unknown as typeof EventSource;
+    document.addEventListener('animationstart',event=>{
+      if(event.animationName==='inbox-row-in')document.documentElement.dataset.arrivedRow=event.target instanceof Element?event.target.textContent??'':'';
+    });
+  });
+  await page.route('**/api/bootstrap',route=>route.fulfill({json:{csrfToken:'fixture-csrf',widgetOrigin:'http://127.0.0.1:5802'}}));
+  await page.route('**/api/attention',route=>route.fulfill({json:{items,unread:items.length,sequence:items.length}}));
+  await page.goto('/tests/e2e/fixtures/inbox-controls.html?network');
+  await expect(rows(page).first()).toContainText('Existing result');
+  expect(await page.locator('.ui-list-row').first().evaluate(node=>getComputedStyle(node).animationName)).toBe('none');
+  items.unshift({...initial,id:'after',title:'Arrived later',notificationKey:'after'});
+  await page.getByRole('button',{name:'Refresh inbox'}).click();
+  await expect(rows(page).first()).toContainText('Arrived later');
+  await expect(page.locator('html')).toHaveAttribute('data-arrived-row',/Arrived later/);
+});
+
 for(const width of [280,1100])test(`short Inbox controls remain reachable at ${width} pixels`,async({page})=>{
   await page.setViewportSize({width:width+16,height:720});
   await fixture(page);
@@ -113,6 +185,8 @@ test('the rendered Inbox is capped while search and unread use all 1000 results'
  const note=page.getByText('Showing 200 of 1000. Refine search or filter to see more.',{exact:true});
  await expect(note).toBeAttached();
  await expect(page.locator('.inbox-unread-count')).toHaveText('4');
+ // Isolate filtering/capping from the selected row's asynchronous read policy.
+ await page.evaluate(()=>{window.inboxControls.holdRead=new Promise(()=>{});});
  const first=rows(page).first(),last=rows(page).last();
  await first.focus();await page.keyboard.press('End');
  await expect(last).toBeFocused();await expect(last).toBeInViewport();

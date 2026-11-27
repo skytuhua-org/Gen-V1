@@ -5,6 +5,7 @@ import {Select} from '../../../packages/ui-shell/Select';
 import {shownColumns,oneColumn} from '../../../third-party/vespin/inbox-columns.ts';
 import {InboxList,InboxItemRow,InboxPane} from '../../../third-party/vespin/inbox-presentation.tsx';
 import {projectColor} from './project-colors';
+import {readMotionPolicy} from './motion-policy';
 import {formatLocalDateTime,type TimeFormat} from './time-format';
 import './agent-inbox.css';
 
@@ -27,7 +28,7 @@ const age=(value:string)=>{const minutes=Math.max(0,Math.floor((Date.now()-Date.
 const renderCap=200;
 
 /** Scoped adaptation of Vespin's list/reader composition; canonical Gen actions stay in their thread. */
-export interface InboxViewProps {attention:{items:AttentionItem[];unread:number;error:string;refresh():Promise<void|string>;markRead(id:string):Promise<void>;markUnread(id:string):Promise<void>;markAllRead?(ids:readonly string[]):Promise<void>};onOpenThread:(threadId:string)=>void|Promise<void>;emptyTitle?:string;emptyMessage?:string;projectColorFor?:(projectId?:string)=>string|undefined;timeFormat?:TimeFormat}
+export interface InboxViewProps {attention:{items:AttentionItem[];unread:number;error:string;loaded?:boolean;refresh():Promise<void|string>;markRead(id:string):Promise<void>;markUnread(id:string):Promise<void>;markAllRead?(ids:readonly string[]):Promise<void>};onOpenThread:(threadId:string)=>void|Promise<void>;emptyTitle?:string;emptyMessage?:string;projectColorFor?:(projectId?:string)=>string|undefined;timeFormat?:TimeFormat}
 export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projectColorFor,timeFormat='system'}:InboxViewProps){
  const [filter,setFilter]=useState<Filter>('all'),[query,setQuery]=useState(''),[chosen,setChosen]=useState<string>(),[explicitDismissed,setExplicitDismissed]=useState(false),[single,setSingle]=useState(false),[actionError,setActionError]=useState(''),root=useRef<HTMLElement>(null),reader=useRef<HTMLElement>(null),rows=useRef(new Map<string,HTMLButtonElement>()),heading=useId(),actionVersion=useRef(0),markTimer=useRef<ReturnType<typeof setTimeout>>(undefined);
  type FocusRequest={instance:number;intent:number;interaction:number;kind:'return'|'reader';requestedId:string;source:'back'|'escape'|'choose'|'shortcut';priorVisibleIds:string[];priorIndex:number;expectedNode?:HTMLElement};
@@ -43,7 +44,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
   const button=bulkButton.current??refreshButton.current;
   if(button&&button.ownerDocument.activeElement===button.ownerDocument.body)button.focus({preventScroll:true});
  },[markingAll,attention.unread]);
- const searchInput=useRef<HTMLInputElement>(null);
+ const searchInput=useRef<HTMLInputElement>(null),knownItems=useRef<Set<string>|undefined>(undefined);
  const clearSearch=()=>{setQuery('');searchInput.current?.focus();};
  useEffect(()=>()=>{clearTimeout(markTimer.current);actionVersion.current++;instanceGeneration.current++;interactionGeneration.current++;if(focusFrame.current!==undefined)cancelAnimationFrame(focusFrame.current);focusFrame.current=undefined;focusRequest.current=undefined;},[]);
  useEffect(()=>{if(!refreshFeedback)return;const timer=setTimeout(()=>setRefreshFeedback(undefined),2400);return()=>clearTimeout(timer);},[refreshFeedback]);
@@ -57,7 +58,21 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
   const ids=rendered.map(item=>item.id),signature=rendered.map(item=>[item.id,item.title,item.summary,item.updatedAt,item.read,item.state,item.actionable,item.kind].join('\u0000')).join('\u0001'),prior=committedListSignature.current;
   if(prior!==undefined&&prior!==signature)interactionGeneration.current++;
   committedVisibleIds.current=ids;committedListSignature.current=signature;
+  if(attention.loaded===false)return;
+  const known=knownItems.current;
+  if(known&&columns!=='item'&&readMotionPolicy()==='full')for(const id of ids){
+   if(!known.has(id))rows.current.get(id)?.parentElement?.classList.add('row-enter');
+  }
+  knownItems.current=new Set(attention.items.map(item=>item.id));
  });
+ useEffect(()=>{
+  const owner=root.current;if(!owner)return;
+  const removeEntry=(event:AnimationEvent)=>{
+   if(event.animationName==='inbox-row-in'&&event.target instanceof Element)event.target.classList.remove('row-enter');
+  };
+  owner.addEventListener('animationend',removeEntry);owner.addEventListener('animationcancel',removeEntry);
+  return()=>{owner.removeEventListener('animationend',removeEntry);owner.removeEventListener('animationcancel',removeEntry);};
+ },[]);
  useEffect(()=>{
   const invalidate=()=>{interactionGeneration.current++;},hide=()=>{if(document.hidden)invalidate();};
   window.addEventListener('keydown',invalidate,true);window.addEventListener('pointerdown',invalidate,true);window.addEventListener('focusin',invalidate,true);window.addEventListener('wheel',invalidate,true);window.addEventListener('blur',invalidate);document.addEventListener('visibilitychange',hide);
@@ -200,7 +215,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
  const error=actionError||attention.error;
  const reconnecting=!actionError&&error==='Inbox is reconnecting…';
  const empty=<div className="agent-inbox-empty"><Inbox size={27}/><h3>{hasItems?'Nothing matches':emptyTitle??'You are all caught up'}</h3><p>{hasItems?'Try another view or search.':emptyMessage??'Questions, reviews and task results will appear here.'}</p>{hasItems&&<button type="button" className="quiet inbox-filter-reset" onClick={()=>{setFilter('all');clearSearch();}}>Clear search and filter</button>}</div>;
- const head=<header className="ui-toolbar inbox-list-head" data-place="inbox"><h2 id={heading}>Inbox</h2>{!refreshFeedback&&attention.unread>0&&<span className="inbox-unread-count">{attention.unread}</span>}<span className="inbox-refresh-status" aria-live="polite">{refreshFeedback?.text}</span><div className="inbox-view-controls"><Select aria-label="Inbox filter" value={filter} options={filters} onValueChange={value=>setFilter(value as Filter)}/><button ref={refreshButton} type="button" className="icon-button" aria-label="Refresh inbox" title={refreshing?'Refreshing…':'Refresh inbox'} aria-busy={refreshing} aria-disabled={refreshing} onClick={refresh}><RefreshCw className={refreshing?'spinning':undefined} size={14} aria-hidden="true"/></button>{(attention.unread>0||markingAll)&&<button ref={bulkButton} type="button" className="quiet inbox-mark-all" aria-label="Mark all as read" disabled={markingAll} onClick={markAll}>{markingAll?'Marking…':'Mark all read'}</button>}</div></header>;
+ const head=<header className="ui-toolbar inbox-list-head" data-place="inbox"><h2 id={heading}>Inbox</h2>{!refreshFeedback&&attention.unread>0&&<span className="inbox-unread-count"><span key={attention.unread}>{attention.unread}</span></span>}<span className="inbox-refresh-status" aria-live="polite">{refreshFeedback?.text}</span><div className="inbox-view-controls"><Select aria-label="Inbox filter" value={filter} options={filters} onValueChange={value=>setFilter(value as Filter)}/><button ref={refreshButton} type="button" className="icon-button" aria-label="Refresh inbox" title={refreshing?'Refreshing…':'Refresh inbox'} aria-busy={refreshing} aria-disabled={refreshing} onClick={refresh}><RefreshCw className={refreshing?'spinning':undefined} size={14} aria-hidden="true"/></button>{(attention.unread>0||markingAll)&&<button ref={bulkButton} type="button" className="quiet inbox-mark-all" aria-label="Mark all as read" disabled={markingAll} onClick={markAll}>{markingAll?'Marking…':'Mark all read'}</button>}</div></header>;
  const search=<search className="inbox-search"><div className="inbox-search-field"><Search size={14} aria-hidden="true"/><input ref={searchInput} type="search" placeholder="Search inbox" aria-label="Search Inbox" value={query} onChange={event=>setQuery(event.target.value)} onKeyDown={event=>{if(event.key==='Escape'&&query&&!event.nativeEvent.isComposing&&event.nativeEvent.keyCode!==229){event.preventDefault();event.stopPropagation();clearSearch();}}}/>{query&&<button type="button" className="inbox-search-clear" aria-label="Clear search" title="Clear search" onClick={clearSearch}><X size={11} aria-hidden="true"/></button>}</div></search>;
  const toolbar=selected?<header className="ui-toolbar inbox-item-toolbar" data-place="inbox-item">
   {single&&<button type="button" className="quiet" onClick={()=>back()}><ArrowLeft size={14}/>Inbox</button>}
@@ -218,7 +233,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
    {rendered.map(item=><InboxItemRow key={item.id} pressRef={node=>{if(node)rows.current.set(item.id,node);else rows.current.delete(item.id);}} title={item.title} description={<>{item.actionable&&<Bell size={11}/>}<span>{item.summary}</span></>} lead={{icon:<span className="inbox-holder-mark" style={{'--inbox-project':projectColorFor?projectColorFor(item.projectId):projectColor({kind:'local'},item.projectId)} as CSSProperties}>{item.state==='failed'?<TriangleAlert size={13}/>:item.state==='completed'||item.state==='resolved'?<Check size={13}/>:<Bot size={13}/>}</span>,label:sourceLabels[item.kind]}} action={<RowReadButton read={item.read} pending={pendingRead(item.id)} toggle={()=>toggleRead(item)}/>} meta={<time dateTime={item.updatedAt}>{age(item.updatedAt)}</time>} unread={!item.read} current={chosen===item.id} muted={item.state==='completed'||item.state==='resolved'} label={`${item.title}, ${labels[item.state]}${!item.read?', unread':''}`} onPress={()=>choose(item,true)}/>)}
   </InboxList>
   {!explicitDismissed&&<InboxPane title={selected?.title} hidden={columns==='list'} toolbar={toolbar} paneRef={reader} footer={footer} empty={<div className="agent-inbox-empty"><Inbox size={29}/><h3>Select an item</h3><p>Read it here, then open its conversation when needed.</p></div>}>
-   {selected&&<div className="inbox-canonical-message"><div className="inbox-message-meta"><span data-state={selected.state}>{labels[selected.state]}</span><time dateTime={selected.updatedAt}>{formatLocalDateTime(selected.updatedAt,timeFormat,undefined,{dateStyle:'medium',timeStyle:'short'})}</time></div><p>{selected.summary}</p></div>}
+   {selected&&<div key={selected.id} className="inbox-canonical-message"><div className="inbox-message-meta"><span data-state={selected.state}>{labels[selected.state]}</span><time dateTime={selected.updatedAt}>{formatLocalDateTime(selected.updatedAt,timeFormat,undefined,{dateStyle:'medium',timeStyle:'short'})}</time></div><p>{selected.summary}</p></div>}
   </InboxPane>}
   {error&&<p className="agent-inbox-error" data-tone={reconnecting?'info':'danger'} role={reconnecting?'status':'alert'} aria-atomic="true">{error}</p>}
  </section>;

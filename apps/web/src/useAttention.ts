@@ -2,13 +2,13 @@ import {useSyncExternalStore} from 'react';
 import {attentionItemSchema,type AttentionEnvelope} from '../../../packages/contracts/attention.ts';
 import {authenticated,csrfToken,read,subscribe} from './api';
 
-let state:AttentionEnvelope&{error:string}={items:[],unread:0,sequence:0,error:''};
+let state:AttentionEnvelope&{error:string;loaded:boolean}={items:[],unread:0,sequence:0,error:'',loaded:false};
 const listeners=new Set<()=>void>();let stop:(()=>void)|undefined,flight:Promise<string|undefined>|undefined,trailing:Promise<string|undefined>|undefined,timer:ReturnType<typeof setTimeout>|undefined;
 const publish=()=>{for(const listener of listeners)listener();};
 function refreshAttention():Promise<string|undefined>{
  if(flight)return trailing??=flight.then(()=>{trailing=undefined;return refreshAttention();});
  return flight=Promise.resolve().then(async()=>{
-  try{const value=await authenticated(()=>fetch('/api/attention',{credentials:'same-origin',cache:'no-store',redirect:'error'})).then(read<AttentionEnvelope>);if(!Array.isArray(value.items)||value.items.length>1000||!Number.isSafeInteger(value.sequence))throw Error('The Inbox response is invalid.');state={...value,items:value.items.map(item=>attentionItemSchema.parse(item)),error:''};publish();}
+  try{const value=await authenticated(()=>fetch('/api/attention',{credentials:'same-origin',cache:'no-store',redirect:'error'})).then(read<AttentionEnvelope>);if(!Array.isArray(value.items)||value.items.length>1000||!Number.isSafeInteger(value.sequence))throw Error('The Inbox response is invalid.');state={...value,items:value.items.map(item=>attentionItemSchema.parse(item)),error:'',loaded:true};publish();}
   catch(cause){const error=cause instanceof Error?cause.message:'Inbox could not load.';state={...state,error};publish();return error;}
   finally{flight=undefined;}
  });

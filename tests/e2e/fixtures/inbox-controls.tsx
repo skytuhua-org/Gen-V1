@@ -7,7 +7,7 @@ import '../../../apps/web/src/styles.css';
 
 type Mode = 'success' | 'reject' | 'throw' | 'source-error';
 type Call = {type: 'refresh' | 'read' | 'unread' | 'open'; id?: string};
-declare global {interface Window {inboxControls: {calls: Call[]; items: AttentionItem[]; refreshMode: Mode; readMode: Mode; openMode: Mode; unreadMode?: Mode; holdRead?: Promise<void>; rejectReadId?: string; holdUnread?: Promise<void>; holdRefresh?: Promise<void>; holdOpen?: Promise<void>}}}
+declare global {interface Window {inboxControls: {calls: Call[]; items: AttentionItem[]; refreshMode: Mode; readMode: Mode; openMode: Mode; unreadMode?: Mode; holdRead?: Promise<void>; rejectReadId?: string; holdUnread?: Promise<void>; holdRefresh?: Promise<void>; holdOpen?: Promise<void>; arrive?(): void}}}
 window.inboxControls = {calls: [], items: [], refreshMode: 'success', readMode: 'success', openMode: 'success'};
 const initial: AttentionItem[] = [
   {id: 'question', threadId: 'thread-question', kind: 'request', title: 'Question', summary: 'Choose the destination in the canonical conversation.', state: 'needs-input', read: false, actionable: true},
@@ -26,6 +26,10 @@ function Fixture() {
     return [...initial,...Array.from({length:35},(_,index)=>({...initial[1],id:'extra-'+index,title:'Extra item '+index}))];
   }), [error, setError] = useState('');
   window.inboxControls.items = items;
+  window.inboxControls.arrive = () => setItems(current => [
+    {...initial[3], id:'new-arrival', title:'New result', notificationKey:'new-arrival:completed'},
+    ...current,
+  ]);
   const result = (mode: Mode, message: string, succeed: () => void) => {
     if (mode === 'throw') throw Error(message);
     if (mode === 'reject') return Promise.reject(Error(message));
