@@ -118,3 +118,16 @@ test('fixture blocks foreign canonical workspace requests',async({page})=>{
  expect(await page.evaluate(url=>fetch(url).then(()=>true,()=>false),url)).toBe(false);
  expect(h.unexpected).toEqual(['https://outside.invalid/api/split-workspace']);
 });
+
+test('actual Changes identifies its selected conversation and clears its recorded comparison on a switch',async({page})=>{
+ const h=await host(page);
+ await page.getByRole('button',{name:'Inspect changes',exact:true}).click();
+ const current=page.getByRole('tab',{name:'Current',exact:true}),recordedTab=page.getByRole('tab',{name:'Recorded',exact:true});
+ await current.focus();await current.press('ArrowRight');await expect(recordedTab).toBeFocused();
+ const recorded=page.getByRole('tabpanel',{name:'Recorded',exact:true});
+ await expect(recorded).toContainText('Recorded comparison');
+ await expect(recorded).toContainText('Changes recorded for “'+h.snapshot.threads[0].title+'”.');
+ await page.getByRole('button',{name:'Review keyboard navigation Ready',exact:true}).click();
+ await expect(page.getByText('Nothing recorded for “Review keyboard navigation” yet.',{exact:true})).toBeVisible();
+ await expect(page.getByText('Recorded comparison',{exact:true})).toHaveCount(0);
+});

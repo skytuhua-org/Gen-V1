@@ -69,7 +69,7 @@ function Fixture(){
   </section><section className="wo5-checkpoints-tool" aria-label="Changes">
    <FileCheckpoints owner={currentOwner} preferences={{...DEFAULT_PREFERENCES,diffDefaultExpanded:true}} initialSource="History" adapter={state==='unavailable'?undefined:adapter}
     current={<div className="panel-empty"><strong>Live working-copy changes</strong><p>Synthetic current Git source · work-one</p></div>}
-    recorded={<RecordedDiffPanel snapshot={snapshot} threadId="task-thread" preferences={recordedPreferences}/>}/>
+    recorded={<RecordedDiffPanel snapshot={snapshot} threadId={state==='unbound-recorded'?undefined:state==='unavailable-recorded'?'missing-thread':'task-thread'} preferences={recordedPreferences}/>}/>
   </section></div>
  </main>;
 }

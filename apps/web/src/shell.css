@@ -169,6 +169,8 @@
 .file-preview>header strong,.executor-record>header strong { font-weight:500; }
 .file-preview>pre { padding:14px; max-height:50vh; }
 .file-preview>img { display:block; max-width:100%; max-height:60vh; object-fit:contain; margin:auto; }
+.panel-note.recorded-diff-owner { padding:8px 12px 0; line-height:1.5; }
+.panel-note.recorded-diff-empty-caption { margin:4px 0 0; padding:0; line-height:1.5; }
 .workspace-diff { border-bottom:1px solid var(--border); container:recorded-diff / inline-size; }
 .workspace-diff>summary { padding:13px 15px; font-size:13px; }
 .workspace-diff pre { padding:12px 14px; font-size:12px; }

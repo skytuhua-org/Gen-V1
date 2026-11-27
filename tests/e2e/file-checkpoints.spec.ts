@@ -239,3 +239,15 @@ test('each Changes source owns a unique panel and only the selected panel is tab
   await expect(panel).toBeFocused();
  }
 });
+
+for (const [state,copy] of [
+  ['unbound-recorded','Recorded diffs appear here when a conversation is open.'],
+  ['unavailable-recorded','Changes recorded for an unavailable conversation.'],
+]) test(`Recorded keeps the ${state} owner empty`,async({page})=>{
+  await page.goto('/file-checkpoints?state='+state);
+  await page.getByRole('tab',{name:'Recorded',exact:true}).click();
+  const panel=page.getByRole('tabpanel',{name:'Recorded',exact:true});
+  await expect(panel).toContainText(copy);
+  await expect(panel).toContainText('No recorded diffs');
+  await expect(panel.locator('details')).toHaveCount(0);
+});
