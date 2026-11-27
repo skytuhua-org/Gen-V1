@@ -1,6 +1,7 @@
+import {controlBridgeCacheCurrent,recordControlBridgeBuild} from '../scripts/build-windows-control-bridge.ts';
 import {describe,expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
-import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,rm,utimes,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {M16_BROWSER_SCENARIO_REVIEW,M16_CONTROL_ADDON_EXPORTS,assertM16CheckedOutSource,assertM16IdentityVerificationReceipt,assertM16ModuleLoadReceipt,m16BuildManifestIdentity,m16BuildReference,m16ModuleLoadEnvironment,m16RunReference,parseM16ModuleLoadOutput,readM16Owner} from '../scripts/m16-installed-identity.ts';
@@ -111,4 +112,25 @@ describe('M16 hosted installed identity verification',()=>{
   expect(step).not.toContain('--project-memory');
   expect(workflow).toContain('.harness-desktop-installed/run-*/m16-identity-receipt.json');
  });
+});
+
+
+it('requires a native bridge build to reflect ordinary source edits with an unchanged timestamp',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'control-bridge-freshness-'));
+ try{
+  const artifact=join(root,'bridge.node'),source=join(root,'bridge.cc'),builder=join(root,'build.ts'),cache=join(root,'cache');
+  const originalTime=new Date('2026-01-12T12:00:00Z'),builtTime=new Date('2026-01-12T12:01:00Z');
+  await Promise.all([writeFile(artifact,'synthetic build bytes, never loaded'),writeFile(source,'first source'),writeFile(builder,'local builder')]);
+  await Promise.all([utimes(artifact,builtTime,builtTime),utimes(source,originalTime,originalTime),utimes(builder,originalTime,originalTime)]);
+  await expect(controlBridgeCacheCurrent(artifact,source,builder,cache)).resolves.toBe(false);
+  await recordControlBridgeBuild(artifact,source,builder,cache);
+  await expect(controlBridgeCacheCurrent(artifact,source,builder,cache)).resolves.toBe(true);
+  await writeFile(source,'second source');
+  await utimes(source,originalTime,originalTime);
+  await expect(controlBridgeCacheCurrent(artifact,source,builder,cache)).resolves.toBe(false);
+  await recordControlBridgeBuild(artifact,source,builder,cache);
+  await expect(controlBridgeCacheCurrent(artifact,source,builder,cache)).resolves.toBe(true);
+  await writeFile(builder,'updated local builder');
+  await expect(controlBridgeCacheCurrent(artifact,source,builder,cache)).resolves.toBe(false);
+ }finally{await rm(root,{recursive:true,force:true});}
 });
