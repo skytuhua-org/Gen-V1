@@ -150,6 +150,7 @@ it('announces measured divider bounds and keeps the current value inside them',a
   await tab.setViewportSize({width:1440,height:430});
   await expect.poll(async()=>rows.getAttribute('tabindex')).toBe('-1');
   expect(await rows.getAttribute('aria-valuemin')).toBeNull();expect(await rows.getAttribute('aria-valuemax')).toBeNull();expect(await rows.getAttribute('aria-valuenow')).toBeNull();
+  await rows.evaluate(node=>node.blur());await rows.click({force:true});expect(await rows.evaluate(node=>node===document.activeElement)).toBe(false);
  }finally{await tab.close();}
 });
 it('cancels a pending keyboard resize preview on Escape without a command',async()=>{
