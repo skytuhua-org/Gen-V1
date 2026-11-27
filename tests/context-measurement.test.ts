@@ -52,3 +52,12 @@ it('writes a new requested receipt without replacing historical or existing outp
     expect(await readFile(path, 'utf8')).toBe(first);
   } finally { await cleanup(directory); }
 });
+
+it.each([baseline, 'dist/web'])('rejects an empty HTML-selected entry in %s without a receipt', async root => {
+  const directory = await fixture(), output = join(directory, 'invalid-output');
+  try {
+    await writeFile(join(directory, root, 'assets/index-z-current.js'), '');
+    await expect(run(directory, output)).rejects.toThrow(/application entry.*empty/i);
+    await expect(readFile(join(output, 'efficiency.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally { await cleanup(directory); }
+});
