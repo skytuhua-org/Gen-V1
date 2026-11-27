@@ -2117,6 +2117,79 @@
     "docs/implementation/v6/M10/issue-2049-lint.log",
     "docs/implementation/v6/M10/issue-2049-build.log"
    ]
+  },
+  {
+   "id": "m10.issue-2017-occurrence-accounting-offline",
+   "status": "PASS",
+   "requiredCases": [
+    {
+     "id": "M10-2017-A01",
+     "status": "PASS",
+     "evidence": "docs/implementation/v6/M10/issue-2017-occurrence-accounting.md"
+    },
+    {
+     "id": "M10-2017-A02",
+     "status": "PASS",
+     "evidence": "docs/implementation/v6/M10/issue-2017-occurrence-accounting.md"
+    },
+    {
+     "id": "M10-2017-A03",
+     "status": "PASS",
+     "evidence": "docs/implementation/v6/M10/issue-2017-occurrence-accounting.md"
+    },
+    {
+     "id": "M10-2017-A04",
+     "status": "PASS",
+     "evidence": "docs/implementation/v6/M10/issue-2017-occurrence-accounting.md"
+    },
+    {
+     "id": "M10-2017-A05",
+     "status": "PASS",
+     "evidence": "docs/implementation/v6/M10/issue-2017-occurrence-accounting.md"
+    },
+    {
+     "id": "M10-2017-A06",
+     "status": "PASS",
+     "evidence": "docs/implementation/v6/M10/issue-2017-occurrence-accounting.md"
+    },
+    {
+     "id": "M10-2017-A07",
+     "status": "PASS",
+     "evidence": "docs/implementation/v6/M10/issue-2017-occurrence-accounting.md"
+    },
+    {
+     "id": "M10-2017-A08",
+     "status": "PASS",
+     "evidence": "docs/implementation/v6/M10/issue-2017-occurrence-accounting.md"
+    }
+   ],
+   "commands": [
+    {
+     "argv": [
+      "pnpm",
+      "exec",
+      "vitest",
+      "run",
+      "tests/background-work-v3.test.ts",
+      "tests/human-handoff-v3.test.ts",
+      "tests/external-intake-v3.test.ts",
+      "tests/background-contract-decisions-v6.test.ts"
+     ],
+     "cwdIdentity": "skytuhua-org/Gen-V1 @ f239840adf0b6a3dc0d923ec52b2f2df75ffc981",
+     "executableIdentity": "pnpm",
+     "startedAt": "2026-11-27T22:57:40.935Z",
+     "endedAt": "2026-11-27T22:57:48.932Z",
+     "exitCode": 0,
+     "termination": "NONE",
+     "status": "PASS",
+     "boundedLogRef": "docs/implementation/v6/M10/logs/issue-2017-offline.log",
+     "logDigest": "48a8d4e8d92d652d7b8dcc91d79fe3a39db0e46dc765df974c61026cb41e6cf3"
+    }
+   ],
+   "artifactRefs": [
+    "docs/implementation/v6/M10/issue-2017-occurrence-accounting.md",
+    "docs/implementation/v6/M10/logs/issue-2017-offline.log"
+   ]
   }
  ],
  "changedFiles": [
@@ -2386,7 +2459,8 @@
   "bundleStatus computes FAIL because the required full-repository gates fail on this environment; the deterministic M10 phases pass and the milestone outcome is PARTIAL with the named holds.",
   "Post-merge session-5 verification on captured origin/main 4aef753e (cut includes squash 016738f7 + follow-up 1d65ae1e #786): four targeted suites PASS (43+11+24+5=83), lint PASS, build PASS, scoped browser suite PASS 11/11, typecheck PASS on run-4 with NODE_OPTIONS=--max-old-space-size=3584 after three default-heap exit134 OOMs under load-avg~20; full pnpm test FAIL exit1 (330 env-bound failures across 59 non-M10 files: python3.14 absent, platform drivers, pty; no M10-scoped file failed); HOLD_SOURCE_DRIFT recorded for the stale pre-squash branch join (moot: all content on main).",
   "Windows x64 native vitest (83/83) and background-work browser (12/12) PASS on ff38c62c; installed-desktop lane UNSUPPORTED on WIN-M0N0V07LGM1 \u2014 declared prerequisites recovered via pinned hash-verified inputs (Hermes 33/33, wheels 91/91, git/gh 386 files), but packaging stalls inside its own powershell.exe Expand-Archive spawn (box defect, UNSUPPORTED_ENV_STALL); no Setup.exe/win-unpacked produced; verify-installed-desktop NOT RUN. CI-artifact follow-up: no downloadable exact-cut pair exists (CI uploads receipts only \u2014 named ARTIFACT_GAP); the installed-memory CI job 134984166865 at the same cut ran the declared installed verifier with its own lane flags and PASSED (install/owned launches/payload custody/provider verify/uninstall all green, sha-bound Setup.exe afa42167\u20267753) \u2014 provenance receipts committed under logs-pm/ci-installed-lane/; not an M10 no-flag invocation on the target box, and the box's ENV_STALL record stands.",
-  "Dispatch 44414623739 at f8a4ac69: job 135191550723 installed-memory completed success including additive step 'Verify installed default-off acceptance'; flag-less verifier receipt passed (install/2 owned default-off launches/custody/provider/uninstall all green, Setup.exe sha256 476b2a6e\u202643fcc, artifact 14482448945) \u2014 qualifies generic default-off installed lifecycle only; M10 installed supervisor, reconnect/cancel and native fork remain held."
+  "Dispatch 44414623739 at f8a4ac69: job 135191550723 installed-memory completed success including additive step 'Verify installed default-off acceptance'; flag-less verifier receipt passed (install/2 owned default-off launches/custody/provider/uninstall all green, Setup.exe sha256 476b2a6e\u202643fcc, artifact 14482448945) \u2014 qualifies generic default-off installed lifecycle only; M10 installed supervisor, reconnect/cancel and native fork remain held.",
+  "Issue #2017: native process qualification (#2048) and native accepted-input acknowledgement (#2042) were NOT_RUN by the offline occurrence-accounting phase. Independent installed supervisor and authenticated intake evidence does not transfer from these fixtures."
  ],
  "reviewerApproval": false
 }
