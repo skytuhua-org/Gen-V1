@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ShellSidebar } from '../../apps/web/src/ShellSidebar';
 import { matchingThreads } from '../../apps/web/src/thread-search';
@@ -26,8 +26,13 @@ function Fixture() {
   const [search, setSearch] = useState(''), [request, setRequest] = useState<(() => void) | null>(null);
   const [layout, setLayout] = useState<ShellLayout>({ sidebarCollapsed: false, sidebarWidth: 248, rightPanelOpen: false,
     rightPanelWidth: 520, rightPanelMaximized: false, activeTab: 'artifact', openTabs: ['artifact'], activeArtifactId: null, folded: { settled: true } });
-  const preferences = { ...DEFAULT_PREFERENCES, projectGrouping: false, showWorkingSection: false,
-    projectOrder: query.has('recent') ? 'recent' as const : 'manual' as const };
+  const requestedSpeed = Number(query.get('speed'));
+  const motionSpeed = (requestedSpeed === .75 || requestedSpeed === 1 || requestedSpeed === 1.25 ? requestedSpeed : 1) as .75 | 1 | 1.25;
+  const preferences = useMemo(() => ({ ...DEFAULT_PREFERENCES, projectGrouping: false, showWorkingSection: false, motionSpeed,
+    projectOrder: query.has('recent') ? 'recent' as const : 'manual' as const }), [motionSpeed]);
+  useEffect(() => {
+    if (query.has('speed')) void import('../../apps/web/src/useAppearance').then(({ applyAppearance }) => applyAppearance(preferences));
+  }, [preferences]);
   const matching = useMemo(() => matchingThreads(rows, [], search, preferences.projectOrder), [rows, search, preferences.projectOrder]);
   return <div className="app-shell" data-theme="dark" style={{ height: '100vh' }}>
     <ShellSidebar key={generation} elementRef={elementRef} searchRef={searchRef} mobile={false} open={false} layout={layout}

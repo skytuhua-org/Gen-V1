@@ -216,6 +216,15 @@ test('row moves resolve inherited tokens and the selected motion speed', async (
   expect((await records(page)).every(item => item.duration === 300 && item.easing === 'linear' && item.delay === 0)).toBe(true);
 });
 
+for (const motionSpeed of [.75, 1, 1.25] as const) test(`row moves apply real preference speed ${motionSpeed} exactly once`, async ({ page }) => {
+  await load(page, `speed=${motionSpeed}`);
+  await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--motion-speed'))).toBe(String(motionSpeed));
+  await move(page, 'thread-4', 'top');
+  const moves = await records(page);
+  expect(moves).toHaveLength(4);
+  for (const item of moves) expect(item.duration).toBeCloseTo(180 / motionSpeed, 6);
+});
+
 test('settled moves clean up without a retained transform or animation', async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 1000 }); await load(page, '', false);
   await move(page, 'thread-4', 'top'); expect((await order(page))[0]).toBe('thread-4');
