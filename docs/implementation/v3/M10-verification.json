@@ -2375,7 +2375,7 @@
   }
  ],
  "remainingGates": [
-  "#2049-A01 retention/recovery collision: unresolved intakeApprovalClaim command receipts were not pinned on the verified main cut; corrective repair is pending review and post-merge re-verification.",
+  "#2049-A01 retention/recovery collision: unresolved intakeApprovalClaim command receipts were not pinned on the verified main cut; corrective repair requires post-merge re-verification before PASS.",
   "HOLD_SUPERVISOR: APPROVED_SERVICE lifetime unavailable; no installed supervisor with target-platform PASS evidence.",
   "HOLD_FORK_API: pinned Hermes wrapper exposes no callable fork API; review forks and idle model review remain UNSUPPORTED_FORK.",
   "HOLD_EXECUTION_PROFILE: production command launch requires an operator-approved M03 profile, trust and installed backend; none is configured on this host.",

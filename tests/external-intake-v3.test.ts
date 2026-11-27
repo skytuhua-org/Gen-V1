@@ -8,7 +8,7 @@ import { Service } from "../packages/core/service.ts";
 import { ExternalIntakeCoordinator, type IntakeRecord } from "../packages/core/external-intake.ts";
 import { buildServer } from "../apps/server/server.ts";
 import { __setCapabilityFlagForTests } from "../packages/core/capability-flags.ts";
-import type { RuntimeAdapter, Thread } from "../packages/contracts/index.ts";
+import type { Message, RuntimeAdapter, Thread } from "../packages/contracts/index.ts";
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
@@ -465,7 +465,6 @@ describe("M10 durable approval identity across crash and rejection races", () =>
     __setCapabilityFlagForTests("integrations.intakeV1", true);
     service.intake.configure(command("intake.configure"), { repositoryId: REPO, enabled: true });
     return {
-      root,
       get store() { return store; },
       get service() { return service; },
       async reopen() {
@@ -506,7 +505,9 @@ describe("M10 durable approval identity across crash and rejection races", () =>
     expect(approved.disposition).toBe("APPROVED");
     expect(approved.decision?.threadId).toBe((createdReceipt.result as Thread).id);
     expect(f.store.all("thread")).toHaveLength(1);
-    expect(f.store.all("message")).toHaveLength(1);
+    const messages = f.store.all<Message>("message");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ threadId: approved.decision?.threadId, role: "user", content: expect.stringContaining(record.proposedTask.sourceUrl) });
     expect(f.store.get("intakeApprovalClaim", claimKey)).toBeNull();
     for (let i = 0; i < 8; i++) f.store.internal("fixture.after-settlement", null, () => i);
     f.store.retentionSweep({ keepEvents: 1, batchSize: 100 });
