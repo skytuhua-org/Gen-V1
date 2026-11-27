@@ -2,6 +2,7 @@ import {deferred} from './fixtures/deferred.ts';
 import {fakeSecretCodec} from './fixtures/secret-codec.ts';
 import {afterEach,expect,it,vi} from 'vitest';
 import {syncBuiltinESMExports} from 'node:module';
+import {execFileSync} from 'node:child_process';
 import {inspect} from 'node:util';
 import {lstat,mkdir,mkdtemp,readFile,readdir,rm,writeFile} from 'node:fs/promises';
 import {dirname,join} from 'node:path';
@@ -10,9 +11,14 @@ import {HarnessError} from '../packages/contracts/index.ts';
 import {GitHubAuth} from '../packages/workspace/github-auth.ts';
 import {GitHubTools} from '../packages/workspace/github.ts';
 import {Store} from '../packages/storage/store.ts';
-import type {ProjectTools} from '../packages/workspace/tools.ts';
+import {runProcess} from '../packages/capabilities/process.ts';
+import {ProjectTools} from '../packages/workspace/tools.ts';
 import type {TerminalHost} from '../packages/workspace/terminal.ts';
 const cleanup:(()=>Promise<void>)[]=[];afterEach(async()=>{vi.restoreAllMocks();syncBuiltinESMExports();for(const close of cleanup.splice(0).reverse())await close();});
+vi.mock('../packages/capabilities/process.ts',async original=>{
+ const actual=await original<typeof import('../packages/capabilities/process.ts')>();
+ return {...actual,runProcess:vi.fn(actual.runProcess)};
+});
 const codec=fakeSecretCodec();
 it.each(['success','unavailable'] as const)('reads legacy GitHub credentials and migrates when storage is %s',async(mode)=>{
  const{root}=await authFixture(),path=join(root,'github','credentials.json');await mkdir(dirname(path));const prior=JSON.stringify({version:1,token:'legacy-profile-token',login:'fixture-user'});await writeFile(path,prior);
@@ -105,6 +111,36 @@ it('redacts supported-token variants from a failed credential-bearing push',asyn
  expect(outward).toContain('[REDACTED]');expect(inspect(failure)).not.toContain(token);expect(inspect(failure)).toContain('[REDACTED]');
  expect(failure).toMatchObject({code:'GIT_ERROR'});
 });
+
+it('redacts a synthetic token echoed through the real managed-Git/nativeGit boundary',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'gen-gh-real-push-')),source=join(root,'source');
+ await mkdir(source);
+ const executable=process.platform==='win32'?'C:/Program Files/Git/cmd/git.exe':'git',store=new Store(join(root,'data')),tools=new ProjectTools(store,{git:executable});
+ cleanup.push(async()=>{await tools.dispose();store.close();await rm(root,{recursive:true,force:true,maxRetries:5});});
+ const git=(...args:string[])=>execFileSync(executable,['-C',source,...args],{windowsHide:true,encoding:'utf8'}).trim();
+ git('init','-q');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');git('remote','add','origin','https://github.com/example/fixture.git');
+ await writeFile(join(source,'one.txt'),'base\n');git('add','.');git('commit','-qm','base');
+ const receipt=await tools.connect({id:'connect',type:'workspace.project.connect',payload:{name:'Fixture',path:source}}),projectId=(receipt.result as {projects:{id:string}[]}).projects[0]!.id;
+ const now=new Date().toISOString(),thread={id:'thread',title:'Thread',projectId,projectName:'Fixture',createdAt:now,updatedAt:now,status:'ready' as const,epoch:0,runId:null,modelId:null,sessionPath:null,kind:'main' as const};
+ store.internal('fixture',null,()=>store.put('thread',thread.id,thread.id,thread));
+ await tools.prepareWorkspace(thread);
+ const status=await tools.gitStatus(projectId,thread.id);
+ const github=new GitHubTools(tools,{} as TerminalHost,process.execPath),token='ghp_fixture/only+synthetic=20261117';
+ vi.spyOn(github.auth,'token').mockResolvedValue(token);
+ const encoded=encodeURIComponent(token),base64=Buffer.from(token,'utf8').toString('base64');
+ let failure:unknown;
+ try{
+  await github.create(projectId,thread.id,{title:'Review',head:status.head,revision:status.revision,push:true},()=>vi.mocked(runProcess).mockImplementationOnce(async(_command,args,_cwd,_signal,_progress,_timeout,environment)=>{
+   expect(environment?.GH_TOKEN).toBe(token);expect(args).toContain('push');expect(args.join(' ')).toContain('credential.https://github.com.helper=');
+   return {status:'failed',exitCode:1,signal:null,cancelled:false,timedOut:false,stdout:'stdout '+token,stderr:'stderr '+encoded+'\n'+base64+'\n'+token.slice(0,10)+String.fromCharCode(27)+'[31m'+token.slice(10),truncated:false,pid:1234};
+  }));
+ }catch(error){failure=error;}
+ if(!(failure instanceof Error))throw Error('Expected the synthetic credential-bearing push to fail');
+ const fields=Object.fromEntries(Object.getOwnPropertyNames(failure).map(key=>[key,(failure as unknown as Record<string,unknown>)[key]])),outward=JSON.stringify(fields);
+ expect(outward).not.toContain(token);expect(outward).not.toContain(encoded);expect(outward).not.toContain(base64);
+ expect(outward).toContain('[REDACTED]');expect(inspect(failure)).not.toContain(token);expect(inspect(failure)).toContain('[REDACTED]');
+ expect(failure).toMatchObject({code:'GIT_ERROR'});
+},60000);
 
 it.each([
  ['legacy read-only',{gitWrite:false,mode:'legacy'}],
