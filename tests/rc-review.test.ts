@@ -55,6 +55,29 @@ it('compares every SQLite row without rescanning the whole current table',()=>{
 });
 it('inventories empty profiles without inventing a database or app identity',async()=>{const {profile,host}=await fixture();const value=await snapshot(profile,host);expect(value.files).toEqual([]);expect(value.entities).toEqual({});expect(value.identifiers.appId).toBeNull();expect(compare(value,value).passed).toBe(true);});
 it('includes IndexedDB/Local Storage, excludes cache and detects entity removal/change and additive kinds',async()=>{const {profile,host}=await fixture();await mkdir(join(profile,'session/IndexedDB'),{recursive:true});await mkdir(join(profile,'session/Local Storage'),{recursive:true});await mkdir(join(profile,'session/Cache'),{recursive:true});await writeFile(join(profile,'session/IndexedDB/draft'),'draft');await writeFile(join(profile,'session/Local Storage/layout'),'layout');await writeFile(join(profile,'session/Cache/ignored'),'cache');const db=new DatabaseSync(join(host,'harness.sqlite'));db.exec("CREATE TABLE entities(kind TEXT,id TEXT,body TEXT);INSERT INTO entities VALUES ('thread','one','{}'),('thread','two','{}')");db.close();const before=await snapshot(profile,host);expect(before.files.some(file=>file.path.endsWith('ignored'))).toBe(false);expect(before.files.some(file=>file.path.includes('IndexedDB'))).toBe(true);const update=new DatabaseSync(join(host,'harness.sqlite'));update.exec("DELETE FROM entities WHERE id='one';UPDATE entities SET body='null' WHERE id='two';INSERT INTO entities VALUES ('projectMemoryItem','new','{}')");update.close();const value=compare(before,await snapshot(profile,host));expect(value.passed).toBe(false);expect(value.missingEntities).toEqual([{kind:'thread',id:'one'}]);expect(value.changedEntities).toEqual([{kind:'thread',id:'two'}]);expect(value.additiveKinds).toEqual(['projectMemoryItem']);});
+
+it('inventories host cache-named data without reclassifying desktop caches',async()=>{
+ const {profile,host}=await fixture();
+ await mkdir(join(profile,'session','Cache'),{recursive:true});
+ await mkdir(join(host,'Cache'));await mkdir(join(host,'GPUCache'));
+ await writeFile(join(profile,'session','Cache','ignored.txt'),'chromium');
+ await writeFile(join(host,'Cache','kept.txt'),'ordinary host data');
+ await writeFile(join(host,'GPUCache','kept.txt'),'other host data');
+ const before=await snapshot(profile,host);
+ expect(before.files.map(file=>[file.root,file.path])).toEqual([['host','Cache/kept.txt'],['host','GPUCache/kept.txt']]);
+ await writeFile(join(host,'Cache','kept.txt'),'changed');await rm(join(host,'GPUCache','kept.txt'));
+ const result=compare(before,await snapshot(profile,host));
+ expect(result.passed).toBe(false);
+ expect(result.changedFiles.map(file=>file.path)).toEqual(['Cache/kept.txt']);
+ expect(result.missingFiles.map(file=>file.path)).toEqual(['GPUCache/kept.txt']);
+});
+it('does not ignore host cache-named entries already present in a profile manifest',()=>{
+ const before=emptySnapshot({});
+ before.files.push({root:'host',path:'Cache/kept.txt',bytes:7,sha256:'old'});
+ const result=compare(before,emptySnapshot({}));
+ expect(result.passed).toBe(false);
+ expect(result.missingFiles).toEqual(before.files);
+});
 it('fails missing files and identifier changes and refuses malformed databases',async()=>{const {profile,host}=await fixture();await writeFile(join(profile,'kept'),'value');const before=await snapshot(profile,host);await rm(join(profile,'kept'));const after=await snapshot(profile,host);after.identifiers.profile='renamed';const result=compare(before,after);expect(result.passed).toBe(false);expect(result.missingFiles).toHaveLength(1);expect(result.identifierChanges).toEqual(['profile']);await writeFile(join(host,'harness.sqlite'),'not sqlite');await expect(snapshot(profile,host)).rejects.toThrow();});
 it('fails truncated non-SQLite user files, including LevelDB data logs, but classifies SQLite/diagnostic churn',async()=>{const {profile,host}=await fixture();await mkdir(join(profile,'IndexedDB'));for(const name of ['draft','000001.log','LOG','LOCK'])await writeFile(join(profile,'IndexedDB',name),'retained data');const before=await snapshot(profile,host);for(const name of ['draft','000001.log','LOG','LOCK'])await writeFile(join(profile,'IndexedDB',name),'');const after=await snapshot(profile,host),result=compare(before,after);expect(result.passed).toBe(false);expect(result.changedFiles.map(file=>file.path)).toEqual(['IndexedDB/000001.log','IndexedDB/draft']);expect(result.ignoredFileChanges).toHaveLength(2);const unchanged=structuredClone(before);unchanged.files=unchanged.files.filter(file=>!['LOG','LOCK'].includes(file.path.split('/').at(-1)!));expect(compare(before,unchanged).passed).toBe(true);before.files.push({root:'host',path:'harness.sqlite-wal',bytes:1,sha256:'before'});expect(compare(before,unchanged).passed).toBe(true);});
 it('checks installed registry custody, rejects ambient activation and registry drift, and fails missing registries',async()=>{const {root}=await fixture(),install=join(root,'install'),core=join(install,'resources/host/packages/core');await mkdir(core,{recursive:true});for(const file of ['capability-flags.ts','host-flags.ts'])await copyFile(join('packages/core',file),join(core,file));const quiet=vi.spyOn(console,'log').mockImplementation(()=>{});try{expect((await flagsOff(install,join(root,'normal'))).passed).toBe(true);process.env.HARNESS_FLAG_RC_TEST='true';try{await expect(flagsOff(install,join(root,'ambient'))).rejects.toThrow('Flags-off');}finally{delete process.env.HARNESS_FLAG_RC_TEST;}const path=join(core,'host-flags.ts');await writeFile(path,(await readFile(path,'utf8')).replace("'coding.debuggerV1'","'coding.unknownV1'"));await expect(flagsOff(install,join(root,'drift'))).rejects.toThrow('Flags-off');await rm(path);await expect(flagsOff(install,join(root,'missing'))).rejects.toThrow();}finally{quiet.mockRestore();}},60000);
