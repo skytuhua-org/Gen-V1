@@ -186,7 +186,7 @@ function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) 
     scrollPositions.current.set(index, entries);
   };
   const select = (label: unknown, cause: 'pointer' | 'keyboard') => {
-    if (label === active) { pending.current = undefined; return; }
+    if (label === active) { pending.current = undefined; if (value !== label) setValue(label); return; }
     captureScroll(labels.indexOf(active));
     effectCause.current = cause;
     pending.current = label;

@@ -84,13 +84,16 @@ test('an unknown saved label falls back without rewriting state on render', asyn
   const spec = tabsSpec(['Details', 'Preview']); validateSurface(spec);
   const host = await serveTaskFixture(page, taskFixture(spec, { operation }, { selectedTab: 'Unknown label' }));
   await page.goto('/');
-  await expect(page.locator('.artifact-content').getByRole('tab', { name: 'Details', exact: true })).toHaveAttribute('aria-selected', 'true');
+  const details = page.locator('.artifact-content').getByRole('tab', { name: 'Details', exact: true });
+  await expect(details).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.artifact-content').getByRole('tab', { selected: true })).toHaveCount(1);
   await expect(page.locator('.artifact-content').getByRole('tabpanel')).toHaveCount(1);
   await expect(page.getByRole('textbox', { name: 'First draft' })).toBeVisible();
   expect(await quiescent(page, 800, () => [host.commands.filter(command => ['state.save', 'action.submit'].includes(command.type)).length, JSON.stringify(host.snapshot.userStates[0].values)])).toHaveLength(1);
   expect(host.commands.filter(command => ['state.save', 'action.submit'].includes(command.type))).toEqual([]);
   expect(host.snapshot.userStates[0].values).toEqual({ selectedTab: 'Unknown label' });
+  await details.click();
+  await expect.poll(() => host.snapshot.userStates[0].values.selectedTab).toBe('Details');
 });
 
 type TabEffectWindow = Window & { tabEffects: { target: string; frames: ComputedKeyframe[] }[]; tabAnimations: Animation[] };
