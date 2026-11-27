@@ -23,9 +23,11 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
   const [post, setPost] = useState({recipientThreadId: '', topic: '', text: ''});
   const [posting, setPosting] = useState(false);
   const [open, setOpen] = useState(false);
-  const [create, setCreate] = useState({role: 'PLAN_READ' as AgentWorkRow['role'], prompt: '', tokens: '1000', minutes: '10'});
+  const [create, setCreate] = useState({role: 'PLAN_READ' as AgentWorkRow['role'], prompt: '', tokens: '', minutes: ''});
   const [createIds, setCreateIds] = useState<{commandId: string; workId: string; childThreadId: string} | null>(null);
+  const [selectedGrants, setSelectedGrants] = useState<ReadonlySet<string>>(() => new Set());
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const busy = useRef(false);
   const evidenceRequest = useRef(0);
   const refresh = useCallback(async () => {
@@ -81,12 +83,18 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
     const prompt = create.prompt.trim();
     const tokens = create.tokens.trim() ? Number(create.tokens) : null;
     const ms = create.minutes.trim() ? Number(create.minutes) * 60_000 : null;
-    if (!prompt || !Number.isInteger(tokens) && tokens !== null || !Number.isInteger(ms) && ms !== null || tokens === null && ms === null) return;
+    const validTokens = tokens === null || Number.isInteger(tokens) && tokens > 0;
+    const validMs = ms === null || Number.isInteger(ms) && ms > 0;
+    if (!prompt || !validTokens || !validMs || tokens === null && ms === null) {
+      setCreateError('Enter a prompt and at least one positive whole token budget or positive minute budget.');
+      return;
+    }
+    setCreateError(null);
     const ids = createIds ?? {commandId: crypto.randomUUID(), workId: crypto.randomUUID(), childThreadId: crypto.randomUUID()};
     setCreateIds(ids);
     setCreating(true);
     void createAgentWork(threadId, {
-      role: create.role, prompt, grantSubset: list.resources.slice(0, 16).map(grant => grant.id),
+      role: create.role, prompt, grantSubset: list.resources.filter(grant => selectedGrants.has(grant.id)).map(grant => grant.id),
       budget: {tokens, ms}, workId: ids.workId, childThreadId: ids.childThreadId,
     }, ids.commandId)
       .then(() => {
@@ -125,23 +133,31 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
     <button type="button" className="agents-disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>Agent work · {list ? list.works.length : '…'}</button>
     {open && <div className="agents-work-body">
       {!list && !error && <p className="agents-work-meta">Loading agent work…</p>}
-      {list && <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ' (unavailable)'}`).join(', ')} · budget reserved {list.budget.reservedTokens}tok</div>}
+      {list && <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ` (unavailable${r.reason ? `: ${r.reason}` : ''})`}`).join(', ')} · budget reserved {list.budget.reservedTokens}tok</div>}
       {progress && <div className="agents-work-progress">
         <progress aria-label="Task progress" aria-valuetext={progressLabel} max={progress.total || 1} value={progress.completed}/><span>{progressLabel}</span>
         <PlanTree plan={plan!}/>
       </div>}
       {list && list.works.length === 0 && <p className="agents-empty">No admitted agent work yet.</p>}
       {list && <details className="agents-work-create">
-        <summary>Admit read work</summary>
+        <summary>Admit agent work</summary>
         <div className="agents-board-post">
           <Select aria-label="New work role" value={create.role} onValueChange={value => setCreate(current => ({...current, role: value as AgentWorkRow['role']}))}
-            options={(['PLAN_READ', 'RESEARCH_READ'] as const).filter(role => list.roles[role]?.available).map(role => ({value: role, label: role}))}/>
-          <input aria-label="Token budget" inputMode="numeric" value={create.tokens} onChange={e => setCreate(current => ({...current, tokens: e.target.value}))}/>
-          <input aria-label="Minute budget" inputMode="numeric" value={create.minutes} onChange={e => setCreate(current => ({...current, minutes: e.target.value}))}/>
+            options={(['PLAN_READ', 'RESEARCH_READ', 'CODE_WORKTREE', 'QA'] as const).filter(role => list.roles[role]?.available).map(role => ({value: role, label: role}))}/>
+          <input aria-label="Token budget" placeholder="Tokens" inputMode="numeric" value={create.tokens} onChange={e => setCreate(current => ({...current, tokens: e.target.value}))}/>
+          <input aria-label="Minute budget" placeholder="Minutes" inputMode="numeric" value={create.minutes} onChange={e => setCreate(current => ({...current, minutes: e.target.value}))}/>
         </div>
-        <textarea aria-label="New work prompt" placeholder="Read-only task for the child…" value={create.prompt} onChange={e => setCreate(current => ({...current, prompt: e.target.value}))}/>
-        <p className="agents-work-meta">Uses all {list.resources.length} current parent resources read-only{list.resources.length > 16 ? '; only the first 16 fit one admission' : ''}. Retrying keeps the same admission identity.</p>
-        <button type="button" disabled={creating || !create.prompt.trim() || !(list.roles[create.role]?.available) || list.resources.length > 16} onClick={submitCreate}>{creating ? 'Admitting…' : 'Admit work'}</button>
+        <textarea aria-label="New work prompt" placeholder="Task for the child…" value={create.prompt} onChange={e => setCreate(current => ({...current, prompt: e.target.value}))}/>
+        {list.resources.length > 0 && <div className="agents-work-grants" aria-label="Resource access">
+          {list.resources.map(grant => <label key={grant.id} className="agents-work-meta"><input type="checkbox" checked={selectedGrants.has(grant.id)} onChange={event => setSelectedGrants(current => {
+            const next = new Set(current);
+            if (event.target.checked) { if (next.size < 16) next.add(grant.id); } else next.delete(grant.id);
+            return next;
+          })}/>{grant.label}{grant.writable ? ' (writable parent grant)' : ''}</label>)}
+        </div>}
+        <p className="agents-work-meta">No resources are shared unless selected here; at most 16 fit one admission. Retrying keeps the same admission identity.</p>
+        {createError && <p className="agents-error" role="alert">{createError}</p>}
+        <button type="button" disabled={creating || !create.prompt.trim() || !(list.roles[create.role]?.available)} onClick={submitCreate}>{creating ? 'Admitting…' : 'Admit work'}</button>
       </details>}
       {list?.works.map(work => <article key={work.workId} className="agents-work-row" data-state={work.state}>
         <header>

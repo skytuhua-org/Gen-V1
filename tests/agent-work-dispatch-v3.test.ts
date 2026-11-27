@@ -6,6 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {Store} from '../packages/storage/store.ts';
 import type {ResourceGrant, RunContext, RuntimeAdapter, Thread} from '../packages/contracts/index.ts';
 import {AgentWorkCoordinator, type AgentWorkChild} from '../packages/core/agent-work.ts';
+import {agentResultJsonSchemaFor} from '../packages/contracts/agent-work.ts';
 import {capabilityEnabled, __setCapabilityFlagForTests} from '../packages/core/capability-flags.ts';
 import {createHermesService} from '../apps/server/hermes-service.ts';
 import * as hermes from '../packages/runtime-hermes/index.ts';
@@ -185,6 +186,43 @@ describe('AgentWorkV1 dispatch requires a real runtime', () => {
     // the tool root would point at definitions that do not exist there.
     expect(advertised).toContain('"$ref":"#/$defs/outcome"');
     expect(advertised).not.toContain('#/properties/output/allOf/0/$defs/outcome');
+  });
+
+  it('exposes admission as one idempotent parent command and rejects mismatched command identity', async () => {
+    const f = fixture(false);
+    f.store.internal('fixture.model', f.ctx.threadId, () => {
+      const parent = f.store.get<Thread>('thread', f.ctx.threadId)!;
+      f.store.put('thread', parent.id, parent.id, {...parent, modelId: 'openai/model', accountId: null});
+    });
+    let starts = 0;
+    const createRuntime = hermes.createHermesRuntime;
+    vi.spyOn(hermes, 'createHermesRuntime').mockImplementationOnce(options => createRuntime(options, {
+      createClient() {
+        return {
+          async request<T>(method: string): Promise<T> {
+            if (method === 'hello') return {protocolVersion: 1, engineClass: 'run_agent.AIAgent', sourceCommit: 'c627ec84664d43e0b18b95d9d86d8963747d56c7'} as T;
+            if (method === 'agent.start') starts += 1;
+            return {accepted: true} as T;
+          },
+          async dispose() {},
+        };
+      },
+    }));
+    const native: RuntimeAdapter = {configure() {}, models: async () => [], start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {}, history: async () => [], dispose: async () => {}};
+    const service = createHermesService(f.store, native);
+    cleanups.push(() => service.dispose());
+    const spec = f.admission(), commandId = 'command-admit-1';
+    const command = {id: commandId, type: 'agentWork.admit', threadId: f.ctx.threadId, payload: {...spec, commandId, expectedOutputSchema: agentResultJsonSchemaFor('PLAN_READ')}};
+    const receipt = await service.command(command);
+    expect(receipt.commandId).toBe(commandId);
+    expect(starts).toBe(1);
+    const stored = f.store.get<{state: string; childOwner: {runId: string | null}; revision: number}>('agentWork', spec.workId)!;
+    expect(stored).toMatchObject({state: 'RUNNING', revision: 2});
+    expect(stored.childOwner.runId).toBeTruthy();
+    expect(await service.command(command)).toEqual(receipt);
+    expect(starts).toBe(1);
+    await expect(service.command({...command, id: 'command-admit-2'})).rejects.toMatchObject({code: 'INVALID_INPUT'});
+    expect(starts).toBe(1);
   });
 
   it('an admission without a runtime factory cannot record RUNNING', async () => {

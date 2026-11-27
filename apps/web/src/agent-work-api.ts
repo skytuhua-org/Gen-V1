@@ -1,4 +1,5 @@
 import {authenticated, command, read} from './api.ts';
+import {agentResultJsonSchemaFor} from '../../../packages/contracts/agent-work.ts';
 
 type WorkState = 'QUEUED' | 'RUNNING' | 'WAITING_HUMAN' | 'COMPLETED_REPORTED' | 'VERIFIED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED';
 export type AgentWorkVerification = 'NOT_REPORTED' | 'REPORTED_UNVERIFIED' | 'REPORTED_INCOMPLETE' | 'REPORTED_BLOCKED' | 'VERIFIED';
@@ -52,7 +53,7 @@ export const createAgentWork = (threadId: string, args: {role: AgentWorkRow['rol
     commandId,
     workId: args.workId ?? crypto.randomUUID(),
     childThreadId: args.childThreadId ?? crypto.randomUUID(),
-    expectedOutputSchema: args.expectedOutputSchema ?? {type: 'object'},
+    expectedOutputSchema: args.expectedOutputSchema ?? agentResultJsonSchemaFor(args.role),
   }, threadId, commandId as ReturnType<typeof crypto.randomUUID>);
 export const sendAgentInput = (threadId: string, args: {workId: string; kind: 'STEER' | 'FOLLOW_UP'; text: string; inputId?: string; dedupeKey?: string}) =>
   command('agentWork.input', {...args, inputId: args.inputId ?? crypto.randomUUID(), dedupeKey: args.dedupeKey ?? crypto.randomUUID()}, threadId);

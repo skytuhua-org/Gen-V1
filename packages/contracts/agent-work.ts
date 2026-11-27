@@ -208,6 +208,10 @@ const QaResultV1Schema = z.strictObject({
 });
 
 
+export function agentResultJsonSchemaFor(role: AgentWorkRole): Record<string, unknown> {
+  return z.toJSONSchema(agentResultSchemaFor(role)) as Record<string, unknown>;
+}
+
 export function agentResultSchemaFor(role: AgentWorkRole): z.ZodType<unknown> {
   switch (role) {
     case 'PLAN_READ': return PlanReadResultV1Schema;
