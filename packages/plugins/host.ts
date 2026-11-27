@@ -1,10 +1,14 @@
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {pluginIdSchema,pluginPathSchema,pluginSurfaceSchema,type PluginCompatibility,type PluginHostInstance,type PluginHostModule,type PluginManifest,type PluginSurface} from './contracts.ts';
-import {checkInstalledCompatibility,readPluginIndex,safeDirectory,validGenVersion,verifyPluginPackage,versionCompatible,type ActivePlugin,type VerifiedPackage} from './installation.ts';
+import {checkInstalledCompatibility,readPluginIndex,safeDirectory,validatePluginPackage,validGenVersion,verifyPluginPackage,versionCompatible,type ActivePlugin,type VerifiedPackage} from './installation.ts';
 export {installPluginPackage,removePlugin} from './installation.ts';
 
 interface LoadedPlugin {record:ActivePlugin;verified:VerifiedPackage;instance?:PluginHostInstance;pending:Set<AbortController>}
+/** The live registry of installed plug-ins returned by `loadInstalledPlugins`.
+ * Every read re-checks the index and package digest, so a tampered or replaced
+ * package fails closed rather than serving stale trust. Incompatible plug-ins
+ * stay listed but never activate; their errors surface via `failures`. */
 export interface PluginRegistry {
  list():PluginManifest[];
  failures():{id:string;message:string}[];
@@ -71,7 +75,7 @@ export async function loadInstalledPlugins(root:string,genVersion:string):Promis
  const current=async(id:string,requireHost=false)=>{
   if(closed||!pluginIdSchema.safeParse(id).success)throw unavailable();const entry=loaded.get(id),active=(await readPluginIndex(root)).find(row=>row.id===id);
   if(!entry||!active||active.version!==entry.record.version||active.digest!==entry.record.digest||requireHost&&!entry.instance){if(entry)for(const request of entry.pending)request.abort();throw unavailable();}
-  await verifyPluginPackage(entry.verified.directory,entry.record.digest);
+  await validatePluginPackage(entry.verified.directory,entry.record.digest);
   const latest=(await readPluginIndex(root)).find(row=>row.id===id);if(closed||!latest||latest.version!==entry.record.version||latest.digest!==entry.record.digest){for(const request of entry.pending)request.abort();throw unavailable();}return entry;
  };
  return {

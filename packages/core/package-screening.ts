@@ -112,6 +112,21 @@ export async function screenPackage(identity: PackageIdentity, advisory: Advisor
   const snapshotAge = Date.parse(checkedAt) - snapshotTime;
   const freshSnapshot = Number.isSafeInteger(snapshotAge) && snapshotAge >= 0 &&
     snapshotAge <= DEFAULT_MAX_CACHE_AGE_MS;
+  // A concurrent refresh may have published a newer denial while this query
+  // was awaiting the provider. Re-read the same cache before deciding or
+  // writing; only a strictly newer fresh clean snapshot may clear a denial.
+  const latest = options.cache?.get(key) ?? options.cache?.get(legacyCacheKey(pkg));
+  if (latest) {
+    const parsed = packageScreeningV1Schema.parse(latest);
+    const sameIdentity = parsed.pkg.name === pkg.name && parsed.pkg.version === pkg.version &&
+      parsed.pkg.digest === pkg.digest && parsed.advisory.database === advisory.database;
+    if (sameIdentity && parsed.status === 'KNOWN_BAD' && parsed.decision === 'DENY' &&
+        (!previousKnownBad || Date.parse(parsed.advisory.asOf) > Date.parse(previousKnownBad.advisory.asOf))) {
+      previousKnownBad = parsed;
+      const age = Date.parse(checkedAt) - Date.parse(parsed.checkedAt);
+      previousCacheAgeMs = Number.isSafeInteger(age) && age >= 0 ? age : 0;
+    }
+  }
   if (previousKnownBad) {
     const previousSnapshotTime = Date.parse(previousKnownBad.advisory.asOf);
     // Only a fresh, strictly newer snapshot can clear a denial. An older
@@ -171,26 +186,4 @@ export function screeningGate(record: PackageScreeningV1): 'BLOCK' | 'NEUTRAL' |
   if (parsed.status === 'UNAVAILABLE')
     return parsed.decision === 'OPERATOR_EXCEPTION' ? 'EXCEPTION_RECORDED' : 'BLOCK';
   return parsed.decision === 'ALLOW' ? 'NEUTRAL' : 'BLOCK';
-}
-
-export interface ScreeningAdvisory {
-  label: 'Advisory';
-  classifier: string;
-  model: string;
-  version: string;
-  uncertainty: 'low' | 'medium' | 'high';
-  rationale: string;
-  cannotAuthorize: true;
-}
-
-/** Deterministic advisory note attached to a screening outcome. It explains,
- * it never decides: KNOWN_BAD stays denied and clean lookups stay neutral. */
-export function screeningAdvisory(record: PackageScreeningV1): ScreeningAdvisory {
-  const parsed = packageScreeningV1Schema.parse(record);
-  const uncertainty = parsed.status === 'UNAVAILABLE' ? 'high' : parsed.status === 'KNOWN_BAD' ? 'low' : 'medium';
-  return {
-    label: 'Advisory', classifier: 'package-screening-advisory',
-    model: 'deterministic-v1', version: '1.0.0', uncertainty,
-    rationale: parsed.reason, cannotAuthorize: true,
-  };
 }

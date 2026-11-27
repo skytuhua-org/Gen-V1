@@ -61,22 +61,23 @@ function dividerControlOutlines(css: string, classes: Set<string>): string[] {
       const native = /(?:^|[(:])(?:input|textarea|select|button)(?=[.#[:)]|$)/.test(leaf)
         || /\[role=["']?(?:button|tab|switch|checkbox|radio)\b/.test(leaf);
       const control = native || [...leaf.matchAll(/\.([\w-]+)/g)].some(match => classes.has(match[1]!));
+      const quietShell = /(?:^|\.)?(?:composer|agents-composer|side-chat-composer|loading-composer|composer-context-chip|search-field)(?:[.#[:]|$)/.test(leaf);
       const frame = /\.[\w-]*(?:search|filter|composer)(?:-(?:field|frame))?(?=[.#[:]|$)/.test(leaf);
       for (const declaration of rule[2]!.split(';')) {
         const colon = declaration.indexOf(':'), property = declaration.slice(0, colon).trim(), value = declaration.slice(colon + 1);
         if (!/var\(\s*--border\s*[,)]/.test(value)) continue;
         const boundary = /^(?:border(?:-.+)?|outline(?:-.+)?|box-shadow)$/.test(property);
         const perimeter = /^(?:border|border-color|outline(?:-.+)?|box-shadow)$/.test(property);
-        if (boundary && native || perimeter && control || frame && (perimeter || /search|filter/.test(leaf) && boundary)) violations.push(selector + ': ' + declaration.trim());
+        if (!quietShell && (boundary && native || perimeter && control || frame && (perimeter || /search|filter/.test(leaf) && boundary))) violations.push(selector + ': ' + declaration.trim());
       }
     }
   }
   return violations;
 }
-const styles = source('apps/web/src/styles.css'), shell = source('apps/web/src/shell.css'), appearance = source('apps/web/src/appearance.css'), sidebar = source('apps/web/src/sidebar-context.css');
+const styles = source('apps/web/src/styles.css'), shell = source('apps/web/src/shell.css'), appearance = source('apps/web/src/appearance.css'), sidebar = source('apps/web/src/sidebar-context.css'), settings = source('apps/web/src/settings.css');
 
 const REQUIRED = [
-  '--canvas', '--sidebar', '--surface', '--subtle', '--hover', '--text', '--muted', '--placeholder', '--control-border',
+  '--canvas', '--sidebar', '--surface', '--subtle', '--hover', '--text', '--muted', '--placeholder', '--control-border', '--composer-focus-border',
   '--selection-bg', '--selection-ink', '--accent', '--accent-solid', '--accent-fg', '--accent-bg', '--accent-text',
   '--danger', '--danger-soft', '--danger-fg', '--danger-bg', '--pending', '--success', '--success-fg', '--success-bg',
   '--warning-fg', '--warning-bg', '--category-fg', '--category-bg',
@@ -165,6 +166,8 @@ const PAIRS: readonly Pair[] = [
   nonText('--muted', '--hover', 'the switch thumb and focus ring on a hovered row'),
   nonText('--pending', '--canvas', 'the pending dot beside a thread status'),
   nonText('--accent', '--selection-bg', 'the selected sidebar filter icon'),
+  nonText('--accent', '--surface', 'the checked settings switch track on its settings card'),
+  nonText('--canvas', '--accent', 'the switch thumb on the checked track'),
 ];
 
 /** A token the audit cannot turn into a colour is reported as unmeasured, not as a crash. */
@@ -192,7 +195,7 @@ describe('appearance theme contrast audit', () => {
   it('enforces control boundaries without treating dividers or shells as controls', () => {
     const classes = new Set(['retry']);
     expect(dividerControlOutlines('', classes)).toEqual([]);
-    expect(dividerControlOutlines('input { border:1px solid var(--border); } .retry { border-color:var(--border); } .search { border-bottom:1px solid var(--border); } .composer { border:1px solid var(--border); }', classes)).toHaveLength(4);
+    expect(dividerControlOutlines('input { border:1px solid var(--border); } .retry { border-color:var(--border); } .search { border-bottom:1px solid var(--border); } .composer { border:1px solid var(--border); }', classes)).toHaveLength(3);
     expect(dividerControlOutlines('.card { border:1px solid var(--border); } .composer { border-top:1px solid var(--border); } .ui-modal { border:1px solid var(--border); } input { border:1px solid var(--control-border); }', classes)).toEqual([]);
   });
 
@@ -213,11 +216,10 @@ describe('appearance theme contrast audit', () => {
     expect(dividerControlOutlines('.action,.switch,.focus-target,.native,.segments { border:1px solid var(--border); }', classes)).toHaveLength(5);
   });
 
-  it('still rejects all thirteen reviewer boundaries when the divider token is reintroduced', () => {
+  it('still rejects reviewer boundaries when the divider token is reintroduced', () => {
     const classes = controlClasses();
     for (const [path, selector] of [
       ['agents-workspace/agents-workspace.css', '.agents-new-output'],
-      ['agents-workspace/agents-workspace.css', '.agents-workspace .agents-composer.composer'],
       ['agents-workspace/agents-workspace.css', '.agents-virtual-reveal'],
       ['agents-workspace/agents-workspace.css', '.agents-work-send input'],
       ['agents-workspace/agents-workspace.css', '.agents-board-post select'],
@@ -227,7 +229,6 @@ describe('appearance theme contrast audit', () => {
       ['model-picker.css', '.model-picker-search'],
       ['map-view.css', '.task-map-themes'],
       ['context-inspector.css', '.context-request-tabs>button[aria-selected="true"]'],
-      ['sidebar-context.css', '.sidebar .sidebar-action-btn.selected'],
       ['relationship-graph.css', '.task-graph-check'],
     ]) {
       const rule = [...source('apps/web/src/' + path).matchAll(/([^{}]+)\{([^{}]*)\}/g)]
@@ -265,6 +266,8 @@ describe('appearance theme contrast audit', () => {
   it('paints the surfaces this audit covers with the tokens it measures', () => {
     expect(sidebar).toMatch(/\.sidebar \.thread-item-meta\[data-thread-state='working'\] \.thread-item-status \{\s*color: var\(--accent-text\)/);
     expect(styles).toMatch(/\.send-button \{[^}]*color:var\(--accent-ink,#fff\)/);
+    expect(settings).toMatch(/:root\[data-theme="dark"\] \.settings-switch\[aria-checked=true\] \{\s*background:var\(--accent\);\s*border-color:var\(--accent\);?\s*\}/);
+    expect(settings).toMatch(/:root\[data-theme="dark"\] \.settings-switch\[aria-checked=true\]>span \{\s*background:var\(--canvas\);?\s*\}/);
   });
 
   it('keeps search, textarea, button and radio boundaries on the control token', () => {
@@ -279,14 +282,11 @@ describe('appearance theme contrast audit', () => {
       'apps/web/src/github-sign-in.css': ['.github-sign-in button'],
       'apps/web/src/project-memory.css': ['.project-memory-body button'],
       'apps/web/src/settings.css': ['.settings-result', '.settings-switch'],
-      'apps/web/src/sidebar-context.css': ['.sidebar .search-field'],
       'apps/web/src/interaction-tools.css': ['.review-item-nav[aria-current=step]', '.review-decision-choice'],
       'apps/web/src/connections.css': ['.connection-providers button'],
       'apps/web/src/software-development.css': ['.software-list button', '.software-blocking-checks button'],
       'apps/web/src/model-picker.css': ['.model-picker-new-task', '.model-picker-search'],
       'apps/web/src/task-table.css': ['.task-table .task-table-follow', '.task-table-filter-field'],
-      'apps/web/src/composer-toolbar.css': ['.composer-context-chip'],
-      'apps/web/src/side-chat.css': ['.side-chat-composer'],
       'apps/web/src/workspace-canvas.css': ['.canvas-side-composer textarea'],
       'apps/web/src/work-objects.css': ['.trace-filter', '.architecture-node', '.workflow-card'],
       'apps/web/src/frontend-fidelity.css': ['.document-download>a'],
@@ -294,10 +294,9 @@ describe('appearance theme contrast audit', () => {
       'apps/web/src/appearance-settings.css': ['.appearance-settings .color-swatch'],
       'apps/web/src/terminal-excerpts.css': ['.terminal-excerpt-chip'],
       'apps/web/src/map-view.css': ['.task-map-point', '.task-map-themes'],
-      'apps/web/src/agents-workspace/agents-workspace.css': ['.agents-new-output', '.agents-workspace .agents-composer.composer', '.agents-virtual-reveal', '.agents-work-send input', '.agents-board-post select', '.agents-board-post input'],
+      'apps/web/src/agents-workspace/agents-workspace.css': ['.agents-new-output', '.agents-virtual-reveal', '.agents-work-send input', '.agents-board-post select', '.agents-board-post input'],
       'apps/web/src/files/files.css': ['.files-filter input', '.files-error button', '.project-search-more'],
       'apps/web/src/relationship-graph.css': ['.task-graph-check'],
-      'apps/web/src/loading-state.css': ['.loading-composer'],
       'apps/web/src/styles.css': ['.jump-latest'],
     };
     for (const [path, selectors] of Object.entries(boundaries)) {
@@ -312,26 +311,60 @@ describe('appearance theme contrast audit', () => {
     expect(source('apps/web/src/Widget.tsx')).toContain("'--control-border': style.getPropertyValue('--control-border').trim()");
   });
 
+  it('uses quieter borders for composer and search shells', () => {
+    const shells = {
+      'apps/web/src/styles.css': ['.composer'],
+      'apps/web/src/sidebar-context.css': ['.sidebar .search-field'],
+      'apps/web/src/side-chat.css': ['.side-chat-composer'],
+      'apps/web/src/agents-workspace/agents-workspace.css': ['.agents-workspace .agents-composer.composer'],
+      'apps/web/src/loading-state.css': ['.loading-composer'],
+      'apps/web/src/composer-toolbar.css': ['.composer-context-chip'],
+      'packages/ui-shell/summary-dock.css': ['.docked-summary'],
+    };
+    for (const [path, selectors] of Object.entries(shells)) {
+      const rules = [...source(path).matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+      for (const selector of selectors) {
+        const bodies = rules.filter(rule => rule[1]!.split(',').some(name => name.trim() === selector)).map(rule => rule[2]!).join('');
+        expect(bodies, path + ': ' + selector).toContain('var(--border)');
+        expect(bodies, path + ': ' + selector).not.toContain('var(--control-border)');
+      }
+    }
+    expect(styles).toMatch(/:root \{[^}]*--composer-focus-border:#b8b8b8/);
+    expect(styles).toMatch(/:root\[data-theme="dark"\] \{[^}]*--composer-focus-border:#3d3d3d/);
+    expect(shell).toContain('--composer-focus-border:var(--control-border)');
+  });
+
   it('distinguishes selected controls and current review items from resting controls', () => {
     for (const [path, selectors] of Object.entries({
       'apps/web/src/everyday-data.css': ['.everyday-option-card[data-selected=true] .everyday-option-selector'],
       'apps/web/src/work-objects.css': ['.workflow-card[data-selected=true]', '.architecture-node[aria-pressed=true]'],
       'apps/web/src/interaction-tools.css': ['.review-decision-choice[data-selected=true]'],
       'apps/web/src/task-interface.css': ['.task-choice.is-selected'],
-      'apps/web/src/settings.css': ['.settings-navigation nav button.selected'],
       'apps/web/src/exploration-tools.css': ['.schedule-interval[aria-selected=true]'],
       'apps/web/src/software-development.css': ['.software-response-tabs button[aria-selected=true]'],
       'apps/web/src/planning-question.css': ['.planning-option.is-selected'],
       'apps/web/src/connections.css': ['.connection-providers button[aria-pressed="true"]', '.connection-account-row[data-chosen="true"]'],
       'apps/web/src/context-inspector.css': ['.context-request-tabs>button[aria-selected="true"]'],
-      'apps/web/src/sidebar-context.css': ['.app-shell .sidebar .sidebar-action-btn.selected', '.sidebar .sidebar-action-btn.selected', '.app-shell .sidebar .sidebar-thread-row.active', '.sidebar .sidebar-thread-row.active'],
-      'apps/web/src/shell.css': ['.sidebar-thread-row.active'],
     })) {
       const rules = [...source(path).matchAll(/([^{}]+)\{([^{}]*)\}/g)];
       for (const selector of selectors) {
         const rule = rules.find(rule => rule[1]!.split(',').some(name => name.trim() === selector));
         expect(rule?.[2], selector).toMatch(/(?:border-color|box-shadow):[^;]*var\(--text\)(?:;|$)/);
         expect(rule?.[2], selector).not.toContain('border-color:var(--control-border)');
+        expect(rule?.[2], selector).not.toContain('var(--selection-border');
+      }
+    }
+    const selections = {
+      'apps/web/src/settings.css': ['.settings-navigation nav button.selected'],
+      'apps/web/src/sidebar-context.css': ['.app-shell .sidebar .sidebar-action-btn.selected', '.sidebar .sidebar-action-btn.selected', '.app-shell .sidebar .sidebar-thread-row.active', '.sidebar .sidebar-thread-row.active'],
+      'apps/web/src/shell.css': ['.sidebar-thread-row.active'],
+    };
+    for (const [path, selectors] of Object.entries(selections)) {
+      const rules = [...source(path).matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+      for (const selector of selectors) {
+        const rule = rules.find(rule => rule[1]!.split(',').some(name => name.trim() === selector));
+        expect(rule?.[2], selector).toMatch(/background:\s*var\(--hover\)/);
+        expect(rule?.[2], selector).not.toMatch(/(?:border-color|box-shadow):[^;]*var\(--text\)/);
         expect(rule?.[2], selector).not.toContain('var(--selection-border');
       }
     }

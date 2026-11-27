@@ -4,7 +4,7 @@ import {shellInit,shellRoute,shellSnapshot} from '../../scripts/capture-ui/shell
 
 
 import {scopedContext,scopedEnvelope,scopedMessage} from '../scoped-conversation-fixture';
-import {serveTaskSplitLayout} from './task-interface-fixture';
+import {serveTaskFixture,serveTaskSplitLayout} from './task-interface-fixture';
 async function setup(page:Page,count=3){
  const snapshot=shellSnapshot();snapshot.messages=Array.from({length:count},(_,i)=>({...snapshot.messages[0],id:'m'+i,content:i===0?'Review the **work**space, sidebar and composer.':i===1?'I reviewed the workspace and found two areas to check.':'The workspace panel starts closed.',role:i===0?'user':'assistant'}));
  await page.addInitScript(shellInit);await page.route('**/api/**',r=>shellRoute(r,snapshot,false));await serveTaskSplitLayout(page,snapshot);await page.goto('/fixture');await page.locator('.composer textarea').waitFor();return snapshot;
@@ -83,4 +83,31 @@ test('find trigger re-enables when the transcript has messages',async({page})=>{
  await expect(trigger).toHaveAttribute('title','Find in conversation (Ctrl+F)');
  await trigger.click();
  await expect(phrase(page)).toBeFocused();
+});
+
+test('find follows live transcript availability and restores focus after clearance',async({page})=>{
+ await page.setViewportSize({width:420,height:760});
+ const snapshot=shellSnapshot(), initial=snapshot.messages;
+ snapshot.messages=[];
+ const host=await serveTaskFixture(page,snapshot);
+ await page.goto('/fixture');
+ const trigger=page.getByRole('button',{name:'Find in conversation',exact:true});
+ const draft=page.getByRole('textbox',{name:'Message',exact:true});
+ await expect(trigger).toBeDisabled();
+ snapshot.messages=initial;await host.publish();
+ await expect(trigger).toBeEnabled();
+ await draft.focus();await page.keyboard.press('Control+f');await expect(phrase(page)).toBeFocused();
+ snapshot.messages=[];await host.publish();
+ await expect(trigger).toBeDisabled();await expect(phrase(page)).toHaveCount(0);
+ await expect(draft).toBeFocused();
+ snapshot.messages=initial;await host.publish();
+ await trigger.click();await expect(phrase(page)).toBeFocused();
+ snapshot.messages=[];await host.publish();
+ await expect(trigger).toBeDisabled();await expect(page.locator('.conversation-scroll:visible')).toBeFocused();
+});
+
+test('find input keeps a readable width at desktop and narrow widths',async({page})=>{
+ await setup(page);await open(page);
+ expect(await phrase(page).evaluate(el=>el.getBoundingClientRect().width)).toBeGreaterThanOrEqual(160);
+ for(const width of [400,360]){await page.setViewportSize({width,height:900});await expect(phrase(page)).toBeVisible();expect(await phrase(page).evaluate(el=>el.getBoundingClientRect().width)).toBeGreaterThanOrEqual(96);}
 });

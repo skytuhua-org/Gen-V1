@@ -1,12 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { constants, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { HarnessError } from "../contracts/index.ts";
 import {
   CODE_INTELLIGENCE_LIMITS,
   diagnosticObservationV1Schema,
+  renamePlanIdSchema,
   renamePlanV1Schema,
   renameRecoveryResultSchema,
   type CodeDiagnostic,
@@ -19,11 +20,43 @@ import {
   type RenameRecoveryResult,
   type TextEdit,
 } from "../contracts/code-intelligence.ts";
-import { readBoundFile, withPathGuard } from "./file-access.ts";
+import { readBoundFile, replaceOwnedFile } from "./file-access.ts";
 import { inside, canonical } from "./security.ts";
 import { hostFlagEnabled, type RegisteredHostFlag } from "./host-flags.ts";
 
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+
+/** Write-temp-fsync-rename so a torn write never occupies the final path.
+ * Recovery journals must survive a crash at any durable boundary. */
+async function writeDurable(path: string, data: string | Buffer): Promise<void> {
+  const temporary = join(dirname(path), `.${randomUUID()}.tmp`);
+  const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+  try {
+    await handle.writeFile(data);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(temporary, path).finally(() => unlink(temporary).catch(() => {}));
+  if (process.platform !== "win32") {
+    const directory = await open(dirname(path), constants.O_RDONLY).catch(() => null);
+    if (directory) { await directory.sync().catch(() => {}); await directory.close(); }
+  }
+}
+
+/** Replace one leaf through the platform's owned conditional primitive. The
+ * destination digest is verified by the guard at replacement time rather than
+ * only by a host-side read/check/write sequence. */
+async function replaceVerifiedFile(path: string, data: Buffer, expectedDigest: string, signal: AbortSignal): Promise<void> {
+  const temporary = join(dirname(path), `.gen-rename-${randomUUID()}.tmp`);
+  await writeDurable(temporary, data);
+  try {
+    const identity = await lstat(temporary, { bigint: true });
+    await replaceOwnedFile(temporary, path, { dev: identity.dev, ino: identity.ino }, sha(data), signal, expectedDigest);
+  } finally {
+    await unlink(temporary).catch(() => {});
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Explicit host-adapter protocol. Nothing here assumes a method on the Hermes
@@ -706,14 +739,14 @@ export class CodeIntelligence {
       // Durable journal + backups BEFORE the first change.
       const journalDir = join(input.journalRoot, "code-intelligence", "rename", plan.planId);
       await mkdir(journalDir, { recursive: true });
-      const journal: { planId: string; entries: { path: string; preimage: string; postimage: string | null; backup: string; disposition: RenameRecoveryEntry["disposition"] }[]; resolved: boolean } = {
-        planId: plan.planId, entries: [], resolved: false,
+      const journal: { planId: string; workspaceIdentity: string; entries: { path: string; preimage: string; postimage: string | null; backup: string; disposition: RenameRecoveryEntry["disposition"] }[]; resolved: boolean } = {
+        planId: plan.planId, workspaceIdentity: plan.workspaceIdentity, entries: [], resolved: false,
       };
-      const flush = () => writeFile(join(journalDir, "journal.json"), JSON.stringify(journal));
+      const flush = () => writeDurable(join(journalDir, "journal.json"), JSON.stringify(journal));
       for (const target of plan.textEdits) {
         const preimage = preimages.get(target.path)!;
         const backup = join(journalDir, "backup-" + sha(target.path).slice(0, 16));
-        await writeFile(backup, preimage);
+        await writeDurable(backup, preimage);
         journal.entries.push({ path: target.path, preimage: sha(preimage), postimage: null, backup, disposition: "Unchanged" });
       }
       await flush();
@@ -733,10 +766,24 @@ export class CodeIntelligence {
           // still leaves a complete recovery record for this path.
           record.postimage = sha(Buffer.from(postimage, "utf8"));
           await flush();
-          const target_ = join(target.path);
-          await withPathGuard([{ path: dirname(target_), leaf: false }], input.signal, async () => {
-            await writeFile(target_, postimage);
-          });
+          try {
+            await replaceVerifiedFile(target.path, Buffer.from(postimage, "utf8"), record.preimage, input.signal);
+          } catch (error) {
+            if (error instanceof HarnessError && error.code === "CANCELLED") throw error;
+            record.disposition = "Conflict";
+            entries.push({ path: target.path, disposition: "Conflict", detail: "The file changed while its rename edits were being written." });
+            await flush();
+            continue;
+          }
+          // A writer that raced the digest check is caught before the apply
+          // is recorded: the leaf must still carry the postimage digest.
+          const written = await readBoundFile(target.path, 32 * 1024 * 1024).catch(() => null);
+          if (!written || sha(written) !== record.postimage) {
+            record.disposition = "Conflict";
+            entries.push({ path: target.path, disposition: "Conflict", detail: "The file changed while its rename edits were being written." });
+            await flush();
+            continue;
+          }
           record.disposition = "Applied";
           entries.push({ path: target.path, disposition: "Applied" });
           await flush();
@@ -756,10 +803,13 @@ export class CodeIntelligence {
    * its current bytes match the bundle's written postimage; an external edit
    * stops recovery with PARTIAL_RECOVERY_REQUIRED — never a silent overwrite. */
   async recoverRename(input: { journalRoot: string; planId: string; grantedRoots: readonly string[]; signal: AbortSignal }): Promise<RenameRecoveryResult> {
-    const journalDir = join(input.journalRoot, "code-intelligence", "rename", input.planId);
+    const planId = renamePlanIdSchema.safeParse(input.planId);
+    if (!planId.success)
+      throw new HarnessError("INVALID_INPUT", "A rename plan ID must be a UUID v4.");
+    const journalDir = join(input.journalRoot, "code-intelligence", "rename", planId.data);
     const journal = JSON.parse(await readFile(join(journalDir, "journal.json"), "utf8")
       .catch(() => { throw new HarnessError("NOT_FOUND", "No rename journal exists for this plan."); })) as {
-      planId: string; resolved: boolean;
+      planId: string; resolved: boolean; workspaceIdentity?: string;
       entries: { path: string; preimage: string; postimage: string | null; backup: string; disposition: RenameRecoveryEntry["disposition"] }[];
     };
     // Recovery never writes outside the current project's granted roots.
@@ -773,38 +823,81 @@ export class CodeIntelligence {
         state: journal.entries.some(record => record.disposition === "Conflict") ? "PARTIAL_RECOVERY_REQUIRED" : "APPLIED",
         entries: journal.entries.map(record => ({ path: record.path, disposition: record.disposition })),
       });
-    const entries: RenameRecoveryEntry[] = [];
-    let conflict = false;
-    for (const record of journal.entries) {
-      const current = await readBoundFile(record.path, 32 * 1024 * 1024).catch(() => null);
-      const currentDigest = current ? sha(current) : null;
-      if (record.postimage !== null && currentDigest === record.postimage) {
-        // Restore only when current bytes still match the written postimage.
-        const backup = await readBoundFile(record.backup, 32 * 1024 * 1024).catch(() => null);
-        if (!backup || sha(backup) !== record.preimage) {
-          conflict = true;
-          entries.push({ path: record.path, disposition: "Conflict", detail: "The backup is unavailable." });
-          continue;
-        }
-        await withPathGuard([{ path: dirname(record.path), leaf: false }], input.signal, async () => {
-          await writeFile(record.path, backup);
+    // Recovery shares the workspace mutation lock with apply: a restore and
+    // a live rename must never interleave on the same paths. Journals written
+    // before workspaceIdentity was recorded lock on the plan id instead.
+    return this.underLock(journal.workspaceIdentity ?? planId.data, async () => {
+      // The journal may have been resolved while this call waited on the
+      // lock; reconcile the durable record, not a stale snapshot.
+      const live = JSON.parse(await readFile(join(journalDir, "journal.json"), "utf8")) as typeof journal;
+      // The durable record read under the lock is what recovery acts on; its
+      // targets must re-pass the granted-roots check the unlocked read ran.
+      for (const record of live.entries)
+        if (!input.grantedRoots.some(root => inside(root, record.path)))
+          throw new HarnessError("CAPABILITY_DENIED", "The recovery journal targets a file outside the granted roots.");
+      if (live.resolved)
+        return renameRecoveryResultSchema.parse({
+          planId: live.planId,
+          state: live.entries.some(record => record.disposition === "Conflict") ? "PARTIAL_RECOVERY_REQUIRED" : "APPLIED",
+          entries: live.entries.map(record => ({ path: record.path, disposition: record.disposition })),
         });
-        entries.push({ path: record.path, disposition: "Restored" });
-      } else if (currentDigest === record.preimage) {
-        entries.push({ path: record.path, disposition: "Unchanged" });
-      } else if (currentDigest === null) {
-        conflict = true;
-        entries.push({ path: record.path, disposition: "Conflict", detail: "The file is missing." });
-      } else {
-        // An external editor changed it — stop, do not overwrite that edit.
-        conflict = true;
-        entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed outside the rename; manual recovery is required." });
+      const entries: RenameRecoveryEntry[] = [];
+      let conflict = false;
+      for (const [index, record] of live.entries.entries()) {
+        const current = await readBoundFile(record.path, 32 * 1024 * 1024).catch(() => null);
+        const currentDigest = current ? sha(current) : null;
+        if (record.postimage !== null && currentDigest === record.postimage) {
+          // Restore only when current bytes still match the written postimage.
+          const backup = await readBoundFile(record.backup, 32 * 1024 * 1024).catch(() => null);
+          if (!backup || sha(backup) !== record.preimage) {
+            conflict = true;
+            live.entries[index]!.disposition = "Conflict";
+            entries.push({ path: record.path, disposition: "Conflict", detail: "The backup is unavailable." });
+            continue;
+          }
+          try {
+            await replaceVerifiedFile(record.path, backup, record.postimage!, input.signal);
+          } catch (error) {
+            if (error instanceof HarnessError && error.code === "CANCELLED") throw error;
+            conflict = true;
+            live.entries[index]!.disposition = "Conflict";
+            entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed while its recovery was being written." });
+            continue;
+          }
+          // A writer that raced the postimage check is caught before the
+          // restore is recorded: the leaf must still carry the preimage.
+          const restored = await readBoundFile(record.path, 32 * 1024 * 1024).catch(() => null);
+          if (!restored || sha(restored) !== record.preimage) {
+            conflict = true;
+            live.entries[index]!.disposition = "Conflict";
+            entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed while its recovery was being written." });
+            continue;
+          }
+          live.entries[index]!.disposition = "Restored";
+          entries.push({ path: record.path, disposition: "Restored" });
+        } else if (currentDigest === record.preimage) {
+          live.entries[index]!.disposition = "Unchanged";
+          entries.push({ path: record.path, disposition: "Unchanged" });
+        } else if (currentDigest === null) {
+          conflict = true;
+          live.entries[index]!.disposition = "Conflict";
+          entries.push({ path: record.path, disposition: "Conflict", detail: "The file is missing." });
+        } else {
+          // An external editor changed it — stop, do not overwrite that edit.
+          conflict = true;
+          live.entries[index]!.disposition = "Conflict";
+          entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed outside the rename; manual recovery is required." });
+        }
       }
-    }
-    return renameRecoveryResultSchema.parse({
-      planId: journal.planId,
-      state: conflict ? "PARTIAL_RECOVERY_REQUIRED" : entries.some(e => e.disposition === "Restored") ? "RECOVERED" : "APPLIED",
-      entries,
+      // Recovery dispositions are durable: a second recovery pass reconciles
+      // the recorded outcome instead of re-processing the same entries.
+      live.resolved = true;
+      await writeDurable(join(journalDir, "journal.json"), JSON.stringify(live));
+      return renameRecoveryResultSchema.parse({
+        planId: live.planId,
+        state: conflict ? "PARTIAL_RECOVERY_REQUIRED" : entries.some(e => e.disposition === "Restored") ? "RECOVERED" : "APPLIED",
+        entries,
+      });
     });
   }
 

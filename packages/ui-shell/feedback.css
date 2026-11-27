@@ -113,15 +113,32 @@
 .ui-error .ui-error-retry:hover:not(:disabled) { background: var(--hover, #262626); }
 .ui-busy-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .ui-busy-button[data-busy] { cursor: progress; }
+.ui-action-indicator { position: relative; display: inline-block; flex: 0 0 16px; width: 16px; height: 16px; color: var(--muted, #a0a0a0); }
+.ui-action-indicator-layer { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity var(--ui-motion-status) var(--ui-ease-move); }
+.ui-action-indicator-layer[data-current="true"] { opacity: 1; }
+.ui-action-indicator-acknowledged { color: var(--success, #5fb878); }
+.ui-action-indicator .ui-spinner { animation: none; }
+.ui-action-indicator-layer[data-current="true"] .ui-spinner { animation: ui-spin 800ms linear infinite; }
 .ui-spinner { flex-shrink: 0; animation: ui-spin 800ms linear infinite; }
 @keyframes ui-spin { to { transform: rotate(360deg); } }
 @keyframes ui-feedback-fade { from { opacity: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
   .ui-toast, .ui-tooltip { animation-name: ui-feedback-fade; animation-duration: var(--ui-motion-press); }
-  .ui-toast[data-state="closed"], .ui-tooltip[data-state="closed"] { animation-direction: reverse; }
+  .ui-toast[data-state="closed"], .ui-tooltip[data-state="closed"] { animation-name: ui-feedback-fade; animation-duration: var(--ui-motion-press); animation-direction: reverse; }
   .ui-spinner { animation-duration: 1600ms; }
+  .ui-action-indicator-layer { transition-duration: var(--ui-motion-press); }
+  .ui-action-indicator .ui-spinner, .ui-action-indicator-layer[data-current="true"] .ui-spinner { animation: none; }
 }
+:root[data-motion="reduced"] .ui-action-indicator-layer { transition-duration: var(--ui-motion-press); }
+:root[data-motion="reduced"] .ui-action-indicator .ui-spinner,
+:root[data-motion="reduced"] .ui-action-indicator-layer[data-current="true"] .ui-spinner,
+:root[data-motion="off"] .ui-action-indicator .ui-spinner,
+:root[data-motion="off"] .ui-action-indicator-layer[data-current="true"] .ui-spinner,
+.app-shell[data-panel-animations="false"] .ui-action-indicator .ui-spinner,
+.app-shell[data-panel-animations="false"] .ui-action-indicator-layer[data-current="true"] .ui-spinner { animation: none; }
+:root[data-motion="off"] .ui-action-indicator-layer,
+.app-shell[data-panel-animations="false"] .ui-action-indicator-layer { transition: none; }
 @media (forced-colors: active) {
   .ui-toast, .ui-tooltip { border-color: CanvasText; }
 }

@@ -1,6 +1,7 @@
 import {useCallback,useId,useLayoutEffect,useRef,useState,type RefObject} from 'react';
 import {ArrowDown,ArrowUp,Search,X} from 'lucide-react';
-import {conversationRanges,highlightConversation,nextFindIndex,retainFindIndex,type ConversationMatch} from './conversation-find';
+import {usableFocusable} from '../../../packages/ui-shell/focus-retention';
+import {coalescedTranscriptScan,conversationRanges,highlightConversation,nextFindIndex,retainFindIndex,type ConversationMatch} from './conversation-find';
 import {chordFor} from './keyboard-bindings';
 import {matchesShortcut} from './shell-layout';
 import './conversation-find.css';
@@ -42,7 +43,16 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,empty=fa
   };
   root.ownerDocument.addEventListener('keydown',key);return()=>root.ownerDocument.removeEventListener('keydown',key);
  },[active,open,empty,scope]);
- useLayoutEffect(()=>{if(open)input.current?.focus();else if(restoreFocus.current){restoreFocus.current=false;(opener.current?.isConnected?opener.current:trigger.current)?.focus({preventScroll:true});}},[open]);
+ useLayoutEffect(()=>{
+  if(open){input.current?.focus();return;}
+  if(!restoreFocus.current)return;
+  restoreFocus.current=false;
+  const preferred=opener.current?.isConnected?opener.current:trigger.current;
+  const viewport=transcript.current,root=scope.current;
+  const target=preferred&&!preferred.matches(':disabled')&&!preferred.closest('[hidden],[inert]')?preferred
+   :viewport&&viewport.tabIndex>=0?viewport:root?usableFocusable(root):undefined;
+  target?.focus({preventScroll:true});
+ },[open,scope,transcript]);
  useLayoutEffect(()=>{if(empty&&open)close();},[empty,open,close]);
  useLayoutEffect(()=>{
   const root=transcript.current;if(!root)return;
@@ -54,8 +64,8 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,empty=fa
    setCount(found.length);setIndex(next);highlightConversation(root.ownerDocument,id,found,next);
    if(changed&&next>=0)jump(next);
   };
-  scan();const observer=new MutationObserver(scan);observer.observe(root,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['hidden','aria-hidden']});
-  return()=>{observer.disconnect();highlightConversation(root.ownerDocument,id,[],-1);};
+  scan();const stopScan=coalescedTranscriptScan(root,()=>Boolean(query),scan);
+  return()=>{stopScan();highlightConversation(root.ownerDocument,id,[],-1);};
  },[open,active,query,ownerKey,transcript,id,jump]);
  if(!active)return null;
  return <div className="conversation-find-owner">

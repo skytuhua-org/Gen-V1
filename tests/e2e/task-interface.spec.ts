@@ -2,6 +2,80 @@ import { test, expect } from '@playwright/test';
 import { branchGraphData, branchGraphSpec, growingQaSpec, linkedMapData, linkedMapSpec, migrationTableSpec, serveTaskFixture, taskFixture } from './task-interface-fixture';
 import { validateSurface } from '../../packages/ui-catalog';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { openApp } from './app-ready';
+
+test('settings writes broadcast a named workspace event and refresh the app', async ({ page }) => {
+  const snapshot = taskFixture(branchGraphSpec('vertical'), { graph: branchGraphData });
+  snapshot.settings.theme = 'light';
+  await serveTaskFixture(page, snapshot);
+  await openApp(page);
+  await expect(page.locator('.task-graph')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+  const frames = await page.evaluateHandle(after => {
+    const received: { name: string; lastEventId: string; data: unknown }[] = [];
+    const stream = new EventSource(`/api/events?after=${after}`);
+    const record = (event: Event) => {
+      const frame = event as MessageEvent<string>;
+      received.push({ name: frame.type, lastEventId: frame.lastEventId, data: JSON.parse(frame.data) });
+    };
+    stream.addEventListener('workspace', record);
+    stream.onmessage = record;
+    return received;
+  }, snapshot.seq);
+  const receipt = await page.evaluate(async () => {
+    const response = await fetch('/api/commands', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'fixture-settings', type: 'settings.update', payload: { theme: 'dark' } }),
+    });
+    return response.json();
+  });
+  expect(receipt).toEqual({ commandId: 'fixture-settings', seq: snapshot.seq, result: {} });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(await frames.jsonValue()).toEqual([{
+    name: 'workspace', lastEventId: String(snapshot.seq),
+    data: {
+      seq: snapshot.seq, id: expect.any(String), type: 'settings.update', threadId: null,
+      payload: { result: snapshot.settings }, occurredAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+    },
+  }]);
+});
+
+test('a workspace stream error refreshes the snapshot and resumes named updates', async ({ page }) => {
+  const snapshot = taskFixture(branchGraphSpec('vertical'), { graph: branchGraphData });
+  const fixture = await serveTaskFixture(page, snapshot);
+  let bootstraps = 0;
+  let releaseBootstrap!: () => void;
+  const renew = new Promise<void>(resolve => { releaseBootstrap = resolve; });
+  await page.route('**/api/bootstrap', async route => {
+    if (++bootstraps > 1) await renew;
+    await route.fallback();
+  });
+
+  await openApp(page);
+  const graph = page.locator('.task-graph');
+  await expect(graph).toHaveAttribute('data-orientation', 'vertical');
+  const reconnecting = page.getByTitle('Reconnecting', { exact: true });
+  await expect(reconnecting).toHaveCount(0);
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('task-fixture-disconnect')));
+    await expect(reconnecting).toBeVisible();
+    snapshot.artifacts[0].spec = branchGraphSpec('horizontal');
+    snapshot.artifacts[0].revision++;
+    await fixture.publish();
+    await expect(graph).toHaveAttribute('data-orientation', 'vertical');
+  } finally {
+    releaseBootstrap();
+  }
+  await expect(graph).toHaveAttribute('data-orientation', 'horizontal');
+  await expect(reconnecting).toHaveCount(0);
+  expect(bootstraps).toBe(2);
+
+  snapshot.artifacts[0].spec = branchGraphSpec('vertical');
+  snapshot.artifacts[0].revision++;
+  await fixture.publish();
+  await expect(graph).toHaveAttribute('data-orientation', 'vertical');
+});
 
 test('vertical history and horizontal lanes are distinct accessible source views', async ({ page }) => {
   const fixture = await serveTaskFixture(page, taskFixture(branchGraphSpec('vertical'), { graph: branchGraphData }));
@@ -187,4 +261,23 @@ test('capture one batched desktop, narrow and theme inspection of reusable task 
     }
   }
   await writeFile(`${path}/manifest.json`, JSON.stringify({ provenance: 'Authored synthetic local renderer fixtures. No live model, GitHub, database, geographic provider, or external feedback delivery.', reducedMotion: true, references: ['merge-16.png', 'graph-14.png', 'migration-16.png', 'faq-24.png'], metrics }, null, 2));
+});
+
+test('map source disclosure hides blank source', async ({ page }) => {
+  await serveTaskFixture(page, taskFixture(linkedMapSpec, { places: { ...linkedMapData, source: '   ' } }));
+  await page.goto('/');
+  await expect(page.locator('.task-map')).toBeVisible();
+  await expect(page.locator('.task-map-source')).toHaveCount(0);
+});
+
+test('map source disclosure renders URL source as a link', async ({ page }) => {
+  await serveTaskFixture(page, taskFixture(linkedMapSpec, { places: { ...linkedMapData, source: '  https://example.com/places ' } }));
+  await page.goto('/');
+  const details = page.locator('.task-map-source');
+  await expect(details).toHaveCount(1);
+  await details.locator('summary').click();
+  const link = details.locator('a.task-map-source-link');
+  await expect(link).toHaveText('https://example.com/places');
+  await expect(link).toHaveAttribute('href', 'https://example.com/places');
+  await expect(link).toHaveAttribute('target', '_blank');
 });

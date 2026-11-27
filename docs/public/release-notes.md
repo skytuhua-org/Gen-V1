@@ -43,7 +43,9 @@ Expect Windows SmartScreen to show a
 - **Workspace and UI:** durable split layouts, retained editors, in-app floating
   conversations, parked-view recovery, undo/redo, named layouts, project colors
   and a unified overview/plan timeline. Legacy canvas records survive retirement
-  of the built-in Code Review, Research, Custom and Visuals presets.
+  of the built-in Code Review, Research, Custom and Visuals presets. Ask/Attach/Open
+  source selections are creatable from the keyboard without a pointer (#949), and
+  control boundaries meet 3:1 non-text contrast in both themes (#972).
 - **Conversations and agents:** loaded-message search, saved local prompts,
   command/skill selection, terminal excerpts and paged Personal/agent reads.
   Separately gated work adds typed delegation, budgeted multi-agent tasks,
@@ -95,6 +97,8 @@ Expect Windows SmartScreen to show a
   valid issues in the same batch. (#920)
 - Bound optional composer prediction context by its serialized size, including
   escaped characters, so JSON-heavy chats stay within the limit. (#933)
+- Retain a known-bad integration denial when an advisory refresh fails, instead
+  of losing the prior denial during a failed refresh. (#936)
 
 Advanced host capabilities are separately gated and generally default off;
 listing source work here does not grant execution authority, prove provider
@@ -155,14 +159,10 @@ The 0.6.4 source preview passed its Windows CI run. Focused native candidate che
 
 These items are in 0.6.5 scope but not merged and ship only if they pass freeze gates.
 
-- Keyboard-created source selections so Ask/Attach/Open do not require a pointer
-  (#788), control boundaries meeting 3:1 non-text contrast in both themes (#789),
-  and layout-resilience verification at UI zoom and OS text scaling (#589).
+- Layout-resilience verification at UI zoom and OS text scaling (#589).
 - UI acceptance repairs (#896): preserve main selection when detaching a non-main
   conversation, improve dock previews and keyboard float resizing, and refine
   compact composer, plan and workspace-surface behavior.
-- Retain a known-bad integration denial when advisory refresh fails (#936),
-  rather than losing the prior denial during a failed refresh.
 - Independent installed-Windows memory retention and opt-in qualification (#782):
   draft CI-only work, not completed acceptance or a user-facing feature.
 
