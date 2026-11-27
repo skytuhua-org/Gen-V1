@@ -118,6 +118,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const desktop = useDesktop();
   useLayoutEffect(() => registerEditorHandoff('settings-writes', settleSettingsOperations), []);
   const navigation = useRef<HTMLElement>(null), content = useRef<HTMLElement>(null);
+  const settingsLayout = useRef<HTMLDivElement>(null);
   const visibleSections = SETTINGS_SECTIONS.filter(([id]) => desktop || id !== 'browser');
   const target = legacySections[initialSection] ?? initialSection;
   const [section, setSection] = useState(visibleSections.some(([id]) => id === target) ? target : 'general');
@@ -164,7 +165,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
     const focusable = [...node.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], summary, [tabindex]')].find(element=>!element.matches(':disabled')&&element.tabIndex>=0&&element.getClientRects().length&&!element.closest('[inert], [hidden]')&&getComputedStyle(element).visibility!=='hidden');
     if (focusable) focusable.focus({preventScroll:true}); else { node.tabIndex = -1; node.focus({preventScroll:true}); }
   }, [pendingTarget, section]);
-  const persist = async (payload: Record<string, unknown>) => {
+  const persist = useCallback(async (payload: Record<string, unknown>) => {
     if (busy) return false;
     setBusy(true); setSaved(false); setError('');
     try { fromSave.current = true; await persistSettingsChange(() => command('settings.update', payload), guardedRefresh); setSaved(true); return true; }
@@ -173,7 +174,27 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
       setError(cause instanceof Error ? cause.message : 'Settings could not be saved. Retry your change.'); return false;
     }
     finally { fromSave.current = false; setBusy(false); }
-  };
+  }, [busy, guardedRefresh]);
+  const cancelShortcutCapture = useCallback((target: EventTarget|null) => {
+    if (!(target instanceof HTMLInputElement) || !target.readOnly) return false;
+    const row = target.closest<HTMLElement>('[data-setting-id^="harness-keybinding-"]');
+    if (!row || !settingsLayout.current?.contains(row)) return false;
+    row.focus({preventScroll:true});
+    if (row.dataset.settingId === 'harness-keybinding-stop') void persist({preferences:{keybindings:{stop:'Escape'}}});
+    return true;
+  }, [persist]);
+  useLayoutEffect(() => {
+    const dialog = settingsLayout.current?.closest('dialog');
+    if (!dialog) return;
+    const cancel = (event: Event) => {
+      if (!cancelShortcutCapture(dialog.ownerDocument.activeElement)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    // The dialog receives native cancel even when keydown does not bubble.
+    dialog.addEventListener('cancel', cancel, true);
+    return () => dialog.removeEventListener('cancel', cancel, true);
+  }, [cancelShortcutCapture]);
   const update = async (value: Partial<UiPreferences>) => {
     // System popup/sound delivery exists only in the Windows app (host attentionRead);
     // the browser keeps in-app notices, so no browser permission is requested (T07).
@@ -209,7 +230,10 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
       default: return { description: '', control: null };
     }
   };
-  return <div className={matches('harness-skills') ? 'settings-layout settings-skills' : 'settings-layout'} onKeyDown={event => { if (searching && !event.nativeEvent.isComposing && matchesShortcut(event, chordFor('settings-clear-search'))) { event.preventDefault(); event.stopPropagation(); setQuery(''); } }}>
+  return <div ref={settingsLayout} className={matches('harness-skills') ? 'settings-layout settings-skills' : 'settings-layout'} onKeyDownCapture={event => {
+    if (event.key !== 'Escape' || event.nativeEvent.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    if (cancelShortcutCapture(event.target)) { event.preventDefault(); event.stopPropagation(); }
+  }} onKeyDown={event => { if (searching && !event.nativeEvent.isComposing && matchesShortcut(event, chordFor('settings-clear-search'))) { event.preventDefault(); event.stopPropagation(); setQuery(''); } }}>
     <aside className="settings-navigation"><label className="settings-search"><Search size={14}/><input type="search" aria-label="Search all settings" placeholder="Search settings" value={query} onChange={event => setQuery(event.target.value)}/></label>
       <div className="settings-section-select"><Select aria-label="Settings section" value={section} options={visibleSections.map(([value, label]) => ({value, label}))} onValueChange={chooseSection}/></div>
       <nav ref={navigation} aria-label="Settings sections" onKeyDown={event => { if (event.nativeEvent.isComposing) return; const intent = matchesShortcut(event, chordFor('settings-next-section')) ? 'next' : matchesShortcut(event, chordFor('settings-previous-section')) ? 'previous' : matchesShortcut(event, chordFor('settings-first-section')) ? 'first' : matchesShortcut(event, chordFor('settings-last-section')) ? 'last' : null; if (!intent) return; const buttons = [...event.currentTarget.querySelectorAll('button')], index = buttons.indexOf(document.activeElement as HTMLButtonElement); event.preventDefault(); buttons[intent === 'first' ? 0 : intent === 'last' ? buttons.length - 1 : (index + (intent === 'next' ? 1 : -1) + buttons.length) % buttons.length]?.focus(); }}>
@@ -229,7 +253,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
         {rows.length === 0 && <p className="settings-empty">No matching settings.</p>}
       </> : <>
       {showAppearance && <div data-setting-id="harness-personalization"><AppearanceSettings preferences={preferences} theme={data.settings.theme} projects={data.projects} busy={busy} save={(patch, theme) => persist({ preferences: patch, ...(theme ? { theme } : {}) })}/></div>}
-      {rows.filter(item => !customRows.has(item.id)).map(item => { const { description, control } = details(item); return <section key={item.id} className="settings-row" data-setting-id={item.id==='harness-runtime'?'harness-runtime-summary':item.id}><div className="settings-row-copy"><h2>{item.title}</h2>{description&&<p>{description}</p>}</div><div className="settings-row-control">{control}</div></section>; })}
+      {rows.filter(item => !customRows.has(item.id)).map(item => { const { description, control } = details(item); return <section key={item.id} className="settings-row" data-setting-id={item.id==='harness-runtime'?'harness-runtime-summary':item.id} tabIndex={item.id.startsWith('harness-keybinding-')?-1:undefined}><div className="settings-row-copy"><h2>{item.title}</h2>{description&&<p>{description}</p>}</div><div className="settings-row-control">{control}</div></section>; })}
       {matches('harness-keyboard-reference') && <div data-setting-id="harness-keyboard-reference"><KeyboardReference keybindings={preferences.keybindings}/></div>}
       {matches('harness-notification-controls') && <div data-setting-id="harness-notification-controls"><NotificationSettings preferences={preferences} busy={busy} update={update} desktop={Boolean(desktop)}/></div>}
       {matches('harness-runtime') && <details className="settings-runtime-details" data-setting-id="harness-runtime"><summary>Environment variables and advanced runtime settings</summary>{environmentSettings ?? <p className="settings-card-intro">Environment controls are unavailable in this view.</p>}</details>}

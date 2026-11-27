@@ -1,6 +1,7 @@
 import {expect,test,type Page} from '@playwright/test';
 import {mkdir} from 'node:fs/promises';
 import {EMPTY_USAGE} from '../../packages/contracts';
+import {getPreferences,mergePreferences,type UiPreferences} from '../../packages/contracts/preferences';
 import {shellInit,shellRoute,shellSnapshot} from '../../scripts/capture-ui/shell-api';
 import {projectContext} from '../../scripts/capture-ui/browser-data';
 import {serveTaskSplitLayout} from './task-interface-fixture';
@@ -79,6 +80,48 @@ test('actual terminal selection reaches the same unsent composer and is serializ
  await page.getByRole('button',{name:'Send message',exact:true}).click();await expect.poll(()=>h.commands.filter(c=>c.type==='message.send').length).toBe(1);
  const sent=h.commands.find(c=>c.type==='message.send')!;expect(sent.threadId).toBe('one');expect(sent.payload.content?.match(/Reviewed failure output/g)).toHaveLength(1);await expect(chip).toHaveCount(0);expect(h.unexpected).toEqual([]);
 });
+test('Settings Escape cancels shortcut capture and only records it for Stop',async({page})=>{
+ const h=await host(page);
+ await page.route('**/api/commands',async route=>{
+  const command=route.request().postDataJSON();
+  if(command.type!=='settings.update')return route.fallback();
+  const preferences:Partial<UiPreferences>=command.payload.preferences??{};
+  h.commands.push(command);
+  h.snapshot.settings.preferences=mergePreferences(getPreferences(h.snapshot.settings),preferences);
+  return route.fulfill({json:{commandId:command.id,eventSeq:++h.snapshot.seq,result:{}}});
+ });
+ const opener=page.getByRole('button',{name:'Settings',exact:true});
+ await opener.click();
+ const dialog=page.getByRole('dialog',{name:'Settings',exact:true});
+ await dialog.getByRole('button',{name:'Keyboard Shortcuts',exact:true}).click();
+ const capture=dialog.getByRole('textbox',{name:'Toggle sidebar shortcut',exact:true});
+ const row=dialog.locator('[data-setting-id="harness-keybinding-toggleSidebar"]');
+ const original=await capture.inputValue();
+ await capture.focus();
+ await page.keyboard.press('Escape');
+ await expect(dialog).toBeVisible();
+ await expect(row).toBeFocused();
+ await expect(capture).toHaveValue(original);
+ expect(h.commands.filter(command=>command.type==='settings.update')).toHaveLength(0);
+ await capture.focus();
+ expect(await dialog.evaluate(element=>element.dispatchEvent(new Event('cancel',{cancelable:true})))).toBe(false);
+ await expect(row).toBeFocused();
+ await expect(dialog).toBeVisible();
+
+ const stop=dialog.getByRole('textbox',{name:'Stop active run shortcut',exact:true});
+ await stop.focus();
+ await page.keyboard.press('Alt+s');
+ await expect(stop).toHaveValue('Alt+S');
+ await stop.focus();
+ await page.keyboard.press('Escape');
+ await expect(stop).toHaveValue('Escape');
+ expect(h.commands.at(-1)).toMatchObject({type:'settings.update',payload:{preferences:{keybindings:{stop:'Escape'}}}});
+ await expect(dialog).toBeVisible();
+ await page.keyboard.press('Escape');
+ await expect(dialog).toHaveCount(0);
+ await expect(opener).toBeFocused();
+});
+
 test('production overview and compact usage retain their exact destinations under reduced motion and light zoom',async({page})=>{
  await page.emulateMedia({reducedMotion:'reduce'});const h=await host(page);
  await page.evaluate(()=>{document.documentElement.dataset.theme='light';document.documentElement.dataset.motion='off';document.documentElement.style.zoom='1.5';});
