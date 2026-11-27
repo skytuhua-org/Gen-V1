@@ -39,3 +39,26 @@ it('rejects revoking a grant owned by another thread or an unknown id', async ()
   await expect(x.send('resource.revoke', { resourceId: crypto.randomUUID() })).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
   expect(x.store.all<ResourceGrant>('resource', x.thread.id)).toHaveLength(1);
 });
+
+it('removes a generated attachment from the composer while preserving its artifact grant', async () => {
+  const x = await setup();
+  x.store.internal('fixture.artifact', x.thread.id, () => {
+    x.store.put('artifact', 'signature-source', x.thread.id, {
+      id: 'signature-source', threadId: x.thread.id, title: 'Component catalog', lifecycle: 'active',
+    });
+  });
+  const other = (await x.service.command({ id: crypto.randomUUID(), type: 'thread.create', payload: {} })).result as Thread;
+  const upload = {name:'signature.png', base64:'YQ==', attachmentArtifactId:'signature-source'};
+  await expect(x.send('resource.upload', upload, other.id)).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+  const generated = (await x.send('resource.upload', upload)).result as ResourceGrant;
+  expect(generated).toMatchObject({composerAttachment:{artifactId:'signature-source', title:'Component catalog'}});
+  const manual = (await x.send('resource.upload', {name:'signature.png', base64:'Yg=='})).result as ResourceGrant;
+  expect(manual).not.toHaveProperty('composerAttachment');
+  await expect(x.send('resource.remove-composer-attachment', {resourceId:generated.id}, other.id)).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+  await expect(x.send('resource.remove-composer-attachment', {resourceId:manual.id})).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+  const detach = {id:crypto.randomUUID(), type:'resource.remove-composer-attachment', threadId:x.thread.id, payload:{resourceId:generated.id}};
+  const receipt = await x.service.command(detach);
+  expect(await x.service.command(detach)).toEqual(receipt);
+  expect(x.store.get('resource', generated.id)).toMatchObject({path:generated.path, composerAttachment:{hidden:true}});
+  expect(x.store.get('resource', manual.id)).toEqual(manual);
+});

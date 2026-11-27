@@ -51,7 +51,7 @@ import {LoadingState} from './LoadingState';
 import {RunProgressCard,RunStrip,threadWorking} from './run-progress';
 import {SurfaceBoundary} from './SurfaceBoundary';
 import {ComposerSkeleton, ConversationSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
-import {ComposerAttachments} from './ComposerAttachments';
+import {ComposerAttachments,useComposerAttachmentFeedback} from './ComposerAttachments';
 import {SessionBranchLineage, SessionBranchMenu, useSessionBranchOverview} from './SessionBranchMenu';
 import {toast,Toaster} from '../../../packages/ui-shell/Toast';
 import {Spinner} from '../../../packages/ui-shell/Feedback';
@@ -238,6 +238,11 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
   const file = useRef<HTMLInputElement>(null);
   const ghost = useRef<HTMLDivElement>(null);
   const resources = snapshot.resources.filter(item => item.threadId === thread?.id);
+  const removeBlocked=thread&&delegatedThread(thread)?'read-only':undefined;
+  const attachmentFeedback=useComposerAttachmentFeedback(resources,resource=>command(
+    resource.composerAttachment?'resource.remove-composer-attachment':'resource.revoke',
+    {resourceId:resource.id},thread?.id,
+  ).then(()=>refresh()).catch(cause=>{setError(`Could not remove ${resource.label}: ${messageOf(cause)}`);throw cause;}),removeBlocked);
   const unavailable = !models.length || !models.some(model => model.id === modelId);
   const project=resources.find(resource=>resource.kind==='project');const changes=useMemo(()=>recordedChangeSummary(snapshot.data,thread?.id),[snapshot.data,thread?.id]);
   useEffect(()=>{const model=models.find(model=>model.id===modelId);if(model&&thinkingLevel&&!model.thinkingLevels?.includes(thinkingLevel))chooseThinking('');},[models,modelId,thinkingLevel]);
@@ -365,9 +370,11 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
     {localSkills.error&&!shared&&<p role="alert" className="composer-error">{localSkills.error}</p>}
     {error && <div className="composer-error" role="alert"><span>{error}</span><span className="composer-error-actions">{resumeRequired&&thread&&<button className="quiet" disabled={!modelId} onClick={resume}>Resume thread</button>}<button className="icon-button" aria-label="Dismiss composer error" onClick={dismissError}><X size={14} /></button></span></div>}
     {working && draft.trim() && !(workbench?.enabled && workbench.draft?.sendMode === 'AFTER_CURRENT') && !/^\/(?:btw|side)(?:\s|$)/i.test(draft.trim()) && <p className="composer-hint">The agent is working — start the message with /btw to send a side question.</p>}
+    {attachmentFeedback.notice}
     <ComposerView className={dragging ? 'dragging' : ''} onSubmit={event => { event.preventDefault(); void send(); }} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (event.dataTransfer.files.length) void upload(event.dataTransfer.files); }}>
       <WorkbenchComposer title={thread?.title??'New conversation'} working={working} disabled={busy||!ready||retry}/>
-      <ComposerAttachments resources={resources} excerpts={excerpts} disabled={busy||!ready||retry} onEditExcerpt={(id,text)=>updateExcerpt(id,text)} onRemoveExcerpt={id=>updateExcerpt(id)} onRemoveResource={resource=>command('resource.revoke',{resourceId:resource.id},thread?.id??'').then(()=>refresh()).catch(cause=>{setError(`Could not remove ${resource.label}: ${messageOf(cause)}`);throw cause;})} removeBlocked={thread&&delegatedThread(thread)?'read-only':undefined} timeFormat={getPreferences(snapshot.settings).timeFormat}/>
+      <span role="status" className="sr-only">{attachmentFeedback.announcement}</span>
+      <ComposerAttachments resources={resources} excerpts={excerpts} disabled={busy||!ready||retry} onEditExcerpt={(id,text)=>updateExcerpt(id,text)} onRemoveExcerpt={id=>updateExcerpt(id)} onRemoveResource={attachmentFeedback.remove} removeBlocked={removeBlocked} removing={attachmentFeedback.removing} timeFormat={getPreferences(snapshot.settings).timeFormat}/>
       <ComposerSkillBindings bindings={skills} retry={retry} onRemove={id=>{void (sharedComposers&&sharedTarget?sharedComposers.removeSkill(sharedTarget,id):localSkills.remove(id)).catch(cause=>fail(cause));}}/>
       <ComposerCommands ref={commands} input={input} draft={draft} threadId={thread?.id} projectId={thread?.projectId} disabled={!ready||!skillsReady||busy||predictionBlocked} mode={thread?.mode??draftMode} onDraft={updateDraft} onModel={()=>modelPicker.current?.open()} onMode={chooseMode}/>
       <div className="composer-entry-row">

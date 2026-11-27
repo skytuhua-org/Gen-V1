@@ -779,7 +779,7 @@ export class Service {
             await retainSourceFiles(0);
           };
           if(expected||capabilityEnabled('context.compilerV1')){
-            const nativeInput:StartRun={...ctx,modelId:thread.modelId!,thinkingLevel:thread.thinkingLevel,sessionPath:thread.sessionPath!,inputId:ctx.runId,prompt:'',resources:this.store.all<ResourceGrant>('resource',thread.id)};
+            const nativeInput:StartRun={...ctx,modelId:thread.modelId!,thinkingLevel:thread.thinkingLevel,sessionPath:thread.sessionPath!,inputId:ctx.runId,prompt:'',resources:this.store.all<ResourceGrant>('resource',thread.id).filter(grant=>!grant.composerAttachment?.hidden)};
             await withApprovedProjectContext(this.store,nativeInput,control.signal,compact);
           }else await compact(undefined,()=>{});
         }catch(cause){
@@ -1338,14 +1338,32 @@ export class Service {
       if (!grant || grant.threadId !== thread.id) throw new HarnessError("CAPABILITY_DENIED", "Operation resource is not granted");
       return this.store.command(command, () => { this.store.remove("resource", resourceId); return { removed: resourceId }; });
     }
+    if (command.type === "resource.remove-composer-attachment") return this.store.command(command, () => {
+      const id = text(p, "resourceId", 200);
+      const grant = this.store.get<ResourceGrant>("resource", id);
+      if (!grant || grant.threadId !== thread.id || grant.kind !== "attachment" || !grant.composerAttachment) {
+        throw new HarnessError("CAPABILITY_DENIED", "The generated attachment does not belong to this composer");
+      }
+      if (!grant.composerAttachment.hidden) this.store.put("resource", id, thread.id, {
+        ...grant, composerAttachment: { ...grant.composerAttachment, hidden: true },
+      });
+      return { removed: id };
+    });
     if (command.type === "resource.upload") {
+      let composerAttachment: ResourceGrant["composerAttachment"];
+      if (p.attachmentArtifactId !== undefined) {
+        const artifactId = text(p, "attachmentArtifactId", 200);
+        const artifact = this.store.get<ArtifactRecord>("artifact", artifactId);
+        if (!artifact || artifact.threadId !== thread.id) throw new HarnessError("CAPABILITY_DENIED", "The attachment source does not belong to this conversation");
+        composerAttachment = { artifactId, title: artifact.title, ...(p.composerHidden === true ? { hidden: true } : {}) };
+      }
       const name = basename(text(p, "name", 200)).replace(/[^a-zA-Z0-9._ -]/g, "_");
       const base64 = text(p, "base64", 28 * 1024 * 1024);
       if (!/^[a-zA-Z0-9+/]*={0,2}$/.test(base64)) throw new HarnessError("INVALID_INPUT", "Invalid attachment encoding");
       const bytes = Buffer.from(base64, "base64"); if (bytes.length > 20 * 1024 * 1024) throw new HarnessError("INVALID_INPUT", "Attachments are limited to 20 MiB");
       const folder = join(this.store.dataDir, "attachments", thread.id); await mkdir(folder, { recursive: true });
       const path = join(folder, command.id + "-" + name); try { await writeFile(path, bytes, { flag: "wx" }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; if (!(await readFile(path)).equals(bytes)) throw new HarnessError("DUPLICATE_COMMAND", "Upload ID already has different content"); }
-      const grant: ResourceGrant = { id: command.id, threadId: thread.id, path, label: name, kind: "attachment", writable: false, createdAt: now() };
+      const grant: ResourceGrant = { id: command.id, threadId: thread.id, path, label: name, kind: "attachment", writable: false, createdAt: now(), ...(composerAttachment ? { composerAttachment } : {}) };
       return this.store.command(command, () => { this.store.put("resource", grant.id, thread.id, grant); return grant; });
     }
     const receipt = this.store.command(command, () => this.applyCommand(command, this.thread(thread.id)));
@@ -1792,7 +1810,7 @@ export class Service {
     if(!requestContextId&&this.source&&!thread.sideParentId&&contents.some(content=>/^\/learn(?:\s|$)/i.test(content.trim())))try{contents=await Promise.all(contents.map(async content=>/^\/learn(?:\s|$)/i.test(content.trim())?(await this.source!.runtime.sourceRequest<{prompt:string}>('learn.prompt',{request:content.trim().replace(/^\/learn\s*/i,'')})).prompt:content));}catch(error){this.runtimeFailure(ctx,error);return;}
     const userPrompt=inputs.map((input,index) => "Input " + input.id + ":\n" + contents[index]).join("\n\n");
     const sourceContext = sourceContexts.map(context => context.text).join(''), deliveredRefs = sourceContexts.flatMap(context => context.refs);
-    let input: StartRun = { ...ctx,accountId:binding.accountId, memory: taskMemoryContext(this.store, threadId), modelId, thinkingLevel:thread.thinkingLevel, sessionPath: thread.sessionPath, inputId: inputs[0].id, inputIds: inputs.map(i => i.id), resources: thread.sideParentId?[]:this.store.all("resource", threadId), ...(completedWrites.length?{completedWrites}:{}), ...(deliveredRefs.length ? {sourceRefs: deliveredRefs} : {}), prompt: guidance+userPrompt+sourceContext };
+    let input: StartRun = { ...ctx,accountId:binding.accountId, memory: taskMemoryContext(this.store, threadId), modelId, thinkingLevel:thread.thinkingLevel, sessionPath: thread.sessionPath, inputId: inputs[0].id, inputIds: inputs.map(i => i.id), resources: thread.sideParentId ? [] : this.store.all<ResourceGrant>("resource", threadId).filter(grant => !grant.composerAttachment?.hidden), ...(completedWrites.length?{completedWrites}:{}), ...(deliveredRefs.length ? {sourceRefs: deliveredRefs} : {}), prompt: guidance+userPrompt+sourceContext };
     // A live controller may already serve a queued or in-flight approved
     // effect; replacing it would orphan that work from Stop.
     const retainedControl=this.aborts.get(threadId);
