@@ -24,6 +24,8 @@ export const inboxFooterHint=(item:AttentionItem)=>item.actionable?'Answer or re
 const labels:Record<AttentionItem['state'],string>={'needs-input':'Needs your input','needs-review':'Review change',completed:'Finished',failed:'Needs attention',resolved:'Resolved'};
 const age=(value:string)=>{const minutes=Math.max(0,Math.floor((Date.now()-Date.parse(value))/60_000));return minutes<1?'now':minutes<60?minutes+'m':minutes<1440?Math.floor(minutes/60)+'h':Math.floor(minutes/1440)+'d';};
 
+const renderCap=200;
+
 /** Scoped adaptation of Vespin's list/reader composition; canonical Gen actions stay in their thread. */
 export interface InboxViewProps {attention:{items:AttentionItem[];unread:number;error:string;refresh():Promise<void|string>;markRead(id:string):Promise<void>;markUnread(id:string):Promise<void>;markAllRead?(ids:readonly string[]):Promise<void>};onOpenThread:(threadId:string)=>void|Promise<void>;emptyTitle?:string;emptyMessage?:string;projectColorFor?:(projectId?:string)=>string|undefined;timeFormat?:TimeFormat}
 export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projectColorFor,timeFormat='system'}:InboxViewProps){
@@ -48,10 +50,11 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
  const [,setTick]=useState(0);
  useEffect(()=>{const id=setInterval(()=>setTick(t=>t+1),30_000);return()=>clearInterval(id);},[]);
  const visible=attention.items.filter(item=>(filter==='all'||filter==='needs-you'&&needsYou(item)||filter==='unread'&&!item.read||filter==='completed'&&(item.state==='completed'||item.state==='resolved'))&&`${item.title} ${item.summary} ${labels[item.state]}`.toLowerCase().includes(query.toLowerCase().trim()));
- const selected=visible.find(item=>item.id===chosen),columns=explicitDismissed?'list':shownColumns(single,selected?.id);
+ const capped=visible.length>renderCap,rendered=capped?visible.slice(0,renderCap):visible;
+ const selected=rendered.find(item=>item.id===chosen),columns=explicitDismissed?'list':shownColumns(single,selected?.id);
  useEffect(()=>{const node=root.current;if(!node)return;const measure=(width:number)=>{if(width>0)setSingle(was=>oneColumn(width,was));};measure(node.getBoundingClientRect().width);const observer=new ResizeObserver(entries=>{if(entries[0])measure(entries[0].contentRect.width);});observer.observe(node);return()=>observer.disconnect();},[]);
  useLayoutEffect(()=>{
-  const ids=visible.map(item=>item.id),signature=visible.map(item=>[item.id,item.title,item.summary,item.updatedAt,item.read,item.state,item.actionable,item.kind].join('\u0000')).join('\u0001'),prior=committedListSignature.current;
+  const ids=rendered.map(item=>item.id),signature=rendered.map(item=>[item.id,item.title,item.summary,item.updatedAt,item.read,item.state,item.actionable,item.kind].join('\u0000')).join('\u0001'),prior=committedListSignature.current;
   if(prior!==undefined&&prior!==signature)interactionGeneration.current++;
   committedVisibleIds.current=ids;committedListSignature.current=signature;
  });
@@ -185,9 +188,9 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
   if(!direction&&event.key!=='Home'&&event.key!=='End')return;
   event.preventDefault();
   const pressed=target.closest('.ui-list-row-main'),focusedId=pressed?[...rows.current.entries()].find(([,node])=>node===pressed)?.[0]:undefined;
-  const index=visible.findIndex(item=>item.id===(focusedId??chosenRef.current));
-  const next=event.key==='Home'?0:event.key==='End'?visible.length-1:Math.max(0,Math.min(visible.length-1,index<0?direction>0?0:visible.length-1:index+direction));
-  const item=visible[next];
+  const index=rendered.findIndex(item=>item.id===(focusedId??chosenRef.current));
+  const next=event.key==='Home'?0:event.key==='End'?rendered.length-1:Math.max(0,Math.min(rendered.length-1,index<0?direction>0?0:rendered.length-1:index+direction));
+  const item=rendered[next];
   if(!item||columns==='item'&&right&&item.id===chosenRef.current)return;
   choose(item);
   if(columns!=='item'){const row=rows.current.get(item.id);row?.focus();row?.scrollIntoView({block:'nearest'});}
@@ -210,9 +213,9 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
   </span>
  </header>:null;
  const footer=selected?<div className="agent-inbox-answer"><button type="button" className="primary" onClick={()=>{void act(()=>onOpenThread(selected.destination.threadId));}}>Open conversation<ArrowUpRight size={14}/></button><small>{inboxFooterHint(selected)}</small></div>:null;
- return <section className="agent-inbox inbox-view" aria-label="Agent inbox" ref={root} data-columns={columns} onKeyDown={keyboard}>
-  <InboxList label="Inbox items" hidden={columns==='item'} head={head} search={search} empty={!visible.length} note={!visible.length?empty:undefined}>
-   {visible.map(item=><InboxItemRow key={item.id} pressRef={node=>{if(node)rows.current.set(item.id,node);else rows.current.delete(item.id);}} title={item.title} description={<>{item.actionable&&<Bell size={11}/>}<span>{item.summary}</span></>} lead={{icon:<span className="inbox-holder-mark" style={{'--inbox-project':projectColorFor?projectColorFor(item.projectId):projectColor({kind:'local'},item.projectId)} as CSSProperties}>{item.state==='failed'?<TriangleAlert size={13}/>:item.state==='completed'||item.state==='resolved'?<Check size={13}/>:<Bot size={13}/>}</span>,label:sourceLabels[item.kind]}} action={<RowReadButton read={item.read} pending={pendingRead(item.id)} toggle={()=>toggleRead(item)}/>} meta={<time dateTime={item.updatedAt}>{age(item.updatedAt)}</time>} unread={!item.read} current={chosen===item.id} muted={item.state==='completed'||item.state==='resolved'} label={`${item.title}, ${labels[item.state]}${!item.read?', unread':''}`} onPress={()=>choose(item,true)}/>)}
+ return <section className="agent-inbox inbox-view" aria-label="Agent inbox" ref={root} data-columns={columns} data-capped={capped||undefined} onKeyDown={keyboard}>
+  <InboxList label="Inbox items" hidden={columns==='item'} head={head} search={search} empty={!rendered.length} note={!rendered.length?empty:capped?<p className="inbox-render-cap">{`Showing ${renderCap} of ${visible.length}. Refine search or filter to see more.`}</p>:undefined}>
+   {rendered.map(item=><InboxItemRow key={item.id} pressRef={node=>{if(node)rows.current.set(item.id,node);else rows.current.delete(item.id);}} title={item.title} description={<>{item.actionable&&<Bell size={11}/>}<span>{item.summary}</span></>} lead={{icon:<span className="inbox-holder-mark" style={{'--inbox-project':projectColorFor?projectColorFor(item.projectId):projectColor({kind:'local'},item.projectId)} as CSSProperties}>{item.state==='failed'?<TriangleAlert size={13}/>:item.state==='completed'||item.state==='resolved'?<Check size={13}/>:<Bot size={13}/>}</span>,label:sourceLabels[item.kind]}} action={<RowReadButton read={item.read} pending={pendingRead(item.id)} toggle={()=>toggleRead(item)}/>} meta={<time dateTime={item.updatedAt}>{age(item.updatedAt)}</time>} unread={!item.read} current={chosen===item.id} muted={item.state==='completed'||item.state==='resolved'} label={`${item.title}, ${labels[item.state]}${!item.read?', unread':''}`} onPress={()=>choose(item,true)}/>)}
   </InboxList>
   {!explicitDismissed&&<InboxPane title={selected?.title} hidden={columns==='list'} toolbar={toolbar} paneRef={reader} footer={footer} empty={<div className="agent-inbox-empty"><Inbox size={29}/><h3>Select an item</h3><p>Read it here, then open its conversation when needed.</p></div>}>
    {selected&&<div className="inbox-canonical-message"><div className="inbox-message-meta"><span data-state={selected.state}>{labels[selected.state]}</span><time dateTime={selected.updatedAt}>{formatLocalDateTime(selected.updatedAt,timeFormat,undefined,{dateStyle:'medium',timeStyle:'short'})}</time></div><p>{selected.summary}</p></div>}

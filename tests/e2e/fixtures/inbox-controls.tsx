@@ -22,6 +22,7 @@ function Fixture() {
     const params=new URLSearchParams(location.search);
     if(params.has('empty'))return [];
     if(!params.has('long'))return initial;
+    if(params.get('long')==='1000')return [...initial,...Array.from({length:995},(_,index)=>({...initial[1],id:'seed-'+index,title:'Result '+index,read:index!==994}))];
     return [...initial,...Array.from({length:35},(_,index)=>({...initial[1],id:'extra-'+index,title:'Extra item '+index}))];
   }), [error, setError] = useState('');
   window.inboxControls.items = items;

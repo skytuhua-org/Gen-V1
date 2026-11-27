@@ -106,6 +106,25 @@ test('Inbox reconnect is polite and clears when the real client resynchronizes',
  await expect(status).toHaveCount(0);
 });
 
+test('the rendered Inbox is capped while search and unread use all 1000 results',async({page})=>{
+ await page.setViewportSize({width:1100,height:560});
+ await page.goto('/tests/e2e/fixtures/inbox-controls.html?long=1000');
+ await expect(rows(page)).toHaveCount(200);
+ const note=page.getByText('Showing 200 of 1000. Refine search or filter to see more.',{exact:true});
+ await expect(note).toBeAttached();
+ await expect(page.locator('.inbox-unread-count')).toHaveText('4');
+ const first=rows(page).first(),last=rows(page).last();
+ await first.focus();await page.keyboard.press('End');
+ await expect(last).toBeFocused();await expect(last).toBeInViewport();
+ await page.keyboard.press('ArrowDown');await expect(last).toBeFocused();
+ await page.keyboard.press('Home');await expect(first).toBeFocused();
+ const search=page.getByRole('searchbox',{name:'Search Inbox'});
+ await search.fill('Result 994');
+ await expect(rows(page)).toHaveCount(1);await expect(rows(page).first()).toContainText('Result 994');
+ await expect(note).toHaveCount(0);
+ await expect(page.locator('.inbox-unread-count')).toHaveText('4');
+});
+
 test('overflowing Inbox list and reader expose native scrollbars', async ({page}) => {
   await page.setViewportSize({width: 1100, height: 350});
   await fixture(page);
