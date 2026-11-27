@@ -14,5 +14,21 @@ function refreshAttention():Promise<string|undefined>{
  });
 }
 function listen(listener:()=>void){listeners.add(listener);if(listeners.size===1){let cancelled=false,disconnect:(()=>void)|undefined;const changed=()=>{clearTimeout(timer);timer=setTimeout(()=>void refreshAttention(),60);};void refreshAttention().then(()=>{if(cancelled||!listeners.size)return;disconnect=subscribe(state.sequence,changed,connected=>{if(!connected){state={...state,error:'Inbox is reconnecting…'};publish();}},async()=>{await refreshAttention();});});window.addEventListener('focus',changed);stop=()=>{cancelled=true;disconnect?.();window.removeEventListener('focus',changed);};}return()=>{listeners.delete(listener);if(!listeners.size){clearTimeout(timer);stop?.();stop=undefined;}};}
-async function change(eventId:string,type:'read'|'unread'|'dismiss-popup'){const body=JSON.stringify({id:crypto.randomUUID(),type});await authenticated(()=>fetch(`/api/attention/${encodeURIComponent(eventId)}/commands`,{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',headers:{'Content-Type':'application/json','x-harness-csrf':csrfToken},body})).then(read);await refreshAttention();}
-export function useAttention(enabled=true){const current=useSyncExternalStore(enabled?listen:()=>()=>{},()=>state,()=>state);return{...current,refresh:async()=>{const error=await refreshAttention();if(error!==undefined)throw Error(error);},markRead:(id:string)=>change(id,'read'),markUnread:(id:string)=>change(id,'unread'),dismissPopup:(id:string)=>change(id,'dismiss-popup')};}
+async function writeReadState(eventId:string,type:'read'|'unread'|'dismiss-popup'){
+ const body=JSON.stringify({id:crypto.randomUUID(),type});
+ await authenticated(()=>fetch(`/api/attention/${encodeURIComponent(eventId)}/commands`,{method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',headers:{'Content-Type':'application/json','x-harness-csrf':csrfToken},body})).then(read);
+}
+async function change(eventId:string,type:'read'|'unread'|'dismiss-popup'){
+ await writeReadState(eventId,type);
+ await refreshAttention();
+}
+async function markAllRead(ids:readonly string[]){
+ const results=await Promise.allSettled(ids.map(id=>writeReadState(id,'read')));
+ await refreshAttention();
+ const failure=results.find(result=>result.status==='rejected');
+ if(failure)throw failure.reason;
+}
+export function useAttention(enabled=true){
+ const current=useSyncExternalStore(enabled?listen:()=>()=>{},()=>state,()=>state);
+ return{...current,refresh:refreshAttention,markRead:(id:string)=>change(id,'read'),markUnread:(id:string)=>change(id,'unread'),markAllRead,dismissPopup:(id:string)=>change(id,'dismiss-popup')};
+}

@@ -8,6 +8,15 @@ import {projectColor} from './project-colors';
 import {formatLocalDateTime,type TimeFormat} from './time-format';
 import './agent-inbox.css';
 
+function RowReadButton({read,pending,toggle}:{read:boolean;pending:boolean;toggle:()=>void}){
+ const label=read?'Mark as unread':'Mark as read';
+ return <button type="button" className="inbox-row-read" aria-label={label} title={label} aria-disabled={pending}
+  onClick={event=>{event.stopPropagation();if(!pending)toggle();}}
+  onKeyDown={event=>{if(['ArrowUp','ArrowDown','j','k','Home','End'].includes(event.key))event.stopPropagation();}}>
+  {read?<Circle size={11} aria-hidden="true"/>:<Check size={12} aria-hidden="true"/>}
+ </button>;
+}
+
 type Filter='all'|'needs-you'|'unread'|'completed';
 const filters=[{value:'all',label:'All'},{value:'needs-you',label:'Needs you'},{value:'unread',label:'Unread'},{value:'completed',label:'Completed'}];
 const needsYou=(item:AttentionItem)=>item.actionable||item.state==='failed';
@@ -16,13 +25,22 @@ const labels:Record<AttentionItem['state'],string>={'needs-input':'Needs your in
 const age=(value:string)=>{const minutes=Math.max(0,Math.floor((Date.now()-Date.parse(value))/60_000));return minutes<1?'now':minutes<60?minutes+'m':minutes<1440?Math.floor(minutes/60)+'h':Math.floor(minutes/1440)+'d';};
 
 /** Scoped adaptation of Vespin's list/reader composition; canonical Gen actions stay in their thread. */
-export interface InboxViewProps {attention:{items:AttentionItem[];unread:number;error:string;refresh():Promise<void>;markRead(id:string):Promise<void>;markUnread(id:string):Promise<void>};onOpenThread:(threadId:string)=>void|Promise<void>;emptyTitle?:string;emptyMessage?:string;projectColorFor?:(projectId?:string)=>string|undefined;timeFormat?:TimeFormat}
+export interface InboxViewProps {attention:{items:AttentionItem[];unread:number;error:string;refresh():Promise<void|string>;markRead(id:string):Promise<void>;markUnread(id:string):Promise<void>;markAllRead?(ids:readonly string[]):Promise<void>};onOpenThread:(threadId:string)=>void|Promise<void>;emptyTitle?:string;emptyMessage?:string;projectColorFor?:(projectId?:string)=>string|undefined;timeFormat?:TimeFormat}
 export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projectColorFor,timeFormat='system'}:InboxViewProps){
  const [filter,setFilter]=useState<Filter>('all'),[query,setQuery]=useState(''),[chosen,setChosen]=useState<string>(),[explicitDismissed,setExplicitDismissed]=useState(false),[single,setSingle]=useState(false),[actionError,setActionError]=useState(''),root=useRef<HTMLElement>(null),reader=useRef<HTMLElement>(null),rows=useRef(new Map<string,HTMLButtonElement>()),heading=useId(),actionVersion=useRef(0),markTimer=useRef<ReturnType<typeof setTimeout>>(undefined);
  type FocusRequest={instance:number;intent:number;interaction:number;kind:'return'|'reader';requestedId:string;source:'back'|'escape'|'choose'|'shortcut';priorVisibleIds:string[];priorIndex:number;expectedNode?:HTMLElement};
  const chosenRef=useRef<string|undefined>(undefined),instanceGeneration=useRef(0),intentGeneration=useRef(0),interactionGeneration=useRef(0),focusFrame=useRef<number|undefined>(undefined),focusRequest=useRef<FocusRequest|undefined>(undefined),committedVisibleIds=useRef<string[]>([]),committedListSignature=useRef<string|undefined>(undefined);
  const [refreshing,setRefreshing]=useState(false),[refreshFeedback,setRefreshFeedback]=useState<{text:string}>();
  const refreshPending=useRef(false);
+ const [markingAll,setMarkingAll]=useState(false);
+ const bulkItems=useRef<ReadonlySet<string>|undefined>(undefined);
+ const bulkButton=useRef<HTMLButtonElement>(null),refreshButton=useRef<HTMLButtonElement>(null),returnBulkFocus=useRef(false);
+ useLayoutEffect(()=>{
+  if(markingAll||!returnBulkFocus.current)return;
+  returnBulkFocus.current=false;
+  const button=bulkButton.current??refreshButton.current;
+  if(button&&button.ownerDocument.activeElement===button.ownerDocument.body)button.focus({preventScroll:true});
+ },[markingAll,attention.unread]);
  const searchInput=useRef<HTMLInputElement>(null);
  const clearSearch=()=>{setQuery('');searchInput.current?.focus();};
  useEffect(()=>()=>{clearTimeout(markTimer.current);actionVersion.current++;instanceGeneration.current++;interactionGeneration.current++;if(focusFrame.current!==undefined)cancelAnimationFrame(focusFrame.current);focusFrame.current=undefined;focusRequest.current=undefined;},[]);
@@ -62,7 +80,8 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
  const activeReadWrites=useRef(new Map<string,Promise<void>>());
  const [pendingReadWrites,setPendingReadWrites]=useState<ReadonlySet<string>>(()=>new Set());
  const readButton=useRef<HTMLButtonElement>(null),refocusReadItem=useRef<string|undefined>(undefined);
- const readBusy=selected?pendingReadWrites.has(selected.id):false;
+ const pendingRead=(id:string)=>pendingReadWrites.has(id)||Boolean(bulkItems.current?.has(id));
+ const readBusy=selected?pendingRead(selected.id):false;
  useLayoutEffect(()=>{
   const id=refocusReadItem.current;
   if(!id)return;
@@ -82,7 +101,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
   refreshPending.current=true;
   setRefreshing(true);
   setRefreshFeedback(undefined);
-  const request=act(()=>attention.refresh());
+  const request=act(async()=>{const error=await attention.refresh();if(error)throw new Error(error);});
   const settle=(feedback:string)=>{
    refreshPending.current=false;
    setRefreshing(false);
@@ -94,7 +113,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
   },()=>settle('Refresh failed'));
  };
  const setItemRead=(id:string,read:boolean,version?:number)=>{
-  if(activeReadWrites.current.has(id))return;
+  if(activeReadWrites.current.has(id)||bulkItems.current?.has(id))return;
   const button=readButton.current;
   if(button?.dataset.itemId===id&&button.ownerDocument.activeElement===button)refocusReadItem.current=id;
   const request=act(()=>read?attention.markRead(id):attention.markUnread(id),version);
@@ -107,9 +126,36 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
   void request.then(finish,finish);
  };
  const toggleRead=(item:AttentionItem)=>{
-  if(activeReadWrites.current.has(item.id))return;
-  clearTimeout(markTimer.current);
+  if(activeReadWrites.current.has(item.id)||bulkItems.current?.has(item.id))return;
+  if(chosenRef.current===item.id)clearTimeout(markTimer.current);
   setItemRead(item.id,!item.read);
+ };
+ const markAll=()=>{
+  if(bulkItems.current)return;
+  const unread=attention.items.filter(item=>!item.read).map(item=>item.id);
+  if(!unread.length)return;
+  const pending:Promise<void>[]=[],fresh:string[]=[];
+  for(const id of unread){
+   const request=activeReadWrites.current.get(id);
+   if(request)pending.push(request);else fresh.push(id);
+  }
+  bulkItems.current=new Set(unread);
+  if(chosenRef.current&&bulkItems.current.has(chosenRef.current))clearTimeout(markTimer.current);
+  returnBulkFocus.current=bulkButton.current===bulkButton.current?.ownerDocument.activeElement;
+  setMarkingAll(true);
+  const request=act(async()=>{
+   const batch=attention.markAllRead;
+   const writes=batch&&fresh.length?[...pending,Promise.resolve().then(()=>batch(fresh))]
+     :[...pending,...fresh.map(id=>Promise.resolve().then(()=>attention.markRead(id)))];
+   const results=await Promise.allSettled(writes);
+   const failure=results.find(result=>result.status==='rejected');
+   if(!batch){
+    try{const error=await attention.refresh();if(error)throw new Error(error);}catch(error){if(!failure)throw error;}
+   }
+   if(failure)throw failure.reason;
+  });
+  const finish=()=>{bulkItems.current=undefined;setMarkingAll(false);};
+  void request.then(finish,finish);
  };
  // Arrow-key traversal calls choose() per step; only the settled selection
  // earns a mark-read write, so coalesce rapid choices into one request.
@@ -118,7 +164,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
   chosenRef.current=item.id;setChosen(item.id);setExplicitDismissed(false);setActionError('');clearTimeout(markTimer.current);
   const pending=activeReadWrites.current.get(item.id);
   if(pending)void act(()=>pending,version);
-  else if(!item.read)markTimer.current=setTimeout(()=>setItemRead(item.id,true,version),500);
+  else if(!item.read&&!bulkItems.current?.has(item.id))markTimer.current=setTimeout(()=>setItemRead(item.id,true,version),500);
   if(focusReader&&single)requestFocus('reader',item.id,'choose');
  };
  const back=(source:'back'|'escape'='back')=>{const id=chosenRef.current;actionVersion.current++;chosenRef.current=undefined;clearTimeout(markTimer.current);setChosen(undefined);setExplicitDismissed(true);setActionError('');if(id)requestFocus('return',id,source);};
@@ -149,7 +195,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
  const sourceLabels:Record<AttentionItem['kind'],string>={request:'Question',operation:'Change review','thread-completed':'Task result','thread-failed':'Task needs attention'};
  const hasItems=attention.items.length>0;
  const empty=<div className="agent-inbox-empty"><Inbox size={27}/><h3>{hasItems?'Nothing matches':emptyTitle??'You are all caught up'}</h3><p>{hasItems?'Try another view or search.':emptyMessage??'Questions, reviews and task results will appear here.'}</p>{hasItems&&<button type="button" className="quiet inbox-filter-reset" onClick={()=>{setFilter('all');clearSearch();}}>Clear search and filter</button>}</div>;
- const head=<header className="ui-toolbar inbox-list-head" data-place="inbox"><h2 id={heading}>Inbox</h2>{!refreshFeedback&&attention.unread>0&&<span className="inbox-unread-count">{attention.unread}</span>}<span className="inbox-refresh-status" aria-live="polite">{refreshFeedback?.text}</span><div className="inbox-view-controls"><Select aria-label="Inbox filter" value={filter} options={filters} onValueChange={value=>setFilter(value as Filter)}/><button type="button" className="icon-button" aria-label="Refresh inbox" title={refreshing?'Refreshing…':'Refresh inbox'} aria-busy={refreshing} aria-disabled={refreshing} onClick={refresh}><RefreshCw className={refreshing?'spinning':undefined} size={14} aria-hidden="true"/></button></div></header>;
+ const head=<header className="ui-toolbar inbox-list-head" data-place="inbox"><h2 id={heading}>Inbox</h2>{!refreshFeedback&&attention.unread>0&&<span className="inbox-unread-count">{attention.unread}</span>}<span className="inbox-refresh-status" aria-live="polite">{refreshFeedback?.text}</span><div className="inbox-view-controls"><Select aria-label="Inbox filter" value={filter} options={filters} onValueChange={value=>setFilter(value as Filter)}/><button ref={refreshButton} type="button" className="icon-button" aria-label="Refresh inbox" title={refreshing?'Refreshing…':'Refresh inbox'} aria-busy={refreshing} aria-disabled={refreshing} onClick={refresh}><RefreshCw className={refreshing?'spinning':undefined} size={14} aria-hidden="true"/></button>{(attention.unread>0||markingAll)&&<button ref={bulkButton} type="button" className="quiet inbox-mark-all" aria-label="Mark all as read" disabled={markingAll} onClick={markAll}>{markingAll?'Marking…':'Mark all read'}</button>}</div></header>;
  const search=<search className="inbox-search"><div className="inbox-search-field"><Search size={14} aria-hidden="true"/><input ref={searchInput} type="search" placeholder="Search inbox" aria-label="Search Inbox" value={query} onChange={event=>setQuery(event.target.value)} onKeyDown={event=>{if(event.key==='Escape'&&query&&!event.nativeEvent.isComposing&&event.nativeEvent.keyCode!==229){event.preventDefault();event.stopPropagation();clearSearch();}}}/>{query&&<button type="button" className="inbox-search-clear" aria-label="Clear search" title="Clear search" onClick={clearSearch}><X size={11} aria-hidden="true"/></button>}</div></search>;
  const toolbar=selected?<header className="ui-toolbar inbox-item-toolbar" data-place="inbox-item">
   {single&&<button type="button" className="quiet" onClick={()=>back()}><ArrowLeft size={14}/>Inbox</button>}
@@ -164,7 +210,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
  const footer=selected?<div className="agent-inbox-answer"><button type="button" className="primary" onClick={()=>{void act(()=>onOpenThread(selected.destination.threadId));}}>Open conversation<ArrowUpRight size={14}/></button><small>{inboxFooterHint(selected)}</small></div>:null;
  return <section className="agent-inbox inbox-view" aria-label="Agent inbox" ref={root} data-columns={columns} onKeyDown={keyboard}>
   <InboxList label="Inbox items" hidden={columns==='item'} head={head} search={search} empty={!visible.length} note={!visible.length?empty:undefined}>
-   {visible.map(item=><InboxItemRow key={item.id} pressRef={node=>{if(node)rows.current.set(item.id,node);else rows.current.delete(item.id);}} title={item.title} description={<>{item.actionable&&<Bell size={11}/>}<span>{item.summary}</span></>} lead={{icon:<span className="inbox-holder-mark" style={{'--inbox-project':projectColorFor?projectColorFor(item.projectId):projectColor({kind:'local'},item.projectId)} as CSSProperties}>{item.state==='failed'?<TriangleAlert size={13}/>:item.state==='completed'||item.state==='resolved'?<Check size={13}/>:<Bot size={13}/>}</span>,label:sourceLabels[item.kind]}} meta={<time dateTime={item.updatedAt}>{age(item.updatedAt)}</time>} unread={!item.read} current={chosen===item.id} muted={item.state==='completed'||item.state==='resolved'} label={`${item.title}, ${labels[item.state]}${!item.read?', unread':''}`} onPress={()=>choose(item,true)}/>)}
+   {visible.map(item=><InboxItemRow key={item.id} pressRef={node=>{if(node)rows.current.set(item.id,node);else rows.current.delete(item.id);}} title={item.title} description={<>{item.actionable&&<Bell size={11}/>}<span>{item.summary}</span></>} lead={{icon:<span className="inbox-holder-mark" style={{'--inbox-project':projectColorFor?projectColorFor(item.projectId):projectColor({kind:'local'},item.projectId)} as CSSProperties}>{item.state==='failed'?<TriangleAlert size={13}/>:item.state==='completed'||item.state==='resolved'?<Check size={13}/>:<Bot size={13}/>}</span>,label:sourceLabels[item.kind]}} action={<RowReadButton read={item.read} pending={pendingRead(item.id)} toggle={()=>toggleRead(item)}/>} meta={<time dateTime={item.updatedAt}>{age(item.updatedAt)}</time>} unread={!item.read} current={chosen===item.id} muted={item.state==='completed'||item.state==='resolved'} label={`${item.title}, ${labels[item.state]}${!item.read?', unread':''}`} onPress={()=>choose(item,true)}/>)}
   </InboxList>
   {!explicitDismissed&&<InboxPane title={selected?.title} hidden={columns==='list'} toolbar={toolbar} paneRef={reader} footer={footer} empty={<div className="agent-inbox-empty"><Inbox size={29}/><h3>Select an item</h3><p>Read it here, then open its conversation when needed.</p></div>}>
    {selected&&<div className="inbox-canonical-message"><div className="inbox-message-meta"><span data-state={selected.state}>{labels[selected.state]}</span><time dateTime={selected.updatedAt}>{formatLocalDateTime(selected.updatedAt,timeFormat,undefined,{dateStyle:'medium',timeStyle:'short'})}</time></div><p>{selected.summary}</p></div>}
