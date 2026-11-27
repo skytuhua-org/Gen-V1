@@ -583,6 +583,43 @@ test('bulk read uses the existing attention command for every unread id and load
   expect(snapshots-before).toBe(1);
 });
 
+test('a timed-out mark-read releases the actual row for a new request',async({page})=>{
+ const stamp='2026-11-06T12:00:00.000Z';
+ const item:AttentionItem={id:'read-timeout',threadId:'test-thread',kind:'request',title:'Timed reply',
+  summary:'A synthetic request',state:'needs-input',read:false,actionable:true,createdAt:stamp,updatedAt:stamp,
+  popupDismissed:false,notificationKey:'read-timeout',destination:{threadId:'test-thread'}};
+ const requests:string[]=[];
+ await page.clock.install();
+ await page.addInitScript(()=>{
+  window.EventSource=class extends EventTarget{onopen:()=>void=()=>{};constructor(){super();queueMicrotask(()=>this.onopen());}close(){}} as unknown as typeof EventSource;
+ });
+ await page.route('**/api/bootstrap',route=>route.fulfill({json:{csrfToken:'fixture-csrf',widgetOrigin:'http://127.0.0.1:5802'}}));
+ await page.route('**/api/attention',route=>route.fulfill({json:{items:[item],unread:Number(!item.read),sequence:item.read?2:1}}));
+ await page.route('**/api/attention/read-timeout/commands',route=>{
+  const body=route.request().postDataJSON();
+  expect(body.type).toBe('read');
+  requests.push(body.id);
+  if(requests.length===1)return; // No server reply until the client deadline aborts it.
+  item.read=true;
+  return route.fulfill({json:{result:{id:item.id}}});
+ });
+ await page.goto('/tests/e2e/fixtures/inbox-controls.html?network');
+ const row=page.getByRole('button',{name:/^Timed reply/});
+ await row.click();
+ await page.clock.runFor(600);
+ await expect.poll(()=>requests.length).toBe(1);
+ await page.clock.fastForward(15_000);
+ const error=page.getByRole('alert').filter({hasText:'The inbox is not responding. Try again.'});
+ await expect(error).toBeVisible();
+ const mark=readToolbar(page).getByRole('button',{name:'Mark as read',exact:true});
+ await expect(mark).toBeEnabled();
+ await mark.click();
+ await expect.poll(()=>requests.length).toBe(2);
+ expect(requests[0]).not.toBe(requests[1]);
+ await expect(readToolbar(page).getByRole('button',{name:'Mark as unread',exact:true})).toBeVisible();
+ await expect(error).toHaveCount(0);
+});
+
 test.describe('using touch',()=>{
   test.use({hasTouch:true,viewport:{width:320,height:620}});
   test('row read toggle is exposed without hover',async({page})=>{
