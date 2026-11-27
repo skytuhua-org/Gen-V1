@@ -106,6 +106,7 @@ for (const mode of ['reject', 'throw', 'source-error'] as const) {
     const {errors} = await fixture(page);
     await page.evaluate(mode => {window.inboxControls.refreshMode = mode;}, mode);
     await choose(page, 'Unread'); await page.getByRole('button', {name: 'Refresh inbox', exact: true}).click();
+    await expect(page.locator('.inbox-refresh-status')).toHaveText('Refresh failed');
     await expect(page.getByRole('status').filter({hasText:mode === 'source-error' ? 'Inbox could not load.' : 'Refresh failed.'})).toBeVisible();
     await expect(filter(page)).toHaveText('Unread'); await expect(rows(page)).toHaveCount(3);
     expect(await calls(page)).toEqual([{type: 'refresh'}]); expect(errors).toEqual([]);
@@ -204,17 +205,23 @@ for(const outcome of ['success','reject'] as const){
     await page.evaluate(async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);});
     await expect(page.locator('.agent-inbox-error')).toHaveText('Read state could not save.');
   });
-  test(`late refresh ${outcome} cannot overwrite a newer refresh result`,async({page})=>{
+  test(`a held refresh blocks repeats and reports ${outcome} before clearing`,async({page})=>{
     await fixture(page);
+    await page.emulateMedia({reducedMotion:'reduce'});
     await page.evaluate(outcome=>{window.inboxControls.refreshMode=outcome;window.inboxControls.holdRefresh=new Promise(resolve=>window.addEventListener('release-refresh',()=>resolve(),{once:true}));},outcome);
-    const refresh=page.getByRole('button',{name:'Refresh inbox',exact:true});await refresh.click();
-    await expect.poll(()=>calls(page)).toEqual([{type:'refresh'}]);
-    await page.evaluate(outcome=>{window.inboxControls.holdRefresh=undefined;window.inboxControls.refreshMode=outcome==='success'?'reject':'success';},outcome);
+    const refresh=page.getByRole('button',{name:'Refresh inbox',exact:true});
+    const feedback=page.locator('.inbox-refresh-status');
     await refresh.click();
-    if(outcome==='success')await expect(page.locator('.agent-inbox-error')).toContainText('Refresh failed.');else await expect(page.locator('.agent-inbox-error')).toHaveCount(0);
+    await expect(refresh).toBeDisabled();
+    await expect(refresh).toHaveAttribute('aria-busy','true');
+    await expect(refresh.locator('svg')).toHaveCSS('animation-name','none');
+    await page.keyboard.press('Enter');
+    await expect.poll(()=>calls(page)).toEqual([{type:'refresh'}]);
     await page.evaluate(()=>window.dispatchEvent(new Event('release-refresh')));
-    await page.evaluate(async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);});
-    if(outcome==='success')await expect(page.locator('.agent-inbox-error')).toContainText('Refresh failed.');else await expect(page.locator('.agent-inbox-error')).toHaveCount(0);
+    await expect(refresh).toBeEnabled();
+    await expect(feedback).toHaveText(outcome==='success'?/^Updated \d{2}:\d{2}$/:/^Refresh failed$/);
+    await expect(feedback).toBeEmpty({timeout:3500});
+    expect(await calls(page)).toEqual([{type:'refresh'}]);
   });
 }
 
