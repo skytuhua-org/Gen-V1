@@ -169,3 +169,46 @@ test('operation tab status slots keep labels and mounted drafts fixed through co
  host.setInput('operation',{status:'success',items:[{label:'users',status:'success'},{label:'projects',status:'success'}]});await host.publish();await expect(page.locator('.task-tabs-operation .spinning')).toHaveCount(0);expect(await users.locator('.task-tab-label').evaluate(node=>node.getBoundingClientRect().left)).toBeCloseTo(left,1);await expect(users).toHaveAttribute('aria-selected','true');await expect(draft).toHaveValue('Keep this local edit');expect(await draft.evaluate((node,old)=>node===old,identity)).toBe(true);
  await page.getByRole('tab',{name:'projects',exact:true}).click();await users.click();expect(await draft.evaluate((node,old)=>node===old,identity)).toBe(true);
 });
+
+test('the empty conversation and composer fit short viewports while messages remain scrollable',async({page})=>{
+ const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic short chat fixture'}}}});
+ snapshot.messages=[];snapshot.artifacts=[];
+ const host=await serveTaskFixture(page,snapshot);
+ await page.route('**/api/plugins',route=>route.fulfill({json:{plugins:[]}}));
+ await page.setViewportSize({width:400,height:500});
+ await page.goto('/');
+ const hero=page.getByRole('heading',{name:'What are we working on?',exact:true});
+ const composer=page.getByRole('textbox',{name:'Message',exact:true});
+ const scroll=page.locator('.conversation-scroll:visible');
+ for(const viewport of [{width:400,height:500},{width:360,height:360},{width:640,height:700},{width:1024,height:768}]){
+  await page.setViewportSize(viewport);
+  await expect(composer).toBeVisible();
+  await expect(hero,JSON.stringify(viewport)).toBeInViewport({ratio:1});
+  await expect(page.getByText('Start with a question, file, or project.',{exact:true})).toBeInViewport({ratio:1});
+  await expect(composer).toBeInViewport({ratio:1});
+  await expect(page.getByRole('button',{name:'Send message',exact:true})).toBeInViewport({ratio:1});
+  await expect.poll(()=>scroll.evaluate(element=>element.scrollHeight-element.clientHeight),{message:JSON.stringify(viewport)}).toBeLessThanOrEqual(1);
+ }
+ await page.setViewportSize({width:400,height:500});
+ snapshot.messages=Array.from({length:16},(_,index)=>({id:'short-chat-'+index,threadId:'task-thread',role:'assistant',content:'Short layout history '+index+' '+('Meaningful conversation content. '.repeat(9)),createdAt:'2026-11-01T20:00:00.000Z',runId:null}));
+ await host.publish();
+ await expect(hero).toHaveCount(0);
+ await expect.poll(()=>scroll.evaluate(element=>element.scrollHeight-element.clientHeight)).toBeGreaterThan(150);
+ await scroll.evaluate(element=>{element.scrollTop=40;});
+ await expect.poll(()=>scroll.evaluate(element=>element.scrollTop)).toBe(40);
+ await expect(composer).toBeInViewport({ratio:1});
+});
+
+test('an empty short chat with no models keeps its setup action within reach',async({page})=>{
+ const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic setup fixture'}}}});
+ snapshot.messages=[];snapshot.artifacts=[];
+ await serveTaskFixture(page,snapshot);
+ await page.route(url=>url.pathname==='/api/models',route=>route.fulfill({json:{models:[]}}));
+ await page.route('**/api/plugins',route=>route.fulfill({json:{plugins:[]}}));
+ await page.setViewportSize({width:400,height:500});
+ await page.goto('/');
+ const setup=page.getByRole('button',{name:'Connect a model to get started',exact:true});
+ await expect(setup).toBeInViewport({ratio:1});
+ await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeInViewport({ratio:1});
+ await setup.focus();await expect(setup).toBeFocused();
+});
