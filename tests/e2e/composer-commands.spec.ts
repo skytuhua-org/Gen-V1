@@ -94,6 +94,22 @@ test('slash skill results and the pagination footer stay mounted during a narrow
  expect(f.reads.some(url=>url.includes('cursor='))).toBe(false);
 });
 
+test('empty command results explain that Enter dismisses before normal send resumes',async({page})=>{
+ const f=await fixture(page);
+ await f.input.fill('/unmatched');
+ const menu=page.getByRole('listbox',{name:'Commands and skills'});
+ await expect(menu).toBeVisible();
+ await expect(page.getByText('No commands or skills found',{exact:true})).toBeVisible();
+ await expect(page.getByText('Enter or Esc Dismiss',{exact:true})).toBeVisible();
+ await f.input.press('Enter');
+ await expect(menu).toHaveCount(0);
+ await expect(f.input).toHaveValue('/unmatched');
+ expect(f.commands.filter(command=>command.type==='message.send')).toHaveLength(0);
+ await f.input.press('Enter');
+ await expect.poll(()=>f.commands.filter(command=>command.type==='message.send').map(command=>command.payload.content)).toEqual(['/unmatched']);
+ await expect(f.input).toHaveValue('');
+});
+
 test('keyboard model selection opens the existing picker, while hover and Escape never commit commands', async ({page}) => {
   const f = await fixture(page); await f.input.fill('/model'); await expect(page.getByRole('listbox', {name: 'Commands and skills'})).toBeVisible();
   await f.input.press('Enter'); await expect(page.getByRole('searchbox', {name: 'Search models'})).toBeVisible();
