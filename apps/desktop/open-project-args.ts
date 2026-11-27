@@ -29,10 +29,11 @@ function validateFolder(value:string):OpenProjectArgsResult {
 }
 
 export function parseOpenProjectArgs(argv:readonly string[]):OpenProjectArgsResult {
+ if(argv.some(arg=>arg.startsWith(SWITCH+'=')))return {kind:'invalid',reason:'The --open-project value must be a separate argument.'};
  const positions:number[]=[];
  argv.forEach((arg,index)=>{if(arg===SWITCH)positions.push(index);});
  if(positions.length>1)return {kind:'invalid',reason:'The launch contained more than one --open-project request.'};
- if(positions.length===0)return argv.some(arg=>arg.startsWith(SWITCH+'='))?{kind:'invalid',reason:'The --open-project value must be a separate argument.'}:{kind:'none'};
+ if(positions.length===0)return {kind:'none'};
  const value=argv[positions[0]+1];
  if(value===undefined||value==='')return {kind:'invalid',reason:'The --open-project switch needs a folder path.'};
  if(value.startsWith('-'))return {kind:'invalid',reason:'The --open-project value must be a folder path, not a switch.'};
