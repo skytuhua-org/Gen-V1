@@ -6,12 +6,12 @@
 import {memo,type ReactNode,type Ref} from 'react';
 
 interface InboxItemRowProps {
- title:string;description:ReactNode;lead:{icon:ReactNode;label:ReactNode};meta:ReactNode;
+ title:string;description:ReactNode;lead:{icon:ReactNode;label:ReactNode};meta:ReactNode;action?:ReactNode;
  unread:boolean;current:boolean;muted:boolean;onPress:()=>void;label:string;pressRef?:Ref<HTMLButtonElement>;
 }
 
 /** ListRow's ABOVE lead + TITLE metadata branch, as InboxItemRow composes it. */
-export const InboxItemRow=memo(function InboxItemRow({title,description,lead,meta,unread,current,muted,onPress,label,pressRef}:InboxItemRowProps){
+export const InboxItemRow=memo(function InboxItemRow({title,description,lead,meta,action,unread,current,muted,onPress,label,pressRef}:InboxItemRowProps){
  const heading=(
   <span className="ui-list-row-title">
    {unread?<span className="sr-only">Unread. </span>:null}
@@ -19,7 +19,8 @@ export const InboxItemRow=memo(function InboxItemRow({title,description,lead,met
   </span>
  );
  const end=(
-  <span className="ui-list-row-end">
+  <span className={`ui-list-row-end${action?' inbox-row-controls':''}`}>
+   {action}
    <span className="ui-list-row-meta">{meta}</span>
   </span>
  );
@@ -35,7 +36,7 @@ export const InboxItemRow=memo(function InboxItemRow({title,description,lead,met
     <span className="ui-unread-dot" data-unread={unread?'true':undefined}/>
    </span>
    <span className="ui-list-row-text">
-    <span className="ui-list-row-head">{leadMark}{end}</span>
+    <span className="ui-list-row-head">{leadMark}{!action&&end}</span>
     {heading}
     <span className="ui-list-row-description"><span className="inbox-row-line">{description}</span></span>
    </span>
@@ -44,6 +45,7 @@ export const InboxItemRow=memo(function InboxItemRow({title,description,lead,met
  return(
   <li className="ui-list-row" data-meta="title" data-lead="above" data-current={current?'true':undefined} data-current-look="tint" data-unread={unread?'true':undefined} data-muted={muted?'true':undefined} data-ink="sidebar">
    <button ref={pressRef} type="button" className="ui-list-row-main" aria-current={current?'true':undefined} aria-label={label} onClick={onPress}>{face}</button>
+   {action&&end}
   </li>
  );
 });
