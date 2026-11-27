@@ -128,18 +128,24 @@ it('redacts a synthetic token echoed through the real managed-Git/nativeGit boun
  const github=new GitHubTools(tools,{} as TerminalHost,process.execPath),token='ghp_fixture/only+synthetic=20261117';
  vi.spyOn(github.auth,'token').mockResolvedValue(token);
  const encoded=encodeURIComponent(token),base64=Buffer.from(token,'utf8').toString('base64');
- let failure:unknown;
- try{
-  await github.create(projectId,thread.id,{title:'Review',head:status.head,revision:status.revision,push:true},()=>vi.mocked(runProcess).mockImplementationOnce(async(_command,args,_cwd,_signal,_progress,_timeout,environment)=>{
-   expect(environment?.GH_TOKEN).toBe(token);expect(args).toContain('push');expect(args.join(' ')).toContain('credential.https://github.com.helper=');
-   return {status:'failed',exitCode:1,signal:null,cancelled:false,timedOut:false,stdout:'stdout '+token,stderr:'stderr '+encoded+'\n'+base64+'\n'+token.slice(0,10)+String.fromCharCode(27)+'[31m'+token.slice(10),truncated:false,pid:1234};
-  }));
- }catch(error){failure=error;}
- if(!(failure instanceof Error))throw Error('Expected the synthetic credential-bearing push to fail');
- const fields=Object.fromEntries(Object.getOwnPropertyNames(failure).map(key=>[key,(failure as unknown as Record<string,unknown>)[key]])),outward=JSON.stringify(fields);
- expect(outward).not.toContain(token);expect(outward).not.toContain(encoded);expect(outward).not.toContain(base64);
- expect(outward).toContain('[REDACTED]');expect(inspect(failure)).not.toContain(token);expect(inspect(failure)).toContain('[REDACTED]');
- expect(failure).toMatchObject({code:'GIT_ERROR'});
+ for(const child of [
+  {name:'failed',code:'GIT_ERROR',result:{status:'failed' as const,exitCode:1,signal:null,cancelled:false,timedOut:false}},
+  {name:'cancelled',code:'CANCELLED',result:{status:'cancelled' as const,exitCode:null,signal:'SIGTERM',cancelled:true,timedOut:false}},
+  {name:'timed out',code:'GIT_ERROR',result:{status:'failed' as const,exitCode:null,signal:'SIGKILL',cancelled:false,timedOut:true}},
+ ]){
+  let failure:unknown;
+  try{
+   await github.create(projectId,thread.id,{title:'Review',head:status.head,revision:status.revision,push:true},()=>vi.mocked(runProcess).mockImplementationOnce(async(_command,args,_cwd,_signal,_progress,_timeout,environment)=>{
+    expect(environment?.GH_TOKEN).toBe(token);expect(args).toContain('push');expect(args.join(' ')).toContain('credential.https://github.com.helper=');
+    return {...child.result,stdout:'stdout '+token,stderr:'stderr '+encoded+'\n'+base64+'\n'+token.slice(0,10)+String.fromCharCode(27)+'[31m'+token.slice(10),truncated:false,pid:1234};
+   }));
+  }catch(error){failure=error;}
+  if(!(failure instanceof Error))throw Error('Expected the synthetic credential-bearing push to fail');
+  const fields=Object.fromEntries(Object.getOwnPropertyNames(failure).map(key=>[key,(failure as unknown as Record<string,unknown>)[key]])),outward=JSON.stringify(fields);
+  expect(outward).not.toContain(token);expect(outward).not.toContain(encoded);expect(outward).not.toContain(base64);
+  expect(outward).toContain('[REDACTED]');expect(inspect(failure)).not.toContain(token);expect(inspect(failure)).toContain('[REDACTED]');
+  expect(failure).toMatchObject({code:child.code});
+ }
 },60000);
 
 it.each([
