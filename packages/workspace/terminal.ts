@@ -8,10 +8,6 @@ import {environmentSettingsFor} from '../core/environment-settings.ts';
 
 interface Session{id:string;projectId:string;threadId?:string;path:string;pty:IPty;output:string;offset:number;exited:boolean;exitCode:number|null;done:Promise<void>;startupFailed?:boolean}
 const identifier=z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/),dimension=z.number().int().min(2).max(500);
-function completeCharacterStart(output:string,index:number){
- const before=output.charCodeAt(index-1),after=output.charCodeAt(index);
- return before>=0xd800&&before<=0xdbff&&after>=0xdc00&&after<=0xdfff?index+1:index;
-}
 /** Host owns processes; renderer visibility and native reparenting do not own their lifetime. */
 export class TerminalHost{
  private readonly sessions=new Map<string,Session>();
@@ -62,8 +58,10 @@ export class TerminalHost{
    pty.onData(data=>{
     session.output+=data;
     if(session.output.length>512*1024){
+     let remove=session.output.length-512*1024;
+     const before=session.output.charCodeAt(remove-1),after=session.output.charCodeAt(remove);
      // Preserve the stream's UTF-16 cursor units without returning half a character.
-     const remove=completeCharacterStart(session.output,session.output.length-512*1024);
+     if(before>=0xd800&&before<=0xdbff&&after>=0xdc00&&after<=0xdfff)remove++;
      session.output=session.output.slice(remove);session.offset+=remove;
     }
    });
@@ -110,9 +108,14 @@ export class TerminalHost{
   const dead=[...this.sessions.entries()].filter(([,session])=>session.exited&&!session.startupFailed);
   for(const [id]of dead.slice(0,Math.max(0,dead.length-48)))this.sessions.delete(id);
  }
- private result(session:Session,cursor:number){const end=session.offset+session.output.length,index=completeCharacterStart(session.output,Math.min(end,Math.max(session.offset,cursor))-session.offset);return{id:session.id,projectId:session.projectId,threadId:session.threadId,output:session.output.slice(index),start:session.offset+index,cursor:end,exited:session.exited,exitCode:session.exitCode};}
+ private result(session:Session,cursor:number){const end=session.offset+session.output.length,start=Math.min(end,Math.max(session.offset,cursor));return{id:session.id,projectId:session.projectId,threadId:session.threadId,output:session.output.slice(start-session.offset),start,cursor:end,exited:session.exited,exitCode:session.exitCode};}
  private async owned(id:string,projectId:string,threadId?:string,stopping=false){const session=this.sessions.get(identifier.parse(id));if(!session){const old=this.projects.store.get<{projectId:string;threadId?:string}>('terminalSession',id);if(old&&old.projectId===projectId&&old.threadId===threadId)throw new HarnessError('TERMINAL_ENDED','The host restarted or this terminal ended. Open a new terminal.');throw new HarnessError('NOT_FOUND','Terminal is unavailable.');}if(session.projectId!==projectId||session.threadId!==threadId)throw new HarnessError('CAPABILITY_DENIED','Terminal belongs to another working copy.');if(!stopping){const binding=await this.projects.binding(projectId,threadId);if(session.path!==binding.path)throw new HarnessError('CAPABILITY_DENIED','Terminal belongs to another working copy.');this.assertStartupAvailable(session);}return session;}
- async read(id:string,projectId:string,threadId?:string,cursor=0){return this.result(await this.owned(id,projectId,threadId),z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(cursor));}
+ async read(id:string,projectId:string,threadId?:string,cursor=0){
+  const session=await this.owned(id,projectId,threadId),requested=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(cursor),index=requested-session.offset;
+  // A caller-provided UTF-16 cursor may land between the halves of a retained character.
+  const before=session.output.charCodeAt(index-1),after=session.output.charCodeAt(index);
+  return this.result(session,before>=0xd800&&before<=0xdbff&&after>=0xdc00&&after<=0xdfff?requested+1:requested);
+ }
  private async stop(session:Session){
   if(session.exited)return;
   session.pty.kill();
