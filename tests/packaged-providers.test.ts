@@ -51,6 +51,26 @@ describe('packaged provider custody',()=>{
    expect(await outcome).toEqual({error:expect.objectContaining({message:'Probe stdout is not well-formed UTF-8.'})});
   }finally{vi.mocked(spawn).mockClear();await rm(directory,{recursive:true,force:true});}
  });
+ it.each(['stdout','stderr'] as const)('reports an outer probe %s error through the verification promise',async stream=>{
+  const directory=await mkdtemp(join(tmpdir(),'harness-probe-pipe-'));
+  try{
+   await cursorFixture(directory);
+   const failure=new Error('Synthetic read failure');
+   const observed=new Promise<unknown>(resolve=>{
+    vi.mocked(spawn).mockImplementationOnce(()=>{
+     const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stderr:new PassThrough(),exitCode:1});
+     queueMicrotask(()=>{
+      try{child[stream].emit('error',failure);resolve(null);}catch(error){resolve(error);}
+      child.emit('close',1);
+     });
+     return child as unknown as ReturnType<typeof spawn>;
+    });
+   });
+   const outcome=probeCursorBootstrap(directory,process.execPath,directory).catch(error=>error);
+   expect(await observed).toBeNull();
+   expect(await outcome).toMatchObject({message:'Packaged runtime verification could not read '+stream+'.',cause:failure});
+  }finally{vi.mocked(spawn).mockClear();await rm(directory,{recursive:true,force:true});}
+ });
  it('validates the bundled probe version captures with a fatal UTF-8 decode',async()=>{
   const source=(await import('node:fs/promises')).readFile(new URL('../scripts/verify-packaged-providers.ts',import.meta.url),'utf8');
   expect(((await source).match(/fatal:\s*true/g)??[]).length).toBeGreaterThanOrEqual(3);
