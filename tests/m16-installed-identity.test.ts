@@ -11,9 +11,9 @@ const exports=Object.fromEntries(M16_CONTROL_ADDON_EXPORTS.map(name=>[name,'func
 const moduleReceipt=parseM16ModuleLoadOutput(JSON.stringify({status:'LOADED',versions:{electron,node:'24.1.0',modules:'137',napi:'10',platform:'win32',arch:'x64'},exports,missing:[]}),electron);
 
 function receipt(){
- const first={kind:'m16-installed-identity',status:'PASS',sourceSha:source,fileIdentity:{executable:{name:'Gen V1.exe',bytes:1,sha256:sha},addon:{packageRelativePath:'resources/host/packages/core/windows-control-bridge.node',bytes:2,sha256:sha}},directModuleLoad:moduleReceipt,applicationProductionRegistration:{status:'NOT_OBSERVED'},runtimeRegistration:{status:'UNPROVED'},browserScenarioReview:M16_BROWSER_SCENARIO_REVIEW};
- const second={...first,directModuleLoad:{status:'NOT_RUN',dependency:'same installed runtime'}};
- return{passed:true,installedIntegration:{status:'bound'},launches:[{passed:true,verifiedOwner:true},{passed:true,verifiedOwner:true}],integrations:[{iteration:1,kind:'installed-verifier-integration',receipt:first},{iteration:2,kind:'installed-verifier-integration',receipt:second}],cleanup:{status:'uninstalled-owned-installation'}} as Record<string,unknown>;
+ const first={kind:'m16-installed-identity',status:'PASS',sourceSha:source,buildReference:'https://example.test/build',packageVersion:'1.2.3',iteration:1,fileIdentity:{executable:{name:'Gen V1.exe',bytes:1,sha256:sha},addon:{packageRelativePath:'resources/host/packages/core/windows-control-bridge.node',bytes:2,sha256:sha}},directModuleLoad:moduleReceipt,applicationProductionRegistration:{status:'NOT_OBSERVED'},runtimeRegistration:{status:'UNPROVED'},browserScenarioReview:M16_BROWSER_SCENARIO_REVIEW};
+ const second={...structuredClone(first),iteration:2,directModuleLoad:{status:'NOT_RUN',dependency:'same installed runtime'}};
+ return{passed:true,installedIntegration:{status:'bound',buildReference:'https://example.test/build'},launches:[{passed:true,verifiedOwner:true},{passed:true,verifiedOwner:true}],integrations:[{iteration:1,kind:'installed-verifier-integration',receipt:first},{iteration:2,kind:'installed-verifier-integration',receipt:second}],cleanup:{status:'uninstalled-owned-installation'}} as Record<string,unknown>;
 }
 
 describe('M16 hosted installed identity verification',()=>{
@@ -82,6 +82,18 @@ describe('M16 hosted installed identity verification',()=>{
   expect(()=>assertM16IdentityVerificationReceipt(proved,electron)).toThrow(/runtime registration/);
   const dirty=receipt();dirty.cleanup={status:'preserved-for-inspection'};
   expect(()=>assertM16IdentityVerificationReceipt(dirty,electron)).toThrow(/clean up/);
+ });
+
+ it.each([
+  ['a failed second callback',{status:'FAIL'}],
+  ['a different second source',{sourceSha:'e'.repeat(40)}],
+  ['a different second build',{buildReference:'https://example.test/other-build'}],
+  ['an incorrect inner iteration',{iteration:1}],
+  ['a different addon',{fileIdentity:{executable:{name:'Gen V1.exe',bytes:1,sha256:sha},addon:{packageRelativePath:'resources/host/packages/core/windows-control-bridge.node',bytes:2,sha256:'e'.repeat(64)}}}],
+ ])('refuses %s even if the second smoke is NOT_RUN',(_label,patch)=>{
+  const aggregate=receipt(),second=(aggregate.integrations as {receipt:Record<string,unknown>}[])[1]!.receipt;
+  Object.assign(second,patch);
+  expect(()=>assertM16IdentityVerificationReceipt(aggregate,electron)).toThrow(/callback/);
  });
 
  it('records the browser scenario review without wiring flag, registration, capture or Stop',()=>{
