@@ -40,7 +40,7 @@ const oidPattern = /^[0-9a-f]{40}$/;
 export class GitHistorySnapshots {
   private readonly entries = new Map<string, HistoryEntry>();
   save(entry: Omit<HistoryEntry, "touched">) {
-    this.entries.set(entry.id, { ...entry, touched: Date.now() });
+    this.touch({ ...entry, touched: 0 });
     const owned = [...this.entries.values()].filter((item) => item.owner === entry.owner);
     while (owned.length > GIT_HISTORY_LIMITS.snapshotsPerOwner) {
       const oldest = owned.shift();
@@ -52,19 +52,32 @@ export class GitHistorySnapshots {
     }
     return this.entries.get(entry.id)!;
   }
+  private touch(entry: HistoryEntry) {
+    entry.touched = Date.now();
+    // Map iteration order is least to most recently used.
+    this.entries.delete(entry.id);
+    this.entries.set(entry.id, entry);
+  }
+  private active(entry: HistoryEntry, owner: string): boolean {
+    if (entry.owner !== owner) return false;
+    if (Date.now() - entry.touched <= GIT_HISTORY_LIMITS.idleMs) return true;
+    this.entries.delete(entry.id);
+    return false;
+  }
   get(owner: string, id: string): HistoryEntry {
     const entry = this.entries.get(id);
-    if (!entry || entry.owner !== owner || Date.now() - entry.touched > GIT_HISTORY_LIMITS.idleMs) {
-      if (entry) this.entries.delete(id);
+    if (!entry || !this.active(entry, owner))
       throw new HarnessError("HISTORY_EXPIRED", "Refresh history before continuing.");
-    }
-    entry.touched = Date.now();
+    this.touch(entry);
     return entry;
   }
   comparison(owner: string, comparisonId: string) {
     for (const entry of this.entries.values()) {
+      if (!this.active(entry, owner)) continue;
       const comparison = entry.comparisons.get(comparisonId);
-      if (comparison && entry.owner === owner) return { entry, comparison };
+      if (!comparison) continue;
+      this.touch(entry);
+      return { entry, comparison };
     }
     throw new HarnessError("HISTORY_EXPIRED", "Refresh history before reading this file.");
   }

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../packages/storage/store.ts";
 import { ProjectTools } from "../packages/workspace/tools.ts";
-import type { GitHistoryPage } from "../packages/contracts/code-review.ts";
+import { GIT_HISTORY_LIMITS, type GitHistoryPage } from "../packages/contracts/code-review.ts";
 import {
   GitHistorySnapshots,
   readHistoryCommit,
@@ -69,6 +69,42 @@ it("reads pages, details and patches directly against a plain repository", async
   const rootPatch = await readHistoryFile(context, snapshots, rootDetail.comparisonId, "one.txt");
   expect(rootPatch.state).toBe("text");
   expect(rootPatch.text).toContain("+base");
+});
+
+it("renews a history snapshot on an active patch read and expires it after idling", async () => {
+  const { commit, context, snapshots } = await plainRepo();
+  await commit("history.txt", "one\n", "First");
+  const clock = vi.spyOn(Date, "now").mockReturnValue(0);
+  try {
+    const page = await readHistoryPage(context, snapshots);
+    const detail = await readHistoryCommit(context, snapshots, page.snapshotId!, page.commits[0].oid);
+    clock.mockReturnValue(GIT_HISTORY_LIMITS.idleMs - 1);
+    expect((await readHistoryFile(context, snapshots, detail.comparisonId, "history.txt")).state).toBe("text");
+    clock.mockReturnValue(GIT_HISTORY_LIMITS.idleMs + 1);
+    const afterActivity = await readHistoryFile(context, snapshots, detail.comparisonId, "history.txt");
+    expect(afterActivity.state).toBe("text");
+    clock.mockReturnValue(2 * GIT_HISTORY_LIMITS.idleMs + 2);
+    await expect(readHistoryFile(context, snapshots, detail.comparisonId, "history.txt")).rejects.toMatchObject({
+      code: "HISTORY_EXPIRED",
+    });
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+it.each(["per-owner", "global"])("keeps recently used snapshots when the %s cap is full", (cap) => {
+  const snapshots = new GitHistorySnapshots();
+  const total = cap === "per-owner" ? GIT_HISTORY_LIMITS.snapshotsPerOwner : GIT_HISTORY_LIMITS.snapshotsGlobal;
+  const owner = (index: number) => cap === "per-owner" ? "owner" : "owner-" + index;
+  const save = (index: number) => snapshots.save({
+    owner: owner(index), id: "snapshot-" + index, headOid: "a".repeat(40), branch: "main",
+    upstreamRef: null, upstreamOid: null, unpushed: null, served: new Set(), comparisons: new Map(),
+  });
+  for (let i = 0; i < total; i++) save(i);
+  snapshots.get(owner(0), "snapshot-0");
+  save(total);
+  expect(snapshots.get(owner(0), "snapshot-0").id).toBe("snapshot-0");
+  expect(() => snapshots.get(owner(1), "snapshot-1")).toThrow("Refresh history");
 });
 
 it("scopes a deleted file's patch away from same-named directory contents", async () => {
