@@ -1,5 +1,7 @@
 import {isTaskHistoryScrollKey} from '../apps/web/src/TaskHistory';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { build } from 'esbuild';
+import { chromium, type Browser, type Page } from '@playwright/test';
 import { CAPABILITIES, SURFACE_LIMITS, validateSurface } from '../packages/ui-catalog';
 import { disclosureData, mapData, relationshipData, tableChangesData } from '../packages/ui-catalog/workflow';
 import { HarnessError } from '../packages/contracts';
@@ -74,4 +76,80 @@ it('does not interrupt bounded-history follow for arrow and caret keys inside co
  expect(isTaskHistoryScrollKey({...event,defaultPrevented:true})).toBe(false);
  expect(isTaskHistoryScrollKey({...event,nativeEvent:{isComposing:true}})).toBe(false);
  expect(isTaskHistoryScrollKey({...event,key:'Enter'})).toBe(false);
+});
+
+
+const choiceFixture = `
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {StateProvider, useStateStore} from '@json-render/react';
+import {ChoiceValidationProvider, useChoiceValidation} from './apps/web/src/task-context';
+import {ChoiceList} from './apps/web/src/task-interface';
+
+function Probe(){
+  const validation = useChoiceValidation();
+  const store = useStateStore();
+  window.choiceValidation = validation;
+  window.stateStore = store;
+  window.evaluateChoice = mappedKeys => {
+    const result = validation.validate({mappedKeys});
+    return {valid: result.valid, captures: result.captures};
+  };
+  return null;
+}
+const customChoice = {stateKey: 'delivery', label: 'Choose delivery', required: true, options: [{value: 'download', label: 'Prepare a local export'}], custom: {label: 'Other delivery method'}};
+const hiddenChoice = {stateKey: 'requiredChoice', label: 'Required witness', required: true, options: [{value: 'yes', label: 'Include a witness'}]};
+createRoot(document.getElementById('root')).render(<StateProvider initialState={{values: {delivery: 'Typed freeform value'}}}><ChoiceValidationProvider><Probe/><ChoiceList element={{props: customChoice}}/><div id="boundary"><ChoiceList element={{props: hiddenChoice}}/></div></ChoiceValidationProvider></StateProvider>);
+`;
+
+type ChoiceEvaluation = { valid: boolean; captures: Array<{ valueLabel: string; userEditVersion: number }> };
+
+describe('required choice registration capture', () => {
+  let browser: Browser, script: string;
+  beforeAll(async () => {
+    script = (await build({stdin: {contents: choiceFixture, resolveDir: process.cwd(), loader: 'tsx'}, bundle: true, write: false, format: 'iife', platform: 'browser', jsx: 'automatic', loader: {'.css': 'empty'}, define: {'process.env.NODE_ENV': '"production"'}})).outputFiles[0]!.text;
+    browser = await chromium.launch({headless: true, ...(process.env.GEN_TEST_CHROMIUM_EXECUTABLE ? {executablePath: process.env.GEN_TEST_CHROMIUM_EXECUTABLE} : process.platform === 'win32' ? {channel: 'msedge'} : {})});
+  });
+  afterAll(async () => { await browser?.close(); });
+  async function open(): Promise<Page> {
+    const page = await browser.newPage();
+    await page.setContent('<div id="root"></div>');
+    await page.addScriptTag({content: script});
+    await expect.poll(() => page.evaluate('Boolean(window.choiceValidation && window.stateStore)')).toBe(true);
+    return page;
+  }
+
+  it('captures renderer-approved custom labels and only user edit versions', async () => {
+    const page = await open();
+    const initial = (await page.evaluate(`window.evaluateChoice(['delivery'])`)) as ChoiceEvaluation;
+    expect(initial.valid).toBe(true);
+    expect(initial.captures).toHaveLength(1);
+    expect(initial.captures[0].valueLabel).toBe('Other delivery method');
+    expect(initial.captures[0].valueLabel).not.toBe('Typed freeform value');
+    expect(initial.captures[0].userEditVersion).toBe(0);
+    await page.locator('.task-choice-custom-input').fill('Typed replacement');
+    const edited = (await page.evaluate(`window.evaluateChoice(['delivery'])`)) as ChoiceEvaluation;
+    expect(edited.captures[0].userEditVersion).toBe(1);
+    await page.evaluate(`window.stateStore.set('/values/delivery', 'Programmatic replacement')`);
+    const programmatic = (await page.evaluate(`window.evaluateChoice(['delivery'])`)) as ChoiceEvaluation;
+    expect(programmatic.captures[0].userEditVersion).toBe(1);
+    await page.close();
+  });
+
+  it('excludes inert and aria-hidden required choices until their ancestor is usable', async () => {
+    const page = await open();
+    await page.evaluate(`document.getElementById('boundary').inert = true`);
+    await expect.poll(() => page.evaluate(`document.querySelector('#boundary fieldset').disabled`)).toBe(true);
+    expect(await page.evaluate(`window.evaluateChoice(['requiredChoice'])`)).toEqual({valid: true, captures: []});
+    await page.evaluate(`document.getElementById('boundary').inert = false; document.getElementById('boundary').setAttribute('aria-hidden', 'true')`);
+    await expect.poll(() => page.evaluate(`document.querySelector('#boundary fieldset').disabled`)).toBe(true);
+    expect(await page.evaluate(`window.evaluateChoice(['requiredChoice'])`)).toEqual({valid: true, captures: []});
+    await page.evaluate(`document.getElementById('boundary').removeAttribute('aria-hidden')`);
+    await expect.poll(() => page.evaluate(`document.querySelector('#boundary fieldset').disabled`)).toBe(false);
+    const active = (await page.evaluate(`window.evaluateChoice(['requiredChoice'])`)) as ChoiceEvaluation;
+    expect(active.valid).toBe(false);
+    expect(active.captures).toEqual([]);
+    await expect.poll(() => page.locator('#boundary .task-choice-error').textContent()).toBe('Pick an option first.');
+    await page.close();
+  });
 });

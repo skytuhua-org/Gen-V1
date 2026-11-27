@@ -30,15 +30,15 @@ export function ChoiceList({ element: { props } }: ComponentRenderProps) {
   const customInput = useRef<HTMLInputElement>(null);
   const editVersion = useRef(0);
   const customSelected = Boolean(custom && (choosingCustom || typeof value === 'string' && !options.some(option => option.value === value)));
-  const current = useRef({ value, options, customSelected, required, disabled, label });
+  const current = useRef({ value, options, customSelected, customLabel: custom?.label, required, disabled, label });
   const secureScope = useRef(scope);
-  current.current = { value, options, customSelected, required, disabled, label };
+  current.current = { value, options, customSelected, customLabel: custom?.label, required, disabled, label };
   secureScope.current = scope;
   const computeEligible = () => {
     if (secureScope.current?.active === false || current.current.disabled) return false;
     let node: HTMLElement | null = fieldset.current;
     if (!node) return false;
-    for (; node && node !== document.body; node = node.parentElement) {
+    for (; node; node = node.parentElement) {
       if (node.hidden || node.inert || node.getAttribute('aria-hidden') === 'true') return false;
       const style = getComputedStyle(node);
       if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
@@ -66,7 +66,7 @@ export function ChoiceList({ element: { props } }: ComponentRenderProps) {
       },
       capture: () => {
         const selected = current.current.options.find(option => option.value === current.current.value);
-        return { instanceId, stateKey, label: current.current.label, valueLabel: current.current.customSelected ? String(current.current.value ?? '') : selected?.label ?? String(current.current.value ?? ''), userEditVersion: editVersion.current };
+        return { instanceId, stateKey, label: current.current.label, valueLabel: current.current.customSelected ? String(current.current.customLabel ?? '') : selected?.label ?? String(current.current.value ?? ''), userEditVersion: editVersion.current };
       },
       setInvalid,
       focusInvalid: () => {
