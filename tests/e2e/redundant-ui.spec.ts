@@ -209,3 +209,39 @@ for(const motion of ['reduced','off'])test(`light/zoom keyboard destinations res
  expect(await opener.evaluate(el=>getComputedStyle(el).outlineStyle)).not.toBe('none');await page.keyboard.press('Enter');await expect(page.getByRole('dialog',{name:'Usage',exact:true})).toBeVisible();
  await page.keyboard.press('Escape');await expect(opener).toBeFocused();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
+
+for(const width of [1440,620])test(`keyboard moves a conversation between areas at ${width}px`,async({page})=>{
+ await page.setViewportSize({width:1440,height:1000});
+ await ownerApp(page,'split');
+ const panes=page.locator('.split-root-workarea [data-split-pane]');
+ const sourceId=await panes.first().getAttribute('data-split-pane');
+ const source=panes.and(page.locator(`[data-split-pane="${sourceId}"]`));
+ const actions=source.getByRole('button',{name:'Area actions',exact:true});
+ const move=page.getByRole('menuitem',{name:'Move to Empty area',exact:true});
+ await actions.focus();await page.keyboard.press('Enter');
+ await expect(move).toHaveCount(0);
+ await page.keyboard.press('Home');
+ await expect(page.getByRole('menuitem',{name:'Split left / right',exact:true})).toBeFocused();
+ await page.keyboard.press('Enter');
+ await expect(panes).toHaveCount(2);
+ const targetId=await panes.last().getAttribute('data-split-pane');
+ const target=panes.and(page.locator(`[data-split-pane="${targetId}"]`));
+ await expect(target).toHaveAttribute('aria-label','Empty area');
+ await page.setViewportSize({width,height:1000});
+ if(width===620){
+  const area=page.getByRole('combobox',{name:'Active workspace area',exact:true});
+  await area.focus();await page.keyboard.press('Enter');
+  await page.keyboard.press('Home');
+  await expect(page.getByRole('option',{name:'Audit the workspace',exact:true})).toBeFocused();
+  await page.keyboard.press('Enter');
+ }
+ await actions.focus();await page.keyboard.press('Enter');
+ await expect(move).toBeEnabled();
+ await page.keyboard.press('Home');
+ for(let step=0;step<4 && !await move.evaluate(node=>node===document.activeElement);step++) await page.keyboard.press('ArrowDown');
+ await expect(move).toBeFocused();
+ await page.keyboard.press('Enter');
+ if(width===620)await expect(source).toHaveCount(0);else await expect(source).toHaveAttribute('aria-label','Empty area');
+ await expect(target.getByRole('tab',{name:'Audit the workspace',exact:true})).toHaveAttribute('aria-selected','true');
+ await expect(target.getByRole('button',{name:'Area actions',exact:true})).toBeVisible();
+});
