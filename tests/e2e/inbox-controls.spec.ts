@@ -137,7 +137,7 @@ test('reading and failed canonical navigation never approve or falsely mark an u
   const {requests, errors} = await fixture(page);
   await rows(page).filter({hasText: 'Question'}).first().click();
   await expect(page.getByRole('button', {name: 'Question, Needs your input', exact: true})).toBeVisible();
-  await page.getByRole('button', {name: 'Mark unread'}).click();
+  await page.getByRole('button', {name: 'Mark as unread'}).click();
   await page.evaluate(() => {window.inboxControls.openMode = 'reject';});
   await page.getByRole('button', {name: 'Open conversation'}).click();
   await expect(page.getByRole('status').filter({hasText:'Navigation failed.'})).toBeVisible();
@@ -174,38 +174,61 @@ test('narrow themed controls and popup fit without overflow and retain list/read
 });
 
 
-test('Mark unread cancels the selected Inbox item’s delayed automatic read', async ({page}) => {
+test('explicit Mark read cancels the delayed write and reverses with keyboard focus intact', async ({page}) => {
+  await page.setViewportSize({width:320,height:620});
   await fixture(page);
   await page.clock.install();
   await page.clock.pauseAt(new Date(Date.now() + 100));
-  await rows(page).filter({hasText: 'Question'}).first().click();
+  await rows(page).filter({hasText:'Question'}).first().click();
+  await page.clock.runFor(25);
   expect(await calls(page)).toEqual([]);
-  await page.getByRole('button', {name: 'Mark unread', exact: true}).click();
+  const read=page.getByRole('button',{name:'Mark as read',exact:true});
+  await expect(read).toHaveText('Mark read');
+  await read.focus();
+  await page.keyboard.press('Enter');
   await page.clock.runFor(600);
-  expect(await calls(page)).toEqual([{type: 'unread', id: 'question'}]);
-  await expect(page.getByRole('button', {name: 'Question, Needs your input, unread', exact: true})).toBeVisible();
+  expect(await calls(page)).toEqual([{type:'read',id:'question'}]);
+  const unread=page.getByRole('button',{name:'Mark as unread',exact:true});
+  await expect(unread).toHaveText('Mark unread');
+  await expect(unread).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(read).toBeFocused();
+  await expect(page.locator('.inbox-item-toolbar')).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  expect(await calls(page)).toEqual([{type:'read',id:'question'},{type:'unread',id:'question'}]);
 });
 
-test('Mark unread wins over an automatic read already in flight for that Inbox item', async ({page}) => {
+test('held automatic read disables the control until the reverse write is valid', async ({page}) => {
   await fixture(page);
   await page.evaluate(() => {
     window.inboxControls.holdRead = new Promise(resolve => window.addEventListener('fixture-release-read', () => resolve(), {once:true}));
+    window.inboxControls.holdUnread = new Promise(resolve => window.addEventListener('fixture-release-unread', () => resolve(), {once:true}));
   });
-  await rows(page).filter({hasText: 'Question'}).first().click();
-  await expect.poll(() => calls(page)).toEqual([{type: 'read', id: 'question'}]);
-  await page.getByRole('button', {name: 'Mark unread', exact: true}).click();
-  const beforeRelease=await calls(page);
+  await rows(page).filter({hasText:'Question'}).first().click();
+  await expect.poll(() => calls(page)).toEqual([{type:'read',id:'question'}]);
+  const read=page.getByRole('button',{name:'Mark as read',exact:true});
+  await expect(read).toBeDisabled();
+  await expect(read).toHaveAttribute('title','Updating read state');
+  await expect(read).toHaveAttribute('aria-disabled','true');
+  await read.evaluate(button=>(button as HTMLButtonElement).click());
+  expect(await calls(page)).toHaveLength(1);
   await page.evaluate(() => window.dispatchEvent(new Event('fixture-release-read')));
-  expect(beforeRelease).toEqual([{type: 'read', id: 'question'}]);
-  await expect.poll(() => calls(page)).toEqual([{type: 'read', id: 'question'}, {type: 'unread', id: 'question'}]);
-  await expect(page.getByRole('button', {name: 'Question, Needs your input, unread', exact: true})).toBeVisible();
+  const unread=page.getByRole('button',{name:'Mark as unread',exact:true});
+  await expect(unread).toBeEnabled();
+  await unread.click();
+  await expect(unread).toBeDisabled();
+  await unread.evaluate(button=>(button as HTMLButtonElement).click());
+  expect(await calls(page)).toEqual([{type:'read',id:'question'},{type:'unread',id:'question'}]);
+  await page.evaluate(() => window.dispatchEvent(new Event('fixture-release-unread')));
+  await expect(read).toBeEnabled();
+  await expect(read).toBeFocused();
+  await expect(page.getByRole('button',{name:'Question, Needs your input, unread',exact:true})).toBeVisible();
 });
-
 
 for(const action of ['refresh','unread','open'] as const){
   test(`successful ${action} retry clears only its current failure`,async({page})=>{
     await fixture(page);await rows(page).filter({hasText:'Review'}).click();
-    const button=page.getByRole('button',{name:action==='refresh'?'Refresh inbox':action==='unread'?'Mark unread':'Open conversation',exact:true});
+    const button=page.getByRole('button',{name:action==='refresh'?'Refresh inbox':action==='unread'?'Mark as unread':'Open conversation',exact:true});
     await page.evaluate(action=>{const state=window.inboxControls;if(action==='refresh')state.refreshMode='reject';else if(action==='unread')state.unreadMode='reject';else state.openMode='reject';},action);
     await button.click();await expect(page.locator('.agent-inbox-error')).toContainText(action==='refresh'?'Refresh failed.':action==='unread'?'Unread state could not save.':'Navigation failed.');
     await page.evaluate(action=>{const state=window.inboxControls;if(action==='refresh')state.refreshMode='success';else if(action==='unread')state.unreadMode='success';else state.openMode='success';},action);
@@ -216,7 +239,7 @@ for(const outcome of ['success','reject'] as const){
   test(`late ${outcome} for item A cannot replace item B's current error`,async({page})=>{
     await fixture(page);await rows(page).filter({hasText:'Review'}).click();
     await page.evaluate(outcome=>{window.inboxControls.unreadMode=outcome;window.inboxControls.holdUnread=new Promise(resolve=>window.addEventListener('release-unread',()=>resolve(),{once:true}));},outcome);
-    await page.getByRole('button',{name:'Mark unread',exact:true}).click();
+    await page.getByRole('button',{name:'Mark as unread',exact:true}).click();
     await expect.poll(()=>calls(page)).toEqual([{type:'unread',id:'review'}]);
     await page.evaluate(()=>{window.inboxControls.readMode='reject';});
     await rows(page).filter({hasText:'Failed task'}).click();

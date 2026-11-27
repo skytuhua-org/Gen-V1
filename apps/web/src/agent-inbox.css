@@ -51,6 +51,9 @@
 .agent-inbox .inbox-item-toolbar button{font-size:11px;min-height:26px;padding:4px 6px}
 .agent-inbox .inbox-item-crumb{display:inline-flex;align-items:center;gap:6px;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .agent-inbox .inbox-item-toolbar-actions{margin-left:auto;flex-shrink:0}
+.agent-inbox .inbox-read-action{transition:none}
+.agent-inbox .inbox-read-action:disabled{opacity:.45}
+.agent-inbox .inbox-read-action:focus-visible{outline:2px solid var(--ui-focus-ring);outline-offset:-2px}
 .agent-inbox .desktop-inbox{display:flex;flex:1;min-height:0;overflow-y:auto}
 .agent-inbox .inbox-board{display:flex;flex-direction:column;width:100%;max-width:760px;margin:0 auto;padding:28px 30px}
 .agent-inbox .inbox-subject{display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--border);padding-bottom:18px}
