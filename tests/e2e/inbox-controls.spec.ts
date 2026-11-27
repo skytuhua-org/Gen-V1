@@ -138,7 +138,7 @@ test('an Inbox action failure reserves space below the list and reader',async({p
  await page.evaluate(()=>{window.inboxControls.refreshMode='reject';});
  await page.getByRole('button',{name:'Refresh inbox',exact:true}).click();
  const error=page.getByRole('alert').filter({hasText:'Refresh failed.'});
- await expect(error).toHaveAttribute('data-tone','danger');
+ await expect(page.locator('.agent-inbox-error')).toHaveAttribute('data-tone','danger');
  const scroll=page.locator('.inbox-tasks-scroll');
  const reader=page.locator('.inbox-view-items');
  const last=rows(page).last();
@@ -148,6 +148,48 @@ test('an Inbox action failure reserves space below the list and reader',async({p
  expect(await bottom(scroll)).toBeLessThanOrEqual(errorTop);
  expect(await bottom(reader)).toBeLessThanOrEqual(errorTop);
  expect(await last.evaluate(node=>{const {x,y,width,height}=node.getBoundingClientRect();return node.contains(document.elementFromPoint(x+width/2,y+height/2));})).toBe(true);
+});
+
+test('the failure strip retries once, regains focus on failure and returns it after recovery',async({page})=>{
+ await fixture(page);
+ const refresh=page.getByRole('button',{name:'Refresh inbox',exact:true});
+ await page.evaluate(()=>{window.inboxControls.refreshMode='reject';});
+ await refresh.click();
+ const strip=page.locator('.agent-inbox-error');
+ await expect(strip.getByRole('alert')).toHaveText('Refresh failed.');
+ const retry=strip.getByRole('button',{name:'Retry',exact:true});
+ await page.evaluate(()=>{
+  window.inboxControls.refreshMode='source-error';
+  window.inboxControls.holdRefresh=new Promise(resolve=>window.addEventListener('fixture-retry-release',()=>resolve(),{once:true}));
+ });
+ await retry.focus();await page.keyboard.press('Enter');
+ await expect(retry).toBeDisabled();
+ await expect(refresh).toHaveAttribute('aria-busy','true');
+ await retry.evaluate((button:HTMLButtonElement)=>button.click());
+ await expect.poll(async()=>(await calls(page)).filter(call=>call.type==='refresh').length).toBe(2);
+ await page.evaluate(()=>window.dispatchEvent(new Event('fixture-retry-release')));
+ await expect(strip.getByRole('alert')).toHaveText('Inbox could not load.');
+ await expect(retry).toBeEnabled();
+ await expect(retry).toBeFocused();
+ await page.evaluate(()=>{window.inboxControls.refreshMode='success';});
+ await page.keyboard.press('Space');
+ await expect(strip).toHaveCount(0);
+ await expect(refresh).toBeFocused();
+ expect((await calls(page)).filter(call=>call.type==='refresh')).toHaveLength(3);
+});
+
+test('Retry restores focus to the reader when its toolbar mate is hidden',async({page})=>{
+ await page.setViewportSize({width:360,height:700});
+ await fixture(page);
+ await page.getByRole('button',{name:/^Review, Review change/}).click();
+ await page.evaluate(()=>{window.inboxControls.openMode='reject';});
+ await page.getByRole('button',{name:'Open conversation',exact:true}).click();
+ const strip=page.locator('.agent-inbox-error');
+ await expect(strip.getByRole('alert')).toHaveText('Navigation failed.');
+ await strip.getByRole('button',{name:'Retry',exact:true}).focus();
+ await page.keyboard.press('Enter');
+ await expect(strip).toHaveCount(0);
+ await expect(page.getByRole('region',{name:'Review',exact:true})).toBeFocused();
 });
 
 test('Inbox reconnect is polite and clears when the real client resynchronizes',async({page})=>{
@@ -171,7 +213,7 @@ test('Inbox reconnect is polite and clears when the real client resynchronizes',
  await page.evaluate(()=>window.dispatchEvent(new Event('fixture-disconnect')));
  const status=page.getByRole('status').filter({hasText:'Inbox is reconnecting…'});
  try{
-  await expect(status).toHaveAttribute('data-tone','info');
+  await expect(page.locator('.agent-inbox-error')).toHaveAttribute('data-tone','info');
   await expect(status).toHaveAttribute('aria-atomic','true');
   await expect.poll(()=>snapshots).toBe(2);
  }finally{release();}
@@ -421,10 +463,10 @@ for(const outcome of ['success','reject'] as const){
     await expect.poll(()=>calls(page)).toEqual([{type:'unread',id:'review'}]);
     await page.evaluate(()=>{window.inboxControls.readMode='reject';});
     await rows(page).filter({hasText:'Failed task'}).click();
-    await expect(page.locator('.agent-inbox-error')).toHaveText('Read state could not save.');
+    await expect(page.locator('.agent-inbox-error').getByRole('alert')).toHaveText('Read state could not save.');
     await page.evaluate(()=>window.dispatchEvent(new Event('release-unread')));
     await page.evaluate(async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);});
-    await expect(page.locator('.agent-inbox-error')).toHaveText('Read state could not save.');
+    await expect(page.locator('.agent-inbox-error').getByRole('alert')).toHaveText('Read state could not save.');
   });
   test(`a held refresh blocks repeats and reports ${outcome} before clearing`,async({page})=>{
     await fixture(page);
@@ -452,10 +494,10 @@ test('a deferred automatic read cannot clear a newer navigation failure',async({
   await rows(page).filter({hasText:'Question'}).first().click();
   await page.evaluate(()=>{window.inboxControls.openMode='reject';});
   await page.getByRole('button',{name:'Open conversation',exact:true}).click();
-  await expect(page.locator('.agent-inbox-error')).toHaveText('Navigation failed.');
+  await expect(page.locator('.agent-inbox-error').getByRole('alert')).toHaveText('Navigation failed.');
   await page.clock.runFor(600);
   await expect.poll(()=>calls(page)).toEqual([{type:'open',id:'thread-question'},{type:'read',id:'question'}]);
-  await expect(page.locator('.agent-inbox-error')).toHaveText('Navigation failed.');
+  await expect(page.locator('.agent-inbox-error').getByRole('alert')).toHaveText('Navigation failed.');
 });
 
 test('reselecting an item observes its held read failure without another write',async({page})=>{
@@ -466,7 +508,7 @@ test('reselecting an item observes its held read failure without another write',
   await question.click();await page.clock.runFor(600);
   expect(await calls(page)).toEqual([{type:'read',id:'question'}]);
   await page.evaluate(()=>window.dispatchEvent(new Event('release-read')));
-  await expect(page.locator('.agent-inbox-error')).toHaveText('Read state could not save.');
+  await expect(page.locator('.agent-inbox-error').getByRole('alert')).toHaveText('Read state could not save.');
   expect(await calls(page)).toEqual([{type:'read',id:'question'}]);
 });
 
@@ -531,7 +573,7 @@ test('Mark all read retains partial successes and refreshes once per attempt',as
   await bulk.evaluate(button=>(button as HTMLButtonElement).click());
   await expect.poll(()=>calls(page)).toEqual([{type:'read',id:'question'},{type:'read',id:'failed'},{type:'read',id:'completed'}]);
   await page.evaluate(()=>window.dispatchEvent(new Event('release-bulk-read')));
-  await expect(page.locator('.agent-inbox-error')).toHaveText('Read state could not save.');
+  await expect(page.locator('.agent-inbox-error').getByRole('alert')).toHaveText('Read state could not save.');
   await expect(bulk).toBeEnabled();
   expect(await page.evaluate(()=>window.inboxControls.items.filter(item=>!item.read).map(item=>item.id))).toEqual(['failed']);
   expect(await calls(page)).toHaveLength(4);

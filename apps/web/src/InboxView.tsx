@@ -34,7 +34,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
  type FocusRequest={instance:number;intent:number;interaction:number;kind:'return'|'reader';requestedId:string;source:'back'|'escape'|'choose'|'shortcut';priorVisibleIds:string[];priorIndex:number;expectedNode?:HTMLElement};
  const chosenRef=useRef<string|undefined>(undefined),instanceGeneration=useRef(0),intentGeneration=useRef(0),interactionGeneration=useRef(0),focusFrame=useRef<number|undefined>(undefined),focusRequest=useRef<FocusRequest|undefined>(undefined),committedVisibleIds=useRef<string[]>([]),committedListSignature=useRef<string|undefined>(undefined);
  const [refreshing,setRefreshing]=useState(false),[refreshFeedback,setRefreshFeedback]=useState<{text:string}>();
- const refreshPending=useRef(false);
+ const refreshPending=useRef(false),retryButton=useRef<HTMLButtonElement>(null),returnRetryFocus=useRef(false);
  const [markingAll,setMarkingAll]=useState(false);
  const bulkItems=useRef<ReadonlySet<string>|undefined>(undefined);
  const bulkButton=useRef<HTMLButtonElement>(null),refreshButton=useRef<HTMLButtonElement>(null),returnBulkFocus=useRef(false);
@@ -53,6 +53,12 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
  const visible=attention.items.filter(item=>(filter==='all'||filter==='needs-you'&&needsYou(item)||filter==='unread'&&!item.read||filter==='completed'&&(item.state==='completed'||item.state==='resolved'))&&`${item.title} ${item.summary} ${labels[item.state]}`.toLowerCase().includes(query.toLowerCase().trim()));
  const capped=visible.length>renderCap,rendered=capped?visible.slice(0,renderCap):visible;
  const selected=rendered.find(item=>item.id===chosen),columns=explicitDismissed?'list':shownColumns(single,selected?.id);
+ useLayoutEffect(()=>{
+  if(refreshing||!returnRetryFocus.current)return;
+  returnRetryFocus.current=false;
+  const target=retryButton.current??(columns==='item'?reader.current:refreshButton.current);
+  if(target&&target.ownerDocument.activeElement===target.ownerDocument.body)target.focus({preventScroll:true});
+ },[columns,refreshing]);
  useEffect(()=>{const node=root.current;if(!node)return;const measure=(width:number)=>{if(width>0)setSingle(was=>oneColumn(width,was));};measure(node.getBoundingClientRect().width);const observer=new ResizeObserver(entries=>{if(entries[0])measure(entries[0].contentRect.width);});observer.observe(node);return()=>observer.disconnect();},[]);
  useLayoutEffect(()=>{
   const ids=rendered.map(item=>item.id),signature=rendered.map(item=>[item.id,item.title,item.summary,item.updatedAt,item.read,item.state,item.actionable,item.kind].join('\u0000')).join('\u0001'),prior=committedListSignature.current;
@@ -235,6 +241,12 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
   {!explicitDismissed&&<InboxPane title={selected?.title} hidden={columns==='list'} toolbar={toolbar} paneRef={reader} footer={footer} empty={<div className="agent-inbox-empty"><Inbox size={29}/><h3>Select an item</h3><p>Read it here, then open its conversation when needed.</p></div>}>
    {selected&&<div key={selected.id} className="inbox-canonical-message"><div className="inbox-message-meta"><span data-state={selected.state}>{labels[selected.state]}</span><time dateTime={selected.updatedAt}>{formatLocalDateTime(selected.updatedAt,timeFormat,undefined,{dateStyle:'medium',timeStyle:'short'})}</time></div><p>{selected.summary}</p></div>}
   </InboxPane>}
-  {error&&<p className="agent-inbox-error" data-tone={reconnecting?'info':'danger'} role={reconnecting?'status':'alert'} aria-atomic="true">{error}</p>}
+  {error&&<div className="agent-inbox-error" data-tone={reconnecting?'info':'danger'}>
+   <span role={reconnecting?'status':'alert'} aria-atomic="true">{error}</span>
+   {!reconnecting&&<button ref={retryButton} type="button" className="agent-inbox-retry" disabled={refreshing} onClick={event=>{
+    returnRetryFocus.current=event.currentTarget.ownerDocument.activeElement===event.currentTarget;
+    refresh();
+   }}>Retry</button>}
+  </div>}
  </section>;
 }

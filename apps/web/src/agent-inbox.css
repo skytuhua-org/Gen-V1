@@ -75,6 +75,11 @@
 .agent-inbox .agent-inbox-empty h3{font-size:14px;font-weight:500;color:var(--text)}
 .agent-inbox .agent-inbox-empty p{font-size:12px;max-width:240px;line-height:1.6}
 .agent-inbox .agent-inbox-error{grid-column:1/-1;grid-row:2;margin:0 8px 8px;padding:8px 12px;border:1px solid var(--danger);border-radius:7px;background:var(--surface);color:var(--danger);font-size:11px;overflow-wrap:anywhere}
+.agent-inbox .agent-inbox-error{display:flex;align-items:center;gap:8px}
+.agent-inbox .agent-inbox-error>span{flex:1;min-width:0}
+.agent-inbox .agent-inbox-retry{flex:none;min-height:24px;border:1px solid currentColor;border-radius:4px;padding:2px 8px;color:inherit;font:inherit;transition:none}
+.agent-inbox .agent-inbox-retry:enabled:hover{background:color-mix(in srgb,currentColor 12%,transparent)}
+.agent-inbox .agent-inbox-retry:focus-visible{outline:2px solid var(--ui-focus-ring);outline-offset:2px}
 .agent-inbox .agent-inbox-error[data-tone=info]{color:var(--muted);background:var(--subtle);border-color:var(--border)}
 .agent-inbox button:focus-visible{outline-offset:-2px}
 .agent-inbox :is(.inbox-tasks,.inbox-tasks-scroll,.inbox-view-items,.desktop-inbox){scrollbar-width:thin;scrollbar-color:var(--border) transparent;scrollbar-gutter:auto}
