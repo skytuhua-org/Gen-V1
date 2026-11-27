@@ -170,7 +170,7 @@ test('compact Settings reserves sections while metadata loads and retains its se
     await expect(dialog.locator('.loading-state-skeleton .settings-navigation')).toBeVisible();
     release();
     const search = dialog.getByRole('searchbox', {name: 'Search all settings', exact: true});
-    await dialog.getByRole('navigation', {name: 'Settings sections'}).getByRole('button', {name: 'Data & Recovery', exact: true}).click();
+    await dialog.getByRole('tablist', {name: 'Settings sections'}).getByRole('tab', {name: 'Data & Recovery', exact: true}).click();
     const original = await search.elementHandle();
     gate = new Promise<void>(resolve => {release = resolve;});
     await dialog.getByRole('button', {name: 'Refresh settings', exact: true}).click();
@@ -191,8 +191,8 @@ test('Settings opens over the monitor with compact metadata and preserves the ow
   await expect(page.getByRole('region', {name: 'Agent workspace', exact: true})).toBeVisible();
   await page.getByRole('button', {name: 'Settings', exact: true}).click();
   const dialog = page.getByRole('dialog', {name: 'Settings', exact: true});
-  await expect(dialog.getByRole('navigation', {name: 'Settings sections'})).toBeVisible();
-  await dialog.getByRole('button', {name: 'Appearance', exact: true}).click();
+  await expect(dialog.getByRole('tablist', {name: 'Settings sections'})).toBeVisible();
+  await dialog.getByRole('tab', {name: 'Appearance', exact: true}).click();
   await expect(dialog.getByRole('heading', {name: 'Appearance', exact: true})).toBeVisible();
   expect(h.requests.filter(path => path === '/api/snapshot')).toEqual([]);
   expect(h.commands.filter(item => item.type === 'workspace.canvas.select')).toEqual([]);
@@ -246,7 +246,7 @@ test('compact Settings Add resource opens the existing resource grant flow', asy
   await fixture(page);
   await page.getByRole('button', {name: 'Settings', exact: true}).click();
   const settings = page.getByRole('dialog', {name: 'Settings', exact: true});
-  await settings.getByRole('button', {name: 'Projects & Working Copies', exact: true}).click();
+  await settings.getByRole('tab', {name: 'Projects & Working Copies', exact: true}).click();
   await settings.getByRole('button', {name: 'Add resource', exact: true}).click();
   await expect(page.getByRole('dialog', {name: 'Add a resource', exact: true})).toBeVisible();
 });
@@ -362,7 +362,7 @@ test('Settings close waits for an accepted preference save before applying monit
   const h = await fixture(page, {working: false, archiveConfirmation: false});
   await page.getByRole('button', {name: 'Settings', exact: true}).click();
   const dialog = page.getByRole('dialog', {name: 'Settings', exact: true});
-  await dialog.getByRole('button', {name: 'General', exact: true}).click();
+  await dialog.getByRole('tab', {name: 'General', exact: true}).click();
   let release!: () => void, started = false;
   const gate = new Promise<void>(resolve => {release = resolve;});
   await page.route('**/api/commands', async route => {if (route.request().postDataJSON().type === 'settings.update') {started = true; await gate;} await route.fallback();});

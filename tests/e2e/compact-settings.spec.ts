@@ -34,26 +34,26 @@ async function setup(page: Page) {
   await page.route('**/compact-settings-fixture', route => route.fulfill({contentType: 'text/html', body: `<html data-theme="dark"><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${encodeURI(fixture)}');</script></body></html>`}));
   const open = () => page.goto('/compact-settings-fixture');
   const dialog = page.getByRole('dialog', {name: 'Settings', exact: true});
-  const nav = dialog.getByRole('navigation', {name: 'Settings sections'});
+  const nav = dialog.getByRole('tablist', {name: 'Settings sections'});
   return {model, commands, reads, open, dialog, nav};
 }
 test('actual compact Settings uses every real section, complete grants/archive and zero forbidden reads', async ({page}) => {
   const host = await setup(page); await host.open();
   const labels = ['General', 'Appearance', 'Chat & Composer', 'Models & Accounts', 'Projects & Working Copies', 'Source Control & Reviews', 'Skills & Integrations', 'Notifications & Usage', 'Browser', 'Keyboard Shortcuts', 'Data & Recovery', 'About & Licenses'];
-  for (const label of labels) {await host.nav.getByRole('button', {name: label, exact: true}).click(); await expect(host.dialog.getByRole('heading', {level: 1, name: label, exact: true})).toBeVisible();}
-  await host.nav.getByRole('button', {name: 'Projects & Working Copies', exact: true}).click(); await expect(host.dialog.getByText('Exact grant 124', {exact: true})).toBeVisible();
-  await host.nav.getByRole('button', {name: 'Data & Recovery', exact: true}).click();
+  for (const label of labels) {await host.nav.getByRole('tab', {name: label, exact: true}).click(); await expect(host.dialog.getByRole('heading', {level: 1, name: label, exact: true})).toBeVisible();}
+  await host.nav.getByRole('tab', {name: 'Projects & Working Copies', exact: true}).click(); await expect(host.dialog.getByText('Exact grant 124', {exact: true})).toBeVisible();
+  await host.nav.getByRole('tab', {name: 'Data & Recovery', exact: true}).click();
   await expect(host.dialog.getByText('125 archived', {exact: true})).toBeVisible();
   await expect(host.dialog.getByText(/205 threads.*37 artifacts.*125 grants.*4 uncertain/)).toBeVisible();
   await host.dialog.locator('.settings-row').filter({has: page.getByRole('heading', {name: 'Archived a124', exact: true})}).getByRole('button', {name: 'Restore thread'}).click();
   await expect(host.dialog.getByText('124 archived', {exact: true})).toBeVisible();
   await host.dialog.getByRole('button', {name: 'Refresh settings', exact: true}).click();
-  await host.nav.getByRole('button', {name: 'General', exact: true}).click(); await host.dialog.getByRole('switch', {name: 'Archive confirmation', exact: true}).click();
+  await host.nav.getByRole('tab', {name: 'General', exact: true}).click(); await host.dialog.getByRole('switch', {name: 'Archive confirmation', exact: true}).click();
   await expect.poll(() => host.commands.some(command => command.type === 'settings.update')).toBe(true);
   expect(host.reads.filter(path => /snapshot|\/api\/events|\/src\/App\.tsx|\/content|\/tree|draft-references|\/api\/skills\//.test(path))).toEqual([]);
 });
 test('account defaults refresh the unbound model catalog and model selection keeps exact command authority', async ({page}) => {
-  const host = await setup(page); await host.open(); await host.nav.getByRole('button', {name: 'Models & Accounts', exact: true}).click();
+  const host = await setup(page); await host.open(); await host.nav.getByRole('tab', {name: 'Models & Accounts', exact: true}).click();
   const provider = host.dialog.locator('[data-provider="openai"]'); await provider.getByRole('radio', {name: 'Second account', exact: true}).check(); await provider.getByRole('button', {name: 'Use account', exact: true}).click();
   await expect(host.dialog.getByRole('combobox', {name: 'Default model', exact: true})).toBeEnabled();
   await host.dialog.getByRole('combobox', {name: 'Default model', exact: true}).click(); await page.getByRole('option', {name: 'Second model', exact: true}).click();
@@ -65,7 +65,7 @@ test('account defaults refresh the unbound model catalog and model selection kee
 test('saved skill details use only the explicit endpoint when inspected', async ({page}) => {
   const host = await setup(page); let details = 0;
   await page.route('**/api/skills/saved-skill*', route => {details++; return route.fulfill({json: {skill: host.model.skills[0], content: 'Exact saved instructions', files: [], versions: [], nextVersionOffset: null}});});
-  await host.open(); await host.nav.getByRole('button', {name: 'Skills & Integrations', exact: true}).click(); expect(details).toBe(0);
+  await host.open(); await host.nav.getByRole('tab', {name: 'Skills & Integrations', exact: true}).click(); expect(details).toBe(0);
   await host.dialog.getByRole('button', {name: 'Inspect saved-skill', exact: true}).click(); await expect(host.dialog.getByRole('textbox', {name: 'Instructions for saved-skill'})).toHaveValue('Exact saved instructions'); expect(details).toBe(1);
 });
 test('failed loading is explicit and retry loads real settings', async ({page}) => {
@@ -80,7 +80,7 @@ test('a changed scope aborts late metadata and the old result cannot replace the
   await host.open(); await expect(host.dialog.getByRole('status')).toContainText('Opening settings');
   await page.evaluate(() => (document.querySelector('button') as HTMLButtonElement).click());
   await expect(host.nav).toBeVisible(); release();
-  await host.nav.getByRole('button', {name: 'Appearance', exact: true}).click(); await expect(host.dialog.getByText('Synthetic project', {exact: true})).toBeVisible(); await expect(host.dialog.getByText('Stale scope')).toHaveCount(0);
+  await host.nav.getByRole('tab', {name: 'Appearance', exact: true}).click(); await expect(host.dialog.getByText('Synthetic project', {exact: true})).toBeVisible(); await expect(host.dialog.getByText('Stale scope')).toHaveCount(0);
 });
 test('late model reads cannot replace the catalog after account selection', async ({page}) => {
   const host = await setup(page); let calls = 0, release!: () => void;
@@ -89,7 +89,7 @@ test('late model reads cannot replace the catalog after account selection', asyn
     if (++calls !== 1) return route.fallback();
     await held; await route.fulfill({json: {models: [{id: 'stale-model', name: 'Stale model', provider: 'openai'}]}}).catch(() => {});
   });
-  await host.open(); await host.nav.getByRole('button', {name: 'Models & Accounts', exact: true}).click();
+  await host.open(); await host.nav.getByRole('tab', {name: 'Models & Accounts', exact: true}).click();
   const provider = host.dialog.locator('[data-provider="openai"]');
   await provider.getByRole('radio', {name: 'Second account', exact: true}).check(); await provider.getByRole('button', {name: 'Use account', exact: true}).click();
   await expect.poll(() => calls).toBeGreaterThan(1); release();
@@ -99,7 +99,7 @@ test('late model reads cannot replace the catalog after account selection', asyn
 test('actual compact draft export preserves the signature guard and sends only exact journal keys', async ({page}) => {
   const host = await setup(page); const requested: unknown[] = [];
   await page.route('**/api/shell/draft-references', route => {requested.push(route.request().postDataJSON()); return route.fulfill({json: {threads: [{id: 'signature-only'}], skills: [], userStates: [], requests: []}});});
-  await host.open(); await host.nav.getByRole('button', {name: 'Data & Recovery', exact: true}).click();
+  await host.open(); await host.nav.getByRole('tab', {name: 'Data & Recovery', exact: true}).click();
   await page.evaluate(async () => {
     const path = '/src/journal.ts'; const journal = await import(path); await journal.journalWrite('draft:new', 'Private local browser draft');
     localStorage.setItem('harness:signature-assets:v1:signature-only:state', JSON.stringify([{id: 'mark', stateKey: 'signature', base64: 'mark'}]));
@@ -113,13 +113,13 @@ test('actual compact draft export preserves the signature guard and sends only e
 });
 test('the injected browser callback receives the accepted start page and closes Settings', async ({page}) => {
   const host = await setup(page); host.model.settings.preferences = {browserStartUrl: 'https://example.com/accepted'};
-  await host.open(); await host.nav.getByRole('button', {name: 'Browser', exact: true}).click();
+  await host.open(); await host.nav.getByRole('tab', {name: 'Browser', exact: true}).click();
   await host.dialog.getByRole('textbox', {name: 'Browser start page', exact: true}).fill('https://example.com/unsaved');
   await host.dialog.getByRole('button', {name: 'Open browser', exact: true}).click();
   expect(await page.evaluate(() => (window as unknown as {openedUrl: string}).openedUrl)).toBe('https://example.com/accepted'); await expect(host.dialog).toHaveCount(0);
 });
 test('accepted appearance applies immediately in the standalone compact consumer', async ({page}) => {
-  const host = await setup(page); await host.open(); await host.nav.getByRole('button', {name: 'Appearance', exact: true}).click();
+  const host = await setup(page); await host.open(); await host.nav.getByRole('tab', {name: 'Appearance', exact: true}).click();
   await host.dialog.getByRole('combobox', {name: 'Density', exact: true}).click(); await page.getByRole('option', {name: /^Touch/}).click();
   await host.dialog.getByRole('combobox', {name: 'Color scheme', exact: true}).click(); await page.getByRole('option', {name: 'Light', exact: true}).click();
   await host.dialog.getByRole('button', {name: 'Apply', exact: true}).click();
@@ -128,7 +128,7 @@ test('accepted appearance applies immediately in the standalone compact consumer
 
 test('the shortcut reference is revealed by search and follows a saved rebinding', async ({page}) => {
   const host = await setup(page); await host.open();
-  await host.nav.getByRole('button', {name: 'General', exact: true}).click();
+  await host.nav.getByRole('tab', {name: 'General', exact: true}).click();
   await host.dialog.getByRole('searchbox', {name: 'Search all settings', exact: true}).fill('cheat sheet');
   await host.dialog.getByRole('button', {name: /Shortcut reference/}).click();
   const reference = host.dialog.locator('[data-setting-id="harness-keyboard-reference"]');
@@ -145,13 +145,13 @@ test('the shortcut reference is revealed by search and follows a saved rebinding
 test('the Saved chip clears on section switch, search, external refresh and after four seconds', async ({page}) => {
   const host = await setup(page); await host.open();
   const chip = host.dialog.locator('.settings-save-state');
-  const save = async () => { await host.nav.getByRole('button', {name: 'General', exact: true}).click(); await host.dialog.getByRole('switch', {name: 'Archive confirmation', exact: true}).click(); };
+  const save = async () => { await host.nav.getByRole('tab', {name: 'General', exact: true}).click(); await host.dialog.getByRole('switch', {name: 'Archive confirmation', exact: true}).click(); };
   await save(); await expect(chip).toContainText('Saved');
-  await host.nav.getByRole('button', {name: 'Browser', exact: true}).click(); await expect(chip).toBeEmpty();
+  await host.nav.getByRole('tab', {name: 'Browser', exact: true}).click(); await expect(chip).toBeEmpty();
   await save(); await expect(chip).toContainText('Saved');
   await host.dialog.getByRole('searchbox').fill('theme'); await expect(chip).toBeEmpty();
   await host.dialog.getByRole('searchbox').fill(''); await save(); await expect(chip).toContainText('Saved');
-  await host.dialog.getByRole('button', {name: 'Data & Recovery', exact: true}).click();
+  await host.dialog.getByRole('tab', {name: 'Data & Recovery', exact: true}).click();
   await host.dialog.getByRole('button', {name: 'Refresh settings', exact: true}).click(); await expect(chip).toBeEmpty();
   await save(); await expect(chip).toContainText('Saved'); await expect(chip).toBeEmpty({timeout: 8000});
 });
