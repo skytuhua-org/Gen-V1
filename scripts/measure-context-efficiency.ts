@@ -23,16 +23,20 @@ async function entry(directory: string) {
   return { filename, bytes: value.byteLength, gzipBytes: gzipSync(value).byteLength };
 }
 const before = await entry(resolve('dist/desktop-release-0.2.0/win-unpacked/resources/host/dist/web/assets')), after = await entry(resolve('dist/web/assets'));
-const temporary = await mkdtemp(join(tmpdir(), 'harness-context-measure-')), store = new Store(temporary);
+const temporary = await mkdtemp(join(tmpdir(), 'harness-context-measure-'));
+let owned: Store | undefined;
 let inspection;
 try {
+  const store = owned = new Store(temporary);
   store.internal('fixture', 'measurement', () => { for (let n = 0; n < 2000; n++) store.put('data', `record-${n}`, 'measurement', { id: `record-${n}`, threadId: 'measurement', revision: 1, provenance: 'p'.repeat(180), createdAt: '', value: { fixture: 'Synthetic retained data' } }); });
   const start = performance.now(), summary = inspectTask(store, { id: 'measurement' } as never, undefined, {});
   inspection = { syntheticRecords: 2000, durationMs: performance.now() - start, responseBytes: bytes(summary), truncated: summary.truncated };
 } finally {
-  store.close();
-  if (dirname(resolve(temporary)) !== resolve(tmpdir()) || !basename(temporary).startsWith('harness-context-measure-')) throw new Error('Refusing cleanup outside the owned measurement fixture.');
-  await rm(temporary, { recursive: true, force: true });
+  try { owned?.close(); }
+  finally {
+    if (dirname(resolve(temporary)) !== resolve(tmpdir()) || !basename(temporary).startsWith('harness-context-measure-')) throw new Error('Refusing cleanup outside the owned measurement fixture.');
+    await rm(temporary, { recursive: true, force: true });
+  }
 }
 const result = { measuredAt: new Date().toISOString(), environment: { node: process.version, platform: process.platform, osRelease: release(), cpu: cpus()[0]?.model }, bundle: { before, after, rawReductionPercent: (1 - after.bytes / before.bytes) * 100, gzipReductionPercent: (1 - after.gzipBytes / before.gzipBytes) * 100 }, discovery: { method: 'Controlled prior/default response-shape reconstruction with current definitions; excludes old widget extras, not measured tokens or billing.', beforeBytes: bytes(oldShape), afterBytes: bytes(index), byteReductionPercent: (1 - bytes(index) / bytes(oldShape)) * 100 }, inspection, limitations: 'Payload bytes and synthetic metadata processing only. No inference latency, live provider token cost, memory quota or physical-monitor performance claim.' };
 const output = resolve(process.argv[2] ?? join('.harness-context-measurements', 'run-' + Date.now()));
