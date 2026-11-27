@@ -6,6 +6,18 @@ import './controls.css';
 
 export interface ModalProps { open: boolean; title: string; onClose: () => void; children: ReactNode; className?: string; initialFocusRef?: RefObject<HTMLElement | null> }
 
+const openModals = new Set<HTMLDialogElement>();
+const modalListeners = new Set<() => void>();
+
+export const topModal = () => [...openModals].at(-1) ?? null;
+export function subscribeTopModal(listener: () => void) {
+  modalListeners.add(listener);
+  return () => { modalListeners.delete(listener); };
+}
+function publishModals() {
+  for (const listener of modalListeners) listener();
+}
+
 export function Modal({ open, title, onClose, children, className = '', initialFocusRef }: ModalProps) {
   const dialog = useRef<HTMLDialogElement>(null), close = useRef(onClose), pressedBackdrop = useRef(false), armedEscape = useRef<Element | null>(null);
   const titleId = useId(); close.current = onClose;
@@ -20,6 +32,7 @@ export function Modal({ open, title, onClose, children, className = '', initialF
     if (!open || !element) return;
     const previous = element.ownerDocument.activeElement as HTMLElement | null;
     element.showModal();
+    openModals.add(element); publishModals();
     // showModal() focuses the first focusable control (the header Close).
     // A dialog naming an initial-focus target claims it instead.
     const initial = initialFocusRef?.current;
@@ -33,6 +46,7 @@ export function Modal({ open, title, onClose, children, className = '', initialF
     return () => {
       release();
       element.removeEventListener('close', closed); element.close();
+      openModals.delete(element); publishModals();
       if (previous?.isConnected) previous.focus();
     };
   }, [open]);

@@ -1,5 +1,9 @@
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
+import { topModal, subscribeTopModal } from './Modal';
+import { isComposing } from './list-navigation';
+import { refocusWithin } from './focus-retention';
 import './tokens.css';
 import './feedback.css';
 
@@ -57,8 +61,23 @@ function ToastItem({ entry, paused }: { entry: ToastEntry; paused: boolean }) {
 /** Mount once per window. Timers pause while the stack is hovered or holds focus. */
 export function Toaster() {
   const list = useSyncExternalStore(subscribe, () => entries, () => entries);
+  const modal = useSyncExternalStore(subscribeTopModal, topModal, () => null);
+  const [portal, setPortal] = useState<HTMLDivElement>();
+  useLayoutEffect(() => {
+    const container = document.createElement('div');
+    setPortal(container);
+    return () => container.remove();
+  }, []);
   const [hovered, setHovered] = useState(false), [focused, setFocused] = useState(false);
   const stack = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!portal) return;
+    const host = modal ?? portal.ownerDocument.body;
+    if (portal.parentElement === host) return;
+    host.append(portal);
+    setHovered(false);
+    setFocused(portal.contains(portal.ownerDocument.activeElement));
+  }, [modal, portal]);
   useEffect(() => { if (!list.length) setHovered(false); }, [list.length]);
   useLayoutEffect(() => {
     // Removing or replacing a focused toast can happen without a blur event.
@@ -71,23 +90,33 @@ export function Toaster() {
       // toast's close button instead of dropping to body.
       if (root.dataset.prevHadFocus === 'true' && active === root.ownerDocument.body) {
         const buttons = root.querySelectorAll<HTMLElement>('.ui-toast:not([data-state="closed"]) .ui-toast-close');
-        buttons[buttons.length - 1]?.focus({ preventScroll: true });
+        const next = buttons[buttons.length - 1];
+        if (next) next.focus({ preventScroll: true });
+        else if (modal) refocusWithin(modal);
       }
     }
-  }, [list]);
-  return <div ref={stack} className="ui-toaster" role="region" aria-label="Notifications" onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
+  }, [list, modal]);
+  if (!portal) return null;
+  return createPortal(<div ref={stack} className="ui-toaster" role="region" aria-label="Notifications" onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
     onFocus={() => { setFocused(true); if (stack.current) stack.current.dataset.prevHadFocus = 'true'; }}
     onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) { setFocused(false); event.currentTarget.dataset.prevHadFocus = 'false'; } }}
     onKeyDown={event => {
       if (event.key !== 'Escape') return;
       const target = event.target as HTMLElement;
       const item = target.closest<HTMLElement>('.ui-toast');
-      if (item) { const id = Number(item.dataset.toastId); if (id) dismissToast(id); return; }
+      if (item) {
+        if (modal) { event.preventDefault(); event.stopPropagation(); }
+        if (!isComposing(event)) {
+          const id = Number(item.dataset.toastId);
+          if (id) dismissToast(id);
+        }
+        return;
+      }
       if (target === event.currentTarget) {
         const newest = [...list].reverse().find(entry => !entry.leaving);
         if (newest) dismissToast(newest.id);
       }
     }}>
     {list.map(entry => <ToastItem key={entry.id} entry={entry} paused={hovered || focused} />)}
-  </div>;
+  </div>, portal);
 }
