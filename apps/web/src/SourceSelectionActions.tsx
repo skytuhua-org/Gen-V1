@@ -12,6 +12,30 @@ export function mapSelectedText(content:string,selected:string):VisibleSourceSel
   if(start<0||content.indexOf(selected,start+1)!==-1)return null;
   return {start,end:start+selected.length,text:selected};
 }
+const SOURCE_UI='[data-source-selection-ui]',TRANSFORMED='[data-source-transformed="true"]';
+/** Authored bytes exclude app-owned source UI (copy controls, duplicate raw
+ * disclosures) — their captions must never contaminate canonical equality. */
+function measureAuthored(root:HTMLElement):string{
+  let out='';
+  const walk=(node:Node)=>{
+    if(node instanceof Element&&node.hasAttribute('data-source-selection-ui'))return;
+    if(node.nodeType===Node.TEXT_NODE){out+=node.textContent;return;}
+    for(const child of node.childNodes)walk(child);
+  };
+  for(const child of root.childNodes)walk(child);
+  return out;
+}
+function transformed(root:HTMLElement):boolean{return Boolean(root.querySelector(TRANSFORMED));}
+function insideSourceUI(node:Node):boolean{const element=node instanceof Element?node:node.parentElement;return Boolean(element?.closest(SOURCE_UI));}
+function carriesMarker(node:Node):boolean{return node instanceof Element&&(node.hasAttribute('data-source-selection-ui')||node.hasAttribute('data-source-transformed')||Boolean(node.querySelector('[data-source-selection-ui],[data-source-transformed]')));}
+/** Mutations wholly inside app-owned source UI are presentation noise; any
+ * marker change itself still requires authored remeasurement. */
+function relevantMutation(record:MutationRecord):boolean{
+  if(record.type==='attributes')return true;
+  if(record.type==='characterData')return !insideSourceUI(record.target);
+  if(insideSourceUI(record.target)&&![...record.addedNodes,...record.removedNodes].some(carriesMarker))return false;
+  return true;
+}
 function elementOf(node:Node):Element|null{return node instanceof Element?node:node.parentElement;}
 function visible(range:Range,root:HTMLElement):boolean {
   const interactive='iframe,input,textarea,select,button,a,[contenteditable="true"],object,embed,audio,video';
@@ -22,7 +46,7 @@ function visible(range:Range,root:HTMLElement):boolean {
     for(const endpoint of [range.startContainer,range.endContainer]) {
       for(let element=elementOf(endpoint);element;element=element.parentElement) {
         const style=getComputedStyle(element),bounds=element.getBoundingClientRect();
-        if(element.matches(`[hidden],[inert],[aria-hidden="true"],${interactive}`)||style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||style.contentVisibility==='hidden')return false;
+        if(element.matches(`[hidden],[inert],[aria-hidden="true"],${SOURCE_UI},${interactive}`)||style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||style.contentVisibility==='hidden')return false;
         if(/hidden|clip|auto|scroll/.test(style.overflowX)&& (rect.left<bounds.left-1||rect.right>bounds.right+1))return false;
         if(/hidden|clip|auto|scroll/.test(style.overflowY)&& (rect.top<bounds.top-1||rect.bottom>bounds.bottom+1))return false;
       }
@@ -33,7 +57,7 @@ function visible(range:Range,root:HTMLElement):boolean {
     if(node.matches(interactive))return false;
     if(!node.textContent)continue;
     const style=getComputedStyle(node);
-    if(node.matches('[hidden],[inert],[aria-hidden="true"]')||style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||style.contentVisibility==='hidden')return false;
+    if(node.matches(`[hidden],[inert],[aria-hidden="true"],${SOURCE_UI}`)||style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||style.contentVisibility==='hidden')return false;
     // A selected interior descendant can clip bytes even though neither range
     // endpoint is inside it. Check only this descendant's selected portion.
     const inside=range.cloneRange(),bounds=node.getBoundingClientRect();
@@ -55,8 +79,25 @@ export function SourceSelectionActions({children,text,enabled,onAction,onOpenCan
   const [note,setNote]=useState('');
   const describedBy=useId();
   const candidateRef=useRef(candidate);candidateRef.current=candidate;
-  const revision=useRef(0),composing=useRef(false),announceDone=useRef(false),prevCandidate=useRef(candidate);
-  useLayoutEffect(()=>{authored.current=root.current?.textContent??'';setExactRendering(authored.current===text);revision.current++;setCandidate(null);setError('');setBusy(false);},[text,enabled]);
+  const revision=useRef(0),composing=useRef(false),announceDone=useRef(false),prevCandidate=useRef(candidate),presentationEpoch=useRef(0);
+  const measure=(element:HTMLElement)=>{authored.current=measureAuthored(element);setExactRendering(!transformed(element)&&authored.current===latest.current.text);};
+  useLayoutEffect(()=>{const element=root.current;authored.current=element?measureAuthored(element):'';setExactRendering(Boolean(element&&!transformed(element))&&authored.current===text);revision.current++;setCandidate(null);setError('');setBusy(false);},[text,enabled]);
+  // One observer per enabled root: a lazy renderer can replace authored DOM
+  // while canonical text and enabled stay unchanged. Each delivered batch is
+  // coalesced into one epoch+revision increment, synchronously invalidating
+  // the candidate before exactRendering is recomputed.
+  useLayoutEffect(()=>{
+    const element=root.current;
+    if(!enabled||!element)return;
+    const observer=new MutationObserver(records=>{
+      if(!records.some(relevantMutation))return;
+      presentationEpoch.current++;revision.current++;
+      candidateRef.current=null;setCandidate(null);setError('');
+      measure(element);
+    });
+    observer.observe(element,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['data-source-selection-ui','data-source-transformed']});
+    return()=>observer.disconnect();
+  },[enabled]);
   useEffect(()=>{
     const previous=prevCandidate.current;prevCandidate.current=candidate;
     if(candidate){
@@ -79,12 +120,16 @@ export function SourceSelectionActions({children,text,enabled,onAction,onOpenCan
       const range=selection.getRangeAt(0);
       if(dismissed&&sameRange(dismissed,range))return;
       dismissed=null;
-      if(authored.current!==latest.current.text||!element.contains(range.startContainer)||!element.contains(range.endContainer)||element.textContent!==authored.current||!visible(range,element)){setCandidate(null);return;}
+      // Remeasure synchronously: observer delivery is a later microtask, so a
+      // same-turn DOM replacement must fail closed here rather than offer a
+      // candidate measured from replaced authored bytes.
+      const measured=measureAuthored(element);
+      if(measured!==latest.current.text||transformed(element)||!element.contains(range.startContainer)||!element.contains(range.endContainer)||!visible(range,element)){setCandidate(null);return;}
       const focused=document.activeElement;
       if(focused&&focused!==document.body&&!element.contains(focused)&&!element.parentElement?.contains(focused)){setCandidate(null);return;}
       const mapped=mapSelectedText(latest.current.text,selection.toString());
       if(!mapped){setCandidate(null);return;}
-      setCandidate({...mapped,range:range.cloneRange(),rendered:authored.current});setError('');
+      setCandidate({...mapped,range:range.cloneRange(),rendered:measured});setError('');
     };
     const key=(event:KeyboardEvent)=>{
       if(event.isComposing||event.keyCode===229||composing.current)return;
@@ -128,7 +173,16 @@ export function SourceSelectionActions({children,text,enabled,onAction,onOpenCan
   },[enabled]);
   async function act(action:SourceSelectionAction){
     const value=candidateRef.current,element=root.current,version=revision.current;
-    if(!value||!element||busy||!latest.current.enabled||authored.current!==latest.current.text||element.textContent!==value.rendered||!visible(value.range,element))return;
+    if(!value||!element||!element.isConnected||busy||!latest.current.enabled)return;
+    // Synchronous guard: a mismatch invalidates the candidate before dispatch
+    // and remeasures so canonical access appears when the rendering is inexact.
+    const measured=measureAuthored(element),inexact=measured!==latest.current.text||transformed(element);
+    const stale=measured!==value.rendered||value.range.toString()!==value.text||latest.current.text.slice(value.start,value.end)!==value.text;
+    if(inexact||stale||!visible(value.range,element)){
+      candidateRef.current=null;setCandidate(null);
+      if(inexact)measure(element);
+      return;
+    }
     const {startContainer,startOffset,endContainer,endOffset}=value.range;
     const sameRange=(range:Range)=>range.startContainer===startContainer&&range.startOffset===startOffset&&range.endContainer===endContainer&&range.endOffset===endOffset;
     setBusy(true);setError('');

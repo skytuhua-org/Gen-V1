@@ -389,3 +389,77 @@ test('M15 measures paired controlled renderer latency with 100,000 retained line
   expect(Object.values(measurements).flatMap(item=>item.samples).every(sample=>sample.trusted)).toBe(true);
 });
 });
+test.describe('SRC01 presentation invalidation',()=>{
+ const mutableSelect=(page:Page,start=0,end=7)=>page.locator('#mutable-text').evaluate((element,{start,end})=>{
+  const walk=(node:Node):Text[]=>{const out:Text[]=[];if(node.nodeType===Node.TEXT_NODE)out.push(node as Text);else for(const child of node.childNodes)if(!(child instanceof Element&&child.hasAttribute('data-source-selection-ui')))out.push(...walk(child));return out;};
+  const nodes=walk(element);let offset=0,range=document.createRange(),started=false;
+  for(const node of nodes){
+   const next=offset+node.data.length;
+   if(!started&&start<next){range.setStart(node,start-offset);started=true;}
+   if(started&&end<=next){range.setEnd(node,end-offset);break;}
+   offset=next;
+  }
+  const selection=window.getSelection()!;selection.removeAllRanges();selection.addRange(range);
+  element.dispatchEvent(new MouseEvent('pointerup',{bubbles:true}));document.dispatchEvent(new Event('selectionchange'));
+ },{start,end});
+ // Programmatic clicks: a pointer click on fixture controls would move focus
+ // outside the source, which correctly suppresses a candidate.
+ const press=(page:Page,selector:string)=>page.locator(selector).evaluate((element:HTMLButtonElement)=>element.click());
+ test('same-text DOM replacement invalidates the candidate yet stays selectable',async({page})=>{
+  await page.goto('/fixture?fixture=selection-mutable');
+  const toolbar=page.getByRole('toolbar',{name:'Selected source',exact:true});
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  await press(page,'[data-shape-split]');
+  await expect(toolbar).toHaveCount(0);
+  // Canonical equality survives the replacement: re-selection works.
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  await toolbar.getByRole('button',{name:'Attach to prompt',exact:true}).click();
+  await expect(page.locator('[data-mutable-action]')).toHaveText('attach:Mutable');
+ });
+ test('a transformed marker exposes canonical access and removing it restores selection',async({page})=>{
+  await page.goto('/fixture?fixture=selection-mutable');
+  await press(page,'[data-shape-transformed]');
+  await expect(page.getByRole('button',{name:'Select canonical source',exact:true})).toBeVisible();
+  await expect(page.locator('.source-selection-hint')).toHaveCount(0);
+  await press(page,'[data-shape-plain]');
+  await mutableSelect(page);
+  await expect(page.getByRole('toolbar',{name:'Selected source',exact:true})).toBeVisible();
+ });
+ test('a same-turn DOM replacement cannot dispatch the stale candidate',async({page})=>{
+  await page.goto('/fixture?fixture=selection-mutable');
+  const toolbar=page.getByRole('toolbar',{name:'Selected source',exact:true});
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  // Replace the authored bytes and click the action in one synchronous turn,
+  // ahead of any observer microtask delivery.
+  await page.evaluate(()=>{
+   for(const node of document.querySelectorAll('#mutable-text'))node.textContent='Replaced bytes';
+   document.querySelector<HTMLButtonElement>('.source-selection-toolbar button')?.click();
+  });
+  await page.waitForTimeout(300);
+  await expect(page.locator('[data-mutable-action]')).toHaveText('');
+ });
+ test('app-owned source UI captions never contaminate authored equality',async({page})=>{
+  await page.goto('/fixture?fixture=selection-mutable');
+  await press(page,'[data-add-ui]');
+  const toolbar=page.getByRole('toolbar',{name:'Selected source',exact:true});
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  await press(page,'[data-mutate-caption]');
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  await toolbar.getByRole('button',{name:'Attach to prompt',exact:true}).click();
+  await expect(page.locator('[data-mutable-action]')).toHaveText('attach:Mutable');
+ });
+ test('a late settlement cannot clear a newer candidate after DOM replacement',async({page})=>{
+  await page.goto('/fixture?fixture=selection-mutable');
+  const toolbar=page.getByRole('toolbar',{name:'Selected source',exact:true});
+  await press(page,'[data-hold-action]');
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  await toolbar.getByRole('button',{name:'Attach to prompt',exact:true}).click();
+  // Replace the DOM while the action is held, then re-select in the new DOM.
+  await press(page,'[data-shape-split]');
+  await mutableSelect(page);
+  await press(page,'[data-release-action]');
+  // The late completion is fenced by the revision: the action outcome is
+  // still recorded, but no newer selection state is cleared by it.
+  await expect(page.locator('[data-mutable-action]')).toHaveText('attach:Mutable');
+ });
+});
