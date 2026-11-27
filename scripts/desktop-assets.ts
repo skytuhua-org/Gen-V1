@@ -8,10 +8,14 @@ export function readDesktopOutputRoot(args:string[]):string{
  if(args.length!==2||args[0]!=='--output-root'||!args[1].trim())throw Error('Usage: desktop:package [--output-root <directory>]');
  return resolve(args[1]);
 }
-export async function reserveDesktopRelease(outputRoot:string,version:string):Promise<string>{
+export async function checkDesktopReleaseAvailable(outputRoot:string,version:string):Promise<string>{
  if(!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version))throw Error('Invalid desktop release version.');
  const release=resolve(outputRoot,'desktop-release-'+version);
  try{await lstat(release);throw Error('The desktop release destination already exists. Choose another --output-root; existing releases are never overwritten.');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+ return release;
+}
+export async function reserveDesktopRelease(outputRoot:string,version:string):Promise<string>{
+ const release=await checkDesktopReleaseAvailable(outputRoot,version);
  await mkdir(resolve(outputRoot),{recursive:true});
  try{await mkdir(release);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')throw Error('The desktop release destination already exists. Choose another --output-root; existing releases are never overwritten.');throw error;}
  return release;

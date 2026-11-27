@@ -9,9 +9,10 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 describe('desktop distribution custody',()=>{
- it('rejects invalid wheel configuration without reserving a versioned output or work stage',async()=>{
+ it.each([false,true])('preflights invalid wheel input without changing the output root (occupied=%s)',async occupied=>{
   const root=await mkdtemp(join(tmpdir(),'gen-package-preflight-')),argv=process.argv;
   const platform=Object.getOwnPropertyDescriptor(process,'platform')!,arch=Object.getOwnPropertyDescriptor(process,'arch')!;
+  vi.resetModules();
   vi.doMock('electron-builder',()=>({build:vi.fn()}));
   vi.doMock('../scripts/hermes-assets.ts',()=>({discoverHermesPython:async()=>({}),collectHermesPayload:async()=>({})}));
   try{
@@ -19,8 +20,14 @@ describe('desktop distribution custody',()=>{
    Object.defineProperty(process,'arch',{...arch,value:'x64'});
    process.argv=['node','package-desktop.ts','--output-root',root];
    vi.stubEnv('HARNESS_INTEGRATION_WHEELS','relative-input');
-   await expect(import('../scripts/package-desktop.ts')).rejects.toThrow('HARNESS_INTEGRATION_WHEELS must name an explicit absolute archive directory');
-   expect(await readdir(root)).toEqual([]);
+   const {version}=JSON.parse(await readFile('package.json','utf8'));
+   const release='desktop-release-'+version,receipt=join(root,release,'receipt.txt');
+   if(occupied){await mkdir(join(root,release));await writeFile(receipt,'preserve this release');}
+   await expect(import('../scripts/package-desktop.ts')).rejects.toThrow(occupied
+    ?'The desktop release destination already exists'
+    :'HARNESS_INTEGRATION_WHEELS must name an explicit absolute archive directory');
+   expect(await readdir(root)).toEqual(occupied?[release]:[]);
+   if(occupied)expect(await readFile(receipt,'utf8')).toBe('preserve this release');
   }finally{
    process.argv=argv;Object.defineProperty(process,'platform',platform);Object.defineProperty(process,'arch',arch);
    vi.unstubAllEnvs();vi.doUnmock('electron-builder');vi.doUnmock('../scripts/hermes-assets.ts');
