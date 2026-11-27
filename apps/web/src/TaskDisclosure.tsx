@@ -3,7 +3,7 @@ import { useStateStore, type ComponentRenderProps } from '@json-render/react';
 import { ChevronDown, RotateCcw } from 'lucide-react';
 import { disclosureData } from '../../../packages/ui-catalog/workflow';
 import { inputPath, mapActionPayload, statePath, useTaskAction } from './task-context';
-import { animateTask, IncomingAnswer, MotionRegion, reducedMotion, TASK_MOTION } from './task-motion';
+import { animateTask, IncomingAnswer, MotionRegion, TASK_MOTION } from './task-motion';
 import {useSecureArtifact} from './secure-artifact-context';
 
 function FollowupBranch({ pending, children }: { pending: boolean; children: ReactNode }) {
@@ -42,7 +42,6 @@ function FollowupBranch({ pending, children }: { pending: boolean; children: Rea
     }
     if (!wasPending.current || !row) return;
     wasPending.current = false;
-    if (reducedMotion()) { setPhase('idle'); return; }
     setPhase('resolving');
     const before = reserved.current;
     const target = Array.from(shell.children).filter(child => child !== row)[before.existing] as HTMLElement | undefined;
