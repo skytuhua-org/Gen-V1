@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Artifact } from '../../apps/web/src/Artifact';
 import { taskFixture } from './task-interface-fixture';
+import { DEFAULT_PREFERENCES, mergePreferences } from '../../packages/contracts/preferences';
 import '../../apps/web/src/styles.css';
 
 const source = taskFixture({ root: 'body', elements: {
@@ -11,6 +12,16 @@ const source = taskFixture({ root: 'body', elements: {
 } }, { rows: Array.from({ length: 6 }, (_, index) => ({ name: `Record ${index + 1}`, detail: 'Synthetic source material for the new working object.' })) }, { note: 'Keep this saved note' });
 
 function Fixture() {
+  const requestedSpeed = Number(new URLSearchParams(location.search).get('speed'));
+  const motionSpeed: .75 | 1 | 1.25 = requestedSpeed === .75 ? .75 : requestedSpeed === 1.25 ? 1.25 : 1;
+  useEffect(() => {
+    if (!new URLSearchParams(location.search).has('speed')) return;
+    let active = true;
+    void import('../../apps/web/src/useAppearance').then(({ applyAppearance }) => {
+      if (active) applyAppearance(mergePreferences(DEFAULT_PREFERENCES, { motionSpeed }));
+    });
+    return () => { active = false; };
+  }, [motionSpeed]);
   const restored = new URLSearchParams(location.search).has('restored');
   const [snapshot, setSnapshot] = useState(() => {
     const initial = structuredClone(source);

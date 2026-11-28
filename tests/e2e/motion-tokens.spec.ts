@@ -46,7 +46,7 @@ for (const width of [1024, 1440]) {
   test(`project and sidebar hover colors use 120ms at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     await standalone(page, 'project-picker');
-    await hoverTiming(page.getByRole('button', { name: 'Filter threads', exact: true }));
+    await hoverTiming(page.getByRole('button', { name: 'Thread filter: all', exact: true }));
     await page.getByRole('button', { name: 'Open project picker', exact: true }).click();
     await hoverTiming(page.getByRole('option', { name: 'Beta', exact: true }));
     await page.keyboard.press('Escape');
@@ -58,7 +58,7 @@ for (const width of [1024, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.route('**/api/**', route => route.fulfill({ status: 404 }));
     await page.route('**/api/bootstrap', route => route.fulfill({ json: { csrfToken: 'motion-fixture' } }));
-    await page.route('**/api/projects/*/files?*', route => route.fulfill({ json: { entries: [{ name: 'motion.txt', path: 'motion.txt', kind: 'file', bytes: 10 }] } }));
+    await page.route('**/api/projects/*/files?*', route => route.fulfill({ json: { entries: [{ name: 'motion.txt', path: 'motion.txt', kind: 'file', bytes: 10 }], bindingId: 'motion-fixture-binding' } }));
     await standalone(page, 'files-reading');
     await hoverTiming(page.getByRole('button', { name: 'motion.txt', exact: true }));
   });
@@ -119,24 +119,24 @@ for (const width of [1024, 1440]) {
     await expect(child).toHaveCSS('animation-timing-function', enter);
   });
 
-  test(`side chat and document windows enter in 220ms without overshoot at ${width}`, async ({ page }) => {
+  test(`side chat and document windows enter in 180ms without overshoot at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 }); await recordMotion(page);
     const host = await serveTaskFixture(page, taskFixture({ root: 'doc', elements: { doc: { type: 'Document', props: { title: 'Handoff', text: 'Prepared document.', presentation: 'window', editableStateKey: 'draft' } } } })); await page.goto('/');
     const main = page.getByRole('textbox', { name: 'Message', exact: true }); await main.fill('/side'); await main.press('Enter');
     const side = page.getByRole('region', { name: 'Side conversation window', exact: true }); await expect(side).toBeVisible();
-    await expect(side).toHaveCSS('transition-timing-function', [move, move, move, move].join(', '));
+    await expect(side).toHaveCSS('transition-timing-function', move);
     await side.getByRole('button', { name: 'Close Side conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Open document', exact: true }).click();
     await expect(page.locator('.document-text-window')).toBeVisible();
-    const panels = (await records(page)).filter(item => item.name === 'panel' && item.duration === 220);
+    const panels = (await records(page)).filter(item => item.name === 'panel' && item.duration === 180);
     expect(panels).toHaveLength(2);
     for (const panel of panels) {
-      expect(panel.duration).toBe(220); expect(panel.easing).toBe(enter);
+      expect(panel.duration).toBe(180); expect(panel.easing).toBe(enter);
       expect(panel.frames).toHaveLength(2);
-      expect(panel.frames[1].transform).toMatch(/translate[XY]\(0(?:px)?\) scale\(1\)/);
+      expect(panel.frames[1].transform).toBe('scale(1)');
     }
     await host.publish();
-    expect((await records(page)).filter(item => item.name === 'panel' && item.duration === 220)).toHaveLength(2);
+    expect((await records(page)).filter(item => item.name === 'panel' && item.duration === 180)).toHaveLength(2);
   });
 }
 
@@ -162,12 +162,12 @@ test('reduced motion reveals new solid and prospective graph edges immediately',
   expect(await draws(page)).toHaveLength(0);
 });
 
-test('imperative panel motion resolves inherited tokens and the selected speed', async ({ page }) => {
+test('imperative popup motion resolves inherited tokens and the selected speed', async ({ page }) => {
   await recordMotion(page);
   await serveTaskFixture(page, taskFixture({ root: 'doc', elements: { doc: { type: 'Document', props: { title: 'Handoff', text: 'Prepared document.', presentation: 'window' } } } })); await page.goto('/');
   const launcher = page.getByRole('button', { name: 'Open document', exact: true }); await expect(launcher).toBeVisible();
   await page.evaluate(() => {
-    document.documentElement.style.setProperty('--ui-motion-panel-enter', '.3s');
+    document.documentElement.style.setProperty('--ui-motion-popup-enter', '.3s');
     document.documentElement.style.setProperty('--ui-ease-enter', 'linear');
     document.documentElement.style.setProperty('--motion-speed', '1.25');
   });
@@ -176,7 +176,7 @@ test('imperative panel motion resolves inherited tokens and the selected speed',
   expect(panels).toHaveLength(1); expect(panels[0].duration).toBe(300); expect(panels[0].easing).toBe('linear');
 });
 
-for (const motionSpeed of [.75, 1, 1.25] as const) test(`panel entrance applies real preference speed ${motionSpeed} exactly once`, async ({ page }) => {
+for (const motionSpeed of [.75, 1, 1.25] as const) test(`popup entrance applies real preference speed ${motionSpeed} exactly once`, async ({ page }) => {
   await recordMotion(page);
   const snapshot = taskFixture({ root: 'doc', elements: { doc: { type: 'Document', props: { title: 'Handoff', text: 'Prepared document.', presentation: 'window' } } } });
   snapshot.settings.preferences = { motionSpeed };
@@ -184,10 +184,10 @@ for (const motionSpeed of [.75, 1, 1.25] as const) test(`panel entrance applies 
   await page.getByRole('button', { name: 'Open document', exact: true }).click();
   await expect(page.locator('.document-text-window')).toBeVisible();
   const panels = (await records(page)).filter(item => item.name === 'panel');
-  expect(panels).toHaveLength(1); expect(panels[0].duration).toBeCloseTo(220 / motionSpeed, 6);
+  expect(panels).toHaveLength(1); expect(panels[0].duration).toBeCloseTo(180 / motionSpeed, 6);
 });
 
-test('changing only motion speed does not restart or retime an active panel effect', async ({ page }) => {
+test('changing only motion speed does not restart or retime an active popup effect but applies to the next one', async ({ page }) => {
   await recordMotion(page);
   const snapshot = taskFixture({ root: 'doc', elements: { doc: { type: 'Document', props: { title: 'Handoff', text: 'Prepared document.', presentation: 'window' } } } });
   snapshot.settings.preferences = { motionSpeed: 1 };
@@ -199,14 +199,26 @@ test('changing only motion speed does not restart or retime an active panel effe
     animation.pause(); Object.assign(animation, { motionProbe: 'kept' });
     return { duration: Number(animation.effect!.getTiming().duration), playState: animation.playState, count: (window as unknown as MotionWindow).motionRecords.filter(item => item.name === 'panel').length };
   });
-  expect(before).toEqual({ duration: 220, playState: 'paused', count: 1 });
+  expect(before).toEqual({ duration: 180, playState: 'paused', count: 1 });
   host.snapshot.settings.preferences = { motionSpeed: 1.25 }; await host.publish();
   await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--motion-speed'))).toBe('1.25');
   const after = await page.evaluate(() => {
     const animation = (window as unknown as MotionWindow).motionAnimations[0];
     return { duration: Number(animation.effect!.getTiming().duration), playState: animation.playState, count: (window as unknown as MotionWindow).motionRecords.filter(item => item.name === 'panel').length, kept: Reflect.get(animation, 'motionProbe') };
   });
-  expect(after).toEqual({ duration: 220, playState: 'paused', count: 1, kept: 'kept' });
+  expect(after).toEqual({ duration: 180, playState: 'paused', count: 1, kept: 'kept' });
+  await page.evaluate(() => {
+    const animation = (window as unknown as MotionWindow).motionAnimations[0];
+    animation.play(); animation.finish();
+  });
+  await page.getByRole('button', { name: 'Close document', exact: true }).click();
+  await expect(page.locator('.document-text-window')).toBeHidden();
+  await page.getByRole('button', { name: 'Open document', exact: true }).click();
+  await expect(page.locator('.document-text-window')).toBeVisible();
+  const entrances = (await records(page)).filter(item => item.name === 'panel' && item.easing === enter);
+  expect(entrances).toHaveLength(2);
+  expect(entrances[0].duration).toBe(180);
+  expect(entrances[1].duration).toBeCloseTo(180 / 1.25, 6);
 });
 
 test('tab crossfade and shared control press feedback resolve motion tokens and policies', async ({ page }) => {

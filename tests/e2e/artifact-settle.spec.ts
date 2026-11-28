@@ -247,6 +247,16 @@ test('entrance resolves inherited panel tokens and the existing motion speed', a
   await expect(page.locator('.artifact')).toHaveAttribute('data-entry-phase', 'settled'); await settled(page);
 });
 
+for (const motionSpeed of [.75, 1, 1.25] as const) test(`artifact panel entrance applies real preference speed ${motionSpeed} exactly once`, async ({ page }) => {
+  await recordEntrances(page); await fixture(page, `?speed=${motionSpeed}`);
+  await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--motion-speed'))).toBe(String(motionSpeed));
+  await publish(page);
+  const entry = (await records(page))[0];
+  expect(entry.duration).toBeCloseTo(220 / motionSpeed, 6);
+  expect(Number.parseFloat(entry.durationToken)).toBeCloseTo(220 / motionSpeed, 6);
+  await finish(page); await settled(page);
+});
+
 for (const width of [1024, 1440]) for (const policy of ['os-reduced', 'reduced', 'off'] as const) {
   test(`${policy} publishes immediately without a transform at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
