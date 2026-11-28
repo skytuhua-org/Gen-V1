@@ -153,6 +153,29 @@ describe("M10-S11 retry classification", () => {
     expect(await missing.intake.pollOnce()).toMatchObject({ status: "FAILED", attempts: 1 });
     expect(missing.delays).toEqual([]);
   });
+  it.each(["page body", "repository lookup body", "rejected page body"])("does not record work when an in-flight %s settles after stop", async (stage) => {
+    let entered!: () => void, complete!: (value: unknown) => void, fail!: (reason: unknown) => void;
+    const reading = new Promise<void>(resolve => { entered = resolve; });
+    const payload = new Promise<unknown>((resolve, reject) => { complete = resolve; fail = reject; });
+    const alias = "https://api.github.com/repos/example/synthetic";
+    const f = fixture({ fetchImpl: async url => {
+      if(stage === "repository lookup body" && String(url) !== alias) return jsonResponse([issue({repository_url: alias})]);
+      const response = jsonResponse([]);
+      vi.spyOn(response, "json").mockImplementation(() => { entered(); return payload; });
+      return response;
+    } });
+    const pending = f.intake.pollOnce();
+    await reading;
+    f.intake.stop();
+    const sequence = f.store.sequence;
+    if(stage === "rejected page body") fail(new TypeError("synthetic body failure"));
+    else complete(stage === "repository lookup body" ? {id: REPO} : [issue()]);
+    expect(await pending).toMatchObject({ status: "CANCELLED", proposals: 0, duplicates: 0, rejected: 0, attempts: stage === "repository lookup body" ? 2 : 1 });
+    expect(f.store.sequence).toBe(sequence);
+    expect(f.intake.records()).toEqual([]);
+    expect(f.store.all("intakeDelivery")).toEqual([]);
+    expect(f.intake.status()).toMatchObject({lastPollAt: null, lastError: null});
+  });
   it("never retries after cancellation", async () => {
     const f = fixture();
     let attempts = 0;

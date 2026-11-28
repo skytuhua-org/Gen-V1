@@ -109,7 +109,8 @@ export class ExternalIntakeCoordinator {
 
   private async pollOnceInner(): Promise<{ status: "DISABLED" | "UNAVAILABLE" | "OK" | "FAILED" | "CANCELLED"; proposals: number; duplicates: number; rejected: number; attempts: number; error?: string }> {
     const empty = { proposals: 0, duplicates: 0, rejected: 0, attempts: 0 };
-    if (this.stopped) return { status: "CANCELLED", ...empty };
+    const cancelled = (attempts = 0) => ({...empty, status: "CANCELLED" as const, attempts});
+    if (this.stopped) return cancelled();
     const config = this.config();
     if (!this.isEnabled() || !config?.enabled) return { status: "DISABLED", ...empty };
     if (!this.auth) return { status: "UNAVAILABLE", ...empty, error: "GITHUB_AUTH_REQUIRED" };
@@ -118,10 +119,11 @@ export class ExternalIntakeCoordinator {
       token = await this.auth.token();
       installation = this.auth.login ?? "authenticated-github";
     } catch (error) {
+      if (this.stopped) return cancelled();
       this.lastError = error instanceof Error ? error.message : String(error);
       return { status: "UNAVAILABLE", ...empty, error: this.lastError };
     }
-    if (this.stopped) return { status: "CANCELLED", ...empty };
+    if (this.stopped) return cancelled();
     this.store.internal("intake.installation", null, () => {
       const current = this.config();
       if (current && current.sourceInstallation !== installation) this.store.put("intakeConfig", "global", null, { ...current, sourceInstallation: installation, updatedAt: iso(this.now()) });
@@ -142,15 +144,16 @@ export class ExternalIntakeCoordinator {
       let response: Response | null = null;
       for (let attempt = 1; attempt <= BACKGROUND_SCHEDULER_LIMITS.retryAttempts; attempt++) {
         attempts++;
-        if (this.stopped) return { status: "CANCELLED", ...empty, attempts };
+        if (this.stopped) return cancelled(attempts);
         if (attempt > 1) await this.sleep(BACKGROUND_SCHEDULER_LIMITS.retryDelaysMs[attempt - 2] ?? 2_000);
-        if (this.stopped) return { status: "CANCELLED", ...empty, attempts };
+        if (this.stopped) return cancelled(attempts);
         try {
           const candidate = await this.fetchImpl(url, {
             method: "GET",
             headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "gen-v1-host" },
             redirect: "error",
           });
+          if (this.stopped) return cancelled(attempts);
           if (candidate.ok) { response = candidate; break; }
           lastFailure = new HarnessError("INTAKE_READ_FAILED", `GitHub read failed with status ${candidate.status}`);
           if (!this.transient(candidate.status, null)) {
@@ -159,6 +162,7 @@ export class ExternalIntakeCoordinator {
             return { status: candidate.status === 401 || candidate.status === 403 ? "UNAVAILABLE" : "FAILED", ...empty, attempts, error: this.lastError };
           }
         } catch (error) {
+          if (this.stopped) return cancelled(attempts);
           lastFailure = error;
           if (!this.transient(null, error)) {
             this.lastError = error instanceof Error ? error.message : String(error);
@@ -174,9 +178,11 @@ export class ExternalIntakeCoordinator {
       let pageRecords: unknown;
       try { pageRecords = await response.json(); }
       catch (error) {
+        if (this.stopped) return cancelled(attempts);
         this.lastError = error instanceof Error ? error.message : String(error);
         return { status: "FAILED", ...empty, attempts, error: this.lastError };
       }
+      if (this.stopped) return cancelled(attempts);
       if (!Array.isArray(pageRecords)) {
         this.lastError = "GitHub issue payload was not a list.";
         return { status: "FAILED", ...empty, attempts, error: this.lastError };
@@ -218,28 +224,33 @@ export class ExternalIntakeCoordinator {
       let verdict: "VERIFIED" | "WRONG" | "INDETERMINATE" = "INDETERMINATE";
       for (let attempt = 1; attempt <= BACKGROUND_SCHEDULER_LIMITS.retryAttempts; attempt++) {
         attempts++;
-        if (this.stopped) return { status: "CANCELLED", ...empty, attempts };
+        if (this.stopped) return cancelled(attempts);
         if (attempt > 1) await this.sleep(BACKGROUND_SCHEDULER_LIMITS.retryDelaysMs[attempt - 2] ?? 2_000);
-        if (this.stopped) return { status: "CANCELLED", ...empty, attempts };
+        if (this.stopped) return cancelled(attempts);
         try {
           const res = await this.fetchImpl(repositoryUrl, {
             method: "GET",
             headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "User-Agent": "gen-v1-host" },
             redirect: "error",
           });
+          if (this.stopped) return cancelled(attempts);
           if (res.ok) {
             const repo = await res.json() as { id?: unknown };
+            if (this.stopped) return cancelled(attempts);
             verdict = repo && repo.id === config.repositoryId ? "VERIFIED" : "WRONG";
             break;
           }
           if (!this.transient(res.status, null)) { verdict = "WRONG"; break; }
         } catch (error) {
+          if (this.stopped) return cancelled(attempts);
           if (!this.transient(null, error)) { verdict = "WRONG"; break; }
         }
       }
       if (verdict === "VERIFIED") verifiedRepositories.add(repositoryUrl);
       else if (verdict === "INDETERMINATE") indeterminateRepositories.add(repositoryUrl);
     }
+    // A pause can arrive while the final response body is being read.
+    if (this.stopped) return cancelled(attempts);
     const stamp = this.now();
     const result = this.store.internal("intake.polled", null, () => {
       let proposals = 0, duplicates = 0, rejected = 0;
