@@ -15,6 +15,7 @@ workspace presets and settings are application state, not separate URL routes.
 | Thread previews | `thread-hover/ThreadHoverCard.tsx` | `thread-hover` suite |
 | Settings | `Settings.tsx` | `settings-leaf-selects` suite |
 | Local table controls | `TaskTable.tsx`, `TaskTableControls.tsx`, `task-table-model.ts` | `table-controls` suite |
+| Failing-CI evidence (PR checks log, fix sheet, thread chip) | `CiFailurePanel.tsx`, `WorkspaceSurfaceBody.tsx`, `App.tsx` | `m08-restore` suite (`ci-failure-panel.spec.ts`, `ci-fix.spec.ts`) |
 | Files and review surfaces | `files/FilesView.tsx`, `WorkspaceSurfaceBody.tsx`, `WorkspacePanelBodies.tsx` | `files-reading`, `workspace-host` suites |
 
 UI owning files above are under `apps/web/src/` unless a package path is given.
