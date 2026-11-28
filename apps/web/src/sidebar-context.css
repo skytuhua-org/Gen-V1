@@ -208,6 +208,9 @@
   cursor: grab;
 }
 
+.sidebar .sidebar-thread-row[data-reorder-locked],
+.sidebar .sidebar-thread-row[data-reorder-locked] .thread-item { cursor: default; }
+
 .sidebar .sidebar-thread-row .thread-item[draggable='true']:active {
   cursor: grabbing;
 }

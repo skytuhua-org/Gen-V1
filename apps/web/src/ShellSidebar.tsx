@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type RefObject, type ReactNode, type MouseEvent } from 'react';
+import { Fragment, useEffect, useId, useRef, useState, type RefObject, type ReactNode, type MouseEvent } from 'react';
 import {
   Archive,
   BarChart3,
@@ -36,7 +36,7 @@ import { projectColor, threadDragPayload } from './project-colors';
 import { ActionMenu } from '../../../packages/ui-shell/ActionMenu';
 import { toast } from '../../../packages/ui-shell/Toast';
 import { useThreadMove } from './sidebar-thread-move';
-import { useThreadReorder, type SidebarSection } from './sidebar-reorder';
+import { REORDER_PAUSED, useThreadReorder, type SidebarSection } from './sidebar-reorder';
 import './sidebar-thread-move.css';
 
 const threadAge = (value: string) => {
@@ -198,6 +198,11 @@ export function ShellSidebar({
   const settledFolded = layout.folded['settled'] ?? false;
   const visibleSettled = showAllSettled ? settled : settled.slice(0, 6);
   const locked = search.trim().length > 0 || filter !== 'all';
+  const reorderPauseId = useId();
+  const rowShortcuts = ariaKeyShortcuts([
+    ...(onPlaceThread ? ['thread-place' as const] : []),
+    ...(locked ? [] : ['thread-reorder-up', 'thread-reorder-down'] as const),
+  ]);
   const reorder = useThreadReorder(navRef, {
     // Ordering needs every settled row; only rendering stops at six.
     lists: () => ({ pinned, working, flat: orderedRemaining, settled }),
@@ -226,6 +231,9 @@ export function ShellSidebar({
           break;
         case 'cancelled':
           message = 'Reorder cancelled';
+          break;
+        case 'locked':
+          message = REORDER_PAUSED;
           break;
       }
       cancelAnimationFrame(reorderNoticeFrame.current);
@@ -266,6 +274,8 @@ export function ShellSidebar({
       <div
         key={item.id}
         data-thread-id={item.id}
+        data-reorder-locked={locked || undefined}
+        title={locked ? REORDER_PAUSED : undefined}
         className={`sidebar-thread-row ${compactSettled ? 'sidebar-settled-row' : ''} ${item.id === selectedId ? 'active' : ''} ${item.kind === 'delegate' ? 'sidebar-delegate' : ''} ${reorder.dragging?.id === item.id ? 'sidebar-drag-source' : ''}`}
       >
         <ThreadHoverCard facts={{scope,title:item.title,project:item.projectName?{name:item.projectName,monogram:projectMonogram(item.projectName)}:undefined,model:item.modelId??undefined,reasoning:item.thinkingLevel??undefined,activity:threadStatus(item),lastActivity:{label:threadAge(item.updatedAt),at:item.updatedAt},parent:item.parentThreadId?{threadId:item.parentThreadId,title:matching.find(parent=>parent.id===item.parentThreadId)?.title}:undefined}}
@@ -275,12 +285,14 @@ export function ShellSidebar({
           className="thread-item"
           draggable={!locked}
           onDragStart={event => {
+            if (locked) { event.preventDefault(); return; }
             event.dataTransfer.effectAllowed = 'copyMove';
             event.dataTransfer.setData('application/x-gen-thread', threadDragPayload(item));
             reorder.begin(item);
           }}
           onDragEnd={reorder.end}
-          aria-keyshortcuts={ariaKeyShortcuts(onPlaceThread ? ['thread-place', 'thread-reorder-up', 'thread-reorder-down'] : ['thread-reorder-up', 'thread-reorder-down'])}
+          aria-keyshortcuts={rowShortcuts}
+          aria-describedby={locked ? reorderPauseId : undefined}
           onKeyDown={event => {
             if (onPlaceThread && event.altKey && event.key === 'Enter') {
               event.preventDefault();
@@ -456,6 +468,7 @@ export function ShellSidebar({
           <SquarePen size={15} />
         </button>
       </div>
+      {locked && <span id={reorderPauseId} className="sr-only">{REORDER_PAUSED}</span>}
       {/* Persistent live region: announcements must update an existing
           element — mounting a status region is missed by some screen readers. */}
       <div className="sr-only" role="status" aria-atomic="true">

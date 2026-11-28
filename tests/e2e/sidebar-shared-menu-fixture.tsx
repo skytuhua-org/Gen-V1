@@ -29,12 +29,13 @@ const threads: ThreadNavigationRow[] = ['Selected conversation', 'Other conversa
 function Fixture() {
   const elementRef = useRef<HTMLElement>(null), searchRef = useRef<HTMLInputElement>(null);
   const [visible, setVisible] = useState(true), [rows, setRows] = useState(threads);
+  const [search,setSearch] = useState('');
   const [layout, setLayout] = useState<ShellLayout>({sidebarCollapsed: false, sidebarWidth: 248, rightPanelOpen: false, rightPanelWidth: 520, rightPanelMaximized: false, activeTab: 'artifact', openTabs: ['artifact'], activeArtifactId: null, folded: {}});
   return <DesktopProvider bridge={bridge} context={context}><WorkspaceProvider value={{activeArtifactId: null, requestOpenArtifact: () => {}, closeArtifact: () => {}, rightPanelOpen: false, activeTab: 'artifact', setActiveTab: () => {}}}>
     <div className="app-shell" data-theme="dark" style={{height: '100vh'}}>
       <ShellSidebar elementRef={elementRef} searchRef={searchRef} mobile={query.has('mobile')} open={visible} layout={layout}
         preferences={{...DEFAULT_PREFERENCES, projectGrouping: true, showWorkingSection: false, panelAnimations: false}}
-        matching={rows} selectedId="thread-0" loaded creating={false} search="" setSearch={() => {}} close={() => setVisible(false)}
+        matching={rows} selectedId="thread-0" loaded creating={false} search={search} setSearch={setSearch} close={() => setVisible(false)}
         toggleCollapsed={() => setLayout(value => ({...value, sidebarCollapsed: !value.sidebarCollapsed}))}
         setFolded={(key, folded) => setLayout(value => ({...value, folded: {...value.folded, [key]: folded}}))}
         select={id => calls.push({select: id})} create={() => {}} settings={() => {}}
