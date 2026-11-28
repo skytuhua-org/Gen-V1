@@ -26,8 +26,9 @@ test('Current and Recorded remain separate, keyboard reachable sources',async({p
  await page.keyboard.press('ArrowRight');await expect(page.getByText('Synthetic recorded executor comparison',{exact:true})).toBeVisible();
  await page.getByRole('tab',{name:'Recorded',exact:true}).dispatchEvent('keydown',{key:'ArrowRight',isComposing:true});
  await expect(page.getByRole('tab',{name:'Recorded',exact:true})).toHaveAttribute('aria-selected','true');
- await page.keyboard.press('End');await expect(history).toBeFocused();
- expect(await history.evaluate(el=>getComputedStyle(el).outlineStyle)).not.toBe('none');
+ const last=page.getByRole('tab',{name:'Git history',exact:true});
+ await page.keyboard.press('End');await expect(last).toBeFocused();
+ expect(await last.evaluate(el=>getComputedStyle(el).outlineStyle)).not.toBe('none');
 });
 test('empty, failed/retry, denied and unavailable are honest read states',async({page})=>{
  await page.goto('/file-checkpoints?state=empty');await expect(page.getByText('No file checkpoints available.',{exact:true})).toBeVisible();
@@ -159,8 +160,39 @@ test('QA #130 displays escaped control paths and reviews their exact original by
  expect(paths).toEqual(['src/notes\t2026.txt','src/notes\n2026.txt']);await expect(page.locator('.file-checkpoints-callout')).toContainText('Restoring files isn’t set up');await page.screenshot({path:testInfo.outputPath('control-paths.png'),fullPage:true});
 });
 
+test('recorded comparison columns respond to their panel and long code scrolls locally',async({page})=>{
+ await page.setViewportSize({width:1440,height:900});
+ const resize=(width:number)=>page.locator('.wo5-checkpoints-workarea').evaluate((node,value)=>{
+  (node as HTMLElement).style.gridTemplateColumns=`minmax(0,1fr) ${value}px`;
+ },width);
+ for(const [theme,prefs] of [['dark','split'],['light','colors']] as const){
+  await page.goto('/file-checkpoints?long-pair&prefs='+prefs);
+  await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+  await page.getByRole('tab',{name:'Recorded',exact:true}).click();
+  const pair=page.locator('.workspace-diff-pair').first();
+  const columns=()=>pair.evaluate(node=>getComputedStyle(node).gridTemplateColumns.split(' ').length);
+  await resize(340);
+  await expect.poll(columns).toBe(1);
+  const before=pair.locator('pre').first(),after=pair.locator('pre').last();
+  await expect(before).toHaveAttribute('tabindex','0');
+  await before.focus();await page.keyboard.press('Tab');await expect(after).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(()=>after.evaluate(node=>node.scrollLeft)).toBeGreaterThan(0);
+  expect(await pair.evaluate(node=>node.scrollWidth===node.clientWidth)).toBe(true);
+  const tints=await pair.locator('section').evaluateAll(nodes=>nodes.map(node=>getComputedStyle(node).backgroundColor));
+  expect(new Set(tints).size).toBe(2);
+  await resize(720);
+  await expect.poll(columns).toBe(2);
+  expect(await pair.locator('section').evaluateAll(nodes=>nodes.map(node=>getComputedStyle(node).backgroundColor))).toEqual(tints);
+ }
+});
+
 test('recorded comparison preferences have real renderer effects with explicit scope (T07)',async({page})=>{
- const recorded=async(query:string)=>{await page.goto('/file-checkpoints'+query);await page.getByRole('tab',{name:'Recorded',exact:true}).click();};
+ const recorded=async(query:string)=>{
+  await page.goto('/file-checkpoints'+query);
+  await page.locator('.wo5-checkpoints-workarea').evaluate(node=>{(node as HTMLElement).style.gridTemplateColumns='minmax(0,1fr) 720px';});
+  await page.getByRole('tab',{name:'Recorded',exact:true}).click();
+ };
  await recorded('?ws=1');
  await expect(page.getByText('Layout, whitespace and color preferences apply to recorded before/after comparisons. Unified source patches are shown verbatim.')).toHaveCount(0);
  const wsPair=page.locator('.workspace-diff').filter({hasText:'whitespace.ts'});
@@ -182,4 +214,28 @@ test('recorded comparison preferences have real renderer effects with explicit s
  await recorded('?ws=1&prefs=colors');
  const altTint=await page.locator('.workspace-diff-pair section').first().evaluate(node=>getComputedStyle(node).backgroundColor);
  expect(altTint).not.toBe(defaultTint);
+});
+
+test('each Changes source owns a unique panel and only the selected panel is tabbable', async ({page}) => {
+ await page.goto('/file-checkpoints');
+ const tablist=page.getByRole('tablist',{name:'Changes source'});
+ const sources=['Current','Recorded','History','Git history'];
+ await expect(tablist.getByRole('tab')).toHaveCount(sources.length);
+ await expect(page.getByRole('tabpanel',{includeHidden:true})).toHaveCount(sources.length);
+ for (const source of sources) {
+  const tab=tablist.getByRole('tab',{name:source,exact:true});
+  await tab.click();
+  const panel=page.getByRole('tabpanel',{name:source,exact:true});
+  await expect(panel).toBeVisible();
+  const pairs=await tablist.getByRole('tab').evaluateAll(tabs=>tabs.map(tab=>{
+   const target=tab.getAttribute('aria-controls')??'';
+   const panel=document.getElementById(target);
+   return {target,paired:panel?.getAttribute('aria-labelledby')===tab.id,hidden:panel?.hidden,tabIndex:panel?.tabIndex,selected:tab.getAttribute('aria-selected')==='true'};
+  }));
+  expect(new Set(pairs.map(pair=>pair.target)).size).toBe(sources.length);
+  expect(pairs.every(pair=>pair.paired&&pair.hidden===!pair.selected&&pair.tabIndex===(pair.selected?0:-1))).toBe(true);
+  await tab.focus();
+  await page.keyboard.press('Tab');
+  await expect(panel).toBeFocused();
+ }
 });
