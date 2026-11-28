@@ -17,14 +17,17 @@ function stream<T>() {
 
 it('continues a durable host decision in the same official session through real Service callbacks and authenticated MCP', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'official-service-'));
-  const queries: Array<{ options: {mcpServers:{host:{url:string;headers:Record<string,string>}};sessionId?:string;resume?:string}; inputs: {uuid?:string;message?:{content:string}}[]; events: ReturnType<typeof stream<unknown>> }> = [];
+  type HostConfig = {url: string; headers: Record<string, string>};
+  type State = { options: {sessionId?: string; resume?: string}; host?: HostConfig; inputs: {uuid?: string; message?: {content: string}}[]; events: ReturnType<typeof stream<unknown>> };
+  const queries: State[] = [];
   const runtime = createOfficialRuntime({ dataDir }, {
-    claudeSdk: { query({ prompt, options }: { prompt: AsyncIterable<unknown>; options: {mcpServers:{host:{url:string;headers:Record<string,string>}};sessionId?:string;resume?:string} }) {
-      const events = stream<unknown>(); const state = { options, events, inputs: [] as {uuid?:string;message?:{content:string}}[] }; queries.push(state);
+    claudeSdk: { query({ prompt, options }: { prompt: AsyncIterable<unknown>; options: State['options'] }) {
+      const events = stream<unknown>(); const state: State = { options, events, inputs: [] }; queries.push(state);
       void (async () => { for await (const input of prompt) state.inputs.push(input as {uuid?:string;message?:{content:string}}); })();
       return Object.assign(events[Symbol.asyncIterator](), {
         accountInfo: async () => ({ apiProvider: 'firstParty', subscriptionType: 'Claude Max', apiKeySource: 'none' }),
         supportedModels: async () => [{ value: 'official-fixture', displayName: 'Scripted official runtime fixture', description: '' }],
+        async setMcpServers({host}: {host: HostConfig}) { state.host = host; return {added: ['host'], removed: [], errors: {}}; },
         setModel: async () => {}, getContextUsage: async () => ({ totalTokens: 10, maxTokens: 100 }), interrupt: async () => undefined, close: () => events.close(),
       });
     } } as never,
@@ -37,7 +40,7 @@ it('continues a durable host decision in the same official session through real 
   const send = (type: string, payload: Record<string, unknown>, threadId?: string) => service.command({ id: randomUUID(), type, payload, threadId });
   const tool = async (index: number, name: string, args: Record<string, unknown>) => {
     const client = new Client({ name: 'scripted-official-service-client', version: '1' }); clients.push(client);
-    const config = queries[index].options.mcpServers.host;
+    const config = queries[index].host!;
     await client.connect(new StreamableHTTPClientTransport(new URL(config.url), { requestInit: { headers: config.headers } }));
     const result = await client.callTool({ name, arguments: args });
     if (result.isError) throw new Error(JSON.stringify(result));

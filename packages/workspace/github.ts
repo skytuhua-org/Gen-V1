@@ -3,6 +3,7 @@ import {lstat,mkdir,mkdtemp,open} from 'node:fs/promises';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
+import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import {HarnessError} from '../contracts/index.ts';
 import {processEnvironment} from '../capabilities/process.ts';
@@ -14,25 +15,43 @@ import {secureDirectory} from '../runtime-official/manifest.ts';
 import {readBoundFile,removeOwnedFile,withPathGuard} from '../core/file-access.ts';
 import {CODE_REVIEW_LIMITS,ComparisonFileRequestSchema,type CodeReviewComparison,type ComparisonPatch,type ComparisonRead,type PullRequestComparisonIdentity} from '../contracts/code-review.ts';
 import {ComparisonSnapshots,PullComparisonSchema,RemoteComparisonSchema,comparisonError,comparisonResult,normalizeChecks,remotePatch,reviewHash} from './code-review.ts';
+import type {ComparisonCheck} from '../contracts/code-review.ts';
 
 const repository=z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),number=z.number().int().positive();
 const bodyText=z.string().max(64000).refine(value=>Buffer.from(value,'utf8').toString('utf8')===value,'Pull request text must be valid Unicode.');
 const quote=(path:string)=>"'"+path.replaceAll('\\','/').replaceAll("'","'\\''")+"'";
 const bundledGh=fileURLToPath(new URL('../../.harness-tool-bundles/gh/bin/gh.exe',import.meta.url));
 interface PullRequest{number:number;title:string;url:string;state:string;headRefOid:string;headRefName:string;isDraft:boolean}
+/** Versioned persisted provider check observation: one record per repo+PR,
+ * carrying the exact tested head, normalized check state, source time and the
+ * next eligible provider read. Pending, unavailable and billing-blocked
+ * provider states are never recorded as a pass. */
+interface PrCheckObservation{version:1;repo:string;number:number;headOid:string;observedAt:string;state:ComparisonCheck['status'];checks:ComparisonCheck[];attempt:number;nextEligibleAt:string;item:Record<string,unknown>;}
 /** Bundled GitHub CLI with a private sign-in profile and exact reviewed revisions. */
 export class GitHubTools{
  readonly auth:GitHubAuth;
  private readonly reviewComparisons=new ComparisonSnapshots();
+<<<<<<< HEAD
  constructor(private readonly projects:ProjectTools,_terminals:TerminalHost,private readonly executable=bundledGh,private readonly remoteUrl:(repo:string)=>string=(repo)=>'https://github.com/'+repo+'.git'){this.auth=new GitHubAuth(projects.store.dataDir);}
+||||||| de8dcf54
+ constructor(private readonly projects:ProjectTools,_terminals:TerminalHost,private readonly executable=bundledGh){this.auth=new GitHubAuth(projects.store.dataDir);}
+=======
+ private static readonly CHECK_BACKOFF_BASE_MS=5_000;
+ private static readonly CHECK_BACKOFF_MAX_MS=60_000;
+ constructor(private readonly projects:ProjectTools,_terminals:TerminalHost,private readonly executable=bundledGh){this.auth=new GitHubAuth(projects.store.dataDir);}
+>>>>>>> origin/devin/44b1bf-1626-git-sync-t02
  private environment(){const root=join(this.projects.store.dataDir,'github');return{...processEnvironment(),HOME:root,USERPROFILE:root,GH_CONFIG_DIR:join(root,'config'),GH_HOST:'github.com',GH_PROMPT_DISABLED:'1',GH_NO_UPDATE_NOTIFIER:'1',GIT_TERMINAL_PROMPT:'0'};}
  private parseOutput(output:string){try{return JSON.parse(output) as unknown;}catch{throw new HarnessError('GITHUB_CLI_OUTPUT_INVALID','The GitHub CLI returned unreadable output. Check the bundled gh tool and the repository state.');}}
  private async run(path:string,args:string[]){
-  const token=await this.auth.token();await mkdir(join(this.projects.store.dataDir,'github/config'),{recursive:true});
+  const token=await this.auth.token();
+  // A short credential cannot be tracked by the declared redactor. Never pass
+  // it to a child that could echo it into a public GitHub tool result.
+  const redactor=createSecretRedactor([token]);
+  if(redactor.tracked===0)throw new HarnessError('GITHUB_CLI_TOKEN_REDACTION_UNSUPPORTED','The GitHub credential cannot be safely redacted from CLI output.');
+  await mkdir(join(this.projects.store.dataDir,'github/config'),{recursive:true});
   let stdout:string;
   try{({stdout}=await promisify(execFile)(this.executable,args,{cwd:path,env:{...this.environment(),GH_TOKEN:token},windowsHide:true,timeout:60000,maxBuffer:2*1024*1024,encoding:'utf8'}));}
   catch{throw new HarnessError('GITHUB_CLI_FAILED','The GitHub CLI did not complete. Check repository access and the bundled tool.');}
-  const redactor=createSecretRedactor([token]);
   // Decode JSON strings before redaction so escaped ANSI fragments cannot hide
   // this command's known token. Plain URL output still uses the same redactor.
   let decoded:unknown;
@@ -100,7 +119,22 @@ export class GitHubTools{
   return created;
   });
  }
- async details(projectId:string,threadId:string|undefined,pullNumber:number){const{path,repo}=await this.repo(projectId,threadId),status=await this.projects.gitStatus(projectId,threadId),item=this.parseOutput(await this.run(path,['pr','view',String(number.parse(pullNumber)),'--repo',repo,'--json','number,title,url,state,baseRefOid,headRefOid,headRefName,isDraft,files,reviews,statusCheckRollup'])) as {headRefOid?:string};return{repo,item,head:status.head,revision:status.revision,canReview:status.gitWrite===true&&item.headRefOid===status.head};}
+ // Status reads may use persisted observations; review effects require a fresh provider read.
+ async details(projectId:string,threadId:string|undefined,pullNumber:number,fresh=false){const{path,repo}=await this.repo(projectId,threadId),status=await this.projects.gitStatus(projectId,threadId),observationId=createHash('sha256').update(`${repo}#${pullNumber}`).digest('hex'),stored=this.projects.store.get<PrCheckObservation>('prCheckObservation',observationId),current=stored?.version===1?stored:undefined,present=(record:PrCheckObservation,stale:boolean)=>({repo,item:record.item as {headRefOid?:string},head:status.head,revision:status.revision,canReview:!stale&&status.gitWrite===true&&record.headOid===status.head,checkObservation:{headOid:record.headOid,observedAt:record.observedAt,state:record.state,checks:record.checks,stale,attempt:record.attempt}});
+  if(!fresh&&current&&current.nextEligibleAt>new Date().toISOString())return present(current,true);
+  let item:{headRefOid?:string;statusCheckRollup?:unknown[]};
+  try{item=this.parseOutput(await this.run(path,['pr','view',String(number.parse(pullNumber)),'--repo',repo,'--json','number,title,url,state,baseRefOid,headRefOid,headRefName,isDraft,files,reviews,statusCheckRollup'])) as typeof item;}
+  catch(error){
+   if(!fresh&&current){
+    const attempt=current.attempt+1,delay=Math.min(GitHubTools.CHECK_BACKOFF_BASE_MS*2**attempt,GitHubTools.CHECK_BACKOFF_MAX_MS);
+    const retry={...current,attempt,nextEligibleAt:new Date(Date.now()+delay).toISOString()};
+    this.projects.store.internal('github.check-observation',null,()=>this.projects.store.put('prCheckObservation',observationId,null,retry));
+    return present(retry,true);
+   }
+   throw error;
+  }
+  const checks=normalizeChecks(item.statusCheckRollup??null),observedAt=new Date().toISOString(),state=checks.length===0?'unknown':checks.some(check=>check.status==='failed')?'failed':checks.some(check=>check.status==='pending'||check.status==='unknown')?'pending':checks.every(check=>check.status==='neutral')?'neutral':checks.every(check=>check.status==='passed'||check.status==='neutral')?'passed':'pending',record:PrCheckObservation={version:1,repo,number:pullNumber,headOid:item.headRefOid??'',observedAt,state,checks,attempt:0,nextEligibleAt:new Date(Date.now()+GitHubTools.CHECK_BACKOFF_BASE_MS).toISOString(),item:item as Record<string,unknown>};
+  this.projects.store.internal('github.check-observation',null,()=>this.projects.store.put('prCheckObservation',observationId,null,record));return present(record,false);}
  private async comparisonRepository(projectId:string,threadId?:string){
   const{path}=await this.projects.binding(projectId,threadId),origin=(await this.projects.gitReviewOrigin(projectId,threadId)).trim(),match=/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(origin);
   if(!match)throw new HarnessError('GITHUB_REMOTE_REQUIRED','Use an enrolled origin hosted on github.com.');
@@ -141,7 +175,7 @@ export class GitHubTools{
    return result;
   }catch{return result;}
  }
- async review(projectId:string,threadId:string|undefined,input:Record<string,unknown>){const pullNumber=number.parse(input.number),details=await this.details(projectId,threadId,pullNumber),{path}=await this.projects.binding(projectId,threadId),current=await this.projects.gitStatus(projectId,threadId);if(current.gitWrite!==true)throw new HarnessError('PROJECT_READ_ONLY','Pull request reviews require a writable managed working copy.');if(input.head!==details.head||input.revision!==details.revision||!details.canReview||current.head!==details.head||current.revision!==details.revision)throw new HarnessError('REVISION_CHANGED','The pull request and local reviewed revision must match exactly.');const event=z.enum(['APPROVE','REQUEST_CHANGES','COMMENT']).parse(input.event),body=bodyText.parse(input.body??''),target={url:`https://github.com/${details.repo}/pull/${pullNumber}`,head:details.head,revision:details.revision,repo:details.repo};return this.withInput(JSON.stringify({commit_id:details.head,event,body}),target,async file=>{
+ async review(projectId:string,threadId:string|undefined,input:Record<string,unknown>){const pullNumber=number.parse(input.number),details=await this.details(projectId,threadId,pullNumber,true),{path}=await this.projects.binding(projectId,threadId),current=await this.projects.gitStatus(projectId,threadId);if(current.gitWrite!==true)throw new HarnessError('PROJECT_READ_ONLY','Pull request reviews require a writable managed working copy.');if(input.head!==details.head||input.revision!==details.revision||!details.canReview||current.head!==details.head||current.revision!==details.revision)throw new HarnessError('REVISION_CHANGED','The pull request and local reviewed revision must match exactly.');const event=z.enum(['APPROVE','REQUEST_CHANGES','COMMENT']).parse(input.event),body=bodyText.parse(input.body??''),target={url:`https://github.com/${details.repo}/pull/${pullNumber}`,head:details.head,revision:details.revision,repo:details.repo};return this.withInput(JSON.stringify({commit_id:details.head,event,body}),target,async file=>{
   const latest=await this.projects.gitStatus(projectId,threadId);if(latest.gitWrite!==true)throw new HarnessError('PROJECT_READ_ONLY','Pull request reviews require a writable managed working copy.');if(latest.head!==details.head||latest.revision!==details.revision)throw new HarnessError('REVISION_CHANGED','The pull request and local reviewed revision must match exactly.');
   return this.parseOutput(await this.run(path,['api','--method','POST',`repos/${details.repo}/pulls/${pullNumber}/reviews`,'--input',file]));
  });}

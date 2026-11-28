@@ -52,7 +52,7 @@ it('rejects a model-supplied root outside the current approved project', async (
 
 it('accepts the exact attested project root', async () => {
   const f = fixture(); await expect(f.declare()).resolves.toEqual({requirements: 1});
-  f.saveEvidence(); expect(verificationPanelModel(f.store, ctx.threadId).label).toBe('VERIFIED');
+  f.saveEvidence(); expect((await verificationPanelModel(f.store, ctx.threadId)).label).toBe('VERIFIED');
 });
 
 it.each(['side', 'delegate'] as const)('does not lend the project root to a %s thread', async kind => {
@@ -76,10 +76,10 @@ it('uses the current working copy rather than the project parent when a workspac
   await expect(f.declare(f.outside)).resolves.toEqual({requirements: 1});
 });
 
-it('does not keep a saved result current after the project directory is replaced by equal bytes', () => {
+it('does not keep a saved result current after the project directory is replaced by equal bytes', async () => {
   const f = fixture(); f.saveEvidence();
   renameSync(f.root, join(f.directory, 'previous')); mkdirSync(f.root); writeFileSync(join(f.root, 'app.ts'), 'export const value = 1;\n');
-  const model = verificationPanelModel(f.store, ctx.threadId);
+  const model = await verificationPanelModel(f.store, ctx.threadId);
   expect(model.label).toBe('COMPLETED_UNVERIFIED');
   expect(model.rows[0].freshness).toBe('INDETERMINATE');
 });

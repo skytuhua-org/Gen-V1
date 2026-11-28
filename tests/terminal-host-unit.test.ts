@@ -108,6 +108,18 @@ describe('TerminalHost commands', () => {
 });
 
 describe('TerminalHost reads and lookup', () => {
+  it('does not return a half-character for an interior UTF-16 read cursor', async () => {
+    const { host } = fixture();
+    const opened = await host.open({ ...openInput, terminalId: 'term-utf16' });
+    spawned[0].emitData('A🧪B');
+    const read = (cursor: number) => host.read(opened.id, 'project-a', 'thread-a', cursor);
+    await expect(read(1)).resolves.toMatchObject({ start: 1, cursor: 4, output: '🧪B' });
+    await expect(read(2)).resolves.toMatchObject({ start: 3, cursor: 4, output: 'B' });
+    await expect(read(3)).resolves.toMatchObject({ start: 3, cursor: 4, output: 'B' });
+    await expect(read(5)).resolves.toMatchObject({ start: 4, cursor: 4, output: '' });
+    await host.dispose();
+  });
+
   it('serves transcript reads by owner and maps ended durable ids to TERMINAL_ENDED', async () => {
     const { host, store } = fixture();
     const opened = await host.open({ ...openInput, terminalId: 'term-1' });

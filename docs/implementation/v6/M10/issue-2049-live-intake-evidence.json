@@ -1,0 +1,78 @@
+{
+  "utc": "2026-11-25T21:18:16.306Z",
+  "repositoryId": 1442565952,
+  "base": "104217fe3fabfe41e0ea5071ef8398d9c8f8403d",
+  "source": "live GitHub REST read-only polling through ExternalIntakeCoordinator",
+  "first": {
+    "status": "OK",
+    "proposals": 228,
+    "duplicates": 0,
+    "rejected": 0,
+    "attempts": 4
+  },
+  "second": {
+    "status": "OK",
+    "proposals": 0,
+    "duplicates": 228,
+    "rejected": 0,
+    "attempts": 4
+  },
+  "recordCounts": {
+    "afterFirst": 200,
+    "afterSecond": 200
+  },
+  "firstProposal": {
+    "intakeId": "dd3d933c-f20c-4e24-ac8f-3c9b7ea2b31e",
+    "issueNumber": 2307,
+    "eventId": "I_kwDOVfvPQM8AAAABijS9tw",
+    "payloadDigest": "0346c27b63906902edf206985583b401c7c5f2d127454ab3a71600948e662f39",
+    "disposition": "PROPOSED",
+    "sourceInstallation": "authenticated-github",
+    "sourceUrl": "https://github.com/skytuhua-org/Gen-V1/issues/2307"
+  },
+  "duplicateDeliveriesCreated": 0,
+  "calls": [
+    {
+      "url": "https://api.github.com/repositories/1442565952/issues?state=open&sort=updated&direction=desc&per_page=100&page=1",
+      "status": 200,
+      "rateLimitRemaining": "4382"
+    },
+    {
+      "url": "https://api.github.com/repositories/1442565952/issues?state=open&sort=updated&direction=desc&per_page=100&page=2",
+      "status": 200,
+      "rateLimitRemaining": "4835"
+    },
+    {
+      "url": "https://api.github.com/repositories/1442565952/issues?state=open&sort=updated&direction=desc&per_page=100&page=3",
+      "status": 200,
+      "rateLimitRemaining": "4834"
+    },
+    {
+      "url": "https://api.github.com/repos/skytuhua-org/Gen-V1",
+      "status": 200,
+      "rateLimitRemaining": "4833"
+    },
+    {
+      "url": "https://api.github.com/repositories/1442565952/issues?state=open&sort=updated&direction=desc&per_page=100&page=1",
+      "status": 200,
+      "rateLimitRemaining": "4832"
+    },
+    {
+      "url": "https://api.github.com/repositories/1442565952/issues?state=open&sort=updated&direction=desc&per_page=100&page=2",
+      "status": 200,
+      "rateLimitRemaining": "4831"
+    },
+    {
+      "url": "https://api.github.com/repositories/1442565952/issues?state=open&sort=updated&direction=desc&per_page=100&page=3",
+      "status": 200,
+      "rateLimitRemaining": "4830"
+    },
+    {
+      "url": "https://api.github.com/repos/skytuhua-org/Gen-V1",
+      "status": 200,
+      "rateLimitRemaining": "4829"
+    }
+  ],
+  "executorInvocations": 0,
+  "secretMaterialCaptured": false
+}
