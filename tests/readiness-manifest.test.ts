@@ -34,6 +34,13 @@ const resultWith=(status:CheckResult['status'],required=true):CheckResult=>({
 });
 
 describe('runCheck child-process contract',()=>{
+  it('preserves both unterminated pipe tails as separate diagnostic records',async()=>{
+    const directory=temporaryDirectory();
+    const spec=specFor(directory,{args:['-e',"process.stdout.write('output tail');process.stderr.write('error tail');"]});
+    expect((await runCheck(spec)).status).toBe('PASS');
+    expect(readFileSync(spec.logPath,'utf8').trimEnd().split('\n').sort()).toEqual(['error tail','output tail']);
+  });
+
   it('zero exit yields PASS with timestamps, duration and a log artifact',async()=>{
     const directory=temporaryDirectory();
     const result=await runCheck(specFor(directory));
