@@ -35,4 +35,8 @@
 .pr-fix-instruction{display:grid;gap:4px;font-size:12px;color:var(--muted)}.pr-fix-instruction textarea{min-height:90px}
 .pr-fix-error{margin:0;font-size:12px;color:var(--danger-fg,var(--danger,#e05d5d))}
 .pr-fix-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+
+.message-ci-chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:2px 8px;margin-top:6px;border:1px solid var(--border);border-radius:999px;background:transparent;color:var(--text);font-size:12px;line-height:1;cursor:pointer;transition:border-color var(--ui-motion-hover) var(--ui-ease-move)}
+.message-ci-chip:hover{border-color:var(--text)}
+.message-ci-chip-dot{width:7px;height:7px;border-radius:50%;background:var(--danger-fg,var(--danger,#e05d5d))}
 @media (prefers-reduced-motion:reduce){.pr-check-log-toggle svg{transition:none}.pr-check-log-anim{transition:opacity var(--ui-motion-remove) var(--ui-ease-move)}.pr-check-log-anim[data-expanded]{transition:opacity var(--ui-motion-insert) var(--ui-ease-enter)}.pr-checks-head .pr-fix-launcher .primary:active{transform:none}}

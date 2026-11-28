@@ -163,3 +163,30 @@ test('expired report keeps the draft and offers Refresh',async({page})=>{
  await expect.poll(()=>refreshes).toBe(1);
  await expect(sheet.getByText('These logs expired.')).toHaveCount(0);
 });
+
+// #1326 T08 — thread chip + expansion (DESIGN 7.5).
+test('stored failure chip shows, expands to excerpts, survives reload; other messages unchanged',async({page})=>{
+ await page.route('**/api/**',route=>route.fulfill({status:404,json:{error:{message:'Unconfigured fixture request'}}}));
+ await page.route('**/api/bootstrap',route=>route.fulfill({json:{csrfToken:'fixture'}}));
+ await page.goto('/shared-panels-check?chip=1');
+ const chip=page.getByRole('button',{name:'Failing CI · 2 jobs'});
+ await expect(chip).toBeVisible();
+ await expect(chip).toHaveAttribute('aria-expanded','false');
+ // Excerpt collapsed by default.
+ await expect(page.locator('.pr-check-log')).toHaveCount(0);
+ await chip.click();
+ await expect(chip).toHaveAttribute('aria-expanded','true');
+ const logs=page.locator('.pr-check-log');
+ await expect(logs).toHaveCount(2);
+ await expect(logs.first()).toContainText('CI · lint · Run tests');
+ await expect(logs.first().locator('mark.pr-check-log-error')).toHaveText('AssertionError: expected 1 to equal 2');
+ await expect(logs.nth(1)).toContainText('CI · retention · Deploy');
+ // Ordinary message carries no chip.
+ await expect(page.locator('.message').nth(1).getByRole('button',{name:/Failing CI/})).toHaveCount(0);
+ // Data is on the stored message — reload keeps the chip.
+ await page.reload();
+ const again=page.getByRole('button',{name:'Failing CI · 2 jobs'});
+ await expect(again).toBeVisible();
+ await again.click();
+ await expect(page.locator('.pr-check-log')).toHaveCount(2);
+});

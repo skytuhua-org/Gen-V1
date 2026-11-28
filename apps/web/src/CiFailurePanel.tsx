@@ -5,7 +5,7 @@
 import {Fragment,useCallback,useEffect,useRef,useState} from 'react';
 import {ChevronRight,Wrench} from 'lucide-react';
 import {ApiError,authenticated,command,getShellSettings,read} from './api.ts';
-import type {CiFailedJob,CiFailureReport} from '../../../packages/contracts/ci-failures.ts';
+import type {CiFailedJob,CiFailureReport,CiStoredFailure,CiStoredJob} from '../../../packages/contracts/ci-failures.ts';
 
 const get=<T,>(url:string,signal?:AbortSignal)=>authenticated(()=>fetch(url,{credentials:'same-origin',cache:'no-store',signal})).then(read<T>);
 const message=(error:unknown)=>error instanceof Error?error.message:'The failure report could not be loaded.';
@@ -131,6 +131,40 @@ export function CiFixSection({hasFailed,threadId,prStale,staleText,failures}:{ha
   <span className="pr-fix-launcher"><button ref={button} type="button" className="primary" disabled={open} onClick={()=>{failures.load();setOpen(true);}}><Wrench size={14} aria-hidden="true"/>Fix with agent</button>{sent&&<small className="pr-fix-sent" role="status">Sent to the thread.</small>}</span>
   <Collapsible open={open}>
    {open&&(report?<CiFixSheet report={report} threadId={threadId} prStale={prStale} staleText={staleText} refresh={()=>failures.load(true)} close={focus=>{setOpen(false);if(focus)setSent(true);requestAnimationFrame(()=>button.current?.focus());}}/>:failures.error?<p className="pr-check-log-note" role="status">{failures.error}</p>:<div className="pr-check-log-skeleton" aria-hidden="true"><span/><span/><span/></div>)}
+  </Collapsible>
+ </>;
+}
+
+// ── T08: thread chip (DESIGN 7.5) ────────────────────────────────────────────
+
+function StoredExcerpt({job}:{job:CiStoredJob}){
+ const pre=useRef<HTMLPreElement|null>(null),errors=new Set(job.errorLines);
+ useEffect(()=>{if(pre.current)pre.current.scrollTop=pre.current.scrollHeight;},[]);
+ return<>
+  {job.truncated&&<p className="pr-check-log-truncated">Showing the stored tail of the log.</p>}
+  <pre className="pr-check-log-body" ref={pre}>{job.excerpt.split('\n').map((line,index)=>
+   <Fragment key={index}>{errors.has(index)?<mark className="pr-check-log-error">{line}</mark>:line.startsWith('▸ ')?<span className="pr-check-log-group">{line}</span>:line}{'\n'}</Fragment>)}</pre>
+ </>;
+}
+
+/** Chip under a user message carrying the stored failure reference (7.5). */
+export function CiMessageChip({failure}:{failure:CiStoredFailure}){
+ const[open,setOpen]=useState(false);
+ if(!failure.jobs.length)return null;
+ return<>
+  <button type="button" className="message-ci-chip" aria-expanded={open} onClick={()=>setOpen(value=>!value)}>
+   <span className="message-ci-chip-dot" aria-hidden="true"/>Failing CI · {failure.jobs.length} jobs</button>
+  <Collapsible open={open}>
+   {failure.jobs.map(job=><div key={job.id} className="pr-check-log">
+    <div className="pr-check-log-head">
+     <strong>{job.workflowName??'Actions'} · {job.checkName}{job.failedStep?` · ${job.failedStep}`:''}</strong>
+     <span className="pr-check-log-actions">
+      <button type="button" onClick={()=>void navigator.clipboard.writeText(job.excerpt).catch(()=>{})}>Copy</button>
+      {job.url&&<a href={job.url} target="_blank" rel="noreferrer">Open on GitHub</a>}
+     </span>
+    </div>
+    <StoredExcerpt job={job}/>
+   </div>)}
   </Collapsible>
  </>;
 }
