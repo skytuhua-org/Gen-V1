@@ -295,6 +295,9 @@ tbody tr:hover { background:var(--subtle); }
 .code-block { margin:0; }
 .code-block figcaption { padding-bottom:10px; font-size:12px; }
 .code-block pre,.diff { background:var(--subtle); border-radius:8px; padding:10px 12px; white-space:pre; font-size:11px; line-height:1.65; }
+.diff { overflow:auto; max-width:100%; }
+.diff > span { display:block; width:max-content; min-width:100%; }
+.diff .diff-header,.diff .diff-hunk { color:var(--muted); }
 .diff .added { color:var(--success-fg); background:var(--success-bg); }
 .diff .removed { color:var(--danger-fg); background:var(--danger-bg); }
 .document { border-radius:9px; padding:14px 18px; background:var(--canvas); }
