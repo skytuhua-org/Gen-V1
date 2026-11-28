@@ -272,7 +272,7 @@ describe('appearance theme contrast audit', () => {
 
   it('keeps search, textarea, button and radio boundaries on the control token', () => {
     const boundaries = {
-      'apps/web/src/agent-inbox.css': ['.agent-inbox .inbox-search>label'],
+      'apps/web/src/agent-inbox.css': ['.agent-inbox .inbox-search-field'],
       'apps/web/src/exploration-tools.css': ['.exploration-field textarea', '.log-search'],
       'apps/web/src/conversation-find.css': ['.conversation-find'],
       'apps/web/src/everyday-data.css': ['.everyday-option-selector'],
