@@ -22,7 +22,11 @@ type ScriptIntent={owner:string;terminalId:string}&(
  {state:'pending'|'accepted'}|{state:'not-applied';code:ScriptRejection}
 );
 function scriptRejection(code:ScriptRejection){return new HarnessError(code,scriptRejections[code]);}
-interface ScriptWriteFence {check:()=>void;attempt:()=>void}
+interface TerminalOpenInput {
+ projectId:string;threadId?:string;terminalId?:string;cols?:number;rows?:number;
+ program?:string;args?:string[];environment?:Record<string,string|undefined>;
+}
+interface StoredScriptStartup {check:()=>string;attempt:()=>void}
 interface Session{id:string;projectId:string;threadId?:string;path:string;pty:IPty;output:string;offset:number;exited:boolean;exitCode:number|null;done:Promise<void>;startupFailed?:boolean}
 const identifier=z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/),dimension=z.number().int().min(2).max(500);
 /** Host owns processes; renderer visibility and native reparenting do not own their lifetime. */
@@ -34,10 +38,12 @@ export class TerminalHost{
   if(unfinished.length)store.internal('terminal.recovered',null,()=>{for(const item of unfinished)store.put('terminalSession',item.id,null,{...item,exited:true,exitCode:null,reason:'Host restarted; the previous terminal is no longer attached.'});});
  }
  private assertOpen(){if(this.closing)throw new HarnessError('HOST_CLOSING','Gen is closing. No new terminal can start.');}
- async open(input:{projectId:string;threadId?:string;terminalId?:string;cols?:number;rows?:number;command?:string;program?:string;args?:string[];environment?:Record<string,string|undefined>},scriptFence?:ScriptWriteFence){
+ async open(input:TerminalOpenInput){
+  return this.#start(input);
+ }
+ async #start(input:TerminalOpenInput,script?:StoredScriptStartup){
   this.assertOpen();
   const projectId=identifier.parse(input.projectId),threadId=input.threadId===undefined?undefined:identifier.parse(input.threadId),terminalId=input.terminalId?identifier.parse(input.terminalId):randomUUID();
-  const command=input.command?z.string().min(1).max(8000).parse(input.command):undefined;
   const binding=await this.projects.binding(projectId,threadId);
   this.assertOpen();
   const existing=this.reopen(this.sessions.get(terminalId),projectId,threadId,binding.path);
@@ -56,12 +62,12 @@ export class TerminalHost{
   if(opened)return opened;
   if(this.projects.store.get('terminalSession',terminalId))throw new HarnessError('TERMINAL_ENDED','This terminal ended. Open a new terminal.');
   if([...this.sessions.values()].filter(item=>!item.exited).length>=12)throw new HarnessError('TERMINAL_CAPACITY','Twelve terminals are already running. Stop one before opening another.');
-  scriptFence?.check();
+  script?.check();
   // Trusted integration programs retain their explicitly pinned environments.
   const options={name:'xterm-256color',cwd:binding.path,cols:dimension.parse(input.cols??100),rows:dimension.parse(input.rows??30),env:(input.environment??{...processEnvironment(),...configured}) as Record<string,string>,useConpty:true};
   let pty:IPty;
   try{pty=spawn(input.program??shell,input.args??args,options);}
-  catch(error){if(scriptFence)throw scriptRejection('TERMINAL_START_FAILED');throw error;}
+  catch(error){if(script)throw scriptRejection('TERMINAL_START_FAILED');throw error;}
   let finish!:()=>void;const session:Session={id:terminalId,projectId,...(threadId?{threadId}:{}),path:binding.path,pty,output:'',offset:0,exited:false,exitCode:null,done:new Promise<void>(resolve=>{finish=resolve;})};
   let registered=false,observingExit=false;
   const discardFailedStartup=()=>{
@@ -96,10 +102,10 @@ export class TerminalHost{
    this.persist(session);
    registered=true;
    if(session.exited)this.evictExited(session);
-   else if(command!==undefined){
-    if(scriptFence)this.assertOpen();
-    scriptFence?.check();
-    scriptFence?.attempt();
+   else if(script){
+    this.assertOpen();
+    const command=script.check();
+    script.attempt();
     pty.write(command+'\r');
    }
   }catch(error){
@@ -139,12 +145,11 @@ export class TerminalHost{
   const action={id:operationId,type:'project.run-script',threadId,payload:{projectId,scriptId}};
   // Validate reused IDs before looking up another project's script.
   store.receipt(action);
-  const {command,owner}=this.scriptScope(projectId,threadId,scriptId);
+  const {owner}=this.scriptScope(projectId,threadId,scriptId);
   const requireOwner=(actual:string)=>{if(actual!==owner)throw scriptRejection('CAPABILITY_DENIED');};
-  const check=()=>requireOwner(this.scriptScope(projectId,threadId,scriptId).owner);
   const uncertain=()=>new HarnessError('ACTION_UNCERTAIN','The script write could not be confirmed. Inspect the original terminal before running the script again.');
   await this.projects.binding(projectId,threadId);
-  check();
+  requireOwner(this.scriptScope(projectId,threadId,scriptId).owner);
   const proposed:ScriptIntent={owner,terminalId:randomUUID(),state:'pending'};
   // The command receipt reserves the ID atomically with the private intent.
   // It holds no script text or terminal output.
@@ -163,7 +168,14 @@ export class TerminalHost{
   }
   let attempted=false;
   try{
-   const result=await this.open({projectId,threadId,terminalId:intent.terminalId,command},{check,attempt:()=>{attempted=true;}});
+   const check=()=>{
+    const current=store.get<ScriptIntent>('projectScriptIntent',operationId);
+    if(!current||current.state!=='pending'||current.terminalId!==intent.terminalId||current.owner!==owner)throw uncertain();
+    const scope=this.scriptScope(projectId,threadId,scriptId);
+    requireOwner(scope.owner);
+    return scope.command;
+   };
+   const result=await this.#start({projectId,threadId,terminalId:intent.terminalId},{check,attempt:()=>{attempted=true;}});
    if(!attempted)throw scriptRejection('TERMINAL_ENDED');
    store.internal('project.script.accepted',threadId??null,()=>{
     store.put('projectScriptIntent',operationId,threadId??null,{...intent,state:'accepted'});

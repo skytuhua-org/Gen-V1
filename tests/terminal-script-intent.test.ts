@@ -165,6 +165,21 @@ it('rechecks the thread generation after native startup and before sending the s
   expect(native.write).not.toHaveBeenCalled();
 });
 
+it('requires the same pending reservation after native startup before sending the script', async () => {
+  const { run, store } = await fixture();
+  const spawn = native.spawn.getMockImplementation()!;
+  native.spawn.mockImplementationOnce((...args) => {
+    const pty = spawn(...args);
+    store.internal('fixture.reservation-removed', 'thread-a', () => {
+      store.remove('projectScriptIntent', 'operation-a');
+    });
+    return pty;
+  });
+  expect((await run()).json().error).toMatchObject({ code: 'ACTION_UNCERTAIN' });
+  expect(native.spawn).toHaveBeenCalledOnce();
+  expect(native.write).not.toHaveBeenCalled();
+});
+
 it('keeps a pending stored script fenced when terminal host shutdown starts', async () => {
   const { run, store, host } = await fixture();
   const preparing = deferred<void>(), release = deferred<Record<string, string>>();
