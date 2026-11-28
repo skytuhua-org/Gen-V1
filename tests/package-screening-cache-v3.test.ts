@@ -1,14 +1,14 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PackageScreeningV1 } from '../packages/contracts/execution-profile.ts';
 import {
   screenPackage, screeningGate, type AdvisoryDatabase, type PackageIdentity,
   type ScreeningRecordCache,
 } from '../packages/core/package-screening.ts';
-import { installPluginPackage, readPluginIndex } from '../packages/plugins/installation.ts';
+import { installPluginPackage, readPluginIndex, verifyPluginPackage } from '../packages/plugins/installation.ts';
 
 const identity: PackageIdentity = { name: 'example-plugin', version: '1.0.0', digest: 'a'.repeat(64) };
 const checkedAt = '2026-11-17T00:00:00.000Z';
@@ -30,6 +30,28 @@ function record(overrides: Partial<PackageScreeningV1> = {}): PackageScreeningV1
 function cache(initial?: PackageScreeningV1): ScreeningRecordCache {
   let current = initial;
   return { get: () => current, put: (_key, next) => { current = next; } };
+}
+
+async function writePackageFixture(source: string, version: string) {
+  await mkdir(source);
+  await mkdir(join(source, 'frontend'));
+  await mkdir(join(source, 'host'));
+  const files = {
+    'plugin.json': JSON.stringify({
+      id: identity.name, name: 'Screening fixture', version,
+      apiVersion: 1, compatibleGenVersions: '>=0.6.3 <0.7.0',
+      frontendEntry: 'frontend/index.html', hostEntry: 'host/main.mjs',
+    }),
+    'frontend/index.html': '<p>Screening fixture</p>',
+    'host/main.mjs': 'export default { activate() { throw Error("must not execute"); } };',
+  };
+  const sha = (bytes: string) => createHash('sha256').update(bytes).digest('hex');
+  const inventory = JSON.stringify({ version: 1, files: Object.entries(files).map(([path, bytes]) => ({
+    path, bytes: Buffer.byteLength(bytes), sha256: sha(bytes),
+  })) });
+  for (const [path, bytes] of Object.entries(files)) await writeFile(join(source, path), bytes);
+  await writeFile(join(source, 'plugin-files.json'), inventory);
+  return sha(inventory);
 }
 
 describe('M03 cached package screening authority', () => {
@@ -472,25 +494,7 @@ describe('M03 cached package screening authority', () => {
     const directory = await mkdtemp(join(tmpdir(), 'screening-install-'));
     const source = join(directory, 'source'), destination = join(directory, 'installed');
     try {
-      await mkdir(source);
-      await mkdir(join(source, 'frontend'));
-      await mkdir(join(source, 'host'));
-      const files = {
-        'plugin.json': JSON.stringify({
-          id: identity.name, name: 'Screening fixture', version: identity.version,
-          apiVersion: 1, compatibleGenVersions: '>=0.6.3 <0.7.0',
-          frontendEntry: 'frontend/index.html', hostEntry: 'host/main.mjs',
-        }),
-        'frontend/index.html': '<p>Screening fixture</p>',
-        'host/main.mjs': 'export default { activate() { throw Error("must not execute"); } };',
-      };
-      const sha = (bytes: string) => createHash('sha256').update(bytes).digest('hex');
-      const inventory = JSON.stringify({ version: 1, files: Object.entries(files).map(([path, bytes]) => ({
-        path, bytes: Buffer.byteLength(bytes), sha256: sha(bytes),
-      })) });
-      for (const [path, bytes] of Object.entries(files)) await writeFile(join(source, path), bytes);
-      await writeFile(join(source, 'plugin-files.json'), inventory);
-      const pkg = { ...identity, digest: sha(inventory) }, stored = cache();
+      const pkg = { ...identity, digest: await writePackageFixture(source, identity.version) }, stored = cache();
       await screenPackage(pkg, unavailable, { cache: stored, exception });
 
       await expect(installPluginPackage(source, destination, pkg.digest, '0.6.3', {
@@ -507,4 +511,36 @@ describe('M03 cached package screening authority', () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it('refuses a verified package without an advisory provider and preserves an existing installation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'screening-provider-'));
+    try {
+      const priorSource = join(directory, 'prior'), source = join(directory, 'candidate');
+      const destination = join(directory, 'installed');
+      const priorDigest = await writePackageFixture(priorSource, identity.version);
+      const digest = await writePackageFixture(source, '1.1.0');
+      const flag = 'HARNESS_FLAG_SECURITY_EXECUTION_PROFILES_V1';
+      vi.stubEnv(flag, '0');
+      const prior = await installPluginPackage(priorSource, destination, priorDigest, '0.6.3');
+      const indexPath = join(destination, 'active.json');
+      const entries = (await readdir(destination, { recursive: true })).sort();
+      const indexBytes = await readFile(indexPath);
+
+      vi.stubEnv(flag, '1');
+      await expect(installPluginPackage(source, destination, digest, '0.6.3'))
+        .rejects.toThrow('Package screening is required but no advisory database is configured.');
+      expect((await readdir(destination, { recursive: true })).sort()).toEqual(entries);
+      expect(await readFile(indexPath)).toEqual(indexBytes);
+      await expect(verifyPluginPackage(prior.directory, priorDigest)).resolves.toMatchObject({
+        manifest: { id: identity.name, version: identity.version },
+      });
+      expect(await readPluginIndex(destination)).toEqual([{
+        id: identity.name, version: identity.version, digest: priorDigest,
+      }]);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
 });
