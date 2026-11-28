@@ -779,8 +779,9 @@ export class Service {
             await retainSourceFiles(0);
           };
           if(expected||capabilityEnabled('context.compilerV1')){
-            const nativeInput:StartRun={...ctx,modelId:thread.modelId!,thinkingLevel:thread.thinkingLevel,sessionPath:thread.sessionPath!,inputId:ctx.runId,prompt:'',resources:this.store.all<ResourceGrant>('resource',thread.id).filter(grant=>!grant.composerAttachment?.hidden)};
-            await withApprovedProjectContext(this.store,nativeInput,control.signal,compact);
+            const authorityGrants = this.store.all<ResourceGrant>('resource',thread.id);
+            const nativeInput:StartRun={...ctx,modelId:thread.modelId!,thinkingLevel:thread.thinkingLevel,sessionPath:thread.sessionPath!,inputId:ctx.runId,prompt:'',resources:authorityGrants.filter(grant=>!grant.composerAttachment?.hidden)};
+            await withApprovedProjectContext(this.store,nativeInput,control.signal,compact,authorityGrants);
           }else await compact(undefined,()=>{});
         }catch(cause){
           // A checked native receipt records an applied historical fact. A later
@@ -1810,7 +1811,8 @@ export class Service {
     if(!requestContextId&&this.source&&!thread.sideParentId&&contents.some(content=>/^\/learn(?:\s|$)/i.test(content.trim())))try{contents=await Promise.all(contents.map(async content=>/^\/learn(?:\s|$)/i.test(content.trim())?(await this.source!.runtime.sourceRequest<{prompt:string}>('learn.prompt',{request:content.trim().replace(/^\/learn\s*/i,'')})).prompt:content));}catch(error){this.runtimeFailure(ctx,error);return;}
     const userPrompt=inputs.map((input,index) => "Input " + input.id + ":\n" + contents[index]).join("\n\n");
     const sourceContext = sourceContexts.map(context => context.text).join(''), deliveredRefs = sourceContexts.flatMap(context => context.refs);
-    let input: StartRun = { ...ctx,accountId:binding.accountId, memory: taskMemoryContext(this.store, threadId), modelId, thinkingLevel:thread.thinkingLevel, sessionPath: thread.sessionPath, inputId: inputs[0].id, inputIds: inputs.map(i => i.id), resources: thread.sideParentId ? [] : this.store.all<ResourceGrant>("resource", threadId).filter(grant => !grant.composerAttachment?.hidden), ...(completedWrites.length?{completedWrites}:{}), ...(deliveredRefs.length ? {sourceRefs: deliveredRefs} : {}), prompt: guidance+userPrompt+sourceContext };
+    const authorityGrants = thread.sideParentId ? [] : this.store.all<ResourceGrant>("resource", threadId);
+    let input: StartRun = { ...ctx,accountId:binding.accountId, memory: taskMemoryContext(this.store, threadId), modelId, thinkingLevel:thread.thinkingLevel, sessionPath: thread.sessionPath, inputId: inputs[0].id, inputIds: inputs.map(i => i.id), resources: authorityGrants.filter(grant => !grant.composerAttachment?.hidden), ...(completedWrites.length?{completedWrites}:{}), ...(deliveredRefs.length ? {sourceRefs: deliveredRefs} : {}), prompt: guidance+userPrompt+sourceContext };
     // A live controller may already serve a queued or in-flight approved
     // effect; replacing it would orphan that work from Stop.
     const retainedControl=this.aborts.get(threadId);
@@ -1849,7 +1851,7 @@ export class Service {
       dispatched=true;
       if(thread.sideParentId)await this.sideRuntime.start(input);else if (thread.runId) await this.runtime.followUp(input); else await this.runtime.start(input);
       };
-      if(!thread.sideParentId&&capabilityEnabled('context.compilerV1'))await withApprovedProjectContext(this.store,input,control.signal,admit);
+      if(!thread.sideParentId&&capabilityEnabled('context.compilerV1'))await withApprovedProjectContext(this.store,input,control.signal,admit,authorityGrants);
       else await admit(undefined,()=>{});
     }
     catch (error) { if (!dispatched) this.blockSourceInputs(sourceInputs, error, ctx.runId); this.runtimeFailure(ctx, error); }
