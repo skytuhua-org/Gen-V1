@@ -470,8 +470,11 @@ describe.runIf(enabled)('actual App split workspace',()=>{
    const metadata=page.locator('[data-split-view="thread:thread-a"] .conversation-metadata');
    await metadata.waitFor({state:'visible'});
    await pw(metadata).toContainText('Model A');
-   await pw(metadata).toContainText('First project');
    await pw(metadata).toContainText('Ready');
+   await pw(metadata).not.toContainText('First project');
+   await pw(metadata).not.toContainText('test');
+   expect(await metadata.getAttribute('title')).toBe('test');
+   expect(await metadata.getAttribute('aria-label')).toBe('Model A · test · Ready');
    const toggle=async()=>{
     await page.getByRole('button',{name:'Settings',exact:true}).dispatchEvent('click');
     const dialog=page.getByRole('dialog',{name:'Settings',exact:true});
