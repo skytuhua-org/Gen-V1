@@ -162,6 +162,44 @@ test('loading, empty, offline and retry states stay distinct from success', asyn
   expect(requests).toEqual([]); expect(errors).toEqual([]);
 });
 
+test('announces an identical successful refresh again without removing the work cards', async ({ page }) => {
+  const { requests, errors } = await fixture(page);
+  const summary = page.locator('.background-work [aria-live="polite"]');
+  const refresh = page.getByRole('button', { name: 'Refresh', exact: true });
+  await expect(summary).toContainText('Background work updated:');
+  const original = await summary.textContent();
+
+  await page.evaluate(() => {
+    window.backgroundWork.holdRefresh = new Promise(resolve => window.addEventListener('finish-fixture-refresh', () => resolve(), { once: true }));
+  });
+  await refresh.focus();
+  await page.keyboard.press('Enter');
+  await expect(summary).toBeEmpty();
+  await expect(card(page, 'w-running')).toBeVisible();
+  await expect(page.locator('.background-card')).toHaveCount(9);
+  await page.evaluate(() => {
+    window.backgroundWork.holdRefresh = undefined;
+    window.dispatchEvent(new Event('finish-fixture-refresh'));
+  });
+  await expect(summary).toHaveText(original!);
+  await expect(refresh).toBeFocused();
+
+  await page.evaluate(() => { window.backgroundWork.refreshMode = 'error'; });
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('alert')).toContainText('reconnecting');
+  await expect(summary).toBeEmpty();
+  await expect(card(page, 'w-running')).toBeVisible();
+
+  await page.evaluate(() => { window.backgroundWork.refreshMode = 'success'; });
+  const retry = page.getByRole('alert').getByRole('button', { name: 'Retry' });
+  await retry.focus();
+  await page.keyboard.press('Enter');
+  await expect(summary).toHaveText(original!);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(requests).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test('cancel is offered only for live work and records the owned stop', async ({ page }) => {
   await fixture(page);
   await expect(card(page, 'w-ok').getByRole('button', { name: 'Cancel' })).toHaveCount(0);

@@ -5,7 +5,7 @@ import '../../../apps/web/src/styles.css';
 
 type Mode = 'success' | 'reject' | 'stale';
 type Call = { type: string; id?: string; revision?: number; response?: unknown; modelId?: string; cursor?: number };
-declare global { interface Window { backgroundWork: { calls: Call[]; respondMode: Mode; declineMode: Mode; approveMode: Mode; refreshMode: 'success' | 'error' | 'empty' | 'loading'; outputMode: 'success' | 'reject' } } }
+declare global { interface Window { backgroundWork: { calls: Call[]; respondMode: Mode; declineMode: Mode; approveMode: Mode; refreshMode: 'success' | 'error' | 'empty' | 'loading'; holdRefresh?: Promise<void>; outputMode: 'success' | 'reject' } } }
 window.backgroundWork = { calls: [], respondMode: 'success', declineMode: 'success', approveMode: 'success', refreshMode: 'success', outputMode: 'success' };
 
 const owner = (threadId: string) => ({ threadId, runId: null, epoch: 0, projectId: null, workspaceId: null, accountBinding: null });
@@ -56,9 +56,11 @@ function Fixture() {
     <BackgroundWorkView
       data={data} loading={loading} error={error}
       models={[{ id: 'test/model', provider: 'test', name: 'Test model' }]} defaultModelId={null}
-      onRefresh={() => {
+      onRefresh={async () => {
         window.backgroundWork.calls.push({ type: 'refresh' });
         const mode = window.backgroundWork.refreshMode;
+        const hold = window.backgroundWork.holdRefresh;
+        if (hold) { setLoading(true); await hold; setLoading(false); }
         if (mode === 'error') { setError('Background work is reconnecting…'); return; }
         setError('');
         if (mode === 'empty') { setData(empty); return; }
