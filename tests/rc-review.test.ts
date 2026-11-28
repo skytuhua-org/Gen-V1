@@ -89,6 +89,29 @@ it('compares every SQLite row without rescanning the whole current table',()=>{
 it('inventories empty profiles without inventing a database or app identity',async()=>{const {profile,host}=await fixture();const value=await snapshot(profile,host);expect(value.files).toEqual([]);expect(value.entities).toEqual({});expect(value.identifiers.appId).toBeNull();expect(compare(value,value).passed).toBe(true);});
 it('rejects a snapshot when a submitted root is missing, a file or a symlink instead of silently inventorying empty',async()=>{const {root,profile,host}=await fixture(),missing=join(root,'missing'),mistyped=join(root,'mistyped'),linked=join(root,'linked'),real=join(root,'real');await mkdir(real);await writeFile(mistyped,'file');await symlink(real,linked);for(const [rootLabel,bad]of [['profile',missing],['profile',mistyped],['profile',linked]]as const)await expect(snapshot(bad,host)).rejects.toThrow('snapshot root is not a directory: '+rootLabel);for(const bad of [missing,mistyped,linked])await expect(snapshot(profile,bad)).rejects.toThrow('snapshot root is not a directory: host');const value=await snapshot(profile,host);expect(value.files).toEqual([]);expect(value.entities).toEqual({});});
 it('includes IndexedDB/Local Storage, excludes cache and detects entity removal/change and additive kinds',async()=>{const {profile,host}=await fixture();await mkdir(join(profile,'session/IndexedDB'),{recursive:true});await mkdir(join(profile,'session/Local Storage'),{recursive:true});await mkdir(join(profile,'session/Cache'),{recursive:true});await writeFile(join(profile,'session/IndexedDB/draft'),'draft');await writeFile(join(profile,'session/Local Storage/layout'),'layout');await writeFile(join(profile,'session/Cache/ignored'),'cache');const db=new DatabaseSync(join(host,'harness.sqlite'));db.exec("CREATE TABLE entities(kind TEXT,id TEXT,body TEXT);INSERT INTO entities VALUES ('thread','one','{}'),('thread','two','{}')");db.close();const before=await snapshot(profile,host);expect(before.files.some(file=>file.path.endsWith('ignored'))).toBe(false);expect(before.files.some(file=>file.path.includes('IndexedDB'))).toBe(true);const update=new DatabaseSync(join(host,'harness.sqlite'));update.exec("DELETE FROM entities WHERE id='one';UPDATE entities SET body='null' WHERE id='two';INSERT INTO entities VALUES ('projectMemoryItem','new','{}')");update.close();const value=compare(before,await snapshot(profile,host));expect(value.passed).toBe(false);expect(value.missingEntities).toEqual([{kind:'thread',id:'one'}]);expect(value.changedEntities).toEqual([{kind:'thread',id:'two'}]);expect(value.additiveKinds).toEqual(['projectMemoryItem']);});
+
+it('inventories host cache-named data without reclassifying desktop caches',async()=>{
+ const {profile,host}=await fixture();
+ await mkdir(join(profile,'session','Cache'),{recursive:true});
+ await mkdir(join(host,'Cache'));await mkdir(join(host,'GPUCache'));
+ await writeFile(join(profile,'session','Cache','ignored.txt'),'chromium');
+ await writeFile(join(host,'Cache','kept.txt'),'ordinary host data');
+ await writeFile(join(host,'GPUCache','kept.txt'),'other host data');
+ const before=await snapshot(profile,host);
+ expect(before.files.map(file=>[file.root,file.path])).toEqual([['host','Cache/kept.txt'],['host','GPUCache/kept.txt']]);
+ await writeFile(join(host,'Cache','kept.txt'),'changed');await rm(join(host,'GPUCache','kept.txt'));
+ const result=compare(before,await snapshot(profile,host));
+ expect(result.passed).toBe(false);
+ expect(result.changedFiles.map(file=>file.path)).toEqual(['Cache/kept.txt']);
+ expect(result.missingFiles.map(file=>file.path)).toEqual(['GPUCache/kept.txt']);
+});
+it('does not ignore host cache-named entries already present in a profile manifest',()=>{
+ const before=emptySnapshot({});
+ before.files.push({root:'host',path:'Cache/kept.txt',bytes:7,sha256:'old'});
+ const result=compare(before,emptySnapshot({}));
+ expect(result.passed).toBe(false);
+ expect(result.missingFiles).toEqual(before.files);
+});
 it('fails missing files and identifier changes and refuses malformed databases',async()=>{const {profile,host}=await fixture();await writeFile(join(profile,'kept'),'value');const before=await snapshot(profile,host);await rm(join(profile,'kept'));const after=await snapshot(profile,host);after.identifiers.profile='renamed';const result=compare(before,after);expect(result.passed).toBe(false);expect(result.missingFiles).toHaveLength(1);expect(result.identifierChanges).toEqual(['profile']);await writeFile(join(host,'harness.sqlite'),'not sqlite');await expect(snapshot(profile,host)).rejects.toThrow();});
 it('counts loss of host data even when its filenames resemble Chromium diagnostics', async () => {
  const {profile,host}=await fixture();
