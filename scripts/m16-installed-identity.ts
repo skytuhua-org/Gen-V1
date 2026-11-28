@@ -167,6 +167,15 @@ function verifierIntegrationReceipt(value:unknown,iteration:number){
  return value.receipt;
 }
 
+function installedIdentityCallback(receipt:Record<string,unknown>,iteration:number){
+ if(receipt.status!=='PASS'||receipt.kind!=='m16-installed-identity'||!isSourceSha(receipt.sourceSha)||typeof receipt.buildReference!=='string'||!receipt.buildReference||typeof receipt.packageVersion!=='string'||!receipt.packageVersion||receipt.iteration!==iteration)throw Error('M16 installed identity callback '+iteration+' has invalid provenance or did not pass.');
+ const identity=receipt.fileIdentity;
+ if(!isRecord(identity)||!isRecord(identity.executable)||!isRecord(identity.addon)||identity.executable.name!==M16_APP_FILE||identity.addon.packageRelativePath!==M16_CONTROL_ADDON_PATH)throw Error('M16 installed identity callback '+iteration+' is missing the executable or addon.');
+ const {executable,addon}=identity;
+ if(!isSha256(executable.sha256)||!isSha256(addon.sha256)||typeof executable.bytes!=='number'||!Number.isSafeInteger(executable.bytes)||executable.bytes<1||typeof addon.bytes!=='number'||!Number.isSafeInteger(addon.bytes)||addon.bytes<1)throw Error('M16 installed identity callback '+iteration+' has invalid executable or addon bytes.');
+ return {sourceSha:receipt.sourceSha,buildReference:receipt.buildReference,packageVersion:receipt.packageVersion,executableSha256:executable.sha256,executableBytes:executable.bytes,addonSha256:addon.sha256,addonBytes:addon.bytes};
+}
+
 export function assertM16IdentityVerificationReceipt(receipt:Record<string,unknown>,expectedElectronVersion:string,singleInstallAcceptance=false){
  if(receipt.passed!==true)throw Error('M16 installed identity verification did not pass.');
  if(!isRecord(receipt.installedIntegration)||receipt.installedIntegration.status!=='bound')throw Error('M16 installed identity verification did not resolve a bound source provenance.');
@@ -178,8 +187,9 @@ export function assertM16IdentityVerificationReceipt(receipt:Record<string,unkno
  }
  if(!Array.isArray(receipt.integrations)||receipt.integrations.length!==2)throw Error('M16 installed identity verification did not complete both callbacks.');
  const first=verifierIntegrationReceipt(receipt.integrations[0],1),second=verifierIntegrationReceipt(receipt.integrations[1],2);
- if(first.status!=='PASS'||first.kind!=='m16-installed-identity'||!isSourceSha(first.sourceSha))throw Error('M16 installed identity callback receipt is not a pass.');
- if(!isRecord(first.fileIdentity)||!isRecord(first.fileIdentity.executable)||!isRecord(first.fileIdentity.addon)||first.fileIdentity.executable.name!==M16_APP_FILE||!isSha256(first.fileIdentity.executable.sha256)||first.fileIdentity.addon.packageRelativePath!==M16_CONTROL_ADDON_PATH||!isSha256(first.fileIdentity.addon.sha256))throw Error('M16 installed identity callback did not record the exact executable and addon identity.');
+ const firstIdentity=installedIdentityCallback(first,1),secondIdentity=installedIdentityCallback(second,2);
+ // Both fixed-shape records must describe the same observed installed bytes.
+ if(firstIdentity.buildReference!==receipt.installedIntegration.buildReference||JSON.stringify(firstIdentity)!==JSON.stringify(secondIdentity))throw Error('M16 installed identity callback records do not share the same verified build and installed bytes.');
  assertM16ModuleLoadReceipt(first.directModuleLoad,expectedElectronVersion);
  if(!isRecord(second.directModuleLoad)||second.directModuleLoad.status!=='NOT_RUN')throw Error('M16 installed identity callback reran or omitted the bounded single module-load receipt.');
  if(!isRecord(first.applicationProductionRegistration)||first.applicationProductionRegistration.status!=='NOT_OBSERVED')throw Error('M16 application production-side registration was not kept distinct and unproved.');
