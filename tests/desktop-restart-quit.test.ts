@@ -23,9 +23,11 @@ vi.mock('../apps/desktop/attention-popups.ts', () => ({
 class FixtureWindow extends EventEmitter {
   private destroyed = false;
   readonly initialBounds: { x: number; y: number; width: number; height: number };
+  private bounds: FixtureWindow['initialBounds'];
   constructor(options: { x: number; y: number; width: number; height: number }) {
     super();
     this.initialBounds = { x: options.x, y: options.y, width: options.width, height: options.height };
+    this.bounds = { ...this.initialBounds };
   }
   readonly contentView = { addChildView() {}, removeChildView() {} };
   readonly closeRequest = deferred<string>();
@@ -48,7 +50,12 @@ class FixtureWindow extends EventEmitter {
   isMaximized() { return false; }
   isFullScreen() { return false; }
   isAlwaysOnTop() { return false; }
-  getNormalBounds() { return { ...this.initialBounds }; }
+  getNormalBounds() { return { ...this.bounds }; }
+  moveTo(bounds: FixtureWindow['initialBounds']) {
+    if (process.platform === 'win32' || process.platform === 'darwin') this.emit('will-move', {}, bounds);
+    this.bounds = { ...bounds };
+    this.emit('move');
+  }
   getContentSize() { return [900, 700]; }
   show() {}
   destroy() { this.destroyed = true; this.emit('closed'); }
@@ -194,25 +201,25 @@ it('resumes host layout persistence after a transient save failure', async () =>
   vi.useRealTimers();
   const sidecar = fixture.sidecars[0]!;
   const lastState = () => fixture.window.sent.filter(({ channel }) => channel === channels.state).at(-1)?.value as { layoutError?: string };
-  fixture.window.emit('will-move', {}, { x: 10, y: 10, width: 800, height: 600 });
+  fixture.window.moveTo({ x: 10, y: 10, width: 800, height: 600 });
   await eventually(() => expect(sidecar.layoutSaves.length).toBeGreaterThan(0));
   const initialSaves = sidecar.layoutSaves.length;
 
   sidecar.failNextLayoutSave = true;
-  fixture.window.emit('will-move', {}, { x: 24, y: 24, width: 800, height: 600 });
+  fixture.window.moveTo({ x: 24, y: 24, width: 800, height: 600 });
   await eventually(() => {
     expect(sidecar.layoutSaves).toHaveLength(initialSaves + 1);
     expect(lastState().layoutError).toContain('Workspace layout could not be saved');
   });
 
   sidecar.failNextLayoutSave = true;
-  fixture.window.emit('will-move', {}, { x: 40, y: 32, width: 810, height: 610 });
+  fixture.window.moveTo({ x: 40, y: 32, width: 810, height: 610 });
   await eventually(() => {
     expect(sidecar.layoutSaves).toHaveLength(initialSaves + 2);
     expect(lastState().layoutError).toContain('Workspace layout could not be saved');
   });
 
-  fixture.window.emit('will-move', {}, { x: 64, y: 48, width: 820, height: 620 });
+  fixture.window.moveTo({ x: 64, y: 48, width: 820, height: 620 });
   await eventually(() => {
     expect(sidecar.layoutSaves).toHaveLength(initialSaves + 3);
     const lastLayout = sidecar.layoutSaves.at(-1) as { windows: { bounds: { x: number } }[] };
@@ -232,15 +239,15 @@ it('keeps newer geometry behind an older in-flight host save', async () => {
   const fixture = await launch();
   vi.useRealTimers();
   const sidecar = fixture.sidecars[0]!;
-  fixture.window.emit('will-move', {}, { x: 10, y: 10, width: 800, height: 600 });
+  fixture.window.moveTo({ x: 10, y: 10, width: 800, height: 600 });
   await eventually(() => expect(sidecar.layoutSaves.length).toBeGreaterThan(0));
   const initialSaves = sidecar.layoutSaves.length;
 
   sidecar.holdNextLayoutSave = true;
-  fixture.window.emit('will-move', {}, { x: 24, y: 24, width: 800, height: 600 });
+  fixture.window.moveTo({ x: 24, y: 24, width: 800, height: 600 });
   await eventually(() => expect(sidecar.layoutSaves).toHaveLength(initialSaves + 1));
 
-  fixture.window.emit('will-move', {}, { x: 64, y: 48, width: 820, height: 620 });
+  fixture.window.moveTo({ x: 64, y: 48, width: 820, height: 620 });
   await persistenceWindow();
   expect(sidecar.layoutSaves).toHaveLength(initialSaves + 1);
 
@@ -257,7 +264,7 @@ it('does not overwrite invalid saved host layout silently', async () => {
   vi.useRealTimers();
   const sidecar = fixture.sidecars[0]!;
 
-  fixture.window.emit('will-move', {}, { x: 96, y: 72, width: 820, height: 620 });
+  fixture.window.moveTo({ x: 96, y: 72, width: 820, height: 620 });
   await eventually(async () => {
     const backup = JSON.parse(await readFile(join(directory!, 'desktop-windows.json'), 'utf8')) as { windows: { bounds: { x: number } }[] };
     expect(backup.windows[0]?.bounds.x).toBe(96);
