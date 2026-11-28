@@ -149,32 +149,69 @@ export function buildChildEnvironment(
 /* It is not a universal scrubber and never claims to be.               */
 /* ------------------------------------------------------------------ */
 
-const MIN_TRACKED_SECRET_LENGTH = 8;
+export const MIN_TRACKED_SECRET_LENGTH = 8;
 const REDACTED = '[REDACTED]';
-const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()#][0-9A-Za-z]|\x1b[=>]/g;
+const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[\]P^X_][\s\S]*?(?:\x07|\x1b\\)|\x1b[\]P^X_]|\x1b[()#][0-9A-Za-z]|\x1b[=>78cDEM]|[\x80-\x9f]/g;
 
 export interface SecretRedactor {
   redact(text: string): { text: string; redactions: number };
+  redactTruncatedSuffix(text: string): { text: string; redactions: number };
+  containsTracked(text: string): boolean;
   readonly tracked: number;
 }
 
-export function createSecretRedactor(secrets: Iterable<string>, options?: { fields?: readonly string[] }): SecretRedactor {
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const wrapBase64 = (value: string, width: number) => value.replace(new RegExp(`(.{${width}})`, 'g'), '$1\n');
+const jsonKeyPattern = (field: string) => [...field].map(ch => {
+  const hex = ch.codePointAt(0)!.toString(16).padStart(4, '0');
+  return `(?:${escapeRegExp(ch)}|\\u${hex})`;
+}).join('');
+const percentInsensitiveMatcher = (variant: string) => {
+  let source = '';
+  for (let index = 0; index < variant.length; index++) {
+    const hex = /^[0-9a-fA-F]{2}$/.test(variant.slice(index + 1, index + 3));
+    if (variant[index] === '%' && hex) {
+      source += '%';
+      for (const ch of variant.slice(index + 1, index + 3))
+        source += /[a-fA-F]/.test(ch) ? `[${ch.toLowerCase()}${ch.toUpperCase()}]` : ch;
+      index += 2;
+    } else source += escapeRegExp(variant[index]!);
+  }
+  return new RegExp(source, 'g');
+};
+
+export function createSecretRedactor(secrets: Iterable<string>, options?: { fields?: readonly string[]; structuredText?: boolean }): SecretRedactor {
   const variants = new Set<string>();
   for (const secret of secrets) {
     if (typeof secret !== 'string' || secret.length < MIN_TRACKED_SECRET_LENGTH) continue;
+    const percent = encodeURIComponent(secret);
+    const base64 = Buffer.from(secret, 'utf8').toString('base64');
     variants.add(secret);
     variants.add(JSON.stringify(secret).slice(1, -1));
-    variants.add(encodeURIComponent(secret));
-    variants.add(Buffer.from(secret, 'utf8').toString('base64'));
-    variants.add(Buffer.from(secret, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+    variants.add(percent);
+    variants.add(percent.replace(/%20/g, '+'));
+    variants.add(base64);
+    variants.add(wrapBase64(base64, 64));
+    variants.add(wrapBase64(base64, 76));
+    variants.add(base64.replace(/\+/g, '-').replace(/\//g, '_'));
+    variants.add(base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
   }
+  const variantMatchers = [...variants].filter(Boolean).map(variant => ({ variant, pattern: percentInsensitiveMatcher(variant) }));
   // Match complete JSON string values, including escaped quotes and backslashes.
+  // Key characters may themselves be validly JSON-escaped as \u00xx.
   const fieldPatterns = (options?.fields ?? []).map(field =>
-    new RegExp(`("${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"\\s*:\\s*")((?:\\\\.|[^"\\\\])*)(")`, 'g'));
+    new RegExp(`("${jsonKeyPattern(field)}"\\s*:\\s*")((?:\\\\.|[^"\\\\])*)(")`, 'g'));
+  const structuredFieldPatterns = options?.structuredText ? (options?.fields ?? []).map(field =>
+    new RegExp(`(^|[^A-Za-z0-9_])(["']?${jsonKeyPattern(field)}["']?\\s*[:=]\\s*)(?:"((?:\\\\.|[^"\\\\])*)"|'((?:\\\\.|[^'\\\\])*)'|([^\\s]+))`, 'gi')) : [];
+  const bearerPattern = options?.structuredText ? /\b(Bearer\s+)([^\s"',;\]}]{8,})/gi : null;
+  // An unquoted Authorization header is credential-bearing as a whole: its
+  // scheme does not end at the first whitespace. Quoted/JSON forms remain
+  // covered by the structured field matcher so their syntax is not consumed.
+  const authorizationHeaderPattern = options?.structuredText ? /\b(authorization[ \t]*:[ \t]*)(?!["'])([^\r\n]+)/gi : null;
+  const credentialUrlPattern = options?.structuredText ? /\b([a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]*:)([^\s@/?#]+)(?=@)/gi : null;
+  const privateKeyPattern = options?.structuredText ? /-----BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)?-----|$)/gi : null;
 
-  function redact(text: string): { text: string; redactions: number } {
-    // Match on an ANSI-stripped view so escape-split secrets still redact,
-    // then map every match range back onto the original text.
+  function normalizedView(text: string): { cleanText: string; origin: number[] } {
     const clean: string[] = [];
     const origin: number[] = [];
     let cursor = 0;
@@ -184,22 +221,47 @@ export function createSecretRedactor(secrets: Iterable<string>, options?: { fiel
       cursor = index + match[0].length;
     }
     for (let i = cursor; i < text.length; i++) { clean.push(text[i]!); origin.push(i); }
-    const cleanText = clean.join('');
+    return { cleanText: clean.join(''), origin };
+  }
+
+  function redact(text: string): { text: string; redactions: number } {
+    // Match on an ANSI-stripped view so escape-split secrets still redact,
+    // then map every match range back onto the original text.
+    const { cleanText, origin } = normalizedView(text);
 
     const ranges: [number, number][] = [];
-    for (const variant of variants) {
-      if (!variant) continue;
-      let at = cleanText.indexOf(variant);
-      while (at !== -1) {
-        ranges.push([at, at + variant.length]);
-        at = cleanText.indexOf(variant, at + Math.max(variant.length, 1));
-      }
+    for (const { pattern } of variantMatchers) {
+      pattern.lastIndex = 0;
+      for (const match of cleanText.matchAll(pattern)) ranges.push([match.index, match.index + match[0].length]);
     }
     for (const pattern of fieldPatterns) {
       pattern.lastIndex = 0;
       for (const match of cleanText.matchAll(pattern)) {
         const start = match.index + match[1]!.length;
         ranges.push([start, start + match[2]!.length]);
+      }
+    }
+    for (const pattern of structuredFieldPatterns) {
+      pattern.lastIndex = 0;
+      for (const match of cleanText.matchAll(pattern)) {
+        const value = match[3] ?? match[4] ?? match[5] ?? '';
+        const quoted = match[3] !== undefined || match[4] !== undefined ? 1 : 0;
+        const start = match.index + match[1]!.length + match[2]!.length + quoted;
+        ranges.push([start, start + value.length]);
+      }
+    }
+    for (const pattern of [bearerPattern, authorizationHeaderPattern, credentialUrlPattern]) {
+      if (!pattern) continue;
+      pattern.lastIndex = 0;
+      for (const match of cleanText.matchAll(pattern)) {
+        const start = match.index + match[1]!.length;
+        ranges.push([start, start + match[2]!.length]);
+      }
+    }
+    if (privateKeyPattern) {
+      privateKeyPattern.lastIndex = 0;
+      for (const match of cleanText.matchAll(privateKeyPattern)) {
+        ranges.push([match.index, match.index + match[0].length]);
       }
     }
     ranges.sort((a, b) => a[0] - b[0]);
@@ -220,5 +282,33 @@ export function createSecretRedactor(secrets: Iterable<string>, options?: { fiel
     return { text: out + text.slice(at), redactions };
   }
 
-  return Object.freeze({ redact, tracked: variants.size });
+  function redactTruncatedSuffix(text: string): { text: string; redactions: number } {
+    const { cleanText, origin } = normalizedView(text);
+    let bestStart = -1, bestLength = 0;
+    for (const variant of variants) {
+      if (!variant) continue;
+      for (let length = Math.min(variant.length - 1, cleanText.length); length > 0; length--) {
+        if (!cleanText.endsWith(variant.slice(0, length))) continue;
+        const start = cleanText.length - length;
+        if (bestStart === -1 || start < bestStart || (start === bestStart && length > bestLength)) {
+          bestStart = start; bestLength = length;
+        }
+        break;
+      }
+    }
+    if (bestStart === -1) return { text, redactions: 0 };
+    const from = origin[bestStart] ?? text.length;
+    return { text: text.slice(0, from) + REDACTED, redactions: 1 };
+  }
+
+  function containsTracked(text: string): boolean {
+    const { cleanText } = normalizedView(text);
+    for (const { pattern } of variantMatchers) {
+      pattern.lastIndex = 0;
+      if (pattern.test(cleanText)) return true;
+    }
+    return false;
+  }
+
+  return Object.freeze({ redact, redactTruncatedSuffix, containsTracked, tracked: variants.size });
 }

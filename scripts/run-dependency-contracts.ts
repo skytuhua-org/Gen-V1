@@ -3,7 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CommandEvidence, EvidenceIssue, SourceLockV3 } from '../packages/contracts/implementation-evidence.ts';
@@ -86,9 +86,10 @@ function sourceReceipt(root: string, lock: SourceLockV3, lockBytes: string, test
   for (const path of ['package.json', 'pnpm-lock.yaml', 'vitest.config.ts', ...testIds]) capture(path);
   return { headSha: lock.executionBaseSha, treeSha: git(root, 'rev-parse', 'HEAD^{tree}'), sourceLockDigest: digest(lockBytes), blobs };
 }
-function inspectTestReport(raw: unknown, root: string, testIds: string[]): TestReceipt[] {
+function inspectTestReport(raw: unknown, root: string, testIds: string[]): { tests: TestReceipt[]; projection: unknown } {
   requireValue(raw && typeof raw === 'object', 'Missing Vitest JSON report object.');
   const report = raw as { success?: unknown; testResults?: unknown };
+  requireValue(typeof report.success === 'boolean', 'Missing Vitest success boolean.');
   requireValue(Array.isArray(report.testResults), 'Missing Vitest per-file results.');
   const expected = new Map(testIds.map(id => [realpathSync(join(root, id)), id]));
   const found = new Map<string, TestReceipt>();
@@ -96,6 +97,7 @@ function inspectTestReport(raw: unknown, root: string, testIds: string[]): TestR
     requireValue(value && typeof value === 'object', 'Invalid Vitest file result.');
     const file = value as { name?: unknown; status?: unknown; assertionResults?: unknown };
     requireValue(typeof file.name === 'string' && isAbsolute(file.name), 'Vitest must report an absolute test path.');
+    requireValue(typeof file.status === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(file.status), 'Invalid Vitest file status.');
     const testId = expected.get(realpathSync(file.name));
     requireValue(testId && !found.has(testId), 'Unexpected or duplicate test file: ' + file.name);
     requireValue(Array.isArray(file.assertionResults), 'Missing assertions for ' + testId);
@@ -106,6 +108,7 @@ function inspectTestReport(raw: unknown, root: string, testIds: string[]): TestR
       else if (status === 'failed') failed++;
       else unexecuted++;
     }
+    requireValue(passed + failed + unexecuted === file.assertionResults.length, 'Invalid Vitest assertion accounting.');
     found.set(testId, { testId, passed, failed, unexecuted,
       status: failed > 0 ? 'FAIL'
         : passed > 0 && unexecuted === 0 && file.status === 'passed' ? 'PASS' : 'BLOCKED' });
@@ -113,7 +116,13 @@ function inspectTestReport(raw: unknown, root: string, testIds: string[]): TestR
   requireValue(found.size === expected.size, 'A declared test file has no current result.');
   const results = testIds.map(id => found.get(id)!);
   requireValue(report.success === true || results.some(item => item.status !== 'PASS'), 'Vitest did not report a successful run.');
-  return results;
+  return {
+    tests: results,
+    projection: {
+      format: 'M01.RedactedTestReport.v1', success: report.success,
+      testResults: results.map(({ testId, status, passed, failed, unexecuted }) => ({ testId, status, passed, failed, unexecuted })),
+    },
+  };
 }
 
 export async function runDependencyContracts(sourceLockPath: string, outputDirectory: string,
@@ -130,7 +139,7 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
     const outputPath = resolve(outputDirectory);
     out = join(realpathSync(dirname(outputPath)), basename(outputPath));
   } catch (error) {
-    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: error instanceof Error ? error.message : String(error) });
+    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: 'Evidence output setup failed.' });
     receipt.endedAt = new Date().toISOString();
     return receipt;
   }
@@ -145,7 +154,7 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
     await mkdir(out);
     requireValue(realpathSync(out) === out, 'Evidence output changed during directory creation.');
   } catch (error) {
-    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: error instanceof Error ? error.message : String(error) });
+    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: 'Evidence output setup failed.' });
     receipt.endedAt = new Date().toISOString();
     return receipt;
   }
@@ -169,10 +178,12 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
     const environment = { COREPACK_ENABLE_NETWORK: '0', CI: 'true' };
     const version = await runRecordedCommand(pm.file, [...pm.prefix, '--version'], { cwd: root, timeoutMs: 30_000, environment });
     receipt.commands.push(await writeCommandEvidence(version, out, '00-package-manager', statusFromObservation(version)));
-    receipt.packageManagerVersion = version.stdout.trim();
+    const observedVersion = version.stdout.trim();
+    receipt.packageManagerVersion = /^\d+\.\d+\.\d+$/.test(observedVersion) ? observedVersion : null;
     requireValue(statusFromObservation(version) === 'PASS' && receipt.packageManagerVersion === pkg.packageManager.slice(5),
       'Pinned pnpm is unavailable offline or its version does not match.');
     const reportPath = join(out, 'vitest.json');
+    const rawReportPath = join(out, '.raw-vitest.json');
     const configPath = join(out, 'vitest.config.mjs');
     // Positional Vitest filters match substrings. A fresh exact include list
     // prevents a neighboring file from accidentally satisfying this contract.
@@ -181,7 +192,7 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
       'if (!base || typeof base !== "object" || Array.isArray(base) || typeof base.then === "function" || base.test?.projects || base.test?.dir) throw new Error("Unsupported Vitest project/config shape");',
       'export default { ...base, root: ' + JSON.stringify(root) + ', test: { ...base.test,',
       'include: ' + JSON.stringify(testIds) + ', passWithNoTests: false, allowOnly: false,',
-      'reporters: ["json"], outputFile: ' + JSON.stringify(reportPath) + ', maxWorkers: 1 } };',
+      'reporters: ["json"], outputFile: ' + JSON.stringify(rawReportPath) + ', maxWorkers: 1 } };',
     ].join('\n');
     await writeFile(configPath, config, { flag: 'wx' });
     const observation = await runRecordedCommand(pm.file, [...pm.prefix, 'exec', 'vitest', 'run', '--config', configPath],
@@ -190,14 +201,19 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
     if (observation.termination !== 'NONE' || observation.exitCode !== 0)
       receipt.issues.push({ code: 'COMMAND_NOT_SUCCESSFUL', message: 'Contract command termination=' + observation.termination + ', exitCode=' + observation.exitCode });
     try {
-      requireValue(statSync(reportPath).size <= 16 * 1024 * 1024, 'Vitest report exceeds the 16 MiB bound.');
-      const reportBytes = readFileSync(reportPath, 'utf8');
-      receipt.report = { path: reportPath, digest: digest(reportBytes) };
-      receipt.tests = inspectTestReport(JSON.parse(reportBytes), root, testIds);
+      requireValue(statSync(rawReportPath).size <= 16 * 1024 * 1024, 'Vitest report exceeds the 16 MiB bound.');
+      const rawReportBytes = readFileSync(rawReportPath, 'utf8');
+      const inspected = inspectTestReport(JSON.parse(rawReportBytes), root, testIds);
+      const projectionBytes = JSON.stringify(inspected.projection, null, 2) + '\n';
+      await writeFile(reportPath, projectionBytes, { encoding: 'utf8', flag: 'wx' });
+      receipt.report = { path: reportPath, digest: digest(projectionBytes) };
+      receipt.tests = inspected.tests;
       if (receipt.tests.some(test => test.status === 'BLOCKED'))
         receipt.issues.push({ code: 'CONTRACT_TEST_NOT_EXECUTED', message: 'Every declared file needs at least one passed assertion, with no skipped, pending, or todo cases.' });
     } catch (error) {
-      receipt.issues.push({ code: 'CURRENT_TEST_RECEIPTS_MISSING', message: error instanceof Error ? error.message : String(error) });
+      receipt.issues.push({ code: 'CURRENT_TEST_RECEIPTS_MISSING', message: 'Current dependency test report is unavailable or invalid.' });
+    } finally {
+      await rm(rawReportPath, { force: true });
     }
     try {
       requireValue(readFileSync(sourceLockPath, 'utf8') === lockBytes, 'Source-lock bytes changed during execution.');
@@ -205,12 +221,12 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
       const after = sourceReceipt(root, lock, lockBytes, testIds);
       requireValue(JSON.stringify(after) === JSON.stringify(receipt.source), 'Source custody changed during execution.');
     } catch (error) {
-      receipt.issues.push({ code: 'SOURCE_CHANGED_DURING_EXECUTION', message: error instanceof Error ? error.message : String(error) });
+      receipt.issues.push({ code: 'SOURCE_CHANGED_DURING_EXECUTION', message: 'Source custody changed during execution.' });
     }
     receipt.status = receipt.tests.some(test => test.status === 'FAIL') ? 'FAIL'
       : receipt.issues.length === 0 && receipt.tests.length === testIds.length ? 'PASS' : 'BLOCKED';
   } catch (error) {
-    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: error instanceof Error ? error.message : String(error) });
+    receipt.issues.push({ code: 'COMPATIBILITY_SETUP_BLOCKED', message: 'Evidence output setup failed.' });
   }
   receipt.contracts = (lock?.publicContracts ?? []).map<DependencyExecutionReceipt['contracts'][number]>(contract => ({
     ...contract, status: contract.testIds.some(id => receipt.tests.some(test => test.testId === id && test.status === 'FAIL')) ? 'FAIL'
@@ -232,5 +248,5 @@ async function dependencyContractsMain(args: string[]): Promise<number> {
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   dependencyContractsMain(process.argv.slice(2)).then(code => { process.exitCode = code; })
-    .catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 2; });
+    .catch(() => { console.error('Dependency contract execution failed safely.'); process.exitCode = 2; });
 }

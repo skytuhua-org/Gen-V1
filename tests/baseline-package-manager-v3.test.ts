@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { once } from 'node:events';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, constants, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,6 +21,9 @@ beforeAll(() => {
   // give each case an independent executable directory without another copy.
   copyFileSync(process.execPath, node, constants.COPYFILE_FICLONE);
 });
+// CI runners carry a real install at PNPM_HOME; cases that do not explicitly
+// exercise it must not inherit it. Cases that do re-stub afterwards and win.
+beforeEach(() => { vi.stubEnv('PNPM_HOME', ''); });
 // Windows can briefly keep the copied Node executable locked after child exit.
 afterAll(() => { if (directory) rmSync(directory, { recursive: true, force: true, maxRetries: 5 }); });
 
@@ -36,6 +39,7 @@ function fixture(version = '10.30.3') {
   const calls = join(root, 'calls.jsonl');
   const entry = join(bin, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs');
   mkdirSync(join(bin, 'node_modules', 'pnpm', 'bin'), { recursive: true });
+  writeFileSync(join(bin, 'node_modules', 'pnpm', 'package.json'), JSON.stringify({ name: 'pnpm', version }));
   writeFileSync(entry, `const fs = require('node:fs');
 fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({args: process.argv.slice(2), network: process.env.COREPACK_ENABLE_NETWORK ?? null}) + '\\n');
 if (process.argv[2] === '--version') console.log(${JSON.stringify(version)});
@@ -72,6 +76,35 @@ describe('M01 installed package manager admission', () => {
     } finally { execPath.mockRestore(); vi.unstubAllEnvs(); }
   });
 
+  it('prefers the pnpm installed at PNPM_HOME over an offline Corepack dispatcher', () => {
+    const value = fixture();
+    vi.stubEnv('PNPM_HOME', join(value.root, 'bin'));
+    vi.stubEnv('PATH', value.runtime);
+    try {
+      const resolved = resolvePackageManager(value.root);
+      expect(resolved.file).toBe(process.execPath);
+      expect(resolved.prefix).toEqual([value.entry]);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('keeps a PATH-shadowed pnpm ahead of a versioned PNPM_HOME install', () => {
+    // Regression: PNPM_HOME is a fallback search location only. A decoy install
+    // carrying exact version metadata must not bypass standard PATH ordering.
+    const shadow = fixture();
+    const decoy = mkdtempSync(join(directory, 'pnpm-home-decoy-'));
+    mkdirSync(join(decoy, 'node_modules', 'pnpm', 'bin'), { recursive: true });
+    writeFileSync(join(decoy, 'node_modules', 'pnpm', 'package.json'), JSON.stringify({ name: 'pnpm', version: '10.30.3' }));
+    writeFileSync(join(decoy, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'), 'throw new Error("decoy must not execute");\n');
+    writeFileSync(join(decoy, 'pnpm.cmd'), '@echo off\r\nexit /b 97\r\n');
+    writeFileSync(join(decoy, 'pnpm'), 'throw decoy\n');
+    vi.stubEnv('PNPM_HOME', decoy);
+    vi.stubEnv('PATH', join(shadow.root, 'bin'));
+    try {
+      const resolved = resolvePackageManager(shadow.root);
+      expect(resolved.file).toBe(process.execPath);
+      expect(resolved.prefix).toEqual([shadow.entry]);
+    } finally { vi.unstubAllEnvs(); }
+  });
   it('inherits only the configured Corepack cache for offline commands, unless explicitly overridden', async () => {
     const cache = join(directory, 'configured cache'), override = join(directory, 'other cache');
     vi.stubEnv('COREPACK_HOME', cache);
@@ -133,5 +166,16 @@ describe('M01 installed package manager admission', () => {
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
     expect(value.observed().map(call => call.network)).toEqual(['0', '0', '0', '0', '0']);
+  });
+
+  it('does not leak invalid package-manager output through the mismatch projection', () => {
+    const secret = 'password=package-manager-secret-20261125';
+    const value = fixture('10.29.0\n' + secret);
+    const result = value.execute();
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('INCOMPATIBLE_TOOLCHAIN');
+    expect(result.stderr).not.toContain(secret);
+    expect(result.stderr).not.toContain('package-manager-secret-20261125');
   });
 });

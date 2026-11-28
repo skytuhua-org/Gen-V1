@@ -10,7 +10,7 @@ const runnerBytes = readFileSync(new URL('./validate-m01-m03-integration.mjs', i
 const manifestPath = 'docs/implementation/v3/audits/2026-11-17/heads.json';
 const repository = 'skytuhua-org/Gen-V1';
 
-function fixture(t, wrongTree = false) {
+function fixture(t, wrongTree = false, badPinnedHarness = false) {
   const temp = mkdtempSync(join(tmpdir(), 'm01-m03-audit-')), root = join(temp, 'repo');
   t.after(() => rmSync(temp, { recursive: true, force: true, maxRetries: 3 }));
   const put = (path, data) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, data); };
@@ -24,32 +24,49 @@ function fixture(t, wrongTree = false) {
   put(join(root, '.gitattributes'), '* -text\n');
   put(join(root, 'package.json'), '{"type":"module","packageManager":"pnpm@10.30.3"}');
   put(join(root, 'scripts/browser-suites.ts'), 'export const rootBrowserSpecs = ["a.spec.ts"];');
-  put(join(root, 'scripts/research-baseline.ts'), `
+  const baselineWorking = `
     import { mkdirSync, writeFileSync } from 'node:fs';
     import { join, resolve } from 'node:path';
+    import { pinnedHarnessMarker } from '../packages/pinned-harness.ts';
+    if (pinnedHarnessMarker !== 'validation-pin') throw new Error('integrated package snapshot imported');
     export const resolvePackageManager = () => ({file:process.execPath,prefix:['fixture-pnpm']});
     export async function runRecordedCommand(file, [pnpm, task], { cwd }) {
       const fault = process.env.FIXTURE_FAULT;
       let exitCode = 0;
       if (task === 'exec') {
-        const assertions = [{status: 'passed'}];
-        const unit = {success:true, testResults:[{name:resolve(cwd,'tests/a.test.ts'),status:'passed',assertionResults:assertions}]};
-        writeFileSync(join(process.env.RUNNER_TEMP,'m01-m03-1-1','targeted-tests.json'), JSON.stringify(unit));
+        const secretReport = fault === 'secret-report';
+        const assertions = [secretReport
+          ? {status:'failed',fullName:'password=integration-report-title-secret-20261125',failureMessages:['Authorization: Bearer integration-report-bearer-secret-20261125']}
+          : {status: 'passed'}];
+        const unit = {success:!secretReport, testResults:[{name:resolve(cwd,'tests/a.test.ts'),status:secretReport?'failed':'passed',assertionResults:assertions}]};
+        const reportTarget = process.env.M01_M03_RAW_TEST_REPORT || join(process.env.RUNNER_TEMP,'m01-m03-1-1','targeted-tests.json');
+        writeFileSync(reportTarget, JSON.stringify(unit));
         if (fault === 'unit-exit') exitCode = 7;
       }
       if (task === 'test:browser') {
         const dir = join(cwd, 'test-results/browser/new/root');
         mkdirSync(dir,{recursive:true});
-        writeFileSync(join(dir,'results.json'), JSON.stringify({errors:[],stats:{expected:1,unexpected:fault==='browser-report'?1:0,flaky:0,skipped:0},suites:[{file:'a.spec.ts'}]}));
+        const secretBrowser = fault === 'browser-secret';
+        writeFileSync(join(dir,'results.json'), JSON.stringify({
+          errors:secretBrowser?[{message:'password=integration-browser-secret-20261125'}]:[],
+          stats:{expected:1,unexpected:fault==='browser-report'?1:0,flaky:0,skipped:0},suites:[{file:'a.spec.ts'}]}));
       }
-      return {stdout:task==='--version'?'10.30.3':'', stderr:'', termination:'NONE', exitCode, argv:[file,pnpm,task]};
+      const secretOutput = fault === 'secret-output';
+      return {stdout:task==='--version'?'10.30.3':secretOutput?'password=integration-stdout-secret-20261125':'', stderr:secretOutput?'Authorization: Bearer integration-stderr-secret-20261125':'', termination:'NONE', exitCode, argv:[file,pnpm,task]};
     }
     export const statusFromObservation = o => o.exitCode === 0 ? 'PASS' : 'FAIL';
-    export const writeCommandEvidence = (o, dir, name, status) => ({...o,name,status});
-  `);
+    export const writeCommandEvidence = (o, dir, name, status) => {
+      const { stdout, stderr, spawnError, truncated, pid, ...receipt } = o;
+      return {...receipt,name,status};
+    };
+  `;
+  put(join(root, 'scripts/research-baseline.ts'), `export const resolvePackageManager = () => { throw new Error('integrated harness snapshot unavailable'); };`);
+  put(join(root, 'packages/pinned-harness.ts'), 'export const pinnedHarnessMarker = "integrated-pin";\n');
   const baseSha = commit('base');
   put(join(root, 'tests/a.test.ts'), 'export {};\n');
   const repair = commit('repair'), tree = git('rev-parse', 'HEAD^{tree}');
+  put(join(root, 'scripts/research-baseline.ts'), badPinnedHarness ? 'throw new Error(\'pinned import fixture diagnostic must stay private\');' : baselineWorking);
+  put(join(root, 'packages/pinned-harness.ts'), 'export const pinnedHarnessMarker = "validation-pin";\n');
   put(join(root, 'package.json'), '{"type":"module","packageManager":"pnpm@10.30.3","scripts":{"later-control-input":"changed"}}');
   put(join(root, 'pnpm-workspace.yaml'), 'packages: []\n');
   put(join(root, runner), runnerBytes);
@@ -71,7 +88,7 @@ function fixture(t, wrongTree = false) {
   const validate = fault => invoke([join(evidence, 'validate-m01-m03-integration.mjs'), 'validate'],
     { INTEGRATED_HEAD: readFileSync(output, 'utf8').trim().split('=')[1], FIXTURE_FAULT: fault });
   const receipt = name => JSON.parse(readFileSync(join(evidence, name + '.json')));
-  return { assemble, validate, git, receipt, tree, validationSha, root };
+  return { assemble, validate, git, receipt, tree, validationSha, root, evidence };
 }
 
 test('a later control checkout cannot add merged main inputs to the original snapshot', t => {
@@ -87,15 +104,30 @@ test('a later control checkout cannot add merged main inputs to the original sna
   assert.equal(f.receipt('validation').releaseApproved, false);
 });
 
+test('a pinned harness import failure is typed, closed, and free of raw diagnostics', t => {
+  const f = fixture(t, false, true);
+  assert.equal(f.assemble().status, 0);
+  const run = f.validate('');
+  assert.equal(run.status, 1);
+  const receipt = f.receipt('validation');
+  assert.equal(receipt.status, 'BLOCKED');
+  assert.deepEqual(receipt.commands, []);
+  assert.equal(receipt.issues[0].code, 'VALIDATION_SOURCE_IMPORT_FAILED');
+  assert.equal(receipt.issues[0].message, 'Validation harness source import failed.');
+  assert.equal((run.stdout + '\n' + run.stderr).includes('pinned import fixture diagnostic must stay private'), false);
+});
+
 test('a tree mismatch blocks setup; a changed HEAD blocks command execution', t => {
   const wrong = fixture(t, true);
   assert.equal(wrong.assemble().status, 1);
-  assert.match(wrong.receipt('assembly').issues[0].message, /Expected tree/);
+  assert.equal(wrong.receipt('assembly').issues[0].code, 'EXPECTED_TREE_MISMATCH');
+  assert.equal(wrong.receipt('assembly').issues[0].message, 'Expected tree mismatch.');
   const changed = fixture(t);
   assert.equal(changed.assemble().status, 0);
   changed.git('checkout', '--detach', changed.validationSha);
   assert.equal(changed.validate('').status, 1);
-  assert.match(changed.receipt('validation').issues[0].message, /HEAD changed/);
+  assert.equal(changed.receipt('validation').issues[0].code, 'INTEGRATED_HEAD_CHANGED');
+  assert.equal(changed.receipt('validation').issues[0].message, 'Integrated HEAD changed after assembly.');
   assert.deepEqual(changed.receipt('validation').commands, []);
 });
 
@@ -114,4 +146,44 @@ test('a zero browser exit cannot override a failed Playwright report', t => {
   assert.equal(f.validate('browser-report').status, 1);
   assert.equal(f.receipt('validation').browserReport.stats.unexpected, 1);
   assert.equal(f.receipt('validation').status, 'FAIL');
+});
+
+test('the integration controller does not mirror raw confidential command output', t => {
+  const f = fixture(t);
+  assert.equal(f.assemble().status, 0);
+  const run = f.validate('secret-output');
+  const publicOutput = run.stdout + '\n' + run.stderr;
+  assert.equal(run.status, 0, publicOutput);
+  assert.equal(f.receipt('validation').status, 'PASS');
+  assert.equal(publicOutput.includes('integration-stdout-secret-20261125'), false);
+  assert.equal(publicOutput.includes('integration-stderr-secret-20261125'), false);
+});
+
+test('the integration controller publishes minimized redacted unit and browser report projections', t => {
+  const f = fixture(t);
+  assert.equal(f.assemble().status, 0);
+  const run = f.validate('secret-report');
+  const publicOutput = run.stdout + '\n' + run.stderr;
+  assert.equal(run.status, 1);
+  assert.equal(f.receipt('validation').status, 'FAIL');
+  const projection = readFileSync(join(f.evidence, 'targeted-tests.json'), 'utf8');
+  assert.equal(JSON.parse(projection).format, 'M01.RedactedTestReport.v1');
+  for (const secret of ['integration-report-title-secret-20261125', 'integration-report-bearer-secret-20261125']) {
+    assert.equal(projection.includes(secret), false);
+    assert.equal(publicOutput.includes(secret), false);
+  }
+  assert.equal(projection.includes('fullName'), false);
+  assert.equal(projection.includes('failureMessages'), false);
+});
+
+test('the integration controller does not publish raw browser error payloads', t => {
+  const f = fixture(t);
+  assert.equal(f.assemble().status, 0);
+  const run = f.validate('browser-secret');
+  assert.equal(run.status, 1);
+  assert.equal(f.receipt('validation').status, 'FAIL');
+  const projection = readFileSync(join(f.evidence, 'browser-results.json'), 'utf8');
+  assert.equal(JSON.parse(projection).format, 'M01.RedactedBrowserReport.v1');
+  assert.equal(projection.includes('integration-browser-secret-20261125'), false);
+  assert.equal((run.stdout + '\n' + run.stderr).includes('integration-browser-secret-20261125'), false);
 });

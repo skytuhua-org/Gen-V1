@@ -246,7 +246,7 @@ describe('M01 current dependency compatibility execution', () => {
     const receipt = await value.run();
     expect(receipt.status).toBe('BLOCKED');
     expect(receipt.commands).toEqual([]);
-    expect(receipt.issues.some(issue => issue.message.includes('Working source differs from locked source'))).toBe(true);
+    expect(receipt.issues.some(issue => issue.code === 'COMPATIBILITY_SETUP_BLOCKED')).toBe(true);
   });
 
   it('blocks an external-looking output junction that resolves into the checkout', async () => {
@@ -280,5 +280,42 @@ describe('M01 current dependency compatibility execution', () => {
       issues: [{ code: 'COMPATIBILITY_SETUP_BLOCKED', message: expect.any(String) }],
     });
     expect(readFileSync(join(value.out, 'compatibility.json'), 'utf8')).toBe('immutable earlier evidence\n');
+  });
+
+
+  it('publishes only a minimized safe projection of a secret-bearing Vitest report', async () => {
+    const titleSecret = 'password=dependency-report-title-secret-20261125';
+    const messageSecret = 'Authorization: Bearer dependency-report-bearer-secret-20261125';
+    const body = [
+      "import { test } from 'vitest';",
+      'test(' + JSON.stringify(titleSecret) + ', () => { throw new Error(' + JSON.stringify(messageSecret) + '); });',
+    ].join('\n');
+    const value = fixture(body);
+    const receipt = await value.run();
+    expect(receipt.status).toBe('FAIL');
+    expect(receipt.report).not.toBeNull();
+    const reportText = readFileSync(receipt.report!.path, 'utf8');
+    expect(JSON.parse(reportText).format).toBe('M01.RedactedTestReport.v1');
+    expect(reportText).not.toContain(titleSecret);
+    expect(reportText).not.toContain(messageSecret);
+    expect(reportText).not.toContain('dependency-report-title-secret-20261125');
+    expect(reportText).not.toContain('dependency-report-bearer-secret-20261125');
+    expect(reportText).not.toContain('failureMessages');
+    expect(reportText).not.toContain('fullName');
+    expect(receipt.report!.digest).toBe(createHash('sha256').update(reportText).digest('hex'));
+  }, 120_000);
+
+  it('projects output setup failure without raw private path text', async () => {
+    const value = fixture();
+    const secret = 'password=dependency-setup-secret-20261125';
+    const missingParent = join(value.directory, 'missing-' + secret);
+    const receipt = await runDependencyContracts(value.lockPath, join(missingParent, 'out'), value.root);
+    expect(receipt.status).toBe('BLOCKED');
+    expect(receipt.issues[0]).toMatchObject({
+      code: 'COMPATIBILITY_SETUP_BLOCKED',
+      message: 'Evidence output setup failed.',
+    });
+    expect(JSON.stringify(receipt)).not.toContain(secret);
+    expect(JSON.stringify(receipt)).not.toContain('dependency-setup-secret-20261125');
   });
 });
