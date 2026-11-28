@@ -15,7 +15,7 @@ declare global { interface Window {
   releaseSettingsGuard?: () => void;
 } }
 
-async function fixture(page: Page, {native = false, delayed = false, unavailable = false, invalidOwner = false, working = true, pinned = false, archiveConfirmation = true, emptyAgents = false, retiredActive = '', retiredSelectionFailsOnce = false, plugins = {} as {fail?: boolean; manifests?: unknown[]}} = {}) {
+async function fixture(page: Page, {native = false, delayed = false, unavailable = false, invalidOwner = false, working = true, pinned = false, archiveConfirmation = true, emptyAgents = false, retiredActive = '', retiredSelectionFailsOnce = false, customThreadPanel = false, plugins = {} as {fail?: boolean; manifests?: unknown[]}} = {}) {
   const snapshot = taskFixture({root: 'text', elements: {text: {type: 'Text', props: {text: 'Synthetic host fixture'}}}});
   snapshot.threads[0] = {...snapshot.threads[0], id: 'parent-a', title: 'Project investigation', projectId: 'project-a', projectName: 'Alpha', status: working ? 'working' : 'ready', runId: working ? 'run-a' : null};
   snapshot.activeThreadId = 'parent-a'; snapshot.artifacts = []; snapshot.userStates = []; snapshot.data = []; snapshot.messages = [];
@@ -47,8 +47,9 @@ async function fixture(page: Page, {native = false, delayed = false, unavailable
   let failed = unavailable, release!: () => void;
   const gate = delayed ? new Promise<void>(resolve => {release = resolve;}) : Promise.resolve();
   const projects = [{id: 'project-a', name: 'Alpha', authority: {kind: 'local'}, rootPath: 'C:/synthetic/alpha', createdAt: '2026-11-06T00:00:00.000Z'}];
-  const canvases = ['workspace', 'all-agents', 'code-review', 'research', 'custom'].map(preset => ({id: preset, name: preset, preset, version: 1, panels: [], filter: 'all', projectIds: [], viewport: {x: 0, y: 0, zoom: 1}}));
-  const envelope = {projects, state: {version: 1, revision: 1, activeCanvasId: invalidOwner ? 'missing' : retiredActive || 'all-agents', canvases, profiles: [], disabledKinds: [], integrations: {}}};
+  const threadPanel = {id: 'empty-draft-panel', kind: 'thread', binding: {authority: {kind: 'local'}, threadId: 'empty-draft', projectId: 'project-a'}, canvasId: 'custom', placement: 'canvas', visible: true, collapsed: false, bounds: {x: 24, y: 24, width: 540, height: 420}, order: 0, alwaysOnTop: false};
+  const canvases = ['workspace', 'all-agents', 'code-review', 'research', 'custom'].map(preset => ({id: preset, name: preset, preset, version: 1, panels: preset === 'custom' && customThreadPanel ? [threadPanel] : [], filter: 'all', projectIds: [], viewport: {x: 0, y: 0, zoom: 1}}));
+  const envelope = {projects, state: {version: 1, revision: 1, activeCanvasId: invalidOwner ? 'missing' : retiredActive || (customThreadPanel ? 'custom' : 'all-agents'), canvases, profiles: [], disabledKinds: [], integrations: {}}};
   await page.route('**/api/workspace', async route => {await gate; return failed ? route.fulfill({status: 503, json: {error: {code: 'UNAVAILABLE', message: 'Workspace unavailable'}}}) : route.fulfill({json: envelope});});
   await page.route('**/api/workspace/commands', route => {
     const input = route.request().postDataJSON();
@@ -111,6 +112,29 @@ test('cold restored monitor resolves its owner before any global conversation re
   await expect(page.getByRole('button', {name: 'Empty draft stays in navigation Ready', exact: true})).toBeVisible();
   expect(h.requests.filter(path => path === '/api/snapshot')).toEqual([]);
   expect(h.requests.filter(path => path.startsWith('/api/events'))).toEqual([]);
+});
+
+test('a passively restored canvas composer does not steal focus', async ({page}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator.userActivation, 'isActive', {get: () => false});
+    localStorage.setItem('harness:workspace-mode:v3', 'retained-canvas');
+  });
+  await fixture(page, {customThreadPanel: true});
+  await expect(page.getByRole('region', {name: 'custom canvas', exact: true})).toBeVisible();
+  const panel = page.locator('.canvas-panel').filter({hasText: 'Empty draft stays in navigation'});
+  const composer = panel.getByRole('textbox', {name: 'Message', exact: true});
+  await expect(composer).toBeVisible();
+  await expect.poll(() => composer.evaluate(node => document.activeElement !== node)).toBe(true);
+});
+
+test('a user-activated restored canvas composer can autofocus', async ({page}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator.userActivation, 'isActive', {get: () => true});
+    localStorage.setItem('harness:workspace-mode:v3', 'retained-canvas');
+  });
+  await fixture(page, {customThreadPanel: true});
+  const composer = page.locator('.canvas-panel').filter({hasText: 'Empty draft stays in navigation'}).getByRole('textbox', {name: 'Message', exact: true});
+  await expect(composer).toBeFocused();
 });
 
 test('native progress never installs the legacy snapshot refresh subscription in the monitor', async ({page}) => {
