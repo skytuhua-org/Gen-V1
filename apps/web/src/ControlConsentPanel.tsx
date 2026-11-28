@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { useDisposal, usePolling, type PollingTaskState } from './usePolling';
 import { authenticated, command, csrfToken, read } from './api';
 import type { ControlSurfaceModelV1, ControlTargetCandidateV1 } from '../../../packages/contracts/interactive-control.ts';
 
@@ -24,16 +25,13 @@ export function ControlConsentPanel({ threadId }: { threadId: string }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [capture, setCapture] = useState<{ artifactRef: string; sha256: string } | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => authenticated(() => fetch(`/api/threads/${encodeURIComponent(threadId)}/control`, { credentials: 'same-origin', cache: 'no-store' }))
-      .then(read<{ control: ControlSurfaceModelV1 }>)
-      .then(body => { if (!cancelled) setModel(body.control); })
-      .catch(() => {});
-    load();
-    const timer = setInterval(load, 4000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [threadId]);
+  const current = useRef(threadId);
+  const lifecycle = useDisposal();
+  current.current = threadId;
+  const load = useCallback((polling: PollingTaskState) => authenticated(() => fetch(`/api/threads/${encodeURIComponent(threadId)}/control`, { credentials: 'same-origin', cache: 'no-store' }))
+    .then(read<{ control: ControlSurfaceModelV1 }>)
+    .then(body => { if (!polling.disposed && !lifecycle.disposed && current.current === threadId) setModel(body.control); }), [threadId, lifecycle]);
+  usePolling(load, 4000);
   // The indicator exists only while control is live or consent is pending;
   // an untouched capability stays silent rather than claiming activity.
   if (!model || (model.state === 'unavailable' && !model.pendingConsent)) return null;
@@ -50,10 +48,7 @@ export function ControlConsentPanel({ threadId }: { threadId: string }) {
       </section>
     );
   }
-  const refresh = () => void authenticated(() => fetch(`/api/threads/${encodeURIComponent(threadId)}/control`, { credentials: 'same-origin', cache: 'no-store' }))
-    .then(read<{ control: ControlSurfaceModelV1 }>)
-    .then(body => setModel(body.control))
-    .catch(() => {});
+  const refresh = () => void load(lifecycle);
   if (model.state === 'consent' && model.pendingConsent) {
     const pending = model.pendingConsent;
     // Target selection is explicit: the approved driver names each candidate
