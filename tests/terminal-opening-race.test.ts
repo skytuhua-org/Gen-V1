@@ -24,13 +24,12 @@ it('returns an empty range at the current end for a cursor beyond the transcript
  await expect(host.read(input.terminalId,input.projectId,undefined,2)).resolves.toMatchObject({output:'ady',start:2,cursor:5});
 });
 
-it('rejects an oversized initial command before starting or reserving a terminal',async()=>{
- const {host}=fixture();const input={projectId:'project-a',threadId:'thread-a',terminalId:'terminal-a'};
- await expect(host.open({...input,command:'x'.repeat(8001)})).rejects.toThrow();
- expect(mocks.spawn).not.toHaveBeenCalled();
- await expect(host.open({...input,command:'echo ready'})).resolves.toMatchObject({id:'terminal-a'});
+it('does not write an initial command during an ordinary open',async()=>{
+ const {host}=fixture();
+ const input={projectId:'project-a',threadId:'thread-a',terminalId:'terminal-a',command:'fixture'};
+ await expect(host.open(input)).resolves.toMatchObject({id:'terminal-a'});
  expect(mocks.spawn).toHaveBeenCalledOnce();
- expect(mocks.spawn.mock.results[0]?.value.write).toHaveBeenCalledWith('echo ready\r');
+ expect(mocks.spawn.mock.results[0]?.value.write).not.toHaveBeenCalled();
 });
 
 it('keeps the retained output and its cursor on a complete UTF-16 character boundary',async()=>{
@@ -54,16 +53,43 @@ function startupPty(){
  return {pty,exit};
 }
 
+function storedScriptFixture(command='fixture'){
+ const {host,projects}=fixture(),{store}=projects;
+ const projectId='project-a',scriptId='script-a',operationId='operation-a';
+ store.put('workspaceProject',projectId,undefined,{id:projectId,authority:{kind:'local'}});
+ store.put('projectScript',scriptId,undefined,{projectId,command});
+ Object.assign(store,{receipt:vi.fn(),command:(_action:unknown,apply:()=>void)=>apply()});
+ const run=()=>host.runScript(projectId,undefined,scriptId,operationId);
+ const terminalInput=()=>{
+  const intent=store.get('projectScriptIntent',operationId) as {terminalId:string};
+  return {projectId,terminalId:intent.terminalId};
+ };
+ return {host,projects,run,terminalInput};
+}
+
+it('rejects an oversized stored command before reserving a terminal',async()=>{
+ const {projects,run}=storedScriptFixture('x'.repeat(8001));
+ await expect(run()).rejects.toThrow();
+ expect(projects.store.get('projectScriptIntent','operation-a')).toBeUndefined();
+ expect(mocks.spawn).not.toHaveBeenCalled();
+});
+
 it.each(['registration','initial write','data listener','exit listener'] as const)('rolls back a spawned terminal after %s fails',async(step)=>{
- const {host,projects}=fixture(),{pty}=startupPty();
- const input={projectId:'project-a',terminalId:'failed-start'},error=new Error(`Fixture ${step} failed`);
+ const {host,projects,run,terminalInput}=storedScriptFixture(),{pty}=startupPty();
+ const error=new Error(`Fixture ${step} failed`);
  const fail=()=>{throw error;};
- if(step==='registration')vi.spyOn(projects.store,'put').mockImplementationOnce(fail);
+ const put=projects.store.put;
+ const registration=step==='registration'?vi.spyOn(projects.store,'put').mockImplementation((kind,id,thread,value)=>{
+  if(kind==='terminalSession')return fail();
+  return put(kind,id,thread,value);
+ }):undefined;
  if(step==='initial write')pty.write.mockImplementationOnce(fail);
  if(step==='data listener')pty.onData.mockImplementationOnce(fail);
  if(step==='exit listener')pty.onExit.mockImplementationOnce(fail);
 
- await expect(host.open({...input,command:'echo ready'})).rejects.toBe(error);
+ await expect(run()).rejects.toMatchObject({code:'ACTION_UNCERTAIN'});
+ registration?.mockRestore();
+ const input=terminalInput();
  expect(pty.kill).toHaveBeenCalledOnce();
  expect(pty.write).toHaveBeenCalledTimes(step==='initial write'?1:0);
  expect(projects.store.get('terminalSession',input.terminalId)).toBeUndefined();
@@ -73,12 +99,12 @@ it.each(['registration','initial write','data listener','exit listener'] as cons
 });
 
 it.each(['reopen','dispose'] as const)('retries failed terminal registration cleanup during %s',async (next)=>{
- const {host,projects}=fixture(),{pty}=startupPty();
- const input={projectId:'project-a',terminalId:'retry-cleanup'};
+ const {host,projects,run,terminalInput}=storedScriptFixture(),{pty}=startupPty();
  const failure=Error('Fixture initial write failed');
  pty.write.mockImplementationOnce(()=>{throw failure;});
  vi.spyOn(projects.store,'remove').mockImplementationOnce(()=>{throw Error('Fixture temporary store failure');});
- await expect(host.open({...input,command:'echo ready'})).rejects.toBe(failure);
+ await expect(run()).rejects.toMatchObject({code:'ACTION_UNCERTAIN'});
+ const input=terminalInput();
  expect(pty.kill).toHaveBeenCalledOnce();
  expect(projects.store.get('terminalSession',input.terminalId)).toMatchObject({exited:false});
  if(next==='dispose'){
@@ -91,35 +117,36 @@ it.each(['reopen','dispose'] as const)('retries failed terminal registration cle
 });
 
 it('retries durable rollback when shutdown was waiting for the failed startup to exit',async()=>{
- const {host,projects}=fixture(),{pty,exit}=startupPty();
- const input={projectId:'project-a',terminalId:'shutdown-cleanup'};
+ const {host,projects,run,terminalInput}=storedScriptFixture(),{pty,exit}=startupPty();
  const failure=Error('Fixture initial write failed');
  pty.write.mockImplementationOnce(()=>{throw failure;});
  pty.kill.mockImplementation(()=>{});
  vi.spyOn(projects.store,'remove').mockImplementationOnce(()=>{throw Error('Fixture temporary store failure');});
- const opening=host.open({...input,command:'echo ready'}).catch(error=>error);
+ const opening=run().catch(error=>error);
  await vi.waitFor(()=>expect(pty.kill).toHaveBeenCalledOnce());
  const shutdown=host.dispose();
  await vi.waitFor(()=>expect(pty.kill).toHaveBeenCalledTimes(2));
  exit();
- await expect(opening).resolves.toBe(failure);
+ await expect(opening).resolves.toMatchObject({code:'ACTION_UNCERTAIN'});
  await shutdown;
+ const input=terminalInput();
  expect(projects.store.get('terminalSession',input.terminalId)).toBeUndefined();
 });
 
 it('holds a failed terminal in custody until native exit even when termination times out',async()=>{
  vi.useFakeTimers();
- const {host,projects}=fixture(),{pty,exit}=startupPty();
- const input={projectId:'project-a',terminalId:'still-closing'};
+ const {host,projects,run,terminalInput}=storedScriptFixture(),{pty,exit}=startupPty();
  pty.write.mockImplementationOnce(()=>{throw Error('Fixture initial write failed');});
  pty.kill.mockImplementation(()=>{});
- const opening=host.open({...input,command:'echo ready'}).catch(error=>error);
+ const opening=run().catch(error=>error);
+ let input:ReturnType<typeof terminalInput>;
  try{
   await vi.waitFor(()=>expect(pty.kill).toHaveBeenCalledOnce());
+  input=terminalInput();
   await expect(host.open(input)).rejects.toMatchObject({code:'TERMINAL_CANCEL_UNCONFIRMED'});
   await expect(host.read(input.terminalId,input.projectId)).rejects.toMatchObject({code:'TERMINAL_CANCEL_UNCONFIRMED'});
   await vi.advanceTimersByTimeAsync(5000);
-  expect(await opening).toMatchObject({code:'TERMINAL_CANCEL_UNCONFIRMED'});
+  expect(await opening).toMatchObject({code:'ACTION_UNCERTAIN'});
   await expect(host.open(input)).rejects.toMatchObject({code:'TERMINAL_CANCEL_UNCONFIRMED'});
   expect(mocks.spawn).toHaveBeenCalledOnce();
  }finally{exit();await opening;vi.useRealTimers();}
@@ -162,3 +189,20 @@ it('retains newly exited scrollback by exit order, not by when the terminal open
  await expect(host.read('short-2',projectId)).resolves.toMatchObject({output:'short 2',exited:true});
 });
 
+
+it.each(['environment resolution','final binding'] as const)('does not spawn a terminal when shutdown finishes during %s',async(stage)=>{
+ const {host,projects}=fixture();
+ let resume!:()=>void,reached!:()=>void;
+ const blocked=new Promise<void>(resolve=>{reached=resolve;});
+ if(stage==='environment resolution')mocks.resolve.mockImplementationOnce(()=>new Promise(resolve=>{resume=()=>resolve({EXAMPLE_API_KEY:'fixture'});reached();}));
+ else projects.binding.mockResolvedValueOnce({path:'C:/fixture'}).mockImplementationOnce(()=>new Promise(resolve=>{resume=()=>resolve({path:'C:/fixture'});reached();}));
+ const input={projectId:'project-a',threadId:'thread-a',terminalId:'shutdown-open'};
+ const opening=host.open(input);void opening.catch(()=>{});
+ await blocked;
+ await host.dispose();
+ resume();
+ await expect(opening).rejects.toMatchObject({code:'HOST_CLOSING'});
+ await expect(host.open({...input,terminalId:'after-close'})).rejects.toMatchObject({code:'HOST_CLOSING'});
+ expect(mocks.spawn).not.toHaveBeenCalled();
+ expect(projects.store.get('terminalSession',input.terminalId)).toBeUndefined();
+});

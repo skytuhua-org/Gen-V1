@@ -16,7 +16,7 @@ function isProjectContext(value:unknown):value is ProjectContext{
  return true;
 }
 
-export function useProjectContext(projectId?:string,threadId?:string,workspaceId?:string){
+export function useProjectContext(projectId?:string,threadId?:string,workspaceId?:string,threadEpoch?:number){
  const owner=projectId?JSON.stringify([projectId,threadId,workspaceId]):'';
  const [state,setState]=useState<{owner:string;context:ProjectContext|null;loading:boolean;error:string}>({owner:'',context:null,loading:false,error:''}),generation=useRef(0);
  const pending=useRef<AbortController|null>(null);
@@ -33,10 +33,14 @@ export function useProjectContext(projectId?:string,threadId?:string,workspaceId
  useEffect(()=>{void load();return()=>{if(activeLoad.current===load)activeLoad.current=null;generation.current++;pending.current?.abort();pending.current=null;};},[load]);
  const action=useCallback(async(type:string,payload:Record<string,unknown>={})=>{
   if(!projectId)return undefined;
-  const response=await authenticated(()=>fetch(`/api/projects/${encodeURIComponent(projectId)}/actions`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','x-harness-csrf':csrfToken},body:JSON.stringify({id:crypto.randomUUID(),type,payload,...(threadId?{threadId}:{})})})).then(read<unknown>);
+  if(type==='run-script'&&threadId&&!Number.isSafeInteger(threadEpoch)){
+   throw new Error('Conversation changed. Reopen Project tools and run the script again.');
+  }
+  const intent=type==='run-script'?JSON.stringify({id:crypto.randomUUID(),type,payload:{...payload,...(threadId?{expectedThreadEpoch:threadEpoch}:{})},...(threadId?{threadId}:{})}):undefined;
+  const response=await authenticated(()=>fetch(`/api/projects/${encodeURIComponent(projectId)}/actions`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','x-harness-csrf':csrfToken},body:intent??JSON.stringify({id:crypto.randomUUID(),type,payload,...(threadId?{threadId}:{})})})).then(read<unknown>);
   if(activeLoad.current===load)await load();
   return response;
- },[projectId,threadId,load]);
+ },[projectId,threadId,threadEpoch,load]);
  const refresh=useCallback(()=>{void load();},[load]);
  const current=state.owner===owner?state:{context:null,loading:Boolean(projectId),error:''};
  return{context:current.context,loading:current.loading,error:current.error,action,refresh};

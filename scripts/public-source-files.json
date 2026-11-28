@@ -4269,6 +4269,7 @@
     "tests/terminal-host.test.ts",
     "tests/terminal-opening-race.test.ts",
     "tests/terminal-reopen-ended.test.ts",
+    "tests/terminal-script-intent.test.ts",
     "tests/theme-contrast.test.ts",
     "tests/thinking-level.test.ts",
     "tests/thread-search.test.ts",
