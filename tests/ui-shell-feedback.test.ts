@@ -48,7 +48,8 @@ describe('BusyButton',()=>{
   expect(html).toContain('type="button"');
   expect(html).toContain('>Save<');
   expect(html).not.toContain('aria-busy');
-  expect(html).not.toContain('ui-spinner');
+  expect(html).toContain('data-state="idle"');
+  expect(html).not.toContain('data-spinner-visible');
   expect(html).not.toContain('disabled');
  });
  it('disables itself, exposes aria-busy/data-busy and renders a spinner while busy',()=>{

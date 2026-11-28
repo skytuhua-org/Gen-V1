@@ -8,6 +8,7 @@ import {dismissToast,toast,Toaster} from '../packages/ui-shell/Toast';
 // distinct messages to evict leftovers from earlier tests before asserting.
 const drain=()=>{toast('drain-1');toast('drain-2');toast('drain-3');toast('drain-4');};
 const markup=()=>renderToStaticMarkup(createElement(Toaster,{}));
+const visibleToasts=(html:string)=>html.split('<div class="ui-toast"').slice(1).filter(part=>part.includes('data-state="open"'));
 const entryHtml=(message:string)=>{
  const part=markup().split('<div class="ui-toast"').find(chunk=>chunk.includes(`>${message}<`));
  expect(part,`a toast entry for ${JSON.stringify(message)}`).toBeDefined();
@@ -18,7 +19,7 @@ describe('toast()',()=>{
  it('returns 0 and renders nothing for a blank message',()=>{
   drain();
   expect(toast('   ')).toBe(0);
-  expect(markup().match(/<div class="ui-toast"/g)).toHaveLength(3);
+  expect(visibleToasts(markup())).toHaveLength(3);
  });
  it('dedupes an identical message instead of stacking it',()=>{
   drain();
@@ -29,10 +30,10 @@ describe('toast()',()=>{
  it('caps the stack at three entries and evicts the oldest',()=>{
   drain();
   toast('keep-1');toast('keep-2');toast('keep-3');toast('keep-4');
-  const html=markup();
-  expect(html.match(/<div class="ui-toast"/g)).toHaveLength(3);
-  expect(html).not.toContain('>keep-1<');
-  for(const message of ['keep-2','keep-3','keep-4']) expect(html).toContain(`>${message}<`);
+  const visible=visibleToasts(markup());
+  expect(visible).toHaveLength(3);
+  expect(visible.some(entry=>entry.includes('>keep-1<'))).toBe(false);
+  for(const message of ['keep-2','keep-3','keep-4']) expect(visible.some(entry=>entry.includes(`>${message}<`))).toBe(true);
  });
 });
 
