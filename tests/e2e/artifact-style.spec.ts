@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import type { ArtifactRecord, HostCommand, Snapshot } from '../../packages/contracts';
 import { validateSurface } from '../../packages/ui-catalog';
+import { catalogSpec } from '../../scripts/review-fixtures';
 import { createSigningPdfFixture, SIGNING_FIELD_STATE_KEYS, SIGNING_SIGNATURE_BOX } from './document-preview-fixture';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { serveTaskSplitLayout } from './task-interface-fixture';
@@ -88,6 +89,105 @@ async function host(page: Page, snapshot: Snapshot) {
   await serveTaskSplitLayout(page, snapshot);
   return { snapshot, commands };
 }
+
+test('tall inline artifact chrome stays within its own scroll bounds',async({page})=>{
+  const lines=Array.from({length:38},(_,index)=>'line-'+index);
+  const elements:Spec['elements']={
+    root:{type:'Tabs',props:{labels:['Details','Summary'],stateKey:'view'},children:['details','summary']},
+    details:{type:'Stack',props:{gap:'md'},children:lines},
+    summary:{type:'Text',props:{text:'Short summary'}},
+  };
+  for(const [index,line] of lines.entries())elements[line]={type:'Text',props:{text:'Long artifact details, row '+index}};
+  const snapshot=fixture({root:'root',elements},'First inline report');
+  snapshot.messages.push({...snapshot.messages[0],id:'second-assistant',content:'Second artifact follows.',createdAt:'2026-10-29T23:01:00.000Z'});
+  snapshot.artifacts.push({...snapshot.artifacts[0],id:'second-object',messageId:'second-assistant',stateId:'second-state',title:'Second inline report'});
+  snapshot.userStates.push({...snapshot.userStates[0],id:'second-state'});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await host(page,snapshot);
+  await openApp(page);
+  const conversation=page.locator('.conversation-scroll:visible').first();
+  const first=page.locator('[data-artifact-id="task-object"]');
+  const second=page.locator('[data-artifact-id="second-object"]');
+  const header=first.locator('.artifact-header'),views=first.getByRole('tablist',{name:'Views',exact:true});
+  const move=async(id:string,offset:number)=>conversation.evaluate((scroll,{id,offset})=>{
+    const target=scroll.querySelector(`[data-artifact-id="${id}"]`)!;
+    scroll.scrollTop+=target.getBoundingClientRect().top-scroll.getBoundingClientRect().top+offset;
+  },{id,offset});
+  for(const width of [960,360]){
+    await page.setViewportSize({width,height:800});
+    await expect(views).toBeVisible();
+    await move('task-object',340);
+    await expect.poll(async()=>{
+      const top=await conversation.evaluate(node=>node.getBoundingClientRect().top+Number.parseFloat(getComputedStyle(node).paddingTop));
+      const box=(await header.boundingBox())!;
+      return Math.abs(box.y-top);
+    }).toBeLessThan(3);
+    await expect.poll(async()=>{
+      const title=(await header.boundingBox())!,strip=(await views.boundingBox())!;
+      return Math.abs(strip.y-title.y-title.height);
+    }).toBeLessThan(3);
+    expect(await header.getByRole('button',{name:'Expand artifact',exact:true}).evaluate(node=>{
+      const {x,y,width,height}=node.getBoundingClientRect();
+      return node.contains(document.elementFromPoint(x+width/2,y+height/2));
+    })).toBe(true);
+  }
+  await move('second-object',300);
+  const viewport=(await conversation.boundingBox())!,outgoing=(await header.boundingBox())!;
+  expect(outgoing.y+outgoing.height).toBeLessThanOrEqual(viewport.y+2);
+  await expect(second.getByRole('tablist',{name:'Views',exact:true})).toBeVisible();
+  await move('task-object',340);
+  await header.getByRole('button',{name:'Expand artifact',exact:true}).click();
+  const expanded=page.getByRole('dialog',{name:'First inline report',exact:true});
+  await expect(expanded).toBeVisible();
+  await expect(expanded.locator('.artifact-header')).toHaveCSS('position','static');
+  await expect(expanded.getByRole('tablist',{name:'Views',exact:true})).toBeVisible();
+});
+
+test('artifact views use one scrollable row and keep keyboard selection in view',async({page})=>{
+  const labels=['Controls','Data and visuals','Documents','Content','Development','Everyday','Interactions','Explore','Work objects'];
+  const panes=labels.map((_,index)=>'view-'+index);
+  const elements:Spec['elements']={tabs:{type:'Tabs',props:{labels,stateKey:'view'},children:panes}};
+  for(const [index,pane] of panes.entries())elements[pane]={type:'Text',props:{text:labels[index]+' panel'}};
+  elements[panes.at(-1)!]={type:'Tabs',props:{label:'Work object views',labels,stateKey:'workView'},children:panes.slice(0,-1).map(pane=>'work-'+pane).concat('work-last')};
+  for(const [index,pane] of (elements[panes.at(-1)!].children??[]).entries())elements[pane]={type:'Text',props:{text:labels[index]+' work details'}};
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await host(page,fixture({root:'tabs',elements},'Component catalog'));
+  await openApp(page);
+  const list=page.getByRole('tablist',{name:'Views',exact:true});
+  const strip=page.locator('.surface-tabs').first();
+  const sameRow=(selector:typeof list)=>selector.evaluate(node=>new Set([...node.children].map(child=>child.getBoundingClientRect().top)).size);
+  for(const width of [320,360,480,1024]){
+    await page.setViewportSize({width,height:760});
+    await expect(list.getByRole('tab')).toHaveCount(labels.length);
+    await expect.poll(()=>sameRow(list)).toBe(1);
+  }
+  await page.setViewportSize({width:360,height:760});
+  const first=list.getByRole('tab',{name:labels[0],exact:true}),last=list.getByRole('tab',{name:labels.at(-1),exact:true});
+  await first.focus();
+  await expect(strip.locator('..')).toHaveAttribute('data-overflow-end','true');
+  await strip.scrollIntoViewIfNeeded();
+  const box=(await strip.boundingBox())!;
+  const x=box.x+box.width/2,y=box.y+box.height/2;
+  expect(await strip.evaluate((node,{x,y})=>node.contains(document.elementFromPoint(x,y)),{x,y})).toBe(true);
+  await page.mouse.move(x,y);
+  await page.mouse.wheel(0,100);
+  await expect.poll(()=>strip.evaluate(node=>node.scrollLeft)).toBeGreaterThan(0);
+  await page.keyboard.press('End');
+  await expect(last).toBeFocused();
+  await expect(last).toHaveAttribute('aria-selected','true');
+  await expect(strip.locator('..')).toHaveAttribute('data-overflow-start','true');
+  await expect(strip.locator('..')).toHaveAttribute('data-overflow-end','false');
+  expect(await strip.evaluate(node=>node.dispatchEvent(new WheelEvent('wheel',{deltaY:100,cancelable:true,bubbles:true})))).toBe(true);
+  const nested=page.getByRole('tablist',{name:'Work object views',exact:true});
+  await expect.poll(()=>sameRow(nested)).toBe(1);
+  await page.keyboard.press('ArrowRight');
+  await expect(first).toBeFocused();
+  await expect(first).toHaveAttribute('aria-selected','true');
+  await expect(strip.locator('..')).toHaveAttribute('data-overflow-start','false');
+  await page.setViewportSize({width:1024,height:760});
+  await page.getByRole('button',{name:'Expand artifact',exact:true}).click();
+  await expect.poll(()=>sameRow(list)).toBe(1);
+});
 
 for (const width of [1440, 960]) test(`long email choices retain readable width and compact navigation at ${width}px`, async ({page}) => {
   await page.setViewportSize({width,height:1000});
@@ -210,6 +310,15 @@ test('status reads actual host operation states and keeps receipt details availa
   await expect(page.getByRole('status').filter({ hasText: 'Fixture checks' })).toContainText('Exit code 0');
   record.value = { operationId: 'fixture-operation', kind: 'command.run', approved: true, result: { exitCode: 0 } };
   await reloadApp(page); await expect(page.getByText('Status is unavailable from the connected source.')).toBeVisible();
+});
+
+test('catalog Delivery heading and choice group have distinct accessible names',async({page})=>{
+  await host(page,fixture(catalogSpec('catalog-pdf','catalog-image'),'Component catalog'));
+  await openApp(page);
+  await expect(page.getByRole('heading',{name:'Delivery',exact:true})).toBeVisible();
+  const options=page.getByRole('group',{name:'Delivery options',exact:true});
+  await expect(options.getByRole('radio',{name:/^Download/})).toBeVisible();
+  await expect(page.getByRole('group',{name:'Delivery',exact:true})).toHaveCount(0);
 });
 
 test('connected FAQ branches and follow-up draft retain independent state', async ({ page }) => {

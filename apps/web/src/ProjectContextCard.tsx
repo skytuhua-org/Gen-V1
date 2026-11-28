@@ -1,8 +1,10 @@
 import {useEffect,useId,useState,type ReactNode} from 'react';
-import {Bot,CalendarClock,ChevronDown,ChevronRight,Code2,FileDiff,Folder,GitBranch,GitCommitHorizontal,ListChecks,MessageSquare,Plus,Server,Terminal,Undo2} from 'lucide-react';
+import {Bot,CalendarClock,ChevronDown,ChevronRight,Code2,FileDiff,Folder,GitBranch,GitCommitHorizontal,ListChecks,MessageSquare,Plus,Server,SlidersHorizontal,Terminal,Undo2} from 'lucide-react';
 import {Modal} from '../../../packages/ui-shell/Modal.tsx';
-import type {Snapshot} from '../../../packages/contracts/index.ts';
+import type {ModelInfo,Snapshot} from '../../../packages/contracts/index.ts';
+
 import type {ProjectContext} from '../../../packages/contracts/workspace.ts';
+import {Select} from '../../../packages/ui-shell/Select';
 import {contextCompanions} from './project-context-summary';
 import {LoadingState,PendingStatus} from './LoadingState';
 import './project-context.css';
@@ -19,16 +21,30 @@ export interface ProjectContextCardProps {
  composerChangesAvailable?:boolean;
  snapshot?:Snapshot;threadId?:string;onOpenDetailedPlan?:()=>void;
  automationItems?:{id:string;title:string;status:string;nextRunAt?:string}[];automationsAvailable?:boolean;
+ /** Per-project default for new threads (#1481); `modelDefaultOpen` bumps expand the editor row. */
+ modelDefault?:{modelId:string;thinkingLevel:string|null}|null;
+ onSaveModelDefault?:(value:{modelId:string;thinkingLevel:string|null}|null)=>Promise<void>;
+ loadDefaultCatalog?:(signal:AbortSignal)=>Promise<ModelInfo[]>;modelDefaultOpen?:number;
 }
 /** Data and callbacks only: this card is safe to consume from either authority's shell. */
-export function ProjectContextCard({context,loading,error,threadTitle,plan,planOpen=false,onTogglePlan,fullPlanVisible=false,onAction,onSelectThread,onShowChanges,onConnect,snapshot,threadId,onOpenDetailedPlan,automationItems=[],automationsAvailable=false,composerChangesAvailable=false}:ProjectContextCardProps){
- const planId=useId(),[expanded,setExpanded]=useState<'scripts'|'branch'|'commit'|'lineage'|null>(null),[busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[scriptName,setScriptName]=useState(''),[scriptCommand,setScriptCommand]=useState(''),[branch,setBranch]=useState(''),[commit,setCommit]=useState(''),[undoOpen,setUndoOpen]=useState(false),[notice,setNotice]=useState('');
+export function ProjectContextCard({context,loading,error,threadTitle,plan,planOpen=false,onTogglePlan,fullPlanVisible=false,onAction,onSelectThread,onShowChanges,onConnect,snapshot,threadId,onOpenDetailedPlan,automationItems=[],automationsAvailable=false,composerChangesAvailable=false,modelDefault,onSaveModelDefault,loadDefaultCatalog,modelDefaultOpen}:ProjectContextCardProps){
+ const planId=useId(),[expanded,setExpanded]=useState<'scripts'|'branch'|'commit'|'lineage'|'model'|null>(null),[busy,setBusy]=useState(false),[actionError,setActionError]=useState(''),[scriptName,setScriptName]=useState(''),[scriptCommand,setScriptCommand]=useState(''),[branch,setBranch]=useState(''),[commit,setCommit]=useState(''),[undoOpen,setUndoOpen]=useState(false),[notice,setNotice]=useState('');
+ const [modelDraft,setModelDraft]=useState({modelId:'',thinking:''}),[catalog,setCatalog]=useState<ModelInfo[]|undefined>(),[catalogError,setCatalogError]=useState(''),[modelSaved,setModelSaved]=useState('');
+ useEffect(()=>{if(modelDefaultOpen)setExpanded('model');},[modelDefaultOpen]);
+ useEffect(()=>{if(expanded==='model')setModelDraft({modelId:modelDefault?.modelId??'',thinking:modelDefault?.thinkingLevel??''});},[expanded,modelDefault]);
+ useEffect(()=>{if(!loadDefaultCatalog)return;const control=new AbortController();loadDefaultCatalog(control.signal).then(list=>setCatalog(list)).catch(cause=>{if(!control.signal.aborted)setCatalogError(cause instanceof Error?cause.message:'Models could not be loaded.');});return()=>control.abort();},[loadDefaultCatalog]);
+ const draftModel=(catalog??[]).find(model=>model.id===modelDraft.modelId),levels=draftModel?.thinkingLevels??[];
+ const effortTitle=(value:string)=>value.replaceAll('_',' ').replaceAll('-',' ').replace(/\b\w/g,letter=>letter.toUpperCase());
+ const modelDefaultName=(catalog??[]).find(model=>model.id===modelDefault?.modelId)?.name??modelDefault?.modelId;
+ const modelSummary=modelDefault?(modelDefaultName??'')+(modelDefault.thinkingLevel?' · '+effortTitle(modelDefault.thinkingLevel):''):'Global default';
+ const saveModelDefault=(value:{modelId:string;thinkingLevel:string|null}|null)=>{if(!onSaveModelDefault)return;setModelSaved('');void onSaveModelDefault(value).then(()=>setModelSaved('Saved.')).catch(cause=>setModelSaved(cause instanceof Error?cause.message:'The project default could not be saved.'));};
  const run=(type:string,payload:Record<string,unknown>={})=>{if(!onAction||busy)return;setBusy(true);setActionError('');setNotice('');void onAction(type,payload).then(()=>{setExpanded(null);setCommit('');}).catch(cause=>setActionError(cause instanceof Error?cause.message:'The project action could not finish.')).finally(()=>setBusy(false));};
  const undo=context?.undo,undoHead=undo?.head;
  // A changed tip means the reviewed commit is no longer current; the pending
  // confirmation must not carry over to a commit it did not name.
  useEffect(()=>{setUndoOpen(false);},[undoHead]);
  const confirmUndo=()=>{if(!onAction||busy||!undo?.eligible||!undo.head||!context?.revision)return;setBusy(true);setActionError('');setNotice('');void onAction('undo',{expectedHead:undo.head,revision:context.revision}).then(result=>{const restored=(result as {result?:{message?:unknown}}|undefined)?.result?.message;setUndoOpen(false);setExpanded('commit');if(typeof restored==='string'&&restored)setCommit(restored);setNotice('Commit undone. Changes are staged.');}).catch(cause=>{setUndoOpen(false);setActionError(cause instanceof Error?cause.message:'The project action could not finish.');}).finally(()=>setBusy(false));};
+
  const toggle=(name:NonNullable<typeof expanded>)=>setExpanded(value=>value===name?null:name);
  const connected=Boolean(context&&(context.project.rootPath||context.capabilities.git||context.capabilities.terminal||context.editor.available));
  const total=(value:number)=>compactCount.format(value);
@@ -45,6 +61,16 @@ export function ProjectContextCard({context,loading,error,threadTitle,plan,planO
      {!composerChangesAvailable&&<button className="project-context-row" disabled={!onShowChanges} onClick={onShowChanges} title={context.changes.files===null?'Changes unavailable':context.changes.files+' changed files'}><FileDiff size={16}/><span>Changes</span>
       {context.changes.added===null&&context.changes.removed===null?<small>Unavailable</small>:<>{context.changes.added!==null&&<small className="project-added">+{total(context.changes.added)}</small>}{context.changes.removed!==null&&<small className="project-removed">−{total(context.changes.removed)}</small>}</>}
      </button>}
+     {onSaveModelDefault&&<><button className="project-context-row" aria-expanded={expanded==='model'} onClick={()=>toggle('model')}><SlidersHorizontal size={16}/><span>New thread defaults</span><small className="project-context-row-summary" title={modelSummary}>{modelSummary}</small><ChevronDown size={13}/></button>
+      {expanded==='model'&&<div className="project-context-detail" role="group" aria-label="Project model defaults">
+       <label>Model<Select aria-label="Project default model" disabled={!catalog} value={modelDraft.modelId} options={[{value:'',label:'Global default'},...(catalog??[]).map(model=>({value:model.id,label:model.name}))]} onValueChange={id=>setModelDraft(draft=>({...draft,modelId:id}))}/></label>
+       <label>Reasoning<Select aria-label="Project default reasoning" disabled={!levels.length} value={modelDraft.thinking} options={[{value:'',label:'Model default'},...levels.map(level=>({value:level,label:effortTitle(level)}))]} onValueChange={thinking=>setModelDraft(draft=>({...draft,thinking}))}/></label>
+       <p className="project-context-note">New threads in this project start with this model unless you pick another model in that thread.</p>
+       {catalogError&&<p className="project-context-note error-text">{catalogError}</p>}
+       <button className="secondary" disabled={busy||!catalog||((modelDefault?.modelId??'')===modelDraft.modelId&&(modelDefault?.thinkingLevel??'')===modelDraft.thinking)} onClick={()=>saveModelDefault(modelDraft.modelId?{modelId:modelDraft.modelId,thinkingLevel:modelDraft.thinking||null}:null)}>Save</button>
+       {modelDefault&&<button className="quiet" disabled={busy} onClick={()=>saveModelDefault(null)}>Use global default</button>}
+       {modelSaved&&<p className="project-context-note" role="status">{modelSaved}</p>}
+      </div>}</>}
     </>}
    </section>
    {summary?<section className="project-context-plan-summary" aria-label="Plan summary" data-plan-revision={summary.revision}><div className="project-context-summary-title"><ListChecks size={15}/><strong>{summary.title}</strong></div>{summary.total>0&&<><div className="project-context-summary-progress" role="progressbar" aria-label="Plan tasks completed" aria-valuemin={0} aria-valuemax={summary.total} aria-valuenow={summary.completed}><span style={{width:`${summary.completed/summary.total*100}%`}}/></div><p>{summary.completed} of {summary.total} tasks complete</p></>}{summary.currentStep&&!fullPlanVisible&&<p className={summary.blocked?'project-context-summary-blocked':''}>{summary.blocked?'Blocked: ':''}{summary.currentStep}</p>}{onOpenDetailedPlan&&!fullPlanVisible&&<button type="button" className="quiet" onClick={onOpenDetailedPlan}>Open full plan<ChevronRight size={13}/></button>}</section>:Boolean(plan)&&<section className="project-context-plan"><button className="project-context-row" aria-expanded={planOpen} aria-controls={planId} onClick={onTogglePlan}><ListChecks size={16}/><span>Task plan</span>{planOpen?<ChevronDown size={14}/>:<ChevronRight size={14}/>}</button><div id={planId} className="project-plan-expansion" data-open={planOpen} inert={!planOpen}><div>{plan}</div></div></section>}

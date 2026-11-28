@@ -35,6 +35,7 @@ export const KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
   {id: 'close-find', label: 'Close find', scope: 'Conversation', chords: ['Escape'], handlers: [module('ConversationFind.tsx')]},
   {id: 'terminal-select-all', label: 'Select all terminal text', scope: 'Terminal', chords: ['Ctrl+Shift+A'], handlers: [module('TerminalBody.tsx')]},
   {id: 'thread-place', label: 'Place a focused thread in the workspace', scope: 'Sidebar', chords: ['Alt+Enter'], handlers: [module('ShellSidebar.tsx')]},
+  {id: 'sidebar-clear-search', label: 'Clear the thread search', scope: 'Sidebar', chords: ['Escape'], handlers: [module('ShellSidebar.tsx')]},
   {id: 'thread-reorder-up', label: 'Move a focused thread up', scope: 'Sidebar', chords: ['Alt+ArrowUp'], handlers: [module('sidebar-reorder.ts')]},
   {id: 'thread-reorder-down', label: 'Move a focused thread down', scope: 'Sidebar', chords: ['Alt+ArrowDown'], handlers: [module('sidebar-reorder.ts')]},
   {id: 'thread-drag-cancel', label: 'Cancel a sidebar drag', scope: 'Sidebar', chords: ['Escape'], handlers: [module('sidebar-reorder.ts')]},

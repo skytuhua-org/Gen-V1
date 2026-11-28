@@ -1,8 +1,56 @@
 import { test, expect } from '@playwright/test';
-import { branchGraphData, branchGraphSpec, growingQaSpec, linkedMapData, linkedMapSpec, migrationTableSpec, serveTaskFixture, taskFixture } from './task-interface-fixture';
+import { branchGraphData, branchGraphSpec, growingQaSpec, linkedMapData, linkedMapSpec, migrationTableSpec, serveTaskFixture, taskFixture, type TaskSpec } from './task-interface-fixture';
 import { validateSurface } from '../../packages/ui-catalog';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { openApp } from './app-ready';
+
+test('a hidden artifact status announces directly in its header and clears only on reveal or expiry',async({page})=>{
+ const spec:TaskSpec={root:'views',elements:{
+  views:{type:'Tabs',props:{labels:['Content','Controls','Details'],stateKey:'statusView'},children:['status','save','details']},
+  status:{type:'Status',props:{dataBinding:'result'}},
+  save:{type:'Button',props:{label:'Save choice',actionId:'ask'}},
+  details:{type:'Text',props:{text:'Other details'}},
+ }};
+ const snapshot=taskFixture(spec,{result:{status:'neutral',label:'Waiting for a choice'}});
+ let saved=0;
+ const fixture=await serveTaskFixture(page,snapshot,async command=>{
+  if(command.payload.actionId==='ask')fixture.setInput('result',{status:'success',label:'Choice saved locally '+(++saved)});
+ });
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.emulateMedia({reducedMotion:'reduce'});await page.setViewportSize({width:560,height:800});
+ await openApp(page);
+ const artifact=page.getByRole('region',{name:'Task surface',exact:true});
+ await expect(artifact.getByText('Waiting for a choice',{exact:true})).toBeVisible();
+ const chip=artifact.locator('.artifact-header').getByRole('status');
+ await expect(artifact.locator('.artifact-header .artifact-flash')).toHaveCount(0);
+ await artifact.getByRole('tab',{name:'Controls',exact:true}).click();
+ await page.clock.install();
+ const save=artifact.getByRole('button',{name:'Save choice',exact:true});
+ await save.click();
+ await expect(chip).toHaveText('Choice saved locally 1');
+ expect(await chip.locator('.artifact-flash').evaluate(node=>parseFloat(getComputedStyle(node).animationDuration))).toBeLessThanOrEqual(.001);
+ expect(await artifact.locator('.artifact-header').evaluate(node=>node.scrollWidth<=node.clientWidth)).toBe(true);
+ await page.clock.runFor(2500);
+ await save.click();
+ await expect(chip).toHaveText('Choice saved locally 2');
+ await page.clock.runFor(2000);
+ await expect(chip).toHaveText('Choice saved locally 2');
+ await artifact.getByRole('tab',{name:'Details',exact:true}).click();
+ await expect(chip).toHaveText('Choice saved locally 2');
+ await artifact.getByRole('tab',{name:'Content',exact:true}).click();
+ await expect(chip).toHaveText('');
+ await expect(artifact.getByText('Choice saved locally 2',{exact:true})).toBeVisible();
+ fixture.setInput('result',{status:'error',label:'Choice needs another attempt'});
+ await fixture.publish();
+ await expect(artifact.getByText('Choice needs another attempt',{exact:true})).toBeVisible();
+ await expect(chip).toHaveText('');
+ await artifact.getByRole('tab',{name:'Controls',exact:true}).click();
+ await save.click();
+ await expect(chip).toHaveText('Choice saved locally 3');
+ await page.clock.runFor(4100);
+ await expect(chip).toHaveText('');
+ expect(errors).toEqual([]);
+});
 
 test('settings writes broadcast a named workspace event and refresh the app', async ({ page }) => {
   const snapshot = taskFixture(branchGraphSpec('vertical'), { graph: branchGraphData });
@@ -123,7 +171,9 @@ test('progressive Q&A keeps branches, edit identity and focus while deduplicatin
   fixture.setInput('answer', { status: 'pending', answer: 'Yes. Choose a destination' }); await fixture.publish();
   await expect(page.getByText('Yes. Choose a destination', { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Destination note' })).toBeFocused();
-  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.' }); await fixture.publish(); release();
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.' }); await fixture.publish();
+  await expect(page.locator('.disclosure-pending')).toHaveCount(0);
+  release();
   await expect(page.getByText('Yes. Choose a destination for each package before confirming.', { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Destination note' })).toHaveAttribute('data-identity', identity!);
   await expect(page.getByRole('textbox', { name: 'Destination note' })).toHaveValue('Keep the labels separate');
@@ -151,6 +201,51 @@ test('progressive Q&A keeps branches, edit identity and focus while deduplicatin
   await expect(page.getByRole('button', { name: 'Could the package wait until Friday?' })).toBeVisible();
   await expect(page.getByText('Choose Friday while reviewing the destination, before confirming.')).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Destination note' })).toHaveValue('Keep the labels separate');
+  // a pending follow-up branch resolves into exactly one new interactive row
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.', followupsPending: true }); await fixture.publish();
+  await expect(page.locator('.disclosure-followups-pending[data-phase="pending"]')).toBeVisible();
+  const grown = structuredClone(snapshot.artifacts[0].spec!);
+  grown.elements.delivery.children!.push('insurance');
+  grown.elements.insurance = { type: 'Disclosure', props: { title: 'Is insurance included?', stateKey: 'insuranceOpen', text: 'Insurance is listed per destination.' } };
+  snapshot.artifacts[0].spec = grown; snapshot.artifacts[0].revision++;
+  await page.evaluate(() => {
+    const w = window as unknown as { branchAnimations: number; originalAnimate?: typeof Element.prototype.animate };
+    w.branchAnimations = 0;
+    if (!w.originalAnimate) {
+      w.originalAnimate = Element.prototype.animate;
+      const original = w.originalAnimate;
+      Element.prototype.animate = function (...args) {
+        if ((this as HTMLElement).classList?.contains('disclosure-node')) w.branchAnimations++;
+        return original.apply(this, args);
+      };
+    }
+  });
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.', followupsPending: false }); await fixture.publish();
+  const newBranch = page.getByRole('button', { name: 'Is insurance included?', exact: true });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { branchAnimations: number }).branchAnimations)).toBe(1);
+  await expect(newBranch).toBeVisible(); await expect(newBranch).toBeEnabled();
+  await expect.poll(() => page.locator('.disclosure-followups-pending').count()).toBe(0);
+  expect(fixture.commands.filter(command => command.type === 'action.submit' && command.payload.actionId === 'ask')).toHaveLength(1);
+  await expect(page.getByRole('textbox', { name: 'Destination note' })).toHaveAttribute('data-identity', identity!);
+  await expect(page.getByRole('textbox', { name: 'Destination note' })).toHaveValue('Keep the labels separate');
+  // a repeat publication of the same data never replays the child
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.', followupsPending: false }); await fixture.publish();
+  expect(await page.evaluate(() => (window as unknown as { branchAnimations: number }).branchAnimations)).toBe(1);
+  // close while a placeholder exits, reopen with keyboard, and tab into the real answer
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.', followupsPending: true }); await fixture.publish();
+  await expect(page.locator('.disclosure-followups-pending[data-phase="pending"]')).toBeVisible();
+  const trigger = page.getByRole('button', { name: 'Can delivery be split?', exact: true });
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.', followupsPending: false }); await fixture.publish();
+  await expect(page.locator('.disclosure-followups-pending[data-phase="resolving"]')).toHaveCount(1);
+  await trigger.dispatchEvent('click');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await trigger.focus(); await page.keyboard.press('Enter');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Tab');
+  const tabbed = await page.evaluate(() => { const el = document.activeElement as HTMLElement; return { tag: el.tagName, visible: el.offsetParent !== null, inert: el.closest('[inert]') !== null }; });
+  expect(tabbed.inert).toBe(false); expect(tabbed.visible).toBe(true);
+  await expect.poll(() => page.locator('.disclosure-followups-pending').count()).toBe(0);
+  await expect(page.locator('[role="status"]').filter({ hasText: 'Preparing related questions' })).toHaveCount(0);
 });
 
 test('a pending question cannot duplicate or erase a newer draft and source errors can retry', async ({ page }) => {
@@ -280,4 +375,35 @@ test('map source disclosure renders URL source as a link', async ({ page }) => {
   await expect(link).toHaveText('https://example.com/places');
   await expect(link).toHaveAttribute('href', 'https://example.com/places');
   await expect(link).toHaveAttribute('target', '_blank');
+});
+
+test('artifact unified diff distinguishes file headers, hunks and prefixed content', async ({page}) => {
+  await page.setViewportSize({width:320,height:840});
+  const lines = [
+    'diff --git a/first.txt b/first.txt',
+    'index abcd123..bcde234 100644',
+    '--- a/first.txt',
+    '+++ b/first.txt',
+    '@@ -1,2 +1,2 @@',
+    '--- literal removed line',
+    '+++ literal added line',
+    ' A shared context line wide enough to scroll on a narrow panel.',
+    '\\ No newline at end of file',
+    '--- /dev/null',
+    '+++ b/second.txt',
+    '@@ -0,0 +1 @@',
+    '+ created',
+  ];
+  const snapshot=taskFixture({root:'compare',elements:{compare:{type:'Diff',props:{dataBinding:'patch'}}}}, {patch:lines.join('\n')});
+  await serveTaskFixture(page,snapshot);
+  await openApp(page);
+  const diff=page.locator('pre.diff');
+  await expect(diff).toBeVisible();
+  await expect(diff.locator(':scope > *')).toHaveText(lines);
+  expect(await diff.locator(':scope > *').evaluateAll(rows=>rows.map(row=>row.className))).toEqual([
+    'diff-header','diff-header','diff-header','diff-header','diff-hunk','removed','added','','diff-hunk','diff-header','diff-header','diff-hunk','added',
+  ]);
+  expect(await diff.evaluate(node=>node.scrollWidth>node.clientWidth)).toBe(true);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await test.info().attach('Unified diff at 320 px with synthetic data',{body:await page.screenshot(),contentType:'image/png'});
 });

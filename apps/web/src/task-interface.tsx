@@ -7,7 +7,7 @@ import './task-interface.css';
 export { ArtifactTitle } from './task-context';
 export { RelationshipGraph } from './RelationshipGraph';
 import { inputPath, statePath } from './task-context';
-import { StatusIcon, operationStatusKind, type StatusKind } from './task-status';
+import { ARTIFACT_STATUS_FLASH, StatusIcon, operationStatusKind, type ArtifactStatusFlash, type StatusKind } from './task-status';
 import { animateTask, reducedMotion, TASK_MOTION } from './task-motion';
 import './task-motion.css';
 import './document-preview.css';
@@ -110,6 +110,17 @@ function StatusPresentation({ view, receipt, operation, raw }: { view: StatusVie
   const previous = useRef(view), [leaving, setLeaving] = useState<StatusView | null>(null);
   const signature = JSON.stringify([view.status,operation&&raw&&typeof raw==='object'?(raw as {operationId?:unknown}).operationId:null]);
   const currentOpacity=useRef(1);
+  const flashSignature = JSON.stringify([signature, view.label]);
+  const previousFlash = useRef(flashSignature);
+  useLayoutEffect(() => {
+    if (previousFlash.current === flashSignature) return;
+    previousFlash.current = flashSignature;
+    const node = current.current;
+    if (!node?.closest('.task-tab-panel[hidden]')) return;
+    node.dispatchEvent(new CustomEvent<ArtifactStatusFlash>(ARTIFACT_STATUS_FLASH, {
+      bubbles: true, composed: true, detail: { status: view.status, label: view.label.trim() || view.status },
+    }));
+  }, [flashSignature, view.label, view.status]);
   useLayoutEffect(() => {
     const from = previous.current; previous.current = view;
     if (from.status === view.status) return;

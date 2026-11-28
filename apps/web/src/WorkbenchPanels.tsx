@@ -1,4 +1,5 @@
 import {useEffect,useState} from 'react';
+import {displayThreadTitle} from './thread-title';
 import {z} from 'zod';
 import type {Snapshot} from '../../../packages/contracts';
 import {logicalOwnerV1Schema,sameLogicalOwner,type LogicalOwnerV1} from '../../../packages/contracts/source-selection';
@@ -25,7 +26,7 @@ export function WorkbenchRunPanel({owner,snapshot}:{owner:LogicalOwnerV1;snapsho
  const thread=snapshot?.threads.find(thread=>thread.id===owner.threadId&&(thread.projectId??null)===owner.projectId&&(thread.workspaceId??null)===owner.workspaceId);
  if(!thread||!snapshot)return <p role="status">The current run read model is unavailable.</p>;
  const usage=snapshot.usage[thread.id],operations=snapshot.operations.filter(operation=>operation.threadId===thread.id),requests=snapshot.requests.filter(request=>request.threadId===thread.id&&request.status==='pending');
- return <section aria-label="Current run"><h3>Current run</h3><dl><dt>Owner</dt><dd>{thread.title} ({thread.id})</dd><dt>Working copy</dt><dd>{thread.workspaceId??'None'}</dd><dt>Status</dt><dd>{thread.status}</dd><dt>Run</dt><dd>{thread.runId??'No active run'}</dd><dt>Activity</dt><dd>{usage?.activity??'Not reported'}</dd><dt>Queue</dt><dd>{usage?.activity==='queued'?'Queued by the owning runtime':'No queue position reported'}</dd><dt>Cost</dt><dd>{usage?.cost===null||usage?.cost===undefined?'Not reported':String(usage.cost)}</dd></dl>
+ return <section aria-label="Current run"><h3>Current run</h3><dl><dt>Owner</dt><dd>{displayThreadTitle(thread)} ({thread.id})</dd><dt>Working copy</dt><dd>{thread.workspaceId??'None'}</dd><dt>Status</dt><dd>{thread.status}</dd><dt>Run</dt><dd>{thread.runId??'No active run'}</dd><dt>Activity</dt><dd>{usage?.activity??'Not reported'}</dd><dt>Queue</dt><dd>{usage?.activity==='queued'?'Queued by the owning runtime':'No queue position reported'}</dd><dt>Cost</dt><dd>{usage?.cost===null||usage?.cost===undefined?'Not reported':String(usage.cost)}</dd></dl>
   {thread.error&&<p role="status">Blocker: {thread.error}</p>}{requests.map(request=><p key={request.id}>Awaiting input: {request.title}</p>)}
   <h4>Tool activity</h4>{operations.length?operations.slice(-100).map(operation=><article key={operation.id}><strong>{operation.description}</strong><p>{operation.status} · revision {operation.revision}</p>{operation.error&&<p>{operation.error}</p>}<small>Read-only inspection. Approval and execution remain in the operation's owning panel.</small></article>):<p>No operation records are present in the current snapshot.</p>}
   <h4>Background jobs</h4><p>Unsupported: this workbench has no tested background-job read contract.</p>
