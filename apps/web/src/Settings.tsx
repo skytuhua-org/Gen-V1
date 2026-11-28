@@ -1,4 +1,5 @@
 import {persistSettingsChange, SettingsRefreshError, settingsOperation, settleSettingsOperations} from './settings-operations';
+import {displayThreadTitle} from './thread-title';
 import {registerEditorHandoff} from './editor-handoff';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {notifyAccountAuthChanged,onAccountCatalogChanged,mergeAccountModels} from './account-api';
@@ -263,7 +264,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
           {item.id==='archive' && <div className="settings-records">
             {data.archivedThreads.length>0 && data.counts.archivedThreads>data.archivedThreads.length && <p className="settings-empty">Showing {data.archivedThreads.length} archived conversations available in navigation. The total also includes conversations outside this list.</p>}
             {data.archivedThreads.length ? data.archivedThreads.map(thread => <section className="settings-row" key={thread.id}>
-              <div className="settings-row-copy"><h2>{thread.title}</h2><p>{thread.projectName ?? 'Conversation'} · {thread.status}</p></div>
+              <div className="settings-row-copy"><h2>{displayThreadTitle(thread)}</h2><p>{thread.projectName ?? 'Conversation'} · {thread.status}</p></div>
               <button type="button" className="secondary" disabled={busy} onClick={() => { setBusy(true); void settingsOperation(() => command('thread.restore', {}, thread.id).then(guardedRefresh)).catch(cause => setError(String(cause))).finally(() => setBusy(false)); }}>Restore thread</button>
             </section>) : <div className="settings-empty-card"><p>{data.counts.archivedThreads ? 'No archived conversations are available in navigation.' : 'No archived threads.'}</p></div>}
           </div>}
