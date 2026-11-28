@@ -39,6 +39,8 @@ packages. Each package is published under the MIT license and ships its own
 LICENSE file in the installed package; copyright belongs to Marijn Haverbeke and
 contributors.
 
+The isolated math renderer uses KaTeX 0.19.1, published by Khan Academy and contributors under the MIT license. The installed package ships its LICENSE; font and stretchy-SVG source assets remain governed by the applicable upstream notices and reserved-name terms.
+
 The isolated streaming-Markdown repair trial uses `remend` 1.5.1, published by
 Vercel, Inc. under the Apache-2.0 license. The package ships its own LICENSE in
 the installed artifact; copyright and license rights remain with their authors.
