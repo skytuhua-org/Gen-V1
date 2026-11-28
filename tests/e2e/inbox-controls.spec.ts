@@ -242,6 +242,143 @@ test('reselecting an item observes its held read failure without another write',
   expect(await calls(page)).toEqual([{type:'read',id:'question'}]);
 });
 
+async function twoFrames(page: Page) {
+  await page.evaluate(async() => {await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);});
+}
+
+async function controlFrames(page: Page) {
+  await page.evaluate(() => {
+    type Entry = {callback: FrameRequestCallback; cancelled: boolean};
+    const entries: Entry[] = [];
+    (window as unknown as {inboxRafEntries: Entry[]}).inboxRafEntries = entries;
+    window.requestAnimationFrame = callback => {entries.push({callback, cancelled: false}); return entries.length;};
+    window.cancelAnimationFrame = id => {const entry = entries[id - 1]; if (entry) entry.cancelled = true;};
+  });
+}
+
+async function flushFrames(page: Page) {
+  await page.evaluate(() => {
+    const entries = (window as unknown as {inboxRafEntries: Array<{callback: FrameRequestCallback; cancelled: boolean}>}).inboxRafEntries.splice(0);
+    for (const entry of entries) if (!entry.cancelled) entry.callback(performance.now());
+  });
+}
+
+test('wide Escape dismisses the reader to a full list and returns focus to the same row', async ({page}) => {
+  await fixture(page); await page.setViewportSize({width: 1100, height: 760});
+  const review = rows(page).filter({hasText: 'Review'}).first();
+  await review.click(); await expect(page.getByRole('region', {name: 'Review', exact: true})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'list');
+  await expect(page.getByRole('region', {name: 'Review', exact: true})).toHaveCount(0);
+  await expect(page.getByRole('region', {name: 'Selected inbox item', exact: true})).toHaveCount(0);
+  await expect(review).toBeFocused();
+});
+
+test('after explicit dismissal j traverses from the focused row instead of reselecting the first row', async ({page}) => {
+  await fixture(page); await page.setViewportSize({width: 1100, height: 760});
+  const review = rows(page).filter({hasText: 'Review'}).first(), failed = rows(page).filter({hasText: 'Failed task'}).first();
+  await review.click(); await page.keyboard.press('Escape'); await expect(review).toBeFocused();
+  await page.keyboard.press('j');
+  await expect(failed).toBeFocused();
+  await expect(page.locator('.ui-list-row[data-current=true]').filter({hasText: 'Failed task'})).toHaveCount(1);
+});
+
+test('explicit dismissal survives resize until the next explicit choose restores measured columns', async ({page}) => {
+  await fixture(page); await page.setViewportSize({width: 1100, height: 760});
+  const review = rows(page).filter({hasText: 'Review'}).first();
+  await review.click(); await page.keyboard.press('Escape'); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'list');
+  await page.setViewportSize({width: 390, height: 760}); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'list');
+  await page.setViewportSize({width: 1100, height: 760}); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'list');
+  await review.click(); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'both');
+  await page.setViewportSize({width: 390, height: 760}); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'item');
+});
+
+test('Escape ownership is limited to chosen reader dismissal and non-composing search clearing', async ({page}) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    (window as unknown as {escapeBubbles: number}).escapeBubbles = 0;
+    document.addEventListener('keydown', event => {if (event.key === 'Escape') (window as unknown as {escapeBubbles: number}).escapeBubbles++;});
+  });
+  await rows(page).first().focus(); await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => (window as unknown as {escapeBubbles: number}).escapeBubbles)).toBe(1);
+  await rows(page).filter({hasText: 'Review'}).first().click(); await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => (window as unknown as {escapeBubbles: number}).escapeBubbles)).toBe(1);
+  const search = page.getByRole('searchbox', {name: 'Search Inbox'}); await search.fill('failed');
+  await search.dispatchEvent('keydown', {key: 'Escape', isComposing: true}); await expect(search).toHaveValue('failed');
+  await search.dispatchEvent('keydown', {key: 'Escape', keyCode: 229}); await expect(search).toHaveValue('failed');
+  await search.press('Escape'); await expect(search).toHaveValue('');
+  const review = rows(page).filter({hasText: 'Review'}).first();
+  await review.click(); await expect(page.getByRole('region', {name: 'Review', exact: true})).toBeVisible();
+  await search.focus(); await search.press('Escape'); await expect(page.getByRole('region', {name: 'Review', exact: true})).toBeVisible();
+  await review.evaluate(node => node.addEventListener('keydown', event => event.preventDefault(), {capture: true, once: true}));
+  await review.focus(); await page.keyboard.press('Escape'); await expect(page.getByRole('region', {name: 'Review', exact: true})).toBeVisible();
+});
+
+async function setInboxWidth(page: Page, target: number) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const actual = await page.locator('.agent-inbox').evaluate(node => node.getBoundingClientRect().width), viewport = page.viewportSize();
+    if (!viewport || Math.abs(actual - target) < 0.5) break;
+    await page.setViewportSize({width: Math.max(320, Math.round(viewport.width + target - actual)), height: 760});
+  }
+  await expect.poll(() => page.locator('.agent-inbox').evaluate(node => node.getBoundingClientRect().width)).toBeCloseTo(target, 0);
+}
+
+test('choose restores measured 860/892 container hysteresis after explicit dismissal', async ({page}) => {
+  await fixture(page); await setInboxWidth(page, 1100);
+  const review = rows(page).filter({hasText: 'Review'}).first();
+  await review.click(); await page.keyboard.press('Escape'); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'list');
+  await setInboxWidth(page, 859); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'list');
+  await setInboxWidth(page, 1100); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'list');
+  await review.click(); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'both');
+  await setInboxWidth(page, 859); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'item');
+  await setInboxWidth(page, 880); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'item');
+  await setInboxWidth(page, 892); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'both');
+  await setInboxWidth(page, 860); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'both');
+  await setInboxWidth(page, 859); await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'item');
+});
+
+test('newer Back cancels a pending choose-to-reader focus request', async ({page}) => {
+  await fixture(page); await page.setViewportSize({width: 390, height: 760}); await controlFrames(page);
+  const review = rows(page).filter({hasText: 'Review'}).first();
+  await page.evaluate(() => {
+    (window as unknown as {readerFocuses: number}).readerFocuses = 0;
+    document.addEventListener('focusin', event => {if ((event.target as HTMLElement).classList.contains('inbox-view-items')) (window as unknown as {readerFocuses: number}).readerFocuses++;});
+  });
+  await review.click(); await expect(page.getByRole('button', {name: 'Inbox', exact: true})).toBeVisible();
+  await page.getByRole('button', {name: 'Inbox', exact: true}).click();
+  await flushFrames(page);
+  await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'list');
+  await expect(review).toBeFocused();
+  await expect(page.getByRole('region', {name: 'Review', exact: true})).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as {readerFocuses: number}).readerFocuses)).toBe(0);
+});
+
+test('a list mutation cancels a pending same-row return without stealing newer focus', async ({page}) => {
+  await fixture(page); await page.setViewportSize({width: 1100, height: 760}); await controlFrames(page);
+  const refresh = page.getByRole('button', {name: 'Refresh inbox', exact: true}), review = rows(page).filter({hasText: 'Review'}).first();
+  await review.click();
+  await page.evaluate(() => {window.inboxControls.holdRefresh = new Promise(resolve => window.addEventListener('release-refresh', () => resolve(), {once: true}));});
+  await refresh.click(); await expect.poll(() => calls(page)).toEqual([{type: 'refresh'}]);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.dispatchEvent(new Event('release-refresh')));
+  await expect(rows(page).filter({hasText: 'Refreshed.'})).toHaveCount(5);
+  await flushFrames(page);
+  await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns', 'list');
+  await expect(refresh).toBeFocused();
+  await expect(review).not.toBeFocused();
+});
+
+test('a newer focus intent fences a pending same-row return', async ({page}) => {
+  await fixture(page); await page.setViewportSize({width: 1100, height: 760});
+  await rows(page).filter({hasText: 'Review'}).first().click();
+  await page.evaluate(() => {
+    document.querySelector('.inbox-view-items')?.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true, cancelable: true}));
+    (document.querySelector('button[aria-label="Refresh inbox"]') as HTMLElement | null)?.focus();
+  });
+  await twoFrames(page);
+  await expect(page.getByRole('button', {name: 'Refresh inbox', exact: true})).toBeFocused();
+});
+
 // #1712 T02: the reader must never show an item that left the filtered list.
 test('filtering out the open item clears the reader until it re-enters the list', async ({page}) => {
   await fixture(page);
@@ -263,4 +400,41 @@ test('single-column: a filtered-out open item does not linger when the pane narr
   await page.setViewportSize({width: 400, height: 800});
   await expect(page.getByRole('region', {name: 'Review', exact: true})).toHaveCount(0);
   await expect(rows(page)).toHaveCount(2);
+});
+
+test('search and filter reset controls restore results and focus', async ({page}) => {
+  await page.setViewportSize({width: 320, height: 760});
+  await page.emulateMedia({reducedMotion: 'reduce'});
+  await fixture(page);
+  const search = page.getByRole('searchbox', {name: 'Search Inbox'});
+  const clear = page.getByRole('button', {name: 'Clear search', exact: true});
+  const reset = page.getByRole('button', {name: 'Clear search and filter'});
+  await choose(page, 'Unread');
+  await search.fill('no matching inbox item');
+  await expect(page.getByRole('heading', {name: 'Nothing matches'})).toBeVisible();
+  await search.press('Tab');
+  await expect(clear).toBeFocused();
+  await clear.press('Enter');
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('');
+  await expect(filter(page)).toHaveText('Unread');
+  await expect(rows(page)).toHaveCount(3);
+  await search.fill('no matching inbox item');
+  await test.info().attach('Filtered Inbox at 320 px with synthetic items', {body: await page.screenshot(), contentType: 'image/png'});
+  await reset.click();
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('');
+  await expect(filter(page)).toHaveText('All');
+  await expect(rows(page)).toHaveCount(5);
+  await expect(clear).toHaveCount(0);
+  await expect(reset).toHaveCount(0);
+  expect(await calls(page)).toEqual([]);
+});
+
+test('a genuinely empty Inbox offers search clear without a filter reset', async ({page}) => {
+  await page.goto('/tests/e2e/fixtures/inbox-controls.html?empty');
+  await page.getByRole('searchbox', {name: 'Search Inbox'}).fill('no matching inbox item');
+  await expect(page.getByRole('heading', {name: 'You are all caught up'})).toBeVisible();
+  await expect(page.getByRole('button', {name: 'Clear search', exact: true})).toBeVisible();
+  await expect(page.getByRole('button', {name: 'Clear search and filter'})).toHaveCount(0);
 });
