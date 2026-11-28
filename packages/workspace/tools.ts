@@ -11,7 +11,8 @@ import {WorkspaceRepository} from '../core/workspace-layout.ts';
 import {assertNotStorage,canonical,inside} from '../core/security.ts';
 import {gitExecutable} from '../capabilities/process.ts';
 import {readBoundFile,withPathGuard} from '../core/file-access.ts';
-import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,statusBranch,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
+import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,statusBranch,withLegacyGitView,withPrivateGitFamily,type PrivateGitFamily} from './git-storage.ts';
+import type {GitSyncBlocker,GitSyncResult} from '../contracts/workspace-sync.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead,type GitHistoryCommitDetail,type GitHistoryPage,type GitHistoryPatch} from '../contracts/code-review.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
 import {GitHistorySnapshots,readHistoryCommit,readHistoryFile,readHistoryPage} from './git-history.ts';
@@ -180,6 +181,39 @@ export class ProjectTools{
   return{head,branch,revision:hash(JSON.stringify([head,branch,raw,diff,stagedDiff,untracked])),files,diff,stagedDiff,truncated:false,mode:managed?'managed':'legacy',gitWrite:managed,untrackedIncluded:managed};
  }
  async gitStatus(projectId:string,threadId?:string):Promise<GitStatus>{return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed)=>this.status(metadata,path,signal,managed)));}
+ private readonly lastFetched=new Map<string,string>();
+ /** Local-only remote sync read (plan #1626 R1/R2/R5): never runs fetch or touches the network. */
+ private async sync(projectId:string,metadata:string,path:string,signal:AbortSignal,managed:boolean,bound:{workspace?:WorkspaceBinding},threadId?:string):Promise<GitSyncResult>{
+  const current=await this.status(metadata,path,signal,managed),git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
+  const family=bound.workspace?privateFamilyForBinding(this.store,bound.workspace)?.privateFamily:this.store.get<PrivateGitFamily>('workspaceGitFamily',projectId),origin=/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(family?.origin??'')?.[1];
+  const remote=origin?{name:'origin' as const,repo:origin}:null;
+  let upstream:GitSyncResult['upstream']=null;
+  if(current.branch){
+   const remoteName=(await git(['config','--get','branch.'+current.branch+'.remote']).catch(()=>'')).trim(),merge=(await git(['config','--get','branch.'+current.branch+'.merge']).catch(()=>'')).trim();
+   const candidates:string[]=[];
+   if(remoteName==='origin'&&merge.startsWith('refs/heads/'))candidates.push('refs/remotes/origin/'+merge.slice('refs/heads/'.length));
+   candidates.push('refs/remotes/origin/'+current.branch);
+   for(const ref of candidates){const oid=(await git(['rev-parse','--verify','--quiet',ref]).catch(()=>'')).trim();if(/^[a-f0-9]{40}$/.test(oid)){upstream={ref,short:ref.slice('refs/remotes/'.length),oid};break;}}
+  }
+  let ahead:number|null=null,behind:number|null=null;
+  if(upstream){const[left,right]=(await git(['rev-list','--left-right','--count',upstream.oid+'...'+current.head])).trim().split(/\s+/);behind=Number(left);ahead=Number(right);}
+  const state:GitSyncResult['state']=!current.branch?'detached':!remote?'no-remote':!upstream?'no-upstream':ahead===0&&behind===0?'up-to-date':behind===0?'ahead':ahead===0?'behind':'diverged';
+  const blockers:GitSyncBlocker[]=[];
+  if(threadId){const thread=this.store.get<Thread>('thread',threadId);if(thread&&(thread.runId||thread.status==='working'||thread.status==='awaiting_input'))blockers.push('RUN_ACTIVE');}
+  if(!managed)blockers.push('READ_ONLY');
+  if(!remote)blockers.push('NO_REMOTE');
+  if(state==='detached')blockers.push('DETACHED');
+  if(state==='no-upstream')blockers.push('NO_UPSTREAM');
+  if(state==='up-to-date')blockers.push('UP_TO_DATE');
+  if(state==='ahead')blockers.push('AHEAD_ONLY');
+  if(state==='diverged')blockers.push('DIVERGED');
+  if(state==='behind'&&upstream){
+   const changed=(await git(['-c','diff.renames=false','diff','--name-only','-z',current.head,upstream.oid])).split('\0').filter(Boolean),fold=(p:string)=>process.platform==='win32'?p.toLowerCase():p,remoteChanged=new Set(changed.map(fold)),dirty=new Set(current.files.flatMap(file=>[file.path,...(file.oldPath?[file.oldPath]:[])].map(fold)));
+   if([...dirty].some(dirtyPath=>remoteChanged.has(dirtyPath)))blockers.push('DIRTY_OVERLAP');
+  }
+  return{branch:current.branch||null,head:current.head,revision:current.revision,remote,upstream,ahead,behind,state,lastFetchedAt:this.lastFetched.get(bound.workspace?.id??projectId)??null,blockers};
+ }
+ async gitSync(projectId:string,threadId?:string):Promise<GitSyncResult>{const bound=await this.binding(projectId,threadId);return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed)=>this.sync(projectId,metadata,path,signal,managed,bound,threadId)));}
  /** Read-only undo eligibility shared by the context preview and the write-time recheck. */
  private async undoEligibility(git:(args:string[])=>Promise<string>,managed:boolean,busy:boolean):Promise<{eligible:boolean;reason?:string;head?:string;branch?:string;subject?:string}>{
   if(!managed)return{eligible:false,reason:'Undo needs a managed working copy.'};
