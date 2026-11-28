@@ -333,8 +333,8 @@ test('workspace artifact tabs preserve the exact authenticated widget mount and 
   await expect(frame.getByRole('textbox', { name: 'Widget note' })).toHaveValue('Keep the same mounted editor');
   const tools = page.getByRole('region', { name: 'Workspace panel', exact: true });
   await tools.getByRole('button', { name: 'Add surface', exact: true }).click();
-  await page.getByRole('menuitemcheckbox', { name: 'Notes', exact: true }).click();
-  await tools.getByRole('tab', { name: 'Notes', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Memory', exact: true }).click();
+  await tools.getByRole('tab', { name: 'Memory', exact: true }).click();
   await tools.getByRole('tab', { name: 'Artifact', exact: true }).click();
   await frame.getByRole('textbox', { name: 'Widget note' }).click();
   await expect(frame.getByRole('textbox', { name: 'Widget note' })).toBeFocused();
@@ -366,7 +366,7 @@ test('workspace files, diffs and executor output show actual scoped snapshot evi
   await expect(panel.getByText('old value', { exact: true })).toBeVisible();
   await expect(panel.getByText('new value', { exact: true })).toBeVisible();
   await panel.getByRole('button', { name: 'Add surface', exact: true }).click();
-  await page.getByRole('menuitemcheckbox', { name: 'Output', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Executor output', exact: true }).click();
   await expect(panel).toContainText('one real fixture check passed');
   await expect(panel).not.toContainText('Recorded executor receipts and output. Open Terminal for an interactive host session.');
 });

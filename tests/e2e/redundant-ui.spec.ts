@@ -142,14 +142,14 @@ test('a proven custom owner can use the equivalent composer action',async({page}
 test('ownerless usage retains details rather than assuming a destination',async({page})=>{
  await page.goto('/redundant-ui?mode=ownerless');await expect(page.locator('.floating-usage-details dl')).toContainText('Input tokens');
 });
-test('Notes preserves its unsaved draft through navigation and reload',async({page})=>{
- await page.goto('/redundant-ui');await page.getByRole('button',{name:'Notes',exact:true}).click();
+test('Memory preserves its unsaved draft through navigation and reload',async({page})=>{
+ await page.goto('/redundant-ui');await page.getByRole('button',{name:'Memory',exact:true}).click();
  const editor=page.getByRole('textbox',{name:'Note decision',exact:true});await expect(editor).toBeEnabled();await editor.fill('Keep this unsaved owner A note.');
  await page.getByRole('button',{name:'Usage panel',exact:true}).click();
  await expect(page.getByRole('region',{name:'Thread memory',exact:true})).toHaveCount(0);
  await expect(editor).toHaveCount(0);
- await page.getByRole('button',{name:'Notes',exact:true}).click();await expect(editor).toHaveValue('Keep this unsaved owner A note.');
- await page.reload();await page.getByRole('button',{name:'Notes',exact:true}).click();await expect(editor).toHaveValue('Keep this unsaved owner A note.');
+ await page.getByRole('button',{name:'Memory',exact:true}).click();await expect(editor).toHaveValue('Keep this unsaved owner A note.');
+ await page.reload();await page.getByRole('button',{name:'Memory',exact:true}).click();await expect(editor).toHaveValue('Keep this unsaved owner A note.');
  await expect(page.getByRole('region',{name:'Thread memory',exact:true})).toHaveCount(1);
 });
 test('retained destinations surface actual loading/error/empty boundaries',async({page})=>{

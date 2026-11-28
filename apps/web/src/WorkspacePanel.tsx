@@ -59,7 +59,7 @@ export function WorkspacePanel({ snapshot, threadId, preferences, layout, setWid
   const [handoffError,setHandoffError]=useState('');
   useEffect(()=>setHandoffError(''),[threadId,workspace.activeTab]);
   const tabStrip=useRef<HTMLDivElement>(null);
-  const tabLabels: Record<WorkspaceTab, string> = {artifact:'Artifact',plan:'Plan',diff:'Diff',files:'Files',terminal:'Terminal','pull-request':'Pull request','linked-pull-requests':'Linked pull requests',notes:'Notes',output:'Output',usage:'Usage'};
+  const tabLabels: Record<WorkspaceTab, string> = {artifact:'Artifact',plan:'Plan',diff:'Diff',files:'Files',terminal:'Terminal','pull-request':'Pull request','linked-pull-requests':'Linked pull requests',notes:'Memory',output:'Executor output',usage:'Usage'};
   const openTabs = workspace.openTabs ?? layout.openTabs;
   useLayoutEffect(()=>{
     const strip=tabStrip.current;if(!strip)return;

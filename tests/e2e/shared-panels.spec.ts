@@ -10,26 +10,45 @@ test.beforeEach(async({page})=>{
 test('default launcher opens the real tool tabs and keeps browser and device boundaries',async({page})=>{
  const panel=page.getByRole('complementary',{name:'Workspace panel'}),launcher=panel.getByRole('region',{name:'Workspace launcher'});
  await expect(launcher.getByRole('button',{name:'Browser',exact:true})).toHaveCount(0);await expect(launcher.getByRole('button',{name:'Device',exact:true})).toBeDisabled();
- await expect(launcher.getByRole('button',{name:'Notes',exact:true})).toBeEnabled();await expect(launcher.getByRole('button',{name:'Plan',exact:true})).toBeEnabled();
+ await expect(launcher.getByRole('button',{name:'Memory',exact:true})).toBeEnabled();await expect(launcher.getByRole('button',{name:'Plan',exact:true})).toBeEnabled();
  for(const label of ['Terminal','Pull request','Linked pull requests']){
   await panel.getByRole('tab',{name:'Artifact',exact:true}).click();await launcher.getByRole('button',{name:label,exact:true}).click();
   await expect(panel.getByRole('tab',{name:label,exact:true})).toHaveAttribute('aria-selected','true');await expect(panel.getByRole('tabpanel')).toContainText('Connect a project to use '+label.toLowerCase());
  }
- await openSurface(page,panel,'Output');await expect(panel.getByRole('tabpanel')).toContainText('No executor output yet');await expect(panel.getByRole('tabpanel')).not.toContainText('PTY input are unavailable');
+ await openSurface(page,panel,'Executor output');await expect(panel.getByRole('tabpanel')).toContainText('No executor output yet');await expect(panel.getByRole('tabpanel')).not.toContainText('PTY input are unavailable');
 });
+test('Memory and Executor output use the same names in the narrow panel launcher, menu and tabs',async({page})=>{
+ await page.evaluate(()=>localStorage.setItem('harness:shell-layout:v1',JSON.stringify({rightPanelWidth:320,activeTab:'artifact',openTabs:['artifact','files','terminal','diff']})));
+ await page.reload();
+ const panel=page.getByRole('complementary',{name:'Workspace panel',exact:true});
+ const launcher=panel.getByRole('region',{name:'Workspace launcher',exact:true});
+ await page.addStyleTag({url:'/src/shell.css?direct'});
+ await panel.evaluate(node=>(node as HTMLElement).style.setProperty('--right-panel-width','320px'));
+ await expect.poll(async()=>Math.round((await panel.boundingBox())!.width)).toBe(320);
+ await expect(launcher.getByRole('button',{name:'Executor output',exact:true})).toBeVisible();
+ await launcher.getByRole('button',{name:'Memory',exact:true}).click();
+ await expect(panel.getByRole('tab',{name:'Memory',exact:true})).toHaveAttribute('aria-selected','true');
+ await expect(panel.getByRole('tabpanel')).toContainText('Thread memory');
+ await openSurface(page,panel,'Executor output');
+ const executor=panel.getByRole('tab',{name:'Executor output',exact:true});
+ await expect(executor).toHaveAttribute('aria-selected','true');
+ await expect(executor).toBeInViewport({ratio:0.99});
+ await expect(panel.getByRole('tabpanel')).toContainText('No executor output yet');
+});
+
 test('canvas launch requests go to the owning canvas callback',async({page})=>{
  const canvas=page.getByRole('region',{name:'Canvas launcher'});
- for(const name of ['Terminal','Files','Diff','Pull request','Linked pull requests','Executor output','Usage','Notes','Plan'])await canvas.getByRole('button',{name,exact:true}).click();
+ for(const name of ['Terminal','Files','Diff','Pull request','Linked pull requests','Executor output','Usage','Memory','Plan'])await canvas.getByRole('button',{name,exact:true}).click();
  expect(await page.evaluate(()=>(window as any).__opened)).toEqual(['terminal','files','diff','pull-request','linked-pull-requests','output','usage','notes','plan']);
  await expect(page.getByRole('tab',{name:'Artifact',exact:true})).toHaveAttribute('aria-selected','true');
 });
 test('a rejected canvas launch surfaces the launcher error without opening a surface',async({page})=>{
  const canvas=page.getByRole('region',{name:'Canvas launcher'});
- await page.evaluate(()=>{(window as any).__reject=true});await canvas.getByRole('button',{name:'Notes',exact:true}).click();
+ await page.evaluate(()=>{(window as any).__reject=true});await canvas.getByRole('button',{name:'Memory',exact:true}).click();
  await expect(canvas.getByRole('status')).toContainText('Fixture opener refused');
  expect(await page.evaluate(()=>(window as any).__opened??null)).toBeNull();
  await page.evaluate(()=>{(window as any).__reject=false});
- await canvas.getByRole('button',{name:'Notes',exact:true}).focus();await page.keyboard.press('Enter');
+ await canvas.getByRole('button',{name:'Memory',exact:true}).focus();await page.keyboard.press('Enter');
  expect(await page.evaluate(()=>(window as any).__opened)).toEqual(['notes']);
 });
 test('browser layout handoff saves every duplicate editor and refuses a failed save',async({page})=>{
