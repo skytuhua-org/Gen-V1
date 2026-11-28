@@ -9,20 +9,42 @@ const scrollSettled = (locator: ReturnType<Page['locator']>) => locator.evaluate
 }));
 
 test('a rapid graph reversal brakes from its visible velocity while paths stay attached', async ({ page }) => {
-  const host = await serveTaskFixture(page, taskFixture(branchGraphSpec('vertical'), { graph: branchGraphData })); await page.goto('/');
-  const graph = page.locator('.task-graph'); await expect(graph.locator('[data-node-id=base]')).toBeVisible();
+  const initialSnapshot = taskFixture(branchGraphSpec('vertical'), { graph: branchGraphData });
+  const host = await serveTaskFixture(page, initialSnapshot);
   const inserted = Array.from({ length: 6 }, (_, index) => ({ id: `prep-${index}`, label: `Preparation ${index + 1}`, lane: 0, status: 'neutral' }));
-  host.setInput('graph', { ...branchGraphData, nodes: [...inserted, ...branchGraphData.nodes] }); await host.publish();
-  await graph.evaluate(async graph => {
-    const started = performance.now();
-    while (graph.querySelector('[data-node-id=base] .task-graph-dot')!.getBoundingClientRect().y - graph.getBoundingClientRect().top < 80) {
-      if (performance.now() - started > 1000) throw Error('The graph did not begin moving');
-      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-    }
+  const stagedSnapshot = (seq: number, graph: unknown, revision: number) => {
+    const copy = structuredClone(initialSnapshot); copy.seq = seq;
+    const input = copy.data.find(row => row.id === 'input-graph')!; input.value = graph; input.revision = revision;
+    return copy;
+  };
+  const initialResponse = stagedSnapshot(1, branchGraphData, 1);
+  const insertedResponse = stagedSnapshot(2, { ...branchGraphData, nodes: [...inserted, ...branchGraphData.nodes] }, 2);
+  const reversedResponse = stagedSnapshot(3, branchGraphData, 3);
+  // The reversal is armed inside the page; a Node roundtrip after motion starts reaches the snapshot too late to exercise the velocity handoff.
+  let insertionPublished = false;
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      if ((typeof input === 'string' || input instanceof URL) && input.toString().includes('/api/snapshot') && (window as unknown as { graphReversalRequested?: boolean }).graphReversalRequested) {
+        const url = new URL(input.toString(), window.location.href); url.searchParams.set('graphReversal', '1');
+        return originalFetch(url, init);
+      }
+      return originalFetch(input, init);
+    }) as typeof fetch;
   });
-  await graph.evaluate(graph => {
+  await page.route('**/api/snapshot*', route => {
+    const reversalRequested = new URL(route.request().url()).searchParams.has('graphReversal');
+    const response = !insertionPublished ? initialResponse : !reversalRequested ? insertedResponse : reversedResponse;
+    return route.fulfill({ json: response });
+  });
+  await page.goto('/');
+  const graph = page.locator('.task-graph'); await expect(graph.locator('[data-node-id=base]')).toBeVisible();
+  const insertionSeq = host.snapshot.seq + 1, reversalSeq = insertionSeq + 1;
+  insertedResponse.seq = insertionSeq; reversedResponse.seq = reversalSeq;
+  const reversalEvent = { seq: reversalSeq, id: `fixture-event-${reversalSeq}`, type: 'settings.update', threadId: null, payload: { result: host.snapshot.settings }, occurredAt: '2026-10-29T23:00:00.000Z' };
+  await graph.evaluate((graph, reversalEvent) => {
     const dot = () => graph.querySelector('[data-node-id=base] .task-graph-dot')!.getBoundingClientRect();
-    Object.assign(window, { reversalObservation: new Promise(resolve => {
+    Object.assign(window, { reversalObservation: new Promise((resolve, reject) => {
       const observer = new MutationObserver(() => {
         if (graph.querySelector('[data-node-id^="prep-"]')) return; observer.disconnect();
         const baseline = dot().y - graph.getBoundingClientRect().top, frames: { t: number; y: number; gap: number }[] = [], started = performance.now();
@@ -32,9 +54,18 @@ test('a rapid graph reversal brakes from its visible velocity while paths stay a
           if (performance.now() - started < 650) requestAnimationFrame(sample); else resolve({ baseline, frames });
         }; requestAnimationFrame(sample);
       }); observer.observe(graph, { childList: true, subtree: true });
+      let reversed = false; const started = performance.now(), initialY = dot().y - graph.getBoundingClientRect().top;
+      const reverseWhenMoving = () => {
+        if (!reversed && dot().y - graph.getBoundingClientRect().top > initialY + 1) {
+          reversed = true; (window as unknown as { graphReversalRequested?: boolean }).graphReversalRequested = true; window.dispatchEvent(new CustomEvent('task-fixture-update', { detail: reversalEvent })); return;
+        }
+        if (!reversed && performance.now() - started < 1000) requestAnimationFrame(reverseWhenMoving);
+        else if (!reversed) reject(Error('The graph did not begin moving'));
+      };
+      requestAnimationFrame(reverseWhenMoving);
     }) });
-  });
-  host.setInput('graph', branchGraphData); await host.publish();
+  }, reversalEvent);
+  insertionPublished = true; await host.publish();
   const observation = await page.evaluate(() => (window as unknown as { reversalObservation: Promise<{ baseline: number; frames: {t:number;y:number;gap:number}[] }> }).reversalObservation);
   await test.info().attach('graph-reversal-observation', { body: JSON.stringify(observation), contentType: 'application/json' });
   expect(Math.max(...observation.frames.filter(frame => frame.t < 90).map(frame => frame.y)) - observation.baseline).toBeGreaterThan(.3);
