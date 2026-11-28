@@ -325,3 +325,18 @@ it("never marks commits unpushed without a locally known upstream", async () => 
   const page = await tools.gitHistory(projectId, "main", {});
   expect(page.commits[0].pushState === "unpushed" || page.commits[0].pushState === "unknown").toBe(true);
 });
+
+it("preserves author and subject metadata containing Git's former field separator across pages", async () => {
+  const { git, context, snapshots } = await plainRepo();
+  const author = "Fixture\x1fQA", subject = "Import\x1fnotes";
+  git("-c", "user.name=" + author, "commit", "--allow-empty", "-m", subject);
+  const rootOid = git("rev-parse", "HEAD"), authoredAt = git("show", "-s", "--format=%aI", rootOid);
+  for (let i = 0; i < 50; i++) git("commit", "--allow-empty", "-m", "Next " + i);
+  const first = await readHistoryPage(context, snapshots);
+  expect(first.commits).toHaveLength(50);
+  expect(first.commits[0].subject).toBe("Next 49");
+  expect(first.nextCursor).toBeTruthy();
+  const next = await readHistoryPage(context, snapshots, first.nextCursor!);
+  expect(next.commits).toEqual([expect.objectContaining({oid: rootOid, author, authoredAt, subject})]);
+  expect(next.nextCursor).toBeNull();
+});
