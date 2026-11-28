@@ -81,3 +81,43 @@ it('blocks Pull while the thread has an active run and reports detached/no-remot
  const orphan=await fixture(false);
  expect((await orphan.tools.gitSync(orphan.projectId,orphan.threadId)).state).toBe('no-remote');
 },60000);
+
+it('fetch moves only refs/remotes/origin/* and pull fast-forwards a clean behind branch',async()=>{
+ const f=await fixture(),{GitHubTools}=await import('../packages/workspace/github.ts');
+ const bare=join(f.root,'remote.git');execFileSync('git',['init','--bare','-q',bare],{windowsHide:true});
+ const github=new GitHubTools(f.tools,{} as never,'gh',()=>bare);
+ const status=()=>f.git(f.worktree,'status','--porcelain=v1','-z').split('\0').filter(entry=>entry&&!entry.endsWith('.harness-directory-guard')).join('');
+ const before=status(),head=f.git(f.worktree,'rev-parse','HEAD');
+ const remote=await remoteCommit(f,'remote.txt','remote side\n');f.git(f.path,'push','-q',bare,'HEAD:refs/heads/'+f.branch);
+ let sync=await github.fetch(f.projectId,f.threadId);
+ expect(sync.state).toBe('behind');expect(sync.lastFetchedAt).not.toBeNull();
+ expect(f.git(f.worktree,'rev-parse','HEAD')).toBe(head);expect(status()).toBe(before);
+ sync=await github.pull(f.projectId,f.threadId,{revision:sync.revision,expectedHead:sync.head});
+ expect(sync.state).toBe('up-to-date');expect(f.git(f.worktree,'rev-parse','HEAD')).toBe(remote.tip);
+ remote.restore();
+},60000);
+it('pull refuses non-behind states and dirty overlap without changing the tree',async()=>{
+ const f=await fixture(),{GitHubTools}=await import('../packages/workspace/github.ts');
+ const bare=join(f.root,'remote.git');execFileSync('git',['init','--bare','-q',bare],{windowsHide:true});
+ const github=new GitHubTools(f.tools,{} as never,'gh',()=>bare),head=f.git(f.worktree,'rev-parse','HEAD');
+ f.git(f.path,'push','-q',bare,'HEAD:refs/heads/'+f.branch);
+ let sync=await github.fetch(f.projectId,f.threadId);
+ // up-to-date → UP_TO_DATE blocker
+ await expect(github.pull(f.projectId,f.threadId,{revision:sync.revision,expectedHead:sync.head})).rejects.toMatchObject({code:'PULL_BLOCKED'});
+ // stale revision → REVISION_CHANGED
+ const remote=await remoteCommit(f,'shared.txt','remote edit\n');f.git(f.path,'push','-q',bare,'HEAD:refs/heads/'+f.branch);
+ await github.fetch(f.projectId,f.threadId);
+ await expect(github.pull(f.projectId,f.threadId,{revision:'0'.repeat(64),expectedHead:sync.head})).rejects.toMatchObject({code:'REVISION_CHANGED'});
+ // overlapping dirty path → PULL_BLOCKED, tree byte-identical
+ await writeFile(join(f.worktree,'shared.txt'),'local edit\n');
+ const dirty=await github.fetch(f.projectId,f.threadId);
+ await expect(github.pull(f.projectId,f.threadId,{revision:dirty.revision,expectedHead:dirty.head})).rejects.toMatchObject({code:'PULL_BLOCKED'});
+ expect(f.git(f.worktree,'rev-parse','HEAD')).toBe(head);
+ expect(f.git(f.worktree,'status','--porcelain=v1','-z')).toContain('shared.txt');
+ // non-overlapping dirty path fast-forwards cleanly
+ const {unlink}=await import('node:fs/promises');await unlink(join(f.worktree,'shared.txt'));
+ const clean=await github.fetch(f.projectId,f.threadId);
+ const out=await github.pull(f.projectId,f.threadId,{revision:clean.revision,expectedHead:clean.head});
+ expect(out.state).toBe('up-to-date');expect(f.git(f.worktree,'rev-parse','HEAD')).toBe(remote.tip);
+ remote.restore();
+},60000);

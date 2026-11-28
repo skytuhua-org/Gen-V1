@@ -209,11 +209,33 @@ export class ProjectTools{
   if(state==='diverged')blockers.push('DIVERGED');
   if(state==='behind'&&upstream){
    const changed=(await git(['-c','diff.renames=false','diff','--name-only','-z',current.head,upstream.oid])).split('\0').filter(Boolean),fold=(p:string)=>process.platform==='win32'?p.toLowerCase():p,remoteChanged=new Set(changed.map(fold)),dirty=new Set(current.files.flatMap(file=>[file.path,...(file.oldPath?[file.oldPath]:[])].map(fold)));
+   // Ignored untracked files are absent from status files but a fast-forward still overwrites them.
+   for(const ignored of (await git(['ls-files','-z','--others','--ignored','--exclude-standard','--',...changed]).catch(()=>'')).split('\0').filter(Boolean))dirty.add(fold(ignored));
    if([...dirty].some(dirtyPath=>remoteChanged.has(dirtyPath)))blockers.push('DIRTY_OVERLAP');
   }
   return{branch:current.branch||null,head:current.head,revision:current.revision,remote,upstream,ahead,behind,state,lastFetchedAt:this.lastFetched.get(bound.workspace?.id??projectId)??null,blockers};
  }
  async gitSync(projectId:string,threadId?:string):Promise<GitSyncResult>{const bound=await this.binding(projectId,threadId);return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,false,(metadata,path,signal,managed)=>this.sync(projectId,metadata,path,signal,managed,bound,threadId)));}
+ /** User-triggered fetch into the private family (R3): moves only refs/remotes/origin/*, never branches, index or tree. */
+ async gitFetch(projectId:string,threadId:string|undefined,remoteUrl:string,credentialConfig:string[],environment:NodeJS.ProcessEnv):Promise<GitSyncResult>{
+  const bound=await this.binding(projectId,threadId);
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
+   await nativeGit(this.gitExecutable(),metadata,path,[...credentialConfig,'fetch','--no-tags','--prune','--no-write-fetch-head','--no-recurse-submodules','--',remoteUrl,'+refs/heads/*:refs/remotes/origin/*'],signal,environment);
+   this.lastFetched.set(bound.workspace?.id??projectId,new Date().toISOString());
+   return this.sync(projectId,metadata,path,signal,managed,bound,threadId);
+  }));
+ }
+ /** Pull (R4): re-resolve after the fetch, refuse unless strictly behind, then fast-forward. */
+ async gitFastForward(projectId:string,threadId:string|undefined,expected:{revision:string;head:string}):Promise<GitSyncResult>{
+  const bound=await this.binding(projectId,threadId);
+  return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
+   const current=await this.sync(projectId,metadata,path,signal,managed,bound,threadId);
+   if(current.revision!==expected.revision||current.head!==expected.head)throw new HarnessError('REVISION_CHANGED','The working copy changed. Refresh, then pull again.');
+   if(current.blockers.length)throw new HarnessError('PULL_BLOCKED','Pull is not available for this working copy.',{blockers:current.blockers});
+   await nativeGit(this.gitExecutable(),metadata,path,['merge','--ff-only','--no-edit','--no-verify',current.upstream!.oid],signal);
+   return this.sync(projectId,metadata,path,signal,managed,bound,threadId);
+  }));
+ }
  /** Read-only undo eligibility shared by the context preview and the write-time recheck. */
  private async undoEligibility(git:(args:string[])=>Promise<string>,managed:boolean,busy:boolean):Promise<{eligible:boolean;reason?:string;head?:string;branch?:string;subject?:string}>{
   if(!managed)return{eligible:false,reason:'Undo needs a managed working copy.'};
