@@ -184,6 +184,7 @@ function ResourcePicker({ threadId, close, refresh, opener }: { threadId: string
 }
 
 type PrepareThread = (id: string) => Promise<unknown>;
+type ProjectSelection = {threadId?:string;opener:HTMLElement|null;prepare?:PrepareThread;initialActiveProjectId?:string};
 type ComposerChangesAvailability=(threadId:string,available:boolean)=>void;
 const emptyComposerState: ComposerState = {draft: '', ready: false, busy: false, stopping: false, error: '', retry: false};
 function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, onComposerChangesAvailability, thread, models, modelId, setModelId, snapshot, ensureThread, busy: externalBusy, runAction, refresh, setup, openResource, inspectChanges, reportError,onSide, predictionBlocked, selectProject, usageOpen=false, onShowUsage, onNewTask }: { usageOpen?:boolean; onShowUsage?:()=>void; modelPickerRequest?:number; onModelPickerOpened?:(request:number)=>void; sharedComposers?: SharedAgentComposers; onComposerChangesAvailability?:ComposerChangesAvailability; selectProject?:(id:string|undefined,opener?:HTMLElement|null,prepare?:PrepareThread)=>void; predictionBlocked: boolean; thread: Thread | undefined; models: ModelInfo[]; modelId: string; setModelId: (id: string) => void; snapshot: Snapshot; ensureThread: (prepare: PrepareThread) => Promise<string>; busy: boolean; runAction: (action: () => Promise<void>) => Promise<void>; refresh: () => Promise<void>; setup: () => void; openResource: (id: string, opener?: HTMLElement | null) => void; browseProject:(id:string)=>void;inspectChanges:()=>void; reportError: (error: string) => void;onSide:(content:string)=>Promise<void>; onNewTask?:(modelId:string)=>void }) {
@@ -361,7 +362,7 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
     await command('thread.mode',{mode},thread.id);await refresh();
   };
   const preparePR=()=>{const intent='Create a pull request for the current changes.';const current=draftLatest.current;updateDraft(current.startsWith(intent)?current:intent+(current.trim()?'\n\n'+current:''));input.current?.focus();};
-  return <div className="composer-dock">
+  return <div className="composer-dock" data-composer-thread={thread?.id}>
     {thread && !working && ['stopped', 'interrupted', 'failed'].includes(thread.status) && <div className="resume-strip" role="status"><span>{thread.status === 'interrupted' ? 'This session was interrupted.' : thread.status === 'stopped' ? 'Agent stopped. Your work is saved.' : 'The agent could not finish this run.'}</span><button className="secondary" disabled={!modelId || resuming} title={!modelId ? 'Choose an available model before resuming.' : undefined} onClick={resume} aria-busy={resuming || undefined}>{resuming ? <><Spinner size={12} />Resuming…</> : <>Resume<ChevronRight size={13} /></>}</button></div>}
     {localSkills.error&&!shared&&<p role="alert" className="composer-error">{localSkills.error}</p>}
     {error && <div className="composer-error" role="alert"><span>{error}</span><span className="composer-error-actions">{resumeRequired&&thread&&<button className="quiet" disabled={!modelId} onClick={resume}>Resume thread</button>}<button className="icon-button" aria-label="Dismiss composer error" onClick={dismissError}><X size={14} /></button></span></div>}
@@ -521,21 +522,26 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     if(operation)await sendSplitWorkspaceCommand(operation.type,operation.payload);
     window.dispatchEvent(new Event('harness:workspace-changed'));
   };
-  const pickProject=async(project:NonNullable<typeof workspaceEnvelope>['projects'][number]|null)=>{
-    if(projectPicking||!projectPicker)return;
+  const chooseProject=async(selection:ProjectSelection,project:NonNullable<typeof workspaceEnvelope>['projects'][number]|null)=>{
     if(project&&(project.authority.kind!=='local'||!project.rootPath))throw Error('Choose a connected personal project.');
-    const selection=projectPicker;
     const target=selection.threadId?snapshotRef.current.threads.find(value=>value.id===selection.threadId):undefined;
     if(selection.threadId&&!target)throw Error('This conversation is no longer available.');
     setProjectPicking(true);setProjectPickerError('');
     try{
       await prepareEditorHandoff();await journalFlush();
-      if(!target){await createThread(selection.prepare,project?.id);}
-      else if(target.projectId===project?.id){if(project)await reconcileSplitThreadProject(target.id);}
-      else if(!project||target.runId||target.sessionPath||target.workspaceId){await createThread(undefined,project?.id);}
-      else{await workspaceState.send('workspace.project.connect',{name:project.name,path:project.rootPath,threadId:target.id});await reconcileSplitThreadProject(target.id);await refresh();}
-      closeProjectSelection();
+      if(!target)return await createThread(selection.prepare,project?.id);
+      if(target.projectId===project?.id){if(project)await reconcileSplitThreadProject(target.id);return target.id;}
+      if(!project||target.runId||target.sessionPath||target.workspaceId)return await createThread(undefined,project?.id);
+      await workspaceState.send('workspace.project.connect',{name:project.name,path:project.rootPath,threadId:target.id});
+      await reconcileSplitThreadProject(target.id);
+      await refresh();
+      return target.id;
     }finally{setProjectPicking(false);}
+  };
+  const pickProject=async(project:NonNullable<typeof workspaceEnvelope>['projects'][number]|null)=>{
+    if(projectPicking||!projectPicker)return;
+    await chooseProject(projectPicker,project);
+    closeProjectSelection();
   };
   const saveProjectColor=async(project:NonNullable<typeof workspaceEnvelope>['projects'][number],color:string|null)=>{
     if(project.authority.kind!=='local')throw Error('Choose a connected personal project.');
@@ -699,13 +705,98 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   },[customDock,convSplitState.layout,thread?.id]);
   const savedLayoutActions=useSplitLayoutProfileActions({prepare:()=>prepareWorkspace(),save:layoutSplitState.saveProfile,send:layoutSplitState.send,refresh:splitProfiles.refresh},splitWorkspaceId);
   const [projectConnectOpen,setProjectConnectOpen]=useState(false),[projectName,setProjectName]=useState(''),[projectPath,setProjectPath]=useState(''),[projectConnectError,setProjectConnectError]=useState(''),[projectConnectFormError,setProjectConnectFormError]=useState('');
-  const [projectPicker,setProjectPicker]=useState<{threadId?:string;opener:HTMLElement|null;prepare?:PrepareThread}|null>(null),[projectPicking,setProjectPicking]=useState(false),[projectPickerError,setProjectPickerError]=useState('');
-  const openProjectSelection=(threadId?:string,opener:HTMLElement|null=document.activeElement as HTMLElement|null,prepare?:PrepareThread)=>{setProjectPickerError('');setProjectPicker({threadId,opener,prepare});};
+  const [projectPicker,setProjectPicker]=useState<ProjectSelection|null>(null),[projectPicking,setProjectPicking]=useState(false),[projectPickerError,setProjectPickerError]=useState('');
+  const openProjectSelection=(threadId?:string,opener:HTMLElement|null=document.activeElement as HTMLElement|null,prepare?:PrepareThread,initialActiveProjectId?:string)=>{
+    setProjectPickerError('');
+    setProjectPicker({threadId,opener,prepare,initialActiveProjectId});
+  };
   const closeProjectSelection=()=>{const opener=projectPicker?.opener;setProjectPicker(null);requestAnimationFrame(()=>{if(opener?.isConnected)opener.focus({preventScroll:true});});};
-  const projectConnectPicker=useRef<typeof projectPicker>(null);
+  const projectConnectPicker=useRef<ProjectSelection|null>(null);
   const projectConnectTarget=useRef<{threadId?:string;projectId?:string;opener:HTMLElement|null}|null>(null);
-  const openProjectConnect=(binding:Pick<PanelBinding,'threadId'|'projectId'>)=>{projectConnectTarget.current={...binding,opener:document.activeElement as HTMLElement|null};setProjectConnectError('');setProjectConnectFormError('');setProjectConnectOpen(true);};
-  const closeProjectConnect=()=>{const opener=projectConnectTarget.current?.opener;projectConnectTarget.current=null;setProjectConnectOpen(false);const resume=projectConnectPicker.current;projectConnectPicker.current=null;if(resume){setProjectPicker(resume);return;}requestAnimationFrame(()=>{if(opener?.isConnected)opener.focus({preventScroll:true});});};
+  const [projectConnecting,setProjectConnecting]=useState(false);
+  const projectConnectPending=useRef(false),projectConnectName=useRef<HTMLInputElement>(null),projectConnectPath=useRef<HTMLInputElement>(null);
+  useLayoutEffect(()=>{
+    if(!projectConnectOpen)return;
+    const name=projectConnectName.current;
+    name?.setSelectionRange(0,name.value.length);
+  },[projectConnectOpen]);
+  const projectConnectScope=useRef<HTMLDivElement>(null),projectFocusFrame=useRef(0);
+  const mainProjectThread=useRef(resolvedMainId);
+  mainProjectThread.current=resolvedMainId;
+  useEffect(()=>()=>cancelAnimationFrame(projectFocusFrame.current),[]);
+  const openProjectConnect=(binding:Pick<PanelBinding,'threadId'|'projectId'>)=>{
+    if(projectConnectPending.current)return;
+    cancelAnimationFrame(projectFocusFrame.current);
+    projectConnectTarget.current={...binding,opener:document.activeElement as HTMLElement|null};
+    setProjectConnectError('');setProjectConnectFormError('');setProjectConnectOpen(true);
+  };
+  const closeProjectConnect=()=>{
+    if(projectConnectPending.current)return;
+    const opener=projectConnectTarget.current?.opener,resume=projectConnectPicker.current;
+    projectConnectTarget.current=null;projectConnectPicker.current=null;setProjectConnectOpen(false);
+    if(resume){setProjectPicker(resume);return;}
+    requestAnimationFrame(()=>{if(opener?.isConnected)opener.focus({preventScroll:true});});
+  };
+  const focusConnectedComposer=(threadId:string)=>{
+    const deadline=performance.now()+2000;
+    let previous:Element|null=null;
+    const focus=()=>{
+      const root=projectConnectScope.current;
+      if(!root)return;
+      const current=document.activeElement;
+      if(previous&&current!==document.body&&current!==previous&&current instanceof HTMLElement&&current.getClientRects().length)return;
+      previous=current;
+      const composers=root.querySelectorAll<HTMLElement>(`[data-composer-thread="${CSS.escape(threadId)}"]`);
+      for(const composer of composers){
+        const field=composer.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]:enabled');
+        if(!field?.getClientRects().length||field.closest('[inert],[hidden],[aria-hidden="true"]'))continue;
+        field.focus({preventScroll:true});
+        if(document.activeElement!==field)continue;
+        field.setSelectionRange(field.value.length,field.value.length);
+        return;
+      }
+      if(!navigationOnly&&performance.now()<deadline){projectFocusFrame.current=requestAnimationFrame(focus);return;}
+      const fallback=[...composers].flatMap(composer=>Array.from(composer.querySelectorAll<HTMLElement>('button[aria-label="Select project"]:enabled')))
+        .find(button=>button.getClientRects().length&&!button.closest('[inert],[hidden],[aria-hidden="true"]'));
+      (fallback??root.querySelector<HTMLElement>('button[aria-label$="Project overview"]'))?.focus({preventScroll:true});
+    };
+    projectFocusFrame.current=requestAnimationFrame(focus);
+  };
+  const connectProject=async()=>{
+    const target=projectConnectTarget.current;
+    if(!target||projectConnectPending.current)return;
+    const picker=projectConnectPicker.current;
+    const name=projectName,path=projectPath;
+    projectConnectPending.current=true;setProjectConnecting(true);
+    setProjectConnectError('');setProjectConnectFormError('');
+    let connected=false;
+    try{
+      await prepareWorkspace();
+      if(target.threadId&&!snapshotRef.current.threads.some(item=>item.id===target.threadId&&(item.projectId??undefined)===(target.projectId??undefined)))
+        throw new ApiError('NOT_FOUND','The owning project changed. Close this dialog and reopen it from that conversation.');
+      const result=await workspaceState.send('workspace.project.connect',{name,path,...(target.threadId?{threadId:target.threadId}:{})});
+      connected=true;
+      const project=result.projects.find(item=>item.id===result.connectedProjectId&&item.authority.kind==='local'&&item.rootPath);
+      if(!project)throw Error('The host did not return the connected project. Refresh and retry.');
+      await refresh();
+      let threadId:string|undefined;
+      if(picker)threadId=await chooseProject(picker,project);
+      else if(target.threadId){await reconcileSplitThreadProject(target.threadId);await refresh();threadId=target.threadId;}
+      else if(!mainProjectThread.current&&!navigationOnly)threadId=await createThread(undefined,project.id);
+      projectConnectTarget.current=null;projectConnectPicker.current=null;setProjectConnectOpen(false);
+      if(threadId){focusConnectedComposer(threadId);return;}
+      const toastId=toast('Project connected',{action:{label:'Select project',onClick:()=>openProjectSelection(undefined,target.opener,undefined,project.id)}});
+      requestAnimationFrame(()=>document.querySelector<HTMLElement>(`[data-toast-id="${toastId}"] .ui-toast-action`)?.focus({preventScroll:true}));
+    }catch(cause){
+      if(projectConnectTarget.current!==target)return;
+      const formLevel=connected||cause instanceof ApiError&&['PROJECT_BUSY','WORKSPACE_CHANGED','PROJECT_NOT_CONNECTED','NOT_FOUND'].includes(cause.code);
+      if(formLevel)setProjectConnectFormError(messageOf(cause));else setProjectConnectError(messageOf(cause));
+      (formLevel?projectConnectName:projectConnectPath).current?.focus({preventScroll:true});
+    }finally{
+      projectConnectPending.current=false;
+      setProjectConnecting(false);
+    }
+  };
   const selectedPlan=useMemo(()=>selectPlanRecord(snapshot,thread?.id),[snapshot.data,thread?.id]);
   const planOwner=useRef<{id?:string;run:string|null|undefined}>({id:undefined,run:undefined});
   useEffect(()=>{const before=planOwner.current;planOwner.current={id:thread?.id,run:thread?.runId};const appeared=planVisibility.observe(thread,selectedPlan);if(before.id!==thread?.id||thread?.runId&&before.run!==thread.runId)setPlanOpen(planVisibility.isOpen(thread?.id));if(appeared){setPlanFocusOnOpen(false);setPlanExpandRequest(value=>value+1);setPlanOpen(true);}},[thread?.id,thread?.runId,selectedPlan]);
@@ -1114,7 +1205,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     else if(host.intent.kind==='model')setModelPickerRequest({id:host.intent.id,threadId:host.initialThreadId??thread?.id});
     else if(host.intent.kind==='usage'){setUsageThreadId(thread?.id??null);setUsageOpen(true);}
     else if(host.intent.kind==='new-thread')void newThreadRef.current().catch(cause=>reportError(messageOf(cause)));
-    else if(host.intent.kind==='connect-project')setProjectConnectOpen(true);
+    else if(host.intent.kind==='connect-project')openProjectConnect({});
     else if(host.intent.kind==='resources')void ensureThread(async()=>{}).then(id=>openResourcePicker(id)).catch(cause=>reportError(messageOf(cause)));
     else if(host.intent.kind==='plugin-workspace'){if(host.intent.pluginId&&host.intent.workspaceId)void selectPluginWorkspace(host.intent.pluginId,host.intent.workspaceId).catch(cause=>reportError(messageOf(cause)));}
     else {const review=host.intent.review?{id:host.intent.id,...host.intent.review}:undefined;openSidebarTool('linked-pull-requests',review);}
@@ -1124,7 +1215,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const metadataModel = thread ? models.find(item => item.id === (thread.modelId ?? modelId)) : undefined;
   const shellStyle = { '--sidebar-width': layout.sidebarWidth + 'px', '--right-panel-width': panelWidth + 'px', '--panel-motion': (preferences.panelAnimations ? preferences.motionDuration : 0) + 'ms', '--prompt-font': promptFont, '--code-font': preferences.codeFont, '--interface-font': interfaceFont, '--interface-font-size': preferences.fontSize + 'px' } as CSSProperties;
   if(loaded&&pinnedThreadId&&!thread)return <main className="desktop-surface"><p role="status">The owning conversation is no longer available. Dock this window to choose another task.</p></main>;
-  return <WorkspaceNotificationContext.Provider value={notifications}><WorkspaceProvider value={hostWorkspaceContext ?? workspaceContext}><div className={`app-shell ${embeddedThreadId?'embedded-thread-app':''} ${navigationOnly?'desktop-navigation-only':''} ${pinnedThreadId?'desktop-thread-only':''} ${!hostWorkspaceContext&&layout.rightPanelOpen ? 'has-right-panel' : ''} `} inert={desktop?.closing||Boolean(embeddedThreadId&&!embeddedActive)} style={shellStyle} data-document-docked={documentWindow?.placement==='docked'} data-sidebar-collapsed={layout.sidebarCollapsed} data-chat-width={preferences.chatWidth} data-contrast={preferences.contrast} data-word-wrap={preferences.wordWrap} data-panel-animations={preferences.panelAnimations} data-live-usage={preferences.showUsageFooter}>
+  return <WorkspaceNotificationContext.Provider value={notifications}><WorkspaceProvider value={hostWorkspaceContext ?? workspaceContext}><div ref={projectConnectScope} className={`app-shell ${embeddedThreadId?'embedded-thread-app':''} ${navigationOnly?'desktop-navigation-only':''} ${pinnedThreadId?'desktop-thread-only':''} ${!hostWorkspaceContext&&layout.rightPanelOpen ? 'has-right-panel' : ''} `} inert={desktop?.closing||Boolean(embeddedThreadId&&!embeddedActive)} style={shellStyle} data-document-docked={documentWindow?.placement==='docked'} data-sidebar-collapsed={layout.sidebarCollapsed} data-chat-width={preferences.chatWidth} data-contrast={preferences.contrast} data-word-wrap={preferences.wordWrap} data-panel-animations={preferences.panelAnimations} data-live-usage={preferences.showUsageFooter}>
     {sidebarOpen && <button ref={sidebarScrim} className="sidebar-scrim" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
     {!pinnedThreadId&&!detachedNavigation&&<ShellSidebar onPlaceThread={splitEnabled&&!customDock?item=>{setSelectedPluginId(null);setSelectedPluginWorkspace(null);void placeSplitThread(item.id).catch(cause=>reportError(messageOf(cause)));}:undefined} detachThread={desktop&&desktopSurface?.kind==='main'?async item=>{try{await desktop.detachSurface({kind:'thread',threadId:item.id});return true;}catch(cause){reportError(messageOf(cause));return false;}}:undefined} navigation={plugins.length>0&&<nav className="plugin-navigation" aria-label="Installed plug-ins">{plugins.map(plugin=><button key={plugin.id} aria-current={selectedPluginId===plugin.id?'page':undefined} onClick={()=>{void selectPlugin(plugin.id).then(()=>setSidebarOpen(false)).catch(cause=>reportError(messageOf(cause)));}}>{plugin.name}</button>)}</nav>} elementRef={sidebar} searchRef={searchRef} mobile={mobile} open={sidebarOpen} layout={layout} preferences={preferences} matching={matching} hoverBlocked={Boolean(settingsOpen||usageOpen||projectPicker||projectConnectOpen||resourcePicker||rename)} onOpenThreadPR={host?.openReview?(target,scope)=>{void host.openReview!(target,scope).catch(cause=>reportError(messageOf(cause)));}:undefined} selectedId={thread?.id} loaded={loaded} creating={composerBusy || threadCreating} search={search} setSearch={setSearch} close={() => setSidebarOpen(false)} toggleCollapsed={event => {if (navigationOnly) void desktop?.bridge.reattach(); else {prepareSidebarToggle(event); setLayout(value => ({ ...value, sidebarCollapsed: !value.sidebarCollapsed }));}}} setFolded={(key, folded) => setLayout(value => ({ ...value, folded: { ...value.folded, [key]: folded } }))} select={select} create={() => void newThreadRef.current().catch(error => reportError(messageOf(error)))} settings={() => { setSettingsSection('general'); setSettingsOpen(true); }} onConnectProject={()=>openProjectConnect({})} onOpenPullRequests={()=>openSidebarTool('linked-pull-requests')} onOpenUsage={()=>openSidebarTool('usage')} rename={item => { void prepareSourceJournal().then(()=>{renameSelected.current=false;selectNow(item.id);setTitle(item.title);setRename(true);}).catch(cause=>reportError(messageOf(cause))); }} archive={id => void archive(id)} presentation={async (item, patch) => { if (patch.pinned === false && preferences.unpinConfirmation && !window.confirm('Unpin this thread?')) return false; try { await command('thread.presentation', patch, item.id); void refresh().catch(error => reportError(messageOf(error))); return true; } catch (error) { reportError(messageOf(error)); return false; } }} ensureManualOrder={async () => { try { await command('settings.update', { preferences: { projectOrder: 'manual' } }); await refresh(); return true; } catch (error) { reportError(messageOf(error)); return false; } }} />}
     {!navigationOnly&&!pinnedThreadId&&!detachedNavigation&&!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={232} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({ ...value, sidebarWidth }))} />}
@@ -1177,11 +1268,26 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     {archiveThread && <Dialog title="Uncheckpointed widget edits" close={() => setArchiveThread(null)}><p>Checkpoint your widget edits before archiving this thread, or explicitly discard them.</p>{error&&<p role="status" className="error-text">{error}</p>}<footer className="dialog-actions"><button className="secondary" onClick={() => { select(archiveThread); setArchiveThread(null); }}>Return to checkpoint</button><button className="quiet" onClick={() => void archive(archiveThread, true)}>Discard edits and archive</button></footer></Dialog>}
     {resourcePicker && <ResourcePicker key={resourcePicker.session} threadId={resourcePicker.threadId} opener={resourcePicker.opener}
       close={() => setResourcePicker(current => current === resourcePicker ? null : current)} refresh={refresh} />}
-    {projectPicker&&<ProjectPicker open authority={{kind:'local'}} projects={workspaceEnvelope?.projects??[]} selectedProjectId={snapshot.threads.find(value=>value.id===projectPicker.threadId)?.projectId}
+    {projectPicker&&<ProjectPicker open authority={{kind:'local'}} projects={workspaceEnvelope?.projects??[]} selectedProjectId={snapshot.threads.find(value=>value.id===projectPicker.threadId)?.projectId} initialActiveProjectId={projectPicker.initialActiveProjectId}
       recentProjectIds={[...new Set([...snapshot.threads].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).flatMap(value=>value.projectId?[value.projectId]:[]))]}
       colors={preferences.projectColors} busy={projectPicking} error={projectPickerError} onClose={closeProjectSelection} onSelect={pickProject} onColorChange={saveProjectColor}
       onAddProject={()=>{projectConnectPicker.current=projectPicker;setProjectPicker(null);openProjectConnect({});}}/>}
-    {projectConnectOpen&&<Dialog title="Connect project" close={closeProjectConnect}><form onSubmit={event=>{event.preventDefault();const target=projectConnectTarget.current;setProjectConnectError('');setProjectConnectFormError('');void prepareWorkspace().then(()=>{if(target?.projectId&&snapshotRef.current.threads.find(item=>item.id===target.threadId)?.projectId!==target.projectId)throw Error('The owning project changed. Close this dialog and reopen it from that conversation.');return workspaceState.send('workspace.project.connect',{name:projectName,path:projectPath,...(target?.threadId?{threadId:target.threadId}:{})}).then(async()=>{if(target?.threadId)await reconcileSplitThreadProject(target.threadId);});}).then(async()=>{await refresh();if(projectConnectTarget.current===target)closeProjectConnect();}).catch(cause=>{if(projectConnectTarget.current!==target)return;const formLevel=cause instanceof ApiError&&['PROJECT_BUSY','WORKSPACE_CHANGED','PROJECT_NOT_CONNECTED','NOT_FOUND'].includes(cause.code);if(formLevel)setProjectConnectFormError(messageOf(cause));else setProjectConnectError(messageOf(cause));});}}><label className="field">Project name<input required maxLength={100} value={projectName} aria-describedby="connect-project-name-hint" onChange={event=>setProjectName(event.target.value)}/></label><small id="connect-project-name-hint" className="field-hint">Shown in the project picker · up to 100 characters</small><label className="field">Local folder<input required value={projectPath} placeholder={projectPathPlaceholder} aria-invalid={Boolean(projectConnectError)} aria-describedby={projectConnectError?'connect-project-path-error':undefined} onChange={event=>{setProjectPath(event.target.value);setProjectConnectError('');}}/></label>{projectConnectFormError&&<p role="alert" className="error-text">{projectConnectFormError}</p>}{projectConnectError&&<p role="alert" id="connect-project-path-error" className="error-text">{`Couldn't connect that folder: ${projectConnectError}`}</p>}<footer className="dialog-actions"><button type="button" className="quiet" onClick={closeProjectConnect}>Cancel</button><button className="primary" disabled={!projectName.trim()||!projectPath.trim()}>Connect project</button></footer></form></Dialog>}
+    {projectConnectOpen&&<Dialog title="Connect project" close={closeProjectConnect} closeDisabled={projectConnecting} initialFocusRef={projectConnectName}>
+      <form aria-busy={projectConnecting} onSubmit={event=>{event.preventDefault();void connectProject();}}>
+        <label className="field">Project name<input ref={projectConnectName} required maxLength={100} placeholder="My project" readOnly={projectConnecting}
+          value={projectName} aria-describedby="connect-project-name-hint" onChange={event=>setProjectName(event.target.value)}/></label>
+        <small id="connect-project-name-hint" className="field-hint">Shown in the project picker · up to 100 characters</small>
+        <label className="field">Local folder<input ref={projectConnectPath} required maxLength={4096} readOnly={projectConnecting}
+          value={projectPath} placeholder={projectPathPlaceholder} aria-invalid={Boolean(projectConnectError)}
+          aria-describedby={projectConnectError?'connect-project-path-error':undefined} onChange={event=>{setProjectPath(event.target.value);setProjectConnectError('');}}/></label>
+        {projectConnectFormError&&<p role="alert" className="error-text">{projectConnectFormError}</p>}
+        {projectConnectError&&<p role="alert" id="connect-project-path-error" className="error-text">{`Couldn't connect that folder: ${projectConnectError}`}</p>}
+        <footer className="dialog-actions">
+          <button type="button" className="quiet" disabled={projectConnecting} onClick={closeProjectConnect}>Cancel</button>
+          <button className="primary" disabled={projectConnecting||!projectName.trim()||!projectPath.trim()}>{projectConnecting?'Connecting…':'Connect project'}</button>
+        </footer>
+      </form>
+    </Dialog>}
     <UsageDialog open={usageOpen} onClose={()=>setUsageOpen(false)} reports={usageReport?[usageReport]:[]} requests={usageThreadId?(snapshot.modelRequests?.[usageThreadId]??[]):[]} onRefresh={refresh}/>
     {settingsOpen && <SettingsWindow openBrowser={desktop?.context.surface.kind==='main'?openManualBrowser:undefined} environmentSettings={<EnvironmentSettings/>} initialSection={settingsSection} snapshot={snapshot} modelError={modelError} refresh={refresh} loadModels={loadModels} close={() => setSettingsOpen(false)} addResource={() => { setSettingsOpen(false); void ensureThread(async id => { if (thread) return; const pending = await journalReadRecord<string>('draft:new'); if (pending?.value) { await journalWrite(`draft:${id}`, pending.value); await journalCompareAndSwap('draft:new', pending.generation, ''); } }).then(id=>openResourcePicker(id)).catch(error => reportError(messageOf(error))); }} />}
     {rename && thread && <Dialog title="Rename thread" initialFocusRef={renameInput} close={() => setRename(false)}><form onSubmit={event => { event.preventDefault(); void command('thread.rename', { title: title.trim() }, thread.id).then(async () => { await refresh(); setRename(false); }).catch(error => reportError(messageOf(error))); }}><label className="field">Thread name<input ref={el => { renameInput.current = el; if (el && !renameSelected.current) { renameSelected.current = true; el.select(); } }} autoFocus required value={title} maxLength={180} onChange={event => setTitle(event.target.value)} /></label><footer className="dialog-actions"><button type="button" className="quiet" onClick={() => setRename(false)}>Cancel</button><button className="primary" disabled={!title.trim()}>Save name</button></footer></form></Dialog>}
