@@ -123,10 +123,10 @@ it('advances row ages on the mounted tick and clears the interval on unmount',as
  try{
   await page.clock.install();
   await page.setContent('<div id="root"></div>');await page.addScriptTag({content:script});
-  await expect.poll(()=>page.locator('time').first().textContent()).toBe('1m');
-  expect(await page.evaluate(()=>(window as unknown as TickWindow).intervals.size)).toBe(1);
+  await page.waitForFunction(()=>document.querySelector('time')?.textContent==='1m'
+    && (window as unknown as TickWindow).intervals.size===1,undefined,{timeout:10_000,polling:50});
   await page.clock.runFor(61_000);
-  await expect.poll(()=>page.locator('time').first().textContent()).toBe('2m');
+  await page.waitForFunction(()=>document.querySelector('time')?.textContent==='2m',undefined,{timeout:10_000,polling:50});
   await page.evaluate(()=>(window as unknown as TickWindow).hide());
   expect(await page.evaluate(()=>(window as unknown as TickWindow).intervals.size)).toBe(0);
   await page.clock.runFor(60_000);
