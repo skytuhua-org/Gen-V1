@@ -6,8 +6,9 @@ import './task-interface.css';
 
 export { ArtifactTitle } from './task-context';
 export { RelationshipGraph } from './RelationshipGraph';
-import { inputPath, statePath } from './task-context';
-import { StatusIcon, operationStatusKind, type StatusKind } from './task-status';
+import { inputPath, statePath, useChoiceValidation } from './task-context';
+import { useSecureArtifact } from './secure-artifact-context';
+import { ARTIFACT_STATUS_FLASH, StatusIcon, operationStatusKind, type ArtifactStatusFlash, type StatusKind } from './task-status';
 import { animateTask, reducedMotion, TASK_MOTION } from './task-motion';
 import './task-motion.css';
 import './document-preview.css';
@@ -16,19 +17,93 @@ import {createSpringValue} from './motion-spring';
 export function ChoiceList({ element: { props } }: ComponentRenderProps) {
   const { stateKey, label, options, custom, required, disabled } = WORKFLOW_SCHEMAS.ChoiceList.parse(props);
   const store = useStateStore();
+  const validation = useChoiceValidation();
+  const scope = useSecureArtifact();
   const group = useId();
+  const instanceId = useId();
+  const errorId = useId();
   const value = store.get(statePath(stateKey));
   const [choosingCustom, setChoosingCustom] = useState(false);
+  const [invalid, setInvalid] = useState(false);
+  const [eligible, setEligible] = useState(true);
+  const fieldset = useRef<HTMLFieldSetElement>(null);
   const customInput = useRef<HTMLInputElement>(null);
+  const editVersion = useRef(0);
   const customSelected = Boolean(custom && (choosingCustom || typeof value === 'string' && !options.some(option => option.value === value)));
-  return <fieldset className="task-choices" disabled={disabled}>
+  const current = useRef({ value, options, customSelected, customLabel: custom?.label, hasCustom: Boolean(custom), required, disabled, label });
+  const secureScope = useRef(scope);
+  current.current = { value, options, customSelected, customLabel: custom?.label, hasCustom: Boolean(custom), required, disabled, label };
+  secureScope.current = scope;
+  const computeEligible = () => {
+    if (secureScope.current?.active === false || current.current.disabled) return false;
+    let node: HTMLElement | null = fieldset.current;
+    if (!node) return false;
+    for (; node; node = node.parentElement) {
+      if (node.hidden || node.inert || node.getAttribute('aria-hidden') === 'true') return false;
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    }
+    return true;
+  };
+  const userEdited = () => {
+    editVersion.current += 1;
+    setInvalid(false);
+    validation?.notifyUserEdit(instanceId, editVersion.current);
+  };
+  useLayoutEffect(() => {
+    const field = fieldset.current;
+    if (!field || !validation) return;
+    const entry = {
+      instanceId,
+      stateKey,
+      fieldset: field,
+      isEligible: computeEligible,
+      isRequired: () => current.current.required === true,
+      isValid: () => {
+        if (current.current.required !== true) return true;
+        if (current.current.customSelected) return typeof current.current.value === 'string' && current.current.value.length > 0;
+        const enabledOptions = current.current.options.filter(option => !option.disabled);
+        if (enabledOptions.length === 0 && !current.current.hasCustom) return true;
+        return enabledOptions.some(option => option.value === current.current.value);
+      },
+      capture: () => {
+        const selected = current.current.options.find(option => option.value === current.current.value);
+        return { instanceId, stateKey, label: current.current.label, valueLabel: current.current.customSelected ? String(current.current.customLabel ?? '') : selected?.label ?? '', userEditVersion: editVersion.current };
+      },
+      setInvalid,
+      focusInvalid: () => {
+        const target = current.current.customSelected ? customInput.current : [...field.querySelectorAll<HTMLInputElement>('input[type="radio"]')].find(input => !input.disabled);
+        target?.focus();
+      },
+    };
+    return validation.register(entry);
+  }, [validation, instanceId, stateKey]);
+  useLayoutEffect(() => {
+    const field = fieldset.current;
+    if (!field) return;
+    const sync = () => setEligible(previous => {
+      const next = computeEligible();
+      return previous === next ? previous : next;
+    });
+    sync();
+    const observer = new MutationObserver(sync);
+    for (let node: HTMLElement | null = field; node; node = node.parentElement) observer.observe(node, { attributes: true, attributeFilter: ['hidden', 'inert', 'aria-hidden', 'class', 'style'] });
+    const resize = new ResizeObserver(sync);
+    resize.observe(field);
+    window.addEventListener('resize', sync);
+    return () => { observer.disconnect(); resize.disconnect(); window.removeEventListener('resize', sync); };
+  }, [scope?.active, disabled]);
+  const describedBy = invalid ? errorId : undefined;
+  const choiceInputProps = { 'aria-invalid': invalid || undefined, 'aria-describedby': describedBy } as const;
+  return <fieldset ref={fieldset} className="task-choices" disabled={disabled || !eligible} aria-invalid={invalid || undefined} aria-describedby={describedBy}>
     <legend>{label}</legend>
     {options.map(option => <label key={option.value} className={`task-choice ${value === option.value ? 'is-selected' : ''}`}>
-      <input type="radio" name={group} value={option.value} checked={!customSelected && value === option.value} required={required} disabled={option.disabled} onChange={() => { setChoosingCustom(false); store.set(statePath(stateKey), option.value); }} />
+      <input {...choiceInputProps} type="radio" name={group} value={option.value} checked={!customSelected && value === option.value} required={required} disabled={option.disabled} onChange={() => { setChoosingCustom(false); store.set(statePath(stateKey), option.value); userEdited(); }} />
       <span className="task-choice-copy"><span>{option.label}</span>{option.description && <small>{option.description}</small>}</span>
       {option.detail && <span className="task-choice-detail">{option.detail}</span>}
     </label>)}
-    {custom && <div className="task-choice-custom">{customSelected ? <><input className="task-choice-custom-radio" type="radio" name={group} checked required={required} tabIndex={-1} aria-label={custom.label} onChange={() => {}} /><input ref={customInput} className="task-choice-custom-input" aria-label={custom.label} placeholder={custom.placeholder} value={typeof value === 'string' ? value : ''} maxLength={500} required={required} onChange={event => store.set(statePath(stateKey), event.target.value)} /></> : <label className="task-choice"><input type="radio" name={group} checked={false} required={required} onChange={() => { setChoosingCustom(true); store.set(statePath(stateKey), ''); requestAnimationFrame(() => customInput.current?.focus()); }} /><span className="task-choice-copy">{custom.label}</span></label>}</div>}
+    {custom && <div className="task-choice-custom">{customSelected ? <><input {...choiceInputProps} className="task-choice-custom-radio" type="radio" name={group} checked required={required} tabIndex={-1} aria-label={custom.label} onChange={() => {}} /><input {...choiceInputProps} ref={customInput} className="task-choice-custom-input" aria-label={custom.label} placeholder={custom.placeholder} value={typeof value === 'string' ? value : ''} maxLength={500} required={required} onChange={event => { store.set(statePath(stateKey), event.target.value); userEdited(); }} /></> : <label className="task-choice"><input {...choiceInputProps} type="radio" name={group} checked={false} required={required} onChange={() => { setChoosingCustom(true); store.set(statePath(stateKey), ''); userEdited(); requestAnimationFrame(() => customInput.current?.focus()); }} /><span className="task-choice-copy">{custom.label}</span></label>}</div>}
+    {invalid && <p className="task-choice-error" id={errorId}>Pick an option first.</p>}
   </fieldset>;
 }
 
@@ -110,6 +185,17 @@ function StatusPresentation({ view, receipt, operation, raw }: { view: StatusVie
   const previous = useRef(view), [leaving, setLeaving] = useState<StatusView | null>(null);
   const signature = JSON.stringify([view.status,operation&&raw&&typeof raw==='object'?(raw as {operationId?:unknown}).operationId:null]);
   const currentOpacity=useRef(1);
+  const flashSignature = JSON.stringify([signature, view.label]);
+  const previousFlash = useRef(flashSignature);
+  useLayoutEffect(() => {
+    if (previousFlash.current === flashSignature) return;
+    previousFlash.current = flashSignature;
+    const node = current.current;
+    if (!node?.closest('.task-tab-panel[hidden]')) return;
+    node.dispatchEvent(new CustomEvent<ArtifactStatusFlash>(ARTIFACT_STATUS_FLASH, {
+      bubbles: true, composed: true, detail: { status: view.status, label: view.label.trim() || view.status },
+    }));
+  }, [flashSignature, view.label, view.status]);
   useLayoutEffect(() => {
     const from = previous.current; previous.current = view;
     if (from.status === view.status) return;

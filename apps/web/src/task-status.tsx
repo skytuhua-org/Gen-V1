@@ -1,5 +1,8 @@
 import { AlertCircle, Check, Circle, GitMerge, LoaderCircle, TriangleAlert } from 'lucide-react';
 export type StatusKind = 'neutral' | 'pending' | 'running' | 'success' | 'error' | 'merged';
+export const ARTIFACT_STATUS_FLASH = 'artifact:status-flash';
+export interface ArtifactStatusFlash { status: StatusKind; label: string }
+
 /** Fixed operation semantics: a cancelled/stopped run is neutral, never a red failure. */
 export const operationStatusKind: Record<string, StatusKind> = { prepared: 'pending', running: 'running', succeeded: 'success', failed: 'error', cancelled: 'neutral', unknown: 'pending' };
 export function StatusIcon({ status }: { status: StatusKind }) {

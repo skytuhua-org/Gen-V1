@@ -40,7 +40,10 @@ class Anchor {
   isConnected = true;
   textContent = '';
   private attributes = new Map<string, string>();
-  closest() { return this; }
+  closest(selector:string) { return selector==='[title],[data-tooltip]'?this:null; }
+  getClientRects() { return [{}]; }
+  parentElement=null;
+  get ownerDocument() { return document; }
   matches() { return true; }
   hasAttribute(key: string) { return this.attributes.has(key); }
   getAttribute(key: string) { return this.attributes.get(key) ?? null; }
