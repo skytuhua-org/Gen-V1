@@ -28,7 +28,26 @@ test('unsupported compaction remains disabled and sends no command',async({page}
  await expect(compact).toBeDisabled();await expect(compact).toHaveAttribute('title',/Gemini.*does not support/);await compact.evaluate(node=>(node as HTMLButtonElement).click());expect(commands).toEqual([]);
 });
 test('available compaction keeps its existing owning-thread command',async({page})=>{
- const commands:{type:string;threadId?:string}[]=[];await page.route('**/api/commands',route=>{commands.push(route.request().postDataJSON());return route.fulfill({json:{commandId:'fixture',seq:1,result:{}}});});
+ const commands:{type:string;threadId?:string}[]=[];await page.route('**/api/commands',route=>{commands.push(route.request().postDataJSON());return route.fulfill({json:{commandId:'fixture',seq:1,result:{runId:'compaction-run'}}});});
  await page.goto('/context-compact-check');await page.getByRole('button',{name:'Inspect context usage'}).click();await page.getByRole('button',{name:'Compact now',exact:true}).click();
  await expect.poll(()=>commands.map(value=>[value.type,value.threadId])).toEqual([['run.compact','owning-thread']]);
+ await expect(page.locator('.ui-toast').filter({hasText:'Context compacted'})).toBeVisible();
+});
+
+test('an unreported session disables Compact now with a reason instead of a dead control',async({page})=>{
+ const commands:unknown[]=[];await page.route('**/api/commands',route=>{commands.push(route.request().postDataJSON());return route.fulfill({json:{commandId:'fixture',seq:1,result:{}}});});
+ await page.goto('/context-compact-check?unreported=1');await page.getByRole('button',{name:'Inspect context usage'}).click();
+ const popup=page.getByRole('dialog',{name:'Context inspector'});await expect(popup).toContainText("Context use isn't reported for this session yet.");await expect(popup).toContainText('Not reported');
+ const compact=popup.getByRole('button',{name:'Compact now',exact:true});
+ await expect(compact).toBeDisabled();await expect(compact).toHaveAttribute('title','Nothing to compact');await expect(compact).toHaveAttribute('aria-disabled','true');
+ await compact.evaluate(node=>(node as HTMLButtonElement).click());expect(commands).toEqual([]);
+});
+
+test('a failed compaction reports a toast and re-enables the control',async({page})=>{
+ await page.route('**/api/commands',route=>route.fulfill({status:500,json:{error:{code:'FAILED',message:'Synthetic compaction failure'}}}));
+ await page.goto('/context-compact-check');await page.getByRole('button',{name:'Inspect context usage'}).click();
+ const popup=page.getByRole('dialog',{name:'Context inspector'});
+ await popup.getByRole('button',{name:'Compact now',exact:true}).click();
+ await expect(page.getByRole('alert').filter({hasText:"Couldn't compact — try again"})).toBeVisible();
+ await expect(popup.getByRole('button',{name:'Retry compaction'})).toBeEnabled();
 });

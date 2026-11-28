@@ -52,3 +52,5 @@ html[data-motion="reduced"] .context-segment,html[data-motion="off"] .context-se
 .context-request-tabs { display:flex; flex-wrap:wrap; gap:4px; }
 .context-request-tabs>button { min-height:28px; padding:4px 6px; border:1px solid transparent; border-radius:var(--radius,6px); background:none; color:var(--muted); font:inherit; font-size:12px; }
 .context-request-tabs>button[aria-selected="true"] { border-color:var(--text); background:var(--subtle); color:var(--text); }
+.context-inspector-unreported { margin:0 0 8px; font-size:11px; color:var(--muted); }
+.context-inspector>footer>button .ui-spinner { margin-right:4px; }
