@@ -1,0 +1,33 @@
+[data-markdown-math] .markdown-math-source {
+  white-space: pre-wrap;
+}
+
+[data-markdown-math="display"] {
+  margin-block: 0.75em;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+[data-markdown-math="display"] .markdown-math-output:not([hidden]) {
+  display: block;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+[data-markdown-math="display"] .katex-display {
+  margin-block: 0.4em;
+}
+
+[data-markdown-math="display"] .markdown-math-source:not([hidden]),
+.markdown-math-failure:not([hidden]) {
+  display: block;
+}
+
+.markdown-math-disclosure {
+  margin-block-start: 0.35em;
+}
+
+.markdown-math-disclosure pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
