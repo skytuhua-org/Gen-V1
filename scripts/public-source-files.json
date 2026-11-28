@@ -4204,6 +4204,7 @@
     "tests/scripts-helpers-1009.test.ts",
     "tests/secret-custody-v3.test.ts",
     "tests/secret-scan.test.ts",
+    "tests/selective-commit-attribution-v3.test.ts",
     "tests/selective-commit-staged-v3.test.ts",
     "tests/selective-commit-v3.test.ts",
     "tests/server-shell-read.test.ts",

@@ -11,7 +11,7 @@ import { withApprovedProjectContext } from './approved-project-context.ts';
 import type {AccountAuthTarget} from '../contracts/authentication.ts';
 import {privateFamilyForBinding} from '../workspace/git-storage.ts';
 import { mkdir, readFile, writeFile, stat, open } from "node:fs/promises";
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from "node:path";
 import { Store, digest, compactionOwnerKey, type CompactionAttemptRecord } from "../storage/store.ts";
 import {PersonalResearchRepository} from '../research/repository.ts';
@@ -59,7 +59,7 @@ import { ToolEffectLedger, createToolEffectFlags, ownerFor, type ToolEffectFlag 
 import type { EffectAuthenticator } from "./host-effect-authenticator.ts";
 import { recoverEffects, disableEffects } from "./effect-recovery.ts";
 import { capabilityEnabled } from "./capability-flags.ts";
-import { EditJournal, workspaceOwnerScope } from "../workspace/edit-journal.ts";
+import { EditJournal, sha256hex, workspaceOwnerScope } from "../workspace/edit-journal.ts";
 import { CheckpointService } from "../workspace/checkpoints.ts";
 import { RequestContextCustody, REQUEST_PREPARATION_LIMITS, type RequestContextBasis, type RequestContextHooks, type RequestPreparationOptions, type RequestTextSource } from './request-custody.ts';
 import { createCompactionCandidateRegistry, applyCompactionCandidate } from './context-compaction.ts';
@@ -1004,7 +1004,7 @@ export class Service {
   }
   private m08Journal?: EditJournal;
   private m08Checkpoints?: CheckpointService;
-  private m08PreimageDigests = new Map<string, string>();
+  private m08PreimageDigests = new Map<string, {digest: string; ref: string | null}>();
   private m08PendingReceipts: { operation: Operation; evidence: { path: string; sha256: string; bytes: number } }[] = [];
   /** M09 read-role domain context: resources resolve read-only, operation
    * preparation is denied before effects, evidence publishing stays open. */
@@ -2435,7 +2435,13 @@ export class Service {
     const binding=this.store.get<{id:string;threadId:string;projectId:string;path:string;gitDirectory?:string|null;identity?:unknown}>('workspaceBinding',thread.workspaceId);
     if(!binding||binding.id!==thread.workspaceId||binding.threadId!==thread.id||binding.projectId!==thread.projectId||!inside(binding.path,evidence.path))return;
     const owner=workspaceOwnerScope(thread.projectId,thread.id,binding),path=relative(binding.path,evidence.path).split(sep).join('/');
-    this.m08PreimageDigests.set(op.id,evidence.sha256);
+    // Preserve the preimage under bounded blob custody so a later receipt can
+    // prove the exact region its write covered — a digest alone cannot bound it.
+    let preimageRef: string | null = null;
+    try{
+      if(capabilityEnabled('workspace.provenanceV1'))preimageRef=(this.m08Journal??=new EditJournal(this.store)).writeBlob(Buffer.from(evidence.bytes));
+    }catch{/* blob custody is best effort */}
+    this.m08PreimageDigests.set(op.id,{digest:evidence.sha256,ref:preimageRef});
     try{
       if(capabilityEnabled('workspace.checkpointsV1')){
         const info=await stat(evidence.path).catch(()=>null);
@@ -2454,9 +2460,18 @@ export class Service {
       if(!thread?.projectId||!thread.workspaceId)return;
       const binding=this.store.get<{id:string;threadId:string;projectId:string;path:string;gitDirectory?:string|null;identity?:unknown}>('workspaceBinding',thread.workspaceId);
       if(!binding||binding.id!==thread.workspaceId||binding.threadId!==thread.id||binding.projectId!==thread.projectId||!inside(binding.path,evidence.path))return;
-      const owner=workspaceOwnerScope(thread.projectId,thread.id,binding),path=relative(binding.path,evidence.path).split(sep).join('/'),beforeDigest=this.m08PreimageDigests.get(operation.id)??null;
+      const owner=workspaceOwnerScope(thread.projectId,thread.id,binding),path=relative(binding.path,evidence.path).split(sep).join('/'),preimage=this.m08PreimageDigests.get(operation.id)??null;
       this.m08PreimageDigests.delete(operation.id);
-      (this.m08Journal??=new EditJournal(this.store)).recordProvenEdit({invocationId:'op:'+operation.id,owner,repositoryId:owner.projectId,workspaceIdentity:owner.binding,path,beforeIdentity:null,beforeDigest,afterDigest:evidence.sha256,boundedBlobRefs:[]});
+      const boundedBlobRefs:{ref:string;bytes:number;retention:'AVAILABLE'}[]=[];
+      const journal=this.m08Journal??=new EditJournal(this.store);
+      try{
+        // The postimage bytes were already verified by the write evidence; read
+        // them back bounded so the receipt's refs survive restarts.
+        const post=readFileSync(evidence.path);
+        if(post.length<=8*1024*1024&&sha256hex(post)===evidence.sha256)boundedBlobRefs.push({ref:journal.writeBlob(post),bytes:post.length,retention:'AVAILABLE'});
+      }catch{/* blob custody is best effort */}
+      if(preimage?.ref)boundedBlobRefs.unshift({ref:preimage.ref,bytes:0,retention:'AVAILABLE'});
+      journal.recordProvenEdit({invocationId:'op:'+operation.id,owner,repositoryId:owner.projectId,workspaceIdentity:owner.binding,path,beforeIdentity:null,beforeDigest:preimage?.digest??null,afterDigest:evidence.sha256,boundedBlobRefs});
     }catch{/* journal receipts never block the outbox */}
   }
   private enqueueOperationResult(operation: Operation,writeEvidence?:{path:string;sha256:string;bytes:number}): void {

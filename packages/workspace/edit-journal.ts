@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { diff as diffLines } from "node:util";
 import { z } from "zod";
 import { HarnessError } from "../contracts/index.ts";
 import type { Store } from "../storage/store.ts";
@@ -22,6 +25,28 @@ const EDIT_JOURNAL_KIND = "workspaceEditReceipt" as const;
 const EDIT_JOURNAL_PREPARED_KIND = "workspaceEditPrepared" as const;
 
 export const sha256hex = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
+const splitLines = (bytes: Buffer) => {
+  const lines = bytes.toString("utf8").split(/\r?\n/);
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+};
+
+/** Bounded line diff: shared prefix/suffix trimmed before the Myers walk so
+ *  a small edit inside a large file costs the middle only, and a middle whose
+ *  size product exceeds the bound returns null — the caller treats that as
+ *  coverage loss rather than allocating an O(n·m) trace buffer. `delta`
+ *  entries carry positions offset by the shared prefix. */
+const boundedLineDiff = (before: string[], after: string[]): { delta: [number, string][]; prefix: number; suffix: number } | null => {
+  let prefix = 0;
+  const min = Math.min(before.length, after.length);
+  while (prefix < min && before[prefix] === after[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < min - prefix && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix++;
+  const midBefore = before.slice(prefix, before.length - suffix), midAfter = after.slice(prefix, after.length - suffix);
+  if (midBefore.length * midAfter.length > 4_000_000) return null;
+  if (midBefore.length === 0 && midAfter.length === 0) return { delta: [], prefix, suffix }; // util.diff throws on two empty inputs
+  return { delta: diffLines(midBefore, midAfter) as [number, string][], prefix, suffix };
+};
 
 interface StoredReceipt extends EditReceiptV1 {
   journalId: string;
@@ -90,6 +115,36 @@ const sameScope = (a: CheckpointScope, b: CheckpointScope) =>
 
 export class EditJournal {
   constructor(private readonly store: Store) {}
+
+  private get blobRoot() {
+    return join(this.store.dataDir, "journal-blobs");
+  }
+
+  /** Persist bounded pre/post image bytes under content-addressed custody.
+   *  Receipts reference them through boundedBlobRefs; a digest-equal ref is
+   *  idempotent. */
+  writeBlob(data: Buffer): string {
+    const ref = sha256hex(data);
+    mkdirSync(this.blobRoot, { recursive: true });
+    const target = join(this.blobRoot, ref);
+    try {
+      writeFileSync(target, data, { flag: "wx", mode: 0o600 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (!readFileSync(target).equals(data)) throw error;
+    }
+    return ref;
+  }
+
+  /** Fetch a stored blob by ref (its sha256), verifying content on read. */
+  readBlob(ref: string): Buffer | null {
+    try {
+      const bytes = readFileSync(join(this.blobRoot, ref));
+      return sha256hex(bytes) === ref ? bytes : null;
+    } catch {
+      return null;
+    }
+  }
 
   /** A prepared marker survives a crash between admission and the confirmed write. */
   prepareStructuredEdit(input: {
@@ -239,15 +294,228 @@ export class EditJournal {
     return "unattributed";
   }
 
-  /** A hunk can auto-enter a selective commit only when every receipt covering it is proven
-   *  and the live bytes still equal the newest proven postimage — a later change made
-   *  outside the journal has no receipt and stays unattributed. */
-  hunkAttribution(owner: CheckpointScope, path: string, currentDigest: string | null): "proven" | "process-window" | "unattributed" {
+  /** Resolve a receipt's pre/post image bytes: boundedBlobRefs first, then a
+   *  blob stored under the bare digest ref, then the live file for an
+   *  afterDigest that still matches. */
+  private imageFor(receipt: EditReceiptV1, which: "before" | "after", liveBytes: Buffer | null): Buffer | null {
+    const digest = which === "before" ? receipt.beforeDigest : receipt.afterDigest;
+    for (const ref of receipt.boundedBlobRefs) if (ref.ref === digest) {
+      const bytes = this.readBlob(ref.ref);
+      if (bytes) return bytes;
+    }
+    if (digest) {
+      const bytes = this.readBlob(digest);
+      if (bytes) return bytes;
+      if (which === "after" && liveBytes && sha256hex(liveBytes) === digest) return liveBytes;
+    }
+    return null;
+  }
+
+  /** The postimage line numbers (added) and HEAD preimage line numbers
+   *  (removed) a receipt's write actually changed. Added positions come from
+   *  diffing the receipt's bounded pre/post images; removed positions are
+   *  then translated back into HEAD space through the foreign delta
+   *  diff(HEAD image, receipt preimage), keyed to their line content so
+   *  duplicate lines can be matched by occurrence. `removed` is null when
+   *  no HEAD image was supplied or the foreign delta is unbounded — coverage
+   *  of any removal is then unverifiable. "wholesale" when the receipt recorded no
+   *  preimage at all — it asserts whole-postimage authorship and covers any
+   *  hunk of the path. Null when recorded images cannot bound the delta: the
+   *  caller must then treat coverage as unverifiable (coverage loss). */
+  private coverageOf(receipt: EditReceiptV1, liveBytes: Buffer | null, headBytes: Buffer | null): { added: Set<number>; removed: Map<number, string> | null } | "wholesale" | null {
+    const after = this.imageFor(receipt, "after", liveBytes);
+    if (!after) return null;
+    const before = this.imageFor(receipt, "before", liveBytes);
+    if (!before) return receipt.beforeDigest === null ? "wholesale" : null;
+    const beforeLines = splitLines(before), afterLines = splitLines(after);
+    const own = boundedLineDiff(beforeLines, afterLines);
+    if (!own) return null; // delta too large to bound: coverage loss, never a full-trace diff
+    const added = new Set<number>(), removedBefore = new Map<number, string>();
+    let beforeLine = own.prefix + 1, afterLine = own.prefix + 1;
+    for (const [kind, value] of own.delta) {
+      if (kind === 1) removedBefore.set(beforeLine++, value);
+      else if (kind === -1) added.add(afterLine++);
+      else { beforeLine++; afterLine++; }
+    }
+    // A write that only changes line terminators leaves an empty line delta:
+    // credit exactly the lines whose terminator changed, no others.
+    if (added.size === 0 && removedBefore.size === 0 && !before.equals(after)) {
+      const rawBefore = before.toString("utf8").split(/(?<=\n)/), rawAfter = after.toString("utf8").split(/(?<=\n)/);
+      if (rawBefore.length === rawAfter.length)
+        for (let i = 0; i < rawBefore.length; i++)
+          if (rawBefore[i] !== rawAfter[i]) { removedBefore.set(i + 1, beforeLines[i] ?? ""); added.add(i + 1); }
+    }
+    if (!headBytes) return { added, removed: null };
+    const headLines = splitLines(headBytes);
+    const foreign = boundedLineDiff(headLines, beforeLines);
+    if (!foreign) return { added, removed: null };
+    const removed = new Map<number, string>(), beforeToHead = new Map<number, number>();
+    for (let i = 0; i < foreign.prefix; i++) beforeToHead.set(i + 1, i + 1);
+    for (let i = 0; i < foreign.suffix; i++)
+      beforeToHead.set(beforeLines.length - foreign.suffix + i + 1, headLines.length - foreign.suffix + i + 1);
+    let headLine = foreign.prefix + 1;
+    beforeLine = foreign.prefix + 1;
+    for (const [kind] of foreign.delta) {
+      if (kind === 1) headLine++; // foreign-removed: outside the receipt's coverage
+      else if (kind === -1) beforeLine++; // foreign-added into the receipt's preimage
+      else { beforeToHead.set(beforeLine, headLine); beforeLine++; headLine++; }
+    }
+    for (const [line, content] of removedBefore) {
+      const head = beforeToHead.get(line);
+      if (head !== undefined) removed.set(head, content);
+    }
+    return { added, removed };
+  }
+
+  /** A hunk can auto-enter a selective commit only when a proven receipt's
+   *  recorded bounded delta covers every line it changes and the live bytes
+   *  still equal that receipt's postimage. Receipts are scanned newest-first;
+   *  the newest receipt whose delta covers the hunk assigns its class, so a
+   *  foreign same-scope receipt downgrades only its own region and a later
+   *  foreign write takes precedence over an earlier proof. Regions with no
+   *  covering receipt surface coverage loss ("unattributed"), never
+   *  inheriting a path-level label. A receipt whose bounded images cannot be
+   *  resolved cannot bound a region: proven receipts then prove nothing,
+   *  coarser classes stay path-wide conservative. `change` carries the
+   *  hunk's removed HEAD-preimage and added postimage line numbers; a null
+   *  change is the legacy whole-path check. */
+  hunkAttribution(owner: CheckpointScope, path: string, liveBytes: Buffer | null, headBytes: Buffer | null, change: { removed: Map<number, string>; added: Set<number> } | null = null, claims: Map<string, Set<number>> = new Map<string, Set<number>>(), reservedRemoved: Set<number> = new Set<number>()): "proven" | "process-window" | "unattributed" {
     const entries = this.receipts(owner, { path });
     if (!entries.length) return "unattributed";
-    if (entries.some((entry) => entry.attribution === "UNATTRIBUTED")) return "unattributed";
-    if (entries.some((entry) => entry.attribution === "PROCESS_WINDOW_ONLY")) return "process-window";
-    return entries[entries.length - 1]!.afterDigest === currentDigest ? "proven" : "unattributed";
+    const classOf = (attribution: string) =>
+      attribution === "STRUCTURED_EDIT_PROVED" ? "proven" : attribution === "PROCESS_WINDOW_ONLY" ? "process-window" : "unattributed";
+    if (change === null) {
+      if (entries.some((entry) => entry.attribution === "UNATTRIBUTED")) return "unattributed";
+      if (entries.some((entry) => entry.attribution === "PROCESS_WINDOW_ONLY")) return "process-window";
+      const newest = entries[entries.length - 1]!;
+      return newest.attribution === "STRUCTURED_EDIT_PROVED" && liveBytes && newest.afterDigest === sha256hex(liveBytes) ? "proven" : "unattributed";
+    }
+    // Both sides match by position: added lines in postimage space (both
+    // sides number the live file), removed lines in HEAD space, translated
+    // per receipt through the foreign delta. Covered positions are consumed
+    // through the caller's per-file `claims` ledger: a removed line takes its
+    // exact mapped position first, then borrows an unclaimed same-content
+    // position — diff engines legitimately pick different copies among
+    // repeated text, but joint over-claim (a foreign deletion of content the
+    // receipt also deleted) can never be credited because every coverage
+    // position is consumed at most once. Two restrictions keep borrowed
+    // matches honest: positions in `reservedRemoved` — every HEAD line some
+    // hunk of this file removes — are exact-match territory, claimed directly
+    // by the hunk that removes them; and a borrow is only accepted when it
+    // describes the same edit — deleting the hunk's positions and deleting
+    // the claimed positions leave identical survivors. That permits a borrow
+    // inside one run of identical lines or one uniform shift of the whole
+    // unmatched set onto a repeated block, nothing else. Claims stay
+    // tentative until the whole hunk is covered, so a failed evaluation
+    // never consumes coverage a later hunk may legitimately need.
+    const headLines = headBytes ? splitLines(headBytes) : null;
+    // Removing position set `a` versus set `b` from the same HEAD text is the
+    // same edit iff the surviving lines agree; only the span where
+    // membership differs can disagree, outside it both align identically.
+    const sameDeletion = (a: Set<number>, b: Set<number>): boolean => {
+      if (!headLines || a.size !== b.size) return false;
+      let low = Infinity, high = -Infinity;
+      for (const position of a) if (!b.has(position)) { if (position < low) low = position; if (position > high) high = position; }
+      for (const position of b) if (!a.has(position)) { if (position < low) low = position; if (position > high) high = position; }
+      if (high < 0) return true;
+      const keptA: string[] = [], keptB: string[] = [];
+      for (let i = low; i <= high; i++) {
+        if (!a.has(i)) keptA.push(headLines[i - 1]!);
+        if (!b.has(i)) keptB.push(headLines[i - 1]!);
+      }
+      return keptA.length === keptB.length && keptA.every((line, index) => line === keptB[index]);
+    };
+    const covers = (entry: StoredReceipt, coverage: { added: Set<number>; removed: Map<number, string> | null }) => {
+      const tentative: [string, number][] = [];
+      const claim = (kind: "r" | "a", position: number): boolean => {
+        const key = entry.journalId + ":" + kind;
+        const claimed = claims.get(key) ?? new Set<number>();
+        if (claimed.has(position)) return false;
+        claimed.add(position);
+        claims.set(key, claimed);
+        tentative.push([key, position]);
+        return true;
+      };
+      const removedClaims = () => claims.get(entry.journalId + ":r");
+      const borrowable = (removedCoverage: Map<number, string>, position: number, content: string, taken: Set<number>): number[] => {
+        const helds: number[] = [];
+        for (const [held, heldContent] of removedCoverage) {
+          if (heldContent !== content || held === position || reservedRemoved.has(held) || taken.has(held) || removedClaims()?.has(held)) continue;
+          helds.push(held);
+        }
+        return helds;
+      };
+      const borrow = (removedCoverage: Map<number, string>, unmatched: [number, string][]): boolean => {
+        if (!headLines) return false;
+        const removed = new Set<number>(change.removed.keys());
+        const verify = (picks: Map<number, number>): boolean => {
+          const held = new Set<number>(removed);
+          for (const position of picks.keys()) held.delete(position);
+          for (const position of picks.values()) held.add(position);
+          return sameDeletion(removed, held);
+        };
+        // Uniform shift: the diff named a different copy of a repeated block,
+        // so every unmatched line borrows the position shifted by one amount.
+        const [firstPosition, firstContent] = unmatched[0]!;
+        for (const anchor of borrowable(removedCoverage, firstPosition, firstContent, new Set())) {
+          const shift = anchor - firstPosition, picks = new Map<number, number>([[firstPosition, anchor]]);
+          let viable = true;
+          for (const [position, content] of unmatched.slice(1)) {
+            const held = position + shift;
+            if (removedCoverage.get(held) !== content || reservedRemoved.has(held) || removedClaims()?.has(held)) { viable = false; break; }
+            picks.set(position, held);
+          }
+          if (viable && verify(picks)) {
+            for (const held of picks.values()) if (!claim("r", held)) return false;
+            return true;
+          }
+        }
+        // Identical-line run: each line borrows an identical neighbor — a
+        // repeated single line is a block of one, and the same-edit check
+        // confirms the substitution.
+        const picks = new Map<number, number>(), taken = new Set<number>();
+        for (const [position, content] of unmatched) {
+          const held = borrowable(removedCoverage, position, content, taken).find((candidate) => {
+            for (let i = Math.min(candidate, position); i <= Math.max(candidate, position); i++) if (headLines![i - 1] !== content) return false;
+            return true;
+          });
+          if (held === undefined) return false;
+          picks.set(position, held);
+          taken.add(held);
+        }
+        if (!verify(picks)) return false;
+        for (const held of picks.values()) if (!claim("r", held)) return false;
+        return true;
+      };
+      const covered = () => {
+        const unmatched: [number, string][] = [];
+        for (const [position, content] of change.removed) {
+          if (coverage.removed === null) return false;
+          if (coverage.removed.get(position) !== content) { unmatched.push([position, content]); continue; }
+          if (!claim("r", position)) return false;
+        }
+        if (unmatched.length && !borrow(coverage.removed!, unmatched)) return false;
+        for (const line of change.added) if (!coverage.added.has(line) || !claim("a", line)) return false;
+        return true;
+      };
+      const ok = covered();
+      if (!ok) for (const [key, position] of tentative) claims.get(key)?.delete(position);
+      return ok;
+    };
+    for (const entry of [...entries].reverse()) {
+      const coverage = this.coverageOf(entry, liveBytes, headBytes);
+      if (coverage !== null) {
+        if (coverage === "wholesale" || covers(entry, coverage)) {
+          if (entry.attribution === "STRUCTURED_EDIT_PROVED" && liveBytes && entry.afterDigest === sha256hex(liveBytes)) return "proven";
+          return classOf(entry.attribution) === "proven" ? "unattributed" : classOf(entry.attribution);
+        }
+        continue;
+      }
+      // Coverage unverifiable: coarser evidence downgrades the whole path;
+      // an unverifiable proof proves nothing.
+      if (entry.attribution !== "STRUCTURED_EDIT_PROVED") return classOf(entry.attribution);
+    }
+    return "unattributed";
   }
 
   requireOwned(owner: CheckpointScope, scope: CheckpointScope): void {

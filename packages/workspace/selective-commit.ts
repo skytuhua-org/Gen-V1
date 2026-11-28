@@ -1,8 +1,11 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { open, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { HarnessError } from "../contracts/index.ts";
 import { readBoundFile } from "../core/file-access.ts";
+import { gitExecutable } from "../capabilities/process.ts";
 import {
   selectiveCommitV1Schema,
   type CheckpointScope,
@@ -65,9 +68,10 @@ interface FileSection {
   path: string;
   header: string;
   hunks: string[];
-  // Digest of the live worktree bytes, for journal attribution. Null when the
-  // file is unreadable or exceeds the capture bound — never proven then.
-  postDigest?: string | null;
+  // Live worktree bytes, for journal attribution. Null when the file is
+  // unreadable, binary, or exceeds the capture bound — never proven then.
+  postBytes?: Buffer | null;
+  headBytes?: Buffer | null;
 }
 
 // Split a single-file unified diff into its header (diff/index/---/+++ lines)
@@ -103,6 +107,8 @@ const newFilePatch = (path: string, text: string): FileSection => {
     hunks: [hunks],
   };
 };
+
+const execFileAsync = promisify(execFile);
 
 const repositoryIdentity = (binding: WorkspaceBinding) =>
   sha256hex(JSON.stringify(["repository", binding.commonDirectory, binding.commonDirectoryIdentity.dev, binding.commonDirectoryIdentity.ino]));
@@ -142,20 +148,47 @@ export class SelectiveCommitService {
         } catch {
           continue;
         }
-        sections.push({ ...newFilePatch(path, text), postDigest: sha256hex(bytes) });
+        sections.push({ ...newFilePatch(path, text), postBytes: bytes });
         continue;
       }
       const patch = await git(["diff", "--full-index", "--no-ext-diff", "--no-textconv", "HEAD", "--", path]);
       if (!patch) continue;
       const post = await readBoundFile(join(worktree, path), 8 * 1024 * 1024 + 1).catch(() => null);
-      sections.push({ ...splitFileDiff(patch, path), postDigest: post && post.length <= 8 * 1024 * 1024 ? sha256hex(post) : null });
+      // The hunk preimage is HEAD's image of the file; per-hunk coverage maps
+      // each removed line back through the foreign delta into each receipt's
+      // own preimage space. The blob is fetched straight from the worktree's
+      // repository: the review-bound `git` callback caps stdout below the
+      // 8 MiB image bound, which would silently drop large-file coverage.
+      const head = await execFileAsync(gitExecutable(), ["cat-file", "blob", "HEAD:" + path], { cwd: worktree, encoding: "buffer", maxBuffer: 9 * 1024 * 1024 })
+        .then((result) => result.stdout as Buffer)
+        .catch(() => null);
+      sections.push({ ...splitFileDiff(patch, path), postBytes: post && post.length <= 8 * 1024 * 1024 ? post : null, headBytes: head && head.length <= 8 * 1024 * 1024 ? head : null });
     }
     void scope;
     return sections;
   }
 
-  private attributionFor(scope: CheckpointScope | undefined, path: string, postDigest: string | null): { attribution: HunkAttribution; requiresExplicitSelection: boolean } {
-    const attribution = this.journal && scope ? this.journal.hunkAttribution(scope, path, postDigest) : "unattributed";
+  // The HEAD preimage and postimage line numbers a hunk changes — the
+  // coverage the journal must prove. Both sides are positional; removed
+  // lines also carry content so the journal can match an identical line the
+  // diff anchored to a different copy.
+  private hunkChange(patch: string): { removed: Map<number, string>; added: Set<number> } | null {
+    const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/m.exec(patch);
+    if (!match) return null;
+    let before = parseInt(match[1], 10), after = parseInt(match[2], 10);
+    const removed = new Map<number, string>(), added = new Set<number>();
+    for (const line of patch.slice(patch.indexOf("\n") + 1).split("\n")) {
+      if (line.startsWith("-")) { removed.set(before, line.slice(1).replace(/\r$/, "")); before++; }
+      else if (line.startsWith("+")) added.add(after++);
+      else if (line.startsWith(" ")) { before++; after++; }
+      else if (line.startsWith("\\")) continue;
+      else if (line.startsWith("@@")) break;
+    }
+    return { removed, added };
+  }
+
+  private attributionFor(scope: CheckpointScope | undefined, path: string, postBytes: Buffer | null, headBytes: Buffer | null, patch: string, claims: Map<string, Set<number>>, reservedRemoved: Set<number>): { attribution: HunkAttribution; requiresExplicitSelection: boolean } {
+    const attribution = this.journal && scope ? this.journal.hunkAttribution(scope, path, postBytes, headBytes, this.hunkChange(patch), claims, reservedRemoved) : "unattributed";
     return { attribution, requiresExplicitSelection: attribution !== "proven" };
   }
 
@@ -167,8 +200,17 @@ export class SelectiveCommitService {
       const sections = await this.candidates(git, binding.path, scope);
       const candidates: SelectiveCandidate[] = [];
       for (const section of sections) {
+        // Coverage positions are claimed per file across its hunks, so two
+        // hunks can never jointly over-claim one receipt's region.
+        const claims = new Map<string, Set<number>>();
+        // Every HEAD line some hunk of this file removes is reserved for the
+        // hunk removing it: a same-content fallback can only borrow coverage
+        // no hunk removes, so a foreign hunk can never consume the position a
+        // proven hunk matches exactly.
+        const reservedRemoved = new Set<number>();
+        for (const patch of section.hunks) for (const position of this.hunkChange(patch)?.removed.keys() ?? []) reservedRemoved.add(position);
         section.hunks.forEach((patch, index) => {
-          candidates.push({ path: section.path, index, digest: sha256hex(section.header + patch), patch: section.header + patch, ...this.attributionFor(scope, section.path, section.postDigest ?? null) });
+          candidates.push({ path: section.path, index, digest: sha256hex(section.header + patch), patch: section.header + patch, ...this.attributionFor(scope, section.path, section.postBytes ?? null, section.headBytes ?? null, patch, claims, reservedRemoved) });
         });
       }
       // Bind any later approval to this exact branch and head: a checkout
