@@ -66,7 +66,7 @@
 @container(max-width:420px){.agent-inbox .ui-toolbar{padding:8px 12px}.agent-inbox .inbox-search{padding-inline:12px}.agent-inbox .inbox-tasks-body{padding-inline:8px}.agent-inbox .inbox-board{padding:20px 16px}.agent-inbox .inbox-subject-title{font-size:20px}.agent-inbox .inbox-item-crumb{max-width:140px}}
 
 /* #2336: row-level read/unread toggle — hover/focus-visible, always on touch. */
-.agent-inbox .inbox-row-read-toggle{opacity:0;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;background:none;color:var(--muted);border-radius:5px;cursor:pointer;transition:opacity var(--ui-motion-hover,120ms) var(--ui-ease-enter)}
+.agent-inbox .inbox-row-read-toggle{opacity:0;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;background:none;color:var(--muted);border-radius:5px;cursor:pointer;transition:opacity var(--ui-motion-hover) var(--ui-ease-enter)}
 .agent-inbox .ui-list-row:hover .inbox-row-read-toggle,.agent-inbox .ui-list-row:focus-within .inbox-row-read-toggle{opacity:1}
 .agent-inbox .inbox-row-read-toggle:hover{color:var(--text);background:var(--hover)}
 .agent-inbox .inbox-row-read-toggle:focus-visible{opacity:1;outline:2px solid var(--ui-focus-ring);outline-offset:-2px}
