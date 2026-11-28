@@ -54,6 +54,7 @@ describe('recorded command runner', () => {
     writeFileSync(join(fixture, 'pnpm.cmd'), 'not executed');
     writeFileSync(join(pnpm, 'bin', 'pnpm.cjs'), "if (process.argv[2] === '--version') console.log('10.30.3');");
     vi.stubEnv('PATH', fixture);
+    vi.stubEnv('PNPM_HOME', '');
     try {
       const attempts = await Promise.allSettled([runBaseline(out, fixture), runBaseline(out, fixture)]);
       expect(attempts.filter(attempt => attempt.status === 'fulfilled')).toHaveLength(1);
@@ -179,6 +180,7 @@ describe('executable resolution', () => {
     const bin = dir('resolver');
     copyFileSync(process.execPath, join(bin, process.platform === 'win32' ? 'corepack.exe' : 'corepack'), constants.COPYFILE_FICLONE);
     vi.stubEnv('PATH', bin);
+    vi.stubEnv('PNPM_HOME', '');
     try {
       const pm = resolvePackageManager(process.cwd());
       expect(pm.declaredVersion).toBe('10.30.3');
@@ -201,12 +203,32 @@ describe('executable resolution', () => {
     symlinkSync(join(packageRoot, 'bin', 'pnpm.cjs'), join(bin, 'pnpm'));
     copyFileSync(process.execPath, join(bin, process.platform === 'win32' ? 'corepack.exe' : 'corepack'), constants.COPYFILE_FICLONE);
     vi.stubEnv('PATH', bin);
+    vi.stubEnv('PNPM_HOME', '');
     try {
       const pm = resolvePackageManager(process.cwd());
       expect(pm.declaredVersion).toBe('10.30.3');
       expect(pm.file).toBe(process.execPath);
       expect(`${pm.file} ${pm.prefix.join(' ')}`.toLowerCase()).not.toContain('corepack');
       expect(pm.prefix.at(-1)).toContain(join('pnpm', 'bin', 'pnpm.cjs'));
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('prefers the pinned pnpm/action-setup PNPM_HOME when PATH contains no pnpm shim', () => {
+    const prefix = dir('pnpm-action-setup'), bin = join(prefix, 'node_modules', '.bin');
+    const packageRoot = join(prefix, 'node_modules', 'pnpm');
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(join(packageRoot, 'bin'), { recursive: true });
+    writeFileSync(join(bin, 'pnpm.CMD'), '@echo off');
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: 'pnpm', version: '10.30.3' }));
+    writeFileSync(join(packageRoot, 'bin', 'pnpm.cjs'), "process.stdout.write('10.30.3\\n');");
+    vi.stubEnv('PATH', dir('without-pnpm-on-path'));
+    vi.stubEnv('PNPM_HOME', bin);
+    try {
+      const pm = resolvePackageManager(process.cwd());
+      expect(pm.declaredVersion).toBe('10.30.3');
+      expect(pm.file).toBe(process.execPath);
+      expect(pm.prefix).toHaveLength(1);
+      expect(pm.prefix[0].toLowerCase()).toContain(join('pnpm', 'bin', 'pnpm.cjs').toLowerCase());
     } finally { vi.unstubAllEnvs(); }
   });
 
@@ -222,6 +244,7 @@ describe('executable resolution', () => {
     const node = join(dir('mismatch-node'), process.platform === 'win32' ? 'node.exe' : 'node');
     writeFileSync(node, '');
     vi.stubEnv('PATH', bin);
+    vi.stubEnv('PNPM_HOME', '');
     const execPath = vi.spyOn(process, 'execPath', 'get').mockReturnValue(node);
     try {
       // No corepack here, so the mismatch is reported by the caller as the
@@ -434,13 +457,13 @@ describe('benchmark report shape fixtures', () => {
 });
 
 describe('dependency-contract checker', () => {
-  it('requires a file at a declared contract test path', () => {
+  it('requires source-locked committed test bytes instead of trusting mutable checkout files', () => {
     const checkout = dir('contract-file');
     const git = (...args: string[]) => execFileSync('git', ['-C', checkout, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
     const source = 'packages/capabilities/process.ts', testId = 'tests/contract.test.ts';
     git('init', '-q');
     mkdirSync(join(checkout, 'packages', 'capabilities'), { recursive: true });
-    mkdirSync(join(checkout, testId), { recursive: true });
+    mkdirSync(join(checkout, 'tests'), { recursive: true });
     writeFileSync(join(checkout, source), 'export {};');
     git('add', '--', source);
     git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Seed');
@@ -450,17 +473,91 @@ describe('dependency-contract checker', () => {
       publicContracts: [{ name: 'process-launcher', version: blob, testIds: [testId] }], acceptedDependencyCommits: [], approvedDrift: [],
     });
     expect(verifySourceLock(checkout, lock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_MISSING']);
-    rmSync(join(checkout, testId), { recursive: true });
     writeFileSync(join(checkout, testId), 'export {};');
-    expect(verifySourceLock(checkout, lock)).toEqual([]);
-    const nestedLock = sourceLockV3Schema.parse({ ...lock, publicContracts: [
+    // A local-only untracked test did not exist at the claimed execution base.
+    expect(verifySourceLock(checkout, lock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_MISSING']);
+    git('add', '--', testId);
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Commit contract test');
+    const committedLock = sourceLockV3Schema.parse({ ...lock, executionBaseSha: git('rev-parse', 'HEAD') });
+    expect(verifySourceLock(checkout, committedLock)).toEqual([]);
+    writeFileSync(join(checkout, testId), 'export const unreviewed = true;');
+    expect(verifySourceLock(checkout, committedLock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_DRIFT']);
+    writeFileSync(join(checkout, testId), 'export {};');
+    expect(verifySourceLock(checkout, committedLock)).toEqual([]);
+    rmSync(join(checkout, testId));
+    expect(verifySourceLock(checkout, committedLock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_MISSING']);
+    const nestedLock = sourceLockV3Schema.parse({ ...committedLock, publicContracts: [
       { ...lock.publicContracts[0], testIds: [testId + '/case.ts', 'tests/no-second-contract.test.ts'] },
     ] });
     expect(verifySourceLock(checkout, nestedLock).map(issue => issue.code)).toEqual([
       'CONTRACT_TEST_MISSING', 'CONTRACT_TEST_MISSING',
     ]);
+    const unsafeLock = sourceLockV3Schema.parse({ ...committedLock, publicContracts: [
+      { ...lock.publicContracts[0], testIds: ['../outside.test.ts', 'tests/../alias.test.ts', join(checkout, 'outside.test.ts')] },
+    ] });
+    expect(verifySourceLock(checkout, unsafeLock).map(issue => issue.code)).toEqual([
+      'CONTRACT_TEST_INVALID_PATH', 'CONTRACT_TEST_INVALID_PATH', 'CONTRACT_TEST_INVALID_PATH',
+    ]);
   });
 
+  it('ignores mutable local Git attributes when validating executable contract-test bytes', () => {
+    const checkout = dir('contract-local-attributes');
+    const git = (...args: string[]) => execFileSync('git', ['-C', checkout, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const source = 'packages/capabilities/process.ts', testId = 'tests/contract.test.ts';
+    git('init', '-q');
+    git('config', 'core.autocrlf', 'false');
+    mkdirSync(join(checkout, 'packages', 'capabilities'), { recursive: true });
+    mkdirSync(join(checkout, 'tests'), { recursive: true });
+    writeFileSync(join(checkout, source), 'export {};');
+    writeFileSync(join(checkout, testId), 'export const marker = "$Id$";\n');
+    git('add', '--', source, testId);
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Seed');
+    const sha = git('rev-parse', 'HEAD'), blob = git('rev-parse', sha + ':' + source);
+    const lockedTestBlob = git('rev-parse', sha + ':' + testId);
+    const lock = sourceLockV3Schema.parse({
+      schemaVersion: 3, auditAncestorSha: sha, executionBaseSha: sha, inspectedPaths: [{ path: source, blobSha: blob }],
+      publicContracts: [{ name: 'process-launcher', version: blob, testIds: [testId] }],
+      acceptedDependencyCommits: [], approvedDrift: [],
+    });
+    expect(verifySourceLock(checkout, lock)).toEqual([]);
+    // Git's built-in ident attribute can hide altered working bytes during
+    // hash-object --path, even when .git/info/attributes is not committed.
+    writeFileSync(join(checkout, testId), 'export const marker = "$Id: unreviewed $";\n');
+    writeFileSync(join(checkout, '.git', 'info', 'attributes'), testId + ' ident\n');
+    expect(git('hash-object', `--path=${testId}`, '--', testId)).toBe(lockedTestBlob);
+    expect(git('hash-object', '--no-filters', '--', testId)).not.toBe(lockedTestBlob);
+    expect(verifySourceLock(checkout, lock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_DRIFT']);
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects source-locked test bytes reached through an external parent symlink', () => {
+    const checkout = dir('contract-parent-alias'), external = dir('contract-external');
+    const git = (...args: string[]) => execFileSync('git', ['-C', checkout, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const source = 'packages/capabilities/process.ts', testId = 'tests/contract.test.ts';
+    const bytes = 'import "./helper.js";\n';
+    git('init', '-q');
+    mkdirSync(join(checkout, 'packages', 'capabilities'), { recursive: true });
+    mkdirSync(join(checkout, 'tests'), { recursive: true });
+    writeFileSync(join(checkout, source), 'export {};');
+    writeFileSync(join(checkout, testId), bytes);
+    git('add', '--', source, testId);
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Seed');
+    const sha = git('rev-parse', 'HEAD'), sourceBlob = git('rev-parse', `${sha}:${source}`);
+    const lockedTestBlob = git('rev-parse', `${sha}:${testId}`);
+    const lock = sourceLockV3Schema.parse({
+      schemaVersion: 3, auditAncestorSha: sha, executionBaseSha: sha,
+      inspectedPaths: [{ path: source, blobSha: sourceBlob }],
+      publicContracts: [{ name: 'process-launcher', version: sourceBlob, testIds: [testId] }],
+      acceptedDependencyCommits: [], approvedDrift: [],
+    });
+    expect(verifySourceLock(checkout, lock)).toEqual([]);
+    rmSync(join(checkout, 'tests'), { recursive: true });
+    writeFileSync(join(external, 'contract.test.ts'), bytes);
+    writeFileSync(join(external, 'helper.js'), 'throw new Error("untracked external helper");\n');
+    symlinkSync(external, join(checkout, 'tests'), 'dir');
+    // The leaf is still a regular file and its bytes still match the locked Git blob.
+    expect(git('hash-object', '--no-filters', '--', testId)).toBe(lockedTestBlob);
+    expect(verifySourceLock(checkout, lock).map(issue => issue.code)).toEqual(['CONTRACT_TEST_UNSAFE_PATH']);
+  });
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('collects all contract issues when a test path is inaccessible', () => {
     const checkout = dir('inaccessible-contract');
     const git = (...args: string[]) => execFileSync('git', ['-C', checkout, '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();

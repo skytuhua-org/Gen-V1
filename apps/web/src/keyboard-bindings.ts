@@ -37,12 +37,14 @@ export const KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
   {id: 'thread-place', label: 'Place a focused thread in the workspace', scope: 'Sidebar', chords: ['Alt+Enter'], handlers: [module('ShellSidebar.tsx')]},
   {id: 'thread-reorder-up', label: 'Move a focused thread up', scope: 'Sidebar', chords: ['Alt+ArrowUp'], handlers: [module('sidebar-reorder.ts')]},
   {id: 'thread-reorder-down', label: 'Move a focused thread down', scope: 'Sidebar', chords: ['Alt+ArrowDown'], handlers: [module('sidebar-reorder.ts')]},
+  {id: 'sidebar-search-clear', label: 'Clear the thread search or leave the empty search field', scope: 'Sidebar', chords: ['Escape'], handlers: [module('ShellSidebar.tsx')]},
   {id: 'thread-drag-cancel', label: 'Cancel a sidebar drag', scope: 'Sidebar', chords: ['Escape'], handlers: [module('sidebar-reorder.ts')]},
   {id: 'settings-next-section', label: 'Next settings section', scope: 'Settings', chords: ['ArrowDown'], handlers: [module('Settings.tsx')]},
   {id: 'settings-previous-section', label: 'Previous settings section', scope: 'Settings', chords: ['ArrowUp'], handlers: [module('Settings.tsx')]},
   {id: 'settings-first-section', label: 'First settings section', scope: 'Settings', chords: ['Home'], handlers: [module('Settings.tsx')]},
   {id: 'settings-last-section', label: 'Last settings section', scope: 'Settings', chords: ['End'], handlers: [module('Settings.tsx')]},
   {id: 'settings-clear-search', label: 'Clear the settings search', scope: 'Settings', chords: ['Escape'], handlers: [module('Settings.tsx')]},
+  {id: 'show-shortcuts', label: 'Show keyboard shortcuts', scope: 'Global', chords: ['Shift+?'], handlers: [module('App.tsx'), module('WorkspaceHost.tsx')]},
   {id: 'window-move', label: 'Move the focused window', scope: 'Workspace', chords: ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'], hint: 'Hold Shift to resize it, or Alt for 2 px steps', handlers: [module('FloatingWindow.tsx')]},
   {id: 'window-restore', label: 'Return the focused window to its edge position', scope: 'Workspace', chords: ['Home'], handlers: [module('FloatingWindow.tsx')]},
   {id: 'window-close', label: 'Close or collapse the focused window', scope: 'Workspace', chords: ['Escape'], handlers: [module('FloatingWindow.tsx')]},
@@ -95,6 +97,24 @@ export function chordFor(id: string, keybindings: UiPreferences['keybindings'] =
 export function bindingChords(binding: KeyboardBinding, keybindings: UiPreferences['keybindings'] = DEFAULT_PREFERENCES.keybindings): readonly string[] {
   return binding.preference ? [keybindings[binding.preference]] : binding.chords ?? [];
 }
+
+/** Chords the browser keeps for itself and never delivers to the page; capturing one would save a dead binding. Browser build only — the desktop app registers real accelerators. */
+export const RESERVED_CHORDS: readonly string[] = [
+  'Ctrl+W','Ctrl+T','Ctrl+N','Ctrl+Shift+N','Ctrl+Shift+W','Ctrl+R','Ctrl+Shift+R','Ctrl+L','Ctrl+D','Ctrl+Tab','Ctrl+Shift+Tab',
+  'F5','F11','F12','Alt+Home','Alt+ArrowLeft','Alt+ArrowRight',
+  'Meta+W','Meta+T','Meta+N','Meta+R','Meta+Shift+R','Meta+L','Meta+Q','Meta+Tab','Meta+ArrowLeft','Meta+ArrowRight',
+  ...Array.from({length: 9}, (_, index) => [`Ctrl+${index + 1}`, `Meta+${index + 1}`]).flat(),
+];
+
+const MODIFIER_ORDER = 'ctrl+alt+shift+meta';
+const normalizeChord = (chord: string) => {
+  const {modifiers, key} = readChord(chord);
+  return [...modifiers].sort((left, right) => MODIFIER_ORDER.indexOf(left) - MODIFIER_ORDER.indexOf(right)).join('+') + '+' + key;
+};
+const RESERVED_SET = new Set(RESERVED_CHORDS.map(normalizeChord));
+
+/** True when the chord names a browser-reserved shortcut the page can never receive. */
+export function isReservedChord(chord: string): boolean { return RESERVED_SET.has(normalizeChord(chord)); }
 
 export interface ResolvedKeyboardBinding { id: string; label: string; scope: KeyboardScope; chords: readonly string[]; keys: readonly string[]; hint?: string; rebindable: boolean }
 

@@ -116,3 +116,101 @@ test('rapid review reversal continues from the displayed frame instead of restar
  expect(Number(start.opacity)).toBeCloseTo(Number(before.opacity),4);expect(start.transform).toBe(before.transform);
  await expect.poll(()=>material.evaluate(node=>node.getAnimations().length)).toBe(0);
 });
+
+test('editable table acknowledges the exact review without resizing its button or clearing drafts',async({page})=>{
+ const {host}=await open(page,'EditableTable');
+ let release!:()=>void,started!:()=>void;
+ const held=new Promise<void>(resolve=>{release=resolve;});
+ const sending=new Promise<void>(resolve=>{started=resolve;});
+ await page.route('**/api/commands',async route=>{
+  if(route.request().postDataJSON().type==='action.submit'){started();await held;}
+  return route.fallback();
+ });
+ try{
+  await page.goto('/');
+  const table=page.locator('.editable-table'),hours=table.getByRole('spinbutton',{name:'Design · Hours'});
+  const review=table.getByRole('button',{name:'Review changes',exact:true});
+  await hours.fill('7');
+  await expect(table.locator('.interaction-note')).toHaveText('1 cell changed');
+  const node=await review.elementHandle(),before=(await review.boundingBox())!.width;
+  await review.focus();
+  await page.keyboard.press('Enter');
+  await sending;
+  const pending=table.getByRole('button',{name:'Sending…',exact:true});
+  await expect(pending).toBeFocused();
+  expect((await pending.boundingBox())!.width).toBeCloseTo(before,0);
+  release();
+  const accepted=table.getByRole('button',{name:'Review sent',exact:true});
+  await expect(accepted).toBeFocused();
+  await expect(table.getByRole('status').filter({hasText:'1 change sent for review'})).toBeVisible();
+  expect((await accepted.boundingBox())!.width).toBeCloseTo(before,0);
+  expect(await accepted.evaluate((current,initial)=>current===initial,node)).toBe(true);
+  await expect(hours).toHaveValue('7');
+  await expect(table.locator('.editable-original').first()).toHaveText('Was 4');
+  host.setInput('data',{...records,rows:[...records.rows].reverse()});
+  await host.publish();
+  await expect(table.getByRole('rowheader').first()).toHaveText('Verify');
+  await expect(accepted).toBeFocused();
+  await page.keyboard.press('Enter');
+  expect(host.commands.filter(command=>command.type==='action.submit').map(command=>command.payload.payload))
+   .toEqual([{changes:[{rowId:'design',columnId:'hours',value:7}]}]);
+ }finally{release();}
+});
+
+test('an older editable review receipt does not acknowledge a newer draft',async({page})=>{
+ const {host}=await open(page,'EditableTable');
+ let release!:()=>void,started!:()=>void;
+ const held=new Promise<void>(resolve=>{release=resolve;});
+ const sending=new Promise<void>(resolve=>{started=resolve;});
+ await page.route('**/api/commands',async route=>{
+  if(route.request().postDataJSON().type==='action.submit'){started();await held;}
+  return route.fallback();
+ });
+ try{
+  await page.goto('/');
+  const table=page.locator('.editable-table'),hours=table.getByRole('spinbutton',{name:'Design · Hours'});
+  await hours.fill('7');
+  await table.getByRole('button',{name:'Review changes',exact:true}).click();
+  await sending;
+  await hours.fill('8');
+  release();
+  await expect(table.getByRole('button',{name:'Review changes',exact:true})).toBeEnabled();
+  await expect(table.getByRole('button',{name:'Review sent',exact:true})).toHaveCount(0);
+  await expect(hours).toHaveValue('8');
+  await expect(hours).toBeFocused();
+  await expect(table.locator('.interaction-note')).toHaveText('1 cell changed');
+  expect(host.commands.filter(command=>command.type==='action.submit').map(command=>command.payload.payload))
+   .toEqual([{changes:[{rowId:'design',columnId:'hours',value:7}]}]);
+ }finally{release();}
+});
+
+test('editable review rejection leaves the latest typed draft and an actionable error',async({page})=>{
+ await open(page,'EditableTable');
+ let release!:()=>void,started!:()=>void;
+ const held=new Promise<void>(resolve=>{release=resolve;});
+ const sending=new Promise<void>(resolve=>{started=resolve;});
+ let submitted:unknown;
+ await page.route('**/api/commands',async route=>{
+  const command=route.request().postDataJSON();
+  if(command.type!=='action.submit')return route.fallback();
+  submitted=command.payload.payload;
+  started();
+  await held;
+  return route.fulfill({status:409,json:{error:{code:'REVIEW_REJECTED',message:'The review could not be sent. Try again.'}}});
+ });
+ try{
+  await page.goto('/');
+  const table=page.locator('.editable-table'),hours=table.getByRole('spinbutton',{name:'Design · Hours'});
+  await hours.fill('7');
+  await table.getByRole('button',{name:'Review changes',exact:true}).click();
+  await sending;
+  await hours.fill('8');
+  release();
+  await expect(table.getByRole('status').filter({hasText:'The review could not be sent. Try again.'})).toBeVisible();
+  await expect(table.getByRole('button',{name:'Review changes',exact:true})).toBeEnabled();
+  await expect(table.getByRole('button',{name:'Review sent',exact:true})).toHaveCount(0);
+  await expect(hours).toHaveValue('8');
+  await expect(hours).toBeFocused();
+  expect(submitted).toEqual({changes:[{rowId:'design',columnId:'hours',value:7}]});
+ }finally{release();}
+});

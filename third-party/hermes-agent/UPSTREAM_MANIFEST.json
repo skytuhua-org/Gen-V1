@@ -2023,6 +2023,12 @@
       "sha256": "fbde82a441d4ed6d9183f8c6bfd0ab21760d7501897c691f30ee2789ef42f0eb"
     },
     {
+      "path": "gateway/session_ingress_media.py",
+      "gitBlob": "8f41ecbfb1f3c0d92db49bc5f71276235f4dbb36",
+      "bytes": 29931,
+      "sha256": "860e3cf09dcbc7732430778037d0ad6ad68ec0ca6eabb88f1b67f483f08653e2"
+    },
+    {
       "path": "gateway/session_lifecycle.py",
       "gitBlob": "4ff81302c4fa68ff70f62b21a30032c8f7698cec",
       "bytes": 15084,
@@ -3181,6 +3187,18 @@
       "sha256": "359a03844bab07242c47748e9771fcc5d16a5144d4d099aeff483dc6f0efd1d2"
     },
     {
+      "path": "hermes_state_local_lineage.py",
+      "gitBlob": "93fc303d2162093e70f5935647d19e20384e5029",
+      "bytes": 10357,
+      "sha256": "6e644e387f18a54ef1fd3e63dedbc5523ccddc00faab0c7de0f2432f1dce4bd3"
+    },
+    {
+      "path": "hermes_state_local_migration.py",
+      "gitBlob": "d779abab2ba1fe1fcbb5d95b07fa74893113b120",
+      "bytes": 5627,
+      "sha256": "a451fa9394892854fa4cc6bd3ddded2dccd972052ff9f537162e2dbe7ac87c9b"
+    },
+    {
       "path": "hermes_state_lockguard.py",
       "gitBlob": "2543091ac7f8e36d279074b0996db02a1cedfee4",
       "bytes": 9186,
@@ -3199,10 +3217,70 @@
       "sha256": "08dba84311c3a79c05a2e25f0916969aa2fdc8d21fca0726faa82e8f3815eba8"
     },
     {
+      "path": "hermes_state_media.py",
+      "gitBlob": "097e7e29412623027ca2091834d695895bf5eb20",
+      "bytes": 3673,
+      "sha256": "6c85a33a90bedf9c9769370ce48346459ed32b6ec0d3cd6ddc17535d952c6c5d"
+    },
+    {
       "path": "hermes_state_messages.py",
       "gitBlob": "ef725c17ac154ec1c51c890a8c554c6ec420825f",
       "bytes": 132247,
       "sha256": "b81c7d272f768a548daa91642bf8283dfad2f592528fbe95c029038a13e7f574"
+    },
+    {
+      "path": "hermes_state_mutation_binding.py",
+      "gitBlob": "ab41538290c843d358fc029c0a30b6372244976d",
+      "bytes": 6393,
+      "sha256": "f0fdb8fee8f67098be7070bbc1157b75c33cb5bd4ac5e6f5d07b780f5d9118b5"
+    },
+    {
+      "path": "hermes_state_mutation_branch.py",
+      "gitBlob": "52e5acc3bc5ff3a6c3687e34bf0ec5f17d826d15",
+      "bytes": 6641,
+      "sha256": "1d15d81f71a5235548f80ee270d7caa6b730e171680c8b08e53e81a85316e95b"
+    },
+    {
+      "path": "hermes_state_mutation_compress.py",
+      "gitBlob": "fd5044fcf0c5810f5fb2910d5dd7e226b6b0d269",
+      "bytes": 1663,
+      "sha256": "a5c0f0f744479846426dea8863a93ad6a81e46d373360ed4a6f1441b11a7038e"
+    },
+    {
+      "path": "hermes_state_mutation_guards.py",
+      "gitBlob": "46ed9bdceb66495449ade1b0ce273bb36fb955db",
+      "bytes": 7374,
+      "sha256": "a3fef3337acecb3298d3c87b01b95d49067a82abcbf5724267fc4aa087dd98e1"
+    },
+    {
+      "path": "hermes_state_mutation_prepared.py",
+      "gitBlob": "5638ed213f7c00d53da282c34800dca84ac5fcdc",
+      "bytes": 9741,
+      "sha256": "f7edc4c773a8d1e9c4bd8115d5d9f867b0de62f9596b5e1a927b3547b9b8524c"
+    },
+    {
+      "path": "hermes_state_mutation_reset.py",
+      "gitBlob": "8ba3ed1e32b08094b514e1f343dbd781d224e7a8",
+      "bytes": 2484,
+      "sha256": "8cb6435c6a0b5514e40952afd5e80b3bdd445eb309cc38957068a561cfb1b2df"
+    },
+    {
+      "path": "hermes_state_mutation_retirement.py",
+      "gitBlob": "0e3afdb7d3fa450963e86e8fb3bb20edca2a47d0",
+      "bytes": 25909,
+      "sha256": "bee966ed661abdadf4dec5556e371a17fb06c1ceef58ad51f0e62b847ac0fe73"
+    },
+    {
+      "path": "hermes_state_mutation_transcript.py",
+      "gitBlob": "b8187430fdfac586cba07aac99cc9cc24714e2d0",
+      "bytes": 2492,
+      "sha256": "696a86b072f0b544d3e87b5efcd88622d02497af4707d074b9d01f88c558ca94"
+    },
+    {
+      "path": "hermes_state_mutations.py",
+      "gitBlob": "c809fca4a43b8e6f5187a472b40b602cdadb5dbe",
+      "bytes": 13906,
+      "sha256": "86461c9d7222bc5eb7ecbca605d31738284592921ab27897a4caa5abe0761719"
     },
     {
       "path": "hermes_state_pidns.py",
@@ -3265,6 +3343,12 @@
       "sha256": "6bbcc688799d3ea784545b5227d20e07f8b5ce8f26fcf545825bc8a60462ee3f"
     },
     {
+      "path": "hermes_state_runtime_workers.py",
+      "gitBlob": "7519ad68575b984fd6b88ee53169e0b558c0024f",
+      "bytes": 6105,
+      "sha256": "0d239027f7ff99f50784772f3af4f94219dcb023bcec9f2944efc99c88e73444"
+    },
+    {
       "path": "hermes_state_schema.py",
       "gitBlob": "c83e6b21566121ec5c39f1a2893a6d7921aa036c",
       "bytes": 83019,
@@ -3277,16 +3361,34 @@
       "sha256": "8e0a17486543e2b100bc93cddc6138c58e9b21f1fe0ec8a3b602aa5fe2494c05"
     },
     {
+      "path": "hermes_state_session_list.py",
+      "gitBlob": "9de0868789569d65d14ab87044a41fbaaace7114",
+      "bytes": 2417,
+      "sha256": "15cfe05f48284a4c3ec04d43631246cabd08da55d0bf5a051b6f02d02fd53020"
+    },
+    {
       "path": "hermes_state_sessions.py",
       "gitBlob": "f3fc4c2854367bc1a61786406090b71bdccf28f6",
       "bytes": 108865,
       "sha256": "85a4abc342fd0711cd750750d2cbc948f85804af1c433dccc8d2454b1e77c18d"
     },
     {
+      "path": "hermes_state_sessions_model_config.py",
+      "gitBlob": "6e92a60bee75e3767fb91de10623b24e959b1aea",
+      "bytes": 2040,
+      "sha256": "afd1cbe40c497dc652b536b0a189b23efdc1f060a97c6c0a4d695f49d3979afa"
+    },
+    {
       "path": "hermes_state_telegram.py",
       "gitBlob": "3c91be2276060796ce266808318837f018b7db68",
       "bytes": 19121,
       "sha256": "b04380ef2b87dca669522b871a235f41ceb5697d61f7922cc5628147706949a1"
+    },
+    {
+      "path": "hermes_state_terminal.py",
+      "gitBlob": "20c2b3daeb79ad2ca150e98e8ac914f4fa42484f",
+      "bytes": 9416,
+      "sha256": "371ab5dc76d9e6cdc42ec184d36630eda254c1c97877e558e577020333229162"
     },
     {
       "path": "hermes_state_titles.py",
@@ -3307,10 +3409,34 @@
       "sha256": "aaa063c16a031eec78e14b92dd2d2a2b040a722894afa338436737b12b90ced4"
     },
     {
+      "path": "hermes_state_user_copy.py",
+      "gitBlob": "c2314bcc9cd0d57a6c59260edb7003badb5d3b69",
+      "bytes": 5000,
+      "sha256": "59f2fa4f7b48154d95006d045efc5db22aad1e7cb20b76ad54ad781586b24855"
+    },
+    {
       "path": "hermes_state_wal.py",
       "gitBlob": "2d04546bfcfba01c2db09d99d9721434c2af07b7",
       "bytes": 39499,
       "sha256": "5fb152d748a373995093e253b10af3ab662f7331202ebd99d2897340d14b0e61"
+    },
+    {
+      "path": "hermes_state_worker_compression.py",
+      "gitBlob": "46a0a142239f6f8af1cbd0648b860f8d4738c40d",
+      "bytes": 25632,
+      "sha256": "2f366b30203dec46a2556f949dc1528817c4448d536c4cd6b8435204d239cc63"
+    },
+    {
+      "path": "hermes_state_worker_context.py",
+      "gitBlob": "e59b9dd2233d5931f91690823dfc84a5185630e6",
+      "bytes": 4781,
+      "sha256": "a1a9559d400a6c88c239c59a4484fcb3724b0caeac5a17a6c5856c3b367ee73a"
+    },
+    {
+      "path": "hermes_state_worker_lifecycle.py",
+      "gitBlob": "a1fa46fdbfe4430b50dc66b78a52590854edd3a8",
+      "bytes": 14854,
+      "sha256": "06a88b97b23f4e565acacabe37b5acee7213d26c49a5e463bddb2f317db4d0be"
     },
     {
       "path": "hermes_time.py",

@@ -17,7 +17,7 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
   const [messages, setMessages] = useState<AgentMessageRow[]>([]);
   const [plan, setPlan] = useState<PlanProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [output, setOutput] = useState<{workId: string; output: unknown} | null>(null);
+  const [output, setOutput] = useState<Awaited<ReturnType<typeof getAgentWorkOutput>> | null>(null);
   const [drafts, setDrafts] = useState<Record<string, {text: string}>>({});
   const [pendingInputs, setPendingInputs] = useState<ReadonlySet<string>>(() => new Set());
   const [post, setPost] = useState({recipientThreadId: '', topic: '', text: ''});
@@ -87,20 +87,33 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
       .catch(e => setError(e instanceof Error ? e.message : 'Post failed'))
       .finally(() => setPosting(false));
   };
+  const stateLabel = (work: AgentWorkRow) => {
+    if (work.verification === 'VERIFIED') return 'verified — host evidence accepted';
+    if (work.verification === 'REPORTED_BLOCKED') return 'reported blocked — not verified';
+    if (work.verification === 'REPORTED_INCOMPLETE') return 'reported incomplete — not verified';
+    if (work.verification === 'REPORTED_UNVERIFIED') return 'reported complete — not verified';
+    return work.state.replaceAll('_', ' ');
+  };
+  const evidenceLabel = (work: AgentWorkRow) => {
+    if (work.outputStatus === 'missing') return 'reported output missing';
+    if (work.outputStatus === 'changed') return 'reported output changed';
+    return work.evidence.refs ? `${work.evidence.stale}/${work.evidence.refs} refs stale` : 'no evidence yet';
+  };
   return <section className="agents-work" aria-label="Agent work">
     <button type="button" className="agents-disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>Agent work · {list.works.length}</button>
     {open && <div className="agents-work-body">
       <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ' (unavailable)'}`).join(', ')} · budget reserved {list.budget.reservedTokens}tok</div>
       {progress && <div className="agents-work-progress">
         <progress aria-label="Task progress" aria-valuetext={progressLabel} max={progress.total || 1} value={progress.completed}/><span>{progressLabel}</span>
+        <PlanTree plan={plan!}/>
       </div>}
       {list.works.map(work => <article key={work.workId} className="agents-work-row" data-state={work.state}>
         <header>
           <strong>{work.role}</strong>
           <span className="agents-work-meta" title={work.owner.threadId}>owner {work.owner.threadId.slice(0, 8)}</span>
           {work.worktree && <span className="agents-work-meta" title={work.worktree}>{work.worktree.split(/[\\/]/).pop()}</span>}
-          <span className="agents-work-state" data-state={work.state}>{work.state.replaceAll('_', ' ')}{work.blockedReason ? ` — ${work.blockedReason}` : ''}</span>
-          <span className="agents-work-meta">{work.budget.tokens !== null ? `${work.budget.tokens}tok ` : ''}{work.evidence.refs ? `${work.evidence.stale}/${work.evidence.refs} refs stale` : 'no evidence yet'}</span>
+          <span className="agents-work-state" data-state={work.state} data-verification={work.verification}>{stateLabel(work)}{work.blockedReason ? ` — ${work.blockedReason}` : ''}</span>
+          <span className="agents-work-meta">{work.budget.tokens !== null ? `${work.budget.tokens}tok ` : ''}{evidenceLabel(work)}</span>
           <button type="button" className="agents-icon" aria-label={`Open evidence for ${work.workId}`} onClick={() => openEvidence(work.workId)}><Eye size={14}/></button>
           {(work.state === 'RUNNING' || work.state === 'QUEUED') && <button type="button" className="agents-icon" aria-label={`Stop ${work.workId}`} onClick={() => { void stopAgentWork(threadId, work.workId).then(refresh).catch(e => setError(e instanceof Error ? e.message : 'Stop failed')); }}><Square size={13}/></button>}
           {work.state === 'INTERRUPTED' && <button type="button" className="agents-icon" aria-label={`Resume ${work.workId}`} onClick={() => { void resumeAgentWork(threadId, work.workId).then(refresh).catch(e => setError(e instanceof Error ? e.message : 'Resume failed')); }}><Play size={13}/></button>}
@@ -118,7 +131,26 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
           {input.editable && <button type="button" className="agents-icon" aria-label="Cancel input" onClick={() => { void cancelAgentInput(threadId, input.targetOwner.threadId, input.inputId).then(refresh).catch(e => setError(e instanceof Error ? e.message : 'Cancel failed')); }}><Ban size={13}/></button>}
         </div>)}
       </div>}
-      {output && <pre className="agents-work-output" aria-label="Work output evidence"><button type="button" className="agents-disclosure" onClick={closeEvidence}>Close evidence</button>{JSON.stringify(output.output, null, 2).slice(0, 4000)}</pre>}
+      {output && <section className="agents-work-output" aria-label="Work output evidence">
+        <div className="agents-work-output-header"><strong>Evidence for {output.workId}</strong><button type="button" className="agents-disclosure" onClick={closeEvidence}>Close evidence</button></div>
+        <p className="agents-work-meta">
+          {output.verification === 'VERIFIED' ? 'Verified — host evidence accepted.' :
+            output.verification === 'REPORTED_BLOCKED' ? 'Reported blocked — not verified.' :
+            output.verification === 'REPORTED_INCOMPLETE' ? 'Reported incomplete — not verified.' :
+            output.verification === 'REPORTED_UNVERIFIED' ? 'Reported complete — not verified.' : 'No completed output reported.'}
+        </p>
+        {output.outputStatus !== 'current' && output.outputStatus !== 'none' && <p className="agents-error" role="alert">The durable reported output is {output.outputStatus}; raw output and evidence are unavailable rather than verified.</p>}
+        {output.evidence.length > 0 ? <ul aria-label="Evidence references" className="agents-work-evidence-list">
+          {output.evidence.map(item => <li key={`${item.id}:${item.revision}`} data-status={item.status}>
+            <strong>{item.id}</strong><span>{item.status.replaceAll('-', ' ')}</span>
+            <span className="agents-work-meta">claimed r{item.revision}{item.currentRevision === null ? ' · no durable revision' : ` · current r${item.currentRevision}`}</span>
+            {item.outcome && <span className="agents-work-meta">outcome {item.outcome}</span>}
+            {item.requirementIds.length > 0 && <span className="agents-work-meta">requirements {item.requirementIds.join(', ')}</span>}
+            <p className="agents-work-meta">{item.reason ?? 'Current trusted evidence reference. Verification remains a separate host decision.'}</p>
+          </li>)}
+        </ul> : <p className="agents-work-meta">No usable evidence references are attached to this report.</p>}
+        <pre>{JSON.stringify(output.output, null, 2).slice(0, 4000)}</pre>
+      </section>}
       {messages.length > 0 || list.works.length ? <details className="agents-work-board">
         <summary>Message board · {messages.length}</summary>
         {messages.map(message => <div key={message.messageId} className="agents-board-row">
@@ -137,4 +169,24 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
       {error && <p className="agents-error" role="alert">{error}</p>}
     </div>}
   </section>;
+}
+
+/** M09-U03: weighted task tree. Each node shows its allocated units and its
+ * verbatim reported status — absent from the report means unknown work, and a
+ * reported "completed" is not accepted verification. */
+function PlanTree({plan}: {plan: PlanProgress}) {
+  const weights = plan.weights ?? [];
+  const children = new Map<string, string[]>();
+  for (const rel of plan.parentRelationships ?? []) children.set(rel.parentId, [...(children.get(rel.parentId) ?? []), rel.childId]);
+  const childSet = new Set([...children.values()].flat());
+  const units = new Map(weights.map(weight => [weight.nodeId, weight.units]));
+  const roots = weights.map(weight => weight.nodeId).filter(id => !childSet.has(id));
+  const render = (nodeId: string, depth: number) => {
+    const status = plan.reportedStatuses?.[nodeId];
+    return <li key={nodeId}><span className="agents-work-meta" style={{paddingLeft: depth * 12}}>{nodeId} · {units.get(nodeId) ?? 0} units · {status ?? 'unreported'}{status === 'completed' ? ' (reported)' : ''}</span>
+      {(children.get(nodeId) ?? []).length > 0 && <ul>{children.get(nodeId)!.map(child => render(child, depth + 1))}</ul>}
+    </li>;
+  };
+  if (roots.length === 0) return null;
+  return <ul className="agents-plan-tree" aria-label="Task tree">{roots.map(root => render(root, 0))}</ul>;
 }

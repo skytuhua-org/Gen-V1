@@ -8,6 +8,11 @@ type Patch = NonNullable<Thread['presentation']>;
 export type SidebarLists = Record<SidebarSection, Thread[]>;
 export interface DropTarget { list: SidebarSection; index: number }
 export interface OrderWrite { id: string; order: number }
+type ReorderOutcome =
+  | { kind: 'moved'; item: Thread; direction: -1 | 1; position: number; total: number }
+  | { kind: 'boundary'; direction: -1 | 1 }
+  | { kind: 'grouping' | 'failed'; item: Thread }
+  | { kind: 'cancelled' };
 
 /** The section a row occupies after a presentation patch, mirroring the sidebar filters. */
 export function sectionOf(item: Thread, showWorking: boolean, patch: Patch = {}): SidebarSection {
@@ -108,12 +113,14 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
   ensureManualOrder?: () => Promise<boolean>;
   prepareMove: (id: string, order: number, viaPointer?: boolean) => void;
   toast: (message: string) => void;
+  onReorderOutcome: (outcome: ReorderOutcome) => void;
 }) {
   const [dragging, setDragging] = useState<Thread | null>(null);
   const [target, setTarget] = useState<{ target: DropTarget; top: number; valid: boolean } | null>(null);
   const state = useRef(options);
   state.current = options;
   const dragged = useRef<Thread | null>(null);
+  const cancelTouchDrag = useRef<(() => void) | undefined>(undefined);
 
   const itemOf = (id: string) => Object.values(state.current.lists()).flat().find(row => row.id === id);
   const clear = () => { dragged.current = null; setDragging(null); setTarget(null); };
@@ -122,15 +129,17 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
     const mine = writes.find(write => write.id === item.id)?.order ?? writes.at(-1)?.order ?? 0;
     state.current.prepareMove(item.id, mine, viaPointer);
     const ok = await state.current.presentation(item, { ...patch, order: mine });
-    if (!ok) return;
+    if (!ok) return false;
+    let complete = true;
     for (const write of writes) {
       if (write.id === item.id) continue;
       const other = itemOf(write.id);
-      if (other) await state.current.presentation(other, { order: write.order });
+      if (other && !await state.current.presentation(other, { order: write.order })) complete = false;
     }
     const switched = await state.current.ensureManualOrder?.();
     if (switched) state.current.toast('Sidebar order is now manual. Change it back in Settings.');
     else if (switched === false) state.current.toast('Order saved. Switch sidebar order to Manual in Settings to see it.');
+    return complete && switched !== false;
   };
 
   const resolve = (item: Thread, point: { x: number; y: number }) => {
@@ -161,14 +170,30 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
     const from = rows.findIndex(row => row.id === item.id);
     if (from < 0) return false;
     const to = from + delta;
-    if (to < 0 || to >= rows.length) return false;
+    if (to < 0 || to >= rows.length) {
+      state.current.onReorderOutcome({kind:'boundary',direction:delta});
+      return true;
+    }
     const without = rows.filter(row => row.id !== item.id);
     const index = withinGroup(section, without, item, to, state.current.groupKey, delta);
     // Grouping keeps runs contiguous, so a move it cannot render is refused rather than saved.
-    if (index === from) return false;
+    if (index === from) {
+      state.current.onReorderOutcome({kind:'grouping',item});
+      return true;
+    }
     const order = orderFor(without, index);
     const writes = order === null ? rebalance(rows, item, index) : [{ id: item.id, order }];
-    void commit(item, {}, writes, false);
+    const failed = () => { if (nav.current) state.current.onReorderOutcome({kind:'failed',item}); };
+    void commit(item, {}, writes, false).then(ok => {
+      if (!ok) { failed(); return; }
+      requestAnimationFrame(() => {
+        const list = nav.current?.querySelector<HTMLElement>(`[data-thread-list="${section}"]`);
+        if (!list) return;
+        const rendered = listRows(list, '');
+        const position = rendered.findIndex(row => row.id === item.id) + 1;
+        if (position) state.current.onReorderOutcome({kind:'moved',item,direction:delta,position,total:rendered.length});
+      });
+    }, failed);
     return true;
   };
 
@@ -219,6 +244,7 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
       setDragging(null);
       setTarget(null);
     };
+    cancelTouchDrag.current = cancel;
     const down = (event: PointerEvent) => {
       if (event.pointerType !== 'touch' || held) return;
       const node = row(event.target);
@@ -271,6 +297,7 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
     window.addEventListener('pointercancel', cancelled);
     return () => {
       cancel();
+      cancelTouchDrag.current = undefined;
       element.removeEventListener('pointerdown', down);
       window.removeEventListener('pointermove', moveTouch);
       window.removeEventListener('touchmove', pan);
@@ -282,7 +309,12 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
   /* Escape cancels an in-flight touch drag (HTML5 dragend covers the pointer path). */
   useEffect(() => {
     if (!dragging) return;
-    const key = (event: KeyboardEvent) => { if (matchesShortcut(event, chordFor('thread-drag-cancel'))) clear(); };
+    const key = (event: KeyboardEvent) => {
+      if (!dragged.current || !matchesShortcut(event, chordFor('thread-drag-cancel'))) return;
+      cancelTouchDrag.current?.();
+      clear();
+      state.current.onReorderOutcome({kind:'cancelled'});
+    };
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
   }, [dragging]);

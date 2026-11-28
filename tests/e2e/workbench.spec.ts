@@ -34,6 +34,28 @@ test('keyboard source selection supports backward and line boundaries without es
  await page.keyboard.press('Shift+End');await page.keyboard.press('Shift+ArrowDown');
  await expect.poll(()=>source.evaluate(el=>{const selection=getSelection()!;return el.contains(selection.anchorNode)&&el.contains(selection.focusNode);})).toBe(true);
 });
+test('keyboard source selection shows the focus hint, announces state, and marks the active range',async({page})=>{
+ await page.goto('/fixture');const source=page.locator('.source-selection-text').first(),toolbar=page.getByRole('toolbar',{name:'Selected source'}),hint=page.locator('.source-selection-hint'),status=page.locator('.source-selection').first().getByRole('status');
+ await expect(source).toHaveAttribute('aria-keyshortcuts','shift+ArrowRight control+a shift+f10');
+ const describedBy=await source.getAttribute('aria-describedby');expect(describedBy).toBeTruthy();
+ await expect(page.locator(`[id="${describedBy}"]`)).toHaveText('Selectable source. Use Shift plus arrow keys to select text, Control A to select all, Shift F10 for actions.');
+ await expect(hint).toHaveCount(1);await expect(hint).toBeHidden();
+ await source.focus();await expect(hint).toBeVisible();
+ await page.keyboard.press('Shift+ArrowRight');await expect(toolbar).toBeVisible();await expect(hint).toHaveCount(0);
+ await expect(source).toHaveAttribute('data-selection','active');
+ await expect(status).toHaveText(/^Selected “.+\. Press Shift F10 or Tab for actions\.$/);
+ await page.keyboard.press('Escape');await expect(toolbar).toHaveCount(0);await expect(status).toHaveText('Selection cleared.');
+ await page.keyboard.press('Shift+ArrowRight');await expect(toolbar).toBeVisible();await expect(source).toHaveAttribute('data-selection','active');
+ await toolbar.getByRole('button',{name:'Attach to prompt',exact:true}).click();await expect(status).toHaveText('Done.');
+});
+test('keyboard source selection extends by word with Control+Shift+Arrow',async({page})=>{
+ await page.goto('/fixture');const source=page.locator('.source-selection-text').first(),toolbar=page.getByRole('toolbar',{name:'Selected source'});
+ await source.focus();await page.keyboard.press('Control+Shift+ArrowRight');
+ await expect.poll(()=>page.evaluate(()=>getSelection()?.toString())).toMatch(/^Visible ?$/);
+ await expect(toolbar).toBeVisible();
+ await page.keyboard.press('Control+Shift+ArrowRight');
+ await expect.poll(()=>page.evaluate(()=>getSelection()?.toString())).toMatch(/^Visible selected ?$/);
+});
 test.describe('M15 selection action completion',()=>{
  for(const newerForeignSelection of [false,true])test(`M15 completed selection action ${newerForeignSelection?'preserves a newer foreign range':'clears its unchanged own range'}`,async({page})=>{
   await page.goto('/fixture?fixture=selection-held');await select(page);
@@ -366,4 +388,83 @@ test('M15 measures paired controlled renderer latency with 100,000 retained line
   expect(measurements.windowed.p95Ms).toBeLessThan(100);
   expect(Object.values(measurements).flatMap(item=>item.samples).every(sample=>sample.trusted)).toBe(true);
 });
+});
+test.describe('SRC01 presentation invalidation',()=>{
+ const mutableSelect=(page:Page,start=0,end=7)=>page.locator('#mutable-text').evaluate((element,{start,end})=>{
+  const walk=(node:Node):Text[]=>{const out:Text[]=[];if(node.nodeType===Node.TEXT_NODE)out.push(node as Text);else for(const child of node.childNodes)if(!(child instanceof Element&&child.hasAttribute('data-source-selection-ui')))out.push(...walk(child));return out;};
+  const nodes=walk(element);let offset=0,range=document.createRange(),started=false;
+  for(const node of nodes){
+   const next=offset+node.data.length;
+   if(!started&&start<next){range.setStart(node,start-offset);started=true;}
+   if(started&&end<=next){range.setEnd(node,end-offset);break;}
+   offset=next;
+  }
+  const selection=window.getSelection()!;selection.removeAllRanges();selection.addRange(range);
+  element.dispatchEvent(new MouseEvent('pointerup',{bubbles:true}));document.dispatchEvent(new Event('selectionchange'));
+ },{start,end});
+ // Programmatic clicks: a pointer click on fixture controls would move focus
+ // outside the source, which correctly suppresses a candidate.
+ const press=(page:Page,selector:string)=>page.locator(selector).evaluate((element:HTMLButtonElement)=>element.click());
+ test('same-text DOM replacement invalidates the candidate yet stays selectable',async({page})=>{
+  await page.goto('/fixture?fixture=selection-mutable');
+  const toolbar=page.getByRole('toolbar',{name:'Selected source',exact:true});
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  await press(page,'[data-shape-split]');
+  await expect(toolbar).toHaveCount(0);
+  // Canonical equality survives the replacement: re-selection works.
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  await toolbar.getByRole('button',{name:'Attach to prompt',exact:true}).click();
+  await expect(page.locator('[data-mutable-action]')).toHaveText('attach:Mutable');
+ });
+ test('a transformed marker exposes canonical access and removing it restores selection',async({page})=>{
+  await page.goto('/fixture?fixture=selection-mutable');
+  await press(page,'[data-shape-transformed]');
+  await expect(page.getByRole('button',{name:'Select canonical source',exact:true})).toBeVisible();
+  await expect(page.locator('.source-selection-hint')).toHaveCount(0);
+  await press(page,'[data-shape-plain]');
+  await mutableSelect(page);
+  await expect(page.getByRole('toolbar',{name:'Selected source',exact:true})).toBeVisible();
+ });
+ test('a same-turn DOM replacement cannot dispatch the stale candidate',async({page})=>{
+  await page.goto('/fixture?fixture=selection-mutable');
+  const toolbar=page.getByRole('toolbar',{name:'Selected source',exact:true});
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  // Replace the authored bytes and click the action in one synchronous turn,
+  // ahead of any observer microtask delivery.
+  await page.evaluate(()=>{
+   for(const node of document.querySelectorAll('#mutable-text'))node.textContent='Replaced bytes';
+   document.querySelector<HTMLButtonElement>('.source-selection-toolbar button')?.click();
+  });
+  await page.waitForTimeout(300);
+  await expect(page.locator('[data-mutable-action]')).toHaveText('');
+ });
+ test('app-owned source UI captions never contaminate authored equality',async({page})=>{
+  await page.goto('/fixture?fixture=selection-mutable');
+  await press(page,'[data-add-ui]');
+  const toolbar=page.getByRole('toolbar',{name:'Selected source',exact:true});
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  await press(page,'[data-mutate-caption]');
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  await toolbar.getByRole('button',{name:'Attach to prompt',exact:true}).click();
+  await expect(page.locator('[data-mutable-action]')).toHaveText('attach:Mutable');
+ });
+ test('a late settlement cannot clear a newer candidate after DOM replacement',async({page})=>{
+  await page.goto('/fixture?fixture=selection-mutable');
+  const toolbar=page.getByRole('toolbar',{name:'Selected source',exact:true});
+  await press(page,'[data-hold-action]');
+  await mutableSelect(page);await expect(toolbar).toBeVisible();
+  await toolbar.getByRole('button',{name:'Attach to prompt',exact:true}).click();
+  // Replace the DOM while the action is held, then re-select in the new DOM.
+  await press(page,'[data-shape-split]');
+  await mutableSelect(page);
+  await press(page,'[data-release-action]');
+  // The late completion is fenced by the revision: the action outcome is
+  // still recorded, but no newer selection state is cleared by it.
+  await expect(page.locator('[data-mutable-action]')).toHaveText('attach:Mutable');
+  const next=toolbar.getByRole('button',{name:'Ask about this',exact:true});
+  await expect(next).toBeEnabled();
+  await press(page,'[data-hold-action]');
+  await next.click();
+  await expect(page.locator('[data-mutable-action]')).toHaveText('ask:Mutable');
+ });
 });

@@ -14,6 +14,7 @@ import { useDocumentEvidence, type DocumentEvidence, type DocumentHandoffState }
 import './document-preview.css';
 import { ArtifactInline } from './task-context';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
+import {toast} from '../../../packages/ui-shell/Toast';
 
 const MAX_BYTES = 20 * 1024 * 1024, MAX_PAGES = 200, MAX_PIXELS = 8_000_000;
 const TASK_TIMEOUT = 15_000;
@@ -121,6 +122,7 @@ export function DocumentPreview(props: DocumentPreviewProps) {
   const [source, setSource] = useState<Uint8Array | null>(null), [frame, setFrame] = useState<Frame | null>(null);
   const [frameVisible, setFrameVisible] = useState(false);
   const [error, setError] = useState(''), [activity, setActivity] = useState('Loading PDF…'), [retry, setRetry] = useState(0);
+  const retryCount = useRef(0), toastedRetry = useRef(0);
   const [currentPage, setCurrentPage] = useState(props.page ?? 1), [zoom, setZoom] = useState(1), [focusField, setFocusField] = useState(props.fit !== 'page'), [width, setWidth] = useState(300), [height, setHeight] = useState(260), [signatureUrl, setSignatureUrl] = useState('');
   const displayedZoom = inline ? Math.min(zoom, 1) : zoom;
   const scroll = useRef<HTMLDivElement>(null), canvas = useRef<HTMLCanvasElement>(null), generation = useRef(0), committedDocument = useRef<Loaded | null>(null), sourceOrigins = useRef(new WeakMap<Uint8Array, string>()), identity = useRef(sourceUrl);
@@ -148,6 +150,7 @@ export function DocumentPreview(props: DocumentPreviewProps) {
   };
   const failPreview = (cause: unknown) => {
     setError(message(cause)); setActivity('');
+    if (retryCount.current > toastedRetry.current) { toastedRetry.current = retryCount.current; toast('Preview still unavailable'); }
     if (props.exportOperationId) { clearCommitted(); notifyHandoff(props.exportOperationId, 'error'); }
   };
   const operation = evidence?.operations.find(item => item.id === props.exportOperationId);
@@ -221,7 +224,7 @@ export function DocumentPreview(props: DocumentPreviewProps) {
       const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes.slice().buffer)), value => value.toString(16).padStart(2, '0')).join('');
       if (exportEvidence && hash !== exportEvidence.outputSha256) throw new Error('The saved PDF differs from the approved export. Open the source or retry.');
       if (alive) { sourceOrigins.current.set(bytes, sourceUrl); sourceHashes.current.set(bytes, hash); setSource(bytes); }
-    }).catch(cause => { if (alive) { clearFrame(); setError(message(cause)); setActivity(''); if (props.exportOperationId) notifyHandoff(props.exportOperationId, 'error'); } }).finally(() => clearTimeout(timer));
+    }).catch(cause => { if (alive) { clearFrame(); failPreview(cause); if (props.exportOperationId) notifyHandoff(props.exportOperationId, 'error'); } }).finally(() => clearTimeout(timer));
     return () => { alive = false; clearTimeout(timer); controller.abort(); };
   }, [sourceUrl, retry, props.exportOperationId, evidenceKey, grantKey]);
   useEffect(() => () => { generation.current++; if (committedDocument.current) destroy(committedDocument.current.loading); committedDocument.current = null; }, []);
@@ -336,17 +339,17 @@ export function DocumentPreview(props: DocumentPreviewProps) {
   const title = props.title || 'PDF document', busy = Boolean(activity), changedSignature = Boolean(frame && props.signatureBox?.page === frame.page && (pendingSignature || signatureValid && frame.signatureJson !== signatureJson));
   const changePage = (next: number) => { setFocusField(false); setCurrentPage(next); };
   const overlay = (rect: Rectangle) => ({ left: `${rect.left / Math.max(1, (frame?.width ?? 1) * factor) * 100}%`, top: `${rect.top / Math.max(1, (frame?.height ?? 1) * factor) * 100}%`, width: `${rect.width / Math.max(1, (frame?.width ?? 1) * factor) * 100}%`, height: `${rect.height / Math.max(1, (frame?.height ?? 1) * factor) * 100}%` });
-  return <section className="document-preview" aria-label={title} aria-busy={busy} data-fit={displayedFit} data-export-handoff={handoffState ?? undefined} data-preview-state={activity.includes('paused') ? 'suspended' : busy ? 'updating' : error ? 'error' : 'ready'}>
-    <div className="document-preview-toolbar"><span className="document-preview-title" title={title}>{title}</span><div className="document-preview-tools">
+  return <section className="document-preview" aria-label={title} aria-busy={busy} data-fit={displayedFit} data-export-handoff={handoffState ?? undefined} data-preview-state={activity.includes('paused') ? 'suspended' : busy ? 'updating' : error ? 'error' : 'ready'} data-failure={error && !frame ? 'compact' : undefined}>
+    <div className="document-preview-toolbar"><span className="document-preview-title" title={title}>{title}</span>{frame && <div className="document-preview-tools">
       {activeName && <button type="button" aria-label="Focus active PDF field" title="Focus active field" aria-pressed={focusField} onClick={() => setFocusField(value => !value)}><Focus size={14} /></button>}
       <button type="button" className="document-preview-fit-page" aria-label="Fit PDF page" aria-pressed={displayedFit === 'page'} disabled={!frame} onClick={() => { setFocusField(false); setZoom(1); }}>Fit page</button>
       <button type="button" aria-label="Zoom out PDF" title="Zoom out" disabled={displayedZoom <= .5 || !frame} onClick={() => setZoom(Math.max(.5, displayedZoom - .25))}><Minus size={14} /></button><button type="button" aria-label="Zoom in PDF" title={inline ? 'Expand the preview for closer zoom' : 'Zoom in'} disabled={displayedZoom >= (inline ? 1 : 3) || !frame} onClick={() => setZoom(Math.min(inline ? 1 : 3, displayedZoom + .25))}><Plus size={14} /></button>
       {sourceUrl && <><a href={sourceUrl} target="_blank" rel="noopener noreferrer" aria-label="Open source PDF" title="Open source PDF"><ExternalLink size={14} /></a><a href={sourceUrl} download aria-label="Download source PDF" title="Download source PDF"><Download size={14} /></a></>}
-    </div></div>
+    </div>}</div>
     <div className="document-preview-scroll" ref={scroll} tabIndex={0} role="region" aria-label="Document viewport" hidden={!frame && Boolean(error)}><div className="document-preview-page" style={{ width: frame ? frame.width * factor : 1, height: frame ? frame.height * factor : 1, transition: frameVisible ? undefined : 'none' }}><canvas ref={canvas} role="img" aria-label={`${title}, page ${frame?.page ?? currentPage}. Form values and visual marks are a draft preview.`} />{geometry.highlight && <span key={`${frame?.page}:${activeName}`} className="document-active-field" aria-hidden="true" style={overlay(geometry.highlight)} />}
       {changedSignature && geometry.signature && <svg className="document-signature-overlay" style={overlay(geometry.signature)} viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"><rect width="1000" height="1000" fill="white" />{pendingSignature || mark?.kind === 'image' ? <image href={pendingSignature || signatureUrl} width="1000" height="1000" preserveAspectRatio="none" /> : mark?.kind === 'drawn' ? signatureStrokes(mark).map((stroke, index) => <polyline key={index} points={stroke.map(point => `${point.x * 1000},${point.y * 1000}`).join(' ')} fill="none" stroke="#191b33" strokeWidth={1.5 * geometry.signature!.width / props.signatureBox!.width} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />) : mark?.kind === 'typed' ? <text x="0" y="650" fontFamily="Helvetica,Arial,sans-serif" fontStyle="italic" fontSize="400" fill="#191b33" textLength="980" lengthAdjust="spacingAndGlyphs">{mark.text}</text> : null}</svg>}
     </div></div>
-    {error && <ErrorState className={`document-preview-failure ${frame ? 'has-frame' : ''}`} message={error} retryLabel="Retry preview" onRetry={() => setRetry(value => value + 1)}>{sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener noreferrer">Open source PDF</a>}</ErrorState>}
-    <div className="document-preview-footer"><p role="status" aria-live="polite">{frame?.status ?? (error ? 'Preview unavailable' : activity)}</p>{frame && busy && <span className="document-preview-activity">{activity}</span>}<div className="document-preview-paging" role="group" aria-label="PDF pages"><button type="button" aria-label="Previous PDF page" disabled={!frame || frame.page <= 1} onClick={() => changePage((frame?.page ?? 1) - 1)}><ChevronLeft size={14} /></button><button type="button" aria-label="Next PDF page" disabled={!frame || frame.page >= frame.pages} onClick={() => changePage((frame?.page ?? 1) + 1)}><ChevronRight size={14} /></button></div></div>
+    {error && <ErrorState className={`document-preview-failure ${frame ? 'has-frame' : ''}`} title={frame ? undefined : 'Preview unavailable'} message={error} busy={busy} retryLabel={busy ? 'Retrying…' : 'Retry preview'} onRetry={() => { retryCount.current += 1; setRetry(value => value + 1); }}>{sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener noreferrer">Open source PDF</a>}</ErrorState>}
+    {(frame || !error) && <div className="document-preview-footer"><p role="status" aria-live="polite">{frame?.status ?? (error ? 'Preview unavailable' : activity)}</p>{frame && busy && <span className="document-preview-activity">{activity}</span>}{frame && <div className="document-preview-paging" role="group" aria-label="PDF pages"><button type="button" aria-label="Previous PDF page" disabled={frame.page <= 1} onClick={() => changePage(frame.page - 1)}><ChevronLeft size={14} /></button><button type="button" aria-label="Next PDF page" disabled={frame.page >= frame.pages} onClick={() => changePage(frame.page + 1)}><ChevronRight size={14} /></button></div>}</div>}
   </section>;
 }
