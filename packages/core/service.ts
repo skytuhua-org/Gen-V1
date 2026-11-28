@@ -1034,6 +1034,9 @@ export class Service {
     // workId, messageId) dedupe a retried op itself.
     const run = async (): Promise<unknown> => {
       switch (command.type) {
+        case 'agentWork.admit':
+          if (p.commandId !== command.id) throw new HarnessError('INVALID_INPUT', 'Admission commandId must match the admitted command');
+          return this.agentWork.admit(ctx, p, new AbortController().signal);
         case 'agentWork.input':
           return this.agentWork.sendInput(ctx, {
             inputId: text(p, 'inputId', 160), workId: text(p, 'workId', 160),

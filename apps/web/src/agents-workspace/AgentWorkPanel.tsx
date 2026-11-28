@@ -1,9 +1,10 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {Ban, Eye, Play, Square} from 'lucide-react';
 import {Select} from '../../../../packages/ui-shell/Select';
+import {Modal} from '../../../../packages/ui-shell/Modal';
 import {
   getAgentWork, getAgentWorkInputs, getAgentWorkMessages, getAgentWorkOutput, getAgentWorkPlan,
-  sendAgentInput, stopAgentWork, resumeAgentWork, cancelAgentInput, postAgentMessage,
+  createAgentWork, sendAgentInput, stopAgentWork, resumeAgentWork, cancelAgentInput, postAgentMessage,
   type AgentWorkList, type AgentInputRow, type AgentMessageRow, type PlanProgress, type AgentWorkRow,
 } from '../agent-work-api.ts';
 
@@ -23,6 +24,11 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
   const [post, setPost] = useState({recipientThreadId: '', topic: '', text: ''});
   const [posting, setPosting] = useState(false);
   const [open, setOpen] = useState(false);
+  const [create, setCreate] = useState({role: 'PLAN_READ' as AgentWorkRow['role'], prompt: '', tokens: '', minutes: ''});
+  const [createIds, setCreateIds] = useState<{commandId: string; workId: string; childThreadId: string} | null>(null);
+  const [selectedGrants, setSelectedGrants] = useState<ReadonlySet<string>>(() => new Set());
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const busy = useRef(false);
   const evidenceRequest = useRef(0);
   const refresh = useCallback(async () => {
@@ -40,8 +46,6 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
     finally { busy.current = false; }
   }, [threadId]);
   useEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 4000); return () => clearInterval(timer); }, [refresh]);
-  if (error && !list) return null;
-  if (!list || list.works.length === 0) return null;
   const progress = plan?.extension ? plan.progress : undefined;
   const progressLabel = progress ? `${progress.total ? Math.round(progress.completed / progress.total * 100) : 0}% known complete · ${progress.total ? Math.round(progress.unknown / progress.total * 100) : 0}% unknown` : undefined;
 
@@ -75,6 +79,33 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
         return next;
       }));
   };
+  const submitCreate = () => {
+    if (!list || creating) return;
+    const prompt = create.prompt.trim();
+    const tokens = create.tokens.trim() ? Number(create.tokens) : null;
+    const ms = create.minutes.trim() ? Number(create.minutes) * 60_000 : null;
+    const validTokens = tokens === null || Number.isInteger(tokens) && tokens > 0;
+    const validMs = ms === null || Number.isInteger(ms) && ms > 0;
+    if (!prompt || !validTokens || !validMs || tokens === null && ms === null) {
+      setCreateError('Enter a prompt and at least one positive whole token budget or positive minute budget.');
+      return;
+    }
+    setCreateError(null);
+    const ids = createIds ?? {commandId: crypto.randomUUID(), workId: crypto.randomUUID(), childThreadId: crypto.randomUUID()};
+    setCreateIds(ids);
+    setCreating(true);
+    void createAgentWork(threadId, {
+      role: create.role, prompt, grantSubset: list.resources.filter(grant => selectedGrants.has(grant.id)).map(grant => grant.id),
+      budget: {tokens, ms}, workId: ids.workId, childThreadId: ids.childThreadId,
+    }, ids.commandId)
+      .then(() => {
+        setCreate(current => current.prompt === prompt ? {...current, prompt: ''} : current);
+        setCreateIds(null);
+        return refresh();
+      })
+      .catch(e => setCreateError(e instanceof Error ? e.message : 'Create failed'))
+      .finally(() => setCreating(false));
+  };
   const submitPost = () => {
     if (posting || !post.recipientThreadId || !post.topic || !post.text) return;
     const submitted = post;
@@ -99,15 +130,40 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
     if (work.outputStatus === 'changed') return 'reported output changed';
     return work.evidence.refs ? `${work.evidence.stale}/${work.evidence.refs} refs stale` : 'no evidence yet';
   };
-  return <section className="agents-work" aria-label="Agent work">
-    <button type="button" className="agents-disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>Agent work · {list.works.length}</button>
-    {open && <div className="agents-work-body">
-      <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ' (unavailable)'}`).join(', ')} · budget reserved {list.budget.reservedTokens}tok</div>
+  return <div className="agents-work" role="group" aria-label="Agent work">
+    <button type="button" className="agents-disclosure" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>Agent work · {list ? list.works.length : '…'}</button>
+    <Modal open={open} title={`Agent work · ${list ? list.works.length : '…'}`} onClose={() => setOpen(false)} className="agents-work-modal">
+    <div className="agents-work-body">
+      {!list && !error && <p className="agents-work-meta">Loading agent work…</p>}
+      {list && <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ` (unavailable${r.reason ? `: ${r.reason}` : ''})`}`).join(', ')} · budget reserved {list.budget.reservedTokens}tok</div>}
       {progress && <div className="agents-work-progress">
         <progress aria-label="Task progress" aria-valuetext={progressLabel} max={progress.total || 1} value={progress.completed}/><span>{progressLabel}</span>
         <PlanTree plan={plan!}/>
       </div>}
-      {list.works.map(work => <article key={work.workId} className="agents-work-row" data-state={work.state}>
+      {list && list.works.length === 0 && <p className="agents-empty">No admitted agent work yet.</p>}
+      {list && <details className="agents-work-create">
+        <summary>Admit agent work</summary>
+        <div className="agents-work-create-fields">
+          <label className="agents-work-field"><span>Role</span><Select aria-label="New work role" value={create.role} onValueChange={value => setCreate(current => ({...current, role: value as AgentWorkRow['role']}))}
+            options={(['PLAN_READ', 'RESEARCH_READ', 'CODE_WORKTREE', 'QA'] as const).filter(role => list.roles[role]?.available).map(role => ({value: role, label: role}))}/></label>
+          <div className="agents-work-budgets">
+            <label className="agents-work-field"><span>Token budget</span><input placeholder="Tokens" inputMode="numeric" value={create.tokens} onChange={e => setCreate(current => ({...current, tokens: e.target.value}))}/></label>
+            <label className="agents-work-field"><span>Minute budget</span><input placeholder="Minutes" inputMode="numeric" value={create.minutes} onChange={e => setCreate(current => ({...current, minutes: e.target.value}))}/></label>
+          </div>
+        </div>
+        <label className="agents-work-field"><span>Prompt</span><textarea placeholder="Task for the child…" rows={4} value={create.prompt} onChange={e => setCreate(current => ({...current, prompt: e.target.value}))}/></label>
+        {list.resources.length > 0 && <div className="agents-work-grants" aria-label="Resource access">
+          {list.resources.map(grant => <label key={grant.id} className="agents-work-meta"><input type="checkbox" checked={selectedGrants.has(grant.id)} onChange={event => setSelectedGrants(current => {
+            const next = new Set(current);
+            if (event.target.checked) { if (next.size < 16) next.add(grant.id); } else next.delete(grant.id);
+            return next;
+          })}/>{grant.label}{grant.writable ? ' (writable parent grant)' : ''}</label>)}
+        </div>}
+        <p className="agents-work-meta">No resources are shared unless selected here; at most 16 fit one admission. Retrying keeps the same admission identity.</p>
+        {createError && <p className="agents-error" role="alert">{createError}</p>}
+        <button type="button" disabled={creating || !create.prompt.trim() || !(list.roles[create.role]?.available)} onClick={submitCreate}>{creating ? 'Admitting…' : 'Admit work'}</button>
+      </details>}
+      {list?.works.map(work => <article key={work.workId} className="agents-work-row" data-state={work.state}>
         <header>
           <strong>{work.role}</strong>
           <span className="agents-work-meta" title={work.owner.threadId}>owner {work.owner.threadId.slice(0, 8)}</span>
@@ -151,7 +207,7 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
         </ul> : <p className="agents-work-meta">No usable evidence references are attached to this report.</p>}
         <pre>{JSON.stringify(output.output, null, 2).slice(0, 4000)}</pre>
       </section>}
-      {messages.length > 0 || list.works.length ? <details className="agents-work-board">
+      {list && (messages.length > 0 || list.works.length) ? <details className="agents-work-board">
         <summary>Message board · {messages.length}</summary>
         {messages.map(message => <div key={message.messageId} className="agents-board-row">
           <span className="agents-work-meta">{message.senderTitle} → {message.recipientTitle}</span>
@@ -167,8 +223,9 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
         </div>}
       </details> : null}
       {error && <p className="agents-error" role="alert">{error}</p>}
-    </div>}
-  </section>;
+    </div>
+    </Modal>
+  </div>;
 }
 
 /** M09-U03: weighted task tree. Each node shows its allocated units and its

@@ -98,12 +98,14 @@ describe('agent work API requests used by AgentWorkPanel', () => {
     await mod.sendAgentInput('task-9', {workId: 'w-3', kind: 'STEER', text: 'focus the build', inputId: 'i-1', dedupeKey: 'd-1'});
     await mod.cancelAgentInput('task-9', 'thread-4', 'i-9');
     await mod.postAgentMessage('task-9', {recipientThreadId: 'thread-5', topic: 't', text: 'body', messageId: 'm-1'});
-    const commands = calls.filter(call => call.url === '/api/commands').map(call => JSON.parse(String(call.init!.body)) as {type: string, payload: Record<string, unknown>, threadId: string});
-    expect(commands.map(command => command.type)).toEqual(['agentWork.stop', 'agentWork.resume', 'agentWork.input', 'agentWork.input.cancel', 'agentWork.message']);
+    await mod.createAgentWork('task-9', {role: 'PLAN_READ', prompt: 'Inspect the current evidence', grantSubset: ['grant-1'], budget: {tokens: 500, ms: 60_000}, workId: 'work-1', childThreadId: 'child-1'}, 'command-1');
+    const commands = calls.filter(call => call.url === '/api/commands').map(call => JSON.parse(String(call.init!.body)) as {id: string, type: string, payload: Record<string, unknown>, threadId: string});
+    expect(commands.map(command => command.type)).toEqual(['agentWork.stop', 'agentWork.resume', 'agentWork.input', 'agentWork.input.cancel', 'agentWork.message', 'agentWork.admit']);
     expect(commands[0]).toMatchObject({payload: {workId: 'w-1'}, threadId: 'task-9'});
     expect(commands[2]).toMatchObject({payload: {workId: 'w-3', kind: 'STEER', text: 'focus the build', inputId: 'i-1', dedupeKey: 'd-1'}});
     expect(commands[3]).toMatchObject({payload: {targetThreadId: 'thread-4', inputId: 'i-9'}});
     expect(commands[4]).toMatchObject({payload: {recipientThreadId: 'thread-5', topic: 't', text: 'body', messageId: 'm-1'}});
+    expect(commands[5]).toMatchObject({id: 'command-1', threadId: 'task-9', payload: {commandId: 'command-1', role: 'PLAN_READ', prompt: 'Inspect the current evidence', grantSubset: ['grant-1'], budget: {tokens: 500, ms: 60_000}, workId: 'work-1', childThreadId: 'child-1', expectedOutputSchema: {type: 'object'}}});
     const posts = calls.filter(call => call.url === '/api/commands');
     expect(posts.every(call => (call.init!.headers as Record<string, string>)['x-harness-csrf'] === 'csrf')).toBe(true);
   });

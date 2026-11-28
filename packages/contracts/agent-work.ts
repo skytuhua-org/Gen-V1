@@ -208,6 +208,11 @@ const QaResultV1Schema = z.strictObject({
 });
 
 
+export function agentResultJsonSchemaFor(role: AgentWorkRole): Record<string, unknown> {
+  // The AgentWork coordinator compiles the admitted output contract with Draft 7 Ajv.
+  return z.toJSONSchema(agentResultSchemaFor(role), {target: 'draft-07'}) as Record<string, unknown>;
+}
+
 export function agentResultSchemaFor(role: AgentWorkRole): z.ZodType<unknown> {
   switch (role) {
     case 'PLAN_READ': return PlanReadResultV1Schema;
