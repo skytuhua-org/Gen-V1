@@ -79,7 +79,7 @@ describe('Gemini official headless native continuation', () => {
     await expect(readGeminiNativeHistory(dataDir, manifest)).rejects.toMatchObject({ code: 'OFFICIAL_SESSION_MISMATCH' });
   });
 
-  it.each(['before-exit','after-exit','during-cancel','cancel-timeout','without-final-newline','malformed-clean-close','malformed-failed-close','throwing-observer'])('handles native resume stream lifecycle %s', async phase => {
+  it.each(['before-exit','after-exit','during-cancel','cancel-timeout','without-final-newline','malformed-clean-close','malformed-failed-close','receipt-write-failure','throwing-observer'])('handles native resume stream lifecycle %s', async phase => {
     const { dataDir, manifest } = await fixture();
     const children: any[] = []; const calls: any[] = []; const inputs: string[] = [];
     const spawn = vi.fn((file: string, args: string[], settings: any) => {
@@ -170,6 +170,38 @@ describe('Gemini official headless native continuation', () => {
         expect(events.some(event => event.type === 'assistant.message' || event.type === 'input.processing' || event.type === 'usage')).toBe(false);
         expect(await scratchFiles(manifest.path)).toEqual([]);
       } finally { await runtime.dispose(); }
+      return;
+    }
+    if (phase === 'receipt-write-failure') {
+      const original = fs.rename;
+      let failedWrite = false;
+      const rename = vi.spyOn(fs, 'rename').mockImplementation(async (source, destination) => {
+        if (destination === manifest.path) {
+          failedWrite = true;
+          throw new Error('Synthetic receipt write failed.');
+        }
+        return original(source, destination);
+      });
+      try {
+        child.emitFrame({ type: 'message', role: 'assistant', content: 'current response', delta: true });
+        await vi.waitFor(() => expect(failedWrite).toBe(true));
+        expect(events.some(event => event.type === 'input.processing' || event.type === 'assistant.message')).toBe(false);
+        child.emitFrame({ type: 'result', status: 'success' });
+        child.exitCode = 0;
+        child.emit('exit', 0, null);
+        child.stdout.end();
+        child.emit('close', 0, null);
+        await vi.waitFor(() => expect(events.filter(event => event.type === 'error').map(event => event.message)).toEqual([
+          'Synthetic receipt write failed.',
+          'The official runtime did not close completely. Account sign-in remains blocked.',
+        ]));
+        expect(events.some(event => event.type === 'input.processing' || event.type === 'assistant.message' || event.type === 'usage' || event.type === 'settled')).toBe(false);
+        expect(Object.values(JSON.parse(await readFile(manifest.path, 'utf8')).inputs)).toContainEqual(expect.objectContaining({ inputIds: ['input-new'], observed: false }));
+      } finally {
+        rename.mockRestore();
+        try { await expect(runtime.dispose()).rejects.toMatchObject({ code: 'RUNTIME_TEARDOWN_FAILED' }); }
+        finally { await rm(dataDir, { recursive: true, force: true }); }
+      }
       return;
     }
     child.emitFrame({ type: 'message', role: 'assistant', content: 'current response', delta: true });
