@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { HarnessError } from '../../packages/contracts/index.ts';
+import { RequestRateLimit } from './request-rate-limit.ts';
 import {
   DEVICE_GRANT_TTL_MS,
   DEVICE_TOKEN_BYTES,
@@ -350,7 +351,9 @@ export async function buildRemoteReadSyncServer(pairing: DevicePairingHost, sync
       : known || malformed ? 400 : 500;
     reply.code(status).send({ error: { code, message: known || malformed ? error.message : 'The remote host could not complete this request' } });
   });
+  const requestRateLimit = new RequestRateLimit(60_000);
   app.addHook('onRequest', async (request, reply) => {
+    if (!requestRateLimit.consume(`remote:${request.ip}`, 120)) return reply.code(429).send({ error: { code: 'RATE_LIMITED', message: 'Too many remote requests. Wait before retrying.' } });
     if (request.url === '/remote/pair/claim') return;
     reply.header('Cache-Control', 'no-store');
     const token = /^Bearer ([a-f0-9]{64})$/.exec(String(request.headers.authorization ?? ''))?.[1];

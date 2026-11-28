@@ -36,6 +36,7 @@ import {registerConversationReadRoutes} from './conversation-read-routes.ts';
 import {registerToolEffectReadRoutes} from './tool-effect-read-routes.ts';
 import {DevicePairingHost, registerDevicePairingRoutes} from './device-pairing.ts';
 import {ReadSyncHost} from '../../packages/core/read-sync.ts';
+import {RequestRateLimit} from './request-rate-limit.ts';
 import {registerProjectMemoryRoutes} from './project-memory-routes.ts';
 import {registerOperationProjectTrustRoutes} from './operation-project-trust-routes.ts';
 import {registerOperationExecutionReviewRoutes} from './operation-execution-review-routes.ts';
@@ -95,8 +96,13 @@ export async function buildServer(service: Service, options: ServerOptions) {
     const message = known ? error.message : error instanceof z.ZodError ? "Command envelope is invalid" : error instanceof URIError ? "The request path is invalid" : code === "RESOURCE_LIMIT" ? "The request exceeds its byte limit" : "The host could not complete this request";
     reply.code(status).send({ error: { code, message, ...(known && error.details ? { details: error.details } : {}) } });
   });
+  const requestRateLimit = new RequestRateLimit(60_000);
   app.addHook("onRequest", async (request, reply) => {
     reply.header("X-Content-Type-Options", "nosniff").header("Referrer-Policy", "no-referrer");
+    const path = request.url.split("?")[0] ?? request.url;
+    const sensitive = path === "/api/models" || path.startsWith("/api/account-auth") || path.startsWith("/api/device-pairing") || path.startsWith("/api/devices") || path.startsWith("/api/plugins") || /^\/api\/projects\/[^/]+\/(?:previews|intelligence|debug)(?:\/|$)/.test(path);
+    const limit = sensitive ? 30 : path === "/api/bootstrap" ? 1200 : path.startsWith("/api/") ? 300 : 600;
+    if (!requestRateLimit.consume(`${request.ip}:${limit}`, limit)) return reply.code(429).send({ error: { code: "RATE_LIMITED", message: "Too many requests. Wait before retrying." } });
     if(/^\/api\/artifacts\/[^/?]+\/credentials\//.test(request.url))reply.header('Cache-Control','no-store');
     if (!hosts.has(String(request.headers.host))) return reply.code(403).send({ error: { code: "INVALID_HOST", message: "Host is not allowed" } });
     const origin = request.headers.origin;
