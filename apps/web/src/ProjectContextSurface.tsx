@@ -9,7 +9,7 @@ import './project-memory.css';
 const MemoryReview=lazy(()=>import('./ProjectMemoryReview').then(module=>({default:module.ProjectMemoryReview})));
 
 export function ProjectContextSurface({thread,snapshot,planOpen,onTogglePlan,fullPlanVisible=false,onShowChanges,onSelectThread,onConnect,onContext,onOpenDetailedPlan,defaultPlanOpen=false,composerChangesAvailable=false}:{thread?:Thread;snapshot:Snapshot;planOpen?:boolean;onTogglePlan?:()=>void;fullPlanVisible?:boolean;onShowChanges?:()=>void;onSelectThread?:(id:string)=>void;onConnect?:()=>void;onContext?:(context:ProjectContext|null)=>void;onOpenDetailedPlan?:()=>void;defaultPlanOpen?:boolean;composerChangesAvailable?:boolean}){
- const project=useProjectContext((thread as Thread&{projectId?:string}|undefined)?.projectId,thread?.id),[open,setOpen]=useState(defaultPlanOpen),[memoryOwner,setMemoryOwner]=useState(''),plan=selectPlanRecord(snapshot,thread?.id),memoryLauncher=useRef<HTMLButtonElement>(null);
+ const project=useProjectContext((thread as Thread&{projectId?:string}|undefined)?.projectId,thread?.id,undefined,thread?.epoch),[open,setOpen]=useState(defaultPlanOpen),[memoryOwner,setMemoryOwner]=useState(''),plan=selectPlanRecord(snapshot,thread?.id),memoryLauncher=useRef<HTMLButtonElement>(null);
  const memoryTarget=thread?.projectId&&(!thread.kind||thread.kind==='main')&&!thread.parentThreadId&&!thread.sideParentId&&!thread.jobId?{projectId:thread.projectId,threadId:thread.id,accountId:thread.accountId??null}:undefined;
  const memoryKey=memoryTarget?JSON.stringify(memoryTarget):'',localProject=project.context?.project.authority.kind==='local'&&project.context.project.id===thread?.projectId&&project.context.threadId===thread?.id;
  useEffect(()=>{setMemoryOwner('');},[memoryKey]);

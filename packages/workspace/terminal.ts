@@ -137,15 +137,19 @@ export class TerminalHost{
   const command=z.string().min(1).max(8000).parse(script.command);
   const owner=digest([project.authority,store.get('workspaceProjectRoot',projectId),workspace,
    thread&&[thread.id,thread.projectId,thread.workspaceId,thread.epoch,thread.kind],digest(command)]);
-  return{command,owner};
+  return{command,owner,threadEpoch:thread?.epoch};
  }
  /** A deliberate local click owns one write, including across host restarts. */
- async runScript(projectId:string,threadId:string|undefined,scriptId:string,operationId:string){
+ async runScript(projectId:string,threadId:string|undefined,scriptId:string,operationId:string,expectedThreadEpoch?:number){
   const store=this.projects.store;
-  const action={id:operationId,type:'project.run-script',threadId,payload:{projectId,scriptId}};
+  if(threadId ? expectedThreadEpoch===undefined||!Number.isSafeInteger(expectedThreadEpoch)||expectedThreadEpoch<0 : expectedThreadEpoch!==undefined){
+   throw new HarnessError('INVALID_INPUT','The script request must match the current conversation. Reopen Project tools and try again.');
+  }
+  const action={id:operationId,type:'project.run-script',threadId,payload:{projectId,scriptId,...(threadId?{expectedThreadEpoch}:{})}};
   // Validate reused IDs before looking up another project's script.
   store.receipt(action);
-  const {owner}=this.scriptScope(projectId,threadId,scriptId);
+  const {owner,threadEpoch}=this.scriptScope(projectId,threadId,scriptId);
+  if(threadEpoch!==expectedThreadEpoch)throw new HarnessError('REVISION_CHANGED','Conversation changed. Reopen Project tools and run the script again.');
   const requireOwner=(actual:string)=>{if(actual!==owner)throw scriptRejection('CAPABILITY_DENIED');};
   const uncertain=()=>new HarnessError('ACTION_UNCERTAIN','The script write could not be confirmed. Inspect the original terminal before running the script again.');
   await this.projects.binding(projectId,threadId);

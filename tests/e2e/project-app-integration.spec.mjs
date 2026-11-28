@@ -116,7 +116,7 @@ test('project tools Undo last commit confirms the reviewed subject and restores 
  await expect(card.getByRole('textbox',{name:'Commit message'})).toHaveValue('Undoable subject\n\nRestored body.');
  await expect(card.getByText('Commit undone. Changes are staged.')).toBeVisible();
 });
-test('a stored script click sends one ID-only request and never replays across thread changes', async ({ page }) => {
+test('a stored script click keeps the captured epoch and operation ID through auth retry and never replays across thread changes', async ({ page }) => {
   const h = await host(page);
   const threadA = h.snapshot.threads[0];
   const threadB = { ...threadA, id: 'script-evidence-thread-b', title: 'Second script evidence conversation' };
@@ -140,6 +140,7 @@ test('a stored script click sends one ID-only request and never replays across t
     const request = route.request();
     const body = request.postDataJSON();
     actions.push({ body, path: new URL(request.url()).pathname, method: request.method(), csrf: request.headers()['x-harness-csrf'] });
+    if (actions.length === 1) return route.fulfill({ status: 403, json: { error: { code: 'CSRF_REQUIRED' } } });
     await held;
     return route.fulfill({ json: { id: 'synthetic-terminal', projectId: p.id, threadId: threadA.id } });
   });
@@ -162,17 +163,19 @@ test('a stored script click sends one ID-only request and never replays across t
     await expect(first).toHaveAttribute('title', scriptA.command);
     expect(actions).toHaveLength(0);
     await first.click();
-    await expect.poll(() => actions.length).toBe(1);
+    await expect.poll(() => actions.length).toBe(2);
     expect(actions[0]).toEqual({
       path: '/api/projects/project-a/actions', method: 'POST', csrf: 'fixture-csrf',
-      body: { id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/), type: 'run-script', threadId: threadA.id, payload: { scriptId: scriptA.id } },
+      body: { id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/), type: 'run-script', threadId: threadA.id, payload: { scriptId: scriptA.id, expectedThreadEpoch: threadA.epoch } },
     });
+
+    expect(actions[1]).toEqual(actions[0]);
 
     await openTools(threadB);
     const second = card.getByRole('button', { name: scriptB.name, exact: true });
     await expect(second).toBeEnabled();
     await expect(first).toHaveCount(0);
-    expect(actions).toHaveLength(1);
+    expect(actions).toHaveLength(2);
 
     const finished = page.waitForResponse(response => new URL(response.url()).pathname === '/api/projects/project-a/actions');
     finish();
@@ -180,7 +183,7 @@ test('a stored script click sends one ID-only request and never replays across t
     await expect(second).toBeEnabled();
     await openTools(threadA);
     await expect(first).toBeEnabled();
-    expect(actions).toHaveLength(1);
+    expect(actions).toHaveLength(2);
   } finally {
     finish();
   }

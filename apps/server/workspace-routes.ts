@@ -166,8 +166,11 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
   }
   if(input.type==='run-script'){
    reply.header('Cache-Control','no-store');
-   const {scriptId}=z.strictObject({scriptId:identifier}).parse(input.payload);
-   return terminals.runScript(projectId,input.threadId,scriptId,input.id);
+   const {scriptId,expectedThreadEpoch}=z.strictObject({
+    scriptId:identifier,
+    expectedThreadEpoch:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+   }).parse(input.payload);
+   return terminals.runScript(projectId,input.threadId,scriptId,input.id,expectedThreadEpoch);
   }
   const existing=service.store.receipt({...input,type:'project.'+input.type,payload:{...input.payload,projectId}});if(existing)return existing;
   const command={...input,type:'project.'+input.type,payload:{...input.payload,projectId}},p=input.payload,binding=await projects.binding(projectId,input.threadId);

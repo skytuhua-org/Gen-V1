@@ -62,9 +62,12 @@ async function fixture() {
   const host = '127.0.0.1:4317';
   const bootstrap = await app.inject({ url: '/api/bootstrap', headers: { host } });
   const headers = { host, cookie: String(bootstrap.headers['set-cookie']).split(';')[0], 'x-harness-csrf': bootstrap.json().csrfToken };
-  const run = (threadId = 'thread-a') => app.inject({
+  const run = (threadId: string | null = 'thread-a', expectedThreadEpoch: number | null = threadId ? 1 : null) => app.inject({
     method: 'POST', url: '/api/projects/project-a/actions', headers,
-    payload: { id: 'operation-a', type: 'run-script', threadId, payload: { scriptId: 'script-a' } },
+    payload: {
+      id: 'operation-a', type: 'run-script', ...(threadId ? { threadId } : {}),
+      payload: { scriptId: 'script-a', ...(expectedThreadEpoch === null ? {} : { expectedThreadEpoch }) },
+    },
   });
   const advanceThread = () => store.internal('fixture.thread-advance', 'thread-a', () => {
     store.put('thread', 'thread-a', 'thread-a', { id: 'thread-a', projectId: 'project-a', kind: 'main', epoch: 2 });
@@ -89,6 +92,38 @@ it('rejects an operation id reused by a different thread without sending another
   expect((await run()).statusCode).toBe(200);
   const foreign = await run('thread-b');
   expect(foreign.json().error).toMatchObject({ code: 'DUPLICATE_COMMAND' });
+  expect(native.write).toHaveBeenCalledOnce();
+});
+
+it('rejects a stale captured epoch before claiming the operation or starting a terminal', async () => {
+  const { run, store, advanceThread } = await fixture();
+  advanceThread();
+  expect((await run()).json().error).toMatchObject({ code: 'REVISION_CHANGED' });
+  expect(store.get('projectScriptIntent', 'operation-a')).toBeNull();
+  expect(native.spawn).not.toHaveBeenCalled();
+  expect(native.write).not.toHaveBeenCalled();
+
+  expect((await run('thread-a', 2)).statusCode).toBe(200);
+  expect((await run('thread-a', 1)).json().error).toMatchObject({ code: 'DUPLICATE_COMMAND' });
+  expect(native.spawn).toHaveBeenCalledOnce();
+  expect(native.write).toHaveBeenCalledOnce();
+});
+
+it.each([['thread-a', null], ['thread-a', -1], ['thread-a', Number.MAX_SAFE_INTEGER + 1], [null, 1]] as const)(
+  'rejects an invalid combination of thread %s and expected epoch %s before starting a terminal',
+  async (threadId, epoch) => {
+    const { run, store } = await fixture();
+    expect((await run(threadId, epoch)).statusCode).toBe(400);
+    expect(store.get('projectScriptIntent', 'operation-a')).toBeNull();
+    expect(native.spawn).not.toHaveBeenCalled();
+  },
+);
+
+it('preserves a threadless stored-script operation without an epoch', async () => {
+  const { run } = await fixture();
+  const first = await run(null), replay = await run(null);
+  expect(first.statusCode).toBe(200);
+  expect(replay.json().id).toBe(first.json().id);
   expect(native.write).toHaveBeenCalledOnce();
 });
 
@@ -124,7 +159,7 @@ it('resolves a settled operation after the terminal host restarts without anothe
   expect(first.statusCode).toBe(200);
   await host.terminals.dispose();
   const restarted = new TerminalHost(host.projects);
-  const receipt = await restarted.runScript('project-a', 'thread-a', 'script-a', 'operation-a');
+  const receipt = await restarted.runScript('project-a', 'thread-a', 'script-a', 'operation-a', 1);
   expect(receipt).toMatchObject({ id: first.json().id, exited: true });
   expect(native.spawn).toHaveBeenCalledOnce();
   expect(native.write).toHaveBeenCalledOnce();
@@ -212,7 +247,7 @@ it('replays a confirmed spawn rejection without exposing native details or retry
   expect(replay.json().error).toEqual(first.json().error);
   await host.terminals.dispose();
   const restarted = new TerminalHost(host.projects);
-  await expect(restarted.runScript('project-a', 'thread-a', 'script-a', 'operation-a')).rejects.toMatchObject(first.json().error);
+  await expect(restarted.runScript('project-a', 'thread-a', 'script-a', 'operation-a', 1)).rejects.toMatchObject(first.json().error);
   expect(native.spawn).toHaveBeenCalledOnce();
   expect(native.write).not.toHaveBeenCalled();
 });
