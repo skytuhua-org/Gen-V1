@@ -191,9 +191,12 @@ export async function runDependencyContracts(sourceLockPath: string, outputDirec
       receipt.issues.push({ code: 'COMMAND_NOT_SUCCESSFUL', message: 'Contract command termination=' + observation.termination + ', exitCode=' + observation.exitCode });
     try {
       requireValue(statSync(reportPath).size <= 16 * 1024 * 1024, 'Vitest report exceeds the 16 MiB bound.');
-      const reportBytes = readFileSync(reportPath, 'utf8');
+      const reportBytes = readFileSync(reportPath);
+      let reportText: string;
+      try { reportText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(reportBytes); }
+      catch { throw new Error('Vitest report must be valid UTF-8.'); }
       receipt.report = { path: reportPath, digest: digest(reportBytes) };
-      receipt.tests = inspectTestReport(JSON.parse(reportBytes), root, testIds);
+      receipt.tests = inspectTestReport(JSON.parse(reportText), root, testIds);
       if (receipt.tests.some(test => test.status === 'BLOCKED'))
         receipt.issues.push({ code: 'CONTRACT_TEST_NOT_EXECUTED', message: 'Every declared file needs at least one passed assertion, with no skipped, pending, or todo cases.' });
     } catch (error) {
