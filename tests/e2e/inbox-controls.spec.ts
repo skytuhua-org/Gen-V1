@@ -165,6 +165,20 @@ test('Mark unread cancels the selected Inbox item’s delayed automatic read', a
   await expect(page.getByRole('button', {name: 'Question, Needs your input, unread', exact: true})).toBeVisible();
 });
 
+test('automatic read stays unwritten at 499ms and settles once at 500ms', async ({page}) => {
+  await fixture(page);
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now() + 100));
+  await rows(page).filter({hasText: 'Question'}).first().click();
+  await page.clock.runFor(499);
+  expect(await calls(page)).toEqual([]);
+  await page.clock.runFor(1);
+  await expect.poll(() => calls(page)).toEqual([{type: 'read', id: 'question'}]);
+  await expect.poll(() => page.evaluate(() => window.inboxControls.items.find(item => item.id === 'question')?.read)).toBe(true);
+  await page.clock.runFor(500);
+  expect(await calls(page)).toEqual([{type: 'read', id: 'question'}]);
+});
+
 test('Mark unread wins over an automatic read already in flight for that Inbox item', async ({page}) => {
   await fixture(page);
   await page.evaluate(() => {
@@ -312,6 +326,18 @@ test('Escape ownership is limited to chosen reader dismissal and non-composing s
   await search.focus(); await search.press('Escape'); await expect(page.getByRole('region', {name: 'Review', exact: true})).toBeVisible();
   await review.evaluate(node => node.addEventListener('keydown', event => event.preventDefault(), {capture: true, once: true}));
   await review.focus(); await page.keyboard.press('Escape'); await expect(page.getByRole('region', {name: 'Review', exact: true})).toBeVisible();
+  const reader = page.getByRole('region', {name: 'Review', exact: true});
+  await filter(page).focus(); await page.keyboard.press('Escape'); await expect(reader).toBeVisible();
+  await filter(page).click(); await expect(page.getByRole('listbox', {name: 'Inbox filter', exact: true})).toBeVisible();
+  await page.keyboard.press('Escape'); await expect(page.getByRole('listbox', {name: 'Inbox filter', exact: true})).toHaveCount(0); await expect(reader).toBeVisible();
+  await page.evaluate(() => {
+    const owner = document.querySelector('.agent-inbox');
+    const textarea = document.createElement('textarea'); textarea.className = 'escape-ownership-textarea';
+    const editable = document.createElement('div'); editable.className = 'escape-ownership-editable'; editable.contentEditable = 'true'; editable.tabIndex = 0; editable.textContent = 'editable';
+    owner?.append(textarea, editable);
+  });
+  await page.locator('.escape-ownership-textarea').focus(); await page.keyboard.press('Escape'); await expect(reader).toBeVisible();
+  await page.locator('.escape-ownership-editable').focus(); await page.keyboard.press('Escape'); await expect(reader).toBeVisible();
 });
 
 async function setInboxWidth(page: Page, target: number) {
