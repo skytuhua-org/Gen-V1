@@ -10,7 +10,7 @@ const graphemeSegmenter=new Intl.Segmenter(undefined,{granularity:'grapheme'});
 function textMap(root:HTMLElement,proseOnly:boolean):TextMap|null {
  const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),runs:TextRun[]=[];let text='';
  for(let node=walker.nextNode();node;node=walker.nextNode()){
-  const parent=node.parentElement;if(!parent||parent.closest('.sentence-reveal-layer,[aria-hidden="true"]')||proseOnly&&(parent.closest('pre,code,table,button,input,textarea,select,output,time,[data-sensitive],[data-credentials],[data-telemetry],.credential-entry,.credential-input,.surface-metric')||!/[\p{L}]/u.test(node.textContent??'')))continue;
+  const parent=node.parentElement;if(!parent||parent.closest('.sentence-reveal-layer,[aria-hidden="true"]')||proseOnly&&(parent.closest('pre,code,table,button,input,textarea,select,output,time,[data-markdown-math],[data-sensitive],[data-credentials],[data-telemetry],.credential-entry,.credential-input,.surface-metric')||!/[\p{L}]/u.test(node.textContent??'')))continue;
   if(runs.length>=MAX_NODES||text.length+node.textContent!.length>MAX_TEXT)return null;
   const start=text.length;text+=node.textContent;runs.push({node:node as Text,start,end:text.length});
  }

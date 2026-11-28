@@ -1,38 +1,10 @@
-import {expect, test, type Page} from '@playwright/test';
-import {mkdtemp, rm} from 'node:fs/promises';
-import {resolve} from 'node:path';
-import react from '@vitejs/plugin-react';
-import {createServer, type ViteDevServer} from 'vite';
-
-const fixtureUrl = '/@fs/' + resolve('tests/e2e/markdown-math-leaf.html').replaceAll('\\', '/');
-let server: ViteDevServer | undefined;
-let cacheDir: string | undefined;
-let baseUrl: string;
-
-// Use a private prebundle so a first KaTeX import cannot trigger a Vite reload
-// while a test is holding that import or a selection.
-test.beforeAll(async () => {
-  cacheDir = await mkdtemp(resolve('node_modules/.vite-math-leaf-'));
-  server = await createServer({
-    configFile:false, root:'apps/web', plugins:[react()], cacheDir,
-    optimizeDeps:{include:['katex', 'react', 'react-dom/client', 'react/jsx-dev-runtime', 'lucide-react'], noDiscovery:true},
-    server:{host:'127.0.0.1', port:5477},
-  });
-  await server.listen();
-  const address = server.httpServer?.address();
-  if (!address || typeof address === 'string') throw new Error('Missing fixture server address');
-  baseUrl = 'http://127.0.0.1:' + address.port;
-});
-
-test.afterAll(async () => {
-  await server?.close();
-  if (cacheDir) await rm(cacheDir, {recursive:true, force:true});
-});
+import {expect, type Page} from '@playwright/test';
+import {test} from './markdown-math-browser';
 
 const island = '[data-source-transformed="true"]';
 const leaves = (page: Page) => page.locator('[data-markdown-math]');
 
-test('a cold import leaves original text visible and accepts only the current revision', async ({page}) => {
+test('a cold import leaves original text visible and accepts only the current revision', async ({page, mathFixture}) => {
   let allowImport = () => {};
   const waitForImport = new Promise<void>(done => {allowImport = done;});
   await page.route('**/src/math-renderer.ts*', async route => {
@@ -40,7 +12,7 @@ test('a cold import leaves original text visible and accepts only the current re
     await route.continue();
   });
   const requested = page.waitForRequest('**/src/math-renderer.ts*');
-  await page.goto(baseUrl + fixtureUrl);
+  await page.goto(mathFixture);
   await requested;
   await expect(leaves(page).first()).toHaveText('$x+1$');
   await page.getByRole('button', {name:'Next revision'}).click();
@@ -50,12 +22,12 @@ test('a cold import leaves original text visible and accepts only the current re
   await expect(page.getByText('Math display unavailable. Source shown.')).toBeVisible();
 });
 
-test('hidden and inert leaves keep source until the owner becomes eligible', async ({page}) => {
+test('hidden and inert leaves keep source until the owner becomes eligible', async ({page, mathFixture}) => {
   const moduleRequests: string[] = [];
   page.on('request', request => {
     if (new URL(request.url()).pathname.endsWith('/math-renderer.ts')) moduleRequests.push(request.url());
   });
-  await page.goto(baseUrl + fixtureUrl + '?hidden');
+  await page.goto(mathFixture + '?hidden');
   await expect(leaves(page)).toHaveCount(3);
   await page.getByRole('button', {name:'Toggle inert'}).click();
   await page.getByRole('button', {name:'Toggle hidden'}).click();
@@ -70,8 +42,8 @@ test('hidden and inert leaves keep source until the owner becomes eligible', asy
   await expect(page.locator('.katex-html[aria-hidden="true"]')).toHaveCount(3);
 });
 
-test('selection defers an intersecting leaf and survives rendering elsewhere', async ({page}) => {
-  await page.goto(baseUrl + fixtureUrl + '?hidden');
+test('selection defers an intersecting leaf and survives rendering elsewhere', async ({page, mathFixture}) => {
+  await page.goto(mathFixture + '?hidden');
   await expect(leaves(page)).toHaveCount(3);
   await page.evaluate(() => {
     const select = (selector: string) => {
@@ -98,7 +70,7 @@ test('selection defers an intersecting leaf and survives rendering elsewhere', a
   expect(await page.evaluate(() => getSelection()?.toString())).toBe('Unrelated selectable prose.');
 });
 
-test('an accepted sibling retains its node across revision and source copy preserves CRLF', async ({page}) => {
+test('an accepted sibling retains its node across revision and source copy preserves CRLF', async ({page, mathFixture}) => {
   const copied: string[] = [];
   await page.exposeFunction('recordFormulaCopy', (text: string) => copied.push(text));
   await page.addInitScript(() => {
@@ -106,7 +78,7 @@ test('an accepted sibling retains its node across revision and source copy prese
       value:{writeText: Reflect.get(window, 'recordFormulaCopy')},
     });
   });
-  await page.goto(baseUrl + fixtureUrl);
+  await page.goto(mathFixture);
   const sibling = leaves(page).nth(1).locator(island);
   await expect(sibling).toHaveCount(1);
   await sibling.evaluate(element => element.setAttribute('data-test-retained', 'true'));
@@ -121,7 +93,7 @@ test('an accepted sibling retains its node across revision and source copy prese
   await expect(page.getByRole('region', {name:'Rendered formula'})).toHaveCount(0);
 });
 
-test('removing an owner while its module loads cannot populate the replacement', async ({page}) => {
+test('removing an owner while its module loads cannot populate the replacement', async ({page, mathFixture}) => {
   let allowImport = () => {};
   const waitForImport = new Promise<void>(done => {allowImport = done;});
   await page.route('**/src/math-renderer.ts*', async route => {
@@ -129,7 +101,7 @@ test('removing an owner while its module loads cannot populate the replacement',
     await route.continue();
   });
   const requested = page.waitForRequest('**/src/math-renderer.ts*');
-  await page.goto(baseUrl + fixtureUrl);
+  await page.goto(mathFixture);
   await requested;
   await page.getByRole('button', {name:'Toggle leaves'}).click();
   await expect(leaves(page)).toHaveCount(0);
@@ -145,8 +117,8 @@ test('removing an owner while its module loads cannot populate the replacement',
   await expect(leaves(page).first().locator(island).locator('annotation')).toHaveText('y+2');
 });
 
-test('each frame accepts at most one leaf', async ({page}) => {
-  await page.goto(baseUrl + fixtureUrl + '?hidden');
+test('each frame accepts at most one leaf', async ({page, mathFixture}) => {
+  await page.goto(mathFixture + '?hidden');
   await expect(leaves(page)).toHaveCount(3);
   const acceptedPerFrame = await page.evaluate(() => new Promise<number[]>(done => {
     const seen: number[] = [];
@@ -164,7 +136,7 @@ test('each frame accepts at most one leaf', async ({page}) => {
   expect(acceptedPerFrame.filter(Boolean)).toEqual([1, 1, 1]);
 });
 
-test('one owner tears down its listener and observer after each of 100 disable cycles', async ({page}) => {
+test('one owner tears down its listener and observer after each of 100 disable cycles', async ({page, mathFixture}) => {
   await page.addInitScript(() => {
     const observers = new Set<MutationObserver>();
     const listeners = new Set<EventListenerOrEventListenerObject>();
@@ -193,7 +165,7 @@ test('one owner tears down its listener and observer after each of 100 disable c
       value: () => [observers.size, listeners.size],
     });
   });
-  await page.goto(baseUrl + fixtureUrl + '?hidden');
+  await page.goto(mathFixture + '?hidden');
   await expect(leaves(page)).toHaveCount(3);
   const peak = await page.evaluate(async () => {
     const watchCount = (window as Window & {ownerWatchCount?: () => number[]}).ownerWatchCount;

@@ -1,5 +1,6 @@
 import {StrictMode, useState} from 'react';
 import {createRoot} from 'react-dom/client';
+import {Markdown} from '../../apps/web/src/Markdown';
 import {MarkdownMath, useMathRenderOwner} from '../../apps/web/src/MarkdownMath';
 
 const root = document.querySelector('#root');
@@ -34,4 +35,18 @@ function Fixture() {
   </>;
 }
 
-createRoot(root).render(<StrictMode><Fixture /></StrictMode>);
+function MarkdownFixture() {
+  const [text, setText] = useState('');
+  const [math, setMath] = useState(false);
+  const [owner, setOwner] = useState('first');
+  return <>
+    <textarea aria-label="Markdown source" value={text} onChange={event => setText(event.currentTarget.value)} />
+    <button onClick={() => setMath(value => !value)}>Toggle math</button>
+    <button onClick={() => setOwner(value => value === 'first' ? 'second' : 'first')}>Change owner</button>
+    <button onClick={() => setText('$$\r\na^2\r\n$$')}>Set CRLF formula</button>
+    <Markdown text={text} math={math} renderOwner={owner} animate />
+  </>;
+}
+
+const markdown = new URLSearchParams(location.search).has('markdown');
+createRoot(root).render(<StrictMode>{markdown ? <MarkdownFixture /> : <Fixture />}</StrictMode>);
