@@ -18,7 +18,7 @@ const age=(value:string)=>{const minutes=Math.max(0,Math.floor((Date.now()-Date.
 /** Scoped adaptation of Vespin's list/reader composition; canonical Gen actions stay in their thread. */
 export interface InboxViewProps {attention:{items:AttentionItem[];unread:number;error:string;refresh():Promise<void>;markRead(id:string):Promise<void>;markUnread(id:string):Promise<void>};onOpenThread:(threadId:string)=>void|Promise<void>;emptyTitle?:string;emptyMessage?:string;projectColorFor?:(projectId?:string)=>string|undefined;timeFormat?:TimeFormat}
 export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projectColorFor,timeFormat='system'}:InboxViewProps){
- const [filter,setFilter]=useState<Filter>('all'),[query,setQuery]=useState(''),[chosen,setChosen]=useState<string>(),[single,setSingle]=useState(false),[actionError,setActionError]=useState(''),root=useRef<HTMLElement>(null),reader=useRef<HTMLElement>(null),rows=useRef(new Map<string,HTMLButtonElement>()),heading=useId(),actionVersion=useRef(0),markTimer=useRef<ReturnType<typeof setTimeout>>(undefined);
+ const [filter,setFilter]=useState<Filter>('all'),[query,setQuery]=useState(''),[chosen,setChosen]=useState<string>(),[single,setSingle]=useState(false),[actionError,setActionError]=useState(''),[busyAction,setBusyAction]=useState(false),[,setWriteTick]=useState(0),root=useRef<HTMLElement>(null),reader=useRef<HTMLElement>(null),rows=useRef(new Map<string,HTMLButtonElement>()),heading=useId(),actionVersion=useRef(0),markTimer=useRef<ReturnType<typeof setTimeout>>(undefined);
  useEffect(()=>()=>{clearTimeout(markTimer.current);actionVersion.current++;},[]);
  const [,setTick]=useState(0);
  useEffect(()=>{const id=setInterval(()=>setTick(t=>t+1),30_000);return()=>clearInterval(id);},[]);
@@ -33,8 +33,10 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
  };
  const recordRead=(id:string,version:number)=>{
   const pending=activeReads.current.get(id);
-  const request=act(()=>pending??attention.markRead(id),version);if(pending)return;activeReads.current.set(id,request);
-  const finish=()=>activeReads.current.delete(id);void request.then(finish,finish);
+  const request=act(()=>pending??attention.markRead(id),version);if(pending)return request;
+  activeReads.current.set(id,request);setWriteTick(value=>value+1);
+  const finish=()=>{activeReads.current.delete(id);setWriteTick(value=>value+1);};void request.then(finish,finish);
+  return request;
  };
  const markUnread=(id:string)=>{
   clearTimeout(markTimer.current);
@@ -50,7 +52,7 @@ export function InboxView({attention,onOpenThread,emptyTitle,emptyMessage,projec
  const empty=<div className="agent-inbox-empty"><Inbox size={27}/><h3>{attention.items.length?'Nothing matches':emptyTitle??'You are all caught up'}</h3><p>{attention.items.length?'Try another view or search.':emptyMessage??'Questions, reviews and task results will appear here.'}</p></div>;
  const head=<header className="ui-toolbar inbox-list-head" data-place="inbox"><h2 id={heading}>Inbox</h2>{attention.unread>0&&<span className="inbox-unread-count">{attention.unread}</span>}<div className="inbox-view-controls"><Select aria-label="Inbox filter" value={filter} options={filters} onValueChange={value=>setFilter(value as Filter)}/><button type="button" className="icon-button" aria-label="Refresh inbox" title="Refresh inbox" onClick={()=>{void act(()=>attention.refresh());}}><RefreshCw size={14} aria-hidden="true"/></button></div></header>;
  const search=<search className="inbox-search"><label><Search size={14}/><input type="search" placeholder="Search inbox" aria-label="Search Inbox" value={query} onChange={event=>setQuery(event.target.value)} onKeyDown={event=>{if(event.key==='Escape'&&query){event.preventDefault();event.stopPropagation();setQuery('');}}}/></label></search>;
- const toolbar=selected?<header className="ui-toolbar inbox-item-toolbar" data-place="inbox-item">{single&&<button type="button" className="quiet" onClick={back}><ArrowLeft size={14}/>Inbox</button>}<span className="inbox-item-crumb"><Bot size={13}/>{sourceLabels[selected.kind]}</span><span className="inbox-item-toolbar-actions"><button type="button" className="quiet" onClick={()=>void markUnread(selected.id)}><Circle size={12}/>Mark unread</button></span></header>:null;
+ const toolbar=selected?<header className="ui-toolbar inbox-item-toolbar" data-place="inbox-item">{single&&<button type="button" className="quiet" onClick={back}><ArrowLeft size={14}/>Inbox</button>}<span className="inbox-item-crumb"><Bot size={13}/>{sourceLabels[selected.kind]}</span><span className="inbox-item-toolbar-actions">{(()=>{const readAction=selected.read?{label:'Mark unread',icon:<Circle size={12}/>,run:()=>{setBusyAction(true);void markUnread(selected.id).finally(()=>setBusyAction(false));}}:{label:'Mark read',icon:<Check size={12}/>,run:()=>{clearTimeout(markTimer.current);setBusyAction(true);void recordRead(selected.id,++actionVersion.current)?.finally(()=>setBusyAction(false));}};const pending=busyAction||activeReads.current.has(selected.id);return <button type="button" className="quiet" disabled={pending} aria-disabled={pending} title={pending?'Updating read state':undefined} style={pending?{opacity:.45}:undefined} onClick={readAction.run}>{readAction.icon}{readAction.label}</button>;})()}</span></header>:null;
  const footer=selected?<div className="agent-inbox-answer"><button type="button" className="primary" onClick={()=>{void act(()=>onOpenThread(selected.destination.threadId));}}>Open conversation<ArrowUpRight size={14}/></button><small>{inboxFooterHint(selected)}</small></div>:null;
  return <section className="agent-inbox inbox-view" aria-label="Agent inbox" ref={root} data-columns={columns} onKeyDown={keyboard}>
   <InboxList label="Inbox items" hidden={columns==='item'} head={head} search={search} empty={!visible.length} note={!visible.length?empty:undefined}>
