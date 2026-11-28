@@ -15,6 +15,7 @@ export const CiFailedJobV1 = z.object({
   logState: CiLogStateV1,
   excerpt: z.string(),                  // '' unless logState==='ready'
   excerptLines: z.number().int().nonnegative(),
+  errorLines: z.array(z.number().int().nonnegative()), // excerpt-line indexes that were ##[error]
   truncated: z.boolean(),
 }).strict();
 export const CiFailureReportV1 = z.object({
@@ -30,7 +31,7 @@ export const CiFailureSendV1 = z.object({ reportId: z.string().max(128), jobIds:
 export const CiStoredJobV1 = z.object({
   id: z.string().max(64), checkName: z.string().max(1024),
   workflowName: z.string().max(1024).nullable(), failedStep: z.string().max(1024).nullable(),
-  conclusion: z.string().max(64), url: z.string().max(2048), excerpt: z.string(), truncated: z.boolean(),
+  conclusion: z.string().max(64), url: z.string().max(2048), excerpt: z.string(), errorLines: z.array(z.number().int().nonnegative()), truncated: z.boolean(),
 }).strict();
 export const CiStoredFailureV1 = z.object({
   repo: z.string(), number: z.number().int().positive(), headOid: z.string().max(64), localHead: z.string().max(64),

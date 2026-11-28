@@ -12,7 +12,7 @@ import {HarnessError} from '../packages/contracts/index.ts';
 const cleanups:(()=>Promise<void>)[]=[];
 afterEach(async()=>{vi.restoreAllMocks();__setCapabilityFlagForTests('workspace.ciFixV1',undefined);for(const close of cleanups.splice(0))await close();});
 
-const job=(id:string,over:Partial<CiFailureReport['jobs'][number]>={})=>({id,checkName:`Tests ${id}`,workflowName:'CI',failedStep:'Run tests',conclusion:'FAILURE',url:`https://github.com/example/fixture/actions/runs/55/job/${id}`,logState:'ready' as const,excerpt:`▸ Run pnpm test\nFailure output ${id}`,excerptLines:2,truncated:false,...over});
+const job=(id:string,over:Partial<CiFailureReport['jobs'][number]>={})=>({id,checkName:`Tests ${id}`,workflowName:'CI',failedStep:'Run tests',conclusion:'FAILURE',url:`https://github.com/example/fixture/actions/runs/55/job/${id}`,logState:'ready' as const,excerpt:`▸ Run pnpm test\nFailure output ${id}`,excerptLines:2,errorLines:[1],truncated:false,...over});
 const reportFixture=(jobs:CiFailureReport['jobs']):CiFailureReport=>({id:'r'.repeat(64),repo:'example/fixture',number:12,headOid:'a'.repeat(40),localHead:'b'.repeat(40),observedAt:new Date().toISOString(),jobs,omittedJobs:0});
 
 async function setup(options:{report?:CiFailureReport|Error;withProject?:boolean}={}){
