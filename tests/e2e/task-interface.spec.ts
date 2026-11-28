@@ -329,3 +329,34 @@ test('map source disclosure renders URL source as a link', async ({ page }) => {
   await expect(link).toHaveAttribute('href', 'https://example.com/places');
   await expect(link).toHaveAttribute('target', '_blank');
 });
+
+test('artifact unified diff distinguishes file headers, hunks and prefixed content', async ({page}) => {
+  await page.setViewportSize({width:320,height:840});
+  const lines = [
+    'diff --git a/first.txt b/first.txt',
+    'index abcd123..bcde234 100644',
+    '--- a/first.txt',
+    '+++ b/first.txt',
+    '@@ -1,2 +1,2 @@',
+    '--- literal removed line',
+    '+++ literal added line',
+    ' A shared context line wide enough to scroll on a narrow panel.',
+    '\\ No newline at end of file',
+    '--- /dev/null',
+    '+++ b/second.txt',
+    '@@ -0,0 +1 @@',
+    '+ created',
+  ];
+  const snapshot=taskFixture({root:'compare',elements:{compare:{type:'Diff',props:{dataBinding:'patch'}}}}, {patch:lines.join('\n')});
+  await serveTaskFixture(page,snapshot);
+  await openApp(page);
+  const diff=page.locator('pre.diff');
+  await expect(diff).toBeVisible();
+  await expect(diff.locator(':scope > *')).toHaveText(lines);
+  expect(await diff.locator(':scope > *').evaluateAll(rows=>rows.map(row=>row.className))).toEqual([
+    'diff-header','diff-header','diff-header','diff-header','diff-hunk','removed','added','','diff-hunk','diff-header','diff-header','diff-hunk','added',
+  ]);
+  expect(await diff.evaluate(node=>node.scrollWidth>node.clientWidth)).toBe(true);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await test.info().attach('Unified diff at 320 px with synthetic data',{body:await page.screenshot(),contentType:'image/png'});
+});
