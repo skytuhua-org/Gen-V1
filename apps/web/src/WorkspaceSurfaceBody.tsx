@@ -50,7 +50,7 @@ function ChangesBody({base,query,active,recorded,preferences}:{base:string;query
  const{value}=useProjectRequest<{available:boolean;restore:boolean;owner?:CheckpointOwner}>(base+'/checkpoints/capability?'+query,active);
  const adapter=useMemo(()=>value?.available?createHttpCheckpointAdapter(base,threadId,value.restore===true):disabledCheckpointAdapter,[value?.available,value?.restore,base,threadId]);
  const history=<GitHistory key={base+'?'+query} base={base} query={query} preferences={preferences}/>;
- return <FileCheckpoints preferences={preferences} owner={value?.available?value.owner:undefined} adapter={adapter} current={<DiffBody base={base} query={query} active={active} fallback={recorded}/>} recorded={recorded} history={history}/>;
+ return <FileCheckpoints preferences={preferences} owner={value?.available?value.owner:undefined} adapter={adapter} current={<DiffBody base={base} query={query} active={active} fallback={<div className="panel-empty"><strong>No current changes</strong><p>Changes in the connected folder appear here.</p></div>}/>} recorded={recorded} history={history}/>;
 }
 export type ReviewRequest = {id:number;repo:string;number:number;threadId:string;projectId:string;panelId:string};
 export function WorkspaceSurfaceBody({kind,binding,snapshot,refresh,active=true,preferences,onSelectThread,onOpenTool,panelId,excerptComposer,reviewRequest,onReviewHandled}:{reviewRequest?:ReviewRequest;onReviewHandled?:(id:number)=>void;excerptComposer?:TerminalExcerptComposer;kind:WorkspacePanelKind;binding:PanelBinding;snapshot:Snapshot;refresh:()=>Promise<void>;active?:boolean;preferences?:UiPreferences;panelId?:string;onSelectThread?:(id:string)=>void|Promise<void>;onOpenTool?:(kind:WorkspacePanelKind)=>void|Promise<void>}){
