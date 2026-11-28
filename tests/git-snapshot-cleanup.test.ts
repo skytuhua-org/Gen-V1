@@ -93,7 +93,7 @@ it('removes every owned file on the normal path',async()=>{
  await expect(lstat(worktree)).rejects.toThrow();
 });
 
-it.skipIf(process.platform !== 'linux')('removes the workspace cost benchmark fixture even when Git startup fails',async()=>{
+it('removes the workspace cost benchmark fixture even when Git startup fails',async()=>{
  const root=await mkdtemp(join(tmpdir(),'harness-cost-cleanup-'));roots.push(root);
  const env:NodeJS.ProcessEnv={...process.env,TMPDIR:root,GIT_CONFIG_COUNT:'1'};
  delete env.GIT_CONFIG_KEY_0;
@@ -105,9 +105,9 @@ it.skipIf(process.platform !== 'linux')('removes the workspace cost benchmark fi
  expect((await readdir(root)).filter(name=>name.startsWith('gen-costs-'))).toEqual([]);
 },15000);
 
-it.skipIf(process.platform !== 'linux')('still measures a successful workspace fixture and removes it',async()=>{
+it('still measures a successful workspace fixture and removes it',async()=>{
  const root=await mkdtemp(join(tmpdir(),'harness-cost-cleanup-'));roots.push(root);
- const env={...process.env,TMPDIR:root,GIT_CONFIG_COUNT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null'};
+ const env={...process.env,TMPDIR:root,GIT_CONFIG_COUNT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'};
  const result=spawnSync(process.execPath,['--import','tsx','scripts/measure-workspace-costs.ts','5','2','3'],{encoding:'utf8',env,timeout:10000});
  expect(result.error).toBeUndefined();
  expect(result.status).toBe(0);
