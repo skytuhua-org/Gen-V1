@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { Store } from '../packages/storage/store.ts';
 import { BrowserConsentHost, ControlDriverRegistry } from '../packages/core/browser-consent.ts';
 import { ControlRuntime } from '../packages/core/control-runtime.ts';
+import { createControlSidecarChannel, createSidecarControlDriver } from '../packages/core/control-sidecar-driver.ts';
 import { __setCapabilityFlagForTests } from '../packages/core/capability-flags.ts';
 import { HarnessError } from '../packages/contracts/index.ts';
 import type { ControlDriverOperations } from '../packages/core/desktop-control.ts';
@@ -146,6 +147,46 @@ describe('M16 ControlRuntime host ownership', () => {
       expect(result.outcome).toBe('DISPATCHED');
       const records = store.all<unknown>('controlAction', owner.threadId);
       expect(records).toHaveLength(1);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { name: 'missing receipt', reply: {}, expectedReceipt: null },
+    { name: 'null receipt', reply: { receipt: null }, expectedReceipt: null },
+    { name: 'numeric receipt', reply: { receipt: 42 }, expectedReceipt: null },
+    { name: 'empty receipt', reply: { receipt: '' }, expectedReceipt: null },
+    { name: 'blank receipt', reply: { receipt: '   ' }, expectedReceipt: null },
+    { name: 'valid receipt', reply: { receipt: 'observed-driver-receipt' }, expectedReceipt: 'observed-driver-receipt' },
+  ])('persists the correct outcome for a sidecar dispatch with $name', async ({ reply, expectedReceipt }) => {
+    const { dir, store, registry, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      const operations: unknown[] = [];
+      const channel = createControlSidecarChannel({
+        token: 'test-token',
+        send(value): void {
+          operations.push(value.op);
+          channel.handleReply({ type: 'harness.control.result', requestId: value.requestId, result: reply });
+        },
+      });
+      const sidecar = createSidecarControlDriver(channel);
+      runtime.attachDriver(driver({ dispatch: sidecar.dispatch }));
+      await offerTargets(runtime, request.consentId);
+      const issued = runtime.grant(request.consentId, owner, target);
+      const observation = { observationId: 'obs-fresh', target, geometry: { x: 0, y: 0, width: 400, height: 300, dpiScale: 1 }, observedAtMs: Date.now() };
+      const result = await runtime.action(owner.threadId, owner, { grantId: issued.grantId, action: 'CLICK', parameters: { x: 5, y: 5 }, observation });
+      const outcome = expectedReceipt === null ? 'UNCERTAIN' : 'DISPATCHED';
+      expect(result.outcome).toBe(outcome);
+      expect(result.action.effectReceipt).toBe(expectedReceipt);
+      if (expectedReceipt === null) expect(result.reason).toBe('DRIVER_ERROR');
+      expect(operations).toEqual(['dispatch']);
+      expect(store.all('controlAction', owner.threadId)).toHaveLength(1);
+      expect(store.get('controlAction', result.action.actionId)).toMatchObject({ outcome, effectReceipt: expectedReceipt });
     } finally {
       __setCapabilityFlagForTests('control.consentedBrowserV1', false);
       store.close();
@@ -315,4 +356,14 @@ describe('M16 ControlRuntime host ownership', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+it('clears the sidecar acknowledgement timer if the transport throws synchronously', async () => {
+  vi.useFakeTimers();
+  try {
+    const failure = new Error('local IPC send failed');
+    const channel = createControlSidecarChannel({ token: 'test-token', send: () => { throw failure; } });
+    await expect(channel.request('candidates', {})).rejects.toBe(failure);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
 });

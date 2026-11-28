@@ -1,4 +1,4 @@
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -65,4 +65,35 @@ it('keeps Biome write proposals and Spec Kit initialization unavailable in plan 
  const scope={authority:{kind:'local'} as const,threadId:thread.id};
  await expect(host.manager.command('biome','format',{paths:['.'],write:true},scope)).rejects.toThrow(/plan mode/i);
  await expect(host.manager.command('spec-kit','init',{},scope)).rejects.toThrow(/plan mode/i);
+});
+
+it('drains independent native owners before reporting a failed close and retries only unconfirmed teardown',async()=>{
+ const attempts=[0,0],failure=new Error('fixture native close failure'),managerFailure=new Error('fixture manager close failure');
+ let next=0,finishSecond!:()=>void,secondEntered!:()=>void;
+ const secondGate=new Promise<void>(accept=>{finishSecond=accept;}),secondStarted=new Promise<void>(accept=>{secondEntered=accept;});
+ const {host}=await setup(()=>{
+  const owner=next++;let callbacks:RuntimeCallbacks;
+  return {configure:value=>{callbacks=value;},models:async()=>[],start:async input=>callbacks.onEvent({...input,type:'settled'}),followUp:async()=>{},cancel:async()=>{},compact:async()=>{},history:async()=>[],dispose:async()=>{
+   const attempt=++attempts[owner];if(attempt===1||owner===0&&attempt===2)throw failure;
+   if(owner===1&&attempt===2){secondEntered();await secondGate;}
+  }};
+ });
+ const scope={authority:{kind:'local'} as const,threadId:'owner',projectId:'project',modelId:'openai/test',accountId:null};
+ for(let i=0;i<2;i++)await expect(host.complete(scope,'fixture completion')).rejects.toBe(failure);
+ const original=host.manager.dispose.bind(host.manager),managerClose=vi.spyOn(host.manager,'dispose').mockRejectedValueOnce(managerFailure).mockImplementation(original);
+ try{
+  let settled=false;
+  const close=host.close().then(()=>{settled=true;return undefined;},error=>{settled=true;return error;});
+  const concurrent=host.close().catch((error:unknown)=>error);
+  expect(await Promise.race([secondStarted.then(()=> 'draining'),close.then(()=> 'settled')])).toBe('draining');
+  expect(settled).toBe(false);
+  await expect(host.complete(scope,'late request')).rejects.toThrow(/closed/);
+  finishSecond();
+  const result=await close;
+  expect(result).toBeInstanceOf(AggregateError);expect((result as AggregateError).errors).toEqual([managerFailure,failure]);
+  expect(await concurrent).toBe(result);
+  expect(attempts).toEqual([2,2]);expect(managerClose).toHaveBeenCalledTimes(1);
+  await Promise.all([host.close(),host.close()]);await host.close();
+  expect(attempts).toEqual([3,2]);expect(managerClose).toHaveBeenCalledTimes(2);
+ }finally{finishSecond();managerClose.mockRestore();}
 });

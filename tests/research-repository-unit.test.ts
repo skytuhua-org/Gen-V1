@@ -129,3 +129,16 @@ describe('list',()=>{
   expect(f.repo.document(context,'doc-a').citations[0]).toMatchObject({status:'unavailable',liveStatus:'unverified'});
  });
 });
+
+it('marks saved citations unavailable when the capture content goes missing',async()=>{
+ const f=await setup();putSource(f);
+ const head={...context,id:'doc-capture',revision:1,kind:'findings',title:'Findings',sha256:abcHash,savedAt:'2026-01-01T00:00:00Z'};
+ f.store.internal('t.doc-capture',null,()=>{
+  f.store.put('researchDocument',prefix+head.id,context.threadId,head);
+  f.store.put('researchDocumentVersion',prefix+head.id+'@1',context.threadId,{...head,body:'body',citations:[ref]});
+ });
+ expect(f.repo.document(context,head.id).citations[0]?.status).toBe('current-capture');
+ f.store.internal('t.lost-capture',null,()=>f.store.db.prepare('DELETE FROM entities WHERE kind=? AND id=?').run('researchMaterial',prefix+abcHash));
+ expect(()=>f.repo.passage(context,ref)).toThrow(expect.objectContaining({code:'NOT_FOUND'}));
+ expect(f.repo.document(context,head.id).citations[0]).toMatchObject({status:'unavailable',liveStatus:'unverified'});
+});
