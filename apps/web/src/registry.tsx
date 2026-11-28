@@ -1,9 +1,11 @@
+import {ArtifactImage} from './ArtifactImage';
 import {SentenceReveal} from './SentenceReveal';
 import {WindowDocument} from './DocumentWindow';
 import { Children, createContext, lazy, Suspense, useContext, useId, useRef, useState, type ReactNode } from 'react';
 import { useStateStore, type ComponentRegistry, type ComponentRenderProps } from '@json-render/react';
 import { ExternalLink, FileText, Check, AlertTriangle, CornerDownLeft } from 'lucide-react';
 import { Markdown } from './Markdown';
+import {splitDiffLines} from './diff-line-kind';
 import { ArtifactTitle, ChoiceList, RelationshipGraph, Status, Steps } from './task-interface';
 export { ArtifactTitle } from './task-interface';
 import type { DocumentPreviewProps, SignaturePadProps } from '../../../packages/ui-catalog/documents';
@@ -154,7 +156,15 @@ function TreeNode({ value, depth = 0 }: { value: unknown; depth?: number }) {
 }
 function Tree({ element: { props } }: ComponentRenderProps) { const data = useData(props) ?? props.items; return <ul className="tree">{list(data).map((node, i) => <TreeNode key={i} value={node} />)}</ul>; }
 function Code({ element: { props } }: ComponentRenderProps) { const data = useData(props); return <figure className="code-block">{props.title ? <figcaption>{string(props.title)}</figcaption> : null}<pre><code>{typeof data === 'string' ? data : string(props.code, string(props.content, data ? display(data) : ''))}</code></pre></figure>; }
-function Diff({ element: { props } }: ComponentRenderProps) { const data = useData(props); const pair = data && typeof data === 'object' ? obj(data) : props; const code = typeof data === 'string' ? data : typeof pair.before === 'string' || typeof pair.after === 'string' ? [...string(pair.before).split('\n').map(line => `- ${line}`), ...string(pair.after).split('\n').map(line => `+ ${line}`)].join('\n') : string(props.diff, string(props.content)); return <pre className="diff">{code.split('\n').map((line, i) => <div key={i} className={line.startsWith('+') ? 'added' : line.startsWith('-') ? 'removed' : ''}>{line || ' '}</div>)}</pre>; }
+const artifactDiffClass = {context:'',add:'added',remove:'removed',header:'diff-header',hunk:'diff-hunk'};
+function Diff({ element: { props } }: ComponentRenderProps) {
+  const data = useData(props);
+  const pair = data && typeof data === 'object' ? obj(data) : props;
+  const code = typeof data === 'string' ? data : typeof pair.before === 'string' || typeof pair.after === 'string'
+    ? [...string(pair.before).split('\n').map(line => `- ${line}`), ...string(pair.after).split('\n').map(line => `+ ${line}`)].join('\n')
+    : string(pair.diff, string(pair.content, string(props.diff, string(props.content))));
+  return <pre className="diff">{splitDiffLines(code).map((line, index) => <span key={index} className={artifactDiffClass[line.kind]}>{line.text || ' '}</span>)}</pre>;
+}
 function Document({ element: { props }, children }: ComponentRenderProps) { const data = useData(props); const text=typeof props.text==='string'?props.text:typeof data==='string'?data:undefined;const path = typeof props.resourcePath === 'string' ? '?' + new URLSearchParams({ path: props.resourcePath }) : '';if(props.presentation==='window')return <WindowDocument props={props} text={text}/>; return <section className={`document${props.download ? ' document-download' : ''}`}><div className="document-heading"><FileText size={16} />{string(props.title, 'Document')}</div>{props.text || props.content || typeof data === 'string' ? <Markdown text={string(props.text, string(props.content, string(data)))} /> : null}{children}{typeof props.resourceId === 'string' && <a href={`/api/resources/${encodeURIComponent(props.resourceId)}/content${path}`} download={props.download === true || undefined} target={props.download ? undefined : '_blank'} rel="noreferrer">{string(props.linkLabel, props.download ? 'Download PDF' : 'Open granted document')}<ExternalLink size={12} /></a>}</section>; }
 function Progress({ element: { props } }: ComponentRenderProps) { const source = useData(props); const value = Number(source ?? props.value); const max = Number(props.max) || 100; return <div className="surface-progress"><div>{string(props.label)}{Number.isFinite(value) && <span>{value} / {max}</span>}</div><progress aria-label={string(props.label, 'Progress')} value={Number.isFinite(value) ? value : undefined} max={max} /></div>; }
 const timelineStatusKind:Record<string,StatusKind>={...operationStatusKind,pending:'pending',working:'running',completed:'success',success:'success',error:'error',stopped:'neutral','needs-input':'pending',awaiting_input:'pending'};
@@ -198,7 +208,7 @@ function Form({ element: { props }, children }: ComponentRenderProps) {
 function BoundMarkdown({ element: { props } }: ComponentRenderProps) { const data = useData(props); return <Markdown text={string(props.text, string(data))} animate />; }
 function Metric({ element: { props } }: ComponentRenderProps) { const data = useData(props), value = data ?? props.value; return <div className="surface-metric"><span className="muted">{string(props.label)}</span><strong>{typeof value === 'number' ? value.toLocaleString(undefined, { maximumSignificantDigits: 21 }) : display(value)}{props.unit ? ` ${string(props.unit)}` : ''}</strong></div>; }
 function EvidenceList({ element: { props } }: ComponentRenderProps) { const rows = list(useData(props)); return <section>{props.title ? <h3>{string(props.title)}</h3> : null}<ul className="evidence-list">{rows.map((row, i) => { const item = obj(row); return <li key={i}><Check size={13} /><div>{typeof row === 'string' ? row : string(item.label, string(item.title, string(item.text, display(row))))}{item.source ? <small>{display(item.source)}</small> : null}</div></li>; })}</ul></section>; }
-function Image({ element: { props } }: ComponentRenderProps) { const src = typeof props.resourceId === 'string' ? `/api/resources/${encodeURIComponent(props.resourceId)}/content` : /^https?:\/\//.test(string(props.src)) ? string(props.src) : undefined; return src ? <img className="surface-image" src={src} alt={string(props.alt)} loading="lazy" referrerPolicy="no-referrer" /> : <p className="muted">No granted image is available.</p>; }
+function Image({ element: { props } }: ComponentRenderProps) { if (typeof props.resourceId === 'string') return <ArtifactImage key={props.resourceId} resourceId={props.resourceId} alt={string(props.alt)} />; const src = /^https?:\/\//.test(string(props.src)) ? string(props.src) : undefined; return src ? <img className="surface-image" src={src} alt={string(props.alt)} loading="lazy" referrerPolicy="no-referrer" /> : <p className="muted">No granted image is available.</p>; }
 function Link({ element: { props } }: ComponentRenderProps) { return /^https?:\/\//.test(string(props.href)) ? <a href={string(props.href)} target="_blank" rel="noreferrer">{string(props.label, string(props.href))}<ExternalLink size={12} /></a> : <span>{string(props.label)}</span>; }
 
 export const registry: ComponentRegistry = {

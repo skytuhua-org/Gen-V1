@@ -231,6 +231,12 @@ button:has(>svg.lucide-x):hover:not(:disabled),button:has(>svg.lucide-circle-x):
   .document-pair[data-arrangement=split]>:not(.document-preview) { order:-1; }
 }
 .surface-image { display:block; max-width:100%; height:auto; border-radius:8px; }
+.artifact-image-frame { max-width:100%; min-height:64px; }
+.artifact-image-frame .surface-image[data-loading] { opacity:0; }
+.artifact-image-error { box-sizing:border-box; min-height:64px; display:grid; place-items:center; gap:8px; padding:12px; border:1px dashed var(--border); border-radius:8px; background:var(--surface); color:var(--muted); font-size:13px; text-align:center; animation:artifact-image-error-in 150ms var(--ui-ease-enter); }
+.artifact-image-error p { margin:0; }
+@keyframes artifact-image-error-in { from { opacity:0; } to { opacity:1; } }
+@media(prefers-reduced-motion:reduce) { .artifact-image-error { animation:none; } }
 .chart :is(rect,circle) { fill:var(--text); }
 .chart polyline { stroke:var(--text); }
 .evidence-list { list-style:none; padding:0; margin:10px 0 0; display:flex; flex-direction:column; gap:13px; }
@@ -297,6 +303,9 @@ tbody tr:hover { background:var(--subtle); }
 .code-block { margin:0; }
 .code-block figcaption { padding-bottom:10px; font-size:12px; }
 .code-block pre,.diff { background:var(--subtle); border-radius:8px; padding:10px 12px; white-space:pre; font-size:11px; line-height:1.65; }
+.diff { overflow:auto; max-width:100%; }
+.diff > span { display:block; width:max-content; min-width:100%; }
+.diff .diff-header,.diff .diff-hunk { color:var(--muted); }
 .diff .added { color:var(--success-fg); background:var(--success-bg); }
 .diff .removed { color:var(--danger-fg); background:var(--danger-bg); }
 .document { border-radius:9px; padding:14px 18px; background:var(--canvas); }

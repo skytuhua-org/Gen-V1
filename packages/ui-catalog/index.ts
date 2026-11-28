@@ -53,7 +53,7 @@ const schemas = {
   Toggle: z.strictObject({ stateKey: key, label: text }),
   Button: z.strictObject({ label: text, actionId: key, disabled: z.boolean().optional(), tone: z.enum(["default", "primary", "danger"]).optional(), payload: z.record(key, z.unknown()).optional(), payloadFromState }),
   Code: z.strictObject({ code: optionalText, language: z.string().max(40).optional(), dataBinding: binding }),
-  Diff: z.strictObject({ before: optionalText, after: optionalText, language: z.string().max(40).optional(), dataBinding: binding }),
+  Diff: z.strictObject({ before: optionalText, after: optionalText, diff: optionalText, content: optionalText, language: z.string().max(40).optional(), dataBinding: binding }),
   Document: z.strictObject({ text: optionalText, dataBinding: binding, resourceId: opaqueId.optional(), resourcePath: z.string().min(1).max(1024).refine(path => !/[\u0000-\u001f:]/.test(path) && !/^[\\/]|(?:^|[\\/])\.\.(?:[\\/]|$)/.test(path)).optional(), title: optionalText, linkLabel: z.string().max(200).optional(), download: z.boolean().optional(), presentation: z.enum(['inline','window']).optional(), editableStateKey: key.optional() }).refine(value => !value.editableStateKey || value.presentation === 'window', 'Editable documents use window presentation'),
   Image: z.strictObject({ src: z.string().max(2048).refine(s => {
     try { const url = new URL(s); return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && !/[\u0000-\u0020\\]/.test(s); } catch { return false; }
