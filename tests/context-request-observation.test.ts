@@ -86,10 +86,7 @@ it('spills only large catalog results and retrieves the exact range under the sa
   __setCapabilityFlagForTests('tools.deferredV1', true);
   const spilled = await service.tool(query, ctx) as { status: string; handle: string; preview: string };
   expect(spilled.status).toBe('AVAILABLE');
-  const windows = spilled.preview.split('\n[… result clipped …]\n');
-  expect(windows).toHaveLength(2);
-  expect(Buffer.byteLength(windows[0]!)).toBeLessThanOrEqual(8192);
-  expect(Buffer.byteLength(windows[1]!)).toBeLessThanOrEqual(8192);
+  expect(Buffer.byteLength(spilled.preview)).toBeLessThanOrEqual(16384);
   const call = { name: 'context_result_read', args: { handle: spilled.handle, offset: 0, length: 20 } };
   expect(await service.tool(call, ctx)).toMatchObject({ status: 'OK', text: original.subarray(0, 20).toString(), totalBytes: original.length });
   expect(await service.tool(call, other)).toEqual({ status: 'UNAVAILABLE' });

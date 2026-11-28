@@ -68,9 +68,7 @@ it('spills a real domain result and returns its exact captured JSON through a bo
   const captured = f.store.all<DataRecord>('data', f.ctx.threadId)[0]!, bytes = Buffer.from(JSON.stringify(captured));
   expect(result).toMatchObject({ status: 'AVAILABLE', totalBytes: bytes.length });
   expect(result.handle).toEqual(expect.any(String));
-  const windows = result.preview.split('\n[… result clipped …]\n');
-  expect(windows).toHaveLength(2);
-  expect(Buffer.byteLength(windows[0]!)).toBeLessThanOrEqual(8192); expect(Buffer.byteLength(windows[1]!)).toBeLessThanOrEqual(8192);
+  expect(Buffer.byteLength(result.preview)).toBeLessThanOrEqual(16384);
   expect(result.preview).toContain('BEGIN'); expect(result.preview).toContain('END'); expect(result.omittedBytes).toBeGreaterThan(0);
   const full = await f.range(result.handle!, 0, bytes.length);
   expect(full).toEqual({ status: 'OK', offset: 0, totalBytes: bytes.length, omittedBytes: 0, text: bytes.toString() });
@@ -156,9 +154,9 @@ it('does not derive authority for an integration result from caller supplied res
   const f = fixture({ additionalTool: async () => output });
   const result = await f.service.tool({ name: 'integration_list', args: { resourceId: f.grant.id } }, f.ctx) as { status: string; handle: null; preview: string };
   expect(result).toMatchObject({ status: 'FULL_RESULT_UNAVAILABLE', handle: null });
-  const parts = result.preview.split('\n[… result clipped …]\n');
-  expect(parts).toHaveLength(2);
-  expect(Buffer.byteLength(parts[0]!)).toBeLessThanOrEqual(8192); expect(Buffer.byteLength(parts[1]!)).toBeLessThanOrEqual(8192);
+  const serialized = JSON.stringify(output), head = serialized.slice(0, 8192), tail = serialized.slice(-8192);
+  expect(result.preview).toBe(head + tail);
+  expect(Buffer.byteLength(result.preview)).toBe(16384);
   expect(result.preview).toContain('BEGIN'); expect(result.preview).toContain('LAST_FAILURE: exact diagnostic');
 });
 

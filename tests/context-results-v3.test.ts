@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { expect, it } from 'vitest';
 import fixture from './fixtures/m04-context-v3.json';
-import { createContextResults, clipContextResult, encodeContextResult, RESULT_CAP_BYTES } from '../packages/core/context-results';
+import { createContextResults, clipContextResult, encodeContextResult, CONTEXT_PREVIEW_CAP_BYTES, RESULT_CAP_BYTES } from '../packages/core/context-results';
 
 type Owner = { threadId: string; workspaceId: string; accountId: string };
 type Vault = {
@@ -43,10 +43,7 @@ async function setup(failWrite = false) {
 it('keeps a bounded head and tail preview and returns exact authorized bytes', async () => {
   const x = await setup(), result = await x.spill(), full = bytes(), offset = full.length - 21;
   expect(result.status).toBe('AVAILABLE'); expect(result.handle).not.toBeNull();
-  const windows = result.preview.split('\n[… result clipped …]\n');
-  expect(windows).toHaveLength(2);
-  expect(Buffer.byteLength(windows[0]!)).toBeLessThanOrEqual(fixture.results.previewCapBytes / 2);
-  expect(Buffer.byteLength(windows[1]!)).toBeLessThanOrEqual(fixture.results.previewCapBytes / 2);
+  expect(Buffer.byteLength(result.preview)).toBeLessThanOrEqual(fixture.results.previewCapBytes);
   expect(result.preview).toContain('BEGIN'); expect(result.preview).toContain('END');
   expect(result.omittedBytes).toBeGreaterThan(0);
   expect(x.writes()).toBe(1);
@@ -71,10 +68,7 @@ it('does not reveal stored output after grant revocation, deletion, expiry or a 
 it('returns a bounded usable preview but no handle when full storage fails', async () => {
   const x = await setup(true), result = await x.spill();
   expect(result).toMatchObject({ status: 'FULL_RESULT_UNAVAILABLE', handle: null });
-  const clipped = result.preview.split('\n[… result clipped …]\n');
-  expect(clipped).toHaveLength(2);
-  expect(Buffer.byteLength(clipped[0]!)).toBeLessThanOrEqual(fixture.results.previewCapBytes / 2);
-  expect(Buffer.byteLength(clipped[1]!)).toBeLessThanOrEqual(fixture.results.previewCapBytes / 2);
+  expect(Buffer.byteLength(result.preview)).toBeLessThanOrEqual(fixture.results.previewCapBytes);
   expect(result.preview).toContain('BEGIN'); expect(result.preview).toContain('END');
 });
 
@@ -99,11 +93,8 @@ it('retains the fixed first and last 8 KiB windows, not marker-derived bounds', 
   const bytes = Buffer.from(head + 'b'.repeat(20000 - 16384) + tail);
   expect(bytes.length).toBe(20000);
   const { preview, omittedBytes } = clipContextResult(bytes);
-  const [h, t] = preview.split('\n[… result clipped …]\n') as [string, string];
-  expect(h).toContain(headSentinel);
-  expect(t).toContain(tailSentinel);
-  expect(Buffer.byteLength(h)).toBe(8192);
-  expect(Buffer.byteLength(t)).toBe(8192);
+  expect(preview).toBe(head + tail);
+  expect(Buffer.byteLength(preview)).toBeLessThanOrEqual(CONTEXT_PREVIEW_CAP_BYTES);
   expect(omittedBytes).toBe(20000 - 16384);
 });
 
@@ -111,10 +102,8 @@ it('bounds oversized output while preserving the actual final failure diagnostic
   const value = 'BEGIN\n' + 'x'.repeat(RESULT_CAP_BYTES) + '\nLAST_FAILURE: café 😀', encoded = encodeContextResult(value);
   expect(encoded.bytes).toBeNull(); expect(encoded.totalBytes).toBe(Buffer.byteLength(value));
   expect(encoded.preview).toMatch(/^BEGIN\n/); expect(encoded.preview).toMatch(/LAST_FAILURE: café 😀$/);
-  const [head, tail] = encoded.preview.split('\n[… result clipped …]\n') as [string, string];
-  expect(Buffer.byteLength(head)).toBe(8192);
-  expect(Buffer.byteLength(tail)).toBe(8192);
-  expect(encoded.omittedBytes).toBe(Buffer.byteLength(value) - Buffer.byteLength(head) - Buffer.byteLength(tail));
+  expect(Buffer.byteLength(encoded.preview)).toBeLessThanOrEqual(CONTEXT_PREVIEW_CAP_BYTES);
+  expect(encoded.omittedBytes).toBe(Buffer.byteLength(value) - Buffer.byteLength(encoded.preview));
 });
 
 it('rejects executable or excessive result shapes without invoking accessors or proxy traps', () => {

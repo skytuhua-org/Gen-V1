@@ -6,9 +6,8 @@ export const CONTEXT_PREVIEW_CAP_BYTES = 16 * 1024;
 export const CONTEXT_RANGE_CAP_BYTES = 1024 * 1024;
 export const RESULT_CAP_BYTES = 16 * 1024 * 1024;
 export const MAX_TRACKED_RESULTS = 128;
-// The preview keeps the fixed first and last 8 KiB of source; the marker is a
-// presentation label outside those windows, not part of the content budget.
-const OMIT = '\n[… result clipped …]\n';
+// The preview keeps the fixed first and last 8 KiB of source. omittedBytes is
+// the omission label outside those bounded windows.
 const PREVIEW_WINDOW_BYTES = CONTEXT_PREVIEW_CAP_BYTES / 2;
 export type ContextResultStorage = {
   put(key: string, bytes: Uint8Array, record: ToolResultHandleV1): Promise<void>;
@@ -34,7 +33,7 @@ export function clipContextResult(bytes: Uint8Array): { preview: string; omitted
     let boundary = bytes.length - half;
     while (boundary < bytes.length && (bytes[boundary]! & 0xc0) === 0x80) boundary++;
     const tail = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(boundary));
-    return { preview: start + OMIT + tail, omittedBytes: bytes.length - Buffer.byteLength(start) - Buffer.byteLength(tail) };
+    return { preview: start + tail, omittedBytes: bytes.length - Buffer.byteLength(start) - Buffer.byteLength(tail) };
   } catch {
     return { preview: '[Non-UTF-8 output; text preview unavailable]', omittedBytes: bytes.length };
   }
@@ -107,7 +106,7 @@ export function encodeContextResult(value: unknown): EncodedContextResult {
     const start = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(head, { stream: true });
     let boundary = 0; while (boundary < tail.length && (tail[boundary]! & 0xc0) === 0x80) boundary++;
     const end = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(tail.subarray(boundary));
-    return { bytes: null, mediaType, totalBytes, preview: start + OMIT + end, omittedBytes: totalBytes - Buffer.byteLength(start) - Buffer.byteLength(end) };
+    return { bytes: null, mediaType, totalBytes, preview: start + end, omittedBytes: totalBytes - Buffer.byteLength(start) - Buffer.byteLength(end) };
   } catch {
     return { bytes: null, mediaType, totalBytes: null, preview: '[Tool output is outside the supported bounded serialization; full result unavailable]', omittedBytes: null };
   }
