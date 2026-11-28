@@ -9,7 +9,7 @@ export class ApiError extends Error {
 // A same-origin endpoint bug or hostile response must not grow renderer memory
 // without bound; legitimate snapshot/message pages stay far below this cap.
 const MAX_JSON_BYTES = 64 * 1024 * 1024;
-async function readJson(response: Response): Promise<unknown> {
+export async function readJson(response: Response): Promise<unknown> {
   const body = response.body;
   if (!body) return await response.json();
   const reader = body.getReader();
