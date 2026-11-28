@@ -89,6 +89,52 @@ async function host(page: Page, snapshot: Snapshot) {
   return { snapshot, commands };
 }
 
+test('artifact views use one scrollable row and keep keyboard selection in view',async({page})=>{
+  const labels=['Controls','Data and visuals','Documents','Content','Development','Everyday','Interactions','Explore','Work objects'];
+  const panes=labels.map((_,index)=>'view-'+index);
+  const elements:Spec['elements']={tabs:{type:'Tabs',props:{labels,stateKey:'view'},children:panes}};
+  for(const [index,pane] of panes.entries())elements[pane]={type:'Text',props:{text:labels[index]+' panel'}};
+  elements[panes.at(-1)!]={type:'Tabs',props:{label:'Work object views',labels,stateKey:'workView'},children:panes.slice(0,-1).map(pane=>'work-'+pane).concat('work-last')};
+  for(const [index,pane] of (elements[panes.at(-1)!].children??[]).entries())elements[pane]={type:'Text',props:{text:labels[index]+' work details'}};
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await host(page,fixture({root:'tabs',elements},'Component catalog'));
+  await openApp(page);
+  const list=page.getByRole('tablist',{name:'Views',exact:true});
+  const strip=page.locator('.surface-tabs').first();
+  const sameRow=(selector:typeof list)=>selector.evaluate(node=>new Set([...node.children].map(child=>child.getBoundingClientRect().top)).size);
+  for(const width of [320,360,480,1024]){
+    await page.setViewportSize({width,height:760});
+    await expect(list.getByRole('tab')).toHaveCount(labels.length);
+    await expect.poll(()=>sameRow(list)).toBe(1);
+  }
+  await page.setViewportSize({width:360,height:760});
+  const first=list.getByRole('tab',{name:labels[0],exact:true}),last=list.getByRole('tab',{name:labels.at(-1),exact:true});
+  await first.focus();
+  await expect(strip.locator('..')).toHaveAttribute('data-overflow-end','true');
+  await strip.scrollIntoViewIfNeeded();
+  const box=(await strip.boundingBox())!;
+  const x=box.x+box.width/2,y=box.y+box.height/2;
+  expect(await strip.evaluate((node,{x,y})=>node.contains(document.elementFromPoint(x,y)),{x,y})).toBe(true);
+  await page.mouse.move(x,y);
+  await page.mouse.wheel(0,100);
+  await expect.poll(()=>strip.evaluate(node=>node.scrollLeft)).toBeGreaterThan(0);
+  await page.keyboard.press('End');
+  await expect(last).toBeFocused();
+  await expect(last).toHaveAttribute('aria-selected','true');
+  await expect(strip.locator('..')).toHaveAttribute('data-overflow-start','true');
+  await expect(strip.locator('..')).toHaveAttribute('data-overflow-end','false');
+  expect(await strip.evaluate(node=>node.dispatchEvent(new WheelEvent('wheel',{deltaY:100,cancelable:true,bubbles:true})))).toBe(true);
+  const nested=page.getByRole('tablist',{name:'Work object views',exact:true});
+  await expect.poll(()=>sameRow(nested)).toBe(1);
+  await page.keyboard.press('ArrowRight');
+  await expect(first).toBeFocused();
+  await expect(first).toHaveAttribute('aria-selected','true');
+  await expect(strip.locator('..')).toHaveAttribute('data-overflow-start','false');
+  await page.setViewportSize({width:1024,height:760});
+  await page.getByRole('button',{name:'Expand artifact',exact:true}).click();
+  await expect.poll(()=>sameRow(list)).toBe(1);
+});
+
 for (const width of [1440, 960]) test(`long email choices retain readable width and compact navigation at ${width}px`, async ({page}) => {
   await page.setViewportSize({width,height:1000});
   const copy=structuredClone(signing);
