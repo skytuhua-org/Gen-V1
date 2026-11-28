@@ -5,7 +5,7 @@ import {dirname,join,relative,resolve} from 'node:path';
 import {z} from 'zod';
 import {Store} from '../storage/store.ts';
 import {HarnessError,type HostCommand,type ResourceGrant,type Thread} from '../contracts/index.ts';
-import type {ProjectContext,ProjectSummary} from '../contracts/workspace.ts';
+import type {ProjectContext,ProjectSummary,WorkspaceCommandResult} from '../contracts/workspace.ts';
 import {threadNavigationRevision} from '../contracts/shell-read-models.ts';
 import {WorkspaceRepository} from '../core/workspace-layout.ts';
 import {assertNotStorage,canonical,inside} from '../core/security.ts';
@@ -108,7 +108,8 @@ export class ProjectTools{
    let project=state.projects.find(item=>item.authority.kind==='local'&&item.rootPath===path);project??={id:randomUUID(),name:p.name,rootPath:path,authority:{kind:'local'},createdAt:new Date().toISOString()};
    this.store.put('workspaceProject',project.id,null,project);this.store.put('workspaceProjectRoot',project.id,null,{path,identity:captured});
    if(p.threadId){const thread=this.store.get<Thread>('thread',p.threadId);if(!thread||thread.runId||thread.sessionPath||thread.workspaceId)throw new HarnessError('PROJECT_BUSY','Connect a project before starting this thread.');this.store.put('thread',thread.id,thread.id,{...thread,projectId:project.id,projectName:project.name});}
-   this.store.put('workspaceState','personal',null,{...state.state,revision:state.state.revision+1});return this.workspace.read();
+   this.store.put('workspaceState','personal',null,{...state.state,revision:state.state.revision+1});
+   return {...this.workspace.read(),connectedProjectId:project.id} satisfies WorkspaceCommandResult;
   });
  }
  async validateRepository(path:string,workspace?:WorkspaceBinding){

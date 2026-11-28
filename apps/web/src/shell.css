@@ -137,6 +137,7 @@
 .panel-resizer:hover,.panel-resizer:focus-visible { background:var(--ui-focus-ring,#808080); opacity:.55; }
 .resizing-panel,.resizing-panel * { cursor:col-resize!important; user-select:none!important; }
 .workspace-right { width:var(--right-panel-width); flex:0 0 var(--right-panel-width); border-left:1px solid var(--border); background:var(--surface); display:flex; flex-direction:column; position:relative; min-width:0; z-index:28; animation:panel-enter var(--panel-motion,var(--ui-motion-panel-enter)) var(--ui-ease-enter); }
+.workspace-right[role=region]:focus { outline:none; }
 .workspace-right>.panel-resizer { position:absolute; top:0; bottom:0; left:-4px; margin:0; width:9px; }
 .right-panel-overlay .workspace-right { position:fixed; top:0; right:0; bottom:0; box-shadow:var(--elevation); }
 .workspace-right.workspace-right-maximized { position:fixed; right:12px; top:12px; bottom:12px; border:1px solid var(--border); border-radius:12px; box-shadow:var(--elevation); overflow:hidden; }
@@ -277,11 +278,6 @@
 
 
 .workspace-tools[hidden] { display:none!important; }
-.shell-notice { position:fixed; bottom:64px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:14px; max-width:calc(100vw - 28px); border:1px solid var(--border); background:var(--surface); box-shadow:var(--elevation); border-radius:10px; padding:10px 12px 10px 16px; font-size:12px; z-index:55; animation:shell-notice-in var(--ui-motion-toast-enter) var(--ui-ease-enter) both; }
-.shell-notice[data-leaving] { animation:shell-notice-out var(--ui-motion-toast-exit) var(--ui-ease-move) both; }
-@keyframes shell-notice-in { from { opacity:0; transform:translate(-50%,8px); } }
-@keyframes shell-notice-out { to { opacity:0; transform:translate(-50%,8px); } }
-@media(prefers-reduced-motion:reduce) { .shell-notice { animation:none; } }
 .verification-panel { min-width:0; max-width:100%; margin:8px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface); padding:10px 12px; font-size:12px; }
 .canvas-thread > .verification-panel { flex:0 1 auto; min-height:0; max-height:50%; overflow-y:auto; overscroll-behavior:contain; }
 .verification-panel > header { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; margin-bottom:8px; overflow-wrap:anywhere; }

@@ -1,4 +1,5 @@
 import type { Message, Thread } from '../../../packages/contracts';
+import {displayThreadTitle} from './thread-title';
 import type { UiPreferences } from '../../../packages/contracts/preferences';
 
 export type HistoricalThreadMatches = {query: string; ids: ReadonlySet<string>};
@@ -13,7 +14,7 @@ export function matchingThreads(threads: readonly Thread[], messages: readonly P
   const historyQuery = search.trim();
   const olderIds = historyQuery && historical?.query === historyQuery ? historical.ids : undefined;
   return threads.filter(item => !item.sideParentId && (
-    !query || olderIds?.has(item.id) || `${item.title} ${item.projectName ?? ''} ${histories.get(item.id)?.join(' ') ?? ''}`.toLowerCase().includes(query)
+    !query || olderIds?.has(item.id) || `${displayThreadTitle(item)} ${item.projectName ?? ''} ${histories.get(item.id)?.join(' ') ?? ''}`.toLowerCase().includes(query)
   )).toSorted((a, b) => order === 'manual'
     ? (a.presentation?.order ?? 0) - (b.presentation?.order ?? 0) || b.updatedAt.localeCompare(a.updatedAt)
     : b.updatedAt.localeCompare(a.updatedAt));
