@@ -18,6 +18,7 @@ import {
 	X,
 } from "lucide-react";
 import { Select } from "../../../../packages/ui-shell/Select";
+import { CopyButton } from "../CopyButton";
 import type { FilesRead } from "./useFilesRead";
 import {
 	slotItems,
@@ -69,6 +70,7 @@ export function FilesView({
 	preview,
 	selector,
 	download,
+	copyTarget,
 	limitNote,
 	projectSearch,
 	projectPreviews,
@@ -86,6 +88,7 @@ export function FilesView({
 	preview: FilesRead<unknown> & { body: ReactNode };
 	selector?: ReactNode;
 	download?: string;
+	copyTarget?: { text: string; label: string };
 	limitNote?: string;
 	projectSearch?: {
 		available: boolean;
@@ -531,11 +534,20 @@ export function FilesView({
 										)}
 									</>
 								)}
-								{download && (
-									<a href={download} download={selected.name}>
-										Download
-									</a>
-								)}
+								<span className="files-preview-actions">
+									{download && (
+										<a href={download} download={selected.name}>
+											Download
+										</a>
+									)}
+									{source === "project" && copyTarget && (
+										<CopyButton
+											text={copyTarget.text}
+											label={copyTarget.label}
+											failureMessage="Copy failed. Try again."
+										/>
+									)}
+								</span>
 							</header>
 							<div
 								className="files-preview-content"

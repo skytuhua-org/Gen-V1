@@ -12,6 +12,7 @@ const text = (value = "Current file") => ({
 	text: value,
 	binary: false,
 	sha256: "a".repeat(64),
+	bindingId: "b".repeat(64),
 });
 const deny = (route: Route, code = "CAPABILITY_DENIED") =>
 	route.fulfill({
@@ -54,6 +55,7 @@ async function project(
 	await page.route("**/api/projects/*/files?*", (route) =>
 		route.fulfill({
 			json: {
+				bindingId: "b".repeat(64),
 				entries: new URL(route.request().url()).searchParams.has("path")
 					? []
 					: names,
@@ -97,23 +99,32 @@ test("RED source: held project directory and file requests expose separate pendi
 }) => {
 	const go = await fixture(page);
 	await project(page);
-	let tree: Route | undefined, file: Route | undefined;
+	let file: Route | undefined;
+	const trees: Route[] = [];
 	await page.route("**/api/projects/*/files?*", (route) => {
-		tree = route;
+		trees.push(route);
 	});
 	await go();
-	await expect.poll(() => !!tree).toBe(true);
+	await expect.poll(() => trees.length).toBe(1);
 	await expect(page.getByRole("status")).toContainText(
 		/Loading…/,
 	);
-	await tree!.fulfill({ json: { entries: [entry("held.txt")] } });
+	const folder = { bindingId: "b".repeat(64), entries: [entry("held.txt")] };
+	await trees[0].fulfill({ json: folder });
+	await expect.poll(() => trees.length).toBe(2);
+	await trees[1].fulfill({ json: folder });
+	await expect(
+		page.getByRole("button", { name: "held.txt", exact: true }),
+	).toBeVisible();
 	await page.route("**/api/projects/*/file?*", (route) => {
 		file = route;
 	});
 	await page.getByRole("button", { name: "held.txt", exact: true }).click();
 	await expect.poll(() => !!file).toBe(true);
 	await expect(
-		page.getByRole("region", { name: "File content" }).getByRole("status"),
+		page
+			.getByRole("region", { name: "File content" })
+			.locator(".files-message[role=status]"),
 	).toContainText(/Loading…/);
 	await file!.fulfill({ json: text() });
 	await expect(
@@ -177,7 +188,9 @@ test("RED source: a held project file identifies the pending selection", async (
 		page.getByRole("region", { name: "File content" }),
 	).toContainText("ok.txt");
 	await expect(
-		page.getByRole("region", { name: "File content" }).getByRole("status"),
+		page
+			.getByRole("region", { name: "File content" })
+			.locator(".files-message[role=status]"),
 	).toContainText(/Loading…/);
 	await held!.fulfill({ json: text() });
 });
@@ -192,6 +205,10 @@ test("folder filter is local, breadcrumb navigates, and empty folders are explic
 		if (request.url().includes("/api/projects/")) requests.push(request.url());
 	});
 	await go();
+	await expect(
+		page.getByRole("button", { name: "ok.txt", exact: true }),
+	).toBeVisible();
+	const initialRequests = requests.length;
 	await page.getByRole("searchbox", { name: "Filter this folder" }).fill("OK");
 	await expect(
 		page.getByRole("button", { name: "ok.txt", exact: true }),
@@ -199,7 +216,7 @@ test("folder filter is local, breadcrumb navigates, and empty folders are explic
 	await expect(
 		page.getByRole("button", { name: "denied.txt", exact: true }),
 	).toHaveCount(0);
-	expect(requests).toHaveLength(1);
+	expect(requests).toHaveLength(initialRequests);
 	await page
 		.getByRole("searchbox", { name: "Filter this folder" })
 		.fill("no match");
@@ -246,7 +263,9 @@ test("refresh retains the selected project content and retry recovers directory 
 	});
 	await expect(page.locator(".files-error[role=status]")).toContainText("Folder read failed");
 	await page.route("**/api/projects/*/files?*", (route) =>
-		route.fulfill({ json: { entries: [entry("ok.txt")] } }),
+		route.fulfill({
+			json: { bindingId: "b".repeat(64), entries: [entry("ok.txt")] },
+		}),
 	);
 	await page.getByRole("button", { name: "Retry" }).click();
 	await expect(page.locator(".files-error[role=status]")).toHaveCount(0);
@@ -419,6 +438,7 @@ for (const source of ["project", "granted"])
 				return route.fulfill({
 					json: {
 						path: "",
+						bindingId: "b".repeat(64),
 						entries: [entry("ok.txt"), entry("next", "directory")],
 						truncated: false,
 					},
@@ -434,7 +454,12 @@ for (const source of ["project", "granted"])
 			if (late === "error") await deny(held!);
 			else
 				await held!.fulfill({
-					json: { path: "next", entries: [entry("stale.txt")], truncated: false },
+					json: {
+						path: "next",
+						bindingId: "b".repeat(64),
+						entries: [entry("stale.txt")],
+						truncated: false,
+					},
 				});
 			await settled(page, held!);
 			await expect(
@@ -798,7 +823,12 @@ test("project empty text, binary and too-large errors remain distinct", async ({
 			? route.fulfill({ json: text("") })
 			: path === "binary.dat"
 				? route.fulfill({
-						json: { text: null, binary: true, sha256: "b".repeat(64) },
+						json: {
+							text: null,
+							binary: true,
+							sha256: "b".repeat(64),
+							bindingId: "b".repeat(64),
+						},
 					})
 				: route.fulfill({
 						status: 413,
@@ -911,7 +941,7 @@ test("project inactive state aborts its read and resumes without stale content",
 	await expect(
 		page.getByRole("region", { name: "File content" }),
 	).not.toContainText("Inactive stale result");
-	await expect(page.getByRole("status")).toHaveCount(0);
+	await expect(page.locator(".files-message[role=status]")).toHaveCount(0);
 	await page.route("**/api/projects/*/file?*", (route) =>
 		route.fulfill({ json: text("Resumed file") }),
 	);
@@ -954,3 +984,245 @@ for (const source of ["project", "granted"])
 			).toBeVisible();
 		},
 	);
+
+declare global {
+	interface Window {
+		__clipboardFixture: { writes: string[]; failures: number };
+	}
+}
+async function clipboardWrites(page: Page) {
+	await page.addInitScript(() => {
+		const state = { writes: [] as string[], failures: 0 };
+		Object.assign(window, { __clipboardFixture: state });
+		const write = navigator.clipboard.writeText.bind(navigator.clipboard);
+		navigator.clipboard.writeText = (value: string) => {
+			state.writes.push(value);
+			return state.failures > 0
+				? (state.failures--, Promise.reject(new Error("Clipboard denied")))
+				: write(value);
+		};
+	});
+}
+const clipboard = (page: Page) =>
+	page.evaluate(() => window.__clipboardFixture.writes);
+
+test("an accepted project read copies the exact relative path; failure is retryable", async ({
+	page,
+}) => {
+	await page
+		.context()
+		.grantPermissions(["clipboard-read", "clipboard-write"]);
+	await clipboardWrites(page);
+	const go = await fixture(page);
+	const spaced = "docs/Guide notes caf\u00e9.md";
+	await project(page, [
+		{ name: "Guide notes caf\u00e9.md", path: spaced, kind: "file", bytes: 42 },
+	]);
+	await go();
+	const copy = page.getByRole("button", { name: "Copy relative path" });
+	await expect(copy).toHaveCount(0);
+	await page
+		.getByRole("button", { name: "Guide notes caf\u00e9.md", exact: true })
+		.click();
+	await expect(copy).toBeVisible();
+	expect(await clipboard(page)).toEqual([]);
+	await page.evaluate(() => {
+		window.__clipboardFixture.failures = 1;
+	});
+	await copy.click();
+	await expect(page.locator(".ui-toast")).toContainText(
+		"Copy failed. Try again.",
+	);
+	await copy.click();
+	await expect(copy).toHaveAttribute("title", "Copied");
+	expect(await clipboard(page)).toEqual([spaced, spaced]);
+	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+		spaced,
+	);
+	await expect(copy).toHaveAttribute("title", "Copy relative path", {
+		timeout: 4000,
+	});
+});
+
+test("binary and empty accepted reads still copy the path only", async ({
+	page,
+}) => {
+	await page
+		.context()
+		.grantPermissions(["clipboard-read", "clipboard-write"]);
+	await clipboardWrites(page);
+	const go = await fixture(page);
+	await project(page, [entry("empty.txt"), entry("blob.bin")]);
+	await page.route("**/api/projects/*/file?*", (route) =>
+		new URL(route.request().url()).searchParams.get("path") === "empty.txt"
+			? route.fulfill({ json: text("") })
+			: route.fulfill({
+					json: {
+						text: null,
+						binary: true,
+						sha256: "b".repeat(64),
+						bindingId: "b".repeat(64),
+					},
+				}),
+	);
+	await go();
+	const copy = page.getByRole("button", { name: "Copy relative path" });
+	await page.getByRole("button", { name: "empty.txt", exact: true }).click();
+	await copy.click();
+	await page.getByRole("button", { name: "blob.bin", exact: true }).click();
+	await expect(page.getByRole("region", { name: "File content" })).toContainText(
+		"Binary file",
+	);
+	await copy.click();
+	expect(await clipboard(page)).toEqual(["empty.txt", "blob.bin"]);
+});
+
+for (const blocker of ["held", "failed", "inactive", "granted"] as const)
+	test(`no copy action while the preview is ${blocker}`, async ({ page }) => {
+		await page
+			.context()
+			.grantPermissions(["clipboard-read", "clipboard-write"]);
+		await clipboardWrites(page);
+		const grantedMode = blocker === "granted";
+		const go = await fixture(page, grantedMode ? "?granted=1" : "");
+		if (grantedMode) await granted(page);
+		else await project(page);
+		let held: Route | undefined;
+		if (blocker === "held")
+			await page.route("**/api/projects/*/file?*", (route) => {
+				held = route;
+			});
+		else if (blocker === "failed")
+			await page.route("**/api/projects/*/file?*", (route) =>
+				route.fulfill({
+					status: 500,
+					json: { error: { message: "Read failed" } },
+				}),
+			);
+		await go();
+		await page
+			.getByRole("button", {
+				name: grantedMode ? "empty.txt" : "ok.txt",
+				exact: true,
+			})
+			.click();
+		if (blocker === "held") {
+			await expect.poll(() => !!held).toBe(true);
+			await expect(
+				page.getByRole("button", { name: "Copy relative path" }),
+			).toHaveCount(0);
+			await held!.fulfill({ json: text() });
+			await expect(
+				page.getByRole("button", { name: "Copy relative path" }),
+			).toBeVisible();
+		} else {
+			if (blocker === "failed")
+				await expect(
+					page.locator(".files-error[role=status]"),
+				).toContainText("Read failed");
+			if (blocker === "inactive")
+				await page.getByRole("button", { name: "Toggle active" }).click();
+			await expect(
+				page.getByRole("button", { name: "Copy relative path" }),
+			).toHaveCount(0);
+		}
+		expect(await clipboard(page)).toEqual([]);
+	});
+
+test("same-path refresh hides the copy action until the replacement read settles", async ({
+	page,
+}) => {
+	await page
+		.context()
+		.grantPermissions(["clipboard-read", "clipboard-write"]);
+	await clipboardWrites(page);
+	const go = await fixture(page);
+	await project(page);
+	await go();
+	await page.getByRole("button", { name: "ok.txt", exact: true }).click();
+	const copy = page.getByRole("button", { name: "Copy relative path" });
+	await expect(copy).toBeVisible();
+	let held: Route | undefined;
+	await page.route("**/api/projects/*/file?*", (route) => {
+		held = route;
+	});
+	await page.getByRole("button", { name: "Refresh", exact: true }).click();
+	await expect.poll(() => !!held).toBe(true);
+	await expect(copy).toHaveCount(0);
+	expect(await clipboard(page)).toEqual([]);
+	await held!.fulfill({ json: text("Refreshed file") });
+	await expect(copy).toBeVisible();
+	await copy.click();
+	expect(await clipboard(page)).toEqual(["ok.txt"]);
+});
+
+for (const path of [
+	"up/../escape.txt",
+	"dir\backslash.txt",
+	"C:/absolute.txt",
+	"has\tcontrol.txt",
+	"has//gap.txt",
+])
+	test(`no copy action for the unusable path ${JSON.stringify(path)}`, async ({
+		page,
+	}) => {
+		await page
+			.context()
+			.grantPermissions(["clipboard-read", "clipboard-write"]);
+		await clipboardWrites(page);
+		const go = await fixture(page);
+		const name = "entry-" + path.length + ".txt";
+		await project(page, [{ name, path, kind: "file", bytes: 10 }]);
+		await go();
+		await page.getByRole("button", { name, exact: true }).click();
+		await expect(
+			page.getByRole("region", { name: "File content" }),
+		).toContainText("Current file");
+		await expect(
+			page.getByRole("button", { name: "Copy relative path" }),
+		).toHaveCount(0);
+		expect(await clipboard(page)).toEqual([]);
+	});
+
+test("keyboard reaches the copy control before the preview body and each key writes once", async ({
+	page,
+}) => {
+	await page
+		.context()
+		.grantPermissions(["clipboard-read", "clipboard-write"]);
+	await clipboardWrites(page);
+	const go = await fixture(page, "?width=375");
+	await project(page, [
+		{
+			name: "an-extraordinarily-long-file-name-for-header-layout.txt",
+			path: "an-extraordinarily-long-file-name-for-header-layout.txt",
+			kind: "file",
+			bytes: 10,
+		},
+	]);
+	await go();
+	await page
+		.getByRole("button", {
+			name: "an-extraordinarily-long-file-name-for-header-layout.txt",
+			exact: true,
+		})
+		.click();
+	const copy = page.getByRole("button", { name: "Copy relative path" });
+	await expect(copy).toBeVisible();
+	await page.locator(".files-preview-content").focus();
+	await page.keyboard.press("Shift+Tab");
+	await expect(copy).toBeFocused();
+	await page.keyboard.press("Enter");
+	await page.keyboard.press("Space");
+	expect(await clipboard(page)).toEqual([
+		"an-extraordinarily-long-file-name-for-header-layout.txt",
+		"an-extraordinarily-long-file-name-for-header-layout.txt",
+	]);
+	await expect(copy).toBeFocused();
+	const surface = page.locator(".files-preview > header");
+	expect(
+		await surface.evaluate(
+			(element) => element.scrollWidth <= element.clientWidth,
+		),
+	).toBe(true);
+});
