@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ModelPicker } from '../../apps/web/src/ModelPicker';
 import { useModalRegion } from '../../apps/web/src/focus';
@@ -83,5 +83,15 @@ function ModalToastFixture() {
   </>;
 }
 
+const Conversation = lazy(async () => ({default:(await import('../../apps/web/src/App')).App}));
+function ConversationToastFixture(){
+  useEffect(()=>{
+    const notice=()=>toast('Composer geometry notification',{tone:'error'});
+    window.addEventListener('fixture-composer-toast',notice);
+    return()=>window.removeEventListener('fixture-composer-toast',notice);
+  },[]);
+  return <Suspense fallback={null}><Conversation/></Suspense>;
+}
+
 const retention = new URLSearchParams(location.search).get('retention');
-createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).has('modal-toast') ? <ModalToastFixture/> : new URLSearchParams(location.search).has('toast') ? <ToastFixture/> : retention ? <RetentionFixture mode={retention}/> : <Fixture />);
+createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).has('composer-toast') ? <ConversationToastFixture/> : new URLSearchParams(location.search).has('modal-toast') ? <ModalToastFixture/> : new URLSearchParams(location.search).has('toast') ? <ToastFixture/> : retention ? <RetentionFixture mode={retention}/> : <Fixture />);

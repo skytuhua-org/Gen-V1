@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { resolve } from 'node:path';
+import {serveTaskFixture,taskFixture} from './task-interface-fixture';
 
 const fixture = '/@fs/' + resolve('tests/e2e/ui-shell-overlays-fixture.tsx').replaceAll('\\', '/');
 test.beforeEach(async ({ page }) => {
@@ -7,6 +8,54 @@ test.beforeEach(async ({ page }) => {
     contentType: 'text/html', body: `<html data-theme="dark" data-native-titlebar="true"><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${encodeURI(fixture)}');</script></body></html>`,
   }));
   await page.goto('/ui-shell-overlays');
+});
+
+test('the real docked composer anchors notifications across late startup, resize and layout changes',async({page})=>{
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await page.setViewportSize({width:1440,height:900});
+ const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Composer geometry fixture'}}}});
+ snapshot.artifacts=[];snapshot.userStates=[];
+ await serveTaskFixture(page,snapshot);
+ let openSnapshot!:()=>void;
+ const gate=new Promise<void>(resolve=>{openSnapshot=resolve;});
+ await page.route('**/api/snapshot',async route=>{await gate;await route.fallback();});
+ try{
+  await page.goto('/ui-shell-overlays?composer-toast');
+  const stack=page.getByRole('region',{name:'Notifications',exact:true});
+  await expect(stack).toBeAttached();
+  await page.evaluate(()=>window.dispatchEvent(new Event('fixture-composer-toast')));
+  await expect(stack).toContainText('Composer geometry notification');
+  await expect(stack).toHaveCSS('bottom','24px');
+ }finally{openSnapshot();}
+ const stack=page.getByRole('region',{name:'Notifications',exact:true});
+ const draft=page.getByRole('textbox',{name:'Message',exact:true});
+ await expect(draft).toBeVisible();
+ const gap=()=>stack.evaluate(node=>{
+  const docks=[...document.querySelectorAll('.composer-dock')];
+  const dock=docks.find(el=>el.querySelector('textarea')&&el.getClientRects().length);
+  return (dock?.getBoundingClientRect().top??0)-node.getBoundingClientRect().bottom;
+ });
+ const assertClearance=async()=>{
+  await expect.poll(async()=>{const actual=await gap();return actual>=11&&actual<=14?'12px clearance':{actual,width:page.viewportSize()?.width,css:await stack.evaluate(el=>el.style.bottom)};}).toBe('12px clearance');
+  expect(await draft.evaluate(node=>{
+   const rect=node.getBoundingClientRect();
+   return document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===node;
+  })).toBe(true);
+ };
+ for(const width of [1440,768,560,360]){
+  await page.setViewportSize({width,height:900});
+  await assertClearance();
+ }
+ const before=(await stack.boundingBox())!.y;
+ await draft.fill(Array.from({length:7},(_,index)=>'Draft line '+(index+1)).join('\n'));
+ await assertClearance();
+ await expect.poll(async()=>(await stack.boundingBox())!.y).toBeLessThan(before);
+ await page.setViewportSize({width:1440,height:900});
+ await page.getByRole('button',{name:'Area actions',exact:true}).click();
+ await page.getByRole('menuitem',{name:'Split left / right',exact:true}).click();
+ await expect(page.locator('[data-split-pane]')).toHaveCount(2);
+ await expect(stack).toHaveCSS('bottom','24px');
+ await expect(stack).toContainText('Composer geometry notification');
 });
 
 test('the top native modal owns the shared toaster and Escape dismisses only its focused toast',async({page})=>{
