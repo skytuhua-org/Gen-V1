@@ -547,6 +547,61 @@ test.describe('ACT04 artifact submission feedback', () => {
     await expect(page.getByText(/^Submitted choice:/)).toHaveCount(0);
   });
 
+  test('a late accepted action cannot acknowledge or clear a newer presentation', async ({ page }) => {
+    const snapshot = submissionFixture(deliveryForm());
+    const first = snapshot.artifacts[0];
+    snapshot.userStates[0].values = { delivery: 'pickup', note: 'Submitted draft' };
+    snapshot.messages.push({...snapshot.messages[0], id: 'foreign-reply', content: 'Foreign owner', createdAt: '2026-10-29T23:01:00.000Z'});
+    snapshot.artifacts.push({...first, id: 'foreign-surface', messageId: 'foreign-reply', title: 'Foreign surface', stateId: 'foreign-state'});
+    snapshot.userStates.push({...snapshot.userStates[0], id: 'foreign-state', values: { note: 'Foreign draft' }});
+    let release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const fixture = await serveTaskFixture(page, snapshot, async () => {
+      await gate;
+      return {};
+    });
+    await openApp(page);
+    const current = page.locator('[data-artifact-id="task-surface"]');
+    const foreign = page.locator('[data-artifact-id="foreign-surface"]');
+    const currentNote = current.getByRole('textbox', {name: 'Delivery note'});
+    const currentChoice = current.getByRole('radio', {name: 'Pick up locally'});
+    const foreignNote = foreign.getByRole('textbox', {name: 'Delivery note'});
+    const submit = current.getByRole('button', {name: 'Save choice', exact: true});
+    const submissions = () => fixture.commands.filter(command => command.type === 'action.submit');
+    try {
+      await expect(currentNote).toHaveValue('Submitted draft');
+      await expect(currentChoice).toBeChecked();
+      await expect(foreignNote).toHaveValue('Foreign draft');
+      await submit.click();
+      await expect.poll(() => submissions().map(command => command.payload.payload)).toEqual([{delivery: 'pickup', note: 'Submitted draft'}]);
+      await expect(submit).toBeDisabled();
+      await expect(current.getByText('Submitting request', {exact: true})).toBeVisible();
+
+      snapshot.artifacts[0] = {...first, revision: 2};
+      await fixture.publish();
+      await expect(current.locator('.artifact-secondary-tools')).toHaveAttribute('data-tooltip-group', JSON.stringify(['task-thread', 'task-surface', 2]));
+      await expect(submit).toBeEnabled();
+      await currentNote.fill('Newer presentation draft');
+
+      const accepted = page.waitForResponse(response => response.ok() && new URL(response.url()).pathname === '/api/commands' &&
+        response.request().postDataJSON()?.type === 'action.submit');
+      const refreshed = page.waitForResponse(response => response.ok() && new URL(response.url()).pathname === '/api/snapshot');
+      release();
+      await Promise.all([accepted, refreshed]);
+      await expect(currentChoice).toBeChecked();
+      await expect(currentNote).toHaveValue('Newer presentation draft');
+      await expect(foreignNote).toHaveValue('Foreign draft');
+      await expect(currentNote).toBeFocused();
+      for (const owner of [current, foreign]) {
+        await expect(owner.getByText(/^(Request submitted|Submitting request|Submitted choice:)/)).toHaveCount(0);
+        await expect(owner.getByRole('button', {name: 'Retry', exact: true})).toHaveCount(0);
+      }
+      expect(submissions()).toHaveLength(1);
+    } finally {
+      release();
+    }
+  });
+
   test('keeps the captured choice label after clearing and removes it on a user edit or after four seconds', async ({ page }) => {
     const fixture = await serveTaskFixture(page, submissionFixture(deliveryForm()));
     await openApp(page);
