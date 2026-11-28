@@ -21,8 +21,8 @@ describe('recorded comparison display scope', () => {
     const kept = render();
     expect(kept).toContain('alpha\n \nbeta');
     const hidden = render({ hideWhitespace: true });
-    expect(hidden).toContain('<pre>beta</pre>');
-    expect(hidden).toContain('<pre>beta changed</pre>');
+    expect(hidden).toContain('<pre tabindex="0">beta</pre>');
+    expect(hidden).toContain('<pre tabindex="0">beta changed</pre>');
     expect(hidden).toContain('@@ -1 +1 @@');
     expect(hidden).toContain('-alpha');
   });
