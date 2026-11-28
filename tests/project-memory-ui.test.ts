@@ -22,7 +22,7 @@ function responses(body: unknown) {
 it('makes project memory reachable from an owning main project context without making a request', async () => {
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
   const {ProjectContextSurface} = await import('../apps/web/src/ProjectContextSurface');
-  const thread = {id: 'thread-a', projectId: 'project-a', kind: 'main', accountId: 'account-a'} as Thread;
+  const thread = {id: 'thread-a', title: 'Project conversation', projectId: 'project-a', kind: 'main', accountId: 'account-a'} as Thread;
   const snapshot = {threads: [thread], data: [], messages: [], artifacts: [], operations: [], requests: []} as unknown as Snapshot;
   expect(renderToStaticMarkup(createElement(ProjectContextSurface, {thread, snapshot}))).toContain('Project memory');
   expect(fetch).not.toHaveBeenCalled();
