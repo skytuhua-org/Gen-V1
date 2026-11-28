@@ -1,8 +1,173 @@
-import { test, expect } from '@playwright/test';
-import { branchGraphData, branchGraphSpec, growingQaSpec, linkedMapData, linkedMapSpec, migrationTableSpec, serveTaskFixture, taskFixture } from './task-interface-fixture';
+import { chromium, test, expect } from '@playwright/test';
+import { branchGraphData, branchGraphSpec, growingQaSpec, linkedMapData, linkedMapSpec, migrationTableSpec, serveTaskFixture, taskFixture, type TaskSpec } from './task-interface-fixture';
 import { validateSurface } from '../../packages/ui-catalog';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { openApp } from './app-ready';
+import { release } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { recordWindow } from '../../scripts/review-capture';
+
+test.describe('ACT05 action feedback capture', () => {
+  test.skip(process.env.HARNESS_CAPTURE_ACTION_FEEDBACK !== '1', 'Opt-in paired action-feedback recordings.');
+
+  for (const theme of ['light', 'dark'] as const) for (const policy of ['full', 'reduced', 'off'] as const) {
+    test(`${theme} ${policy}`, async ({ baseURL, channel, headless, launchOptions }, info) => {
+      test.setTimeout(90_000);
+      const { HARNESS_ACTION_BASELINE_SHA: baselineSha, HARNESS_ACTION_CANDIDATE_SHA: candidateSha, HARNESS_ACTION_CAPTURE_SIDE: side } = process.env;
+      if (!baselineSha?.match(/^[a-f0-9]{40}$/) || !candidateSha?.match(/^[a-f0-9]{40}$/) || (side !== 'baseline' && side !== 'candidate')) {
+        throw Error('Specify full baseline and candidate SHAs and set HARNESS_ACTION_CAPTURE_SIDE to baseline or candidate.');
+      }
+      const checkoutSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      const sourceRef = side === 'baseline' ? baselineSha : candidateSha;
+      try {
+        execFileSync('git', ['diff', '--quiet', sourceRef, '--', 'apps', 'packages', 'scripts', 'package.json', 'pnpm-lock.yaml', 'vite.config.*']);
+      } catch {
+        throw Error('Application source must match the declared capture SHA. Apply only the test harness when recording a baseline.');
+      }
+      const directory = info.outputPath('act05');
+      await mkdir(directory, { recursive: true });
+      const viewport = { width: 1920, height: 1080 };
+      const server = await chromium.launchServer({ ...launchOptions, channel, headless });
+      try {
+        const browser = await chromium.connect(server.wsEndpoint());
+        try {
+          const context = await browser.newContext({ baseURL, viewport, deviceScaleFactor: 1, colorScheme: theme, reducedMotion: 'no-preference' });
+          try {
+            const page = await context.newPage();
+            const snapshot = taskFixture({ root: 'form', elements: {
+              form: { type: 'Form', props: { actionId: 'inspect', submitLabel: 'Save choice', payloadFromState: { delivery: 'delivery', note: 'note' }, clearOnSuccess: ['delivery', 'note'] }, children: ['choice', 'note'] },
+              choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Delivery', options: [{ value: 'pickup', label: 'Pick up locally' }, { value: 'review', label: 'Review first' }] } },
+              note: { type: 'Input', props: { stateKey: 'note', label: 'Delivery note' } },
+            } });
+            snapshot.artifacts[0].actions.inspect = { kind: 'agent' };
+            snapshot.settings.theme = theme;
+            snapshot.settings.preferences = { interfaceFont: 'Inter', motion: policy === 'full' ? 'system' : policy, motionSpeed: 1, panelAnimations: true };
+            let releaseRequest = () => {};
+            const requestHeld = new Promise<void>(resolve => { releaseRequest = resolve; });
+            await serveTaskFixture(page, snapshot, async () => { await requestHeld; return { approvalRequired: true, operation: { id: 'delivery-approval' } }; });
+            const commands: unknown[] = [];
+            await page.route('**/api/commands', async route => {
+              const command = route.request().postDataJSON();
+              if (command.type !== 'action.submit') return route.fallback();
+              commands.push(command.payload.payload);
+              if (commands.length === 1) return route.fallback();
+              await route.fulfill({ status: 500, json: { error: { code: 'ACTION_FAILED', message: 'Synthetic request failed. Try again.' } } });
+            });
+            await openApp(page);
+            const artifact = page.locator('[data-artifact-id="task-surface"]');
+            const button = artifact.locator('button[type="submit"]');
+            await expect(button).toHaveAccessibleName('Save choice');
+            await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+            const display = await page.evaluate(async () => {
+              const faces = await document.fonts.load('14px "Inter Variable"');
+              return { interLoaded: faces.some(face => face.status === 'loaded'), width: innerWidth, height: innerHeight, devicePixelRatio, visualViewportScale: visualViewport?.scale ?? null, osReduced: matchMedia('(prefers-reduced-motion: reduce)').matches };
+            });
+            expect(display.interLoaded, 'Paired recordings must load Inter instead of measuring a fallback font').toBe(true);
+            expect([display.width, display.height, display.devicePixelRatio]).toEqual([1920, 1080, 1]);
+            const sample = async (name: string) => {
+              const phase = { name, bounds: await button.boundingBox(), label: await button.innerText(), status: await artifact.getByRole('status').allTextContents(), alerts: await artifact.getByRole('alert').allTextContents(), actionCount: commands.length };
+              // Hold each observed phase in the recording long enough to read it.
+              await page.waitForTimeout(750);
+              return phase;
+            };
+            const phases: Awaited<ReturnType<typeof sample>>[] = [];
+            const videoName = 'action-feedback.mp4';
+            const videoPath = `${directory}/${videoName}`;
+            const stop = await recordWindow(server, page, videoPath, { cursor: 'none' });
+            let video;
+            try {
+              phases.push(await sample('idle'));
+              await artifact.getByRole('radio', { name: 'Pick up locally' }).click();
+              await artifact.getByRole('textbox', { name: 'Delivery note' }).fill('First draft');
+              await button.click();
+              await expect.poll(() => commands.length).toBe(1);
+              await expect(button).toBeDisabled();
+              phases.push(await sample('pending'));
+              releaseRequest();
+              await expect(button).toBeEnabled();
+              if (side === 'candidate') await expect(artifact.getByText('Request submitted', { exact: true })).toBeVisible();
+              phases.push(await sample('result'));
+              await artifact.getByRole('radio', { name: 'Review first' }).click();
+              const note = artifact.getByRole('textbox', { name: 'Delivery note' });
+              await note.fill('Second draft');
+              await note.press('Enter');
+              await expect(artifact.getByRole('alert').filter({ hasText: 'Synthetic request failed. Try again.' })).toBeVisible();
+              phases.push(await sample('error'));
+              expect(commands).toEqual([{ delivery: 'pickup', note: 'First draft' }, { delivery: 'review', note: 'Second draft' }]);
+            } finally {
+              releaseRequest();
+              video = await stop();
+            }
+            expect(video.streams).toContainEqual(expect.objectContaining({ codec_name: 'h264', width: 1920, height: 1080, r_frame_rate: '30/1' }));
+            await writeFile(`${directory}/manifest.json`, JSON.stringify({
+              provenance: 'Synthetic real-App fixture with intercepted host responses. No native app, OS cursor, or provider acceptance.',
+              baselineSha, candidateSha, checkoutSha, side, sourceRef,
+              harnessSha256: createHash('sha256').update(await readFile(info.file)).digest('hex'),
+              theme, policy, viewport, zoom: { method: 'Unmodified fresh browser context', ...display },
+              environment: { platform: process.platform, arch: process.arch, release: release(), node: process.version, browser: browser.version(), channel, executablePath: launchOptions.executablePath },
+              phases, commands, video: { filename: videoName, sha256: createHash('sha256').update(await readFile(videoPath)).digest('hex'), ...video },
+            }, null, 2) + '\n');
+          } finally {
+            await context.close();
+          }
+        } finally {
+          await browser.close();
+        }
+      } finally {
+        await server.close();
+      }
+    });
+  }
+});
+
+test('a hidden artifact status announces directly in its header and clears only on reveal or expiry',async({page})=>{
+ const spec:TaskSpec={root:'views',elements:{
+  views:{type:'Tabs',props:{labels:['Content','Controls','Details'],stateKey:'statusView'},children:['status','save','details']},
+  status:{type:'Status',props:{dataBinding:'result'}},
+  save:{type:'Button',props:{label:'Save choice',actionId:'ask'}},
+  details:{type:'Text',props:{text:'Other details'}},
+ }};
+ const snapshot=taskFixture(spec,{result:{status:'neutral',label:'Waiting for a choice'}});
+ let saved=0;
+ const fixture=await serveTaskFixture(page,snapshot,async command=>{
+  if(command.payload.actionId==='ask')fixture.setInput('result',{status:'success',label:'Choice saved locally '+(++saved)});
+ });
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.emulateMedia({reducedMotion:'reduce'});await page.setViewportSize({width:560,height:800});
+ await openApp(page);
+ const artifact=page.getByRole('region',{name:'Task surface',exact:true});
+ await expect(artifact.getByText('Waiting for a choice',{exact:true})).toBeVisible();
+ const chip=artifact.locator('.artifact-header').getByRole('status');
+ await expect(artifact.locator('.artifact-header .artifact-flash')).toHaveCount(0);
+ await artifact.getByRole('tab',{name:'Controls',exact:true}).click();
+ await page.clock.install();
+ const save=artifact.getByRole('button',{name:'Save choice',exact:true});
+ await save.click();
+ await expect(chip).toHaveText('Choice saved locally 1');
+ expect(await chip.locator('.artifact-flash').evaluate(node=>parseFloat(getComputedStyle(node).animationDuration))).toBeLessThanOrEqual(.001);
+ expect(await artifact.locator('.artifact-header').evaluate(node=>node.scrollWidth<=node.clientWidth)).toBe(true);
+ await page.clock.runFor(2500);
+ await save.click();
+ await expect(chip).toHaveText('Choice saved locally 2');
+ await page.clock.runFor(2000);
+ await expect(chip).toHaveText('Choice saved locally 2');
+ await artifact.getByRole('tab',{name:'Details',exact:true}).click();
+ await expect(chip).toHaveText('Choice saved locally 2');
+ await artifact.getByRole('tab',{name:'Content',exact:true}).click();
+ await expect(chip).toHaveText('');
+ await expect(artifact.getByText('Choice saved locally 2',{exact:true})).toBeVisible();
+ fixture.setInput('result',{status:'error',label:'Choice needs another attempt'});
+ await fixture.publish();
+ await expect(artifact.getByText('Choice needs another attempt',{exact:true})).toBeVisible();
+ await expect(chip).toHaveText('');
+ await artifact.getByRole('tab',{name:'Controls',exact:true}).click();
+ await save.click();
+ await expect(chip).toHaveText('Choice saved locally 3');
+ await page.clock.runFor(4100);
+ await expect(chip).toHaveText('');
+ expect(errors).toEqual([]);
+});
 
 test('settings writes broadcast a named workspace event and refresh the app', async ({ page }) => {
   const snapshot = taskFixture(branchGraphSpec('vertical'), { graph: branchGraphData });
@@ -123,7 +288,9 @@ test('progressive Q&A keeps branches, edit identity and focus while deduplicatin
   fixture.setInput('answer', { status: 'pending', answer: 'Yes. Choose a destination' }); await fixture.publish();
   await expect(page.getByText('Yes. Choose a destination', { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Destination note' })).toBeFocused();
-  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.' }); await fixture.publish(); release();
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.' }); await fixture.publish();
+  await expect(page.locator('.disclosure-pending')).toHaveCount(0);
+  release();
   await expect(page.getByText('Yes. Choose a destination for each package before confirming.', { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Destination note' })).toHaveAttribute('data-identity', identity!);
   await expect(page.getByRole('textbox', { name: 'Destination note' })).toHaveValue('Keep the labels separate');
@@ -151,6 +318,51 @@ test('progressive Q&A keeps branches, edit identity and focus while deduplicatin
   await expect(page.getByRole('button', { name: 'Could the package wait until Friday?' })).toBeVisible();
   await expect(page.getByText('Choose Friday while reviewing the destination, before confirming.')).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Destination note' })).toHaveValue('Keep the labels separate');
+  // a pending follow-up branch resolves into exactly one new interactive row
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.', followupsPending: true }); await fixture.publish();
+  await expect(page.locator('.disclosure-followups-pending[data-phase="pending"]')).toBeVisible();
+  const grown = structuredClone(snapshot.artifacts[0].spec!);
+  grown.elements.delivery.children!.push('insurance');
+  grown.elements.insurance = { type: 'Disclosure', props: { title: 'Is insurance included?', stateKey: 'insuranceOpen', text: 'Insurance is listed per destination.' } };
+  snapshot.artifacts[0].spec = grown; snapshot.artifacts[0].revision++;
+  await page.evaluate(() => {
+    const w = window as unknown as { branchAnimations: number; originalAnimate?: typeof Element.prototype.animate };
+    w.branchAnimations = 0;
+    if (!w.originalAnimate) {
+      w.originalAnimate = Element.prototype.animate;
+      const original = w.originalAnimate;
+      Element.prototype.animate = function (...args) {
+        if ((this as HTMLElement).classList?.contains('disclosure-node')) w.branchAnimations++;
+        return original.apply(this, args);
+      };
+    }
+  });
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.', followupsPending: false }); await fixture.publish();
+  const newBranch = page.getByRole('button', { name: 'Is insurance included?', exact: true });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { branchAnimations: number }).branchAnimations)).toBe(1);
+  await expect(newBranch).toBeVisible(); await expect(newBranch).toBeEnabled();
+  await expect.poll(() => page.locator('.disclosure-followups-pending').count()).toBe(0);
+  expect(fixture.commands.filter(command => command.type === 'action.submit' && command.payload.actionId === 'ask')).toHaveLength(1);
+  await expect(page.getByRole('textbox', { name: 'Destination note' })).toHaveAttribute('data-identity', identity!);
+  await expect(page.getByRole('textbox', { name: 'Destination note' })).toHaveValue('Keep the labels separate');
+  // a repeat publication of the same data never replays the child
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.', followupsPending: false }); await fixture.publish();
+  expect(await page.evaluate(() => (window as unknown as { branchAnimations: number }).branchAnimations)).toBe(1);
+  // close while a placeholder exits, reopen with keyboard, and tab into the real answer
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.', followupsPending: true }); await fixture.publish();
+  await expect(page.locator('.disclosure-followups-pending[data-phase="pending"]')).toBeVisible();
+  const trigger = page.getByRole('button', { name: 'Can delivery be split?', exact: true });
+  fixture.setInput('answer', { status: 'ready', answer: 'Yes. Choose a destination for each package before confirming.', followupsPending: false }); await fixture.publish();
+  await expect(page.locator('.disclosure-followups-pending[data-phase="resolving"]')).toHaveCount(1);
+  await trigger.dispatchEvent('click');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await trigger.focus(); await page.keyboard.press('Enter');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Tab');
+  const tabbed = await page.evaluate(() => { const el = document.activeElement as HTMLElement; return { tag: el.tagName, visible: el.offsetParent !== null, inert: el.closest('[inert]') !== null }; });
+  expect(tabbed.inert).toBe(false); expect(tabbed.visible).toBe(true);
+  await expect.poll(() => page.locator('.disclosure-followups-pending').count()).toBe(0);
+  await expect(page.locator('[role="status"]').filter({ hasText: 'Preparing related questions' })).toHaveCount(0);
 });
 
 test('a pending question cannot duplicate or erase a newer draft and source errors can retry', async ({ page }) => {
@@ -167,7 +379,9 @@ test('a pending question cannot duplicate or erase a newer draft and source erro
   await expect(page.getByText('Use a separate destination for each package.')).toBeVisible();
   const question = page.getByRole('textbox', { name: 'Ask another question' });
   await question.fill('Can I change the date?'); await question.press('Enter');
-  await expect(page.getByRole('button', { name: 'Submitting…', exact: true })).toBeDisabled();
+  const submit = page.getByRole('button', { name: 'Ask question', exact: true });
+  await expect(submit).toBeDisabled();
+  await expect(submit).toHaveAttribute('aria-busy', 'true');
   // Busy feedback precedes draft flush and HTTP delivery. Exercise duplicate
   // input only after the first request actually reaches the held host fixture.
   await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit' && command.payload.actionId === 'ask').length).toBe(1);
@@ -280,4 +494,706 @@ test('map source disclosure renders URL source as a link', async ({ page }) => {
   await expect(link).toHaveText('https://example.com/places');
   await expect(link).toHaveAttribute('href', 'https://example.com/places');
   await expect(link).toHaveAttribute('target', '_blank');
+});
+
+
+const requiredChoiceSpec = { root: 'form', elements: {
+  form: { type: 'Form', props: { actionId: 'ask', submitLabel: 'Continue', payloadFromState: { choice: 'delivery' } }, children: ['choice'] },
+  choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Choose delivery', required: true, options: [{ value: 'download', label: 'Prepare a local export' }, { value: 'review', label: 'Review first' }] } },
+} };
+
+test('a required choice blocks dispatch with an exact inline error and correction clears it', async ({ page }) => {
+  const fixture = await serveTaskFixture(page, taskFixture(requiredChoiceSpec));
+  await openApp(page);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  expect(fixture.commands.filter(command => command.type === 'action.submit')).toHaveLength(0);
+  await expect(page.getByText('Pick an option first.', { exact: true })).toBeVisible();
+  await expect(page.locator('.task-choices')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.locator('.task-choices input[aria-invalid="true"]').first()).toBeFocused();
+  await page.getByRole('radio', { name: 'Prepare a local export' }).click();
+  await expect(page.getByText('Pick an option first.', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit').length).toBe(1);
+  expect(fixture.commands.find(command => command.type === 'action.submit')?.payload.payload).toEqual({ choice: 'download' });
+});
+
+test('an inactive required choice neither blocks nor loses its retained selection', async ({ page }) => {
+  const spec = { root: 'form', elements: {
+    form: { type: 'Form', props: { actionId: 'ask', submitLabel: 'Send', payloadFromState: { choice: 'delivery' } }, children: ['steps'] },
+    steps: { type: 'Steps', props: { stateKey: 'choiceStep', steps: [{ key: 'start', label: 'Start' }, { key: 'choice', label: 'Choice' }] }, children: ['note', 'choice'] },
+    note: { type: 'Input', props: { stateKey: 'note', label: 'Optional note' } },
+    choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Choose delivery', required: true, options: [{ value: 'download', label: 'Prepare a local export' }, { value: 'review', label: 'Review first' }] } },
+  } };
+  const fixture = await serveTaskFixture(page, taskFixture(spec));
+  await openApp(page);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit').length).toBe(1);
+  await expect(page.getByText('Pick an option first.', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Next step', exact: true }).click();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Pick an option first.', { exact: true })).toBeVisible();
+  expect(fixture.commands.filter(command => command.type === 'action.submit')).toHaveLength(1);
+  await page.getByRole('radio', { name: 'Review first' }).click();
+  await page.getByRole('button', { name: 'Previous step', exact: true }).click();
+  await page.getByRole('button', { name: 'Next step', exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Review first' })).toBeChecked();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit').length).toBe(2);
+});
+
+
+test('a required custom choice uses native text validity without weakening optional or unrelated fields', async ({ page }) => {
+  const spec = { root: 'form', elements: {
+    form: { type: 'Form', props: { actionId: 'ask', submitLabel: 'Continue', payloadFromState: { choice: 'delivery' } }, children: ['choice', 'optional'] },
+    choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Choose delivery', required: true, options: [{ value: 'download', label: 'Prepare a local export' }], custom: { label: 'Another arrangement', placeholder: 'Describe it' } } },
+    optional: { type: 'ChoiceList', props: { stateKey: 'witness', label: 'Optional witness', options: [{ value: 'yes', label: 'Include a witness' }] } },
+  } };
+  const fixture = await serveTaskFixture(page, taskFixture(spec));
+  await openApp(page);
+  await page.getByRole('radio', { name: 'Another arrangement' }).click();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  expect(fixture.commands.filter(command => command.type === 'action.submit')).toHaveLength(0);
+  await expect(page.getByText('Pick an option first.', { exact: true })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Another arrangement' }).fill('Pick up in person');
+  await expect(page.getByText('Pick an option first.', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit').length).toBe(1);
+  expect(fixture.commands.find(command => command.type === 'action.submit')?.payload.payload).toEqual({ choice: 'Pick up in person' });
+});
+
+
+test('a disabled required choice does not block submission', async ({ page }) => {
+  const spec = { root: 'form', elements: {
+    form: { type: 'Form', props: { actionId: 'ask', submitLabel: 'Continue', payloadFromState: { choice: 'delivery' } }, children: ['choice'] },
+    choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Choose delivery', required: true, disabled: true, options: [{ value: 'download', label: 'Prepare a local export' }] } },
+  } };
+  const fixture = await serveTaskFixture(page, taskFixture(spec));
+  await openApp(page);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit').length).toBe(1);
+  await expect(page.getByText('Pick an option first.', { exact: true })).toHaveCount(0);
+});
+
+test.describe('ACT04 artifact submission feedback', () => {
+  function deliveryForm(required = false) {
+    return { root: 'form', elements: {
+      form: { type: 'Form', props: { actionId: 'inspect', submitLabel: 'Save choice', payloadFromState: { delivery: 'delivery', note: 'note' }, clearOnSuccess: ['delivery', 'note'] }, children: ['choice', 'note'] },
+      choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Delivery', required, options: [{ value: 'pickup', label: 'Pick up locally' }, { value: 'review', label: 'Review first' }], custom: { label: 'Another arrangement', placeholder: 'Describe it' } } },
+      note: { type: 'Input', props: { stateKey: 'note', label: 'Delivery note' } },
+    } };
+  }
+
+  const submissionFixture = (spec: Parameters<typeof taskFixture>[0]) => {
+    const snapshot = taskFixture(spec);
+    snapshot.artifacts[0].actions.inspect = { kind: 'agent' };
+    return snapshot;
+  };
+
+  test('limits action indicator motion under OS reduction and disables transitions with app preferences', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const snapshot = submissionFixture(deliveryForm());
+    snapshot.settings.preferences = { motion: 'system', motionSpeed: 0.75, panelAnimations: true };
+    const fixture = await serveTaskFixture(page, snapshot);
+    await openApp(page);
+    const submit = page.getByRole('button', { name: 'Save choice', exact: true });
+    const layer = submit.locator('.ui-action-indicator-idle');
+    const spinner = submit.locator('.ui-spinner');
+    const durationMs = () => layer.evaluate(node => parseFloat(getComputedStyle(node).transitionDuration) * 1000);
+    const root = page.locator('html');
+    await expect(root).toHaveAttribute('data-motion', 'system');
+    await expect.poll(() => root.evaluate(node => parseFloat(getComputedStyle(node).getPropertyValue('--ui-motion-press')))).toBeCloseTo(106.667);
+    await expect(layer).toHaveCSS('transition-property', 'opacity');
+    expect(await durationMs()).toBeLessThanOrEqual(80);
+    await expect(spinner).toHaveCSS('animation-name', 'none');
+
+    snapshot.settings.preferences = { ...snapshot.settings.preferences, panelAnimations: false };
+    await fixture.publish();
+    await expect(layer).toHaveCSS('transition-property', 'none');
+    await expect(spinner).toHaveCSS('animation-name', 'none');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await expect(layer).toHaveCSS('transition-duration', '0s');
+
+    snapshot.settings.preferences = { ...snapshot.settings.preferences, panelAnimations: true, motion: 'off' };
+    await fixture.publish();
+    await expect(root).toHaveAttribute('data-motion', 'off');
+    await expect(layer).toHaveCSS('transition-property', 'none');
+    await expect(layer).toHaveCSS('transition-duration', '0s');
+    await expect(spinner).toHaveCSS('animation-name', 'none');
+
+    snapshot.settings.preferences = { ...snapshot.settings.preferences, motion: 'system' };
+    await fixture.publish();
+    await expect(root).toHaveAttribute('data-motion', 'system');
+    await expect.poll(durationMs).toBeCloseTo(160 / 0.75, 2);
+  });
+
+  test('keeps the original Form name and editable input while an approval request is pending', async ({ page }) => {
+    let release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const fixture = await serveTaskFixture(page, submissionFixture(deliveryForm()), async () => {
+      await gate;
+      return { approvalRequired: true, operation: { id: 'delivery-approval' } };
+    });
+    await openApp(page);
+    const note = page.getByRole('textbox', { name: 'Delivery note' });
+    const submit = page.getByRole('button', { name: 'Save choice', exact: true });
+    const payloads = () => fixture.commands.filter(command => command.type === 'action.submit').map(command => command.payload.payload);
+    await note.fill('Initial draft');
+    await note.dispatchEvent('compositionstart');
+    await note.press('Enter');
+    expect(payloads()).toEqual([]);
+    await note.dispatchEvent('compositionend');
+    await note.press('Enter');
+    try {
+      await expect.poll(payloads).toEqual([{ note: 'Initial draft' }]);
+      await expect(submit, 'the pending Form keeps its original accessible name').toBeDisabled({ timeout: 2500 });
+      await expect(submit).toHaveAttribute('aria-busy', 'true');
+      await expect(page.getByRole('status').filter({ hasText: /^Submitting request$/ })).toBeVisible();
+      await expect(note).toBeFocused();
+      await expect(note).toBeEditable();
+      await note.press('Enter');
+      await note.fill('Newer draft');
+      expect(payloads()).toEqual([{ note: 'Initial draft' }]);
+    } finally {
+      release();
+    }
+    await expect(submit).toBeEnabled();
+    await expect(note).toBeFocused();
+    await expect(note).toHaveValue('Newer draft');
+    await expect(page.getByRole('status').filter({ hasText: /^Request submitted$/ })).toHaveCount(1);
+    await expect(page.getByText(/^(Saved|Done|Request completed)$/)).toHaveCount(0);
+    await expect(page.getByText(/^Submitted choice:/)).toHaveCount(0);
+  });
+
+  test('a late accepted action cannot acknowledge or clear a newer presentation', async ({ page }) => {
+    const snapshot = submissionFixture(deliveryForm());
+    const first = snapshot.artifacts[0];
+    snapshot.userStates[0].values = { delivery: 'pickup', note: 'Submitted draft' };
+    snapshot.messages.push({...snapshot.messages[0], id: 'foreign-reply', content: 'Foreign owner', createdAt: '2026-10-29T23:01:00.000Z'});
+    snapshot.artifacts.push({...first, id: 'foreign-surface', messageId: 'foreign-reply', title: 'Foreign surface', stateId: 'foreign-state'});
+    snapshot.userStates.push({...snapshot.userStates[0], id: 'foreign-state', values: { note: 'Foreign draft' }});
+    let release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const fixture = await serveTaskFixture(page, snapshot, async () => {
+      await gate;
+      return {};
+    });
+    await openApp(page);
+    const current = page.locator('[data-artifact-id="task-surface"]');
+    const foreign = page.locator('[data-artifact-id="foreign-surface"]');
+    const currentNote = current.getByRole('textbox', {name: 'Delivery note'});
+    const currentChoice = current.getByRole('radio', {name: 'Pick up locally'});
+    const foreignNote = foreign.getByRole('textbox', {name: 'Delivery note'});
+    const submit = current.getByRole('button', {name: 'Save choice', exact: true});
+    const submissions = () => fixture.commands.filter(command => command.type === 'action.submit');
+    try {
+      await expect(currentNote).toHaveValue('Submitted draft');
+      await expect(currentChoice).toBeChecked();
+      await expect(foreignNote).toHaveValue('Foreign draft');
+      await submit.click();
+      await expect.poll(() => submissions().map(command => command.payload.payload)).toEqual([{delivery: 'pickup', note: 'Submitted draft'}]);
+      await expect(submit).toBeDisabled();
+      await expect(current.getByText('Submitting request', {exact: true})).toBeVisible();
+
+      snapshot.artifacts[0] = {...first, revision: 2};
+      await fixture.publish();
+      await expect(current.locator('.artifact-secondary-tools')).toHaveAttribute('data-tooltip-group', JSON.stringify(['task-thread', 'task-surface', 2]));
+      await expect(submit).toBeEnabled();
+      await currentNote.fill('Newer presentation draft');
+
+      const accepted = page.waitForResponse(response => response.ok() && new URL(response.url()).pathname === '/api/commands' &&
+        response.request().postDataJSON()?.type === 'action.submit');
+      const refreshed = page.waitForResponse(response => response.ok() && new URL(response.url()).pathname === '/api/snapshot');
+      release();
+      await Promise.all([accepted, refreshed]);
+      await expect(currentChoice).toBeChecked();
+      await expect(currentNote).toHaveValue('Newer presentation draft');
+      await expect(foreignNote).toHaveValue('Foreign draft');
+      await expect(currentNote).toBeFocused();
+      for (const owner of [current, foreign]) {
+        await expect(owner.getByText(/^(Request submitted|Submitting request|Submitted choice:)/)).toHaveCount(0);
+        await expect(owner.getByRole('button', {name: 'Retry', exact: true})).toHaveCount(0);
+      }
+      expect(submissions()).toHaveLength(1);
+    } finally {
+      release();
+    }
+  });
+
+  test('keeps the captured choice label after clearing and removes it on a user edit or after four seconds', async ({ page }) => {
+    const fixture = await serveTaskFixture(page, submissionFixture(deliveryForm()));
+    await openApp(page);
+    const submit = page.getByRole('button', { name: 'Save choice', exact: true });
+    const pickup = page.getByRole('radio', { name: 'Pick up locally' });
+    const review = page.getByRole('radio', { name: 'Review first' });
+    const summary = page.getByText('Submitted choice: Pick up locally', { exact: true });
+    await pickup.check();
+    await submit.click();
+    await expect(summary, 'acknowledgment retains the submitted display label').toBeVisible({ timeout: 2500 });
+    await expect(pickup).not.toBeChecked();
+    await expect(submit).toBeEnabled();
+    await expect(page.getByText('Submitted choice: pickup', { exact: true })).toHaveCount(0);
+    await review.check();
+    await expect(summary).toHaveCount(0);
+    await expect(review).toBeChecked();
+
+    await page.clock.install();
+    await pickup.check();
+    await submit.click();
+    await expect(summary).toBeVisible();
+    await page.clock.fastForward(3500);
+    await expect(summary).toBeVisible();
+    await page.clock.fastForward(500);
+    await expect(summary).toHaveCount(0);
+    expect(fixture.commands.filter(command => command.type === 'action.submit')).toHaveLength(2);
+  });
+
+  test('shows the source failure once and Retry validates and sends the current payload once', async ({ page }) => {
+    let firstRequest = true;
+    const payloads: unknown[] = [];
+    await serveTaskFixture(page, submissionFixture(deliveryForm(true)));
+    await page.route('**/api/commands', async route => {
+      const command = route.request().postDataJSON();
+      if (command.type !== 'action.submit') return route.fallback();
+      payloads.push(command.payload.payload);
+      if (!firstRequest) return route.fallback();
+      firstRequest = false;
+      await route.fulfill({ status: 500, json: { error: { code: 'ACTION_FAILED', message: 'Synthetic request failed. Try again.' } } });
+    });
+    await openApp(page);
+    const submit = page.getByRole('button', { name: 'Save choice', exact: true });
+    const note = page.getByRole('textbox', { name: 'Delivery note' });
+    await submit.click();
+    await expect(page.getByText('Pick an option first.', { exact: true })).toBeVisible();
+    expect(payloads).toEqual([]);
+    await page.getByRole('radio', { name: 'Another arrangement' }).check();
+    const custom = page.getByRole('textbox', { name: 'Another arrangement' });
+    await custom.fill('Original arrangement');
+    await note.fill('Original note');
+    await note.press('Enter');
+    const error = page.getByRole('alert').filter({ hasText: 'Synthetic request failed. Try again.' });
+    await expect(error).toHaveCount(1);
+    await expect(note).toBeFocused();
+    await expect(page.getByText('Request submitted', { exact: true })).toHaveCount(0);
+    const retry = page.locator('[data-artifact-id="task-surface"]').getByRole('button', { name: 'Retry', exact: true });
+    await expect(retry, 'a failed submission offers a quiet Retry').toBeVisible({ timeout: 2500 });
+    await custom.fill('');
+    await retry.click();
+    await expect(page.getByText('Pick an option first.', { exact: true })).toBeVisible();
+    expect(payloads).toEqual([{ delivery: 'Original arrangement', note: 'Original note' }]);
+    await custom.fill('Current arrangement');
+    await note.fill('Current note');
+    await retry.click();
+    await expect(page.getByText('Request submitted', { exact: true })).toBeVisible();
+    await expect(page.getByText('Submitted choice: Another arrangement', { exact: true })).toBeVisible();
+    await expect(error).toHaveCount(0);
+    expect(payloads).toEqual([{ delivery: 'Original arrangement', note: 'Original note' }, { delivery: 'Current arrangement', note: 'Current note' }]);
+  });
+
+  for (const followUp of ['refresh', 'draft journal'] as const) {
+    test(`acknowledges an accepted request when the ${followUp} fails`, async ({ page }) => {
+      let accepted = false;
+      const fixture = await serveTaskFixture(page, submissionFixture(deliveryForm()), async () => {
+        if (followUp === 'draft journal') {
+          await page.evaluate(() => {
+            const get = IDBObjectStore.prototype.get;
+            IDBObjectStore.prototype.get = function (key) {
+              if (key === 'state:task-state') throw new Error('Synthetic draft journal failure');
+              return get.call(this, key);
+            };
+          });
+        }
+        accepted = true;
+        return { approvalRequired: true, operation: { id: 'delivery-approval' } };
+      });
+      await page.route('**/api/snapshot', route => accepted && followUp === 'refresh'
+        ? route.fulfill({ status: 500, json: { error: { code: 'REFRESH_FAILED', message: 'Synthetic refresh failure' } } })
+        : route.fallback());
+      await openApp(page);
+      const artifact = page.locator('[data-artifact-id="task-surface"]');
+      await artifact.getByRole('button', { name: 'Save choice', exact: true }).click();
+      await expect(artifact.getByText('Request submitted', { exact: true })).toBeVisible();
+      await expect(artifact.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+      if (followUp === 'refresh') {
+        await expect(artifact.getByRole('alert')).toContainText('Synthetic refresh failure');
+      } else {
+        await expect(artifact.locator('.save-state')).toContainText('Synthetic draft journal failure');
+      }
+      expect(fixture.commands.filter(command => command.type === 'action.submit')).toHaveLength(1);
+    });
+  }
+
+  for (const intent of ['none', 'keyboard', 'focus'] as const) {
+    test(`restores only the initiating compact Form button after ${intent} intent`, async ({ page }) => {
+      let release = () => {};
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const { form, note } = deliveryForm().elements;
+      const spec = { root: 'form', elements: { form: { ...form, children: ['note'] }, note } };
+      const fixture = await serveTaskFixture(page, submissionFixture(spec), async () => { await gate; });
+      await openApp(page);
+      const field = page.getByRole('textbox', { name: 'Delivery note' });
+      const submit = page.getByRole('button', { name: 'Save choice', exact: true });
+      const submittedCount = () => fixture.commands.filter(command => command.type === 'action.submit').length;
+      const popup = page.getByRole('status').filter({ hasText: /^Request submitted$/ });
+      await expect(submit).toHaveCSS('width', '29px');
+      await expect(submit).toHaveCSS('height', '29px');
+      await submit.focus();
+      await expect(submit).toBeFocused();
+      await submit.press('Space');
+      try {
+        await expect.poll(submittedCount).toBe(1);
+        await expect(submit).toBeDisabled();
+        await expect(submit).toHaveCSS('width', '29px');
+        await expect(submit).toHaveCSS('height', '29px');
+        await expect(page.locator('body')).toBeFocused();
+        if (intent === 'keyboard') await page.keyboard.press('Shift');
+        if (intent === 'focus') await field.focus();
+      } finally {
+        release();
+      }
+      await expect(submit).toBeEnabled();
+      await expect(popup).toBeVisible();
+      await expect(intent === 'none' ? submit : intent === 'focus' ? field : page.locator('body')).toBeFocused();
+      expect(submittedCount()).toBe(1);
+    });
+  }
+
+  test('a failed submission with an empty source message still offers Retry', async ({ page }) => {
+    await serveTaskFixture(page, submissionFixture(deliveryForm()));
+    await page.route('**/api/commands', async route => {
+      if (route.request().postDataJSON().type !== 'action.submit') return route.fallback();
+      await route.fulfill({ status: 500, json: { error: { code: 'ACTION_FAILED', message: '' } } });
+    });
+    await openApp(page);
+    await page.getByRole('button', { name: 'Save choice', exact: true }).click();
+    const artifact = page.locator('[data-artifact-id="task-surface"]');
+    await expect(artifact.getByRole('alert')).toHaveText('The request failed. Try again.', { timeout: 3000 });
+    await expect(artifact.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+  });
+
+  test('standalone Button preserves its name and acknowledges one Space activation', async ({ page }) => {
+    let release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const spec = { root: 'action', elements: {
+      action: { type: 'Button', props: { label: 'Inspect delivery', actionId: 'inspect', payload: { scope: 'delivery' } } },
+    } };
+    const fixture = await serveTaskFixture(page, submissionFixture(spec), async () => { await gate; });
+    await openApp(page);
+    const submit = page.getByRole('button', { name: 'Inspect delivery', exact: true });
+    const payloads = () => fixture.commands.filter(command => command.type === 'action.submit').map(command => command.payload.payload);
+    await submit.press('Space');
+    try {
+      await expect.poll(payloads).toEqual([{ scope: 'delivery' }]);
+      await expect(submit, 'the pending Button keeps its original accessible name').toBeDisabled({ timeout: 2500 });
+      await expect(submit).toHaveAttribute('aria-busy', 'true');
+      await expect(page.getByRole('status').filter({ hasText: /^Submitting request$/ })).toBeVisible();
+    } finally {
+      release();
+    }
+    await expect(submit).toBeEnabled();
+    await expect(page.getByRole('status').filter({ hasText: /^Request submitted$/ })).toHaveCount(1);
+    expect(payloads()).toEqual([{ scope: 'delivery' }]);
+  });
+});
+
+test.describe('ACT05 artifact submission functional acceptance', () => {
+  for (const compact of [true, false]) {
+    test(`keeps ${compact ? 'compact' : 'regular'} submit bounds through held error and fast retry`, async ({ page }) => {
+      const spec: TaskSpec = {root: 'form', elements: {
+        form: {type: 'Form', props: {actionId: 'ask', submitLabel: 'Check item', payloadFromState: {note: 'note'}}, children: compact ? ['note'] : ['note', 'detail']},
+        note: {type: 'Input', props: {stateKey: 'note', label: 'Note'}},
+        detail: {type: 'Input', props: {stateKey: 'detail', label: 'Detail'}},
+      }};
+      const fixture = await serveTaskFixture(page, taskFixture(spec, {}, {note: 'first'}));
+      let release = () => {};
+      const held = new Promise<void>(resolve => { release = resolve; });
+      let attempts = 0;
+      await page.route('**/api/commands', async route => {
+        if (route.request().postDataJSON().type !== 'action.submit') return route.fallback();
+        if (++attempts !== 1) return route.fallback();
+        await held;
+        await route.fulfill({status: 500, json: {error: {code: 'ACTION_FAILED', message: 'Check failed.'}}});
+      });
+      await openApp(page);
+      const owner = page.locator('[data-artifact-id="task-surface"]');
+      const submit = owner.getByRole('button', {name: 'Check item', exact: true});
+      const note = owner.getByRole('textbox', {name: 'Note', exact: true});
+      const indicator = submit.locator('.ui-action-indicator');
+      const ready = await submit.boundingBox();
+      expect(ready).not.toBeNull();
+      expect(compact ? ready!.width : ready!.width > 29).toBe(compact ? 29 : true);
+      const expectStable = async () => {
+        const bounds = await submit.boundingBox();
+        expect(bounds).not.toBeNull();
+        expect(Math.abs(bounds!.width - ready!.width)).toBeLessThanOrEqual(1);
+        expect(Math.abs(bounds!.height - ready!.height)).toBeLessThanOrEqual(1);
+      };
+      await page.clock.install();
+      await page.clock.pauseAt(new Date(Date.now() + 500));
+      try {
+        await note.press('Enter');
+        await expect(submit).toBeDisabled();
+        await expect(submit).toHaveAccessibleName('Check item');
+        await expect(note).toBeFocused();
+        await expect(owner.getByRole('status').filter({hasText: /^Submitting request$/})).toHaveCount(1);
+        expect(attempts).toBe(1);
+        await expectStable();
+        await page.clock.runFor(149);
+        await expect(indicator).not.toHaveAttribute('data-spinner-visible', 'true');
+        await page.clock.runFor(1);
+        await expect(indicator).toHaveAttribute('data-spinner-visible', 'true');
+        await expectStable();
+      } finally {
+        release();
+      }
+      await expect(owner.getByRole('alert')).toHaveText('Check failed.');
+      await expect(owner.getByRole('alert')).toHaveCount(1);
+      await expect(note).toBeFocused();
+      await expectStable();
+      await note.fill('retry value');
+      const retry = owner.getByRole('button', {name: 'Retry', exact: true});
+      await retry.press('Space');
+      await expect(owner.getByRole('status').filter({hasText: /^Request submitted$/})).toHaveCount(1);
+      await expect(indicator).not.toHaveAttribute('data-spinner-visible', 'true');
+      await expectStable();
+      await page.clock.runFor(150);
+      await expect(indicator).not.toHaveAttribute('data-spinner-visible', 'true');
+      await expect(owner.getByRole('alert')).toHaveCount(0);
+      expect(attempts).toBe(2);
+      expect(fixture.commands.filter(command => command.type === 'action.submit').map(command => command.payload.payload)).toEqual([{note: 'retry value'}]);
+    });
+  }
+
+  test('keeps disabled and unbound controls inert and applies ordinary Input validity before a hidden choice', async ({ page }) => {
+    const spec: TaskSpec = {root: 'root', elements: {
+      root: {type: 'Stack', children: ['disabled', 'unbound', 'form'], props: {}},
+      disabled: {type: 'Button', props: {actionId: 'ask', disabled: true, label: 'Disabled action'}},
+      unbound: {type: 'Button', props: {label: 'Unbound action'}},
+      form: {type: 'Form', props: {actionId: 'ask', submitLabel: 'Send item', payloadFromState: {note: 'note', choice: 'delivery'}}, children: ['steps']},
+      steps: {type: 'Steps', props: {stateKey: 'step', steps: [{key: 'input', label: 'Input'}, {key: 'choice', label: 'Choice'}]}, children: ['note', 'choice']},
+      note: {type: 'Input', props: {stateKey: 'note', label: 'Required note', required: true}},
+      choice: {type: 'ChoiceList', props: {stateKey: 'delivery', label: 'Delivery', required: true, options: [{value: 'pickup', label: 'Pick up'}]}},
+    }};
+    const fixture = await serveTaskFixture(page, taskFixture(spec));
+    await openApp(page);
+    const actions = () => fixture.commands.filter(command => command.type === 'action.submit');
+    const note = page.getByRole('textbox', {name: 'Required note', exact: true});
+    for (const label of ['Disabled action', 'Unbound action']) {
+      const button = page.getByRole('button', {name: label, exact: true});
+      await expect(button).toBeDisabled();
+      await button.evaluate((element: HTMLButtonElement) => element.click());
+    }
+    await expect(page.getByRole('radio', {name: 'Pick up'})).toHaveCount(0);
+    await note.press('Enter');
+    expect(await note.evaluate((element: HTMLInputElement) => element.validity.valueMissing)).toBe(true);
+    await expect(note).toBeFocused();
+    await expect(page.getByText('Pick an option first.', {exact: true})).toHaveCount(0);
+    expect(actions()).toHaveLength(0);
+    await note.fill('Native input accepted');
+    await note.press('Enter');
+    await expect.poll(() => actions().map(command => command.payload.payload)).toEqual([{note: 'Native input accepted'}]);
+    await expect(page.getByRole('status').filter({hasText: /^Request submitted$/})).toHaveCount(1);
+    await expect(note).toBeFocused();
+    await expect(page.getByText('Pick an option first.', {exact: true})).toHaveCount(0);
+  });
+});
+
+test('a standalone button validates only its keyed associated choice', async ({ page }) => {
+  const spec = { root: 'stack', elements: {
+    stack: { type: 'Stack', props: {}, children: ['choice', 'unrelated', 'action'] },
+    choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Choose delivery', required: true, options: [{ value: 'download', label: 'Prepare a local export' }] } },
+    unrelated: { type: 'ChoiceList', props: { stateKey: 'witness', label: 'Optional witness', required: true, options: [{ value: 'yes', label: 'Include a witness' }] } },
+    action: { type: 'Button', props: { label: 'Continue', actionId: 'ask', payloadFromState: { choice: 'delivery' } } },
+  } };
+  const fixture = await serveTaskFixture(page, taskFixture(spec));
+  await openApp(page);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  expect(fixture.commands.filter(command => command.type === 'action.submit')).toHaveLength(0);
+  await expect(page.locator('fieldset', { hasText: 'Choose delivery' }).getByText('Pick an option first.', { exact: true })).toBeVisible();
+  await expect(page.locator('fieldset', { hasText: 'Optional witness' }).getByText('Pick an option first.', { exact: true })).toHaveCount(0);
+  await page.getByRole('radio', { name: 'Prepare a local export' }).click();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit').length).toBe(1);
+});
+
+test('Artifact secondary tools transfer help without dispatching commands',async({page})=>{
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic tooltip pilot'}}}});
+  const artifact=snapshot.artifacts[0];
+  const host=await serveTaskFixture(page,snapshot);
+  await page.route('**/api/commands',route=>{
+    const command=route.request().postDataJSON();
+    if(command.type==='artifact.pin'&&command.threadId===artifact.threadId&&command.payload.artifactId===artifact.id){
+      artifact.pinned=command.payload.pinned;
+    }
+    return route.fallback();
+  });
+  await openApp(page);
+  await expect(page.getByText('Synthetic tooltip pilot',{exact:true})).toBeVisible();
+  const toolbar=page.locator('.artifact-secondary-tools:visible');
+  const source=toolbar.getByRole('button',{name:'View artifact source'}),pin=toolbar.getByRole('button',{name:'Pin artifact'});
+  const archive=toolbar.getByRole('button',{name:'Archive artifact'}),tooltip=page.getByRole('tooltip');
+  await expect(source).toBeVisible();
+  await expect(toolbar).not.toHaveAttribute('inert','');
+  await page.mouse.move(20,20);
+  await expect(toolbar).toHaveCSS('opacity','0');
+  const commandCount=host.commands.length;
+  await source.hover();
+  await expect(tooltip).toHaveText('View source');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-cold');
+  await pin.hover();
+  await expect(tooltip).toHaveText('Pin artifact');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-warm');
+  await archive.hover();
+  await expect(tooltip).toHaveText('Archive artifact');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-warm');
+  expect(await tooltip.evaluate(node=>node.getAnimations().length)).toBe(0);
+  expect(host.commands).toHaveLength(commandCount);
+  await source.click();
+  await expect(source).toHaveAttribute('aria-expanded','true');
+  await expect(page.locator('.artifact-source')).toContainText('Immutable source · revision 1');
+  expect(host.commands).toHaveLength(commandCount);
+  await page.keyboard.press('Tab');
+  await expect(pin).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(toolbar.getByRole('button',{name:'Unpin artifact'})).toHaveAttribute('aria-pressed','true');
+  expect(host.commands.slice(commandCount)).toEqual([expect.objectContaining({
+    type:'artifact.pin',threadId:artifact.threadId,payload:{artifactId:artifact.id,pinned:true},
+  })]);
+});
+
+test('Artifact tooltip group stays with the rendered revision until a held draft saves',async({page})=>{
+  const spec={root:'draft',elements:{draft:{type:'Input',props:{label:'Pilot draft',stateKey:'draft'}}}};
+  const snapshot=taskFixture(spec,{}, {draft:''});
+  const host=await serveTaskFixture(page,snapshot);
+  let release!:()=>void,started!:()=>void;
+  const held=new Promise<void>(resolve=>{release=resolve;});
+  const saving=new Promise<void>(resolve=>{started=resolve;});
+  await page.route('**/api/commands',async route=>{
+    if(route.request().postDataJSON().type==='state.save'){started();await held;}
+    return route.fallback();
+  });
+  try{
+    await openApp(page);
+    const toolbar=page.locator('.artifact-secondary-tools:visible');
+    await expect(toolbar).toHaveAttribute('data-tooltip-group',JSON.stringify(['task-thread','task-surface',1]));
+    await page.getByRole('textbox',{name:'Pilot draft'}).fill('Hold the rendered owner');
+    await saving;
+    snapshot.artifacts[0]={...snapshot.artifacts[0],revision:2,title:'Updated tooltip owner'};
+    await host.publish();
+    await expect(page.getByText('An updated interface is ready. Save your edits to load it; this version remains open.')).toBeVisible();
+    await expect(toolbar).toHaveAttribute('data-tooltip-group',JSON.stringify(['task-thread','task-surface',1]));
+    const pin=toolbar.getByRole('button',{name:'Pin artifact'});
+    await pin.hover();
+    const tooltip=page.getByRole('tooltip');
+    await expect(tooltip).toHaveText('Pin artifact');
+    release();
+    await expect(toolbar).toHaveAttribute('data-tooltip-group',JSON.stringify(['task-thread','task-surface',2]));
+    await expect(tooltip).toHaveCount(0);
+    await expect(page.getByText('Updated tooltip owner',{exact:true})).toBeVisible();
+  }finally{
+    release();
+  }
+});
+
+test('Artifact toolbar keeps its owner across expanded and workspace placements',async({page})=>{
+  await page.setViewportSize({width:1440,height:900});
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Placement fixture'}}}});
+  const artifact=snapshot.artifacts[0],host=await serveTaskFixture(page,snapshot);
+  await page.route('**/api/commands',route=>{
+    const command=route.request().postDataJSON();
+    if(command.type==='artifact.expand'&&command.threadId===artifact.threadId&&command.payload.artifactId===artifact.id){
+      artifact.placement=command.payload.expanded?'expanded':'inline';
+    }
+    return route.fallback();
+  });
+  await openApp(page);
+  const inline=page.locator('.artifact:visible');
+  const marker=JSON.stringify([artifact.threadId,artifact.id,artifact.revision]);
+  const tools=inline.locator('.artifact-secondary-tools');
+  await expect(tools).toHaveAttribute('data-tooltip-group',marker);
+  await inline.getByRole('button',{name:'Expand artifact',exact:true}).click();
+  const expanded=page.locator('.artifact-expanded[aria-modal="true"]');
+  await expect(expanded).toBeVisible();
+  const modalTools=expanded.locator('.artifact-secondary-tools');
+  await expect(modalTools).toHaveAttribute('data-tooltip-group',marker);
+  const afterExpand=host.commands.length;
+  const tooltip=page.getByRole('tooltip');
+  const hoverSettled=async(target:ReturnType<typeof modalTools.getByRole>)=>{
+    await target.scrollIntoViewIfNeeded();
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    const box=await target.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box!.x+box!.width/2,box!.y+box!.height/2);
+  };
+  await hoverSettled(modalTools.getByRole('button',{name:'View artifact source'}));
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-cold');
+  await hoverSettled(modalTools.getByRole('button',{name:'Pin artifact'}));
+  await expect(tooltip).toHaveText('Pin artifact');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-warm');
+  expect(host.commands).toHaveLength(afterExpand);
+  await expanded.getByRole('button',{name:'Collapse artifact',exact:true}).click();
+  await expect(expanded).toHaveCount(0);
+  await inline.getByRole('button',{name:'Open artifact in workspace',exact:true}).click();
+  const panel=page.locator('.artifact-in-workspace:visible .artifact-secondary-tools');
+  await expect(panel).toHaveAttribute('data-tooltip-group',marker);
+  await hoverSettled(panel.getByRole('button',{name:'Archive artifact'}));
+  await expect(tooltip).toHaveText('Archive artifact');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-cold');
+  expect(host.commands.filter(command=>command.type==='artifact.archive')).toHaveLength(0);
+});
+
+test('a second Artifact owns an independent tooltip group',async({page})=>{
+  await page.setViewportSize({width:1440,height:960});
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Two artifact groups'}}}});
+  const first=snapshot.artifacts[0];
+  snapshot.messages.push({...snapshot.messages[0],id:'second-reply',content:'Second owner message',createdAt:'2026-10-29T23:01:00.000Z'});
+  snapshot.artifacts.push({...first,id:'second-surface',messageId:'second-reply',title:'Second surface',stateId:'second-state'});
+  snapshot.userStates.push({...snapshot.userStates[0],id:'second-state'});
+  const host=await serveTaskFixture(page,snapshot);
+  await openApp(page);
+  const alpha=page.locator('[data-artifact-id="task-surface"] .artifact-secondary-tools');
+  const beta=page.locator('[data-artifact-id="second-surface"] .artifact-secondary-tools');
+  await expect(alpha).toHaveAttribute('data-tooltip-group',JSON.stringify(['task-thread','task-surface',1]));
+  await expect(beta).toHaveAttribute('data-tooltip-group',JSON.stringify(['task-thread','second-surface',1]));
+  const tooltip=page.getByRole('tooltip');
+  const count=host.commands.length;
+  await alpha.getByRole('button',{name:'Pin artifact'}).hover();
+  await expect(tooltip).toHaveText('Pin artifact');
+  await beta.getByRole('button',{name:'View artifact source'}).hover();
+  await expect(tooltip).toHaveText('View source');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-cold');
+  await beta.getByRole('button',{name:'Archive artifact'}).hover();
+  await expect(tooltip).toHaveText('Archive artifact');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-warm');
+  expect(host.commands).toHaveLength(count);
+});
+
+test('artifact unified diff distinguishes file headers, hunks and prefixed content', async ({page}) => {
+  await page.setViewportSize({width:320,height:840});
+  const lines = [
+    'diff --git a/first.txt b/first.txt',
+    'index abcd123..bcde234 100644',
+    '--- a/first.txt',
+    '+++ b/first.txt',
+    '@@ -1,2 +1,2 @@',
+    '--- literal removed line',
+    '+++ literal added line',
+    ' A shared context line wide enough to scroll on a narrow panel.',
+    '\\ No newline at end of file',
+    '--- /dev/null',
+    '+++ b/second.txt',
+    '@@ -0,0 +1 @@',
+    '+ created',
+  ];
+  const snapshot=taskFixture({root:'compare',elements:{compare:{type:'Diff',props:{dataBinding:'patch'}}}}, {patch:lines.join('\n')});
+  await serveTaskFixture(page,snapshot);
+  await openApp(page);
+  const diff=page.locator('pre.diff');
+  await expect(diff).toBeVisible();
+  await expect(diff.locator(':scope > *')).toHaveText(lines);
+  expect(await diff.locator(':scope > *').evaluateAll(rows=>rows.map(row=>row.className))).toEqual([
+    'diff-header','diff-header','diff-header','diff-header','diff-hunk','removed','added','','diff-hunk','diff-header','diff-header','diff-hunk','added',
+  ]);
+  expect(await diff.evaluate(node=>node.scrollWidth>node.clientWidth)).toBe(true);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await test.info().attach('Unified diff at 320 px with synthetic data',{body:await page.screenshot(),contentType:'image/png'});
 });

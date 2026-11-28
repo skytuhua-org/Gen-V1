@@ -9,6 +9,90 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/ui-shell-overlays');
 });
 
+test('the top native modal owns the shared toaster and Escape dismisses only its focused toast',async({page})=>{
+ await page.goto('/ui-shell-overlays?modal-toast');
+ const open=page.getByRole('button',{name:'Open notification dialog',exact:true});
+ await open.click();
+ const outer=page.getByRole('dialog',{name:'Notification dialog',exact:true});
+ const notifications=(owner:typeof outer)=>owner.getByRole('region',{name:'Notifications',exact:true});
+ const notify=outer.getByRole('button',{name:'Notify from dialog',exact:true});
+ await notify.click();
+ await expect(notifications(outer).getByRole('alert')).toContainText('Notification from dialog');
+ await page.keyboard.press('Tab');
+ await expect(notifications(outer).getByRole('button',{name:'Notification action',exact:true})).toBeFocused();
+ await page.keyboard.press('Tab');
+ const outerDismiss=notifications(outer).getByRole('button',{name:'Dismiss notification',exact:true});
+ await expect(outerDismiss).toBeFocused();
+ await page.keyboard.press('Tab');
+ await expect(outer.getByRole('button',{name:'Close dialog',exact:true})).toBeFocused();
+ await page.keyboard.press('Shift+Tab');
+ await expect(outerDismiss).toBeFocused();
+ await outer.getByRole('button',{name:'Open nested notification dialog',exact:true}).click();
+ const inner=page.getByRole('dialog',{name:'Nested notification dialog',exact:true});
+ await expect(notifications(inner).getByRole('alert')).toContainText('Notification from dialog');
+ const notifyInner=inner.getByRole('button',{name:'Notify from nested dialog',exact:true});
+ await notifyInner.click();
+ const alert=notifications(inner).getByRole('alert').filter({hasText:'Notification from nested dialog'});
+ await expect(alert).toBeInViewport();
+ await alert.getByRole('button',{name:'Dismiss notification',exact:true}).focus();
+ await page.keyboard.press('Escape');
+ await expect(alert).toHaveCount(0);await expect(inner).toBeVisible();
+ await notifyInner.focus();
+ await page.keyboard.press('Escape');
+ await expect(notifications(inner).getByRole('alert')).toHaveCount(0);
+ await expect(notifications(outer).getByRole('alert')).toHaveCount(1);
+ await outer.getByRole('button',{name:'Close dialog',exact:true}).click();
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ await expect(page.getByRole('region',{name:'Notifications',exact:true}).getByRole('alert')).toContainText('Notification from dialog');
+});
+
+test('a timed notification keeps its remaining lifetime when a modal opens',async({page})=>{
+ await page.goto('/ui-shell-overlays?modal-toast');
+ await page.clock.install();
+ await page.getByRole('button',{name:'Show timed notification',exact:true}).click();
+ const notice=page.getByRole('status').filter({hasText:'Timed notification'});
+ await expect(notice).toBeVisible();
+ await page.clock.runFor(700);
+ await page.getByRole('button',{name:'Open notification dialog',exact:true}).click();
+ await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Timed notification');
+ await page.clock.runFor(600);
+ await expect(notice).toHaveCount(0);
+});
+
+test('notification error stays until dismissed and success keeps the ordinary timeout',async({page})=>{
+  await page.goto('/ui-shell-overlays?toast');
+  await page.clock.install();
+  const notices=page.getByRole('region',{name:'Notifications',exact:true});
+  await page.getByRole('button',{name:'Show error',exact:true}).click();
+  await page.getByRole('button',{name:'Show success',exact:true}).click();
+  await expect(notices.getByRole('status')).toContainText('Saved locally');
+  await page.clock.runFor(10_000);
+  await expect(notices.getByRole('status')).toHaveCount(0);
+  const error=notices.getByRole('alert');
+  await expect(error).toContainText('Upload failed');
+  await error.getByRole('button',{name:'Dismiss notification'}).click();
+  await expect(error).toHaveCount(0);
+});
+
+test('keyboard focus pauses a custom notification for its remaining time',async({page})=>{
+  await page.goto('/ui-shell-overlays?toast');
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now()+100));
+  const trigger=page.getByRole('button',{name:'Show short notice',exact:true});
+  await trigger.click();
+  const notice=page.getByRole('region',{name:'Notifications',exact:true}).getByRole('status');
+  const dismiss=notice.getByRole('button',{name:'Dismiss notification'});
+  await page.keyboard.press('Tab');
+  await expect(dismiss).toBeFocused();
+  await page.clock.runFor(10_000);
+  await expect(notice).toContainText('Short notice');
+  await trigger.focus();
+  await page.clock.runFor(299);
+  await expect(notice).toHaveAttribute('data-state','open');
+  await page.clock.runFor(2);
+  await expect(notice).toHaveCount(0);
+});
+
 test('a model popup belongs to its native modal and keeps selection, draft and Escape usable', async ({ page }) => {
   await page.getByRole('combobox', { name: 'Model', exact: true }).click();
   const popup = page.locator('.model-picker-popover');
@@ -164,4 +248,186 @@ test('a tall tooltip stays visible in a short viewport when neither side fits', 
     const box = await tooltip.boundingBox();
     return Boolean(box && box.y >= 7 && box.y + box.height <= 203);
   }).toBe(true);
+});
+
+test('caller improvements to tooltip name and description survive title retirement',async({page})=>{
+  await page.goto('/ui-shell-overlays?tooltip');
+  await expect(page.getByRole('button',{name:'Tooltip anchor'})).toBeVisible();
+  await page.evaluate(()=>{
+    for(const kind of ['name','description'] as const){
+      const control=document.createElement('button');
+      control.id='tooltip-'+kind;
+      control.type='button';
+      control.title='Initial delegated help';
+      control.style.cssText='position:fixed;top:220px;width:100px;height:30px;left:'+(kind==='name'?100:250)+'px';
+      if(kind==='description')control.textContent='Named action';
+      document.body.appendChild(control);
+    }
+  });
+  for(const [kind,attribute] of [['name','aria-label'],['description','aria-description']] as const){
+    const control=page.locator('#tooltip-'+kind);
+    await control.hover();
+    await expect(page.getByRole('tooltip')).toHaveText('Initial delegated help');
+    await expect(control).toHaveAttribute(attribute,'Initial delegated help');
+    await control.evaluate((node,attributeName)=>{
+      node.setAttribute(attributeName,'Caller retained value');
+      node.setAttribute('title','Refreshed delegated help');
+    },attribute);
+    await expect(page.getByRole('tooltip')).toHaveText('Refreshed delegated help');
+    await expect(control).toHaveAttribute(attribute,'Caller retained value');
+    await control.evaluate(node=>node.removeAttribute('title'));
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await expect(control).toHaveAttribute(attribute,'Caller retained value');
+  }
+});
+
+test('retiring a tooltip drops its own fallback and preserves caller naming references',async({page})=>{
+  await page.goto('/ui-shell-overlays?tooltip');
+  await expect(page.getByRole('button',{name:'Tooltip anchor'})).toBeVisible();
+  await page.evaluate(()=>{
+    const label=document.createElement('span');
+    label.id='caller-tooltip-label';
+    label.textContent='Caller reference';
+    document.body.appendChild(label);
+    for(const [index,kind] of ['generated','same','references'].entries()){
+      const button=document.createElement('button');
+      button.id='tooltip-'+kind;
+      button.type='button';
+      button.title='Adopted label';
+      button.style.cssText='position:fixed;top:220px;width:100px;height:30px;left:'+(100+150*index)+'px';
+      document.body.appendChild(button);
+    }
+  });
+  for(const kind of ['generated','same','references']){
+    const control=page.locator('#tooltip-'+kind);
+    await control.hover();
+    await expect(page.getByRole('tooltip')).toHaveText('Adopted label');
+    await expect(control).toHaveAttribute('aria-label','Adopted label');
+    await control.evaluate((node,mode)=>{
+      if(mode==='same')node.setAttribute('aria-label','Adopted label');
+      if(mode==='references'){
+        node.setAttribute('aria-labelledby','caller-tooltip-label');
+        node.setAttribute('aria-describedby','caller-tooltip-label');
+      }
+      node.removeAttribute('title');
+    },kind);
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    if(kind==='same')await expect(control).toHaveAttribute('aria-label','Adopted label');
+    else await expect(control).not.toHaveAttribute('aria-label',/./);
+    if(kind==='references'){
+      await expect(control).toHaveAttribute('aria-labelledby','caller-tooltip-label');
+      await expect(control).toHaveAttribute('aria-describedby','caller-tooltip-label');
+    }
+  }
+});
+
+test('open tooltip transfers directly to a peer before the next paint without motion',async({page})=>{
+  await page.goto('/ui-shell-overlays?warm-tooltip');
+  const alpha=page.getByRole('button',{name:'Alpha'}),beta=page.getByRole('button',{name:'Beta'});
+  await alpha.hover();
+  const bubble=page.getByRole('tooltip');
+  await expect(bubble).toHaveText('Help for Alpha');
+  const prior=await bubble.elementHandle();
+  const box=await beta.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x+box!.width/2,box!.y+box!.height/2);
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  expect(await bubble.textContent({timeout:1000})).toBe('Help for Beta');
+  await expect(bubble).toHaveAttribute('data-opening','pointer-warm');
+  expect(await bubble.evaluate((node,old)=>node===old,prior)).toBe(true);
+  expect(await bubble.evaluate(node=>node.getAnimations().length)).toBe(0);
+  const tooltipBounds=await bubble.boundingBox();
+  expect(Math.abs(tooltipBounds!.x+tooltipBounds!.width/2-(box!.x+box!.width/2))).toBeLessThan(3);
+});
+
+test('tooltip dwell and internal gap honor their exact clock boundaries',async({page})=>{
+  await page.goto('/ui-shell-overlays?warm-tooltip');
+  const button=(name:string)=>page.getByRole('button',{name,exact:true});
+  const bubble=page.getByRole('tooltip');
+  const over=async(name:string)=>{await button(name).dispatchEvent('pointerover',{pointerType:'mouse'});};
+  await expect(button('Alpha')).toBeVisible();
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now()+100));
+  await over('Alpha');
+  await page.clock.runFor(349);
+  await expect(bubble).toHaveCount(0);
+  await page.clock.runFor(1);
+  await expect(bubble).toHaveText('Help for Alpha');
+  await page.getByTestId('tooltip-gap').dispatchEvent('pointerover',{pointerType:'mouse'});
+  await expect(bubble).toHaveCount(0);
+  await page.clock.runFor(299);
+  await over('Beta');
+  await expect(bubble).toHaveText('Help for Beta');
+  await expect(bubble).toHaveAttribute('data-opening','pointer-warm');
+  await page.getByTestId('tooltip-gap').dispatchEvent('pointerover',{pointerType:'mouse'});
+  await page.clock.runFor(300);
+  await over('Gamma');
+  await expect(bubble).toHaveCount(0);
+  await page.clock.runFor(350);
+  await expect(bubble).toHaveText('Help for Gamma');
+  await expect(bubble).toHaveAttribute('data-opening','pointer-cold');
+  await over('Delta');
+  await expect(bubble).toHaveCount(0);
+  await page.clock.runFor(350);
+  await expect(bubble).toHaveText('Help for Delta');
+  await expect(bubble).toHaveAttribute('data-opening','pointer-cold');
+});
+
+test('Escape, owner loss and held pointer activity discard tooltip warmth',async({page})=>{
+  await page.goto('/ui-shell-overlays?warm-tooltip');
+  const alpha=page.getByRole('button',{name:'Alpha'}),beta=page.getByRole('button',{name:'Beta'});
+  const bubble=page.getByRole('tooltip');
+  await alpha.hover();
+  await expect(bubble).toHaveText('Help for Alpha');
+  await page.keyboard.press('Escape');
+  await expect(bubble).toHaveCount(0);
+  await alpha.locator('span').hover();
+  await page.waitForTimeout(400);
+  await expect(bubble).toHaveCount(0);
+  await beta.hover();
+  await expect(bubble).toHaveText('Help for Beta');
+  await expect(bubble).toHaveAttribute('data-opening','pointer-cold');
+  await page.getByTestId('tooltip-group-one').evaluate(node=>node.setAttribute('data-tooltip-group','replacement'));
+  await expect(bubble).toHaveCount(0);
+  await beta.dispatchEvent('pointerover',{pointerType:'mouse',buttons:1});
+  await page.waitForTimeout(400);
+  await expect(bubble).toHaveCount(0);
+  // Move the real pointer off the group so removal cannot reveal a neighbor beneath it.
+  await page.mouse.move(25,25);
+  await beta.dispatchEvent('pointerover',{pointerType:'mouse'});
+  await beta.evaluate(node=>node.remove());
+  await page.waitForTimeout(400);
+  await expect(bubble).toHaveCount(0);
+});
+
+test('keyboard tooltip has a 100 ms dwell and does not leave peers warm',async({page})=>{
+  await page.goto('/ui-shell-overlays?warm-tooltip');
+  const alpha=page.getByRole('button',{name:'Alpha'}),beta=page.getByRole('button',{name:'Beta'});
+  const bubble=page.getByRole('tooltip');
+  await expect(alpha).toBeVisible();
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now()+100));
+  await page.keyboard.press('Tab');
+  await expect(alpha).toBeFocused();
+  await page.clock.runFor(99);
+  await expect(bubble).toHaveCount(0);
+  await page.clock.runFor(1);
+  await expect(bubble).toHaveText('Help for Alpha');
+  await expect(bubble).toHaveAttribute('data-opening','keyboard');
+  await beta.dispatchEvent('pointerover',{pointerType:'mouse'});
+  await expect(bubble).toHaveCount(0);
+  await page.clock.runFor(350);
+  await expect(bubble).toHaveText('Help for Beta');
+  await expect(bubble).toHaveAttribute('data-opening','pointer-cold');
+});
+
+test('grouped help portals inside an ARIA modal and stays exposed',async({page})=>{
+  await page.goto('/ui-shell-overlays?warm-tooltip&aria');
+  const dialog=page.getByRole('dialog',{name:'Tooltip modal'});
+  await dialog.getByRole('button',{name:'Alpha'}).hover();
+  const tooltip=dialog.getByRole('tooltip');
+  await expect(tooltip).toHaveText('Help for Alpha');
+  await dialog.getByRole('button',{name:'Beta'}).hover();
+  await expect(tooltip).toHaveText('Help for Beta');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-warm');
 });

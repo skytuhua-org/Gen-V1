@@ -142,3 +142,5 @@
 @media (forced-colors: active) {
   .ui-toast, .ui-tooltip { border-color: CanvasText; }
 }
+
+.ui-tooltip[data-opening="pointer-warm"] { animation:none!important; }

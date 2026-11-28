@@ -4,6 +4,7 @@ import { ModelPicker } from '../../apps/web/src/ModelPicker';
 import { useModalRegion } from '../../apps/web/src/focus';
 import { Modal } from '../../packages/ui-shell/Modal';
 import { TooltipLayer } from '../../packages/ui-shell/Tooltip';
+import { Toaster, toast } from '../../packages/ui-shell/Toast';
 import { Popover } from '../../packages/ui-shell/Popover';
 import '../../apps/web/src/styles.css';
 
@@ -44,6 +45,22 @@ function Fixture() {
       { id: 'model-b', provider: 'openai', name: 'Model B' },
     ]} modelId={model} onChange={setModel} /></div>
   </>;
+  if(new URLSearchParams(location.search).has('warm-tooltip'))return <>
+    <section ref={element=>{if(aria)dialog.current=element;}} role={aria?'dialog':undefined}
+      aria-modal={aria||undefined} aria-label={aria?'Tooltip modal':undefined}>
+    <div data-tooltip-group="one" data-testid="tooltip-group-one" style={{display:'flex',alignItems:'center',position:'fixed',left:100,top:150}}>
+      <button type="button" title="Help for Alpha">Alpha <span aria-hidden="true">◇</span></button>
+      <span data-testid="tooltip-gap" style={{width:45,height:28}} />
+      <button type="button" title="Help for Beta">Beta</button>
+      <button type="button" title="Help for Gamma">Gamma</button>
+    </div>
+    <div data-tooltip-group="two" style={{position:'fixed',left:100,top:260}}>
+      <button type="button" title="Help for Delta">Delta</button>
+    </div>
+    <button type="button" style={{position:'fixed',left:100,top:320}}>Outside</button>
+    </section>
+    <TooltipLayer />
+  </>;
   if (new URLSearchParams(location.search).has('tooltip')) return <>
     <button type="button" style={{ position: 'fixed', top: 94, left: 80 }}
       title={'Help text for the selected action and keyboard shortcut. '.repeat(7).trim()}>Tooltip anchor</button>
@@ -57,5 +74,30 @@ function Fixture() {
   </>;
 }
 
+function ToastFixture() {
+  return <>
+    <button type="button" onClick={() => toast('Upload failed', {tone:'error'})}>Show error</button>
+    <button type="button" onClick={() => toast('Saved locally', {tone:'success'})}>Show success</button>
+    <button type="button" onClick={() => toast('Short notice', {durationMs:300})}>Show short notice</button>
+    <Toaster/>
+  </>;
+}
+
+function ModalToastFixture() {
+  const [outer, setOuter] = useState(false), [inner, setInner] = useState(false);
+  return <>
+    <button type="button" onClick={() => toast('Timed notification', {durationMs:1000})}>Show timed notification</button>
+    <button type="button" onClick={() => setOuter(true)}>Open notification dialog</button>
+    <Modal open={outer} title="Notification dialog" onClose={() => setOuter(false)}>
+      <button type="button" onClick={() => setInner(true)}>Open nested notification dialog</button>
+      <button type="button" onClick={() => toast('Notification from dialog', {tone:'error', action:{label:'Notification action',onClick:()=>{}}})}>Notify from dialog</button>
+    </Modal>
+    <Modal open={inner} title="Nested notification dialog" onClose={() => setInner(false)}>
+      <button type="button" onClick={() => toast('Notification from nested dialog', {tone:'error'})}>Notify from nested dialog</button>
+    </Modal>
+    <Toaster/>
+  </>;
+}
+
 const retention = new URLSearchParams(location.search).get('retention');
-createRoot(document.getElementById('root')!).render(retention ? <RetentionFixture mode={retention}/> : <Fixture />);
+createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).has('modal-toast') ? <ModalToastFixture/> : new URLSearchParams(location.search).has('toast') ? <ToastFixture/> : retention ? <RetentionFixture mode={retention}/> : <Fixture />);
