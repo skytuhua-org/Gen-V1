@@ -2,6 +2,7 @@ import {expect,it,describe} from 'vitest';
 import {DOCUMENT_SCHEMAS,DOCUMENT_EXAMPLES} from '../packages/ui-catalog/documents';
 import {IMAGE_COMPARE_SCHEMAS,IMAGE_COMPARE_EXAMPLES,IMAGE_COMPARE_DESCRIPTIONS} from '../packages/ui-catalog/image-compare';
 import {MAX_SIGNATURE_POINTS,readVisualSignature,signatureStrokes,validateSignaturePng} from '../packages/ui-catalog/signature-data';
+import {validateSurface} from '../packages/ui-catalog/index.ts';
 
 const preview=DOCUMENT_SCHEMAS.DocumentPreview,pad=DOCUMENT_SCHEMAS.SignaturePad;
 describe('DocumentPreview schema',()=>{
@@ -118,5 +119,20 @@ describe('validateSignaturePng',()=>{
   expect(validateSignaturePng(png([{type:'tEXt',data:[1]},{type:'IDAT',data:[1]},{type:'IEND'}]),true)).toEqual({width:1,height:1});
   expect(validateSignaturePng(png([{type:'IDAT',data:[1]},{type:'IEND'}],4096,900),true)).toEqual({width:4096,height:900});
   expect(()=>validateSignaturePng(png([{type:'IDAT',data:[1]},{type:'IEND'}],4097,1),true)).toThrow('dimensions');
+ });
+});
+
+describe('Image and Tabs schema bounds',()=>{
+ const surface=(type:string,props:Record<string,unknown>)=>({root:'r',elements:{r:{type,props}}});
+ it('rejects a dual Image source and keeps single-source and granted-only forms',()=>{
+  expect(()=>validateSurface(surface('Image',{src:'https://x.test/a.png',resourceId:'img-1',alt:'A'}))).toThrow();
+  expect(()=>validateSurface(surface('Image',{resourceId:'img-1',alt:'A'}))).not.toThrow();
+  expect(()=>validateSurface(surface('Image',{src:'https://x.test/a.png',alt:'A'}))).not.toThrow();
+ });
+ it('bounds Tabs label length and requires a non-empty accessible name',()=>{
+  expect(()=>validateSurface(surface('Tabs',{labels:['x'.repeat(500)],stateKey:'t'}))).not.toThrow();
+  expect(()=>validateSurface(surface('Tabs',{labels:['x'.repeat(501)],stateKey:'t'}))).toThrow();
+  expect(()=>validateSurface(surface('Tabs',{labels:[''],stateKey:'t'}))).toThrow();
+  expect(()=>validateSurface(surface('Tabs',{labels:['Evidence','Plan'],stateKey:'t'}))).not.toThrow();
  });
 });
