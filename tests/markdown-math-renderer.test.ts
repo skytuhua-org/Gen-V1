@@ -1,15 +1,38 @@
 import {afterAll,beforeAll,describe,expect,it} from 'vitest';
 import {chromium,type Browser,type Page} from '@playwright/test';
 import {createServer,type ViteDevServer} from 'vite';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {resolve} from 'node:path';
 
 describe('math renderer',()=>{
- let browser:Browser,page:Page,server:ViteDevServer,base:string;
- beforeAll(async()=>{server=await createServer({configFile:false,root:'apps/web',logLevel:'silent',server:{host:'127.0.0.1',port:5577}});await server.listen();const address=server.httpServer?.address();if(!address||typeof address==='string')throw Error('Vite test server did not bind a port.');base=`http://127.0.0.1:${address.port}`;browser=await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{})});page=await browser.newPage();await page.goto(base+'/');});
- afterAll(async()=>{await browser?.close();await server?.close();});
+ let browser:Browser,page:Page,server:ViteDevServer,cacheDir:string|undefined;
+ beforeAll(async()=>{
+  cacheDir=await mkdtemp(resolve('node_modules/.vite-math-'));
+  server=await createServer({configFile:false,root:'apps/web',logLevel:'silent',cacheDir,
+   optimizeDeps:{include:['katex'],noDiscovery:true},
+   server:{host:'127.0.0.1',port:0,strictPort:true},
+  });
+  await server.listen(0);
+  const address=server.httpServer?.address();
+  if(!address||typeof address==='string')throw Error('Vite test server did not bind a port.');
+  const fixture=`http://127.0.0.1:${address.port}/math-renderer-test`;
+  browser=await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{})});
+  page=await browser.newPage();
+  // The isolated entry needs an origin and DOM. Booting the app would let
+  // unrelated dependency discovery reload the first render's execution context.
+  await page.route(fixture,route=>route.fulfill({contentType:'text/html',body:'<!doctype html><html lang="en"><body><script type="module">import {renderMath} from "/src/math-renderer.ts"; window.fixtureRenderMath=renderMath;</script></body></html>'}));
+  await page.goto(fixture);
+  await page.waitForFunction(()=>typeof Reflect.get(window,'fixtureRenderMath')==='function');
+ });
+ afterAll(async()=>{
+  await browser?.close();
+  await server?.close();
+  if(cacheDir)await rm(cacheDir,{recursive:true,force:true});
+ });
  async function render(tex:string,mode:'inline'|'display',remaining=8192,connect=false){
-  return page.evaluate(async({tex,mode,remaining,connect})=>{
+  return page.evaluate(({tex,mode,remaining,connect})=>{
    const target=document.createElement('div');if(connect)document.body.append(target);
-   const {renderMath}=await (new Function('url','return import(url)'))('/src/math-renderer.ts');
+   const renderMath=Reflect.get(window,'fixtureRenderMath') as typeof import('../apps/web/src/math-renderer').renderMath;
    const result=renderMath(tex,mode,target,remaining);
    return {result,html:target.innerHTML,connected:target.isConnected,elements:target.querySelectorAll('*').length};
   },{tex,mode,remaining,connect});
