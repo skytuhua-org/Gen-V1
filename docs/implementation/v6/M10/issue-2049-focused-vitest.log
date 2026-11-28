@@ -1,0 +1,9 @@
+
+ RUN  v4.1.12 C:/Users/Administrator/repos/skytuhua-org-Gen-V1
+
+
+ Test Files  2 passed (2)
+      Tests  43 passed (43)
+   Start at  21:15:40
+   Duration  6.72s (transform 2.52s, setup 0ms, import 3.45s, tests 2.88s, environment 0ms)
+

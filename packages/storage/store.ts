@@ -69,6 +69,14 @@ export class Store {
     mkdirSync(dataDir, { recursive: true });
     this.dataDir = realpathSync(dataDir);
     this.connection = new DatabaseSync(join(this.dataDir, "harness.sqlite"));
+    try {
+      this.statements = this.initialize();
+    } catch (error) {
+      try { this.connection.close(); } catch { /* Preserve the initialization error. */ }
+      throw error;
+    }
+  }
+  private initialize(): Store['statements'] {
     this.connection.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     this.connection.exec(`
       CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY);
@@ -78,7 +86,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, hash TEXT NOT NULL, body TEXT NOT NULL);
       INSERT OR IGNORE INTO migrations(version) VALUES (1);
     `);
-    this.statements = {
+    return {
       get: this.connection.prepare("SELECT body FROM entities WHERE kind=? AND id=?"),
       // rowid order is insertion order: callers rely on chronological message
       // order for windowing, cursor paging, and tail slices.
@@ -310,8 +318,14 @@ export class Store {
         batchEvents = Number(removeEvents.run(floor, batch).changes);
         if (options.receipts !== 'keep') batchReceipts = Number(expireReceipts.run(floor, batch).changes);
         this.db.exec("COMMIT");
-      } catch (error) { this.db.exec("ROLLBACK"); throw error; }
-      finally { this.transactionOpen = false; }
+      } catch (error) {
+        try { this.connection.exec("ROLLBACK"); } catch { /* Preserve the batch failure. */ }
+        throw error;
+      } finally {
+        this.transactionOpen = false;
+        // Reuse command recovery so readers never observe abandoned deletions.
+        if (this.connection.isTransaction) this.reconcileRequired = true;
+      }
       removedEvents += batchEvents; removedReceipts += batchReceipts; batches++;
       if (batchEvents < batch && batchReceipts < batch) break;
     }

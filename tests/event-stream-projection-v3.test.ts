@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { ServerResponse } from "node:http";
-import { expect, it } from "vitest";
-import { streamEvents } from "../apps/server/event-stream";
+import { expect, it, vi } from "vitest";
+import { registerEventStream, streamEvents } from "../apps/server/event-stream";
 import type { WorkspaceEvent } from "../packages/contracts/index.ts";
 
 // Cost audit for #1960: a live commit must not need a store read+parse per
@@ -16,7 +16,7 @@ function fixture(backlog: WorkspaceEvent[] = [], retentionFloor = 0) {
     eventsAfter(after: number, limit = events.length) {
       queries += 1;
       parses += Math.min(limit, Math.max(0, events.filter((event) => event.seq > after).length));
-      return events.filter((event) => event.seq > after).slice(0, limit);
+      return events.filter((event) => event.seq > after && event.seq >= retentionFloor).slice(0, limit);
     },
     subscribe(listener: (event: WorkspaceEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
     commit(event: WorkspaceEvent) { events.push(event); store.sequence = event.seq; for (const listener of [...listeners]) listener(event); },
@@ -28,7 +28,7 @@ function fixture(backlog: WorkspaceEvent[] = [], retentionFloor = 0) {
   });
   const event = (seq: number): WorkspaceEvent => ({ seq, id: String(seq), type: "assistant.delta", threadId: null, payload: { seq }, occurredAt: "2026-01-01T00:00:00.000Z" });
   const stream = (from = 0, own: number[] = writes) => streamEvents(response(own) as unknown as ServerResponse, store, from, () => {});
-  return { store, writes, stream, counts: () => ({ queries, parses }), reset: () => { queries = 0; parses = 0; }, event };
+  return { store, writes, stream, setRetentionFloor: (floor: number) => { retentionFloor = floor; }, counts: () => ({ queries, parses }), reset: () => { queries = 0; parses = 0; }, event };
 }
 
 it("delivers live commits to a caught-up subscriber without a store read per event", async () => {
@@ -103,6 +103,63 @@ it("announces a retention gap before the complete first retained page", async ()
     expect(chunks.flatMap(chunk => /^id: (\d+)/.exec(chunk)?.slice(1).map(Number) ?? [])).toEqual([4, 5, 6]);
   } finally { shutdown(); }
 });
+it("does not announce a retention gap when replay begins at the oldest event", async () => {
+  const f = fixture([f0(4), f0(5)], 4), chunks: string[] = [];
+  const response = Object.assign(new EventEmitter(), {
+    write(chunk: string) { chunks.push(chunk); return true; },
+    destroy() {},
+  });
+  const shutdown = streamEvents(response as unknown as ServerResponse, f.store, 3, () => {});
+  try {
+    await expect.poll(() => chunks.filter(chunk => chunk.startsWith("id: ")).length).toBe(2);
+    expect(chunks.some(chunk => chunk.startsWith("event: retention-gap"))).toBe(false);
+    expect(chunks.flatMap(chunk => /^id: (\d+)/.exec(chunk)?.slice(1).map(Number) ?? [])).toEqual([4, 5]);
+  } finally { shutdown(); }
+});
+it("announces retention that advances while a replay page is backpressured", async () => {
+  const f = fixture(Array.from({ length: 100 }, (_, i) => f0(i + 1)));
+  const frames: (number | string)[] = [];
+  const response = Object.assign(new EventEmitter(), {
+    write(chunk: string) {
+      const id = /^id: (\d+)/.exec(chunk);
+      if (id) { const seq = Number(id[1]); frames.push(seq); return seq !== 1; }
+      if (chunk.startsWith("event: retention-gap")) frames.push(chunk);
+      return true;
+    },
+    destroy() {},
+  });
+  const shutdown = streamEvents(response as unknown as ServerResponse, f.store, 0, () => {});
+  try {
+    expect(frames).toEqual([1]);
+    f.setRetentionFloor(80);
+    response.emit("drain");
+    await expect.poll(() => frames.at(-1)).toBe(100);
+    expect(frames).toEqual([
+      ...Array.from({ length: 64 }, (_, i) => i + 1),
+      'event: retention-gap\ndata: {"floor":80}\n\n',
+      ...Array.from({ length: 21 }, (_, i) => i + 80),
+    ]);
+  } finally { shutdown(); }
+});
+
 function f0(seq: number): WorkspaceEvent {
   return { seq, id: String(seq), type: "x", threadId: null, payload: null, occurredAt: "2026-01-01T00:00:00.000Z" };
 }
+
+it.each(['floor', 'sequence'])('closes a reader if its initial %s read fails', read => {
+  const streams = new Map<ServerResponse, () => void>();
+  const destroy = vi.fn(), write = vi.fn(() => true), unsubscribe = vi.fn();
+  const response = Object.assign(new EventEmitter(), { destroy, write }) as unknown as ServerResponse;
+  const store: Parameters<typeof streamEvents>[1] = {
+    get sequence() { if (read === 'sequence') throw new Error('Ledger unavailable'); return 0; },
+    eventsAfter: vi.fn(() => []),
+    subscribe: vi.fn(() => unsubscribe),
+    retentionFloor() { if (read === 'floor') throw new Error('Ledger unavailable'); return 0; },
+  };
+  expect(() => registerEventStream(streams, response, store, 0)).not.toThrow();
+  expect(unsubscribe).toHaveBeenCalledTimes(vi.mocked(store.subscribe).mock.calls.length);
+  expect(destroy).toHaveBeenCalledOnce();
+  expect(streams.size).toBe(0);
+  expect(write).not.toHaveBeenCalled();
+  expect(response.listenerCount('close')).toBe(0);
+});

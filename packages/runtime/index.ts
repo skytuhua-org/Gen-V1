@@ -10,7 +10,7 @@ import {assertModelOnlyInput,PREDICTION_MAX_OUTPUT_BYTES,type ModelPurpose} from
 
 type Provider='pi'|OfficialRuntimeProviderId;
 type Factories={pi:(options:{dataDir:string;modelOnly?:boolean;purpose?:ModelPurpose})=>RuntimeAdapter;official:(options:{dataDir:string;modelOnly?:boolean;purpose?:ModelPurpose})=>RuntimeAdapter};
-type Pair={root:string;pi:RuntimeAdapter;official:RuntimeAdapter};
+type Pair={root:string;pi?:RuntimeAdapter;official?:RuntimeAdapter};
 type Selection={provider:Provider;adapter:RuntimeAdapter;modelId:string;accountId:string|null};
 type Owner=Selection&{ctx:RunContext;closed:boolean;closing?:Promise<void>;lease?:AccountUseLease;outputBytes?:number;memoryCheckpoint?:StartRun['memoryCheckpoint']};
 const key=(ctx:RunContext)=>JSON.stringify([ctx.threadId,ctx.runId,ctx.epoch]);
@@ -34,12 +34,10 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
    releaseOwner(current);
   })().catch(error=>{current.closing=undefined;throw error;});
  }
- function pair(account:ConnectionAccount|null):Pair {
-  active();const id=account?.id??null,dataDir=account?accountProfileRoot(root,account):root,cached=pairs.get(id);
-  if(cached){if(cached.root!==dataDir)throw new HarnessError('ACCOUNT_PROVIDER_MISMATCH','This saved account changed providers.');return cached;}
+ function createAdapter(kind:'pi'|'official',dataDir:string):RuntimeAdapter {
   const adapterOptions=modelOnly?{dataDir,modelOnly:true,...(options.purpose?{purpose:options.purpose}:{})}:{dataDir};
-  const pi=factories.pi(adapterOptions),official=factories.official(adapterOptions),created={root:dataDir,pi,official};
-  for(const adapter of [pi,official])adapter.configure({
+  const adapter=factories[kind](adapterOptions);
+  adapter.configure({
    onEvent(event){
     let current:Owner;try{current=owner(event,adapter);}catch{return;}
     if(options.purpose==='prediction'&&(event.type==='assistant.delta'||event.type==='assistant.message')){
@@ -58,8 +56,15 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
     const check=()=>{const actual=owner(request.ctx,adapter);if(actual!==current||modelOnly||current.provider!=='pi'||!requiresMemoryCheckpoint(current.memoryCheckpoint))throw new HarnessError('MEMORY_CHECKPOINT_OWNER','The native checkpoint has no current conversation owner.');choose(current.modelId,request.sessionPath,current.accountId);};
     return routeMemoryCheckpoint(request,{adapterId:'pi',ctx:current.ctx,sessionPath:request.sessionPath,modelId:current.modelId,accountId:current.accountId},callbacks?.onMemoryCheckpoint,check);
    },
-  });adapters.add(pi);adapters.add(official);pairs.set(id,created);return created;
+  });adapters.add(adapter);return adapter;
  }
+ function pair(account:ConnectionAccount|null):Pair {
+  active();const id=account?.id??null,dataDir=account?accountProfileRoot(root,account):root,cached=pairs.get(id);
+  if(cached){if(cached.root!==dataDir)throw new HarnessError('ACCOUNT_PROVIDER_MISMATCH','This saved account changed providers.');return cached;}
+  const created:Pair={root:dataDir,pi:createAdapter('pi',dataDir),official:createAdapter('official',dataDir)};
+  pairs.set(id,created);return created;
+ }
+ function adapterFor(value:Pair,kind:'pi'|'official'):RuntimeAdapter {return value[kind]??=createAdapter(kind,value.root);}
  pair(null);
  function resolveAccount(id:string|null|undefined):ConnectionAccount|null {
   active();if(id===undefined||id===null)return null;const saved=options.accounts?.get(id);if(!saved||saved.id!==id||!isConnectionProviderId(saved.providerId))throw new HarnessError('ACCOUNT_NOT_FOUND','Choose a saved subscription account.');
@@ -78,7 +83,7 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
   if(account&&account.providerId!==providerId)throw new HarnessError('ACCOUNT_PROVIDER_MISMATCH','This account belongs to another provider.');available(providerId,account?.id??null);
   const selected=pair(account);
   if(sessionPath&&providerForSession(sessionPath,selected)!==provider)throw new HarnessError('RUNTIME_SESSION_MISMATCH','This session belongs to another runtime. Start a new thread to change runtimes.');
-  return {provider,adapter:provider==='pi'?selected.pi:selected.official,modelId,accountId:account?.id??null};
+  return {provider,adapter:adapterFor(selected,provider==='pi'?'pi':'official'),modelId,accountId:account?.id??null};
  }
  function reserve(ctx:RunContext,selected:Selection,memoryCheckpoint?:StartRun['memoryCheckpoint']):Owner {
   if(requiresMemoryCheckpoint(memoryCheckpoint)&&(selected.provider!=='pi'||modelOnly||!callbacks?.onMemoryCheckpoint))throw new HarnessError('MEMORY_CHECKPOINT_UNSUPPORTED','This native adapter cannot enforce required memory checkpoints.');
@@ -89,7 +94,9 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
  async function retire(adapter:RuntimeAdapter):Promise<void> {
   const affected=[...owners.values()].filter(current=>current.adapter===adapter);for(const current of affected)current.closed=true;
   await adapter.dispose();
-  for(const [id,value]of pairs)if(value.pi===adapter||value.official===adapter)pairs.delete(id);
+  // A completed retirement invalidates only the slot it owned.
+  adapters.delete(adapter);
+  for(const value of pairs.values()){if(value.pi===adapter)value.pi=undefined;if(value.official===adapter)value.official=undefined;}
   for(const current of affected){releaseOwner(current);if(!disposed)callbacks?.onEvent({...current.ctx,type:'error',message:'The subscription runtime closed after discovery failed. Resume the task to continue.'});}
  }
  async function probe<T>(adapter:RuntimeAdapter,providerIds:readonly ConnectionProviderId[],accountId:string|null,action:(providers:readonly ConnectionProviderId[])=>Promise<T>):Promise<T> {
@@ -110,9 +117,10 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
    const providerId=query?.providerId;
    if(providerId&&(!isConnectionProviderId(providerId)||account&&account.providerId!==providerId))throw new HarnessError('ACCOUNT_PROVIDER_MISMATCH','This catalog belongs to another provider.');
    if(account)available(account.providerId,account.id);
-   const targets=providerId?[isOfficialRuntimeProviderId(providerId)?selected.official:selected.pi]:account?[isOfficialRuntimeProviderId(account.providerId)?selected.official:selected.pi]:[selected.pi,selected.official];
+   const scopedProvider=providerId??account?.providerId;
+   const targets:('pi'|'official')[]=scopedProvider?[isOfficialRuntimeProviderId(scopedProvider)?'official':'pi']:['pi','official'];
    const refresh=query?.refresh;
-   const results=await withAccountProfile(root,account,async()=>{active();if(account)available(account.providerId,account.id);return Promise.allSettled(targets.map(adapter=>{const requested=providerId?[providerId]:probeProviders(account,adapter===selected.official);return probe(adapter,requested,account?.id??null,async effective=>{
+   const results=await withAccountProfile(root,account,async()=>{active();if(account)available(account.providerId,account.id);return Promise.allSettled(targets.map(async kind=>{const adapter=adapterFor(selected,kind),requested=providerId?[providerId]:probeProviders(account,kind==='official');return probe(adapter,requested,account?.id??null,async effective=>{
     try{
      if(providerId)return await adapter.models({refresh,providerId});
      // No provider skipped: keep ordinary whole-adapter discovery so its
@@ -147,13 +155,13 @@ export function createRuntime(options:{dataDir:string;accounts?:RuntimeAccountRe
   async invalidateModels(query){
    active();
    const targets=query?.accountId===undefined?[...pairs.values()]:[pairs.get(query.accountId)].filter((value):value is Pair=>Boolean(value));
-   await Promise.all(targets.flatMap(value=>query?.providerId?[isOfficialRuntimeProviderId(query.providerId)?value.official:value.pi]:[value.pi,value.official]).map(adapter=>query?.providerId?adapter.invalidateModels?.({providerId:query.providerId}):adapter.invalidateModels?.()));
+   await Promise.all(targets.flatMap(value=>query?.providerId?[isOfficialRuntimeProviderId(query.providerId)?value.official:value.pi]:[value.pi,value.official]).map(adapter=>query?.providerId?adapter?.invalidateModels?.({providerId:query.providerId}):adapter?.invalidateModels?.()));
   },
   async start(input:StartRun){if(modelOnly)assertModelOnlyInput(input,options.purpose);const captured=structuredClone(input),selected=reserve(captured,choose(captured.modelId,captured.sessionPath,captured.accountId),captured.memoryCheckpoint),account=resolveAccount(selected.accountId);try{await withAccountProfile(root,account,async()=>{owner(captured,selected.adapter);available(captured.modelId.split('/')[0],selected.accountId);await selected.adapter.start(captured);},undefined,captured.threadId);}catch(error){await close(selected);throw error;}},
   async followUp(input){active();if(options.purpose==='memory-extraction')throw new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot continue a conversation.');if(options.purpose==='prediction')throw new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot continue a conversation.');if(modelOnly)assertModelOnlyInput(input,options.purpose);const captured={...input},current=owners.get(key(captured));if(!current)throw new HarnessError('STALE_RUN','Start or resume this task under fresh run authority.');if(current.accountId!==(captured.accountId??null))throw new HarnessError('RUNTIME_ACCOUNT_MISMATCH','This run belongs to another account.');if(!sameMemoryCheckpointRequirement(captured.memoryCheckpoint,current.memoryCheckpoint))throw new HarnessError('MEMORY_CHECKPOINT_OWNER','Follow-up changed the captured checkpoint requirement.');if(current.modelId!==captured.modelId)throw new HarnessError('RUNTIME_MODEL_MISMATCH','Stop the active run before changing models.');choose(captured.modelId,captured.sessionPath,captured.accountId);const account=resolveAccount(current.accountId);await withAccountProfile(root,account,async()=>{owner(captured,current.adapter);available(captured.modelId.split('/')[0],current.accountId);await current.adapter.followUp(captured);},undefined,captured.threadId);},
   async cancel(ctx){const current=owners.get(key(ctx));if(current)await close(current);},
   async compact(ctx,sessionPath,modelId,accountId,memoryCheckpoint){if(options.purpose==='memory-extraction')throw new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot compact conversations.');if(options.purpose==='prediction')throw new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot compact conversations.');const selected=reserve(ctx,choose(modelId,sessionPath,accountId),memoryCheckpoint),account=resolveAccount(selected.accountId);try{await withAccountProfile(root,account,async()=>{owner(ctx,selected.adapter);available(modelId.split('/')[0],selected.accountId);if(memoryCheckpoint!==undefined)await selected.adapter.compact(ctx,sessionPath,modelId,selected.accountId,memoryCheckpoint);else await selected.adapter.compact(ctx,sessionPath,modelId);},undefined,ctx.threadId);await close(selected);}catch(error){await close(selected);throw error;}},
-  async history(sessionPath,accountId){active();if(options.purpose==='memory-extraction')throw new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot read conversations.');if(options.purpose==='prediction')throw new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot read conversations.');const account=resolveAccount(accountId),selected=pair(account),provider=providerForSession(sessionPath,selected);if(account&&isOfficialRuntimeProviderId(account.providerId)&&provider!==account.providerId)throw new HarnessError('RUNTIME_SESSION_MISMATCH','This session belongs to another provider.');if(account&&!isOfficialRuntimeProviderId(account.providerId)&&provider!=='pi')throw new HarnessError('RUNTIME_SESSION_MISMATCH','This session belongs to another provider.');return withAccountProfile(root,account,async()=>{active();const adapter=provider==='pi'?selected.pi:selected.official;return probe(adapter,account?[account.providerId]:provider==='pi'?probeProviders(null,false):[provider],account?.id??null,()=>adapter.history(sessionPath));});},
+  async history(sessionPath,accountId){active();if(options.purpose==='memory-extraction')throw new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot read conversations.');if(options.purpose==='prediction')throw new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot read conversations.');const account=resolveAccount(accountId),selected=pair(account),provider=providerForSession(sessionPath,selected);if(account&&isOfficialRuntimeProviderId(account.providerId)&&provider!==account.providerId)throw new HarnessError('RUNTIME_SESSION_MISMATCH','This session belongs to another provider.');if(account&&!isOfficialRuntimeProviderId(account.providerId)&&provider!=='pi')throw new HarnessError('RUNTIME_SESSION_MISMATCH','This session belongs to another provider.');return withAccountProfile(root,account,async()=>{active();const adapter=adapterFor(selected,provider==='pi'?'pi':'official');return probe(adapter,account?[account.providerId]:provider==='pi'?probeProviders(null,false):[provider],account?.id??null,()=>adapter.history(sessionPath));});},
   dispose(){
    if(disposing)return disposing;disposed=true;for(const current of owners.values())current.closed=true;
    return disposing=Promise.resolve().then(async()=>{

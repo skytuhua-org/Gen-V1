@@ -1,0 +1,24 @@
+{
+  "first": {
+    "status": "OK",
+    "proposals": 228,
+    "duplicates": 0,
+    "rejected": 0,
+    "attempts": 4
+  },
+  "second": {
+    "status": "OK",
+    "proposals": 0,
+    "duplicates": 228,
+    "rejected": 0,
+    "attempts": 4
+  },
+  "recordsAfterFirst": 200,
+  "recordsAfterSecond": 200,
+  "firstIssue": 2307,
+  "calls": 8,
+  "statuses": [
+    200
+  ],
+  "rateLimitRemaining": "4829"
+}

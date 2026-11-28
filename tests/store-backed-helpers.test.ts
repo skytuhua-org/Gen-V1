@@ -7,6 +7,7 @@ import { Store } from '../packages/storage/store.ts';
 import { MEMORY_LIMITS, changeTaskMemory, taskMemories, taskMemoryContext } from '../packages/core/task-memory.ts';
 import { EffectAdmissionPolicy } from '../packages/core/effect-admission-policy.ts';
 import { SKILL_LEARNING_POLICY, learningReviewPrompt, searchSessions } from '../packages/core/learning-context.ts';
+import { memoryContainsSecret } from '../packages/core/memory-publication.ts';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const fn of cleanups.splice(0)) fn(); });
@@ -25,6 +26,7 @@ const thread = (over: Partial<Thread> = {}): Thread => ({
 });
 const message = (id: string, content: string, role: Message['role'] = 'user', threadId = 'thread-a'): Message =>
   ({ id, threadId, role, content, createdAt: 't', runId: null });
+const credentialPlaceholder = 'access_token=synthetic-documentation-placeholder';
 
 describe('task memory', () => {
   it('saves, reads and contexts notes sorted by key', () => {
@@ -70,6 +72,27 @@ describe('task memory', () => {
       write('t', () => { expect(code(() => changeTaskMemory(store, 'thread-a', 'save', { key: 'k', content, baseRevision: 0 }, 'agent'))).toBe('INVALID_MEMORY'); });
     }
     write('t', () => { expect((changeTaskMemory(store, 'thread-a', 'save', { key: 'k', content: 'x'.repeat(MEMORY_LIMITS.entryBytes), baseRevision: 0 }, 'agent') as TaskMemory).key).toBe('k'); });
+  });
+  it('rejects notes matching the shared credential screen before persistence', () => {
+    const { store, write } = fixture();
+    expect(memoryContainsSecret(credentialPlaceholder)).toBe(true);
+    const save = () => write('t', () => changeTaskMemory(store, 'thread-a', 'save', {
+      key: 'k', content: credentialPlaceholder, baseRevision: 0,
+    }, 'agent'));
+    expect(code(save)).toBe('INVALID_MEMORY');
+    expect(taskMemories(store, 'thread-a')).toEqual([]);
+  });
+  it('redacts an older stored note in model context without changing the row', () => {
+    const { store, write } = fixture();
+    const content = 'Example uses ' + credentialPlaceholder;
+    const note: TaskMemory = {
+      id: 'thread-a:k', threadId: 'thread-a', key: 'k', content, revision: 1, author: 'user', updatedAt: 't',
+    };
+    write('legacy.fixture', () => store.put('taskMemory', note.id, note.threadId, note));
+    expect(JSON.parse(taskMemoryContext(store, 'thread-a')!)).toEqual([
+      { key: 'k', content: 'Example uses [redacted credential]' },
+    ]);
+    expect(taskMemories(store, 'thread-a')).toEqual([note]);
   });
   it('bounds the entry count and total byte budget', () => {
     const { store, write } = fixture();
@@ -190,6 +213,14 @@ describe('searchSessions', () => {
     expect(row.content).not.toContain(secret);
     expect(row.content).toContain('[redacted credential]');
   });
+  it('applies the shared credential screen to session excerpts', () => {
+    const { store, write } = fixture();
+    const text = 'Example uses ' + credentialPlaceholder + ' and ordinary notes.';
+    write('t', () => store.put('message', 'm1', 'thread-a', message('m1', text)));
+    const result = searchSessions(store, { query: 'example' });
+    expect(result.matches[0]?.content).toBe('Example uses [redacted credential] and ordinary notes.');
+    expect(store.get<Message>('message', 'm1')?.content).toBe(text);
+  });
   it('returns an empty match list for absent terms', () => {
     const { store, write } = fixture();
     seed(store, write);
@@ -198,6 +229,15 @@ describe('searchSessions', () => {
 });
 
 describe('learningReviewPrompt', () => {
+  it('applies the shared credential screen to the learning transcript', () => {
+    const { store, write } = fixture();
+    const text = 'Example uses ' + credentialPlaceholder + ' and ordinary notes.';
+    write('t', () => store.put('message', 'm1', 'thread-a', message('m1', text)));
+    const prompt = learningReviewPrompt(store, thread(), { threadId: 'thread-a', runId: 'run-a', epoch: 1 }, '');
+    expect(prompt).toContain('Example uses [redacted credential] and ordinary notes.');
+    expect(prompt).not.toContain(credentialPlaceholder);
+    expect(store.get<Message>('message', 'm1')?.content).toBe(text);
+  });
   it('quotes recent messages and operations with redaction', () => {
     const { store, write } = fixture();
     write('t', () => {
