@@ -4,6 +4,16 @@ import type { WorkspaceAuthority } from '../../../packages/contracts/workspace.t
 import { projectColorKey } from './project-colors.ts';
 
 export type ModelSource = 'explicit' | 'project' | 'project-unavailable' | 'global' | 'first' | 'bound';
+
+/** Journal keys for the per-owner explicit model choice (R04) and reasoning-edit flag. */
+export const modelChoiceKey = (owner: string) => `modelChoice:${owner}`;
+export const thinkingExplicitKey = (owner: string) => `thinkingExplicit:${owner}`;
+
+/** Resolution sources that must not be overridden by a later global default change. */
+export const modelSourceLocks = (source?: ModelSource) => source === 'explicit' || source === 'project' || source === 'project-unavailable';
+
+/** R05: a composer pick under a project default keeps the global default untouched. */
+export const pickWritesGlobalDefault = (resolution: { projectDefault?: unknown }) => !resolution.projectDefault;
 export interface ResolvedModel { modelId: string; thinkingLevel: string; source: ModelSource; reasoningDropped: boolean }
 
 export function projectModelDefaultFor(preferences: UiPreferences, authority: WorkspaceAuthority, projectId: string): { modelId: string; thinkingLevel: string | null } | null {

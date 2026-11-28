@@ -1,5 +1,7 @@
 import {useLayoutEffect,useRef,useState,type ReactNode,type Ref} from 'react';
+import {AlertTriangle,Info,X} from 'lucide-react';
 import type {ModelInfo} from '../../../packages/contracts';
+import type {ModelSource} from './project-model-defaults';
 import {ModelPicker,type ModelPickerHandle} from './ModelPicker';
 import {useComposerPointerPress} from './composer-pointer-press';
 import './composer-toolbar.css';
@@ -11,6 +13,7 @@ export interface ComposerToolbarProps {
  onProject:()=>void|Promise<void>;onChanges:()=>void|Promise<void>;onCreatePR:()=>void|Promise<void>;
  onTranscript:(text:string)=>void;disabled?:boolean;working?:boolean;
  modelScopeHint?:string;onModelNewTask?:(modelId:string)=>void;
+ modelSource?:ModelSource;modelProjectColor?:string;modelProjectName?:string;
  separateActions?:boolean;leading?:ReactNode;runtime?:ReactNode;context?:ReactNode;trailing?:ReactNode;
 }
 interface VoiceResult {isFinal:boolean;length:number;[index:number]:{transcript:string}}
@@ -45,7 +48,14 @@ export function ComposerTaskActions({changeSummary,onChanges,onCreatePR,disabled
  </div>;
 }
 
-export function ComposerToolbar({modelPickerRef,models,modelId,onModelChange,thinkingLevel,onThinkingChange,projectLabel,changeSummary,onProject,onChanges,onCreatePR,onTranscript,disabled=false,working=false,modelScopeHint,onModelNewTask,separateActions=false,leading,runtime,context,trailing}:ComposerToolbarProps){
+/** One-line model-provenance notices above the composer toolbar (#1481 §6.3). */
+export function ComposerModelNotice({source,reasoningDropped,projectName,droppedLevel,modelName,dismissed,onChooseModel,onEditProjectDefaults,onDismiss}:{source?:ModelSource;reasoningDropped?:boolean;projectName?:string;droppedLevel?:string;modelName:string;dismissed?:boolean;onChooseModel:()=>void;onEditProjectDefaults?:()=>void;onDismiss:()=>void}){
+ if(source==='project-unavailable')return <div className="composer-model-notice" role="status"><AlertTriangle size={14} aria-hidden="true"/><span>{`${projectName??'Project'}'s default model isn't available with your selected accounts. Choose a model to send.`}</span><button type="button" className="composer-model-notice-action" onClick={onChooseModel}>Choose model</button>{onEditProjectDefaults&&<button type="button" className="composer-model-notice-action" onClick={onEditProjectDefaults}>Edit project defaults</button>}</div>;
+ if(source==='project'&&reasoningDropped&&!dismissed)return <div className="composer-model-notice composer-model-notice-info" role="status"><Info size={14} aria-hidden="true"/><span>{`${modelName} doesn't offer ${droppedLevel} reasoning, so it uses the model default.`}</span><button type="button" className="composer-model-notice-action" aria-label="Dismiss" onClick={onDismiss}><X size={13} aria-hidden="true"/></button></div>;
+ return null;
+}
+
+export function ComposerToolbar({modelPickerRef,models,modelId,onModelChange,thinkingLevel,onThinkingChange,projectLabel,changeSummary,onProject,onChanges,onCreatePR,onTranscript,disabled=false,working=false,modelScopeHint,onModelNewTask,modelSource,modelProjectColor,modelProjectName,separateActions=false,leading,runtime,context,trailing}:ComposerToolbarProps){
  const pointerPress=useComposerPointerPress();
  const [listening,setListening]=useState(false),[error,setError]=useState('');
  const session=useRef<{recognition:VoiceRecognition;epoch:number;seen:Set<number>}|null>(null),epoch=useRef(0),transcript=useRef(onTranscript);
@@ -80,7 +90,7 @@ export function ComposerToolbar({modelPickerRef,models,modelId,onModelChange,thi
     {leading}<button type="button" className="composer-tool composer-project" aria-label="Select project" title={projectLabel?'Select project · '+projectLabel:'Select project'} disabled={disabled} onClick={()=>void invoke(onProject)}>{folder}<span>{projectLabel??'Select project'}</span></button>{runtime}
    </div>
    <div className="composer-runtime-controls" role="group" aria-label="Model and voice">
-    <ModelPicker ref={modelPickerRef} models={models} modelId={modelId} thinkingLevel={thinkingLevel} onThinkingChange={onThinkingChange} disabled={locked} onChange={onModelChange} scopeHint={modelScopeHint} onNewTask={onModelNewTask}/>
+    <ModelPicker ref={modelPickerRef} models={models} modelId={modelId} thinkingLevel={thinkingLevel} onThinkingChange={onThinkingChange} disabled={locked} onChange={onModelChange} scopeHint={modelScopeHint} onNewTask={onModelNewTask} source={modelSource} projectColor={modelProjectColor} projectName={modelProjectName}/>
     {context}<button type="button" className={`composer-tool composer-voice ${listening?'is-listening':''}`} aria-label={!Voice?'Voice input unavailable':listening?'Stop voice input':'Start voice input'} aria-pressed={listening} title={!Voice?'Voice input is unavailable in this browser':listening?'Stop listening':'Dictate into your draft'} disabled={locked||!Voice} onClick={startVoice}>{microphone}<span className="sr-only">{listening?'Listening':''}</span></button>{trailing}
    </div>
   </div>
