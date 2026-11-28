@@ -42,3 +42,18 @@ it.each([false, true])('retains the ACP byte limit with newline present: %s', as
     expect(notifications).toEqual([]);
   } finally { rpc.close(); await result.catch(() => {}); }
 });
+
+it('drains final ACP responses after process exit while refusing further writes', async () => {
+  const child = Object.assign(new EventEmitter(), {stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough()});
+  const rpc = new AcpConnection(child as unknown as ChildProcess, () => {});
+  const result = rpc.request('initialize', {}).catch(error => error);
+  const unanswered = rpc.request('session/list', {}).catch(error => error);
+  try {
+    child.emit('exit', 0, null);
+    await expect(rpc.request('authenticate', {})).rejects.toMatchObject({code: 'OFFICIAL_PROCESS_EXITED'});
+    child.stdout.write(JSON.stringify({jsonrpc: '2.0', id: 1, result: {ok: true}}) + '\n');
+    child.emit('close', 0, null);
+    expect(await result).toEqual({ok: true});
+    expect(await unanswered).toMatchObject({code: 'OFFICIAL_PROCESS_EXITED'});
+  } finally { rpc.close(); await Promise.all([result, unanswered]); }
+});

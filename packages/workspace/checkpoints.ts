@@ -110,14 +110,19 @@ export function unifiedDiff(path: string, before: Buffer | null, after: Buffer |
   while (j < n) ops.push({ kind: "+", text: b[j++]! });
   // Group changes with 3 lines of context into hunks.
   const hunks: string[] = [];
+  const context = 3;
   let at = 0, covered = 0, oldCursor = 0, newCursor = 0;
   while (at < ops.length) {
     while (at < ops.length && ops[at]!.kind === " ") at++;
     if (at >= ops.length) break;
-    const start = Math.max(covered, at - 3);
-    let end = at;
-    while (end < ops.length && (ops[end]!.kind !== " " || end - at < 7)) end = ops[end]!.kind !== " " ? end + 1 : end + 1;
-    const slice = ops.slice(start, Math.min(ops.length, end));
+    const start = Math.max(covered, at - context);
+    let lastChange = at;
+    // Adjacent edits belong to one hunk when their context windows meet.
+    for (let scan = at + 1; scan < ops.length && scan - lastChange <= context * 2 + 1; scan++) {
+      if (ops[scan]!.kind !== " ") lastChange = scan;
+    }
+    const end = Math.min(ops.length, lastChange + context + 1);
+    const slice = ops.slice(start, end);
     while (covered < start) { if (ops[covered]!.kind !== "+") oldCursor++; if (ops[covered]!.kind !== "-") newCursor++; covered++; }
     const oldLines = slice.filter((o) => o.kind !== "+").length;
     const newLines = slice.filter((o) => o.kind !== "-").length;

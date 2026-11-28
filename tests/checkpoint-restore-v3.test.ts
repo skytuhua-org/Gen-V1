@@ -417,3 +417,22 @@ it.runIf(process.platform === "win32")("demotes a blob rejected by native hardli
   await expect(service.create({ owner, root: project, paths: ["linked.txt"] })).rejects.toMatchObject({ code: "CAPABILITY_DENIED" });
   expect(await readFile(twin, "utf8")).toBe("retained bytes\n");
 });
+
+it("uses three exterior lines around each checkpoint diff hunk and joins meeting context windows", () => {
+  const lines = Array.from({ length: 26 }, (_, i) => `line ${i + 1}`);
+  const bytes = (items: string[]) => Buffer.from(items.join("\n") + "\n");
+  const before = bytes(lines);
+  const replace = (first: number, last: number) => lines.map((line, i) => i + 1 >= first && i + 1 <= last ? `changed ${i + 1}` : line);
+  const separated = replace(15, 18);
+  separated[4] = "changed 5";
+  const diff = unifiedDiff("note.txt", before, bytes(separated)).diff!;
+  expect(diff.match(/^@@[^\n]+/gm)).toEqual(["@@ -2,7 +2,7 @@", "@@ -12,10 +12,10 @@"]);
+  expect(diff).toContain("+changed 5\n line 6\n line 7\n line 8\n@@");
+  expect(diff).toContain("+changed 18\n line 19\n line 20\n line 21\n");
+  expect(diff).not.toContain("\n line 9\n");
+  const touching = replace(12, 12);
+  touching[4] = "changed 5";
+  const joined = unifiedDiff("note.txt", before, bytes(touching)).diff!;
+  expect(joined.match(/^@@[^\n]+/gm)).toEqual(["@@ -2,14 +2,14 @@"]);
+  expect(joined).toContain("+changed 12\n line 13\n line 14\n line 15\n");
+});
