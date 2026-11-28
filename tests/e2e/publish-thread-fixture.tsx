@@ -13,13 +13,14 @@ const THREAD = 'thread-one';
 const INTENT = 'Create a pull request for the current changes.';
 
 function Fixture() {
+  const [threadId, setThreadId] = useState(THREAD);
   const [review, setReview] = useState<PublishReviewOpen | null>(null);
   const [draftText, setDraftText] = useState('');
   Object.assign(window, { publishFixture: { unmount: () => root.unmount() } });
   // Mirrors App.tsx preparePR: probe the draft endpoint, open the review on a
   // usable response, keep the legacy prompt insert otherwise.
   const onCreatePR = async () => {
-    const outcome = await probePublishDraft(PROJECT, THREAD);
+    const outcome = await probePublishDraft(PROJECT, threadId);
     if (outcome.kind === 'unavailable') {
       setDraftText((current) => (current.startsWith(INTENT) ? current : INTENT + (current.trim() ? '\n\n' + current : '')));
       return;
@@ -30,14 +31,18 @@ function Fixture() {
     <main className="app-shell">
       <section className="composer" style={{ width: 'min(100%,760px)', margin: 'auto', padding: 12 }}>
         <textarea aria-label="Message" value={draftText} onChange={(event) => setDraftText(event.target.value)} />
+        <button type="button" onClick={() => {
+          setReview(null);
+          setThreadId(threadId === THREAD ? 'thread-two' : THREAD);
+        }}>Switch fixture thread</button>
         <ComposerTaskActions onChanges={() => {}} onCreatePR={onCreatePR} />
         {review && (
           <PublishReview
             open
             projectId={PROJECT}
-            threadId={THREAD}
+            threadId={threadId}
             initial={review}
-            loadDraft={(signal) => probePublishDraft(PROJECT, THREAD, signal)}
+            loadDraft={(signal) => probePublishDraft(PROJECT, threadId, signal)}
             onClose={() => setReview(null)}
           />
         )}

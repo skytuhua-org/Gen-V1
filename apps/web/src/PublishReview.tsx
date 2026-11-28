@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { Modal } from '../../../packages/ui-shell/Modal';
 import { Select } from '../../../packages/ui-shell/Select';
-import { ApiError } from './api.ts';
 import { GitHubSignIn } from './GitHubSignIn.tsx';
 import { journalRead, journalWrite } from './journal.ts';
 import {
   PUBLISH_LIMITS,
+  PublishRejected,
   executePublish,
   publishRequestV1Schema,
+  unresolvedPublishId,
   type PublishDraftV1,
   type PublishOperationV1,
   type PublishReviewOpen,
@@ -65,8 +66,6 @@ const STEP_LABELS: [keyof PublishOperationV1['steps'], string][] = [
 const stepStateLabel = (step: PublishStep) =>
   step.state === 'confirmed' ? 'Done' : step.state === 'not-applied' ? 'Skipped' : step.state === 'uncertain' ? 'Uncertain' : 'Not started';
 
-const message = (cause: unknown) => (cause instanceof Error ? cause.message : 'The publish request failed. Try again.');
-
 export function PublishReview({ open, projectId, threadId, initial, loadDraft, onClose, timeFormat }: PublishReviewProps) {
   const journalKey = `publish-review:${projectId}:${threadId}`;
   const [phase, setPhase] = useState<'loading' | 'form' | 'auth' | 'error'>('loading');
@@ -78,7 +77,7 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
   const [loadError, setLoadError] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [needsReview, setNeedsReview] = useState(false);
-  const retryableOperation = operation !== null && !operation.result && Object.values(operation.steps).every(step => step.state === 'not-started' || step.state === 'not-applied');
+  const [blockedRequest, setBlockedRequest] = useState<string | null>(null);
   const mounted = useRef(true);
 
   const persist = (next: ReviewForm, basis: PublishDraftV1) => {
@@ -132,7 +131,9 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
   };
 
   const accept = (outcome: PublishReviewOpen) => {
-    if (outcome.kind === 'draft') {
+    if (outcome.kind === 'blocked') {
+      setBlockedRequest(outcome.requestId);
+    } else if (outcome.kind === 'draft' && outcome.draft.projectId === projectId && outcome.draft.threadId === threadId) {
       applyDraft(outcome.draft);
       setPhase('form');
       setNeedsReview(false);
@@ -149,7 +150,7 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
   const reload = async () => {
     // A fresh request is safe only when no earlier step may have taken effect.
     // Confirmed or uncertain partial work belongs to the inspection/continue flow.
-    if (operation && !retryableOperation) return;
+    if (operation || unresolvedPublishId(projectId, threadId)) return;
     setOperation(null);
     setError('');
     setPhase('loading');
@@ -175,6 +176,7 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
     setOperation(null);
     setError('');
     setRunning(false);
+    setBlockedRequest(null);
     accept(initial);
     // initial identifies the probe that opened the sheet; reload() is the
     // deliberate re-entry for Retry, sign-in and REVISION_CHANGED.
@@ -189,13 +191,19 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
   };
 
   const approve = async () => {
-    if (!draft || running || needsReview) return;
+    if (!draft || draft.projectId !== projectId || draft.threadId !== threadId || running || needsReview || blockedRequest
+      || !hydrated || form.excluded.size > 0 || draft.files.length === 0) return;
+    const unresolvedId = unresolvedPublishId(projectId, threadId);
+    if (unresolvedId) {
+      setBlockedRequest(unresolvedId);
+      return;
+    }
     const parsed = publishRequestV1Schema.safeParse({
       id: crypto.randomUUID(),
       threadId,
       head: draft.head,
       revision: draft.revision,
-      selectedPaths: draft.files.filter((file) => !form.excluded.has(file.path)).map((file) => file.path),
+      selectedPaths: draft.files.map((file) => file.path),
       commitMessage: form.commitMessage,
       title: form.title,
       body: form.body,
@@ -214,12 +222,14 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
       setOperation(result);
     } catch (cause) {
       if (!mounted.current) return;
-      if (cause instanceof ApiError && cause.code === 'GITHUB_AUTH_REQUIRED') {
-        setPhase('auth');
-      } else if (cause instanceof ApiError && cause.code === 'REVISION_CHANGED') {
-        setError('The working copy changed. Review the current revision before publishing.');
+      if (cause instanceof PublishRejected) {
+        setError(cause.code === 'REVISION_CHANGED'
+          ? 'The working copy changed. Review the current revision before publishing.'
+          : cause.message);
         setNeedsReview(true);
-      } else setError(message(cause));
+      } else {
+        setBlockedRequest(parsed.data.id);
+      }
     } finally {
       if (mounted.current) setRunning(false);
     }
@@ -228,6 +238,20 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
   const baseOptions = [{ value: draft?.base ?? form.base, label: draft?.base ?? form.base }];
   if (form.base && !baseOptions.some((option) => option.value === form.base)) baseOptions.push({ value: form.base, label: form.base });
   const selected = draft ? draft.files.filter((file) => !form.excluded.has(file.path)).length : 0;
+
+  if (blockedRequest) {
+    return (
+      <Modal open={open} title="Review before publishing" onClose={onClose} className="publish-review">
+        <section className="publish-review-result" aria-label="Publish outcome">
+          <p role="alert">The publish outcome could not be confirmed. Check what happened before publishing again.</p>
+          <p>Request ID <code>{blockedRequest}</code></p>
+          <div className="publish-review-actions">
+            <button type="button" className="quiet" onClick={onClose}>Close</button>
+          </div>
+        </section>
+      </Modal>
+    );
+  }
 
   return (
     <Modal open={open} title="Review before publishing" onClose={onClose} className="publish-review">
@@ -333,6 +357,9 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
             <Select aria-label="Base branch" value={form.base} options={baseOptions} onValueChange={(value) => update({ base: value })} />
             {draft.baseNote && <p className="publish-review-note">{draft.baseNote}</p>}
           </section>
+          {selected !== draft.files.length && (
+            <p className="publish-review-note">Select all changed files to publish this working copy.</p>
+          )}
           {error && (
             <p role="alert" className="error-text">
               {error}
@@ -343,7 +370,7 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
             <button type="button" className="quiet" onClick={onClose}>
               Cancel
             </button>
-            <button type="submit" className="primary" disabled={running || !hydrated || needsReview || selected === 0}>
+            <button type="submit" className="primary" disabled={running || !hydrated || needsReview || selected !== draft.files.length}>
               Commit, push and open draft PR
             </button>
           </div>
@@ -375,9 +402,7 @@ export function PublishReview({ open, projectId, threadId, initial, loadDraft, o
           )}
           {!operation.result && (
             <p className="publish-review-note">
-              {retryableOperation ? <>The publish did not complete. Review the step results before trying again.{' '}
-                <button type="button" className="quiet" onClick={() => void reload()}>Retry</button>
-              </> : 'Publishing has a confirmed or uncertain step. Check what happened before continuing.'}
+              The publish did not complete. Check what happened before continuing.
             </p>
           )}
           <div className="publish-review-actions">

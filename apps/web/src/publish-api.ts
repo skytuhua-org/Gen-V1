@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ApiError, authenticated, csrfToken, read } from './api.ts';
+import { ApiError, authenticated, bootstrap, csrfToken, read, readJson } from './api.ts';
 
 // Client-side zod mirror of the publish wire contract in
 // packages/contracts/workspace-publish.ts @ 79d9396743 (PR #1291). The web
@@ -102,28 +102,83 @@ export async function readPublishDraft(projectId: string, threadId: string, sign
     fetch(`${endpoint(projectId)}/draft?threadId=${encodeURIComponent(threadId)}`, { credentials: 'same-origin', cache: 'no-store', signal }),
   ).then(read<unknown>);
   const parsed = publishDraftV1Schema.safeParse(value);
-  if (!parsed.success) throw new ApiError('INVALID_RESPONSE', 'The host returned an unexpected publish draft.');
+  if (!parsed.success || parsed.data.projectId !== projectId || parsed.data.threadId !== threadId)
+    throw new ApiError('INVALID_RESPONSE', 'The host returned an unexpected publish draft.');
   return parsed.data;
 }
 
-export async function executePublish(projectId: string, request: PublishRequestV1, signal?: AbortSignal): Promise<PublishOperationV1> {
-  const value = await authenticated(() =>
-    fetch(endpoint(projectId), {
-      method: 'POST',
-      credentials: 'same-origin',
-      signal,
-      headers: { 'Content-Type': 'application/json', 'x-harness-csrf': csrfToken },
-      body: JSON.stringify(request),
-    }),
-  ).then(read<unknown>);
+// An unresolved operation must survive closing and reopening its review sheet.
+const unresolvedPublishes = new Map<string, string>();
+const ownerKey = (projectId: string, threadId: string) => JSON.stringify([projectId, threadId]);
+
+export class PublishRejected extends ApiError {}
+
+const publishRejectionSchema = z.object({
+  error: z.object({ code: z.string(), message: z.string().min(1) }),
+});
+
+function isPreAdmissionRejection(status: number, code: string): boolean {
+  switch (code) {
+    case 'REVISION_CHANGED':
+    case 'PROJECT_READ_ONLY': return status === 400;
+    case 'CAPABILITY_DENIED':
+    case 'CSRF_REQUIRED': return status === 403;
+    case 'AUTH_REQUIRED': return status === 401;
+    default: return false;
+  }
+}
+
+export function unresolvedPublishId(projectId: string, threadId: string) {
+  return unresolvedPublishes.get(ownerKey(projectId, threadId));
+}
+
+export async function executePublish(projectId: string, request: PublishRequestV1): Promise<PublishOperationV1> {
+  const key = ownerKey(projectId, request.threadId);
+  if (unresolvedPublishes.has(key)) throw new ApiError('PUBLISH_UNRESOLVED', 'An earlier publish operation remains unresolved.');
+  unresolvedPublishes.set(key, request.id);
+
+  try {
+    await bootstrap();
+  } catch {
+    unresolvedPublishes.delete(key);
+    throw new PublishRejected('SESSION_UNAVAILABLE', 'The local session could not be reached. Reload the review before publishing.');
+  }
+
+  // The shared authenticated helper can resend on session errors. A write with
+  // an unconfirmed response must never be replayed automatically.
+  const response = await fetch(endpoint(projectId), {
+    method: 'POST',
+    redirect: 'error',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'x-harness-csrf': csrfToken },
+    body: JSON.stringify(request),
+  });
+  const value = await readJson(response);
+  if (!response.ok) {
+    const rejection = publishRejectionSchema.safeParse(value);
+    if (rejection.success && isPreAdmissionRejection(response.status, rejection.data.error.code)) {
+      unresolvedPublishes.delete(key);
+      throw new PublishRejected(rejection.data.error.code, rejection.data.error.message);
+    }
+    throw new ApiError('INVALID_RESPONSE', 'The host did not confirm the publish outcome.');
+  }
   const parsed = publishOperationV1Schema.safeParse(value);
-  if (!parsed.success) throw new ApiError('INVALID_RESPONSE', 'The host returned an unexpected publish result.');
+  if (!parsed.success || parsed.data.id !== request.id || parsed.data.owner.projectId !== projectId
+    || parsed.data.owner.threadId !== request.threadId
+    || JSON.stringify(parsed.data.request) !== JSON.stringify(publishRequestV1Schema.parse(request)))
+    throw new ApiError('INVALID_RESPONSE', 'The host returned an unexpected publish result.');
+
+  const { result, steps } = parsed.data;
+  if (result && steps.push.state === 'confirmed' && steps.pr.state === 'confirmed' && steps.link.state === 'confirmed'
+    && (steps.commit.state === 'confirmed' || steps.commit.state === 'not-applied'))
+    unresolvedPublishes.delete(key);
   return parsed.data;
 }
 
 export type PublishReviewOpen =
   | { kind: 'draft'; draft: PublishDraftV1 }
   | { kind: 'auth' }
+  | { kind: 'blocked'; requestId: string }
   | { kind: 'unavailable' };
 
 /** One draft probe gates the composer Create PR chip: flag on with a writable
@@ -131,6 +186,8 @@ export type PublishReviewOpen =
  * sheet's inline sign-in state, and every other outcome keeps the legacy
  * prompt-insert behaviour. */
 export async function probePublishDraft(projectId: string, threadId: string, signal?: AbortSignal): Promise<PublishReviewOpen> {
+  const requestId = unresolvedPublishId(projectId, threadId);
+  if (requestId) return { kind: 'blocked', requestId };
   try {
     return { kind: 'draft', draft: await readPublishDraft(projectId, threadId, signal) };
   } catch (cause) {
