@@ -180,8 +180,19 @@ export function Artifact({ artifact: incoming, snapshot, theme, refresh, onDirty
     const receipt = artifact.kind === 'structured' ? await state.submit(send) as Awaited<ReturnType<typeof send>> : await send(effectiveRecord?.revision ?? 0, effectiveRecord?.values ?? {});
     const result = receipt.result as { approvalRequired?: boolean; operation?: { id: string } } | null;
     if (result?.approvalRequired && result.operation?.id) pendingApproval.current = result.operation.id;
-    if (result?.approvalRequired && expanded) await command('artifact.expand', { artifactId: artifact.id, expanded: false }, artifact.threadId);
-    await refresh();
+    // The host accepted the request. A failed view update must not offer to submit it again.
+    const reportFollowUp = (message: string, cause: unknown) => {
+      const current = heldArtifact.current;
+      if (current.threadId === artifact.threadId && current.id === artifact.id && current.revision === artifact.revision) {
+        setError(cause instanceof Error ? `${message}: ${cause.message}` : message);
+      }
+    };
+    if (result?.approvalRequired && expanded) {
+      try { await command('artifact.expand', { artifactId: artifact.id, expanded: false }, artifact.threadId); }
+      catch (cause) { reportFollowUp('Could not open the approval view', cause); }
+    }
+    try { await refresh(); }
+    catch (cause) { reportFollowUp('Could not refresh the artifact after submission', cause); }
   };
   const discardWidget = artifact.kind === 'widget' ? async () => { if (!widget.current) throw new Error('Keep the owning widget open until its edit lease can be released.'); const owner = widget.current, generation = widgetEdits.current; await owner.releaseLease(); if (widget.current !== owner || widgetEdits.current !== generation) throw new Error('The widget changed while discarding. Your newer edits are retained.'); setWidgetGeneration(value => value + 1); dirtyChanged(false); } : undefined;
   const dirtyChanged = (value: boolean) => { widgetEdits.current++; setWidgetDirty(value); onDirtyWidget?.(artifact.id, artifact.threadId, value, discardWidget); };
