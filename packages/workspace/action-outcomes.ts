@@ -8,6 +8,7 @@ import {
   workspaceActionOwnerSchema,
   workspaceActionPayloadSchemas,
   createdPullRequestResultSchema,
+  undoneCommitResultSchema,
   type WorkspaceActionEnvelope,
   type WorkspaceActionExecution,
   type WorkspaceActionOutcome,
@@ -172,6 +173,11 @@ export class WorkspaceActionOutcomes {
     return { operationId: command.id, operation: command.type.slice('project.'.length), state };
   }
   private receiptResult(command: HostCommand, state: WorkspaceActionOutcome['state'], result: unknown, repo?: string) {
+    if (command.type === 'project.undo' && state === 'confirmed') {
+      const undone = undoneCommitResultSchema.parse((result as { undo?: unknown })?.undo);
+      if (undone.undoneHead !== command.payload.expectedHead) throw denied();
+      return undone;
+    }
     if (command.type !== 'project.create-pr' || state !== 'confirmed') return this.summary(command, state);
     const created = createdPullRequestResultSchema.parse(result);
     if (created.repo !== repo || created.head !== command.payload.head || created.revision !== command.payload.revision) throw denied();

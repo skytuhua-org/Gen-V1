@@ -8,14 +8,13 @@ import {ComposerToolbar} from '../../apps/web/src/ComposerToolbar';
 import {ScopedConversationComposer} from '../../apps/web/src/ScopedConversationComposer';
 import {scopedContext} from '../scoped-conversation-fixture';
 import {ComposerAttachments} from '../../apps/web/src/ComposerAttachments';
-import {createSharedAgentComposers} from '../../apps/web/src/agents-workspace/composer';
-import {command} from '../../apps/web/src/api';
+import {createPersonalAgentComposers} from '../../apps/web/src/agents-workspace/composer';
 import '@fontsource-variable/inter';
 import '../../apps/web/src/styles.css';
 import '../../apps/web/src/frontend-fidelity.css';
 import './terminal-excerpts-fixture.css';
 const query=new URLSearchParams(location.search),target={kind:'conversation' as const,threadId:query.get('owner')??'one',projectId:'capture-project',modelId:'test/model',working:false};
-const composers=createSharedAgentComposers({sendParent:input=>command('message.send',{content:input.content,modelId:input.modelId},input.threadId,input.commandId).then(()=>{}),stopParent:async()=>{}});
+const composers=createPersonalAgentComposers();
 function Composer(){
  const state=useSyncExternalStore(listener=>composers.subscribe(target,listener),()=>composers.getSnapshot(target));const input=useRef<HTMLTextAreaElement>(null);
  useEffect(()=>{void composers.prepare(target);},[]);

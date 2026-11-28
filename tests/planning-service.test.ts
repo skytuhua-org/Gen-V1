@@ -19,10 +19,10 @@ it('makes an unanswered explanation retryable after settlement and Stop while pr
  await x.send('request.detail',{requestId:created.requestId,revision:1,kind:'explain',optionId:'repair'},x.id,'detail-1');
  const ctx=x.ctx(),inputIds=x.store.all<{id:string}>('outbox',x.id).map(item=>item.id);
  x.events().onEvent({...ctx,type:'input.processing',inputIds});x.events().onEvent({...ctx,type:'assistant.message',messageId:'response',content:'Some details in the conversation',inputIds});x.events().onEvent({...ctx,type:'settled',aborted:false});
- expect(x.store.get<InputRequest>('request',created.requestId)).toMatchObject({status:'pending',revision:2,detailRequests:[{status:'failed',error:expect.any(String)}]});
- await x.send('request.detail',{requestId:created.requestId,revision:2,kind:'explain',optionId:'repair'},x.id,'detail-2');
+ expect(x.store.get<InputRequest>('request',created.requestId)).toMatchObject({status:'pending',revision:1,detailRequests:[{status:'failed',error:expect.any(String)}]});
+ await x.send('request.detail',{requestId:created.requestId,revision:1,kind:'explain',optionId:'repair'},x.id,'detail-2');
  await x.send('run.stop',{},x.id);expect(x.store.get<InputRequest>('request',created.requestId)?.detailRequests?.at(-1)?.status).toBe('failed');
- await expect(x.send('request.detail',{requestId:created.requestId,revision:3,kind:'explain',optionId:'repair'},x.id,'detail-3')).rejects.toMatchObject({code:'RESUME_REQUIRED'});
+ await expect(x.send('request.detail',{requestId:created.requestId,revision:1,kind:'explain',optionId:'repair'},x.id,'detail-3')).rejects.toMatchObject({code:'RESUME_REQUIRED'});
 });
 it('persists explanation requests once, continues Pi without consuming the pending decision, and updates the same question',async()=>{
  const x=await setup();const created=await x.service.tool({name:'ui_request_input',args},x.ctx()) as {requestId:string};
@@ -31,6 +31,24 @@ it('persists explanation requests once, continues Pi without consuming the pendi
  const pending=x.store.get<InputRequest>('request',created.requestId)!;expect(pending).toMatchObject({status:'pending',detailRequests:[{optionId:'repair',kind:'explain',status:'pending'}]});
  await x.service.tool({name:'ui_request_input',args:{...args,requestId:created.requestId,baseRevision:1,presentation:{...args.presentation,options:[{...args.presentation.options[0],explanation:'Repair preserves the existing API.'},args.presentation.options[1]]}}},x.ctx());
  expect(x.store.all('request',x.id)).toHaveLength(1);expect(x.store.get('request',created.requestId)).toMatchObject({revision:2,status:'pending',detailRequests:[{status:'resolved'}]});
+});
+it('keeps a displayed question action usable through a harmless detail retry',async()=>{
+ const x=await setup(),created=await x.service.tool({name:'ui_request_input',args},x.ctx()) as {requestId:string};
+ const shown=await x.service.tool({name:'ui_present',args:{title:'Decision action',spec:{root:'decide',elements:{decide:{type:'Button',props:{label:'Choose repair',actionId:'decide'}}}},actions:{decide:{kind:'request',requestId:created.requestId}}}},x.ctx()) as {artifactId:string;revision:number};
+ await x.send('request.detail',{requestId:created.requestId,revision:1,kind:'explain',optionId:'repair'},x.id,'detail-red-1');
+ const ctx=x.ctx(),inputIds=x.store.all<{id:string}>('outbox',x.id).map(item=>item.id);
+ x.events().onEvent({...ctx,type:'input.processing',inputIds});x.events().onEvent({...ctx,type:'assistant.message',messageId:'response',content:'No detail update',inputIds});x.events().onEvent({...ctx,type:'settled',aborted:false});
+ const failed=x.store.get<InputRequest>('request',created.requestId)!;
+ await x.send('request.detail',{requestId:created.requestId,revision:failed.revision,kind:'explain',optionId:'repair'},x.id,'detail-red-2');
+ expect(x.store.get<InputRequest>('request',created.requestId)?.detailRequests).toMatchObject([{status:'pending'}]);
+ await x.send('action.submit',{artifactId:shown.artifactId,revision:shown.revision,actionId:'decide',payload:'repair'},x.id,'submit-after-detail-retry');
+ expect(x.store.get<InputRequest>('request',created.requestId)).toMatchObject({status:'accepted',response:'repair'});
+ await expect(x.service.tool({name:'ui_request_input',args:{...args,requestId:created.requestId,baseRevision:1}},x.ctx())).rejects.toMatchObject({code:'STALE_REQUEST'});
+ const replacement=await x.service.tool({name:'ui_request_input',args},x.ctx()) as {requestId:string};
+ const stale=await x.service.tool({name:'ui_present',args:{title:'Superseded action',spec:{root:'decide',elements:{decide:{type:'Button',props:{label:'Choose repair',actionId:'decide'}}}},actions:{decide:{kind:'request',requestId:replacement.requestId}}}},x.ctx()) as {artifactId:string;revision:number};
+ await x.service.tool({name:'ui_request_input',args:{...args,requestId:replacement.requestId,baseRevision:1,prompt:'A genuinely different question'}},x.ctx());
+ await expect(x.send('action.submit',{artifactId:stale.artifactId,revision:stale.revision,actionId:'decide',payload:'repair'},x.id,'submit-superseded-question')).rejects.toMatchObject({code:'STALE_REQUEST'});
+ expect(x.store.get<InputRequest>('request',replacement.requestId)).toMatchObject({revision:2,status:'pending'});
 });
 it('rejects foreign option images and stale explanation clicks without consuming a decision',async()=>{
  const x=await setup();await expect(x.service.tool({name:'ui_request_input',args:{...args,presentation:{options:[{id:'x',label:'Example',examples:[{resourceId:'foreign',alt:'Example'}]}]}}},x.ctx())).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
