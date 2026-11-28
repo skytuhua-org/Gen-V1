@@ -11,7 +11,7 @@ export const DEPENDENCY_NOTICES = [
   ['@fontsource/caveat', '5.3.0', 'OFL-1.1'], ['@fontsource/dancing-script', '5.3.0', 'OFL-1.1'],
   ['@json-render/core', '0.21.3', 'Apache-2.0'], ['@json-render/react', '0.21.3', 'Apache-2.0'],
   ['@remote-dom/polyfill', '1.6.0', 'MIT'], ['@sinclair/typebox', '0.34.41', 'MIT'],
-  ['ajv', '8.18.0', 'MIT'], ['fastify', '5.12.7', 'MIT'], ['lucide-react', '0.468.0', 'ISC'],
+  ['ajv', '8.18.0', 'MIT'], ['katex', '0.19.1', 'MIT; fonts and stretchy SVGs include OFL-1.1 reserved-name notices retained in THIRD_PARTY_NOTICES.md'], ['fastify', '5.12.7', 'MIT'], ['lucide-react', '0.468.0', 'ISC'],
   ['pdf-lib', '1.17.1', 'MIT'], ['pdfjs-dist', '6.4.299', 'Apache-2.0'],
   ['react', '19.2.3', 'MIT'], ['react-dom', '19.2.3', 'MIT'], ['zod', '4.6.6', 'MIT'],
 ] as const;
