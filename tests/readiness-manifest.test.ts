@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {reserveDesktopRelease} from '../scripts/desktop-assets.ts';
 import {
   aggregateStatus,blockedResult,buildManifest,childEnvironment,detectBrowserPrerequisite,
-  redactSecrets,runCheck,readinessPackageChecks,windowsVerificationPlan,type CheckResult,type CheckSpec,
+  redactSecrets,runCheck,runInstalledVerification,readinessPackageChecks,windowsVerificationPlan,type CheckResult,type CheckSpec,
 } from '../scripts/verify-readiness.ts';
 
 // Negative-case contract for scripts/verify-readiness.ts (WO-F01 spec step 5).
@@ -282,5 +282,40 @@ describe('aggregate and manifest',()=>{
     const log=readFileSync(result.artifact,'utf8');
     expect(log).not.toContain('split-secret-value');
     expect(log).toContain('[REDACTED]');
+  });
+});
+
+
+describe('Windows package-to-installed readiness gate',()=>{
+  function fixture(){
+    const directory=temporaryDirectory(),version='0.6.1';
+    const plan=windowsVerificationPlan('win32',version,directory,'x64');
+    const spec=specFor(directory,{id:'windows-installed-verification',args:plan.commands[1]!.args});
+    return {spec,release:join(directory,`desktop-release-${version}`),installer:spec.args[3]!};
+  }
+
+  it.each(['missing output directory','wrong version','expected path is a directory'])('records an unusable installer (%s) without losing earlier evidence',async scenario=>{
+    const {spec,release,installer}=fixture();
+    if(scenario!=='missing output directory')mkdirSync(release);
+    if(scenario==='wrong version')writeFileSync(join(release,'Gen-V1-Setup-0.6.0-win-x64.exe'),'fixture');
+    if(scenario==='expected path is a directory')mkdirSync(installer);
+    const run=vi.fn(async()=>resultWith('PASS'));
+    const result=await runInstalledVerification(spec,'PASS',run);
+    const earlier=resultWith('PASS');
+    expect(buildManifest({repositorySha:'fixture',platform:'win32-x64',runId:'fixture',startedAt:earlier.startedAt,endedAt:result.endedAt,results:[earlier,result]})).toMatchObject({
+      aggregate:'FAIL',checks:[{status:'PASS'},{id:'windows-installed-verification',required:true,status:'BLOCKED',errorKind:'prerequisite-unavailable'}],
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('passes the exact planned installer to verification and keeps the verifier result',async()=>{
+    const {spec,release,installer}=fixture();
+    mkdirSync(release);
+    writeFileSync(join(release,'Gen-V1-Setup-0.6.0-win-x64.exe'),'other version');
+    writeFileSync(installer,'fixture');
+    const verified=resultWith('PASS');
+    const run=vi.fn(async()=>verified);
+    await expect(runInstalledVerification(spec,'PASS',run)).resolves.toBe(verified);
+    expect(run).toHaveBeenCalledExactlyOnceWith(spec);
   });
 });
