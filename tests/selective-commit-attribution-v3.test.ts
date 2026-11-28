@@ -63,8 +63,11 @@ async function fixture() {
     store,
     managedWorktree: async (_projectId: string, _threadId: string, run: (ctx: { git: (args: string[], env?: NodeJS.ProcessEnv) => Promise<string>; binding: WorkspaceBinding; signal: AbortSignal }) => Promise<unknown>) =>
       run({
+        // The production review path pins byte-exact diff semantics
+        // (core.autocrlf=false); the double must pin them too or ambient
+        // host git config silently normalizes CRLF away from the diff.
         git: async (args, env) =>
-          (await gitAsync("git", args, { cwd: worktree, encoding: "utf8", env: { ...process.env, ...env } })).stdout as string,
+          (await gitAsync("git", ["-c", "core.autocrlf=false", ...args], { cwd: worktree, encoding: "utf8", env: { ...process.env, ...env } })).stdout as string,
         binding,
         signal: new AbortController().signal,
       }),
