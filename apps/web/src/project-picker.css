@@ -36,8 +36,9 @@ html[data-native-titlebar="true"] .ui-modal.project-picker { height: fit-content
 .project-picker-color-footer[data-has-error] { padding-top: 8px; border-top: 1px solid var(--border); }
 .project-picker-swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
 .project-picker-swatches button { display: grid; place-items: center; min-width: 0; min-height: 32px; padding: 4px; }
-.project-picker-swatches button[aria-pressed="true"] { outline:2px solid var(--ui-focus-ring,#808080); outline-offset: -2px; }
+.project-picker-colors button[aria-pressed="true"] { outline:2px solid var(--ui-focus-ring,#808080); outline-offset: -2px; }
 .project-picker-swatches span { width: 18px; height: 18px; border-radius: 50%; }
+.project-picker-current { margin:0; color:var(--muted); font-size:12px; }
 .project-picker-colors form, .project-picker-colors label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .project-picker-colors input, .project-picker-color-footer button { min-height: 32px; padding: 6px 8px; font: inherit; }
 .project-picker-colors input { width: 100%; min-width: 0; box-sizing: border-box; }
