@@ -1,13 +1,21 @@
-import {afterEach, expect, it} from 'vitest';
-import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {afterEach, expect, it, vi} from 'vitest';
+import {once} from 'node:events';
+import {lstatSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {get} from 'node:http';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {crc32, deflateSync} from 'node:zlib';
 import {Store} from '../packages/storage/store.ts';
 import {Service} from '../packages/core/service.ts';
 import {VerificationArtifactStore} from '../packages/core/verification-artifacts.ts';
+import {readVerificationSourceCut} from '../packages/core/project-verification.ts';
 import {buildServer} from '../apps/server/server.ts';
 import type {RuntimeAdapter, Thread} from '../packages/contracts/index.ts';
+
+vi.mock('../packages/core/project-verification.ts', async importOriginal => {
+  const verification = await importOriginal<typeof import('../packages/core/project-verification.ts')>();
+  return {...verification, readVerificationSourceCut: vi.fn(verification.readVerificationSourceCut)};
+});
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {for (const cleanup of cleanups.splice(0).reverse()) await cleanup();});
@@ -33,6 +41,65 @@ async function fixture() {
   const url = (ref: string, threadId = thread.id) => `/api/threads/${threadId}/verification/artifacts/${encodeURIComponent(ref.slice('verification-artifact:'.length))}`;
   return {root, store, thread, app, log, image, imageBytes, logText, headers, url};
 }
+
+function declarePanelSources(f: Awaited<ReturnType<typeof fixture>>) {
+  const {root, store, thread} = f, projectId = 'panel-project';
+  const info = lstatSync(root, {bigint: true});
+  writeFileSync(join(root, 'app.ts'), 'export const version = 1;\n');
+  store.internal('fixture.verify', thread.id, () => {
+    store.put('thread', thread.id, thread.id, {...thread, projectId});
+    store.put('workspaceProject', projectId, null, {id: projectId, authority: {kind: 'local'}});
+    store.put('workspaceProjectRoot', projectId, null, {path: root, identity: {dev: String(info.dev), ino: String(info.ino)}});
+    store.put('verificationDeclaration', thread.id, thread.id, {version: 1, rootPath: root, sourceFiles: ['app.ts'], dependencyFiles: [], environmentId: 'test/node/pnpm', requirements: []});
+  });
+  return `/api/threads/${thread.id}/verification`;
+}
+
+it('preserves the authenticated panel response and refuses a thread archived during the source read', async () => {
+  const f = await fixture(), url = declarePanelSources(f);
+  expect((await f.app.inject({url, headers: {host: f.headers.host}})).statusCode).toBe(401);
+  const response = await f.app.inject({url, headers: f.headers});
+  expect(response.statusCode).toBe(200);
+  expect(response.headers['cache-control']).toBe('no-store');
+  expect(response.json()).toEqual({seq: f.store.sequence, verification: {
+    label: null, staleBanner: false, summary: {verified: 0, failed: 0, unverified: 0, blocked: 0, missing: []}, rows: [],
+  }});
+
+  const original = (await vi.importActual<typeof import('../packages/core/project-verification.ts')>('../packages/core/project-verification.ts')).readVerificationSourceCut;
+  vi.mocked(readVerificationSourceCut).mockImplementationOnce(async (...args) => {
+    const cut = await original(...args);
+    f.store.internal('fixture.archived', f.thread.id, () => f.store.put('archivedThread', f.thread.id, null, true));
+    return cut;
+  });
+  expect((await f.app.inject({url, headers: f.headers})).statusCode).toBe(404);
+});
+
+it('aborts a pending panel source read when the local HTTP client disconnects', async () => {
+  const f = await fixture(), url = declarePanelSources(f);
+  const address = await f.app.listen({host: '127.0.0.1', port: 0});
+  let markEntered!: (signal: AbortSignal) => void;
+  const entered = new Promise<AbortSignal>(resolve => { markEntered = resolve; });
+  vi.mocked(readVerificationSourceCut).mockImplementationOnce(async (_store, _threadId, _declaration, signal) => {
+    if (!signal) throw new Error('The panel request signal is missing.');
+    markEntered(signal);
+    await once(signal, 'abort');
+    throw signal.reason;
+  });
+
+  const client = get(new URL(url, address), {headers: f.headers, agent: false});
+  client.on('error', () => {}); // Intentional disconnect.
+  try {
+    const signal = await Promise.race([entered, once(client, 'response').then(() => {
+      throw new Error('The request returned before starting the source read.');
+    })]);
+    const aborted = once(signal, 'abort');
+    client.destroy();
+    await aborted;
+    expect(signal.aborted).toBe(true);
+  } finally {
+    client.destroy();
+  }
+});
 
 it('serves exact retained log and PNG bytes through authenticated fixed-media routes', async () => {
   const f = await fixture(), log = await f.app.inject({url: f.url(f.log.ref), headers: f.headers});

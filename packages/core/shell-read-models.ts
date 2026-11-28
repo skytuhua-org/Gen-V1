@@ -16,6 +16,18 @@ const navInput = pageInput.extend({archived: z.boolean().default(false), text: z
 type Owner = ThreadNavigationRow & Pick<Thread, 'sideParentId' | 'epoch'>;
 const invalidCursor = () => new HarnessError('INVALID_CURSOR', 'Reload this metadata list.');
 const known = <T extends object>(value: T, keys: readonly (keyof T)[]): T => Object.fromEntries(keys.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]])) as T;
+const objectRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const taskStatuses = new Set(['ready', 'working', 'awaiting_input', 'stopped', 'interrupted', 'completed', 'failed']);
+const supportedThread = (thread: Owner): Owner | null => {
+  if (!objectRecord(thread) || typeof thread.id !== 'string' || typeof thread.title !== 'string' || typeof thread.createdAt !== 'string' || typeof thread.updatedAt !== 'string' || !taskStatuses.has(String(thread.status))) return null;
+  const next = {...thread, projectName: typeof thread.projectName === 'string' ? thread.projectName : null, runId: typeof thread.runId === 'string' ? thread.runId : null};
+  if (!objectRecord(next.presentation)) delete next.presentation;
+  for (const key of ['projectId', 'parentThreadId', 'sideParentId', 'workspaceId', 'thinkingLevel'] as const) if (next[key] !== undefined && next[key] !== null && typeof next[key] !== 'string') delete next[key];
+  if (next.modelId !== undefined && next.modelId !== null && typeof next.modelId !== 'string') next.modelId = null;
+  if (next.kind !== undefined && !['main', 'side', 'delegate'].includes(String(next.kind))) delete next.kind;
+  if (typeof next.epoch !== 'number') delete (next as Partial<Owner>).epoch;
+  return next;
+};
 
 /** Metadata-only Personal read model. Fixed SQL fields keep bodies outside JS. */
 export class ShellReadModels {
@@ -28,7 +40,7 @@ export class ShellReadModels {
   }
   private owners() {
     const projects = new Map(this.records<{id: string; authority: {kind?: string} | null}>('workspaceProject', ['id', 'authority']).map(project => [project.id, project]));
-    const all = this.records<Owner>('thread', ['id', 'title', 'projectId', 'projectName', 'createdAt', 'updatedAt', 'status', 'runId', 'kind', 'parentThreadId', 'sideParentId', 'presentation', 'workspaceId', 'epoch', 'modelId', 'thinkingLevel'], "AND json_extract(body,'$.id')=id AND (thread_id IS NULL OR thread_id=id)");
+    const all = this.records<Owner>('thread', ['id', 'title', 'projectId', 'projectName', 'createdAt', 'updatedAt', 'status', 'runId', 'kind', 'parentThreadId', 'sideParentId', 'presentation', 'workspaceId', 'epoch', 'modelId', 'thinkingLevel'], "AND json_extract(body,'$.id')=id AND (thread_id IS NULL OR thread_id=id)").map(supportedThread).filter((thread): thread is Owner => thread !== null);
     const byId = new Map(all.map(thread => [thread.id, thread]));
     const personal = (thread: Owner) => {
       const seen = new Set<string>(); let current: Owner | undefined = thread;
@@ -118,7 +130,10 @@ export class ShellReadModels {
       learning.lastReview = known(learning.lastReview, ['sourceThreadId', 'sourceRunId', 'modelId', 'accountId', 'status', 'startedAt', 'finishedAt', 'toolCalls', 'inputBytes', 'appliedChanges', 'usage', 'error', 'cleanupConfirmed', 'engine', 'summary']);
       if (learning.lastReview.usage) {
         const usage = known<Partial<RuntimeUsage>>(learning.lastReview.usage, ['contextTokens', 'contextWindow', 'inputTokens', 'outputTokens', 'cost', 'activity', 'sessionPercent', 'weeklyPercent', 'contextBreakdown']);
-        if (usage.contextBreakdown) usage.contextBreakdown = usage.contextBreakdown.map(item => known(item, ['label', 'tokens']));
+        if (usage.contextBreakdown) {
+          if (Array.isArray(usage.contextBreakdown)) usage.contextBreakdown = usage.contextBreakdown.filter(objectRecord).map(item => known(item, ['label', 'tokens'])).filter(item => typeof item.label === 'string' && typeof item.tokens === 'number');
+          else delete usage.contextBreakdown;
+        }
         learning.lastReview.usage = usage;
       }
     }

@@ -28,3 +28,23 @@ it('keeps two landed main revisions in different groups without changing same-PR
  expect(key(pr)).toBe(key({...pr,sha:'b'.repeat(40)}));
  expect(key(pr)).not.toBe(key({...pr,ref:'refs/pull/43/merge'}));
 });
+
+const issueLabelWorkflow=readFileSync(new URL('../.github/workflows/issue-labeler.yml',import.meta.url),'utf8').replaceAll('\r\n','\n');
+const issueLabelScript=issueLabelWorkflow.split(/\n +script: \|\n/)[1]!;
+function executeLabeler(get:()=>Promise<{data:{labels:{name:string}[]}}>,addLabels:(request:{labels:string[]})=>Promise<void>){
+ const context={payload:{issue:{number:42,title:'Fix runtime crash',body:'Normal issue about startup.',labels:[]}},repo:{owner:'fixture',repo:'sample'}};
+ return runInNewContext('(async()=>{'+issueLabelScript+'\n})()',{context,github:{rest:{issues:{get,addLabels}}}},{timeout:100}) as Promise<void>;
+}
+
+it('preserves type and priority labels added while the first-pass job was queued',async()=>{
+ const writes:string[][]=[];
+ await executeLabeler(async()=>({data:{labels:[{name:'enhancement'},{name:'priority:low'}]}}),async({labels})=>{writes.push(labels);});
+ expect(writes).toEqual([['area:runtime','level:medium']]);
+});
+
+it('does not add labels from the event snapshot if GitHub cannot return the live labels',async()=>{
+ const writes:string[][]=[];
+ await expect(executeLabeler(async()=>{throw new Error('live labels not available');},async({labels})=>{writes.push(labels);}))
+  .rejects.toThrow('live labels not available');
+ expect(writes).toEqual([]);
+});

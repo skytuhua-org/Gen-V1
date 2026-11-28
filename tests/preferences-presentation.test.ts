@@ -25,6 +25,22 @@ describe('compact settings and unified context presentation', () => {
     expect(html).toContain('Private · no content');
   });
 
+  it('disables notification controls in the browser build with a caption (#1714 T03)', () => {
+    const preferences = getPreferences({ preferences: { notificationQuietHours: { enabled: true, start: '23:00', end: '07:00' } } });
+    const html = renderToStaticMarkup(createElement(NotificationSettings, { preferences, busy: false, update: async () => {}, desktop: false }));
+    expect(html).toContain('Desktop notifications and sounds only work in the Windows app.');
+    expect(html).toContain('<fieldset class="settings-card" disabled=""');
+    expect(html).not.toContain('System notifications and sound require the Windows app.');
+  });
+
+  it('keeps notification controls enabled in the Windows build (#1714 T03)', () => {
+    const preferences = getPreferences({});
+    const html = renderToStaticMarkup(createElement(NotificationSettings, { preferences, busy: false, update: async () => {}, desktop: true }));
+    expect(html).toContain('<fieldset class="settings-card"');
+    expect(html).not.toContain('disabled=""');
+    expect(html).not.toContain('Desktop notifications and sounds only work in the Windows app.');
+  });
+
   it('shows a concise validated plan and keeps empty companion groups hidden', () => {
     const snapshot = { threads: [], data: [{ id: 'plan:thread-a', threadId: 'thread-a', provenance: 'harness:plan', revision: 2, value: { version: 1, title: 'Inspect changes', agents: [], steps: [{ id: 'check', title: 'Run checks', status: 'working', requirements: [] }] } }] } as unknown as Snapshot;
     const html = renderToStaticMarkup(createElement(ProjectContextCard, { snapshot, threadId: 'thread-a', threadTitle: 'Current conversation', onOpenDetailedPlan: () => {} }));

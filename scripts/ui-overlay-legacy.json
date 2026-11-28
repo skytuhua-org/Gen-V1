@@ -82,13 +82,13 @@
     },
     {
       "file": "apps/web/src/DocumentWindow.tsx",
-      "line": 76,
-      "column": 385,
+      "line": 92,
+      "column": 397,
       "rule": "ad-hoc-overlay",
       "message": "React portal: use packages/ui-shell primitives; legacy occurrences require an individually reviewed migration entry.",
-      "fingerprint": "7933b79e35a474d3f164f8c09e104f98289c57172ba09aa8e003982efea1688f",
+      "fingerprint": "17bd2d6a0ad4adbe734bd72632fa796dc8309290ca36ebafa596f592fd1f394c",
       "reason": "TOOLS: migrate document portal ownership with shared primitives after document recovery acceptance; portal content migrated to shared ErrorState.",
-      "evidence": "createPortal(<section ref={windowRef} role=\"region\" aria-label={`${title} document window`} className=\"document-text-window\" data-escape-scope data-placement={placement} data-native-owner={nativeOwner} style={style} onSc",
+      "evidence": "createPortal(<section ref={windowRef} role=\"region\" aria-label={`${title} document window`} className=\"document-text-window\" data-escape-scope data-pl",
       "disposition": "staged-migration"
     },
     {
@@ -430,6 +430,17 @@
       "fingerprint": "4aba586360bd624c42079414cbd6f5accfbdb282756d0af3846ecce50dd06200",
       "reason": "TOOLS: migrate expanded artifact to shared Modal, retaining artifact identity.",
       "evidence": "<section ref={section} className={`artifact artifact-width-${artifact.presentation?.width ?? 'standard'} artifact-frame-${artifact.presentation?.frame ?? 'card'} ${expanded ? 'artifact-expanded' : ''} ${inWorkspace ? 'ar",
+      "disposition": "staged-migration"
+    },
+    {
+      "file": "apps/web/src/ComposerCommands.tsx",
+      "line": 102,
+      "column": 5,
+      "rule": "ad-hoc-overlay",
+      "message": "imperative overlay attributes: use packages/ui-shell primitives; legacy occurrences require an individually reviewed migration entry.",
+      "fingerprint": "f8aedfd96612481af554629997d752cd5afde3707d24956f3b280d77d83d09be",
+      "reason": "Issue #1880 combobox semantics: the textarea is owned by the parent composer, so only this effect can annotate it; role/aria wiring applies only while the palette is open and is removed on close and unmount. Migrate once the composer input is expressed through a shared primitive.",
+      "evidence": "element.setAttribute('role', 'combobox');",
       "disposition": "staged-migration"
     }
   ]

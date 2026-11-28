@@ -1,6 +1,6 @@
 import {cleanTempDirs,tempDir} from './fixtures/temp-dir.ts';
-import {it,expect,afterEach} from 'vitest';
-import {writeFileSync,readFileSync,readdirSync,existsSync} from 'node:fs';
+import {it,expect,afterEach,vi} from 'vitest';
+import {writeFileSync,readFileSync,readdirSync,existsSync,mkdirSync,renameSync,symlinkSync,unlinkSync} from 'node:fs';
 
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -9,8 +9,16 @@ import {CodeIntelligence,type LanguageServerAdapter,type LspWorkspaceEdit} from 
 import {renamePlanV1Schema} from '../packages/contracts/code-intelligence.ts';
 
 const sha=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
+const race=vi.hoisted(()=>({beforeReplace:undefined as undefined|((destination:string)=>void)}));
+vi.mock('../packages/core/file-access.ts',async importActual=>{
+ const actual=await importActual<typeof import('../packages/core/file-access.ts')>();
+ return {...actual,replaceOwnedFile:async(source:string,destination:string,identity:{dev:bigint;ino:bigint},sha256:string,signal:AbortSignal,expectedDestinationHash?:string)=>{
+  if(race.beforeReplace){const inject=race.beforeReplace;race.beforeReplace=undefined;inject(destination);}
+  return actual.replaceOwnedFile(source,destination,identity,sha256,signal,expectedDestinationHash);
+ }};
+});
 const disposables:{dispose():Promise<void>}[]=[];
-afterEach(async()=>{for(const d of disposables.splice(0))await d.dispose();cleanTempDirs();});
+afterEach(async()=>{race.beforeReplace=undefined;for(const d of disposables.splice(0))await d.dispose();cleanTempDirs();});
 
 const descriptor={language:'typescript',executable:'/approved/tsserver',argv:['--stdio'],configDigest:'a'.repeat(64)};
 
@@ -40,6 +48,22 @@ function planInput(root:string,path:string,text:string,overrides:Record<string,u
   position:{line:0,character:7},newName:'beta2',grantedRoots:[root],
   workspaceIdentity:'ws-1',approvalId:'approval-1',signal:signal(),text,afterDigest:sha(text),...overrides};
 }
+
+it('rename plan identifiers must have the format issued by the host',()=>{
+ expect(renamePlanV1Schema.safeParse({
+  version:1,planId:'draft-plan',workspaceIdentity:'ws-1',serverVersion:'rename-server-1',
+  sourceVersions:[],textEdits:[],expectedBeforeDigests:[],exactApprovalId:'approval-1',
+ }).success).toBe(false);
+});
+
+it('rename recovery rejects an invalid plan identifier before journal lookup',async()=>{
+ const journal=tempDir('rename-journal-');
+ const ci=new CodeIntelligence(()=>new RenameAdapter());
+ disposables.push(ci);
+ await expect(ci.recoverRename({journalRoot:journal,planId:'draft-plan',grantedRoots:[],signal:signal()}))
+  .rejects.toMatchObject({code:'INVALID_INPUT'});
+ expect(readdirSync(journal)).toEqual([]);
+});
 
 it('rename plans reject resource operations and ungranted roots',async()=>{
  const root=tempDir('rename-root-');
@@ -189,6 +213,76 @@ it('an external edit of a renamed file stops recovery with PARTIAL_RECOVERY_REQU
  expect(readdirSync(join(journal,'code-intelligence','rename',plan.planId)).filter(n=>n.startsWith('backup-')).length).toBe(2);
 });
 
+it('an external write at replacement time survives apply and reconciles as a conflict',async()=>{
+ const root=tempDir('rename-root-');
+ const journal=tempDir('rename-journal-');
+ const a=file(root,'a.ts');
+ const aText='const alpha = 1;\n',external='const alpha = 99;\n';
+ writeFileSync(a,aText);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{[uri(a)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}]}};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,a,aText));
+ race.beforeReplace=destination=>{expect(destination).toBe(a);writeFileSync(a,external);};
+ const applied=await ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()});
+ expect(applied.state).toBe('PARTIAL_RECOVERY_REQUIRED');
+ expect(applied.entries).toEqual([{path:a,disposition:'Conflict',detail:'The file changed while its rename edits were being written.'}]);
+ expect(readFileSync(a,'utf8')).toBe(external);
+ const recovered=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
+ expect(recovered.state).toBe('PARTIAL_RECOVERY_REQUIRED');
+ expect(recovered.entries[0]!.disposition).toBe('Conflict');
+ expect(readFileSync(a,'utf8')).toBe(external);
+});
+
+it.each(['atomic-save','symlink'])('an identity-changing %s at replacement time survives apply',async kind=>{
+ const root=tempDir('rename-root-');
+ const journal=tempDir('rename-journal-');
+ const a=file(root,'a.ts');
+ const aText='const alpha = 1;\n',external='const alpha = 100;\n';
+ writeFileSync(a,aText);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{[uri(a)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}]}};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,a,aText));
+ race.beforeReplace=()=>{
+  if(kind==='atomic-save'){const replacement=file(root,'atomic.tmp');writeFileSync(replacement,external);renameSync(replacement,a);}
+  else{const target=file(root,'target.txt');writeFileSync(target,external);renameSync(a,file(root,'original.tmp'));symlinkSync(target,a,'file');}
+ };
+ const applied=await ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()});
+ expect(applied.state).toBe('PARTIAL_RECOVERY_REQUIRED');
+ expect(applied.entries[0]!.disposition).toBe('Conflict');
+ expect(readFileSync(a,'utf8')).toBe(external);
+ if(kind==='symlink')unlinkSync(a); // remove the link so temporary-directory cleanup can recurse normally
+});
+
+it('an external write during recovery replacement is never overwritten',async()=>{
+ const root=tempDir('rename-root-');
+ const journal=tempDir('rename-journal-');
+ const a=file(root,'a.ts');
+ const aText='const alpha = 1;\n',external='const beta2 = 1;\n// external edit\n';
+ writeFileSync(a,aText);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{[uri(a)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}]}};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,a,aText));
+ await ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()});
+ const journalPath=join(journal,'code-intelligence','rename',plan.planId,'journal.json');
+ const recorded=JSON.parse(readFileSync(journalPath,'utf8'));
+ recorded.resolved=false;
+ writeFileSync(journalPath,JSON.stringify(recorded));
+ race.beforeReplace=destination=>{expect(destination).toBe(a);writeFileSync(a,external);};
+ const result=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
+ expect(result.state).toBe('PARTIAL_RECOVERY_REQUIRED');
+ expect(result.entries).toEqual([{path:a,disposition:'Conflict',detail:'The file changed while its recovery was being written.'}]);
+ expect(readFileSync(a,'utf8')).toBe(external);
+ const persisted=JSON.parse(readFileSync(journalPath,'utf8'));
+ expect(persisted.resolved).toBe(true);
+ expect(persisted.entries[0].disposition).toBe('Conflict');
+});
+
 it('a revoked workspace produces no write: apply re-validates granted roots',async()=>{
  const root=tempDir('rename-root-');
  const journal=tempDir('rename-journal-');
@@ -302,4 +396,66 @@ it('rename exchanges positions in the negotiated encoding and canonicalizes rang
  expect(adapter.received).toEqual({line:0,character:10});
  // The returned UTF8 range is stored in the plan as UTF16 (8..13).
  expect(plan.textEdits[0]!.edits[0]!.range).toEqual({start:{line:0,character:8},end:{line:0,character:13}});
+});
+
+it('recovery persists its dispositions: a resolved journal reconciles without re-processing',async()=>{
+ const root=tempDir('rename-root-');
+ const journal=tempDir('rename-journal-');
+ const a=file(root,'a.ts'),b=file(root,'b.ts');
+ const aText='const alpha = 1;\n',bText='const alpha = 2;\n';
+ writeFileSync(a,aText);writeFileSync(b,bText);
+ const adapter=new RenameAdapter();
+ adapter.edit={changes:{
+  [uri(a)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}],
+  [uri(b)]:[{range:{start:{line:0,character:6},end:{line:0,character:11}},newText:'beta2'}],
+ }};
+ const ci=new CodeIntelligence(()=>adapter);
+ disposables.push(ci);
+ const plan=await ci.planRename(planInput(root,a,aText));
+ await ci.applyRename({plan,approvalId:'approval-1',journalRoot:journal,grantedRoots:[root],signal:signal()});
+ const journalPath=join(journal,'code-intelligence','rename',plan.planId,'journal.json');
+ const recorded=JSON.parse(readFileSync(journalPath,'utf8'));
+ recorded.resolved=false;
+ writeFileSync(journalPath,JSON.stringify(recorded));
+ const recovered=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
+ expect(recovered.state).toBe('RECOVERED');
+ // The recovery outcome is durable on disk, not only returned.
+ const persisted=JSON.parse(readFileSync(journalPath,'utf8'));
+ expect(persisted.resolved).toBe(true);
+ expect(persisted.entries.map((e:{disposition:string})=>e.disposition)).toEqual(['Restored','Restored']);
+ // A second recovery reconciles the recorded outcome instead of re-restoring:
+ // an external edit made after recovery is never mistaken for a rename target.
+ writeFileSync(a,'const alpha = 1;\n// post-recovery edit\n');
+ const again=await ci.recoverRename({journalRoot:journal,planId:plan.planId,grantedRoots:[root],signal:signal()});
+ expect(again.entries.find(e=>e.path===a)!.disposition).toBe('Restored');
+ expect(readFileSync(a,'utf8')).toBe('const alpha = 1;\n// post-recovery edit\n');
+});
+
+it('recovery reconciles durable dispositions without rewriting unchanged files',async()=>{
+ const root=tempDir('rename-root-');
+ const journal=tempDir('rename-journal-');
+ const a=file(root,'a.ts');
+ const aText='const alpha = 1;\n';
+ writeFileSync(a,aText);
+ const {randomUUID}=await import('node:crypto');
+ const planId=randomUUID();
+ const dir=join(journal,'code-intelligence','rename',planId);
+ mkdirSync(dir,{recursive:true});
+ const preimage=createHash('sha256').update(aText).digest('hex');
+ // A journal whose apply never reached a write: every path still holds its preimage.
+ writeFileSync(join(dir,'journal.json'),JSON.stringify({planId,workspaceIdentity:'w-test',resolved:false,
+  entries:[{path:a,preimage,postimage:null,backup:join(dir,'backup-none'),disposition:'Unchanged'}]}));
+ const ci=new CodeIntelligence(()=>new RenameAdapter());
+ disposables.push(ci);
+ const first=await ci.recoverRename({journalRoot:journal,planId,grantedRoots:[root],signal:signal()});
+ expect(first.state).toBe('APPLIED');
+ expect(first.entries).toEqual([{path:a,disposition:'Unchanged'}]);
+ // The reconciled outcome is durable: the journal is resolved with per-path dispositions.
+ const persisted=JSON.parse(readFileSync(join(dir,'journal.json'),'utf8'));
+ expect(persisted.resolved).toBe(true);
+ expect(persisted.entries[0].disposition).toBe('Unchanged');
+ // A second recovery reports the recorded outcome — it does not re-scan the leaf.
+ writeFileSync(a,'const alpha = 1;\n// post-recovery edit\n');
+ const again=await ci.recoverRename({journalRoot:journal,planId,grantedRoots:[root],signal:signal()});
+ expect(again.entries[0].disposition).toBe('Unchanged');
 });
