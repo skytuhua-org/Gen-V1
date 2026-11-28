@@ -98,7 +98,7 @@ test('agent work evidence reaches the supported all-agents UI through the real h
   });
   await page.getByRole('button', { name: 'All Agents', exact: true }).click();
   await page.getByRole('button', { name: 'Agent work · 1', exact: true }).click();
-  const panel = page.getByRole('region', { name: 'Agent work', exact: true });
+  const panel = page.getByRole('dialog', { name: 'Agent work · 1', exact: true });
   await expect(panel).toContainText('reported blocked — not verified');
   await expect(panel).toContainText('2/3 refs stale');
   await expect(panel).toContainText('10tok/1000ms conservatively charged · no reservation remaining');

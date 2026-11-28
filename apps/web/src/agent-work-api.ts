@@ -1,4 +1,5 @@
 import {authenticated, command, read} from './api.ts';
+import {agentResultJsonSchemaFor} from '../../../packages/contracts/agent-work.ts';
 
 type WorkState = 'QUEUED' | 'RUNNING' | 'WAITING_HUMAN' | 'COMPLETED_REPORTED' | 'VERIFIED' | 'FAILED' | 'CANCELLED' | 'INTERRUPTED';
 export type AgentWorkVerification = 'NOT_REPORTED' | 'REPORTED_UNVERIFIED' | 'REPORTED_INCOMPLETE' | 'REPORTED_BLOCKED' | 'VERIFIED';
@@ -19,6 +20,7 @@ export interface AgentWorkRow {
 export interface AgentWorkList {
   enabled: boolean; works: AgentWorkRow[]; budget: {reservedTokens: number; reservedMs: number; spentTokens: number; spentMs: number; admitted: number; completed: number; failed: number; cancelled: number; interrupted: number; limits: {tokens: number | null; ms: number | null}};
   roles: Record<string, {available: boolean; reason?: string}>;
+  resources: {id: string; label: string; writable: boolean}[];
 }
 export interface AgentInputRow {
   inputId: string; workId?: string; targetOwner: {threadId: string}; kind: 'STEER' | 'FOLLOW_UP' | 'MESSAGE';
@@ -45,6 +47,14 @@ export const getAgentWorkMessages = (taskId: string) => get<{messages: AgentMess
 export const getAgentWorkOutput = (taskId: string, workId: string) => get<{workId: string; output: unknown; lateArtifacts: number; reportedOutcome: AgentWorkRow['reportedOutcome']; verification: AgentWorkVerification; outputStatus: AgentWorkRow['outputStatus']; evidence: AgentWorkEvidenceDetail[]}>(`/api/agent-work/output?taskId=${encodeURIComponent(taskId)}&workId=${encodeURIComponent(workId)}`);
 export const getAgentWorkPlan = (taskId: string) => get<PlanProgress>(`/api/agent-work/plan?taskId=${encodeURIComponent(taskId)}`);
 
+export const createAgentWork = (threadId: string, args: {role: AgentWorkRow['role']; prompt: string; grantSubset: string[]; budget: {tokens: number | null; ms: number | null}; workId?: string; childThreadId?: string; expectedOutputSchema?: Record<string, unknown>}, commandId: string = crypto.randomUUID()) =>
+  command('agentWork.admit', {
+    ...args,
+    commandId,
+    workId: args.workId ?? crypto.randomUUID(),
+    childThreadId: args.childThreadId ?? crypto.randomUUID(),
+    expectedOutputSchema: args.expectedOutputSchema ?? agentResultJsonSchemaFor(args.role),
+  }, threadId, commandId as ReturnType<typeof crypto.randomUUID>);
 export const sendAgentInput = (threadId: string, args: {workId: string; kind: 'STEER' | 'FOLLOW_UP'; text: string; inputId?: string; dedupeKey?: string}) =>
   command('agentWork.input', {...args, inputId: args.inputId ?? crypto.randomUUID(), dedupeKey: args.dedupeKey ?? crypto.randomUUID()}, threadId);
 export const stopAgentWork = (threadId: string, workId: string) => command('agentWork.stop', {workId}, threadId);

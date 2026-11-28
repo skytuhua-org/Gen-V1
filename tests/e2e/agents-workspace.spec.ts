@@ -108,7 +108,7 @@ test('a slower evidence request cannot replace the latest selected child', async
  let finish!: () => void;
  const delayed = new Promise<void>(resolve => {finish = resolve;});
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
-  enabled: true, roles: {}, budget: {reservedTokens: 10, reservedMs: 1000, spentTokens: 20, spentMs: 2000, admitted: 2, completed: 2, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: 100, ms: 5000}}, works: ['first', 'second'].map(id => ({
+  enabled: true, resources: [{id: 'fixture-grant', label: 'Fixture grant', writable: false}], roles: {}, budget: {reservedTokens: 10, reservedMs: 1000, spentTokens: 20, spentMs: 2000, admitted: 2, completed: 2, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: 100, ms: 5000}}, works: ['first', 'second'].map(id => ({
    workId: id, role: 'QA', state: 'VERIFIED', owner: {threadId: id, epoch: 1},
    budget: {tokens: 10, ms: 1000}, evidence: {refs: 1, stale: 0},
   })),
@@ -122,9 +122,11 @@ test('a slower evidence request cannot replace the latest selected child', async
  try {
   fixtureHost.release();
   await page.getByRole('button', {name: 'Agent work · 2', exact: true}).click();
-  const panel = page.getByRole('region', {name: 'Agent work', exact: true});
+  const panel = page.getByRole('dialog', {name: /^Agent work · /});
   await expect(panel).toContainText('global budget reserved 10tok/1000ms · lifetime charged 20tok/2000ms · remaining 70tok/2000ms');
   await expect(panel).toContainText('10tok/1000ms conservatively charged · no reservation remaining');
+  await panel.getByText('Admit agent work', {exact: true}).click();
+  await expect(panel.getByRole('checkbox', {name: 'Fixture grant'})).not.toBeChecked();
   const first = page.waitForRequest(request => request.url().includes('/api/agent-work/output?') && request.url().includes('workId=first'));
   await page.getByRole('button', {name: 'Open evidence for first', exact: true}).click();
   await first;
@@ -230,7 +232,7 @@ test('agent evidence separates reported outcome from verification and explains u
   owner: {threadId: 'child-active', epoch: 1}, budget: {tokens: 10, ms: null}, evidence: {refs: 2, stale: 1}, blockedReason: null,
  };
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
-  enabled: true, roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [work],
+  enabled: true, resources: [], roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [work],
  }}));
  await page.route(/\/api\/agent-work\/(plan|messages)\?/, route => route.fulfill({json: {extension: false, messages: []}}));
  await page.route('**/api/agent-work/output?*', route => route.fulfill({json: {
@@ -244,7 +246,7 @@ test('agent evidence separates reported outcome from verification and explains u
  try {
   fixtureHost.release();
   await page.getByRole('button', {name: 'Agent work · 1', exact: true}).click();
-  const panel = page.getByRole('region', {name: 'Agent work', exact: true});
+  const panel = page.getByRole('dialog', {name: /^Agent work · /});
   await expect(panel).toContainText('reported blocked — not verified');
   await expect(panel).toContainText('1/2 refs stale');
   const request = page.waitForRequest(value => value.url().includes('/api/agent-work/output?') && value.url().includes('workId=evidence-work'));
@@ -263,7 +265,7 @@ test('agent evidence separates reported outcome from verification and explains u
 test('agent task progress exposes its name and unknown share to assistive technology', async ({page}) => {
  const fixtureHost = await setup(page, false, false, true);
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
-  enabled: true, roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [{
+  enabled: true, resources: [], roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [{
    workId: 'demo-progress', role: 'QA', state: 'VERIFIED', owner: {threadId: 'child-active', epoch: 1},
    budget: {tokens: 10, ms: null}, evidence: {refs: 0},
   }],
@@ -275,7 +277,7 @@ test('agent task progress exposes its name and unknown share to assistive techno
  try {
   fixtureHost.release();
   await page.getByRole('button', {name: 'Agent work · 1', exact: true}).click();
-  const work = page.getByRole('region', {name: 'Agent work', exact: true});
+  const work = page.getByRole('dialog', {name: /^Agent work · /});
   await expect(work.getByText('30% known complete · 20% unknown', {exact: true})).toBeVisible();
   const progress = work.getByRole('progressbar', {name: 'Task progress', exact: true});
   await expect(progress).toHaveAttribute('aria-valuetext', '30% known complete · 20% unknown');
@@ -315,7 +317,7 @@ test('a child input acknowledgement preserves a newer draft', async ({page}) => 
  const acknowledgement = new Promise<void>(resolve => {finish = resolve;});
  const sent: unknown[] = [];
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
-  enabled: true, roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [{
+  enabled: true, resources: [], roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [{
    workId: 'demo-child', role: 'QA', state: 'RUNNING', steerSupported: true,
    owner: {threadId: 'child-active', epoch: 2}, budget: {tokens: 10, ms: null}, evidence: {refs: 0},
   }],
@@ -330,7 +332,7 @@ test('a child input acknowledgement preserves a newer draft', async ({page}) => 
  try {
   fixtureHost.release();
   await page.getByRole('button', {name: 'Agent work · 1', exact: true}).click();
-  const work = page.getByRole('region', {name: 'Agent work', exact: true});
+  const work = page.getByRole('dialog', {name: /^Agent work · /});
   await expect(work).toContainText('10tok reserved · used/remaining unknown · prior epochs charged 10tok');
   const input = work.getByRole('textbox', {name: 'Message work demo-child'});
   const queue = work.getByRole('button', {name: 'Queue next'});
@@ -357,7 +359,7 @@ test('a message board post acknowledgement preserves edits for the next post', a
  const acknowledgement = new Promise<void>(resolve => {finish = resolve;});
  const sent: unknown[] = [];
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
-  enabled: true, roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [{
+  enabled: true, resources: [], roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [{
    workId: 'demo-child', role: 'QA', state: 'VERIFIED', owner: {threadId: 'child-active', epoch: 1},
    budget: {tokens: 10, ms: null}, evidence: {refs: 0},
   }],
@@ -372,7 +374,7 @@ test('a message board post acknowledgement preserves edits for the next post', a
  try {
   fixtureHost.release();
   await page.getByRole('button', {name: 'Agent work · 1', exact: true}).click();
-  const work = page.getByRole('region', {name: 'Agent work', exact: true});
+  const work = page.getByRole('dialog', {name: /^Agent work · /});
   await work.getByText('Message board · 0', {exact: true}).click();
   await work.getByRole('combobox', {name: 'Recipient', exact: true}).click();
   await page.getByRole('option', {name: 'QA child-ac', exact: true}).click();
