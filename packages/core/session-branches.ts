@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { HarnessError, type Message, type Thread } from '../contracts/index.ts';
+import { HarnessError, normalizeThreadTitle, type Message, type Thread } from '../contracts/index.ts';
 import {
   SESSION_CAPTURE_LIMITS,
   adapterCapabilityV1Schema,
@@ -175,7 +175,7 @@ export function applySessionBranch(store: Store, source: Thread, payload: Record
     return { id: message.id, role: message.role, excerpt: (message.content ?? '').slice(0, 2000) };
   });
   const sourceMessages = store.all<Message>('message', source.id).filter(message => message.threadId === source.id);
-  const title = payload.title === undefined ? 'New task (quoted context)' : bounded(payload.title, 140);
+  const title = payload.title === undefined ? 'New task (quoted context)' : normalizeThreadTitle(bounded(payload.title, 140));
   const now = new Date().toISOString();
   const child: Thread = {
     id: randomUUID(), kind: 'main', title, createdAt: now, updatedAt: now,
