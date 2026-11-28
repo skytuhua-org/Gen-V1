@@ -4167,6 +4167,7 @@
     "tests/pure-helper-modules.test.ts",
     "tests/python-dependency-locks.test.ts",
     "tests/qa-delegation-v3.test.ts",
+    "tests/rc-installed-launch.test.ts",
     "tests/rc-review.test.ts",
     "tests/read-aloud-text.test.ts",
     "tests/read-sync-decisions-v6.test.ts",
