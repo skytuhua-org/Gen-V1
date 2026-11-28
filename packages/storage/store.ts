@@ -69,6 +69,14 @@ export class Store {
     mkdirSync(dataDir, { recursive: true });
     this.dataDir = realpathSync(dataDir);
     this.connection = new DatabaseSync(join(this.dataDir, "harness.sqlite"));
+    try {
+      this.statements = this.initialize();
+    } catch (error) {
+      try { this.connection.close(); } catch { /* Preserve the initialization error. */ }
+      throw error;
+    }
+  }
+  private initialize(): Store['statements'] {
     this.connection.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     this.connection.exec(`
       CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY);
@@ -82,7 +90,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, hash TEXT NOT NULL, body TEXT NOT NULL);
       INSERT OR IGNORE INTO migrations(version) VALUES (1);
     `);
-    this.statements = {
+    return {
       get: this.connection.prepare("SELECT body FROM entities WHERE kind=? AND id=?"),
       // rowid order is insertion order: callers rely on chronological message
       // order for windowing, cursor paging, and tail slices.
