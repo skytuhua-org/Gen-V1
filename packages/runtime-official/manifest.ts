@@ -29,6 +29,13 @@ export async function secureDirectory(dataDir: string, target: string): Promise<
   return actual;
 }
 
+/** A malformed byte must not silently change IDs in durable input receipts. */
+async function readManifestFile(path: string): Promise<Manifest> {
+  const bytes = await readFile(path);
+  try { return JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)) as Manifest; }
+  catch { throw mismatch(); }
+}
+
 export async function readManifest(dataDir: string, sessionPath: string, provider?: OfficialProvider, threadId?: string): Promise<ManifestState> {
   const root = resolve(dataDir, 'official');
   const file = resolve(sessionPath);
@@ -36,7 +43,7 @@ export async function readManifest(dataDir: string, sessionPath: string, provide
   const [realRoot, realFile] = await Promise.all([realpath(root), realpath(file)]);
   if (!within(realRoot, realFile) || !(await stat(realFile)).isFile()) throw mismatch();
   let value: Manifest;
-  try { value = JSON.parse(await readFile(realFile, 'utf8')); } catch { throw mismatch(); }
+  try { value = await readManifestFile(realFile); } catch { throw mismatch(); }
   if (value?.version !== 1 || !isOfficialRuntimeProviderId(value.provider) || typeof value.threadId !== 'string' || !value.threadId || (value.sessionId !== null && (typeof value.sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(value.sessionId))) || !value.inputs || typeof value.inputs !== 'object' || Array.isArray(value.inputs)) throw mismatch();
   if ((provider && provider !== value.provider) || (threadId && threadId !== value.threadId)) throw mismatch();
   const expected = join(threadDirectory(dataDir, value.provider, value.threadId), 'session.json');
@@ -69,7 +76,7 @@ export function saveManifest(state: ManifestState): Promise<void> {
   const next = (writes.get(state.path) ?? Promise.resolve()).catch(() => {}).then(async () => {
     await secureDirectory(state.dataDir, dirname(state.path));
     try {
-      const previous = JSON.parse(await readFile(state.path, 'utf8')) as Manifest;
+      const previous = await readManifestFile(state.path);
       if (previous.version !== snapshot.version || previous.provider !== snapshot.provider || previous.threadId !== snapshot.threadId || (previous.sessionId && snapshot.sessionId && previous.sessionId !== snapshot.sessionId)) throw mismatch();
       snapshot.sessionId ??= previous.sessionId;
       for (const [uuid, receipt] of Object.entries(previous.inputs)) {
