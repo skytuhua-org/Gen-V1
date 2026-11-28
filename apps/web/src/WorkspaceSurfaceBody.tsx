@@ -1,4 +1,5 @@
 import {useCallback,useEffect,useMemo,useRef,useState,type ReactNode} from 'react';
+import {displayThreadTitle} from './thread-title';
 import type {Snapshot} from '../../../packages/contracts/index.ts';
 import type {PanelBinding,WorkspacePanelKind} from '../../../packages/contracts/workspace.ts';
 import {workspaceActionEnvelopeSchema,workspaceActionPayloadSchemas,createdPullRequestResultSchema} from '../../../packages/contracts/workspace-action-outcomes';
@@ -14,7 +15,8 @@ import {z} from 'zod';
 import {journalRead,journalWrite,journalSubscribe,journalFlush,journalGeneration,journalCompareAndSwap} from './journal.ts';
 import {useDesktopCloseGuard} from './desktop-context.tsx';
 import {GitHubSignIn} from './GitHubSignIn.tsx';
-import {FileCheckpoints} from './FileCheckpoints';
+import {FileCheckpoints,plural} from './FileCheckpoints';
+import {splitDiffLines} from './diff-line-kind';
 import {GitHistory} from './GitHistory';
 import {createHttpCheckpointAdapter,disabledCheckpointAdapter,type CheckpointOwner} from './file-checkpoint-api';
 import type {TerminalExcerptComposer} from './TerminalBody';
@@ -37,12 +39,56 @@ function FilesBody({base,query,active,fallback}:{base:string;query:URLSearchPara
  const owner=base+'?'+query.toString();
  return <ProjectFiles key={owner} base={base} query={query.toString()} active={active} fallback={fallback}/>;
 }
+const porcelainLabels = [
+ ['U','Unmerged'], ['R','Renamed'], ['C','Copied'], ['D','Deleted'], ['A','Added'],
+ ['T','Type changed'], ['M','Modified'], ['?','Untracked'],
+] as const;
+export function porcelainStatus(index:string,worktree:string):string {
+ const pair=index+worktree;
+ if(pair==='AA'||pair==='DD')return 'Unmerged';
+ return porcelainLabels.find(([code])=>index===code||worktree===code)?.[1]??'Modified';
+}
 function DiffBody({base,query,active,fallback}:{base:string;query:URLSearchParams;active:boolean;fallback:ReactNode}){
  const{value,error,errorCode,load,setError}=useProjectRequest<GitStatus>(base+'/git?'+query,active),[staged,setStaged]=useState(false),[pending,setPending]=useState(false);
+ const [announcement,setAnnouncement]=useState('');
+ const emptyDiff='No tracked changes in this view.';
+ const diff=staged?value?.stagedDiff:value?.diff;
+ const lines=useMemo(()=>diff?.trim()?splitDiffLines(diff):[],[diff]);
+ const changeStage=(next:boolean)=>{
+  setStaged(next);
+  if(!value)return;
+  const first=(next?value.stagedDiff:value.diff)?.trim().split(/\r?\n/,1)[0]?.slice(0,160);
+  setAnnouncement(`${next?'Staged diff':'Unstaged diff'}. ${first||emptyDiff}`);
+ };
  const apply=async(type:string,path:string)=>{if(!value||value.gitWrite!==true||pending)return;setPending(true);try{await post(base+'/actions',{id:crypto.randomUUID(),type,payload:{paths:[path],revision:value.revision,expectedHead:value.head},...(query.get('threadId')?{threadId:query.get('threadId')}:{})});await load();}catch(error){setError(message(error));}finally{setPending(false);}};
  if(errorCode==='PROJECT_NOT_CONNECTED')return fallback;
  const legacy=(value as (GitStatus&{mode?:string})|null)?.mode==='legacy';
- return <div className="live-review"><div className="panel-toolbar"><strong>Changes</strong><span>{value?.branch}</span><button onClick={()=>void load()}>Refresh</button><label><input type="checkbox" checked={staged} onChange={event=>setStaged(event.target.checked)}/>Staged</label></div>{error&&<p role="status" className="error-text">{error}</p>}{legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}{value&&<><small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length} changed files</small><ul className="live-change-list">{value.files.map(file=><li key={file.path}><span>{file.oldPath?file.oldPath+' → ':''}{file.path}</span><small>{file.binary?'Binary':file.untracked?'Untracked':`${file.index}${file.worktree} +${file.added??'?'} −${file.removed??'?'}`}</small><button disabled={pending||value.gitWrite!==true} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button></li>)}</ul><pre className="live-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{(staged?value.stagedDiff:value.diff)||'No tracked changes in this view.'}</pre></>}</div>;
+ return <div className="live-review">
+  <div className="panel-toolbar">
+   <strong>Changes</strong><span>{value?.branch}</span>
+   <button onClick={()=>void load()} title="Refresh the changed-file list">Refresh</button>
+   <label><input type="checkbox" aria-label="Show staged changes" checked={staged} onChange={event=>changeStage(event.target.checked)}/>Staged</label>
+  </div>
+  <p className="sr-only live-diff-announcement" role="status">{announcement}</p>
+  {error&&<p role="status" className="error-text">{error}</p>}
+  {legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}
+  {value&&<>
+   <small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length?plural(value.files.length,'changed file'):'no changed files'}</small>
+   <ul className="live-change-list">{value.files.map(file=>{
+    const counts=[file.added==null?'':`+${file.added}`,file.removed==null?'':`−${file.removed}`].filter(Boolean).join(' ');
+    return <li key={file.path}>
+     <span>{file.oldPath?file.oldPath+' → ':''}{file.path}</span>
+     <small className="live-change-status" title={file.index+file.worktree}>{porcelainStatus(file.index,file.worktree)}</small>
+     {file.binary&&<small>Binary</small>}
+     {counts&&<small>{counts}</small>}
+     <button disabled={pending||value.gitWrite!==true} title={value.gitWrite!==true?'Git writes are disabled for this project':undefined} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button>
+    </li>;
+   })}</ul>
+   {lines.length
+    ?<pre className="live-diff unified-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{lines.map(({text,kind},index)=><span key={index} data-kind={kind==='context'?undefined:kind}>{text||' '}{'\n'}</span>)}</pre>
+    :<p className="file-checkpoints-note">{emptyDiff}</p>}
+  </>}
+ </div>;
 }
 function ChangesBody({base,query,active,recorded,preferences}:{base:string;query:URLSearchParams;active:boolean;recorded:ReactNode;preferences:UiPreferences}){
  // Enable History only with a host adapter and the context's exact workingCopy.id.
@@ -85,7 +131,7 @@ function ArtifactSurface({binding,snapshot,refresh,active}:{binding:PanelBinding
  return <Artifact embedded artifact={artifact} snapshot={snapshot} theme={theme} refresh={refresh} active={active}/>;
 }
 function NavigationSurface({snapshot,selectedId,select}:{snapshot:Snapshot;selectedId?:string;select?: (id:string)=>void|Promise<void>}){
- const[error,setError]=useState('');return <nav className="live-navigation" aria-label="Conversation navigation">{error&&<p role="status" className="error-text">{error}</p>}{snapshot.threads.filter(thread=>thread.kind!=='delegate').toSorted((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).map(thread=><button key={thread.id} disabled={!select} aria-current={thread.id===selectedId?'page':undefined} onClick={()=>{if(select)void Promise.resolve(select(thread.id)).catch(reason=>setError(message(reason)));}}><small>{thread.projectName||'Personal'} · {thread.status}</small><strong>{thread.title}</strong></button>)}</nav>;
+ const[error,setError]=useState('');return <nav className="live-navigation" aria-label="Conversation navigation">{error&&<p role="status" className="error-text">{error}</p>}{snapshot.threads.filter(thread=>thread.kind!=='delegate').toSorted((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).map(thread=><button key={thread.id} disabled={!select} aria-current={thread.id===selectedId?'page':undefined} onClick={()=>{if(select)void Promise.resolve(select(thread.id)).catch(reason=>setError(message(reason)));}}><small>{thread.projectName||'Personal'} · {thread.status}</small><strong>{displayThreadTitle(thread)}</strong></button>)}</nav>;
 }
 const gitHead=z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i),gitRevision=z.string().regex(/^[a-f0-9]{64}$/i);
 const prActionSchema=workspaceActionEnvelopeSchema.extend({type:z.enum(['create-pr','review-pr'])});

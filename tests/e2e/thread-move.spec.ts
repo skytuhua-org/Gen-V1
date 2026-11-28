@@ -223,3 +223,47 @@ test('settled moves clean up without a retained transform or animation', async (
   expect(await records(page)).toHaveLength(4);
   expect(await row(page, 'thread-4').evaluate(node => getComputedStyle(node).transform)).toBe('none');
 });
+
+test('keyboard reorder reports the landed position and repeated boundary refusals', async ({page}) => {
+  await load(page, '', false);
+  const sidebar = page.getByRole('complementary', {name: 'Thread navigation'});
+  const status = sidebar.getByRole('status');
+  const item = row(page, 'thread-2').locator('.thread-item');
+  await item.focus();
+  await page.keyboard.press('Alt+ArrowUp');
+  await expect(status).toHaveText('Moved Thread 2 up to position 1 of 6');
+  expect((await order(page))[0]).toBe('thread-2');
+  await page.keyboard.press('Alt+ArrowUp');
+  await expect(status).toHaveText('Already at the top');
+  await status.evaluate(node => {
+    node.dataset.announced = '0';
+    new MutationObserver(() => {
+      if (node.textContent?.trim() === 'Already at the top') node.dataset.announced = String(Number(node.dataset.announced) + 1);
+    }).observe(node,{childList:true,characterData:true,subtree:true});
+  });
+  await page.keyboard.press('Alt+ArrowUp');
+  await expect(status).toHaveAttribute('data-announced', '1');
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect(status).toHaveText('Moved Thread 2 down to position 2 of 6');
+  await row(page, 'thread-6').locator('.thread-item').focus();
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect(status).toHaveText('Already at the bottom');
+});
+
+test('keyboard reorder reports a group boundary and Escape cancels an active drag', async ({page}) => {
+  await load(page, 'grouped=1', false);
+  const sidebar = page.getByRole('complementary', {name: 'Thread navigation'});
+  const status = sidebar.getByRole('status');
+  const item = row(page, 'thread-2').locator('.thread-item');
+  const before = await order(page);
+  await item.focus();
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect(status).toHaveText('Cannot move Thread 2 outside its section');
+  expect(await order(page)).toEqual(before);
+  await item.evaluate(node => node.dispatchEvent(new DragEvent('dragstart', {bubbles:true,dataTransfer:new DataTransfer()})));
+  await expect(sidebar).toHaveAttribute('data-dragging','true');
+  await page.keyboard.press('Escape');
+  await expect(status).toHaveText('Reorder cancelled');
+  await expect(sidebar).not.toHaveAttribute('data-dragging','true');
+  expect(await order(page)).toEqual(before);
+});
