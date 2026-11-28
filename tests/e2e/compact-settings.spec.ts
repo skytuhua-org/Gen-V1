@@ -4,10 +4,10 @@ import type {ShellSettingsReadModel, ThreadNavigationRow} from '../../packages/c
 import type {HostCommand} from '../../packages/contracts';
 
 const thread = (id: string): ThreadNavigationRow => ({id, title: 'Archived ' + id, status: 'ready', projectName: 'Synthetic project', runId: null, createdAt: '2026-11-06', updatedAt: '2026-11-06'});
-async function setup(page: Page) {
+async function setup(page: Page, { archiveTotal=125, archiveListed=archiveTotal, desktop=false }: { archiveTotal?:number; archiveListed?:number; desktop?:boolean } = {}) {
   const grants = Array.from({length: 125}, (_, i) => ({id: 'r' + i, threadId: 'authorized-thread', kind: 'file' as const, label: 'Exact grant ' + i, path: 'C:/authorized/' + i, writable: false}));
-  const archives = Array.from({length: 125}, (_, i) => thread('a' + i));
-  const model: ShellSettingsReadModel = {sequence: 7, settings: {theme: 'dark', modelId: 'model-one', selectedAccounts: {openai: 'account-one'}}, accounts: [{id: 'account-one', providerId: 'openai', label: 'First account', enabled: true, createdAt: '2026-11-06', updatedAt: '2026-11-06'}, {id: 'account-two', providerId: 'openai', label: 'Second account', enabled: true, createdAt: '2026-11-06', updatedAt: '2026-11-06'}], skills: [{name: 'saved-skill', description: 'Synthetic saved skill', category: 'general', revision: 2, state: 'active', enabled: true, protected: false, origin: 'user', managed: true, author: 'user', createdAt: '', updatedAt: '', lastUsedAt: null, useCount: 4, patchCount: 1}], skillProposals: [], learning: {supported: true, status: 'idle', lastReview: null}, projects: [{id: 'project', name: 'Synthetic project'}], resources: grants.slice(0, 100), resourcePage: {total: 125, nextCursor: 'resource-100'}, counts: {threads: 205, archivedThreads: 125, artifacts: 37, resources: 125, uncertainOperations: 4}};
+  const archives = Array.from({length: archiveListed}, (_, i) => thread('a' + i));
+  const model: ShellSettingsReadModel = {sequence: 7, settings: {theme: 'dark', modelId: 'model-one', selectedAccounts: {openai: 'account-one'}}, accounts: [{id: 'account-one', providerId: 'openai', label: 'First account', enabled: true, createdAt: '2026-11-06', updatedAt: '2026-11-06'}, {id: 'account-two', providerId: 'openai', label: 'Second account', enabled: true, createdAt: '2026-11-06', updatedAt: '2026-11-06'}], skills: [{name: 'saved-skill', description: 'Synthetic saved skill', category: 'general', revision: 2, state: 'active', enabled: true, protected: false, origin: 'user', managed: true, author: 'user', createdAt: '', updatedAt: '', lastUsedAt: null, useCount: 4, patchCount: 1}], skillProposals: [], learning: {supported: true, status: 'idle', lastReview: null}, projects: [{id: 'project', name: 'Synthetic project'}], resources: grants.slice(0, 100), resourcePage: {total: 125, nextCursor: 'resource-100'}, counts: {threads: 205, archivedThreads: archiveTotal, artifacts: 37, resources: 125, uncertainOperations: 4}};
   const commands: HostCommand[] = [], reads: string[] = [];
   page.on('request', request => reads.push(new URL(request.url()).pathname + new URL(request.url()).search));
   await page.route('**/api/**', async route => {
@@ -31,29 +31,83 @@ async function setup(page: Page) {
     return route.fulfill({status: 500, json: {error: {message: 'Unexpected fixture read: ' + path}}});
   });
   const fixture = '/@fs/' + resolve('tests/e2e/compact-settings-fixture.tsx').replaceAll('\\', '/');
-  await page.route('**/compact-settings-fixture', route => route.fulfill({contentType: 'text/html', body: `<html data-theme="dark"><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${encodeURI(fixture)}');</script></body></html>`}));
-  const open = () => page.goto('/compact-settings-fixture');
+  await page.route(url=>url.pathname==='/compact-settings-fixture', route => route.fulfill({contentType: 'text/html', body: `<html data-theme="dark"><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${encodeURI(fixture)}');</script></body></html>`}));
+  const params = new URLSearchParams();
+  if (archiveTotal > 0 && archiveListed === 0) params.set('unlisted', String(archiveTotal));
+  if (desktop) params.set('desktop', 'true');
+  const open = () => page.goto('/compact-settings-fixture?' + params);
   const dialog = page.getByRole('dialog', {name: 'Settings', exact: true});
-  const nav = dialog.getByRole('navigation', {name: 'Settings sections'});
+  const nav = dialog.getByRole('tablist', {name: 'Settings sections'});
   return {model, commands, reads, open, dialog, nav};
 }
+for(const total of [0,5])test(`archive records stay with the row when ${total} threads are archived and none are listed`,async({page})=>{
+  const host=await setup(page,{archiveTotal:total,archiveListed:0});
+  await host.open();
+  await host.nav.getByRole('tab',{name:'Data & Recovery',exact:true}).click();
+  const archive=host.dialog.locator('[data-setting-id="archive"]');
+  await expect(archive.getByRole('heading',{name:'Archived threads',exact:true})).toBeVisible();
+  const records=host.dialog.locator('[data-setting-id="archive"] + .settings-records');
+  const message=total?'No archived conversations are available in navigation.':'No archived threads.';
+  await expect(records.getByText(message,{exact:true})).toBeVisible();
+  await expect(host.dialog.getByText(message,{exact:true})).toHaveCount(1);
+  await expect(archive.getByText(`${total} archived`,{exact:true})).toHaveCount(total?1:0);
+  const order=await records.evaluate(node=>{
+    const devices=document.querySelector('[data-setting-id="harness-paired-devices"]')!;
+    return Boolean(node.compareDocumentPosition(devices)&Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(order).toBe(true);
+});
+test('populated archive keeps the complete list next to its row and can restore the final entry',async({page})=>{
+  const host=await setup(page);await host.open();
+  await host.nav.getByRole('tab',{name:'Data & Recovery',exact:true}).click();
+  const records=host.dialog.locator('[data-setting-id="archive"] + .settings-records');
+  await expect(records.getByRole('button',{name:'Restore thread'})).toHaveCount(125);
+  await records.locator('.settings-row').filter({has:page.getByRole('heading',{name:'Archived a124',exact:true})}).getByRole('button',{name:'Restore thread'}).click();
+  await expect(records.getByRole('button',{name:'Restore thread'})).toHaveCount(124);
+  await expect(host.dialog.getByText('124 archived',{exact:true})).toBeVisible();
+});
+test('desktop Settings rail keeps one tab stop and selects the section moved to with the keyboard', async ({page}) => {
+  const host = await setup(page);
+  await host.open();
+  await expect(host.nav).toHaveAttribute('aria-orientation', 'vertical');
+  const general = host.nav.getByRole('tab', {name: 'General', exact: true});
+  const appearance = host.nav.getByRole('tab', {name: 'Appearance', exact: true});
+  await general.focus();
+  await expect(general).toHaveAttribute('aria-selected', 'true');
+  await expect(host.nav.locator('[tabindex="0"]')).toHaveCount(1);
+  await general.press('ArrowDown');
+  await expect(appearance).toBeFocused();
+  await expect(appearance).toHaveAttribute('aria-selected', 'true');
+  await expect(appearance).toHaveAttribute('tabindex', '0');
+  await expect(general).toHaveAttribute('tabindex', '-1');
+  await expect(host.dialog.getByRole('tabpanel', {name: 'Appearance', exact: true})).toBeVisible();
+  await appearance.press('End');
+  const last = host.nav.getByRole('tab').last();
+  await expect(last).toBeFocused();
+  await expect(last).toHaveAttribute('aria-selected', 'true');
+  await last.press('ArrowDown');
+  await expect(general).toBeFocused();
+  await expect(general).toHaveAttribute('aria-selected', 'true');
+  await expect(host.dialog.getByRole('tabpanel', {name: 'General', exact: true})).toBeVisible();
+});
+
 test('actual compact Settings uses every real section, complete grants/archive and zero forbidden reads', async ({page}) => {
-  const host = await setup(page); await host.open();
+  const host = await setup(page, {desktop: true}); await host.open();
   const labels = ['General', 'Appearance', 'Chat & Composer', 'Models & Accounts', 'Projects & Working Copies', 'Source Control & Reviews', 'Skills & Integrations', 'Notifications & Usage', 'Browser', 'Keyboard Shortcuts', 'Data & Recovery', 'About & Licenses'];
-  for (const label of labels) {await host.nav.getByRole('button', {name: label, exact: true}).click(); await expect(host.dialog.getByRole('heading', {level: 1, name: label, exact: true})).toBeVisible();}
-  await host.nav.getByRole('button', {name: 'Projects & Working Copies', exact: true}).click(); await expect(host.dialog.getByText('Exact grant 124', {exact: true})).toBeVisible();
-  await host.nav.getByRole('button', {name: 'Data & Recovery', exact: true}).click();
+  for (const label of labels) {await host.nav.getByRole('tab', {name: label, exact: true}).click(); await expect(host.dialog.getByRole('heading', {level: 1, name: label, exact: true})).toBeVisible();}
+  await host.nav.getByRole('tab', {name: 'Projects & Working Copies', exact: true}).click(); await expect(host.dialog.getByText('Exact grant 124', {exact: true})).toBeVisible();
+  await host.nav.getByRole('tab', {name: 'Data & Recovery', exact: true}).click();
   await expect(host.dialog.getByText('125 archived', {exact: true})).toBeVisible();
   await expect(host.dialog.getByText(/205 threads.*37 artifacts.*125 grants.*4 uncertain/)).toBeVisible();
   await host.dialog.locator('.settings-row').filter({has: page.getByRole('heading', {name: 'Archived a124', exact: true})}).getByRole('button', {name: 'Restore thread'}).click();
   await expect(host.dialog.getByText('124 archived', {exact: true})).toBeVisible();
   await host.dialog.getByRole('button', {name: 'Refresh settings', exact: true}).click();
-  await host.nav.getByRole('button', {name: 'General', exact: true}).click(); await host.dialog.getByRole('switch', {name: 'Archive confirmation', exact: true}).click();
+  await host.nav.getByRole('tab', {name: 'General', exact: true}).click(); await host.dialog.getByRole('switch', {name: 'Archive confirmation', exact: true}).click();
   await expect.poll(() => host.commands.some(command => command.type === 'settings.update')).toBe(true);
   expect(host.reads.filter(path => /snapshot|\/api\/events|\/src\/App\.tsx|\/content|\/tree|draft-references|\/api\/skills\//.test(path))).toEqual([]);
 });
 test('account defaults refresh the unbound model catalog and model selection keeps exact command authority', async ({page}) => {
-  const host = await setup(page); await host.open(); await host.nav.getByRole('button', {name: 'Models & Accounts', exact: true}).click();
+  const host = await setup(page); await host.open(); await host.nav.getByRole('tab', {name: 'Models & Accounts', exact: true}).click();
   const provider = host.dialog.locator('[data-provider="openai"]'); await provider.getByRole('radio', {name: 'Second account', exact: true}).check(); await provider.getByRole('button', {name: 'Use account', exact: true}).click();
   await expect(host.dialog.getByRole('combobox', {name: 'Default model', exact: true})).toBeEnabled();
   await host.dialog.getByRole('combobox', {name: 'Default model', exact: true}).click(); await page.getByRole('option', {name: 'Second model', exact: true}).click();
@@ -65,7 +119,7 @@ test('account defaults refresh the unbound model catalog and model selection kee
 test('saved skill details use only the explicit endpoint when inspected', async ({page}) => {
   const host = await setup(page); let details = 0;
   await page.route('**/api/skills/saved-skill*', route => {details++; return route.fulfill({json: {skill: host.model.skills[0], content: 'Exact saved instructions', files: [], versions: [], nextVersionOffset: null}});});
-  await host.open(); await host.nav.getByRole('button', {name: 'Skills & Integrations', exact: true}).click(); expect(details).toBe(0);
+  await host.open(); await host.nav.getByRole('tab', {name: 'Skills & Integrations', exact: true}).click(); expect(details).toBe(0);
   await host.dialog.getByRole('button', {name: 'Inspect saved-skill', exact: true}).click(); await expect(host.dialog.getByRole('textbox', {name: 'Instructions for saved-skill'})).toHaveValue('Exact saved instructions'); expect(details).toBe(1);
 });
 test('failed loading is explicit and retry loads real settings', async ({page}) => {
@@ -80,7 +134,7 @@ test('a changed scope aborts late metadata and the old result cannot replace the
   await host.open(); await expect(host.dialog.getByRole('status')).toContainText('Opening settings');
   await page.evaluate(() => (document.querySelector('button') as HTMLButtonElement).click());
   await expect(host.nav).toBeVisible(); release();
-  await host.nav.getByRole('button', {name: 'Appearance', exact: true}).click(); await expect(host.dialog.getByText('Synthetic project', {exact: true})).toBeVisible(); await expect(host.dialog.getByText('Stale scope')).toHaveCount(0);
+  await host.nav.getByRole('tab', {name: 'Appearance', exact: true}).click(); await expect(host.dialog.getByText('Synthetic project', {exact: true})).toBeVisible(); await expect(host.dialog.getByText('Stale scope')).toHaveCount(0);
 });
 test('late model reads cannot replace the catalog after account selection', async ({page}) => {
   const host = await setup(page); let calls = 0, release!: () => void;
@@ -89,7 +143,7 @@ test('late model reads cannot replace the catalog after account selection', asyn
     if (++calls !== 1) return route.fallback();
     await held; await route.fulfill({json: {models: [{id: 'stale-model', name: 'Stale model', provider: 'openai'}]}}).catch(() => {});
   });
-  await host.open(); await host.nav.getByRole('button', {name: 'Models & Accounts', exact: true}).click();
+  await host.open(); await host.nav.getByRole('tab', {name: 'Models & Accounts', exact: true}).click();
   const provider = host.dialog.locator('[data-provider="openai"]');
   await provider.getByRole('radio', {name: 'Second account', exact: true}).check(); await provider.getByRole('button', {name: 'Use account', exact: true}).click();
   await expect.poll(() => calls).toBeGreaterThan(1); release();
@@ -99,27 +153,27 @@ test('late model reads cannot replace the catalog after account selection', asyn
 test('actual compact draft export preserves the signature guard and sends only exact journal keys', async ({page}) => {
   const host = await setup(page); const requested: unknown[] = [];
   await page.route('**/api/shell/draft-references', route => {requested.push(route.request().postDataJSON()); return route.fulfill({json: {threads: [{id: 'signature-only'}], skills: [], userStates: [], requests: []}});});
-  await host.open(); await host.nav.getByRole('button', {name: 'Data & Recovery', exact: true}).click();
+  await host.open(); await host.nav.getByRole('tab', {name: 'Data & Recovery', exact: true}).click();
   await page.evaluate(async () => {
     const path = '/src/journal.ts'; const journal = await import(path); await journal.journalWrite('draft:new', 'Private local browser draft');
     localStorage.setItem('harness:signature-assets:v1:signature-only:state', JSON.stringify([{id: 'mark', stateKey: 'signature', base64: 'mark'}]));
   });
   await host.dialog.getByRole('button', {name: 'Export local drafts', exact: true}).click();
-  await expect(host.dialog.getByRole('status').filter({hasText:'pending signature'})).toContainText('pending signature'); expect(requested).toEqual([{keys: ['draft:new']}]);
+  await expect(host.dialog.getByRole('alert').filter({hasText:'pending signature'})).toContainText('pending signature'); expect(requested).toEqual([{keys: ['draft:new']}]);
   await page.evaluate(() => localStorage.removeItem('harness:signature-assets:v1:signature-only:state'));
   const download = page.waitForEvent('download'); await host.dialog.getByRole('button', {name: 'Export local drafts', exact: true}).click();
   expect((await download).suggestedFilename()).toBe('harness-drafts.json');
   expect(JSON.stringify(requested)).not.toContain('Private local browser draft'); expect(host.reads).not.toContain('/api/snapshot');
 });
 test('the injected browser callback receives the accepted start page and closes Settings', async ({page}) => {
-  const host = await setup(page); host.model.settings.preferences = {browserStartUrl: 'https://example.com/accepted'};
-  await host.open(); await host.nav.getByRole('button', {name: 'Browser', exact: true}).click();
+  const host = await setup(page, {desktop: true}); host.model.settings.preferences = {browserStartUrl: 'https://example.com/accepted'};
+  await host.open(); await host.nav.getByRole('tab', {name: 'Browser', exact: true}).click();
   await host.dialog.getByRole('textbox', {name: 'Browser start page', exact: true}).fill('https://example.com/unsaved');
   await host.dialog.getByRole('button', {name: 'Open browser', exact: true}).click();
   expect(await page.evaluate(() => (window as unknown as {openedUrl: string}).openedUrl)).toBe('https://example.com/accepted'); await expect(host.dialog).toHaveCount(0);
 });
 test('accepted appearance applies immediately in the standalone compact consumer', async ({page}) => {
-  const host = await setup(page); await host.open(); await host.nav.getByRole('button', {name: 'Appearance', exact: true}).click();
+  const host = await setup(page); await host.open(); await host.nav.getByRole('tab', {name: 'Appearance', exact: true}).click();
   await host.dialog.getByRole('combobox', {name: 'Density', exact: true}).click(); await page.getByRole('option', {name: /^Touch/}).click();
   await host.dialog.getByRole('combobox', {name: 'Color scheme', exact: true}).click(); await page.getByRole('option', {name: 'Light', exact: true}).click();
   await host.dialog.getByRole('button', {name: 'Apply', exact: true}).click();
@@ -128,7 +182,7 @@ test('accepted appearance applies immediately in the standalone compact consumer
 
 test('the shortcut reference is revealed by search and follows a saved rebinding', async ({page}) => {
   const host = await setup(page); await host.open();
-  await host.nav.getByRole('button', {name: 'General', exact: true}).click();
+  await host.nav.getByRole('tab', {name: 'General', exact: true}).click();
   await host.dialog.getByRole('searchbox', {name: 'Search all settings', exact: true}).fill('cheat sheet');
   await host.dialog.getByRole('button', {name: /Shortcut reference/}).click();
   const reference = host.dialog.locator('[data-setting-id="harness-keyboard-reference"]');
@@ -145,13 +199,13 @@ test('the shortcut reference is revealed by search and follows a saved rebinding
 test('the Saved chip clears on section switch, search, external refresh and after four seconds', async ({page}) => {
   const host = await setup(page); await host.open();
   const chip = host.dialog.locator('.settings-save-state');
-  const save = async () => { await host.nav.getByRole('button', {name: 'General', exact: true}).click(); await host.dialog.getByRole('switch', {name: 'Archive confirmation', exact: true}).click(); };
+  const save = async () => { await host.nav.getByRole('tab', {name: 'General', exact: true}).click(); await host.dialog.getByRole('switch', {name: 'Archive confirmation', exact: true}).click(); };
   await save(); await expect(chip).toContainText('Saved');
-  await host.nav.getByRole('button', {name: 'Browser', exact: true}).click(); await expect(chip).toBeEmpty();
+  await host.nav.getByRole('tab', {name: 'Appearance', exact: true}).click(); await expect(chip).toBeEmpty();
   await save(); await expect(chip).toContainText('Saved');
   await host.dialog.getByRole('searchbox').fill('theme'); await expect(chip).toBeEmpty();
   await host.dialog.getByRole('searchbox').fill(''); await save(); await expect(chip).toContainText('Saved');
-  await host.dialog.getByRole('button', {name: 'Data & Recovery', exact: true}).click();
+  await host.nav.getByRole('tab', {name: 'Data & Recovery', exact: true}).click();
   await host.dialog.getByRole('button', {name: 'Refresh settings', exact: true}).click(); await expect(chip).toBeEmpty();
   await save(); await expect(chip).toContainText('Saved'); await expect(chip).toBeEmpty({timeout: 8000});
 });

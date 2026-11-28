@@ -182,8 +182,8 @@ test('Settings search and section navigation retain the unsaved account choice',
   const dialog=page.getByRole('dialog',{name:'Settings',exact:true});await dialog.getByRole('searchbox',{name:'Search all settings',exact:true}).fill('ChatGPT');
   await dialog.getByRole('button',{name:/^ChatGPT \/ Codex Models & accounts/}).click();
   await expect(provider.getByRole('radio',{name:'Work',exact:true})).toBeChecked();expect(await owner!.evaluate(node=>node.isConnected)).toBe(true);
-  await dialog.getByRole('navigation',{name:'Settings sections'}).getByRole('button',{name:'General',exact:true}).click();
-  await dialog.getByRole('navigation',{name:'Settings sections'}).getByRole('button',{name:'Models & Accounts',exact:true}).click();
+  await dialog.getByRole('tablist', {name: 'Settings sections'}).getByRole('tab',{name:'General',exact:true}).click();
+  await dialog.getByRole('tablist', {name: 'Settings sections'}).getByRole('tab',{name:'Models & Accounts',exact:true}).click();
   await expect(provider.getByRole('radio',{name:'Work',exact:true})).toBeChecked();expect(h.snapshot.settings.selectedAccounts?.openai).toBe(personal);expect(h.commands).toHaveLength(0);
 });
 

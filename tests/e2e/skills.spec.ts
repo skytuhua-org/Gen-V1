@@ -85,6 +85,29 @@ test('empty libraries and automatic review controls work with old snapshots',asy
  await expect(page.getByText('Uses the task’s selected model and subscription quota.',{exact:true})).toBeVisible();
 });
 
+test('review interval keeps invalid drafts and saves only settled whole numbers',async({page})=>{
+ const x=await fixture(page);await x.open();
+ const field=page.getByRole('spinbutton',{name:'Review after model iterations',exact:true});
+ const hint=page.getByRole('alert').filter({hasText:'Enter a whole number from 0 to 100.'});
+ const saved=await field.inputValue();
+ const next=page.getByRole('switch',{name:'Require approval for agent writes',exact:true});
+ const before=(await next.boundingBox())!.y;
+ await field.fill('');await field.pressSequentially('999');
+ await expect(field).toHaveValue('999');
+ await expect(field).toHaveAttribute('aria-invalid','true');
+ await expect(field).toHaveAccessibleDescription('Enter a whole number from 0 to 100.');
+ await expect(hint).toBeVisible();
+ expect(Math.abs((await next.boundingBox())!.y-before)).toBeLessThanOrEqual(2);
+ await field.press('Tab');await expect(field).toHaveValue('999');await expect(hint).toBeVisible();
+ expect(x.host.commands.filter(command=>command.type==='settings.update')).toHaveLength(0);
+ await field.focus();await field.press('Escape');
+ await expect(field).toBeFocused();await expect(field).toHaveValue(saved);await expect(hint).toHaveCount(0);
+ await field.fill('1.5');await expect(field).toHaveValue('1.5');await expect(hint).toBeVisible();
+ await field.fill('');await expect(hint).toBeVisible();
+ await field.fill('50');await expect(hint).toHaveCount(0);
+ await expect.poll(()=>x.snapshot.settings.preferences).toMatchObject({learningInterval:50});
+ expect(x.host.commands.filter(command=>command.type==='settings.update')).toHaveLength(1);
+});
 test('pending legacy migration keeps saved instructions and supporting files readable',async({page})=>{
  const x=await fixture(page);x.snapshot.skills[0].migrationError='This legacy skill needs migration before activation.';await x.open();
  await page.getByRole('button',{name:'Inspect verify-release',exact:true}).click();
