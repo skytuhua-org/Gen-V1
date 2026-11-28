@@ -187,6 +187,8 @@ test.describe('scripted typed agent work', () => {
     expect(host.service.agentWork.budgetLedger()).toMatchObject({
       admitted: 1, completed: 1, reservedTokens: 0, reservedMs: 0, spentTokens: 100, spentMs: 60_000,
     });
+    const bootstrap = await page.request.get(HOST_URL + '/api/bootstrap');
+    expect(bootstrap.ok()).toBe(true);
     const reopened = await page.request.get(`${HOST_URL}/api/agent-work/output?taskId=${parent.threadId}&workId=${workId}`);
     expect(reopened.ok()).toBe(true);
     expect(await reopened.json()).toMatchObject({
