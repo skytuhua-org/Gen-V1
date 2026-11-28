@@ -258,6 +258,22 @@ deadlines. Install the browser required by each configuration before running it.
 The suite list in `scripts/browser-suites.ts` is checked against every spec file;
 adding a spec requires assigning its fixture configuration there.
 
+### Environment-dependent test failures
+
+Use these symptoms to check whether a test failure is related to local setup.
+Run `pnpm exec vitest run <file>` to isolate the affected test file. Compare the
+result before and after the relevant setup step to help diagnose the cause.
+
+| Symptom | Evidence and likely cause | What to check |
+| --- | --- | --- |
+| `Error: Trusted widget receiver is missing. Run pnpm build:widgets before starting the application or tests.` | Reproduced by running `pnpm exec vitest run tests/server.test.ts` with `dist/` absent. Importing `apps/server` requires `dist/widget-runtime/receiver.js`. | Run `pnpm build:widgets` and rerun the affected file. |
+| Error code `PI_CREDENTIAL_LEASE_UNAVAILABLE` with a loader message mentioning `windows-credential-lease.node` | Source-derived. The [Windows lease loader](../packages/core/windows-credential-lease.ts) forwards the underlying loader message. The Windows-only suite was skipped in Linux verification. `pnpm test:no-lease` skips the addon build step. | Install the Visual Studio **Desktop development with C++** workload, then run `pnpm build:credential-lease`. |
+| `gyp ERR! find VS` or `Could not find any Visual Studio installation to use` while building `node-pty` | The [Windows CI log](https://github.com/skytuhua-org/Gen-V1/actions/runs/44728205681/job/136260918679) records both diagnostics during the node-pty install. The job could not find a usable Visual Studio C++ installation. | Install the Visual Studio **Desktop development with C++** workload, then run `pnpm rebuild node-pty`. |
+| Message `The pinned Python 3.14 runtime could not start.` with error code `HERMES_START_FAILED` | Source-derived from the [Hermes client](../packages/runtime-hermes/client.ts) when launching Python fails. An absent dependency is a separate setup problem. | Install CPython 3.14 or point `HARNESS_HERMES_PYTHON` to a working Python 3.14 executable. Install the pinned Hermes requirements in `.harness-hermes-python-deps/`. Tests that require the integration wheels also need `.harness-integrations-python-deps/`, using **Install pinned Python test dependencies** above. |
+| `Error: EBUSY: resource busy or locked, rmdir` for a Windows temporary directory | Observed during cleanup in `tests/workspace-action-outcomes.test.ts` in the [Windows test log](implementation/v3/logs/m09-test-no-lease.log). The log identifies the failed removal. | Rerun the affected file and retain the failing test, path and cleanup error if it recurs. |
+
+For application startup symptoms, see the next section.
+
 ## Common startup issues
 
 | Symptom | What to check |
