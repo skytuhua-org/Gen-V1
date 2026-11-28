@@ -19,6 +19,12 @@ test.describe('ACT05 action feedback capture', () => {
         throw Error('Specify full baseline and candidate SHAs and set HARNESS_ACTION_CAPTURE_SIDE to baseline or candidate.');
       }
       const checkoutSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      const sourceRef = side === 'baseline' ? baselineSha : candidateSha;
+      try {
+        execFileSync('git', ['diff', '--quiet', sourceRef, '--', 'apps', 'packages', 'scripts', 'package.json', 'pnpm-lock.yaml', 'vite.config.*']);
+      } catch {
+        throw Error('Application source must match the declared capture SHA. Apply only the test harness when recording a baseline.');
+      }
       const directory = info.outputPath('act05');
       await mkdir(directory, { recursive: true });
       const viewport = { width: 1920, height: 1080 };
@@ -96,7 +102,8 @@ test.describe('ACT05 action feedback capture', () => {
             expect(video.streams).toContainEqual(expect.objectContaining({ codec_name: 'h264', width: 1920, height: 1080, r_frame_rate: '30/1' }));
             await writeFile(`${directory}/manifest.json`, JSON.stringify({
               provenance: 'Synthetic real-App fixture with intercepted host responses. No native app, OS cursor, or provider acceptance.',
-              baselineSha, candidateSha, checkoutSha, side, sourceRef: side === 'baseline' ? baselineSha : candidateSha,
+              baselineSha, candidateSha, checkoutSha, side, sourceRef,
+              harnessSha256: createHash('sha256').update(await readFile(info.file)).digest('hex'),
               theme, policy, viewport, zoom: { method: 'Unmodified fresh browser context', ...display },
               environment: { platform: process.platform, arch: process.arch, release: release(), node: process.version, browser: browser.version(), channel, executablePath: launchOptions.executablePath },
               phases, commands, video: { filename: videoName, sha256: createHash('sha256').update(await readFile(videoPath)).digest('hex'), ...video },
