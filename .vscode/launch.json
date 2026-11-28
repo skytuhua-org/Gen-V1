@@ -29,7 +29,7 @@
         "run",
         "${relativeFile}",
         "--pool=forks",
-        "--poolOptions.forks.singleFork"
+        "--maxWorkers=1"
       ],
       "console": "integratedTerminal",
       "skipFiles": [
