@@ -4140,6 +4140,7 @@
     "tests/preferences.test.ts",
     "tests/private-git-family.test.ts",
     "tests/proactive-presentation.test.ts",
+    "tests/process-input.test.ts",
     "tests/process.test.ts",
     "tests/profile-lease.test.ts",
     "tests/project-colors.test.ts",
