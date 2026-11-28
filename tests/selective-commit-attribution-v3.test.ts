@@ -293,7 +293,9 @@ it("attributes a proven deletion when the hunk names the other copy of a repeate
 it("attributes a mid-file line-ending change without covering a foreign final-newline hunk", async () => {
   const f = await fixture();
   const path = join(f.worktree, "many.txt");
-  const headLines = Array.from({ length: 10 }, (_, index) => `l${index + 1}`);
+  // 40 lines keeps the mid-file and final-newline changes far apart: the
+  // two diff hunks must never merge regardless of the platform git version.
+  const headLines = Array.from({ length: 40 }, (_, index) => `l${index + 1}`);
   await writeFile(path, headLines.join("\n") + "\n");
   gitSync(f.worktree, "add", ".");
   gitSync(f.worktree, "commit", "-qm", "eol-baseline");
