@@ -151,7 +151,7 @@ export function buildChildEnvironment(
 
 export const MIN_TRACKED_SECRET_LENGTH = 8;
 const REDACTED = '[REDACTED]';
-const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[\]P^X_][\s\S]*?(?:\x07|\x1b\\|$)|\x1b[()#][0-9A-Za-z]|\x1b[=>78cDEM]|[\x80-\x9f]/g;
+const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[\]P^X_][\s\S]*?(?:\x07|\x1b\\)|\x1b[\]P^X_]|\x1b[()#][0-9A-Za-z]|\x1b[=>78cDEM]|[\x80-\x9f]/g;
 
 export interface SecretRedactor {
   redact(text: string): { text: string; redactions: number };
@@ -204,6 +204,10 @@ export function createSecretRedactor(secrets: Iterable<string>, options?: { fiel
   const structuredFieldPatterns = options?.structuredText ? (options?.fields ?? []).map(field =>
     new RegExp(`(^|[^A-Za-z0-9_])(["']?${jsonKeyPattern(field)}["']?\\s*[:=]\\s*)(?:"((?:\\\\.|[^"\\\\])*)"|'((?:\\\\.|[^'\\\\])*)'|([^\\s]+))`, 'gi')) : [];
   const bearerPattern = options?.structuredText ? /\b(Bearer\s+)([^\s"',;\]}]{8,})/gi : null;
+  // An unquoted Authorization header is credential-bearing as a whole: its
+  // scheme does not end at the first whitespace. Quoted/JSON forms remain
+  // covered by the structured field matcher so their syntax is not consumed.
+  const authorizationHeaderPattern = options?.structuredText ? /\b(authorization[ \t]*:[ \t]*)(?!["'])([^\r\n]+)/gi : null;
   const credentialUrlPattern = options?.structuredText ? /\b([a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]*:)([^\s@/?#]+)(?=@)/gi : null;
   const privateKeyPattern = options?.structuredText ? /-----BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)?-----|$)/gi : null;
 
@@ -246,7 +250,7 @@ export function createSecretRedactor(secrets: Iterable<string>, options?: { fiel
         ranges.push([start, start + value.length]);
       }
     }
-    for (const pattern of [bearerPattern, credentialUrlPattern]) {
+    for (const pattern of [bearerPattern, authorizationHeaderPattern, credentialUrlPattern]) {
       if (!pattern) continue;
       pattern.lastIndex = 0;
       for (const match of cleanText.matchAll(pattern)) {

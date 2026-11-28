@@ -21,11 +21,11 @@ beforeAll(() => {
   // give each case an independent executable directory without another copy.
   copyFileSync(process.execPath, node, constants.COPYFILE_FICLONE);
 });
-// Windows can briefly keep the copied Node executable locked after child exit.
-afterAll(() => { if (directory) rmSync(directory, { recursive: true, force: true, maxRetries: 5 }); });
 // CI runners carry a real install at PNPM_HOME; cases that do not explicitly
 // exercise it must not inherit it. Cases that do re-stub afterwards and win.
 beforeEach(() => { vi.stubEnv('PNPM_HOME', ''); });
+// Windows can briefly keep the copied Node executable locked after child exit.
+afterAll(() => { if (directory) rmSync(directory, { recursive: true, force: true, maxRetries: 5 }); });
 
 function fixture(version = '10.30.3') {
   const root = mkdtempSync(join(directory, 'case '));

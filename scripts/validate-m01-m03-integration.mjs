@@ -12,11 +12,13 @@ const runnerPath = 'scripts/validate-m01-m03-integration.mjs';
 const isSha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 function requireValue(condition, message) { if (!condition) throw new Error(message); }
-function setupFailureMessage(error) {
+function setupFailure(error) {
   const message = error instanceof Error ? error.message : '';
-  if (message.startsWith('Expected tree ')) return 'Expected tree mismatch.';
-  if (message.startsWith('Integrated HEAD changed')) return 'Integrated HEAD changed after assembly.';
-  return 'Integration validation setup failed.';
+  if (message.startsWith('Expected tree ')) return { code: 'EXPECTED_TREE_MISMATCH', message: 'Expected tree mismatch.' };
+  if (message.startsWith('Integrated HEAD changed')) return { code: 'INTEGRATED_HEAD_CHANGED', message: 'Integrated HEAD changed after assembly.' };
+  if (message === 'Validation harness source import failed.')
+    return { code: 'VALIDATION_SOURCE_IMPORT_FAILED', message };
+  return { code: 'INTEGRATION_SETUP_FAILED', message: 'Integration validation setup failed.' };
 }
 function gitBytes(...args) {
   return execFileSync('git', ['-C', root, ...args], {
@@ -106,7 +108,7 @@ try {
     appendFileSync(process.env.GITHUB_OUTPUT, 'integrated_head=' + integratedHead + '\n');
   } else await validate();
 } catch (error) {
-  receipt.issues.push({ phase: mode, message: setupFailureMessage(error), stderr: '[suppressed diagnostic]' });
+  receipt.issues.push({ phase: mode, ...setupFailure(error), stderr: '[suppressed diagnostic]' });
 } finally {
   if (integratedHead) {
     try {
@@ -131,18 +133,36 @@ try {
   process.exitCode = receipt.status === (mode === 'assemble' ? 'ASSEMBLED' : 'PASS') ? 0 : 1;
 }
 
-async function validate() {
+async function importPinnedBaseline() {
   // The validation harness is pinned by VALIDATION_SHA even though the audited
-  // integration tree intentionally contains older repair snapshots. Keep its
-  // module inside scripts/ so relative imports and node_modules resolution
-  // behave exactly as they do for the pinned source checkout.
-  const baselineCopy = join(root, 'scripts', '.m01-m03-validation-research-baseline.ts');
-  rmSync(baselineCopy, { force: true });
-  writeFileSync(baselineCopy, gitBytes('show', validationSha + ':scripts/research-baseline.ts'), { flag: 'wx' });
-  let baseline;
-  try { baseline = await import(pathToFileURL(baselineCopy).href); }
-  finally { rmSync(baselineCopy, { force: true }); }
-  const { resolvePackageManager, runRecordedCommand, statusFromObservation, writeCommandEvidence } = baseline;
+  // integration tree intentionally contains older repair snapshots. Materialize
+  // that exact source revision in a short-lived nested worktree: relative
+  // imports resolve against pinned packages, while bare package resolution can
+  // still reach the outer checkout's node_modules. The worktree is removed as
+  // soon as the module graph has loaded.
+  const pinnedWorktree = join(root, '.m01-m03-validation-src');
+  try {
+    try { git('worktree', 'remove', '--force', pinnedWorktree); } catch { /* No stale fixture worktree. */ }
+    git('worktree', 'add', '--detach', pinnedWorktree, validationSha);
+    let baseline;
+    try { baseline = await import(pathToFileURL(join(pinnedWorktree, 'scripts/research-baseline.ts')).href); }
+    finally {
+      try { git('worktree', 'remove', '--force', pinnedWorktree); }
+      catch {
+        rmSync(pinnedWorktree, { recursive: true, force: true });
+        try { git('worktree', 'prune'); } catch { /* The next setup attempt retries removal. */ }
+      }
+    }
+    if (!baseline || !['resolvePackageManager', 'runRecordedCommand', 'statusFromObservation', 'writeCommandEvidence']
+      .every(key => typeof baseline[key] === 'function')) throw new Error('Validation harness source import failed.');
+    return baseline;
+  } catch {
+    throw new Error('Validation harness source import failed.');
+  }
+}
+
+async function validate() {
+  const { resolvePackageManager, runRecordedCommand, statusFromObservation, writeCommandEvidence } = await importPinnedBaseline();
   const pm = resolvePackageManager(root);
   const run = async (name, args, timeoutMs = 15 * 60_000, extraEnvironment = {}) => {
     console.log('M01_M03_COMMAND_START=' + JSON.stringify({ name }));

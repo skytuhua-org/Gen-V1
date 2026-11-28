@@ -121,9 +121,41 @@ process.stderr.write([
     expect(value.exitCode).toBeNull();
     expect(value.spawnError).toBe('Evidence admission denied: sensitive value is outside supported redaction scope.');
     expect(value.stdout).not.toContain('execution-canary');
-    const evidence = await write(value, directory, statusFromObservation(value));
-    expect(evidence.status).toBe('BLOCKED');
-    expect(readFileSync(evidence.boundedLogRef, 'utf8')).not.toContain('execution-canary');
+    await expect(write(value, directory, statusFromObservation(value))).rejects.toMatchObject({ code: 'EVIDENCE_ADMISSION_DENIED' });
+    expect(existsSync(join(directory, 'evidence', '00-command.log'))).toBe(false);
+  });
+
+  it('denies publication when a preflight-refused unsupported explicit secret appears in exact argv', async () => {
+    const directory = root();
+    const secret = 'hunter2';
+    const observed = await runRecordedCommand(process.execPath, ['password=' + secret], {
+      cwd: directory, sensitiveValues: [secret],
+    });
+    expect(observed.termination).toBe('SPAWN_ERROR');
+    await expect(write(observed, directory, 'BLOCKED')).rejects.toMatchObject({ code: 'EVIDENCE_ADMISSION_DENIED' });
+    expect(existsSync(join(directory, 'evidence', '00-command.log'))).toBe(false);
+  });
+
+  it('redacts a complete unquoted Basic authorization header value', async () => {
+    const directory = root();
+    const credential = 'dXNlcjpwYXNzd29yZA==';
+    const value = observation({ stdout: `Authorization: Basic ${credential}\nnext public line` });
+    const evidence = await write(value, directory, 'PASS');
+    const log = readFileSync(evidence.boundedLogRef, 'utf8');
+    expect(log).not.toContain(credential);
+    expect(log).not.toContain('Basic');
+    expect(log).toContain('Authorization: [REDACTED]');
+    expect(log).toContain('next public line');
+  });
+
+  it('does not hide secrets behind an unterminated ANSI string introducer', async () => {
+    const directory = root();
+    const secret = 'unterminated-osc-secret-20261128';
+    const value = observation({ stdout: '\x1b]\nAuthorization: Bearer ' + secret + '\npublic tail' });
+    const evidence = await writeCommandEvidence(value, join(directory, 'evidence'), '00-command', 'PASS', undefined, { sensitiveValues: [secret] });
+    const log = readFileSync(evidence.boundedLogRef, 'utf8');
+    expect(log).not.toContain(secret);
+    expect(log).toContain('public tail');
   });
 
   it('redacts and bounds spawn diagnostics without exposing structured password material', async () => {
@@ -217,6 +249,36 @@ process.stderr.write([
     const log = readFileSync(evidence.boundedLogRef, 'utf8');
     expect(log).toContain('public diagnostic');
     expect(log).not.toContain(partial);
+  });
+
+  it('rejects a sensitive expected-negative assertion instead of publishing it in the receipt', async () => {
+    const directory = root();
+    const secret = 'expected-negative-secret-20261128';
+    const value = observation({ stdout: 'fixture reached ' + secret });
+    await expect(writeCommandEvidence(value, join(directory, 'evidence'), '00-command', 'EXPECTED_NEGATIVE',
+      { assertedFailure: secret, observed: true }, { sensitiveValues: [secret] }))
+      .rejects.toMatchObject({ code: 'EVIDENCE_ADMISSION_DENIED' });
+    expect(existsSync(join(directory, 'evidence', '00-command.log'))).toBe(false);
+  });
+
+  it('rejects an absent expected-negative assertion instead of fabricating observation evidence', async () => {
+    const directory = root();
+    const value = observation({ stdout: 'ordinary public diagnostic' });
+    await expect(writeCommandEvidence(value, join(directory, 'evidence'), '00-command', 'EXPECTED_NEGATIVE',
+      { assertedFailure: 'assertion absent from bounded output', observed: true }))
+      .rejects.toMatchObject({ code: 'EVIDENCE_ADMISSION_DENIED' });
+    expect(existsSync(join(directory, 'evidence', '00-command.log'))).toBe(false);
+  });
+
+  it('bounds the public expected-negative assertion while retaining strict receipt semantics', async () => {
+    const directory = root();
+    const marker = `known bug ${'x'.repeat(1500)}`;
+    const value = observation({ stdout: 'prefix ' + marker + ' suffix' });
+    const evidence = await writeCommandEvidence(value, join(directory, 'evidence'), '00-command', 'EXPECTED_NEGATIVE',
+      { assertedFailure: marker, observed: true });
+    expect(evidence.status).toBe('EXPECTED_NEGATIVE');
+    expect(Buffer.byteLength(evidence.expectedNegative!.assertedFailure, 'utf8')).toBeLessThanOrEqual(1024);
+    expect(evidence.expectedNegative!.assertedFailure).toContain('[assertion truncated to metadata budget]');
   });
 
   it.each([

@@ -20,11 +20,14 @@ const OUTPUT_LIMIT = 256 * 1024;
 export const COMMAND_EVIDENCE_FINAL_LOG_BYTES = 544 * 1024;
 export const COMMAND_EVIDENCE_EXACT_METADATA_BYTES = 16 * 1024;
 export const COMMAND_EVIDENCE_SPAWN_DIAGNOSTIC_BYTES = 8 * 1024;
+export const COMMAND_EVIDENCE_ASSERTED_FAILURE_BYTES = 1024;
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const EXACT_IDENTITY_DENIED = 'Evidence admission denied: exact command identity cannot be represented safely.';
 const UNSUPPORTED_SENSITIVE_VALUE = 'Evidence admission denied: sensitive value is outside supported redaction scope.';
 const FINAL_TRUNCATION_MARKER = '\n[evidence truncated to final byte budget]\n';
 const DIAGNOSTIC_TRUNCATION_MARKER = '\n[diagnostic truncated to metadata budget]\n';
+const ASSERTED_FAILURE_TRUNCATION_MARKER = '\n[assertion truncated to metadata budget]\n';
+const EXPECTED_NEGATIVE_DENIED = 'Evidence admission denied: expected-negative assertion cannot be represented safely.';
 const COMMAND_EVIDENCE_SECRET_FIELDS = Object.freeze([
   'api_key', 'apikey', 'api-key', 'access_token', 'access-token', 'auth_token', 'auth-token',
   'token', 'secret', 'password', 'passwd', 'private_key', 'private-key', 'authorization',
@@ -183,8 +186,10 @@ export async function runRecordedCommand(file: string, args: string[], options: 
   const admittedValues = sensitiveValues(options.environment, options.sensitiveValues);
   const finishObserved = (partial: Omit<RecordedObservation, 'argv' | 'startedAt' | 'endedAt'>): RecordedObservation => {
     const value = finish(partial);
-    const redactableValues = Object.freeze(admittedValues.filter(secret => !unsupportedSensitiveValue(secret)));
-    if (redactableValues.length) observationSensitiveValues.set(value, redactableValues);
+    // Preserve unsupported registrations through publication. Filtering them
+    // here would make writeCommandEvidence treat the observation as safe and
+    // republish exact metadata that preflight correctly refused to execute.
+    if (admittedValues.length) observationSensitiveValues.set(value, admittedValues);
     return value;
   };
   let resolved: ResolvedExecutable, cwdIdentity: string;
@@ -259,10 +264,22 @@ function redactPipe(redactor: ReturnType<typeof createSecretRedactor>, text: str
   return bounded;
 }
 
+function safeExpectedNegative(redactor: ReturnType<typeof createSecretRedactor>, observation: RecordedObservation, expectedNegative: ExpectedNegative | undefined, requireObserved: boolean): ExpectedNegative | undefined {
+  if (!expectedNegative) return undefined;
+  const asserted = expectedNegative.assertedFailure;
+  if (requireObserved && !`${observation.stdout}\n${observation.stderr}`.includes(asserted))
+    throw new HarnessError('EVIDENCE_ADMISSION_DENIED', EXPECTED_NEGATIVE_DENIED);
+  const redacted = redactor.redact(asserted).text;
+  if (redacted !== asserted || redactor.containsTracked(redacted))
+    throw new HarnessError('EVIDENCE_ADMISSION_DENIED', EXPECTED_NEGATIVE_DENIED);
+  return { ...expectedNegative, assertedFailure: capUtf8(redacted, COMMAND_EVIDENCE_ASSERTED_FAILURE_BYTES, ASSERTED_FAILURE_TRUNCATION_MARKER) };
+}
+
 export async function writeCommandEvidence(observation: RecordedObservation, outDir: string, id: string, status: CommandStatus, expectedNegative?: ExpectedNegative, options: WriteCommandEvidenceOptions = {}): Promise<CommandEvidence> {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id))
     throw new HarnessError('EVIDENCE_ADMISSION_DENIED', 'Evidence admission denied: artifact identifier is unsafe.');
   const redactor = evidenceRedactor(observation, options.sensitiveValues ?? []);
+  const safeNegative = safeExpectedNegative(redactor, observation, expectedNegative, status === 'EXPECTED_NEGATIVE');
   for (const value of observation.argv) requireExactSafeIdentity(redactor, value);
   requireExactSafeIdentity(redactor, observation.cwdIdentity);
   requireExactSafeIdentity(redactor, observation.executableIdentity);
@@ -296,7 +313,7 @@ export async function writeCommandEvidence(observation: RecordedObservation, out
     argv: observation.argv, cwdIdentity: observation.cwdIdentity, executableIdentity: observation.executableIdentity,
     startedAt: observation.startedAt, endedAt: observation.endedAt, exitCode: observation.exitCode,
     termination: observation.termination, status, boundedLogRef, logDigest: sha256(log),
-    ...(expectedNegative ? { expectedNegative } : {}),
+    ...(safeNegative ? { expectedNegative: safeNegative } : {}),
   };
   if (!commandEvidenceSchema.safeParse(candidate).success || validateCommandEvidence(candidate).length)
     throw new HarnessError('EVIDENCE_ADMISSION_DENIED', 'Evidence admission denied: command evidence violates strict evidence semantics.');
