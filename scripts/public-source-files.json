@@ -4178,6 +4178,7 @@
     "tests/read-aloud-text.test.ts",
     "tests/read-sync-decisions-v6.test.ts",
     "tests/read-sync-v3.test.ts",
+    "tests/receipts_m16_substitution.py",
     "tests/recorded-diffs.test.ts",
     "tests/reduced-motion-coverage.test.ts",
     "tests/redundant-ui.test.ts",

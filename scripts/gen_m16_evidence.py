@@ -18,20 +18,26 @@ def git(*args):
 records = json.load(open(sys.argv[1], encoding='utf-8'))
 by_log = {}
 for r in records:
-    r['logDigest'] = sha(os.path.join(ROOT, r['boundedLogRef']))
+    ref = r['boundedLogRef']
+    if ref in by_log:
+        raise ValueError('Duplicate M16 command receipt reference')
+    r['logDigest'] = sha(os.path.join(ROOT, ref))
     r.setdefault('status', 'PASS' if r['exitCode'] == 0 else 'FAIL')
-    by_log[r['boundedLogRef']] = r
+    by_log[ref] = r
 
 doc = json.load(open(os.path.join(ROOT, VPATH), encoding='utf-8'))
 assert doc['baseSha'] == BASE
 swapped = 0
+unmatched = set(by_log)
 for phase in doc['phases']:
     for i, cmd in enumerate(phase.get('commands', [])):
         ref = cmd['boundedLogRef']
         if ref in by_log:
             phase['commands'][i] = by_log[ref]
+            unmatched.discard(ref)
             swapped += 1
-expected = 8  # 3 vitest (x2 phases) -> C1:3, C2: 1 vitest+3 pnpm, FULL: 3 vitest+2 pnpm = 10
+if unmatched:
+    raise ValueError(f'{len(unmatched)} M16 receipt reference(s) do not match an existing command')
 print('swapped commands:', swapped)
 
 changed = git('diff', '--name-only', BASE).split('\n') + git('ls-files', '--others', '--exclude-standard').split('\n')
