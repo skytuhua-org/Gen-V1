@@ -146,7 +146,7 @@
   border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
-.sidebar .thread-group-settled h2 > button > svg.settled-chevron {
+.sidebar .thread-group h2 > button > svg.settled-chevron {
   width: 12px;
   margin-left: 3px;
   transition: transform var(--ui-motion-panel-exit) var(--ui-ease-enter);
@@ -154,10 +154,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sidebar .thread-group-settled h2 > button > svg.settled-chevron { transition: none; }
+  .sidebar .thread-group h2 > button > svg.settled-chevron { transition: none; }
 }
 
-.sidebar .thread-group-settled h2 > button > svg.settled-chevron.is-folded {
+.sidebar .thread-group h2 > button > svg.settled-chevron.is-folded {
   transform: rotate(-90deg);
 }
 
@@ -232,6 +232,24 @@
   border: 0;
   font-size: 8px;
 }
+
+.sidebar .thread-group-project h2 > button.thread-project-header {
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.sidebar .thread-group-project .thread-project-header-label {
+  min-width: 0;
+  text-transform: uppercase;
+  letter-spacing: .035em;
+}
+.sidebar .thread-group-project h2 > button small {
+  flex: none;
+  font-size: 10px;
+  color: var(--placeholder);
+}
+.sidebar .thread-group-project svg.settled-chevron { flex: none; }
+:root:is([data-motion=reduced],[data-motion=off]) .sidebar .thread-group-project svg.settled-chevron { transition: none; }
 
 .sidebar .thread-project-header-label {
   overflow: hidden;

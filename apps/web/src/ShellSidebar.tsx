@@ -69,11 +69,13 @@ export function projectMonogram(name?: string | null): string {
   return word.slice(0, 2).toUpperCase();
 }
 
-export function orderSidebarProjects(remaining: Thread[], projectGrouping: boolean, projectOrder: UiPreferences['projectOrder']) {
-  if (!projectGrouping) return remaining;
+const sidebarProjectKey = ({projectId,projectName}:Thread) => projectId ? 'project:id:'+projectId
+  : projectName ? 'project:name:'+projectName : 'project:personal';
+
+function orderedSidebarProjectBuckets(remaining: Thread[], projectOrder: UiPreferences['projectOrder']) {
   const groups = new Map<string, { rows: Thread[]; earliest: string; latest: string; order: number }>();
   for (const item of remaining) {
-    const key = item.projectId ?? item.projectName ?? 'Conversations';
+    const key = sidebarProjectKey(item);
     const order = item.presentation?.order ?? 0;
     const group = groups.get(key);
     if (!group) groups.set(key, { rows: [item], earliest: item.createdAt, latest: item.updatedAt, order });
@@ -84,10 +86,14 @@ export function orderSidebarProjects(remaining: Thread[], projectGrouping: boole
       if (order < group.order) group.order = order;
     }
   }
-  return [...groups.values()].sort((a, b) => projectOrder === 'created'
+  return [...groups].sort(([,a], [,b]) => projectOrder === 'created'
     ? a.earliest.localeCompare(b.earliest)
     : projectOrder === 'manual' ? a.order - b.order : b.latest.localeCompare(a.latest)
-  ).flatMap(group => group.rows);
+  );
+}
+
+export function orderSidebarProjects(remaining: Thread[], projectGrouping: boolean, projectOrder: UiPreferences['projectOrder']) {
+  return projectGrouping ? orderedSidebarProjectBuckets(remaining, projectOrder).flatMap(([,group]) => group.rows) : remaining;
 }
 
 export function ShellSidebar({
@@ -206,7 +212,8 @@ export function ShellSidebar({
   const settled = visibleMatching.filter(item => !pinned.includes(item) && !working.includes(item) && item.presentation?.settled);
   const remaining = visibleMatching.filter(item => !pinned.includes(item) && !working.includes(item) && !settled.includes(item));
 
-  const orderedRemaining = orderSidebarProjects(remaining, preferences.projectGrouping, preferences.projectOrder);
+  const projectBuckets = preferences.projectGrouping ? orderedSidebarProjectBuckets(remaining, preferences.projectOrder) : [];
+  const orderedRemaining = preferences.projectGrouping ? projectBuckets.flatMap(([,group]) => group.rows) : remaining;
   const settledFolded = layout.folded['settled'] ?? false;
   const visibleSettled = showAllSettled ? settled : settled.slice(0, 6);
   const locked = search.trim().length > 0 || filter !== 'all';
@@ -216,7 +223,7 @@ export function ShellSidebar({
     locked: () => locked,
     showWorking: preferences.showWorkingSection,
     // Grouped runs are contiguous, so a drop can only land inside the row's own project.
-    groupKey: preferences.projectGrouping ? (item: Thread) => item.projectId ?? item.projectName ?? 'Conversations' : undefined,
+    groupKey: preferences.projectGrouping ? sidebarProjectKey : undefined,
     presentation,
     ensureManualOrder: preferences.projectOrder === 'manual' ? undefined : ensureManualOrder,
     prepareMove: (id, order, viaPointer) => threadMove.prepare(id, order, viaPointer),
@@ -347,23 +354,28 @@ export function ShellSidebar({
     );
   };
 
-  const group = (key: string, label: string, items: Thread[], opts: { list?: SidebarSection; keepVisible?: boolean; empty?: ReactNode } = {}) => {
+  const group = (key: string, label: string, items: Thread[], opts: { list?: SidebarSection; keepVisible?: boolean; empty?: ReactNode; project?: Thread } = {}) => {
     if (!items.length && !opts.keepVisible) return null;
     const folded = layout.folded[key] ?? false;
     return (
-      <section key={key} className={`thread-group thread-group-${key}`} data-thread-list={opts.list}>
+      <section key={key} className={`thread-group thread-group-${opts.project ? 'project' : key}`} data-thread-list={opts.list}>
         <h2>
           <button
             type="button"
             aria-expanded={!folded}
+            aria-label={opts.project ? `${label}, ${items.length} ${items.length === 1 ? 'thread' : 'threads'}` : undefined}
+            className={opts.project ? 'thread-project-header' : undefined}
             onClick={() => {
               setMenuId(null);
               setFolded(key, !folded);
             }}
           >
-            <ChevronRight size={11} />
-            <span>{label}</span>
-            <small>{items.length}</small>
+            {opts.project
+              ? <span className="thread-project-monogram" style={{color:projectColor({kind:'local'},opts.project.projectId,preferences.projectColors)}} aria-hidden="true">{projectMonogram(opts.project.projectName)}</span>
+              : <ChevronRight size={11} />}
+            <span className={opts.project ? 'thread-project-header-label' : undefined}>{label}</span>
+            <small aria-hidden={opts.project ? true : undefined}>{items.length}</small>
+            {opts.project && <ChevronDown size={12} aria-hidden="true" className={`settled-chevron ${folded ? 'is-folded' : ''}`} />}
           </button>
         </h2>
         <MotionRegion open={!folded} animate={preferences.panelAnimations && preferences.motionDuration > 0} className="thread-group-content">
@@ -465,7 +477,9 @@ export function ShellSidebar({
           empty: <div className="sidebar-pinned-empty" role="note">Pin a thread from its ⋯ menu, or drag it here.</div>,
         })}
         {group('working', 'Working', working, { list: 'working' })}
-        {orderedRemaining.length > 0 && <div className="thread-flat-list" data-thread-list="flat">{orderedRemaining.map((item, index) => {
+        {orderedRemaining.length > 0 && <div className="thread-flat-list" data-thread-list="flat">{preferences.projectGrouping
+          ? projectBuckets.map(([key, {rows}]) => group(key, rows[0]!.projectName || 'Personal', rows, {project:rows[0]}))
+          : orderedRemaining.map((item, index) => {
           const projectKey = item.projectId ?? item.projectName ?? 'Conversations';
           const previous = orderedRemaining[index - 1];
           const previousKey = previous ? previous.projectId ?? previous.projectName ?? 'Conversations' : null;
