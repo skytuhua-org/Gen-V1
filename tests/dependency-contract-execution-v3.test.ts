@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -7,6 +7,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SourceLockV3 } from '../packages/contracts/implementation-evidence.ts';
 import { runDependencyContracts } from '../scripts/run-dependency-contracts.ts';
+import { runRecordedCommand } from '../scripts/research-baseline.ts';
+
+vi.mock('../scripts/research-baseline.ts', { spy: true });
 
 const repository = realpathSync(fileURLToPath(new URL('../', import.meta.url)));
 const directories: string[] = [];
@@ -281,4 +284,39 @@ describe('M01 current dependency compatibility execution', () => {
     });
     expect(readFileSync(join(value.out, 'compatibility.json'), 'utf8')).toBe('immutable earlier evidence\n');
   });
+
+  it('hashes the exact report bytes for a Unicode assertion title', async () => {
+    const value = fixture(passingTest.replace('current contract', 'current contract – café'));
+    const receipt = await value.run();
+    expect(receipt.status, JSON.stringify(receipt.issues)).toBe('PASS');
+    const reportBytes = readFileSync(join(value.out, 'vitest.json'));
+    expect(reportBytes.includes(Buffer.from('current contract – café'))).toBe(true);
+    expect(receipt.report?.digest).toBe(createHash('sha256').update(reportBytes).digest('hex'));
+  }, 120_000);
+
+  it('blocks a Vitest report with malformed UTF-8', async () => {
+    const value = fixture(passingTest.replace('current contract', 'current contract – café'));
+    const reportPath = join(value.out, 'vitest.json');
+    const actual = await vi.importActual<typeof import('../scripts/research-baseline.ts')>('../scripts/research-baseline.ts');
+    const command = vi.mocked(runRecordedCommand).mockImplementation(async (...args) => {
+      const observation = await actual.runRecordedCommand(...args);
+      if (args[1].includes('vitest')) {
+        const bytes = readFileSync(reportPath);
+        const titleOffset = bytes.indexOf(Buffer.from('current contract – café'));
+        expect(titleOffset).toBeGreaterThanOrEqual(0);
+        bytes[titleOffset] = 0xff;
+        writeFileSync(reportPath, bytes);
+      }
+      return observation;
+    });
+    try {
+      const receipt = await value.run();
+      expect(receipt.commands[1]?.status, JSON.stringify(receipt.issues)).toBe('PASS');
+      expect(receipt.status).toBe('BLOCKED');
+      expect(receipt.tests).toEqual([]);
+      expect(receipt.issues).toEqual([{ code: 'CURRENT_TEST_RECEIPTS_MISSING', message: 'Vitest report must be valid UTF-8.' }]);
+    } finally {
+      command.mockRestore();
+    }
+  }, 120_000);
 });
