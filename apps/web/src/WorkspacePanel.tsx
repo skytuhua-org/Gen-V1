@@ -1,4 +1,4 @@
-import {useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {useEffect,useLayoutEffect,useRef,useState,type RefObject} from 'react';
 import {Plus,X} from 'lucide-react';
 import {Select} from '../../../packages/ui-shell/Select';
 import {ActionMenu} from '../../../packages/ui-shell/ActionMenu';
@@ -26,7 +26,7 @@ export function ResizeHandle({ label, value, minimum, maximum, change, side }: {
     element.setPointerCapture?.(pointerId);
   }} />;
 }
-export function WorkspacePanel({ snapshot, threadId, preferences, layout, setWidth, resizeBounds, close, preferredResourceId, standalone=false,refresh=async()=>{},excerptComposer,leaving=false,onLeave,reviewRequest,onReviewHandled }: { reviewRequest?:ReviewRequest; onReviewHandled?:(id:number)=>void; excerptComposer?:TerminalExcerptComposer; leaving?:boolean; onLeave?:()=>void; refresh?:()=>Promise<void>; standalone?:boolean; preferredResourceId?:string; snapshot: Snapshot; threadId?: string; preferences: UiPreferences; layout: ShellLayout; setWidth: (width: number) => void; resizeBounds?: ReturnType<typeof workspacePanelBounds>; close?: () => void }) {
+export function WorkspacePanel({ snapshot, threadId, preferences, layout, setWidth, resizeBounds, close, preferredResourceId, standalone=false,refresh=async()=>{},excerptComposer,leaving=false,onLeave,reviewRequest,onReviewHandled,regionRef }: { regionRef?:RefObject<HTMLElement | null>; reviewRequest?:ReviewRequest; onReviewHandled?:(id:number)=>void; excerptComposer?:TerminalExcerptComposer; leaving?:boolean; onLeave?:()=>void; refresh?:()=>Promise<void>; standalone?:boolean; preferredResourceId?:string; snapshot: Snapshot; threadId?: string; preferences: UiPreferences; layout: ShellLayout; setWidth: (width: number) => void; resizeBounds?: ReturnType<typeof workspacePanelBounds>; close?: () => void }) {
   const workspace = useWorkspace();
   const content = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -92,10 +92,20 @@ export function WorkspacePanel({ snapshot, threadId, preferences, layout, setWid
   const activeArtifact = artifacts.find(item => item.id === workspace.activeArtifactId);
   const [addOpen,setAddOpen]=useState(false);
   const addable: WorkspaceTab[] = (Object.keys(tabLabels) as WorkspaceTab[]).filter(tab => tab !== 'artifact');
-  const addItems = addable.map(tab=>({id:'add-'+tab,label:tabLabels[tab],onSelect:()=>{workspace.openTab?.(tab);}}));
-  return <aside className="workspace-right" aria-label="Workspace panel" data-state={leaving?"closed":undefined} onAnimationEnd={event=>{if(leaving&&event.target===event.currentTarget&&event.animationName==="panel-exit")onLeave?.();}}>
+  const addItems = addable.map(tab => {
+    const usageDialog = tab === 'usage' && !standalone;
+    const checked = tab === 'usage' ? undefined : openTabs.includes(tab);
+    return {
+      id: 'add-' + tab,
+      label: usageDialog ? 'Usage (dialog)' : tabLabels[tab],
+      title: usageDialog ? 'Opens the Usage dialog' : checked ? 'Already open — switches to its tab' : undefined,
+      checked,
+      onSelect: () => workspace.openTab?.(tab),
+    };
+  });
+  return <aside ref={regionRef} className="workspace-right" role={regionRef?'region':undefined} tabIndex={regionRef?-1:undefined} inert={regionRef&&leaving} aria-label="Workspace panel" data-state={leaving?"closed":undefined} onAnimationEnd={event=>{if(leaving&&event.target===event.currentTarget&&event.animationName==="panel-exit")onLeave?.();}}>
     {!standalone && !resizeBounds?.stacked && <ResizeHandle label="Resize workspace panel" value={resizeBounds?.width ?? layout.rightPanelWidth} minimum={resizeBounds?.minimum ?? 280} maximum={resizeBounds?.maximum ?? 720} side="right" change={setWidth} />}
-    <header className="workspace-right-header"><div ref={tabStrip} role="tablist" aria-label="Workspace views" onKeyDown={onStripKeyDown}>{openTabs.map(id => <button role="tab" key={id} id={`workspace-tab-${id}`} tabIndex={workspace.activeTab === id ? 0 : -1} aria-selected={workspace.activeTab === id} aria-controls={`workspace-view-${id}`} onClick={() => workspace.setActiveTab(id)}>{tabLabels[id]}</button>)}</div><ActionMenu label="Add surface" icon={<Plus size={14} aria-hidden="true"/>} iconOnly open={addOpen} onOpenChange={setAddOpen} items={addItems}/>{standalone&&close&&<button className="icon-button" aria-label="Close workspace panel" onClick={close}><X size={15} /></button>}</header>
+    <header className="workspace-right-header"><div ref={tabStrip} role="tablist" aria-label="Workspace views" onKeyDown={onStripKeyDown}>{openTabs.map(id => <button role="tab" key={id} id={`workspace-tab-${id}`} tabIndex={workspace.activeTab === id ? 0 : -1} aria-selected={workspace.activeTab === id} aria-controls={workspace.activeTab===id?`workspace-view-${id}`:undefined} onClick={() => workspace.setActiveTab(id)}>{tabLabels[id]}</button>)}</div><ActionMenu label="Add surface" icon={<Plus size={14} aria-hidden="true"/>} iconOnly open={addOpen} onOpenChange={setAddOpen} items={addItems}/>{standalone&&close&&<button className="icon-button" aria-label="Close workspace panel" onClick={close}><X size={15} /></button>}</header>
     {handoffError&&<p role="status" className="error-text">{handoffError}</p>}
     <div ref={content} className="workspace-panel-content" role="tabpanel" id={`workspace-view-${workspace.activeTab}`} aria-labelledby={`workspace-tab-${workspace.activeTab}`}>
       {workspace.activeTab === 'artifact' && <><div className="panel-toolbar"><Select aria-label="Workspace artifact" value={activeArtifact?.id ?? ''} onValueChange={workspace.requestOpenArtifact} options={[{value:'',label:'Choose an artifact'},...artifacts.map(artifact=>({value:artifact.id,label:artifact.title}))]}/></div>{!activeArtifact && <WorkspaceLauncher />}</>}
