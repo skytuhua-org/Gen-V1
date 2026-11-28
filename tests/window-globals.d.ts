@@ -119,6 +119,11 @@ interface Window {
 	};
 	GenPluginUI: { pluginFlush(): Promise<unknown> };
 
+	// Agent-work-panel harness probes.
+	__works: unknown[];
+	__sent: { type?: string; payload?: Record<string, unknown> }[];
+	__failList: boolean;
+
 	// Editor and misc.
 	retainedEditor: Element;
 	__originalFrame: Element;
