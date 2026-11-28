@@ -6,6 +6,9 @@ import { join } from 'node:path';
 import { Service } from '../packages/core/service.ts';
 import { Store } from '../packages/storage/store.ts';
 import { createHostResourceLoader } from '../packages/runtime-pi/tool-definitions.ts';
+import { createPiRuntime } from '../packages/runtime-pi/index.ts';
+import { dispatchInput } from '../packages/runtime-pi/delivery.ts';
+import { EventNormalizer } from '../packages/runtime-pi/events.ts';
 import { openTaskSession, taskPaths } from '../packages/runtime-pi/session.ts';
 import type { ArtifactRecord, InputRequest, Operation, RunContext, RuntimeAdapter, RuntimeCallbacks, StartRun, TaskMemory, Thread, UserStateRecord } from '../packages/contracts/index.ts';
 
@@ -15,7 +18,7 @@ afterEach(async () => {
   finally { vi.restoreAllMocks(); }
 });
 
-function capturingRuntime() {
+function capturingRuntime(history: RuntimeAdapter['history'] = async () => []) {
   let callbacks: RuntimeCallbacks;
   const starts: StartRun[] = [], followUps: StartRun[] = [];
   const adapter: RuntimeAdapter = {
@@ -23,22 +26,24 @@ function capturingRuntime() {
     models: async () => [{ id: 'test/model', provider: 'test', name: 'Scripted test runtime' }],
     start: async input => { starts.push(input); },
     followUp: async input => { followUps.push(input); },
-    cancel: async () => {}, compact: async () => {}, history: async () => [], dispose: async () => {},
+    cancel: async () => {}, compact: async () => {}, history, dispose: async () => {},
   };
   return { adapter, starts, followUps, emit: (ctx: RunContext, type: string, values: Record<string, unknown> = {}) => callbacks.onEvent({ ...ctx, type, ...values }) };
 }
 
-async function fixture() {
+async function fixture({ nativeHistory = false } = {}) {
   const base = mkdtempSync(join(tmpdir(), 'harness-memory-recovery-'));
   const directory = join(base, 'storage');
-  let store = new Store(directory), runtime = capturingRuntime(), service = new Service(store, runtime.adapter);
+  const historyReader = nativeHistory ? createPiRuntime({ dataDir: directory }) : undefined;
+  const startRuntime = () => capturingRuntime(historyReader?.history);
+  let store = new Store(directory), runtime = startRuntime(), service = new Service(store, runtime.adapter);
   let closed = false;
   const close = async () => {
     if (closed) return;
     closed = true;
     try { await service.dispose(); } finally { store.close(); }
   };
-  cleanups.push(async () => { await close(); rmSync(base, { recursive: true, force: true }); });
+  cleanups.push(async () => { await close(); await historyReader?.dispose(); rmSync(base, { recursive: true, force: true }); });
   await service.recover();
   return {
     base, directory,
@@ -46,7 +51,7 @@ async function fixture() {
     command: (type: string, payload: Record<string, unknown>, threadId?: string, id: string = randomUUID()) => service.command({ id, type, payload, threadId }),
     reopen: async () => {
       await close();
-      store = new Store(directory); runtime = capturingRuntime(); service = new Service(store, runtime.adapter); closed = false;
+      store = new Store(directory); runtime = startRuntime(); service = new Service(store, runtime.adapter); closed = false;
       await service.recover();
     },
   };
@@ -227,4 +232,126 @@ it('injects restored notes once into an installed Pi SDK session and refreshes t
   }
   expect(second.systemPrompt.split('SDK current note marker.')).toHaveLength(2);
   expect(network).not.toHaveBeenCalled();
+}, 30000);
+
+
+it('continues one durable Pi input after host restart without repeating its original payload', async () => {
+  const x = await fixture({ nativeHistory: true });
+  const sdk = await import('@earendil-works/pi-coding-agent');
+  const network = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => { throw new Error('Network is forbidden in Pi restart verification'); });
+  const modelRuntime = await sdk.ModelRuntime.create({
+    authPath: join(x.base, 'empty-auth.json'), modelsPath: null, refreshOnCreate: false, allowModelNetwork: false,
+  });
+  vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
+  const model = modelRuntime.getModels('openai')[0]!;
+  const owner = (await x.command('thread.create', { title: 'Offline Pi restart' })).result as Thread;
+  const original = 'Original synthetic input must occur once.';
+  const continuation = 'Completed the offline continuation.';
+  const inputId = randomUUID();
+  const streamInputs: string[][] = [];
+  let releaseFirst!: () => void;
+  const heldFirst = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const text = (content: unknown): string => typeof content === 'string' ? content :
+    Array.isArray(content) ? content.filter(part => part.type === 'text').map(part => part.text).join('') : '';
+  const open = async (input: StartRun, interrupted: boolean) => {
+    const paths = taskPaths(x.directory, input.threadId);
+    const { session } = await sdk.createAgentSession({
+      cwd: paths.taskDir, agentDir: paths.agentDir, modelRuntime, model, tools: [], customTools: [],
+      resourceLoader: createHostResourceLoader(sdk),
+      sessionManager: await openTaskSession(x.directory, input),
+      settingsManager: sdk.SettingsManager.inMemory({ cacheWarming: 'off', retry: { enabled: false }, compaction: { enabled: false } }),
+    });
+    const runtime = x.runtime;
+    const normalizer = new EventNormalizer(context(input), event => runtime.emit(context(input), event.type, event));
+    const unsubscribe = session.subscribe(event => normalizer.accept(event, session));
+    session.agent.streamFunction = async (_model, request) => {
+      streamInputs.push(request.messages.filter(message => message.role === 'user').map(message => text(message.content)));
+      if (interrupted) await heldFirst;
+      const message = {
+        role: 'assistant' as const,
+        content: [{ type: 'text' as const, text: interrupted ? '' : continuation }],
+        api: model.api, provider: model.provider, model: model.id,
+        stopReason: interrupted ? 'aborted' as const : 'stop' as const, timestamp: Date.now(),
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      };
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'start', partial: message };
+          yield interrupted ? { type: 'error', reason: 'aborted', error: message } : { type: 'done', reason: 'stop', message };
+        },
+        result: async () => message,
+      } as never;
+    };
+    return { session, unsubscribe };
+  };
+
+  await x.command('message.send', { content: original, modelId: 'test/model' }, owner.id, inputId);
+  await vi.waitFor(() => expect(x.runtime.starts).toHaveLength(1));
+  const initial = x.runtime.starts[0];
+  const first = await open(initial, true);
+  const failures = vi.fn();
+  let sessionPath: string;
+  let durablePrefix: Buffer;
+  try {
+    await dispatchInput(first.session, initial, failures);
+    await vi.waitFor(async () => {
+      expect(streamInputs).toHaveLength(1);
+      expect(await x.runtime.adapter.history(first.session.sessionFile!)).toEqual([inputId]);
+    });
+    sessionPath = first.session.sessionFile!;
+    x.runtime.emit(context(initial), 'session', { sessionPath });
+    expect(x.store.get<{ status: string }>('outbox', inputId)?.status).toBe('processing');
+    durablePrefix = readFileSync(sessionPath);
+    expect(durablePrefix.toString().split(original)).toHaveLength(2);
+
+    // The old stream has delivered the input but cannot settle the reopened host.
+    first.unsubscribe();
+    await x.reopen();
+    expect(x.service.thread(owner.id)).toMatchObject({ status: 'interrupted', runId: null, sessionPath });
+    expect(x.store.get<{ status: string }>('outbox', inputId)?.status).toBe('persisted');
+    expect(streamInputs).toHaveLength(1);
+  } finally {
+    first.unsubscribe();
+    releaseFirst();
+    try { await first.session.waitForIdle(); } finally { first.session.dispose(); }
+  }
+
+  const retained = readFileSync(sessionPath);
+  expect(retained.subarray(0, durablePrefix.length)).toEqual(durablePrefix);
+  expect(x.service.thread(owner.id)).toMatchObject({ status: 'interrupted', runId: null });
+  await x.command('run.resume', {}, owner.id);
+  await vi.waitFor(() => expect(x.runtime.starts).toHaveLength(1));
+  const resumed = x.runtime.starts[0];
+  expect(resumed).toMatchObject({ inputId, sessionPath, threadId: owner.id });
+  expect(resumed.runId).not.toBe(initial.runId);
+  expect(resumed.epoch).toBeGreaterThan(initial.epoch);
+  expect(resumed.prompt).toContain('Continue the unfinished handling of previously delivered input ' + inputId);
+  expect(resumed.prompt).not.toContain(original);
+  const second = await open(resumed, false);
+  try {
+    expect(second.session).not.toBe(first.session);
+    expect(second.session.sessionFile).toBe(sessionPath);
+    expect(readFileSync(sessionPath)).toEqual(retained);
+    await dispatchInput(second.session, resumed, failures);
+    await second.session.waitForIdle();
+    await vi.waitFor(() => {
+      expect(x.service.thread(owner.id)).toMatchObject({ status: 'ready', runId: null });
+      expect(x.store.get<{ status: string }>('outbox', inputId)?.status).toBe('handled');
+    });
+    expect(streamInputs).toHaveLength(2);
+    expect(streamInputs[1].filter(prompt => prompt.includes(original))).toHaveLength(1);
+    expect(streamInputs[1].filter(prompt => prompt.includes('Continue the unfinished handling'))).toHaveLength(1);
+    const transcript = readFileSync(sessionPath);
+    expect(transcript.subarray(0, retained.length)).toEqual(retained);
+    expect(transcript.toString().split(original)).toHaveLength(2);
+    expect(await x.runtime.adapter.history(sessionPath)).toEqual([inputId]);
+    expect(x.store.snapshot().messages.filter(message => message.threadId === owner.id).map(message => [message.role, message.content])).toEqual([
+      ['user', original], ['assistant', continuation],
+    ]);
+    expect(failures).not.toHaveBeenCalled();
+    expect(network).not.toHaveBeenCalled();
+  } finally {
+    second.unsubscribe();
+    second.session.dispose();
+  }
 }, 30000);
