@@ -700,7 +700,7 @@ describe.runIf(enabled)('actual App split workspace',()=>{
    const message=page.locator('[data-split-view="thread:thread-a"]').getByRole('textbox',{name:'Message',exact:true});await message.waitFor({state:'visible'});
    const overview=page.getByRole('region',{name:'Project overview window',exact:true});await overview.waitFor({state:'visible'});
    await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();
-   const panel=page.getByRole('complementary',{name:'Workspace panel',exact:true});await panel.waitFor({state:'visible'});
+   const panel=page.getByRole('region',{name:'Workspace panel',exact:true});await panel.waitFor({state:'visible'});
     expect(await panel.getByRole('button',{name:'Close workspace panel',exact:true}).count()).toBe(0);
    await overview.waitFor({state:'hidden'});
     await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name:'Plan',exact:true}).click();
