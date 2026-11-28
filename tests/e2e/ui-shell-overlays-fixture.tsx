@@ -4,6 +4,7 @@ import { ModelPicker } from '../../apps/web/src/ModelPicker';
 import { useModalRegion } from '../../apps/web/src/focus';
 import { Modal } from '../../packages/ui-shell/Modal';
 import { TooltipLayer } from '../../packages/ui-shell/Tooltip';
+import { Toaster, toast } from '../../packages/ui-shell/Toast';
 import { Popover } from '../../packages/ui-shell/Popover';
 import '../../apps/web/src/styles.css';
 
@@ -57,5 +58,14 @@ function Fixture() {
   </>;
 }
 
+function ToastFixture() {
+  return <>
+    <button type="button" onClick={() => toast('Upload failed', {tone:'error'})}>Show error</button>
+    <button type="button" onClick={() => toast('Saved locally', {tone:'success'})}>Show success</button>
+    <button type="button" onClick={() => toast('Short notice', {durationMs:300})}>Show short notice</button>
+    <Toaster/>
+  </>;
+}
+
 const retention = new URLSearchParams(location.search).get('retention');
-createRoot(document.getElementById('root')!).render(retention ? <RetentionFixture mode={retention}/> : <Fixture />);
+createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).has('toast') ? <ToastFixture/> : retention ? <RetentionFixture mode={retention}/> : <Fixture />);

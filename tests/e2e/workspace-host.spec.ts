@@ -15,7 +15,7 @@ declare global { interface Window {
   releaseSettingsGuard?: () => void;
 } }
 
-async function fixture(page: Page, {native = false, delayed = false, unavailable = false, invalidOwner = false, working = true, pinned = false, archiveConfirmation = true, emptyAgents = false, retiredActive = '', retiredSelectionFailsOnce = false, plugins = {} as {fail?: boolean; manifests?: unknown[]}} = {}) {
+async function fixture(page: Page, {native = false, delayed = false, unavailable = false, invalidOwner = false, working = true, pinned = false, archiveConfirmation = true, emptyAgents = false, retiredActive = '', retiredSelectionFailsOnce = false, plugins = {} as {fail?: boolean; manifests?: unknown[]; error?: string}} = {}) {
   const snapshot = taskFixture({root: 'text', elements: {text: {type: 'Text', props: {text: 'Synthetic host fixture'}}}});
   snapshot.threads[0] = {...snapshot.threads[0], id: 'parent-a', title: 'Project investigation', projectId: 'project-a', projectName: 'Alpha', status: working ? 'working' : 'ready', runId: working ? 'run-a' : null};
   snapshot.activeThreadId = 'parent-a'; snapshot.artifacts = []; snapshot.userStates = []; snapshot.data = []; snapshot.messages = [];
@@ -76,7 +76,7 @@ async function fixture(page: Page, {native = false, delayed = false, unavailable
   await page.route('**/api/shell/archive?*', route => route.fulfill({json: {sequence: 1, total: 0, items: [], nextCursor: null}}));
   await page.route('**/api/shell/navigation?*', route => {const archived = new URL(route.request().url()).searchParams.get('archived') === 'true'; return route.fulfill({json: {sequence: 1, total: archived ? 0 : rows.length, items: archived ? [] : rows, nextCursor: null, order: 'created-desc', stats: {pinned: 0, working: 1, waiting: 0, settled: 0, minOrder: 0, maxOrder: 0}}});});
   await page.route('**/api/shell/navigation/*', route => route.fulfill({json: rows.find(row => row.id === new URL(route.request().url()).pathname.split('/').at(-1))}));
-  await page.route('**/api/plugins', route => plugins.fail ? route.fulfill({status: 503, json: {error: {code: 'UNAVAILABLE', message: 'Plugin catalog unavailable'}}}) : route.fulfill({json: {plugins: plugins.manifests ?? []}}));
+  await page.route('**/api/plugins', route => plugins.fail ? route.fulfill({status: 503, json: {error: {code: 'UNAVAILABLE', message: 'Plugin catalog unavailable'}}}) : route.fulfill({json: {plugins: plugins.manifests ?? [], error: plugins.error}}));
   const agent: AgentSummary = {agentId: 'thread:parent-a', parentId: null, rootId: 'thread:parent-a', jobId: null, threadId: 'parent-a', projectId: 'project-a', projectName: 'Alpha', title: 'Project investigation', status: working ? 'working' : 'ready', modelId: 'test/model', currentAction: 'Reviewing sources', reportedPercent: null, createdAt: '2026-11-06', updatedAt: '2026-11-06', orderKey: 'a', revision: 1, archived: false, readOnly: false, metadata: 'thread'};
   await page.route(url => url.pathname.startsWith('/api/agents'), route => {
     const url = new URL(route.request().url());
@@ -817,15 +817,40 @@ test('plugin workspace tabs stay reachable from All Agents and open through the 
 test('a failed plug-in catalog keeps a dismissible toast and a persistent inline retry in All Agents',async({page})=>{
  const plugins:{fail?:boolean;manifests?:unknown[]}={fail:true};
  await fixture(page,{working:false,plugins});
- const inline=page.locator('.workspace-plugin-notice'),toast=page.locator('.shell-notice');
+ const inline=page.locator('.workspace-plugin-notice');
+ const stack=page.getByRole('region',{name:'Notifications',exact:true});
+ const toast=stack.getByRole('status').filter({hasText:'Plug-ins could not be loaded.'});
+ await expect(stack).toHaveCount(1);
  await expect(inline).toContainText('Plug-ins could not be loaded.');
  await expect(toast).toContainText('Plug-ins could not be loaded.');
  await toast.hover();await toast.getByRole('button',{name:'Dismiss notification',exact:true}).click();
  await expect(toast).toHaveCount(0);await expect(inline).toBeVisible();
+ const failedRetry=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/plugins'&&response.status()===503);
+ await inline.getByRole('button',{name:'Retry',exact:true}).click();await failedRetry;
+ await expect(inline.getByRole('button',{name:'Retry',exact:true})).toBeVisible();
+ await expect(toast).toHaveCount(0);
  plugins.fail=false;plugins.manifests=[pluginWorkspaceManifest];
  await inline.getByRole('button',{name:'Retry',exact:true}).click();
  await expect(page.getByRole('button',{name:'Overview',exact:true})).toBeVisible();
  await expect(inline).toHaveCount(0);
+});
+
+test('a plug-in catalog error shares one notification stack across workspace presets',async({page})=>{
+ const message='The sample plug-in could not start.';
+ await fixture(page,{working:false,plugins:{error:message}});
+ const stack=page.getByRole('region',{name:'Notifications',exact:true});
+ const notice=stack.getByRole('status').filter({hasText:message});
+ await expect(notice).toHaveCount(1);
+ await page.getByRole('button',{name:'Workspace',exact:true}).click();
+ await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeVisible();
+ await expect(stack).toHaveCount(1);
+ await expect(stack.getByText(message,{exact:true})).toHaveCount(1);
+ await expect(notice).toHaveCount(1);
+ await notice.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+ await expect(notice).toHaveCount(0);
+ await page.getByRole('button',{name:'All Agents',exact:true}).click();
+ await expect(page.getByRole('region',{name:'Agent workspace',exact:true})).toBeVisible();
+ await expect(notice).toHaveCount(0);
 });
 
 test('All Agents empty copy reconciles with existing conversations and shows a live status dot',async({page})=>{
