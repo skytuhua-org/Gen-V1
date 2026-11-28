@@ -173,7 +173,10 @@ for(const settled of [false,true])for(const outcome of ['accepted','rejected'] a
    await expect(settledRow).toHaveCount(settled?1:0);
   }else{
    await page.evaluate(()=>window.sidebarPresentation.accept!());
-   await expect(page.getByRole('status').filter({hasText:settled?'returned to your threads':'settled'})).toHaveCount(1);
+   await expect(page.getByRole('complementary',{name:'Thread navigation',exact:true}).getByRole('status')).toHaveText(settled?'Selected conversation restored to working':'Selected conversation settled');
+   const feedback=page.locator('.ui-toast').filter({hasText:settled?'returned to your threads':'settled — find it under Settled'});
+   await expect(feedback).toHaveCount(1);
+   await expect(feedback).not.toHaveAttribute('role','status');
    await expect(settledRow).toHaveCount(settled?0:1);
   }
  });
@@ -185,4 +188,76 @@ test('empty Pinned group names the keyboard path and the options menu provides i
   await expect(hint).toHaveAttribute('role', 'note');
   await options(page).click();
   await expect(menu(page).getByRole('menuitem', {name: 'Pin thread', exact: true})).toBeVisible();
+});
+
+test('paused reorder explains search and filter locks while leaving row selection enabled',async({page})=>{
+ const row=page.getByRole('button',{name:'Other conversation Working',exact:true});
+ const search=page.getByRole('textbox',{name:'Search threads',exact:true});
+ const sidebar=page.getByRole('complementary',{name:'Thread navigation',exact:true});
+ const status=sidebar.getByRole('status');
+ const paused='Reordering is paused while search or a filter is active';
+ await search.fill('Other');
+ await expect(row).toBeEnabled();
+ await expect(row).toHaveAttribute('draggable','false');
+ await expect(row).toHaveAttribute('aria-keyshortcuts','Alt+Enter');
+ await expect(row).toHaveAccessibleDescription(paused);
+ await expect(sidebar.locator('[data-thread-id="thread-1"]')).toHaveAttribute('title',paused);
+ expect(await row.evaluate(node=>getComputedStyle(node).cursor)).toBe('default');
+ await expect(status).not.toHaveText(paused);
+ await row.focus();await page.keyboard.press('Alt+ArrowDown');
+ await expect(status).toHaveText(paused);
+ await row.dispatchEvent('keydown',{key:'ArrowDown',altKey:true,repeat:true});
+ await expect(status).toHaveText(paused);
+ expect(await calls(page)).toEqual([]);
+ await row.press('Enter');
+ expect(await calls(page)).toEqual([{select:'thread-1'}]);
+ await search.fill('');
+ await expect(row).toHaveAttribute('draggable','true');
+ await expect(row).toHaveAttribute('aria-keyshortcuts','Alt+Enter Alt+ArrowUp Alt+ArrowDown');
+ await expect(row).not.toHaveAccessibleDescription(paused);
+ await expect(sidebar.locator('[data-thread-id="thread-1"]')).not.toHaveAttribute('title',paused);
+ expect(await row.evaluate(node=>getComputedStyle(node).cursor)).toBe('grab');
+ await sidebar.getByRole('button',{name:/^(Filter threads|Thread filter: all)$/}).click();
+ await expect(row).toHaveAccessibleDescription(paused);
+ await expect(status).toHaveText('Showing working threads');
+ await row.press('Alt+ArrowUp');
+ await expect(status).toHaveText(paused);
+ await sidebar.getByRole('button',{name:'Clear thread filter',exact:true}).click();
+ await expect(row).toHaveAttribute('draggable','true');
+});
+
+test('sidebar confirms only accepted changes in a persistent status region',async({page})=>{
+ const sidebar=page.getByRole('complementary',{name:'Thread navigation',exact:true});
+ const status=sidebar.getByRole('status');
+ await expect(status).toHaveText('Showing all threads');
+ await page.evaluate(()=>{window.sidebarPresentation.mode='hold';});
+ await options(page).click();
+ await menu(page).getByRole('menuitem',{name:'Pin thread',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>typeof window.sidebarPresentation.accept)).toBe('function');
+ await expect(status).toHaveText('Showing all threads');
+ await page.evaluate(()=>window.sidebarPresentation.accept?.());
+ await expect(status).toHaveText('Other conversation pinned');
+ await page.evaluate(()=>{window.sidebarPresentation.mode='reject';});
+ await options(page).click();
+ await menu(page).getByRole('menuitem',{name:'Mark as unread',exact:true}).click();
+ await expect(page.getByText('Presentation was rejected.',{exact:true})).toBeVisible();
+ await expect(status).toHaveText('Other conversation pinned');
+ await page.evaluate(()=>{window.sidebarPresentation.mode='success';});
+ await options(page).click();
+ await menu(page).getByRole('menuitem',{name:'Mark as unread',exact:true}).click();
+ await expect(status).toHaveText('Other conversation marked unread');
+ await options(page).click();
+ await menu(page).getByRole('menuitem',{name:'Settle thread',exact:true}).click();
+ await expect(status).toHaveText('Other conversation settled');
+ const toast=page.locator('.ui-toast',{hasText:'settled — find it under Settled'});
+ await expect(toast).toBeVisible();
+ await expect(toast).not.toHaveAttribute('role','status');
+});
+
+test('sidebar announces detach once the owning action resolves',async({page})=>{
+ const sidebar=page.getByRole('complementary',{name:'Thread navigation',exact:true});
+ await options(page).click();
+ await menu(page).getByRole('menuitem',{name:'Detach thread',exact:true}).click();
+ await expect(sidebar.getByRole('status')).toHaveText('Other conversation detached');
+ expect(await calls(page)).toEqual([{detach:true}]);
 });

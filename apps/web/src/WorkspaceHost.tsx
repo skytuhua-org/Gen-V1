@@ -306,7 +306,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   const answerUnpin = (pending: NonNullable<typeof unpin>, accepted: boolean) => {
     setUnpin(undefined);
     if (!accepted) {pending.decide(false); return;}
-    void mutate(async () => {await command('thread.presentation', pending.patch, pending.row.id); await navigation.refresh();}).then(pending.decide);
+    void mutate(async () => {await command('thread.presentation', pending.patch, pending.row.id); fail(navigation.refresh);}).then(pending.decide);
   };
   const archiveRow = (row: ThreadNavigationRow) => mutate(async () => {
     await command('thread.archive', {}, row.id);
