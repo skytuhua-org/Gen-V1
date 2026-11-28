@@ -10,7 +10,7 @@ import {snapshot,compare} from '../scripts/rc-review/profile-manifest.ts';
 import {flagsOff} from '../scripts/rc-review/flags-off.ts';
 import {hash,pnpm,run,sha} from '../scripts/rc-review/common.ts';
 import {archiveProfile,restoreProfile} from '../scripts/rc-review/profile-archive.ts';
-import {assertCleanLifecycle,parseInterruptMs,runRcReview} from '../scripts/rc-review/run-rc-review.ts';
+import {assertCleanLifecycle,collectNativeVerification,parseInterruptMs,runRcReview} from '../scripts/rc-review/run-rc-review.ts';
 import {compareNativeGeometry} from '../scripts/rc-review/upgrade-check.ts';
 import {closeInstalledSession,withInstalledSessionCleanup} from '../scripts/rc-review/installed-session.ts';
 import type {ChildProcess} from 'node:child_process';
@@ -49,6 +49,22 @@ it('removes a previous phase success before a failed retry can reuse it',async()
  try{await runRcReview({phase:'flags',out:root,build,install});}finally{vi.unstubAllEnvs();quiet.mockRestore();}
  expect(JSON.parse(await readFile(current,'utf8'))).toMatchObject({phase:'flags',passed:true,candidate:'retry'});
  expect(await readFile(join(root,'flags-last-success.json'),'utf8')).toBe(attempt);
+});
+it('keeps the native subprocess failure when diagnostic receipt collection fails',async()=>{
+ const failed=Object.assign(Error('verifier exited 2'),{stdout:'not a receipt',exitCode:2});
+ const parse=Error('unreadable receipt'),collect=vi.fn(async()=>{throw parse;}),capture=async()=>{throw failed;};
+ await expect(collectNativeVerification(capture,collect)).rejects.toBe(failed);
+ expect(collect).toHaveBeenCalledWith('not a receipt',false);
+ await expect(collectNativeVerification(async()=>'{receipt}',collect)).rejects.toBe(parse);
+ expect(collect).toHaveBeenLastCalledWith('{receipt}',true);
+});
+it('rethrows the original failure after a successful best-effort receipt and skips empty stdout',async()=>{
+ const primary=Object.assign(new Error('verify exited 2'),{stdout:'partial log'}),collect=vi.fn(async()=>{});
+ await expect(collectNativeVerification(async()=>{throw primary;},collect)).rejects.toBe(primary);
+ expect(collect).toHaveBeenCalledExactlyOnceWith('partial log',false);
+ const empty=new Error('no stdout');
+ await expect(collectNativeVerification(async()=>{throw empty;},collect)).rejects.toBe(empty);
+ expect(collect).toHaveBeenCalledTimes(1);
 });
 it('requires candidate-bound completed cleanup and explicit opt-in after a failed clean lifecycle',()=>{const receipt={passed:true,setupSha256:'candidate',memoryRetentionRequested:true,cleanup:{status:'uninstalled-owned-installation'}};expect(()=>assertCleanLifecycle(receipt,'candidate')).not.toThrow();expect(()=>assertCleanLifecycle({...receipt,passed:false},'candidate')).toThrow('explicit');expect(()=>assertCleanLifecycle({...receipt,passed:false},'candidate',true)).not.toThrow();for(const invalid of [{},{...receipt,setupSha256:'other'},{...receipt,cleanup:{status:'preserved-for-inspection'}}])expect(()=>assertCleanLifecycle(invalid,'candidate',true)).toThrow('candidate-bound');});
 it('retains captured failure output for review evidence',async()=>{await expect(run(process.execPath,['-e',"console.log('failure evidence');process.exit(3)"],{capture:true})).rejects.toMatchObject({stdout:'failure evidence',exitCode:3});});
