@@ -46,6 +46,10 @@ test.describe('appearance leave guard (#1728)', () => {
     await expect(host.confirm).toBeVisible();
     await expect(host.settings.getByRole('heading', {level: 1, name: 'Appearance', exact: true})).toBeVisible();
     await expect(host.confirm.getByRole('button', {name: 'Keep editing', exact: true})).toBeFocused();
+    const copyStyle = await host.confirm.locator('.discard-appearance-copy').evaluate(element => {const style = getComputedStyle(element); return {color: style.color, lineHeight: style.lineHeight, maxWidth: style.maxWidth, padding: style.padding};});
+    expect(copyStyle).toMatchObject({color: 'rgb(160, 160, 160)', lineHeight: '19.5px', padding: '12px 16px'});
+    expect(copyStyle.maxWidth).not.toBe('none');
+    expect(await host.confirm.locator('.discard-appearance-actions').evaluate(element => getComputedStyle(element).padding)).toBe('0px 16px 16px');
     await host.confirm.getByRole('button', {name: 'Keep editing', exact: true}).click();
     await expect(host.confirm).toBeHidden();
     await expect(host.settings.getByRole('heading', {level: 1, name: 'Appearance', exact: true})).toBeVisible();
@@ -68,6 +72,16 @@ test.describe('appearance leave guard (#1728)', () => {
     await expect(host.confirm).toBeHidden();
     await expect.poll(() => host.commands.some(command => command.type === 'settings.update' && (command.payload.preferences as {wordWrap?: boolean} | undefined)?.wordWrap === false)).toBe(true);
     await expect(host.settings.getByRole('heading', {level: 1, name: 'General', exact: true})).toBeVisible();
+  });
+  test('search-result navigation is guarded without losing the draft', async ({page}) => {
+    const host = await setup(page); await host.makeDirty();
+    await host.settings.getByRole('searchbox', {name: 'Search all settings', exact: true}).fill('Default model');
+    await host.settings.getByRole('button', {name: /^Default model/}).click();
+    await expect(host.confirm).toBeVisible();
+    await host.confirm.getByRole('button', {name: 'Keep editing', exact: true}).click();
+    await expect(host.confirm).toBeHidden();
+    await expect(host.settings.getByRole('heading', {level: 1, name: 'Appearance', exact: true})).toBeVisible();
+    await expect(host.settings.getByText('Unsaved changes', {exact: false})).toBeVisible();
   });
   test('Escape and backdrop on the confirm dialog keep editing', async ({page}) => {
     const host = await setup(page); await host.makeDirty();

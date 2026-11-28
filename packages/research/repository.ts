@@ -68,12 +68,13 @@ export class PersonalResearchRepository implements ResearchProvider {
   document(context: ResearchContext, documentId: string, revision?: number) {
     const head = this.read<DocumentHead>('researchDocument', context, documentId);
     const document = this.read<ResearchDocument>('researchDocument', context, documentId, revision ?? head.revision);
+    const capturedMaterial = this.store.db.prepare('SELECT 1 FROM entities WHERE kind=? AND id=?');
     return {...document, citations: document.citations.map(ref => {
       let status: 'current-capture' | 'stale' | 'unavailable';
       try {
         const source = this.source(context, ref.sourceId, ref.revision);
         this.assertSourceAccess(context, source);
-        if (source.status !== 'captured' || source.sha256 !== ref.sha256 || ref.end > source.bytes) throw Error();
+        if (source.status !== 'captured' || source.sha256 !== ref.sha256 || ref.end > source.bytes || !source.materialId || !capturedMaterial.get('researchMaterial', source.materialId)) throw Error();
         status = this.source(context, ref.sourceId).revision === ref.revision ? 'current-capture' : 'stale';
       } catch {status = 'unavailable';}
       return {...ref, status, liveStatus: 'unverified' as const};

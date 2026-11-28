@@ -51,7 +51,7 @@ async function fixture() {
     if (await realpath(root) !== resolve(root) || !resolve(root).startsWith(await realpath(tmpdir()) + sep) || (await lstat(root)).isSymbolicLink()) throw new Error('Unsafe fixture cleanup');
     await rm(root, { recursive: true, force: true });
   });
-  return { store, baseline, app, open, publish, release, close: () => { incoming?.destroy(); request?.destroy(); }, writes: () => writes, peakQueued: () => peakQueued, subscriptions: () => subscriptions, response: () => response!, ids: () => [...text.matchAll(/^id: (\d+)$/gm)].map(match => Number(match[1])) };
+  return { store, baseline, app, open, publish, release, close: () => { incoming?.destroy(); request?.destroy(); }, writes: () => writes, peakQueued: () => peakQueued, subscriptions: () => subscriptions, response: () => response!, ids: () => [...text.matchAll(/^id: (\d+)$/gm)].map(match => Number(match[1])), raw: () => text };
 }
 
 it('pauses historical replay at backpressure, then delivers replay and live arrivals in order', async () => {
@@ -88,6 +88,20 @@ it('keeps complete ledger reads compatible and validates bounded page sizes', as
   expect(x.store.eventsAfter(x.baseline)).toHaveLength(5);
   expect(x.store.eventsAfter(x.baseline+1, 2).map(event => event.seq)).toEqual([x.baseline+2, x.baseline+3]);
   for (const limit of [0, -1, 1.5, 1001]) expect(() => x.store.eventsAfter(0, limit)).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }));
+});
+
+it('announces a retention gap once when the replay cursor is below the floor', async () => {
+  const x = await fixture(); x.publish(6);
+  x.store.retentionSweep({ keepEvents: 3 });
+  const floor = x.store.retentionFloor();
+  await x.open(0); // after=baseline, below the floor
+  await expect.poll(() => x.raw()).toContain('event: retention-gap');
+  expect(x.raw()).toContain(`"floor":${floor}`);
+  expect([...x.raw().matchAll(/event: retention-gap/g)].length).toBe(1);
+  // Replay resumes at the oldest retained event, including the sweep audit.
+  x.release();
+  await expect.poll(() => x.ids().length).toBe(x.store.eventsAfter(floor - 1).length);
+  expect(x.ids()).toEqual(x.store.eventsAfter(floor - 1).map(event => event.seq));
 });
 
 it('rejects a non-decimal event cursor before registering a reader', async () => {

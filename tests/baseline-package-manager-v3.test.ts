@@ -48,7 +48,7 @@ if (process.argv[2] === '--version') console.log(${JSON.stringify(version)});
       const result = await runBaseline(${JSON.stringify(join(root, 'out'))}, ${JSON.stringify(root)});
       console.log(JSON.stringify(result));
     } catch (error) { console.error(error.code + ': ' + error.message); process.exitCode = 1; }
-  `], { cwd: repository, env: { ...process.env, PATH: bin, Path: bin }, encoding: 'utf8', timeout: 15_000, windowsHide: true, maxBuffer: 128 * 1024 });
+  `], { cwd: repository, env: { ...process.env, PATH: bin, Path: bin, PNPM_HOME: '' }, encoding: 'utf8', timeout: 15_000, windowsHide: true, maxBuffer: 128 * 1024 });
   const observed = () => existsSync(calls) ? readFileSync(calls, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
   return { root, entry, runtime, execute, observed };
 }

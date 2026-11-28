@@ -108,6 +108,21 @@ it('keeps concurrent disposal pending and account ownership held until adapter c
  await f.runtime.dispose();expect(f.pi.runtime.dispose).toHaveBeenCalledOnce();expect(f.official.runtime.dispose).toHaveBeenCalledOnce();
 });
 
+it('retries cancellation after unconfirmed cleanup and releases the lease once',async()=>{
+ const lease={id:'run-lease',nonce:'nonce'},releaseUse=vi.fn(),f=fixture({get:()=>null,claimUse:()=>lease,releaseUse});
+ await f.runtime.start(input());
+ vi.mocked(f.pi.runtime.cancel).mockRejectedValueOnce(Error('Native cleanup is unconfirmed'));
+ try{
+  await expect(f.runtime.cancel(input())).rejects.toThrow('Native cleanup is unconfirmed');
+  expect(releaseUse).not.toHaveBeenCalled();
+  await expect(f.runtime.start({...input(),runId:'other'})).rejects.toMatchObject({code:'RUNTIME_BUSY'});
+  await Promise.all([f.runtime.cancel(input()),f.runtime.cancel(input())]);
+  expect(f.pi.runtime.cancel).toHaveBeenCalledTimes(2);
+  expect(releaseUse).toHaveBeenCalledExactlyOnceWith(lease);
+  await expect(f.runtime.start({...input(),runId:'other'})).resolves.toBeUndefined();
+ }finally{await f.runtime.dispose();}
+});
+
 it('retains failed disposal and its account ownership for every later caller',async()=>{
  const lease={id:'run-lease',nonce:'nonce'},releaseUse=vi.fn(),f=fixture({get:()=>null,claimUse:()=>lease,releaseUse}),failure=Error('Native cleanup is unconfirmed');
  await f.runtime.start(input());vi.mocked(f.pi.runtime.dispose).mockRejectedValue(failure);
@@ -196,4 +211,32 @@ it('denies a descendant Pi junction before actual session validation can resolve
  // The underlying lexical-root validator alone follows this junction into B.
  expect(await validateSessionPath(aRoot,aSession)).toBe(join(bSessions,'saved.jsonl'));
  await expect(runtime.history(aSession,account.id)).rejects.toMatchObject({code:'CAPABILITY_DENIED'});expect(pi.runtime.history).not.toHaveBeenCalled();await runtime.dispose();
+});
+
+it('keeps healthy provider models while a sibling provider signs in',async()=>{
+ const root=profileFixture();let signingIn:string|null=null;
+ const pi=adapter(),official=adapter(),runtime=createRuntime({dataDir:root,accounts:{get:()=>null,isSigningIn:(id:string)=>id===signingIn}},{pi:()=>pi.runtime,official:()=>official.runtime});
+ vi.mocked(pi.runtime.models).mockResolvedValue([{id:'openai/model',provider:'openai',name:'A'},{id:'github-copilot/model',provider:'github-copilot',name:'B'}]);
+ vi.mocked(official.runtime.models).mockResolvedValue([{id:'gemini-cli/pro',provider:'gemini-cli',name:'C'}]);
+ signingIn='github-copilot';
+ expect(await runtime.models()).toEqual([{id:'openai/model',provider:'openai',name:'A'},{id:'gemini-cli/pro',provider:'gemini-cli',name:'C'}]);
+ // A forced refresh must not reach the signing-in profile: each probeable
+ // provider is refreshed on its own and the signing-in one is skipped.
+ const before=vi.mocked(pi.runtime.models).mock.calls.length;
+ vi.mocked(pi.runtime.models).mockImplementation(async query=>{
+  // One disconnected provider must not discard the others during refresh.
+  if(query?.providerId==='xai')throw Object.assign(new Error('Sign in first.'),{code:'PI_AUTH_REQUIRED'});
+  return [{id:(query?.providerId??'openai')+'/model',provider:query?.providerId??'openai',name:'A'}];
+ });
+ const refreshed=await runtime.models({refresh:true});
+ const refreshQueries=vi.mocked(pi.runtime.models).mock.calls.slice(before).map(args=>args[0]);
+ expect(refreshQueries.length).toBeGreaterThan(0);
+ expect(refreshQueries.every(q=>q?.providerId!=='github-copilot')).toBe(true);
+ expect(refreshQueries.every(q=>q?.refresh===true)).toBe(true);
+ expect(refreshed.some(model=>model.provider==='openai')).toBe(true);
+ // Every provider disconnected: the probe rejects so sign-in guidance wins.
+ vi.mocked(pi.runtime.models).mockRejectedValue(Object.assign(new Error('Sign in first.'),{code:'PI_AUTH_REQUIRED'}));
+ vi.mocked(official.runtime.models).mockRejectedValue(new Error('discovery failed'));
+ await expect(runtime.models({refresh:true})).rejects.toMatchObject({code:'AI_AUTH_REQUIRED'});
+ await runtime.dispose();
 });

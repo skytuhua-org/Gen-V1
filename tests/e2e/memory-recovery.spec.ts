@@ -259,3 +259,83 @@ for (const view of [
   await page.screenshot({ path: info.outputPath(`${view.number}-${view.name}.png`), fullPage: true });
   if (view.failed) { const retry = page.getByRole('button', { name: 'Retry', exact: true }); await retry.scrollIntoViewIfNeeded(); await retry.focus(); await retry.press('Enter'); await expect(editor(page)).toHaveValue(draft.content); }
 });
+
+test('busy copy names the in-flight action for save, delete and add', async ({ page }) => {
+  const pending: Route[] = [];
+  const commands = await mount(page, {}, async route => { pending.push(route); });
+  const settle = async (route: Route, result: unknown = {}) => route.fulfill({ json: { commandId: (route.request().postDataJSON() as { id: string }).id, seq: 2, result } });
+  const editor = page.getByRole('textbox', { name: 'Note decision', exact: true });
+
+  // Saved-note save reads "Saving…".
+  await editor.fill('Unsaved edit.'); await page.getByRole('button', { name: 'Save note', exact: true }).click();
+  const saving = page.getByRole('button', { name: 'Saving…', exact: true });
+  await expect(saving).toBeVisible(); await expect(saving).toBeDisabled();
+  await expect.poll(() => pending.length).toBe(1);
+  await settle(pending.shift()!, { key: 'decision', threadId: 'thread-a', content: 'Unsaved edit.', revision: 4, author: 'user', updatedAt: '2026-11-07T00:00:00Z' });
+  await expect(page.getByRole('button', { name: 'Save note', exact: true })).toBeVisible();
+
+  // Delete reads "Deleting…" and Forget reports the busy state; nothing else starts a command.
+  await page.getByRole('button', { name: 'Forget decision', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Deleting…', exact: true })).toBeVisible();
+  const forgetting = page.getByRole('button', { name: 'Deleting decision', exact: true });
+  await expect(forgetting).toHaveAttribute('aria-busy', 'true'); await expect(forgetting).toBeDisabled();
+  await expect.poll(() => pending.length).toBe(1); expect(commands.filter(item => item.type === 'memory.delete')).toHaveLength(1);
+  await settle(pending.shift()!);
+  await expect(page.getByRole('button', { name: 'Forget decision', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Save note', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Deleting…', exact: true })).toBeHidden();
+
+  // Fresh-form save reads "Adding…"; a rejection restores the idle copy.
+  await page.getByRole('button', { name: 'Add memory note', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Note key', exact: true }).fill('beta');
+  await page.getByRole('textbox', { name: 'New thread note', exact: true }).fill('Body.');
+  await page.getByRole('button', { name: 'Add note', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Adding…', exact: true })).toBeVisible();
+  await expect.poll(() => pending.length).toBe(1);
+  await pending.shift()!.fulfill({ status: 503, json: { error: { code: 'SYNTHETIC_FAILURE', message: 'Synthetic save failed.' } } });
+  await expect(page.getByRole('button', { name: 'Add note', exact: true })).toBeEnabled();
+  await expect(page.locator('.task-memory [role=status].error-text')).toContainText('Synthetic save failed.');
+});
+
+test('editing either field clears a failed save and a later failure is still announced', async ({page}) => {
+  const commands = await mount(page, {notes: []}, async route => {
+    await route.fulfill({status:503,json:{error:{code:'SYNTHETIC_FAILURE',message:'Synthetic note save failed.'}}});
+  });
+  await page.getByRole('button',{name:'Add memory note'}).click();
+  const key = page.getByRole('textbox',{name:'Note key',exact:true});
+  const content = page.getByRole('textbox',{name:'New thread note',exact:true});
+  const save = page.getByRole('button',{name:'Add note',exact:true});
+  const error = page.getByRole('status').filter({hasText:'Synthetic note save failed.'});
+  await key.fill('initial');
+  await content.fill('Initial note.');
+  await save.click();
+  await expect(error).toBeVisible();
+  await key.fill('corrected');
+  await expect(error).toHaveCount(0);
+  await save.click();
+  await expect(error).toBeVisible();
+  await content.fill('Corrected note.');
+  await expect(error).toHaveCount(0);
+  expect(commands).toHaveLength(2);
+});
+
+test('a successful edit clears the preceding note draft journal error', async ({page}) => {
+  await mount(page);
+  await expect(editor(page)).toBeEnabled();
+  await page.evaluate(() => {
+    const transaction = IDBDatabase.prototype.transaction;
+    IDBDatabase.prototype.transaction = function (store, mode, options) {
+      if (mode === 'readwrite' && store === 'entries') {
+        IDBDatabase.prototype.transaction = transaction;
+        throw new DOMException('Synthetic note journal write failure');
+      }
+      return transaction.call(this,store,mode,options);
+    };
+  });
+  const error = page.getByRole('status').filter({hasText:'Draft recovery could not be saved.'});
+  await editor(page).fill('Unpersisted edit.');
+  await expect(error).toBeVisible();
+  await editor(page).fill('Persisted edit.');
+  await expect(error).toHaveCount(0);
+  await page.evaluate(() => window.memoryFixture.flush());
+});

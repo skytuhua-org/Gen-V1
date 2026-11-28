@@ -7,18 +7,19 @@ export function isComposing(event: KeyboardEvent) {
 }
 
 // Menu and select share navigation; Popover retains placement and Escape ownership.
-export function useListNavigation(items: readonly ListEntry[], choose: (index: number) => void, close: () => void) {
+export function useListNavigation(items: readonly ListEntry[], choose: (index: number) => void, close: () => void, {focusDisabled = false} = {}) {
   const rows = useRef<(HTMLButtonElement | null)[]>([]);
   const search = useRef({ text: '', time: 0 });
   const active = useRef(-1);
   const reset = () => { search.current = { text: '', time: 0 }; };
+  const canFocus = (item?: ListEntry) => Boolean(item && (focusDisabled || !item.disabled));
   const focus = (index: number) => {
-    if (index < 0 || !items[index] || items[index].disabled) return;
+    if (!canFocus(items[index])) return;
     active.current = index;
     rows.current[index]?.focus({ preventScroll: true });
     rows.current[index]?.scrollIntoView({ block: 'nearest' });
   };
-  const edge = (last = false) => last ? items.findLastIndex(item => !item.disabled) : items.findIndex(item => !item.disabled);
+  const edge = (last = false) => last ? items.findLastIndex(canFocus) : items.findIndex(canFocus);
   const type = (key: string, from = active.current) => {
     const now = Date.now();
     search.current = { text: now - search.current.time > 700 ? key : search.current.text + key, time: now };
@@ -26,11 +27,11 @@ export function useListNavigation(items: readonly ListEntry[], choose: (index: n
     const repeated = [...text].every(letter => letter === text[0]);
     const prefix = repeated ? text[0] : text;
     const current = items[from];
-    if (!repeated && current && !current.disabled && current.label.toLowerCase().startsWith(prefix)) return;
+    if (!repeated && current && canFocus(current) && current.label.toLowerCase().startsWith(prefix)) return;
     if (!current) from = -1;
     for (let step = 1; step <= items.length; step++) {
       const index = (from + step + items.length) % items.length;
-      if (!items[index].disabled && items[index].label.toLowerCase().startsWith(prefix)) { focus(index); break; }
+      if (canFocus(items[index]) && items[index].label.toLowerCase().startsWith(prefix)) { focus(index); break; }
     }
   };
   return { rows, focus, edge, type, reset,
@@ -46,10 +47,10 @@ export function useListNavigation(items: readonly ListEntry[], choose: (index: n
         event.preventDefault();
         reset();
         const direction = event.key === 'ArrowDown' ? 1 : -1;
-        if (!items[active.current] || items[active.current].disabled) { focus(edge(direction < 0)); return; }
+        if (!canFocus(items[active.current])) { focus(edge(direction < 0)); return; }
         for (let step = 1; step <= items.length; step++) {
           const next = (active.current + direction * step + items.length) % items.length;
-          if (!items[next].disabled) { focus(next); break; }
+          if (canFocus(items[next])) { focus(next); break; }
         }
       } else if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();

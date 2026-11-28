@@ -7,35 +7,41 @@ import {checkpointOwnerKey,checkpointReviewPaths,disabledCheckpointAdapter,readC
 import './file-checkpoints.css';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
 
-const sources=['Current','Recorded','History'] as const;
+const sources=['Current','Recorded','History','Git history'] as const;
 type Source=typeof sources[number];
+const sourceId=(source:Source)=>source.toLowerCase().replaceAll(' ','-');
 export interface FileCheckpointsProps {
   owner?:CheckpointOwner;preferences:UiPreferences;current:ReactNode;recorded:ReactNode;
-  adapter?:FileCheckpointAdapter;initialSource?:Source;
+  adapter?:FileCheckpointAdapter;initialSource?:Source;history?:ReactNode;
 }
-export function FileCheckpoints({owner,preferences,current,recorded,adapter=disabledCheckpointAdapter,initialSource='Current'}:FileCheckpointsProps){
+export function FileCheckpoints({owner,preferences,current,recorded,adapter=disabledCheckpointAdapter,initialSource='Current',history}:FileCheckpointsProps){
   const [source,setSource]=useState<Source>(initialSource),id=useId();
+  const panels:Record<Source,ReactNode>={
+    Current:current,
+    Recorded:recorded,
+    History:source==='History'&&(owner?<CheckpointHistory key={checkpointOwnerKey(owner)} owner={owner} adapter={adapter} preferences={preferences}/>:<p className="file-checkpoints-note">Checkpoint history unavailable.</p>),
+    'Git history':source==='Git history'&&(history??<p className="file-checkpoints-note">Git history unavailable.</p>),
+  };
   return <div className="file-checkpoints">
     <div className="file-checkpoints-toolbar"><strong>Changes</strong>
-      <div role="tablist" aria-label="Changes source">{sources.map((name,index)=><button key={name} type="button" role="tab" id={`${id}-${name}`} aria-controls={`${id}-body`} aria-selected={source===name} tabIndex={source===name?0:-1} onClick={()=>setSource(name)} onKeyDown={event=>{
+      <div role="tablist" aria-label="Changes source">{sources.map((name,index)=><button key={name} type="button" role="tab" id={`${id}-tab-${sourceId(name)}`} aria-controls={`${id}-panel-${sourceId(name)}`} aria-selected={source===name} tabIndex={source===name?0:-1} onClick={()=>setSource(name)} onKeyDown={event=>{
         if(isComposing(event))return;
         const next=event.key==='ArrowRight'?(index+1)%sources.length:event.key==='ArrowLeft'?(index+sources.length-1)%sources.length:event.key==='Home'?0:event.key==='End'?sources.length-1:null;
         if(next===null)return;event.preventDefault();setSource(sources[next]);event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
       }}>{name}</button>)}</div>
     </div>
-    <div role="tabpanel" id={`${id}-body`} aria-labelledby={`${id}-${source}`} tabIndex={0}>
-      <div hidden={source!=='Current'}>{current}</div><div hidden={source!=='Recorded'}>{recorded}</div>
-      {source==='History'&&(owner?<CheckpointHistory key={checkpointOwnerKey(owner)} owner={owner} adapter={adapter} preferences={preferences}/>:<p className="file-checkpoints-note">Checkpoint history unavailable.</p>)}
-    </div>
+    {sources.map(name=><div key={name} className="file-checkpoints-panel" role="tabpanel" id={`${id}-panel-${sourceId(name)}`} aria-labelledby={`${id}-tab-${sourceId(name)}`} hidden={source!==name} tabIndex={source===name?0:-1}>
+      {panels[name]}
+    </div>)}
   </div>;
 }
-const errorMessage=(cause:unknown)=>cause instanceof Error?cause.message:'Checkpoints could not load. Try again.';
-const plural=(count:number,word:string)=>`${count} ${word}${count===1?'':'s'}`;
-const formatTime=(value:string,preferences:UiPreferences)=>new Date(value).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short',hour12:preferences.timeFormat==='system'?undefined:preferences.timeFormat==='12h'});
+export const errorMessage=(cause:unknown)=>cause instanceof Error?cause.message:'Checkpoints could not load. Try again.';
+export const plural=(count:number,word:string)=>`${count} ${word}${count===1?'':'s'}`;
+export const formatTime=(value:string,preferences:UiPreferences)=>new Date(value).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short',hour12:preferences.timeFormat==='system'?undefined:preferences.timeFormat==='12h'});
 const provenance=(checkpoint:FileCheckpoint)=>checkpoint.provenance.kind==='restore_backup'?'Saved before a restore':'Saved before an edit';
 const statusNote=(status:string)=>status==='missing'?'Not in your files now':status==='binary'?'Binary file, no preview':status==='too_large'?'Too large to preview':status==='unreadable'?'Could not be read':'No preview available';
 const diffLineKind=(line:string)=>line.startsWith('@@')?'hunk':line.startsWith('+')?'add':line.startsWith('-')?'remove':'context';
-function CheckpointDiff({diff}:{diff:string}){
+export function CheckpointDiff({diff}:{diff:string}){
   const all=diff.split('\n'),firstHunk=all.findIndex(line=>line.startsWith('@@'));
   const headerEnd=firstHunk===-1?Math.min(2,all.length):firstHunk;
   const lines=all.filter((line,index)=>index>=headerEnd||!(line.startsWith('--- ')||line.startsWith('+++ ')));

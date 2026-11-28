@@ -180,3 +180,30 @@ it('attempts every idle transport close before reporting a pool shutdown failure
   await expect(pool.take(key({accountId:'different'}))).resolves.toBeNull();
  }finally{await pool.close();}
 });
+
+it('retains a failed timer close, shares its retry, and blocks only the same key until it settles',async()=>{
+ vi.useFakeTimers();
+ const pool=new StatelessTransportPool(), failure=new Error('Synthetic timed close failure');
+ let finish!:()=>void;
+ const delayed=new Promise<void>(accept=>{finish=accept;});
+ const close=vi.fn<()=>Promise<void>>().mockRejectedValueOnce(failure).mockReturnValue(delayed);
+ const owner={...transport(),close},replacement=transport(),other=transport(),otherKey=key({accountId:'other'});
+ try{
+  expect(pool.offer(key(),owner)).toBe(true);
+  await vi.advanceTimersByTimeAsync(STATELESS_IDLE_EXPIRY_MS);
+  expect(close).toHaveBeenCalledOnce();
+  expect(await pool.take(key())).toBeNull();
+  expect(pool.offer(key(),replacement)).toBe(false);
+  expect(pool.offer(otherKey,other)).toBe(true);
+  let settled=false;
+  const retry=pool.invalidate(key()),closing=pool.close().then(()=>{settled=true;});
+  await Promise.resolve();
+  expect(close).toHaveBeenCalledTimes(2);
+  expect(pool.offer(key(),replacement)).toBe(false);
+  expect(settled).toBe(false);
+  finish();await Promise.all([retry,closing]);
+  expect(other.closed).toBe(true);
+  expect(pool.offer(key(),replacement)).toBe(true);
+  await pool.close();expect(replacement.closed).toBe(true);
+ }finally{finish();await pool.close();vi.useRealTimers();}
+});
