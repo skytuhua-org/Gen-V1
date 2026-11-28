@@ -41,6 +41,15 @@ async function fixture(page:Page,started=false){
  return {...host,envelope,commands,workspaceCommands};
 }
 
+// Below the composer overflow breakpoint tier-2 actions live in the ⋯ menu;
+// click the real control when it is visible, otherwise go through the menu.
+async function composerAction(page:Page,name:string){
+ const direct=page.getByRole('button',{name,exact:true}).first();
+ if(await direct.isVisible()){await direct.click();return;}
+ await page.getByRole('button',{name:'More composer actions',exact:true}).click();
+ await page.getByRole('menuitem',{name,exact:true}).click();
+}
+
 test('text entry shares its first row with Changes and Create PR at wide and narrow widths',async({page})=>{
  await fixture(page);const draft=page.getByRole('textbox',{name:'Message',exact:true});
  for(const width of [1440,390]){
@@ -54,12 +63,32 @@ test('text entry shares its first row with Changes and Create PR at wide and nar
     return {viewport:[innerWidth,innerHeight],topDelta:Math.abs(actions.y-input.y),inputRight:input.right,actionsLeft:actions.left,
      utilities:composer.querySelectorAll('.composer-header-utilities').length,height:composer.getBoundingClientRect().height,overflow:document.documentElement.scrollWidth-innerWidth};
    });
-   expect(bounds.viewport).toEqual([width,900]);expect(bounds.topDelta).toBeLessThanOrEqual(6);expect(bounds.inputRight).toBeLessThanOrEqual(bounds.actionsLeft);
+   expect(bounds.viewport).toEqual([width,900]);
+   // Below the overflow breakpoint the task actions collapse into the ⋯ menu.
+   if(width>560){expect(bounds.topDelta).toBeLessThanOrEqual(6);expect(bounds.inputRight).toBeLessThanOrEqual(bounds.actionsLeft);}
    expect(bounds.utilities).toBe(0);expect(bounds.height).toBeLessThan(150);expect(bounds.overflow).toBeLessThanOrEqual(1);
   }).toPass({timeout:5000});
  }
- await draft.fill('Keep this thought');await page.getByRole('button',{name:'Create PR',exact:true}).click();
+ await draft.fill('Keep this thought');await composerAction(page,'Create PR');
  await expect(draft).toHaveValue('Create a pull request for the current changes.\n\nKeep this thought');await expect(draft).toBeFocused();
+});
+
+test('tier-2 composer controls collapse into the overflow menu below 560px and keep working',async({page})=>{
+ await fixture(page);await page.setViewportSize({width:390,height:844});
+ const trigger=page.getByRole('button',{name:'More composer actions',exact:true});
+ await expect(trigger).toBeVisible();
+ await expect(page.getByRole('button',{name:'Create PR',exact:true})).toBeHidden();
+ await trigger.click();
+ const menu=page.getByRole('menu',{name:'More composer actions',exact:true});
+ await expect(menu).toBeVisible();
+ await expect(menu.getByRole('menuitem',{name:'Create PR',exact:true})).toBeVisible();
+ await expect(menu.getByRole('menuitem',{name:'Show live usage',exact:true})).toBeVisible();
+ await menu.getByRole('menuitem',{name:'Show live usage',exact:true}).click();
+ await expect(page.getByRole('region',{name:'Live usage',exact:true})).toBeVisible();
+ // Widening past the breakpoint restores the real controls and closes the menu.
+ await page.setViewportSize({width:1440,height:900});
+ await expect(page.getByRole('button',{name:'Create PR',exact:true})).toBeVisible();
+ await expect(trigger).toBeHidden();
 });
 
 for(const dismissal of ['Cancel','Add resource'] as const)test(`resource picker ${dismissal} preserves a newly focused composer before its deferred frame`,async({page})=>{
@@ -162,7 +191,7 @@ test('a ready plan opens automatically and right-side tools can only be minimize
  const context=page.getByRole('region',{name:'Project overview window',exact:true});
  host.snapshot.data.push({id:planDataId('task-thread'),threadId:'task-thread',revision:1,provenance:PLANNING_PROVENANCE,createdAt:'2026-11-04T00:00:00Z',value:{version:1,title:'Review the next steps',steps:[{id:'inspect',title:'Inspect the current draft',status:'working',requirements:[],agentIds:[]}],agents:[]}});
  await host.publish();const rail=page.getByRole('region',{name:'Task plan: Review the next steps',exact:true});await expect(rail).toBeVisible();await expect(rail.getByText('Inspect the current draft',{exact:true})).toBeVisible();await context.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(context.getByText('Review the next steps',{exact:true})).toBeVisible();await expect(draft).toHaveValue('Keep writing while the plan arrives');
- await page.getByRole('button',{name:'Show live usage',exact:true}).click();const usage=page.getByRole('region',{name:'Live usage',exact:true});await expect(usage).toBeVisible();
+ await composerAction(page,'Show live usage');const usage=page.getByRole('region',{name:'Live usage',exact:true});await expect(usage).toBeVisible();
  for(const tool of [context,usage])await expect(tool.getByRole('button',{name:/close |detach|reset .*position|resize|^move /i})).toHaveCount(0);
  await context.getByRole('button',{name:'Collapse Project overview',exact:true}).click();await expect(context).toHaveAttribute('data-collapsed','true');await expect(context).toBeVisible();
  await context.getByRole('button',{name:'Expand Project overview',exact:true}).click();await expect(context.getByText('Review the next steps',{exact:true})).toBeVisible();

@@ -42,3 +42,16 @@
 }
 :root:is([data-motion=reduced],[data-motion=off]) :is(.composer-toolbar .composer-tool,.composer-toolbar .composer-select,.composer-context-chip),.app-shell[data-panel-animations=false] :is(.composer-toolbar .composer-tool,.composer-toolbar .composer-select,.composer-context-chip){transform:none!important;transition:none!important}
 @media(prefers-reduced-motion:reduce){.composer-toolbar .composer-tool,.composer-toolbar .composer-select,.composer-context-chip{transform:none!important;transition:none!important}}
+
+/* Tier-2 controls collapse into the overflow ⋯ menu below 560px (issue #1132). */
+.composer{container:composer-box/inline-size}
+.composer-overflow{display:none}
+@container composer-box (max-width:560px){
+ .composer-secondary-actions,.composer-project-controls .saved-drafts-trigger,.composer-project-controls .composer-usage-launcher,.composer-runtime-controls .context-anchor,.composer-runtime-controls .composer-voice{position:absolute;inset-inline-start:0;inset-block-start:0;visibility:hidden;pointer-events:none}
+ .composer-overflow{display:inline-flex}
+}
+.composer-overflow-menu{background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--elevation);min-width:180px;padding:4px}
+.composer-overflow-item{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:6px 8px;border:0;border-radius:4px;background:transparent;font-size:12px;color:var(--text);text-align:left;cursor:pointer}
+.composer-overflow-item:disabled{opacity:.5;cursor:default}
+.composer-overflow-item:focus{outline:2px solid var(--ui-focus-ring);outline-offset:-2px}
+@media(hover:hover) and (pointer:fine){.composer-overflow-item:hover:not(:disabled){background:var(--hover)}}
