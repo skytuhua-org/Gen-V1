@@ -9,6 +9,34 @@ import {journalFlush,journalReadRecord,journalWrite} from '../../apps/web/src/jo
 import {sameLogicalOwner,type LogicalOwnerV1,type SourceRefV1} from '../../packages/contracts/source-selection';
 import type {OutputScrollAnchor,WorkbenchOutputRow} from '../../apps/web/src/workbench-window';
 const transformedMessage='| Column |\n| --- |\n| left\\|right |\n\nPlain later left|right';
+const mutableText='Mutable canonical source text.';
+function MutableSelectionFixture(){
+ const [action,setAction]=useState(''),[shape,setShape]=useState<'plain'|'split'|'transformed'|'removed'>('plain'),[uiCaption,setUiCaption]=useState('Copy'),[addUi,setAddUi]=useState(false),release=useRef<(()=>void)|null>(null),[held,setHeld]=useState(false);
+ const body=shape==='transformed'
+  ?<div data-source-transformed="true"><span>{mutableText}</span></div>
+  :shape==='split'
+   ?<p id="mutable-text"><span>Mutable canonical</span><span> source text.</span>{addUi&&<span data-source-selection-ui="true" contentEditable={false}><button type="button" onClick={event=>event.preventDefault()}>{uiCaption}</button></span>}</p>
+   :shape==='removed'
+    ?<p id="mutable-text">Replaced bytes</p>
+    :<p id="mutable-text">{mutableText}{addUi&&<span data-source-selection-ui="true" contentEditable={false}><button type="button" onClick={event=>event.preventDefault()}>{uiCaption}</button></span>}</p>;
+ return <main style={{padding:24}}>
+  <SourceSelectionActions text={mutableText} enabled onOpenCanonical={async()=>setAction('canonical')} onAction={async(kind,selection)=>{
+   if(held){await new Promise<void>(resolve=>{release.current=resolve;});release.current=null;}
+   setAction(kind+':'+selection.text);
+  }}>{body}</SourceSelectionActions>
+  <div className="fixture-controls">
+   <button type="button" data-shape-split onClick={()=>setShape('split')}>Same-text split DOM</button>
+   <button type="button" data-shape-transformed onClick={()=>setShape('transformed')}>Mark transformed</button>
+   <button type="button" data-shape-plain onClick={()=>setShape('plain')}>Restore plain</button>
+   <button type="button" data-shape-removed onClick={()=>setShape('removed')}>Replace bytes</button>
+   <button type="button" data-add-ui onClick={()=>setAddUi(true)}>Add copy control</button>
+   <button type="button" data-mutate-caption onClick={()=>setUiCaption(value=>value+'!')}>Mutate UI caption</button>
+   <label><input type="checkbox" data-hold-action checked={held} onChange={event=>setHeld(event.target.checked)}/>Hold action</label>
+   <button type="button" data-release-action onClick={()=>release.current?.()}>Release action</button>
+  </div>
+  <output data-mutable-action>{action}</output>
+ </main>;
+}
 function Fixture(){const [action,setAction]=useState('');return <main style={{padding:24}}><SourceSelectionActions text="Visible selected text from an assistant." enabled onAction={(kind,selection)=>setAction(kind+':'+selection.text)}><p id="source-text">Visible selected text from an assistant.</p></SourceSelectionActions><button id="background">Other pane</button><output>{action}</output><div data-source-id="forged">Forged selected text</div><section id="transformed-source"><SourceSelectionActions text={transformedMessage} enabled onAction={(kind,selection)=>setAction(kind+':'+selection.start)}><Markdown text={transformedMessage}/></SourceSelectionActions></section></main>;}
 
 function HeldSelectionFixture(){
@@ -144,4 +172,4 @@ function OutputFixture() {
 }
 
 const fixtureKind=new URLSearchParams(location.search).get('fixture');
-createRoot(document.getElementById('root')!).render(fixtureKind==='output'?<OutputFixture/>:fixtureKind==='selection-modal'?<ModalSelectionFixture/>:fixtureKind==='selection-held'?<HeldSelectionFixture/>:<Fixture/>);
+createRoot(document.getElementById('root')!).render(fixtureKind==='output'?<OutputFixture/>:fixtureKind==='selection-modal'?<ModalSelectionFixture/>:fixtureKind==='selection-held'?<HeldSelectionFixture/>:fixtureKind==='selection-mutable'?<MutableSelectionFixture/>:<Fixture/>);

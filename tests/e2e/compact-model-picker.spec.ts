@@ -235,3 +235,41 @@ test('actual composer sends the explicit model and effort on its pinned account'
   });
   expect(snapshot.threads[0].accountId).toBe('pinned-account');
 });
+
+for (const width of [500, 360]) test(`short combined model picker keeps search and a complete result at ${width}px`, async ({page},info) => {
+  await page.setViewportSize({width,height:320});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/compact-model-picker?short=1');
+  await trigger(page).click();
+  const popup=page.locator('.model-picker-popover');
+  const list=page.getByRole('listbox',{name:'Available models'});
+  const field=search(page);
+  await expect(field).toBeFocused();
+  await expect(popup).toHaveCSS('animation-name','model-picker-fade-in');
+  await expect(page.locator('.model-picker-scope')).toBeHidden();
+  await expect(page.getByRole('button',{name:/^Start new task/})).toBeHidden();
+  expect((await list.boundingBox())!.height).toBeGreaterThanOrEqual(66);
+  const popupBox=(await popup.boundingBox())!, fieldBox=(await field.boundingBox())!;
+  expect(fieldBox.y).toBeGreaterThanOrEqual(popupBox.y);
+  expect(fieldBox.y+fieldBox.height).toBeLessThanOrEqual(popupBox.y+popupBox.height);
+  await field.press('ArrowDown');
+  const row=popup.locator('[role=option][data-active=true]');
+  await expect(row).toHaveCount(1);
+  await expect.poll(()=>row.evaluate(node=>{
+    const row=node.getBoundingClientRect(), list=node.closest('[role=listbox]')!.getBoundingClientRect();
+    return row.height>=48&&row.top>=list.top&&row.bottom<=list.bottom+1;
+  })).toBe(true);
+  await expect(page.getByRole('group',{name:'Reasoning',exact:true})).toBeVisible();
+  await page.emulateMedia({forcedColors:'active',reducedMotion:'reduce'});
+  await expect(list.getByRole('option',{selected:true})).toHaveCSS('border-top-style','solid');
+  await page.emulateMedia({forcedColors:'none',reducedMotion:'reduce'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:info.outputPath(`compact-picker-${width}.png`)});
+  await field.fill('no matching fixture model');
+  await expect(list.getByRole('status')).toContainText('No models found');
+  await page.setViewportSize({width,height:341});
+  await expect(page.locator('.model-picker-scope')).toBeVisible();
+  await expect(page.getByRole('button',{name:/^Start new task/})).toBeVisible();
+  await field.press('Escape');
+  await expect(trigger(page)).toBeFocused();
+});

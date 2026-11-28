@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { HarnessError, type ModelInfo, type RunContext, type RuntimeAdapter, type RuntimeCallbacks, type StartRun } from "../contracts/index.ts";
-import { extractInputIds } from "./input-envelope.ts";
+import { messageInputIds } from "./input-envelope.ts";
 import { routeToolCall, sameContext, type ToolRequest } from "./ipc.ts";
 import { safeError } from "./sdk.ts";
 import { taskPaths, validateSessionPath } from "./session.ts";
@@ -45,6 +45,8 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
     void next.finally(() => { if (locks.get(key) === next) locks.delete(key); }).catch(() => {});
     return next;
   }
+  // An observer cannot change confirmed native teardown or veto the next notification.
+  const notifyLifecycle = (notify: () => void) => { try { notify(); } catch { /* Lifecycle observers are independent. */ } };
   const ownsRun = (worker: Worker) => !disposed && !worker.stopping && !worker.authority?.revoked && (!worker.ctx || runs.get(worker.ctx.threadId) === worker);
   const current = (worker: Worker) => ownsRun(worker) && !worker.transportFailed;
   function emit(worker: Worker, type: string, message: string) {
@@ -123,8 +125,6 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
         );
       }
     });
-    // A lifecycle observer cannot veto worker cleanup or the next notification.
-    const notifyExit = (notify: () => void) => { try { notify(); } catch { /* The native worker still needs to be released. */ } };
     const rejectPending = (error: Error) => {
       for (const pending of worker.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
       worker.pending.clear();
@@ -135,9 +135,9 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       didEnd = true;
       rejectPending(new HarnessError("PI_WORKER_EXITED", "Pi worker exited before completing the request. Run pnpm install if the SDK cannot load; retry or sign in with pnpm agent:login."));
       if (worker.active && !worker.stopping) {
-        notifyExit(() => emit(worker, "error", "Pi worker exited unexpectedly. Persisted history will determine which inputs were delivered."));
+        notifyLifecycle(() => emit(worker, "error", "Pi worker exited unexpectedly. Persisted history will determine which inputs were delivered."));
         const ctx = worker.ctx;
-        if (ctx && ownsRun(worker)) notifyExit(() => callbacks?.onEvent({ ...ctx, type: "settled", aborted: true }));
+        if (ctx && ownsRun(worker)) notifyLifecycle(() => callbacks?.onEvent({ ...ctx, type: "settled", aborted: true }));
       }
       worker.active = false;
       if (worker.authority) { worker.authority.settled = true; worker.authority.revoked = true; }
@@ -153,14 +153,14 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       // IPC can fail while a spawned process is still running. Reject pending
       // replies without treating the transport failure as confirmed native exit.
       if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
-        notifyExit(() => emit(worker, "error", safeError(error)));
+        notifyLifecycle(() => emit(worker, "error", safeError(error)));
         ended();
         return;
       }
       const report = current(worker);
       worker.transportFailed = true;
       rejectPending(failedTransport());
-      if (report && ctx) notifyExit(() => callbacks?.onEvent({ ...ctx, type: "error", message: safeError(error) }));
+      if (report && ctx) notifyLifecycle(() => callbacks?.onEvent({ ...ctx, type: "error", message: safeError(error) }));
     });
     return worker;
   }
@@ -283,8 +283,8 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       for (const authority of matching) authority.revoked = true;
       await Promise.all(matching.flatMap(authority => authority.worker ? [terminate(authority.worker)] : []));
       if (!disposed) {
-        callbacks?.onEvent({ ...matching[0].ctx, type: "usage", usage: { activity: "idle" } });
-        callbacks?.onEvent({ ...matching[0].ctx, type: "settled", aborted: true });
+        notifyLifecycle(() => callbacks?.onEvent({ ...matching[0].ctx, type: "usage", usage: { activity: "idle" } }));
+        notifyLifecycle(() => callbacks?.onEvent({ ...matching[0].ctx, type: "settled", aborted: true }));
       }
     },
     compact(ctx, sessionPath, modelId,accountId,memoryCheckpoint) {
@@ -297,7 +297,29 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       if(purpose==='memory-extraction')throw new HarnessError('MEMORY_EXTRACTION_SESSION_UNSUPPORTED','Memory extraction cannot read conversations.');
       if(purpose==='prediction')throw new HarnessError('PREDICTION_SESSION_UNSUPPORTED','Predictions cannot read conversations.');
       const file = await validateSessionPath(storage, sessionPath);
-      return extractInputIds(await readFile(file, "utf8"));
+      const absent = (error: unknown): never => { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new HarnessError("PI_SESSION_MISSING", "Pi session history is missing or moved. Restore the session file or start a new session."); throw error; };
+      // Stream line by line: memory stays bounded, a torn final append is
+      // still skipped, and total or per-record overruns fail closed instead
+      // of blocking resume.
+      const handle = await open(file, "r").catch(absent);
+      try {
+        const ids = new Set<string>(), decoder = new TextDecoder("utf-8"), buffer = Buffer.alloc(1024 * 1024);
+        let pending = "", position = 0;
+        const record = (line: string) => { try { const entry = JSON.parse(line); if (entry?.type === "message") for (const id of messageInputIds(entry.message)) ids.add(id); } catch { /* A torn append is not a delivered input. */ } };
+        for (;;) {
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+          if (!bytesRead) break;
+          position += bytesRead;
+          if (position > 32 * 1024 * 1024) throw new HarnessError("PI_HISTORY_LIMIT", "Pi session history exceeds the bounded reader limit.");
+          pending += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
+          let newline: number;
+          while ((newline = pending.indexOf("\n")) >= 0) { const line = pending.slice(0, newline); pending = pending.slice(newline + 1); if (line.length > 32 * 1024 * 1024) throw new HarnessError("PI_HISTORY_LIMIT", "Pi session history entry exceeds the bounded reader limit."); record(line); }
+          if (pending.length > 32 * 1024 * 1024) throw new HarnessError("PI_HISTORY_LIMIT", "Pi session history entry exceeds the bounded reader limit.");
+        }
+        pending += decoder.decode();
+        if (pending) record(pending);
+        return [...ids];
+      } finally { await handle.close(); }
     },
     async dispose() {
       disposed = true;

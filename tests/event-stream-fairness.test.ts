@@ -19,8 +19,10 @@ function fixture(emitCloseOnDestroy = true) {
   });
   const unsubscribe = vi.fn(), onClose = vi.fn();
   const store: Parameters<typeof streamEvents>[1] = {
+    sequence: events.length ? events[events.length - 1].seq : 0,
     eventsAfter(after: number, limit = events.length) { return events.filter(event => event.seq > after).slice(0, limit); },
     subscribe: () => unsubscribe,
+    retentionFloor: () => 0,
   };
   const shutdown = streamEvents(response as unknown as ServerResponse, store, 0, onClose);
   return { response: response as unknown as ServerResponse, writes, close: () => response.emit('close'), shutdown, unsubscribe, onClose };
@@ -73,8 +75,10 @@ it('destroys active SSE streams and does not wait for a second close event', () 
 it('does not consume stream slots when a response was already closed before registration', () => {
   const streams = new Map<ServerResponse, () => void>();
   const store: Parameters<typeof streamEvents>[1] = {
+    sequence: 0,
     eventsAfter: vi.fn(() => []),
     subscribe: vi.fn(() => vi.fn()),
+    retentionFloor: vi.fn(() => 0),
   };
   // A client can disconnect between Fastify hijack and the stream route.
   // Thirty-two dead responses must not exhaust the 32-reader limit.
@@ -92,8 +96,10 @@ it('releases a failed replay before registering the stream even if destroy emits
   const streams = new Map<ServerResponse, () => void>(), unsubscribe = vi.fn(), destroy = vi.fn();
   const response = Object.assign(new EventEmitter(), { destroy }) as unknown as ServerResponse;
   const store: Parameters<typeof streamEvents>[1] = {
+    sequence: 0,
     eventsAfter() { throw Error('Ledger unavailable'); },
     subscribe() { return unsubscribe; },
+    retentionFloor() { return 0; },
   };
   try {
     registerEventStream(streams, response, store, 0);
@@ -108,8 +114,10 @@ it('rejects a late stream registration after preClose without allocating a subsc
   const destroy = vi.fn(), unsubscribe = vi.fn();
   const response = Object.assign(new EventEmitter(), { write: vi.fn(() => true), destroy }) as unknown as ServerResponse;
   const store: Parameters<typeof streamEvents>[1] = {
+    sequence: 0,
     eventsAfter: vi.fn(() => []),
     subscribe: vi.fn(() => unsubscribe),
+    retentionFloor: vi.fn(() => 0),
   };
   destroyEventStreams(streams);
   registerEventStream(streams, response, store, 0);
@@ -123,8 +131,10 @@ it('releases a reader if shutdown happens during synchronous subscription', () =
   const streams = new Map<ServerResponse, () => void>(), destroy = vi.fn(), unsubscribe = vi.fn();
   const response = Object.assign(new EventEmitter(), { write: vi.fn(() => true), destroy }) as unknown as ServerResponse;
   const store: Parameters<typeof streamEvents>[1] = {
+    sequence: 0,
     eventsAfter: vi.fn(() => []),
     subscribe: vi.fn(() => { destroyEventStreams(streams); return unsubscribe; }),
+    retentionFloor: vi.fn(() => 0),
   };
   registerEventStream(streams, response, store, 0);
   expect(destroy).toHaveBeenCalledOnce();

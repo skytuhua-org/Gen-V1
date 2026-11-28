@@ -12,6 +12,7 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
 import {EMPTY_USAGE,HarnessError,type CompletedWriteReceipt,type RunContext,type RuntimeAdapter,type RuntimeCallbacks,type RuntimeUsage,type StartRun} from '../contracts/index.ts';
 import type {AccountUseLease,RuntimeAccountResolver} from '../contracts/accounts.ts';
+import type {ReviewForkHandleV1,ReviewForkRequestV1} from '../contracts/background-work.ts';
 import {isConnectionProviderId} from '../contracts/connections.ts';
 import {createRuntime} from '../runtime/index.ts';
 import {secureDirectory,within} from '../runtime-official/manifest.ts';
@@ -46,7 +47,11 @@ export interface HermesEngine extends RuntimeAdapter {
  sourceTool(params:Record<string,unknown>,authority?:HermesLibraryAuthority):Promise<unknown>;
  refreshIntegrations(disabledIds:IntegrationId[]):Promise<void>;
 }
-export interface HermesRuntime extends HermesEngine {createTaskRuntime():RuntimeAdapter}
+export interface HermesRuntime extends HermesEngine {createTaskRuntime():RuntimeAdapter;
+ /** S07: callable review/idle fork — allocates an isolated read-only engine the
+  * host drives under the caller's auxiliary budget. */
+ fork(request:ReviewForkRequestV1):ReviewForkHandleV1&{runtime:RuntimeAdapter};
+}
 export interface HermesEngineOptions extends HermesRuntimeOptions {readOnly?:boolean;sharedLibrary?:(params:Record<string,unknown>,authority:HermesLibraryAuthority)=>Promise<unknown>}
 type Owner={automaticRefusalReported?:boolean;contextBinding?:NativeContextBinding;contextRequested?:boolean;contextReads?:number;toolSnapshot?:{sequence:number;count:number;schemaBytes:number;digest:string};progressiveTools?:ReturnType<typeof createProgressiveToolSession>;input:StartRun;source:HermesSourceClient;settings:HermesSettings;tools:Set<string>;path:string;broker:HermesBroker;known:Set<string>;tickets:Map<string,string[]>;entered:Set<string>;lease?:AccountUseLease;done:Promise<void>;finish:()=>void;foreground:boolean;review:boolean;uiSettled:boolean;closing?:Promise<void>;sourceClosing?:Promise<void>;cleanupFailure?:HarnessError;writes:Promise<void>;failure?:unknown;usage:RuntimeUsage[];maintenance?:RunContext;curation?:RunContext;lastMessage?:string;reviewAbort?:AbortController;reviewRelease?:()=>void;libraryRevoked?:boolean;libraryCalls:Set<Promise<unknown>>;memoryCheckpoint?:StartRun['memoryCheckpoint'];checkpointWork?:Promise<unknown>;compactionProtection?:NativeCompactionEnvelopeV1;compactionCommitAttempted?:boolean;compactionCommitAccepted?:boolean};
 type Admission={input:StartRun;maintenance:boolean;curation?:RunContext;revoked:boolean;controller:AbortController;done:Promise<void>;finish():void};
@@ -78,7 +83,8 @@ export function createHermesEngine(options:HermesEngineOptions,dependencies:Herm
  const automaticCompactionCapabilities=new WeakMap<HermesSourceClient,boolean>();
  const contextCapabilities=new WeakMap<HermesSourceClient,boolean>(),nativeCompiler=createNativeContextCompiler();
  let lastBudgetAnchor:InferenceBudgetAnchor|undefined;
- const sourceClosings=new WeakMap<HermesSourceClient,Promise<void>>();
+ const sourceClosings=new WeakMap<HermesSourceClient,Promise<void>>(),sourceDisposeAcknowledged=new WeakSet<HermesSourceClient>();
+ let catalogPending=true;
  let callbacks:RuntimeCallbacks|undefined,client:HermesSourceClient|undefined,ready:Promise<HermesSourceClient>|undefined,frozen:string|undefined,active:Owner|undefined,retained:Owner|undefined,disposed=false,disposing:Promise<void>|undefined,admission:Admission|undefined,transitions:Promise<unknown>=Promise.resolve();
  let integrationConfig:HermesIntegrationConfig={enabled:[],ponytailMode:'off'},integrationProject:string|undefined,integrationRevision=0;
  const revokedIntegrations=new Map<IntegrationId,number>();
@@ -89,7 +95,7 @@ export function createHermesEngine(options:HermesEngineOptions,dependencies:Herm
  function admitted(current:Admission){activeSource();if(admission!==current||current.revoked)throw error('HERMES_RUN_ABORTED','The source admission was cancelled before it could execute.');}
  function exclusive<T>(operation:()=>Promise<T>):Promise<T>{const work=transitions.then(operation);transitions=work.then(()=>{},()=>{});return work;}
  function forget(source:HermesSourceClient){if(client===source){client=undefined;ready=undefined;frozen=undefined;retained=undefined;nativeCompiler.clear();lastBudgetAnchor=undefined;}}
- function closeSource(source:HermesSourceClient):Promise<void>{let closing=sourceClosings.get(source);if(!closing){closing=(async()=>{try{await source.request('agent.dispose');}catch{/* Actual process/host-call teardown below is the cleanup authority. */}await source.dispose();forget(source);})();sourceClosings.set(source,closing);void closing.catch(()=>sourceClosings.delete(source));}return closing;}
+ function closeSource(source:HermesSourceClient):Promise<void>{let closing=sourceClosings.get(source);if(!closing){closing=(async()=>{if(!sourceDisposeAcknowledged.has(source))try{await source.request('agent.dispose');sourceDisposeAcknowledged.add(source);}catch{/* Actual process/host-call teardown below is the cleanup authority. */}await source.dispose();forget(source);})();sourceClosings.set(source,closing);void closing.catch(()=>sourceClosings.delete(source));}return closing;}
  const emitContext=(ctx:RunContext,type:string,value:Record<string,unknown>={})=>{try{callbacks?.onEvent({...value,threadId:ctx.threadId,runId:ctx.runId,epoch:ctx.epoch,type});}catch{/* An observer cannot release a live source/native owner. */}};
  const emit=(owner:Owner,type:string,value:Record<string,unknown>={})=>emitContext(owner.maintenance??owner.input,type,value);
  function usage(owner:Owner,value:RuntimeUsage){owner.usage.push(value);const result={...EMPTY_USAGE,...value};for(const key of ['inputTokens','outputTokens','cacheReadTokens','cacheWriteTokens','cost'] as const)result[key]=owner.usage.every(item=>item[key]!=null)?owner.usage.reduce((sum,item)=>sum+item[key]!,0):null;emit(owner,'usage',{usage:result});}
@@ -353,7 +359,17 @@ export function createHermesEngine(options:HermesEngineOptions,dependencies:Herm
   },
   async nativeHistoryDigest(ctx,path,accountId){activeSource();const previous=retained;if(!previous||previous.source!==client||resolve(path)!==previous.path||ctx.threadId!==previous.input.threadId||(accountId??null)!==(previous.input.accountId??null))return null;const result=await maintenance<{messages?:unknown[];historySha256?:string}>(previous,ctx,'agent.history',{});return typeof result.historySha256==='string'&&Array.isArray(result.messages)?{sha256:result.historySha256,messages:result.messages}:null;},
   history,
-  dispose(){return disposing??=(async()=>{disposed=true;const ticket=admission;if(ticket){ticket.revoked=true;ticket.controller.abort();}const owner=active,source=client;const outcomes=await Promise.allSettled([owner?forceOwner(owner):source?closeSource(source):Promise.resolve(),catalog.dispose()]);if(ticket)await ticket.done;await transitions;const late=client&&client!==source?await Promise.allSettled([closeSource(client)]):[];const failures=[...outcomes,...late].flatMap(result=>result.status==='rejected'?[result.reason]:[]);if(failures.length)throw new AggregateError(failures,'Hermes cleanup could not be confirmed.');})();},
+  dispose(){return disposing??=(async()=>{
+   disposed=true;
+   const ticket=admission;if(ticket){ticket.revoked=true;ticket.controller.abort();}
+   const owner=active,source=client,cleanup=[owner?forceOwner(owner):source?closeSource(source):Promise.resolve()];
+   if(catalogPending)cleanup.push((async()=>{await catalog.dispose();catalogPending=false;})());
+   const outcomes=await Promise.allSettled(cleanup);
+   if(ticket)await ticket.done;await transitions;
+   const late=client&&client!==source?await Promise.allSettled([closeSource(client)]):[];
+   const failures=[...outcomes,...late].flatMap(result=>result.status==='rejected'?[result.reason]:[]);
+   if(failures.length)throw new AggregateError(failures,'Hermes cleanup could not be confirmed.');
+  })().catch(failure=>{disposing=undefined;throw failure;});},
  };return runtime;
 }
 

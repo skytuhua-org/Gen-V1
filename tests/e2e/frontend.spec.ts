@@ -310,7 +310,7 @@ test('workspace layout persists and context unknowns never appear as zero', asyn
   await page.getByRole('complementary', { name: 'Workspace panel', exact: true }).getByRole('button', { name: 'Add surface', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Usage', exact: true }).click();
   const usageDialog = page.getByRole('dialog', { name: 'Usage', exact: true });
-  await expect(usageDialog).toContainText('No usage reported yet');
+  await expect(usageDialog).toContainText('No usage recorded yet');
   await usageDialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await page.reload();
   await expect(page.locator('.app-shell:not(.embedded-thread-app)')).toHaveAttribute('data-sidebar-collapsed', 'true');
@@ -318,7 +318,7 @@ test('workspace layout persists and context unknowns never appear as zero', asyn
   await expect(page.getByRole('tab', { name: 'Artifact', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('button', { name: 'Hide workspace panel', exact: true }).click();
   await page.getByRole('button', { name: 'Inspect context usage' }).click();
-  await expect(page.getByRole('dialog', { name: 'Context inspector' })).toContainText('Not reported');
+  await expect(page.getByRole('dialog', { name: 'Context inspector' })).toContainText('Usage is not reported until the first response completes.');
   await expect(page.getByRole('progressbar', { name: 'Context used' })).toHaveCount(0);
 });
 
@@ -431,6 +431,28 @@ test('reported context categories and accepted compaction remain anchored and ke
   expect(narrowBox.width).toBeGreaterThanOrEqual(320);
   expect(narrowBox.x).toBeGreaterThanOrEqual(0);
   expect(narrowBox.x + narrowBox.width).toBeLessThanOrEqual(390);
+});
+
+test('appearance settings keeps one visible section heading at desktop and narrow widths', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await host(page, populated());
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await dialog.getByRole('button', { name: 'Appearance', exact: true }).click();
+  const visibleAppearanceHeadings = () => page.evaluate(() => Array.from(document.querySelectorAll('.settings-content h1, .settings-content h2, .settings-content legend'))
+    .filter(element => element.textContent?.trim() === 'Appearance')
+    .filter(element => {
+      const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+      return box.width > 1 && box.height > 1 && style.visibility === 'visible' && style.display !== 'none';
+    })
+    .map(element => element.tagName));
+  expect(await visibleAppearanceHeadings()).toEqual(['H1']);
+  await expect(page.locator('.appearance-settings legend')).toHaveClass(/sr-only/);
+  await expect(page.getByRole('combobox', { name: 'Color scheme', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 640, height: 900 });
+  expect(await visibleAppearanceHeadings()).toEqual(['H1']);
+  await expect(page.getByRole('combobox', { name: 'Color scheme', exact: true })).toBeVisible();
 });
 
 test('capture shell and settings review batch', async ({ page }, testInfo) => {
@@ -1367,3 +1389,36 @@ test('keyboard, narrow layout and reduced motion remain usable', async ({ page }
   const duration = await page.locator('.sidebar').evaluate(element => getComputedStyle(element).transitionDuration);
   expect(parseFloat(duration)).toBeLessThan(.01);
 });
+
+test('saved drafts composer slot covers loading, retry and ready states', async ({ page }) => {
+  const initial = populated();
+  initial.threads[0] = { ...initial.threads[0]!, projectId: 'project', workspaceId: 'copy' };
+  const projectContext = { project: { id: 'project', name: 'Project', authority: { kind: 'local' }, createdAt: timestamp }, threadId: 'one', workingCopy: { id: 'copy', path: '/tmp/copy' }, machineName: 'Fixture', editor: { available: false, label: 'Editor' }, branch: null, head: null, changes: { added: null, removed: null, files: null }, lineage: [], scripts: [], capabilities: { git: false, terminal: false, pullRequests: false } };
+  let behavior: 'pending' | 'error' | 'ready' = 'pending';
+  const pending: (() => void)[] = [];
+  await host(page, initial);
+  await page.route('**/api/projects/project/context?*', route => {
+    if (behavior === 'pending') return new Promise<void>(resolve => pending.push(() => { void route.fulfill({ json: projectContext }); resolve(); }));
+    if (behavior === 'error') return route.fulfill({ status: 500, json: { error: { code: 'CONTEXT_FAILED', message: 'Project context failed.' } } });
+    return route.fulfill({ json: projectContext });
+  });
+  await page.goto('/');
+  const trigger = page.getByRole('button', { name: 'Saved drafts', exact: true });
+  await expect(trigger).toBeDisabled();
+  await expect(trigger).toHaveAttribute('title', 'Loading saved drafts…');
+  pending.splice(0).forEach(resolve => resolve());
+  await expect(trigger).toBeEnabled();
+  await trigger.click();
+  await expect(page.getByRole('dialog', { name: 'Saved drafts', exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  behavior = 'error';
+  await page.reload();
+  await expect(trigger).toBeEnabled();
+  await expect(trigger).toHaveAttribute('title', 'Saved drafts are unavailable — click to retry.');
+  behavior = 'ready';
+  await trigger.click();
+  await trigger.click();
+  await expect(page.getByRole('dialog', { name: 'Saved drafts', exact: true })).toBeVisible();
+});
+

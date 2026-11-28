@@ -395,12 +395,17 @@ export class DurableWakeupScheduler {
     if (this.draining) return;
     const stamp = this.now();
     for (const [key, owner] of this.inFlight) {
-      this.store.internal("background.occurrence.heartbeat", null, () => {
-        const occurrence = this.store.get<BackgroundOccurrenceV1>("backgroundOccurrence", key);
-        if (occurrence && occurrence.state === "CLAIMED") this.store.put("backgroundOccurrence", key, null, { ...occurrence, leaseExpiresAtMs: stamp + this.limits.leaseMs, updatedAt: iso(stamp) });
-        const wakeup = this.store.get<WakeupRecord>("backgroundWakeup", owner.wakeupId);
-        if (wakeup?.state === "CLAIMED" && wakeup.occurrenceKey === key) this.store.put("backgroundWakeup", owner.wakeupId, null, { ...wakeup, leaseExpiresAtMs: stamp + this.limits.leaseMs, updatedAt: iso(stamp) });
-      });
+      try {
+        this.store.internal("background.occurrence.heartbeat", null, () => {
+          const occurrence = this.store.get<BackgroundOccurrenceV1>("backgroundOccurrence", key);
+          if (occurrence && occurrence.state === "CLAIMED") this.store.put("backgroundOccurrence", key, null, { ...occurrence, leaseExpiresAtMs: stamp + this.limits.leaseMs, updatedAt: iso(stamp) });
+          const wakeup = this.store.get<WakeupRecord>("backgroundWakeup", owner.wakeupId);
+          if (wakeup?.state === "CLAIMED" && wakeup.occurrenceKey === key) this.store.put("backgroundWakeup", owner.wakeupId, null, { ...wakeup, leaseExpiresAtMs: stamp + this.limits.leaseMs, updatedAt: iso(stamp) });
+        });
+      } catch {
+        // A failed renewal leaves the durable lease unchanged. Expiry and
+        // reconciliation still own recovery; keep renewing independent leases.
+      }
     }
   }
 
@@ -499,7 +504,7 @@ export class DurableWakeupScheduler {
    * its firing held until the explicit resume, and a disabled feature never
    * executes — the occurrence stays durable for an enabled resume/recover. */
   private deliverHeld(wakeup: WakeupRecord): void {
-    if (!this.enabled() || wakeup.paused || wakeup.state !== "PENDING") return;
+    if (this.draining || !this.enabled() || wakeup.paused || wakeup.state !== "PENDING") return;
     for (const occurrence of this.store.all<BackgroundOccurrenceV1>("backgroundOccurrence").filter(item => item.wakeupId === wakeup.wakeupId && item.state === "PENDING" && item.dispatch === "NOT_DISPATCHED")) {
       const delivery = this.claimOccurrence(wakeup.wakeupId, occurrence.occurrenceKey, {
         scheduledDueAtMs: occurrence.scheduledDueAtMs, hostEventId: occurrence.hostEventId,
@@ -568,6 +573,11 @@ export class DurableWakeupScheduler {
         const occurrence = this.store.get<BackgroundOccurrenceV1>("backgroundOccurrence", key);
         if (occurrence && occurrence.state === "CLAIMED") {
           this.store.put("backgroundOccurrence", key, null, { ...occurrence, state: "UNKNOWN", leaseExpiresAtMs: null, updatedAt: iso(stamp) });
+          const wakeup = this.store.get<WakeupRecord>("backgroundWakeup", occurrence.wakeupId);
+          // Clear only the lease for this exact firing. A newer interval may
+          // already own the schedule; the retained UNKNOWN receipt never retries.
+          if (wakeup?.state === "CLAIMED" && wakeup.scheduleRevision === occurrence.scheduleRevision && wakeup.occurrenceKey === key)
+            this.store.put("backgroundWakeup", wakeup.wakeupId, null, { ...wakeup, state: "PENDING", occurrenceKey: null, leaseExpiresAtMs: null, updatedAt: iso(stamp) });
           uncertain++;
         }
       }

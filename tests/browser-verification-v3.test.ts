@@ -240,7 +240,7 @@ it.each(['deleted','replaced'] as const)('a %s required screenshot cannot verify
  finally{await service.dispose();if(saved===undefined)delete process.env.HARNESS_FLAG_VERIFICATION_WORKFLOW_V1;else process.env.HARNESS_FLAG_VERIFICATION_WORKFLOW_V1=saved;}
  expect(assessment.label).toBe('BLOCKED');
  expect(store.all<{label:string}>('assessment','t1').at(-1)?.label).toBe('BLOCKED');
- const panel=verificationPanelModel(store,'t1');expect(panel.label).toBe('BLOCKED');
+ const panel=await verificationPanelModel(store,'t1');expect(panel.label).toBe('BLOCKED');
  expect(panel.rows.every(row=>row.outcome==='PASS')).toBe(true);
  expect(store.all('visualObservation','t1')).toEqual(recorded);
 });

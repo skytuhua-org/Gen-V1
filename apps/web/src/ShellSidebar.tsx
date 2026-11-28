@@ -11,7 +11,6 @@ import {
   GitBranch,
   GitPullRequest,
   ListFilter,
-  LoaderCircle,
   MoreHorizontal,
   PanelLeftClose,
   Pin,
@@ -23,7 +22,7 @@ import {
 import {threadNavigationRevision,type ThreadNavigationRow as Thread} from '../../../packages/contracts/shell-read-models';
 import type { UiPreferences } from '../../../packages/contracts/preferences';
 import type { ShellLayout } from './shell-layout';
-import { ariaKeyShortcuts } from './keyboard-bindings';
+import { ariaKeyShortcuts, shortcutKeys } from './keyboard-bindings';
 import { MotionRegion } from './task-motion';
 import { UpdateControl } from './UpdateControl';
 import { useWorkspace } from './workspace-context';
@@ -55,6 +54,9 @@ export const threadStatus = (thread: Thread) =>
       : thread.status === 'ready'
         ? 'Ready'
         : thread.status.charAt(0).toUpperCase() + thread.status.slice(1);
+
+export const threadRowLabel = (thread: Thread) =>
+  `${thread.title} ${threadStatus(thread)}${thread.presentation?.unread ? ' Unread' : ''}`;
 
 export function projectMonogram(name?: string | null): string {
   const cleaned = (name ?? '').trim();
@@ -160,6 +162,12 @@ export function ShellSidebar({
   const [hoverCache]=useState(createThreadHoverCache<ThreadHoverPRTarget>);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'working' | 'waiting'>('all');
+  const [reorderNotice, setReorderNotice] = useState<string | undefined>();
+  const reorderNoticeFrame = useRef<number>(0);
+  useEffect(() => {
+    setReorderNotice(undefined);
+    return () => cancelAnimationFrame(reorderNoticeFrame.current);
+  }, [search, filter]);
   const [showAllSettled, setShowAllSettled] = useState(false);
   const navRef = useRef<HTMLElement | null>(null);
   const threadMove = useThreadMove(elementRef, matching,
@@ -201,6 +209,29 @@ export function ShellSidebar({
     ensureManualOrder: preferences.projectOrder === 'manual' ? undefined : ensureManualOrder,
     prepareMove: (id, order, viaPointer) => threadMove.prepare(id, order, viaPointer),
     toast,
+    onReorderOutcome: outcome => {
+      let message: string;
+      switch (outcome.kind) {
+        case 'moved':
+          message = `Moved ${outcome.item.title} ${outcome.direction < 0 ? 'up' : 'down'} to position ${outcome.position} of ${outcome.total}`;
+          break;
+        case 'boundary':
+          message = outcome.direction < 0 ? 'Already at the top' : 'Already at the bottom';
+          break;
+        case 'grouping':
+          message = `Cannot move ${outcome.item.title} outside its section`;
+          break;
+        case 'failed':
+          message = `Could not move ${outcome.item.title}`;
+          break;
+        case 'cancelled':
+          message = 'Reorder cancelled';
+          break;
+      }
+      cancelAnimationFrame(reorderNoticeFrame.current);
+      setReorderNotice('');
+      reorderNoticeFrame.current = requestAnimationFrame(() => setReorderNotice(message));
+    },
   });
 
   const renderMenu = (item: Thread) => (
@@ -259,7 +290,7 @@ export function ShellSidebar({
             if (reorder.key(item, event)) return;
             trigger.onKeyDown?.(event);
           }}
-          aria-label={`${item.title} ${threadStatus(item)}`}
+          aria-label={threadRowLabel(item)}
           aria-current={item.id === selectedId ? 'page' : undefined}
           onClick={() => {
             select(item.id);
@@ -272,24 +303,25 @@ export function ShellSidebar({
                 {projectMonogram(item.projectName)}
               </span>
               <span className="thread-item-title">
-                {item.presentation?.unread && <span className="unread-dot" />}
+                {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
                 {item.title}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
+                {isWorking && <span className="thread-run-badge" aria-hidden="true" />}
                 <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
               </span>
             </span>
           ) : (
             <>
               <span className="thread-item-title">
-                {item.presentation?.unread && <span className="unread-dot" />}
+                {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
                 {item.title}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
                 {showStatus && (
                   <span className="thread-item-status">
                     {isWorking ? (
-                      <LoaderCircle size={11} className="spinning" />
+                      <span className="thread-run-badge" aria-hidden="true" />
                     ) : item.status === 'awaiting_input' ? (
                       <span className="pending-dot" />
                     ) : null}
@@ -370,6 +402,10 @@ export function ShellSidebar({
           type="button"
           className="icon-button sidebar-close"
           aria-label={mobile ? 'Close navigation' : 'Collapse sidebar'}
+          title={mobile ? 'Close navigation' : `Collapse sidebar (${shortcutKeys(preferences.keybindings.toggleSidebar)})`}
+          aria-keyshortcuts={ariaKeyShortcuts(['toggle-sidebar'], preferences.keybindings)}
+          aria-expanded={mobile ? open : !layout.sidebarCollapsed}
+          aria-controls="threads-nav"
           onClick={mobile ? close : toggleCollapsed}
         >
           <PanelLeftClose size={16} />
@@ -381,17 +417,35 @@ export function ShellSidebar({
           <input
             ref={searchRef}
             aria-label="Search threads"
+            title={`Search threads (${shortcutKeys(preferences.keybindings.search)})`}
+            aria-keyshortcuts={ariaKeyShortcuts(['search'], preferences.keybindings)}
             placeholder="Search"
             value={search}
             onChange={event => setSearch(event.target.value)}
+            onKeyDown={event => {
+              if (event.key !== 'Escape') return;
+              // Keep the keyup from reaching other Escape handlers (mobile sidebar close).
+              event.stopPropagation();
+              if (search) setSearch('');
+              else event.currentTarget.blur();
+            }}
           />
+          {search.trim().length > 0 && (
+            <button
+              type="button"
+              className="icon-button sidebar-search-clear"
+              aria-label="Clear search"
+              onClick={() => { setSearch(''); searchRef.current?.focus(); }}
+            >
+              <X size={12} />
+            </button>
+          )}
         </div>
         <button
           type="button"
           className={`icon-button sidebar-action-btn sidebar-filter ${filter !== 'all' ? 'selected' : ''}`}
-          aria-label="Filter threads"
-          title={`Filter: ${filter}. Click for ${filter === 'all' ? 'working' : filter === 'working' ? 'waiting' : 'all'} threads`}
-          aria-pressed={filter !== 'all'}
+          aria-label={`Thread filter: ${filter}`}
+          title={`Filter threads — currently ${filter}`}
           onClick={() => setFilter(value => (value === 'all' ? 'working' : value === 'working' ? 'waiting' : 'all'))}
         >
           <ListFilter size={15} />
@@ -411,12 +465,23 @@ export function ShellSidebar({
           type="button"
           className="icon-button sidebar-action-btn new-thread"
           aria-label="New thread"
-          title={`New thread (${preferences.keybindings.newThread})`}
+          title={`New thread (${shortcutKeys(preferences.keybindings.newThread)})`}
+          aria-keyshortcuts={ariaKeyShortcuts(['new-thread'], preferences.keybindings)}
           onClick={create}
           disabled={!loaded || creating}
         >
           <SquarePen size={15} />
         </button>
+      </div>
+      {/* Persistent live region: announcements must update an existing
+          element — mounting a status region is missed by some screen readers. */}
+      <div className="sr-only" role="status" aria-atomic="true">
+        {reorderNotice ?? <>
+        {loaded && !visibleMatching.length
+          ? (search ? (filter === 'all' ? 'No matching threads.' : `No matching ${filter} threads.`) : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.')
+          : search.trim() ? `${visibleMatching.length} matching ${visibleMatching.length === 1 ? 'thread' : 'threads'}`
+          : filter === 'all' ? 'Showing all threads' : `Showing ${filter} threads`}
+        </>}
       </div>
       {filter !== 'all' && (
         <div className="sidebar-filter-chip">
@@ -424,11 +489,11 @@ export function ShellSidebar({
           <button type="button" className="icon-button" aria-label="Clear thread filter" title="Show all threads" onClick={() => setFilter('all')}><X size={12} /></button>
         </div>
       )}
-      <nav className="thread-list" aria-label="Threads" tabIndex={0} ref={navRef}>
+      <nav id="threads-nav" className="thread-list" aria-label="Threads" tabIndex={0} ref={navRef}>
         {group('pinned', 'Pinned', pinned, {
           list: 'pinned',
           keepVisible: !locked,
-          empty: <div className="sidebar-pinned-empty">Drag a thread here to pin it.</div>,
+          empty: <div className="sidebar-pinned-empty" role="note">Pin a thread from its ⋯ menu, or drag it here.</div>,
         })}
         {group('working', 'Working', working, { list: 'working' })}
         {orderedRemaining.length > 0 && <div className="thread-flat-list" data-thread-list="flat">{orderedRemaining.map((item, index) => {
@@ -485,7 +550,7 @@ export function ShellSidebar({
       </nav>
       {navigation}
       <div className="sidebar-footer" aria-label="App controls">
-        <button type="button" onClick={settings} aria-label="Settings" title="Settings">
+        <button type="button" onClick={settings} aria-label="Settings" title={`Settings (${shortcutKeys(preferences.keybindings.openSettings)})`} aria-keyshortcuts={ariaKeyShortcuts(['open-settings'], preferences.keybindings)}>
           <Settings2 size={16} />
           <span>Settings</span>
         </button>

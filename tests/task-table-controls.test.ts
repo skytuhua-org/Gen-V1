@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { columnWidth, cycleSort, keyboardWidth, moveColumn, reconcileOrder, tableIdentity, tableCellText, tableText, tableView } from '../apps/web/src/task-table-model';
+import { columnWidth, cycleSort, keyboardWidth, moveColumn, reconcileOrder, tableIdentity, tableCellText, tableText, tableView, tableRowWindow, measuredRowSample } from '../apps/web/src/task-table-model';
 const columns = [{ key: 'value', label: 'Value' }, { key: 'other', label: 'Value' }];
 describe('local table controls', () => {
   it('clamps resize and applies the panel keyboard step and endpoints', () => {
@@ -91,4 +91,23 @@ it('finds a numeric cell using either the rendered text or the unformatted numbe
   for (const query of [displayed, '1234567']) {
     expect(tableView(rows, columns, query, null).map(row => row.index)).toEqual([0]);
   }
+});
+
+it('bounds rendered rows to a paged window with the remainder reported', () => {
+  const view = Array.from({length: 950}, (_, i) => ({item: {id: i}, index: i}));
+  expect(tableRowWindow(view, 200).rows).toHaveLength(200);
+  expect(tableRowWindow(view, 200).remaining).toBe(750);
+  expect(tableRowWindow(view, 0).rows).toHaveLength(0);
+  expect(tableRowWindow(view.slice(0, 5), 200).remaining).toBe(0);
+  expect(tableRowWindow(view, 950.7).rows).toHaveLength(950); // clamp+floor
+});
+
+it('bounds per-update minima measurement to a strided sample covering the ends', () => {
+  const rows = Array.from({length: 5000}, (_, i) => i);
+  const sample = measuredRowSample(rows, 500);
+  expect(sample.length).toBeLessThanOrEqual(501);
+  expect(sample[0]).toBe(0);
+  expect(sample.at(-1)).toBe(4999);
+  const small = Array.from({length: 50}, (_, i) => i);
+  expect(measuredRowSample(small, 500)).toEqual(small); // small sets pass through untouched
 });

@@ -20,6 +20,7 @@ async function entry(directory: string) {
   const references = [...html.matchAll(/<script\b[^>]*\bsrc=["']\/assets\/(index-[A-Za-z0-9_-]+\.js)["']/g)];
   if (references.length !== 1) throw new Error('Expected one HTML-referenced application entry.');
   const filename = references[0]![1]!, value = await readFile(join(directory, filename));
+  if (value.byteLength === 0) throw new Error('The selected application entry is empty: ' + join(directory, filename));
   return { filename, bytes: value.byteLength, gzipBytes: gzipSync(value).byteLength };
 }
 const before = await entry(resolve('dist/desktop-release-0.2.0/win-unpacked/resources/host/dist/web/assets')), after = await entry(resolve('dist/web/assets'));

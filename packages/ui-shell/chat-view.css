@@ -9,6 +9,8 @@
 .chat-view-header .breadcrumb{min-width:0;overflow:hidden;flex:1}
 .chat-view-header .breadcrumb strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-layout-actions{display:flex;align-items:center;gap:3px;flex:none}
+.chat-view-header .header-actions>.ui-action-trigger{border:1px solid transparent;background:transparent}
+.chat-view-header .header-actions>.ui-action-trigger:hover:not(:disabled){background:var(--hover)}
 .chat-layout-actions .ui-action-trigger{min-width:28px;width:28px;height:28px;min-height:28px;padding:0;justify-content:center}
 .chat-layout-actions .icon-button{width:28px;height:28px;flex:none}
 .chat-layout-actions button{transition:transform var(--ui-motion-press) var(--ui-ease-enter)}
