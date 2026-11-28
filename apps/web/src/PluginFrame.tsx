@@ -4,6 +4,7 @@ import type {ExtensionViewV1} from '../../../packages/contracts/plugin-worker';
 import {parsePluginFrameRequest,pluginFrameReply,pluginFrameSource,pluginWindowOperation} from '../../../packages/plugins/frame-protocol';
 import {authenticated,csrfToken,read} from './api';
 import {DesktopWindowActions,useDesktop,useDesktopCloseGuard} from './desktop-context';
+import {toast} from '../../../packages/ui-shell/Toast';
 import './plugins.css';
 import {desktopSurfaceKey} from '../../../packages/desktop-contract';
 
@@ -113,3 +114,14 @@ function PluginFrameBody({plugin,theme,active=true,surface,workspace,projectColo
   return <section className="plugin-workspace" aria-label={workspace?.title??plugin.name} hidden={!active}>{!surface&&!workspace&&<header className="workspace-header plugin-native-header"><strong>{plugin.name}</strong><DesktopWindowActions/></header>}{error&&<p className="notice" role="alert">{error}{revoked.current?<button className="quiet" onClick={reload}>Reload plug-in</button>:<><button className="quiet" onClick={()=>bridge.current?.postMessage({type:'gen.plugin.retry-saves',session})}>Retry saving drafts</button><button className="quiet" onClick={()=>setError('')}>Dismiss</button></>}</p>}<iframe ref={frame} title={workspace?.title??plugin.name} src={pluginFrameSource(plugin.id,session,initialTheme,surface,workspace)} sandbox="allow-scripts" referrerPolicy="no-referrer" onLoad={()=>{if(loaded.current||!bridge.current||revoked.current){unavailable();return;}loaded.current=true;bridge.current.postMessage({type:'gen.plugin.theme',session,theme});}}/></section>;
 }
 export function usePluginCatalog(enabled=true){const [catalog,setCatalog]=useState<{plugins:PluginManifest[];extensions?:ExtensionViewV1[];theme?:string;error?:string}>({plugins:[]});const [loaded,setLoaded]=useState(false),[failed,setFailed]=useState(false),[attempt,setAttempt]=useState(0);useEffect(()=>{if(!enabled)return;let active=true;void authenticated(()=>fetch('/api/plugins',{credentials:'same-origin',cache:'no-store'})).then(read<{plugins:PluginManifest[];extensions?:ExtensionViewV1[];theme?:string;error?:string}>).then(value=>{if(!Array.isArray(value?.plugins))throw Error('Invalid plug-in catalog');if(active){setCatalog(value);setLoaded(true);setFailed(false);}}).catch(()=>{if(active)setFailed(true);});return()=>{active=false;};},[enabled,attempt]);const retry=useCallback(()=>{setLoaded(false);setFailed(false);setAttempt(value=>value+1);},[]);return {...catalog,loaded,failed,retry};}
+
+const announcedCatalogErrors = new Set<string>();
+
+export function usePluginCatalogNotice(error?: string) {
+  useEffect(() => {
+    const message = error?.trim();
+    if (!message || announcedCatalogErrors.has(message)) return;
+    announcedCatalogErrors.add(message);
+    toast(message, {tone: 'info'});
+  }, [error]);
+}
