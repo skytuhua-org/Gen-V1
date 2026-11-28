@@ -79,7 +79,7 @@ describe('Gemini official headless native continuation', () => {
     await expect(readGeminiNativeHistory(dataDir, manifest)).rejects.toMatchObject({ code: 'OFFICIAL_SESSION_MISMATCH' });
   });
 
-  it.each(['before-exit','after-exit','during-cancel','cancel-timeout','without-final-newline','malformed-clean-close','malformed-failed-close'])('handles native resume stream lifecycle %s', async phase => {
+  it.each(['before-exit','after-exit','during-cancel','cancel-timeout','without-final-newline','malformed-clean-close','malformed-failed-close','receipt-write-failure','throwing-observer'])('handles native resume stream lifecycle %s', async phase => {
     const { dataDir, manifest } = await fixture();
     const children: any[] = []; const calls: any[] = []; const inputs: string[] = [];
     const spawn = vi.fn((file: string, args: string[], settings: any) => {
@@ -105,7 +105,10 @@ describe('Gemini official headless native continuation', () => {
       } }); children.push(child); return child;
     });
     const runtime = createOfficialRuntime({ dataDir }, { spawn: spawn as any });
-    const events: RuntimeEvent[] = []; runtime.configure({ onEvent: event => events.push(event), onTool: async () => null });
+    const events: RuntimeEvent[] = []; runtime.configure({ onEvent: event => {
+      events.push(event);
+      if (phase === 'throwing-observer' && (event.type === 'usage' || event.type === 'error')) throw new Error('Synthetic observer failure');
+    }, onTool: async () => null });
     await runtime.start(input({ sessionPath: manifest.path }));
     await vi.waitFor(() => expect(calls).toHaveLength(2));
     const turn = calls.find(call => call.args.includes('--resume'));
@@ -169,16 +172,52 @@ describe('Gemini official headless native continuation', () => {
       } finally { await runtime.dispose(); }
       return;
     }
+    if (phase === 'receipt-write-failure') {
+      const original = fs.rename;
+      let failedWrite = false;
+      const rename = vi.spyOn(fs, 'rename').mockImplementation(async (source, destination) => {
+        if (destination === manifest.path) {
+          failedWrite = true;
+          throw new Error('Synthetic receipt write failed.');
+        }
+        return original(source, destination);
+      });
+      try {
+        child.emitFrame({ type: 'message', role: 'assistant', content: 'current response', delta: true });
+        await vi.waitFor(() => expect(failedWrite).toBe(true));
+        expect(events.some(event => event.type === 'input.processing' || event.type === 'assistant.message')).toBe(false);
+        child.emitFrame({ type: 'result', status: 'success' });
+        child.exitCode = 0;
+        child.emit('exit', 0, null);
+        child.stdout.end();
+        child.emit('close', 0, null);
+        await vi.waitFor(() => expect(events.filter(event => event.type === 'error').map(event => event.message)).toEqual([
+          'Synthetic receipt write failed.',
+          'The official runtime did not close completely. Account sign-in remains blocked.',
+        ]));
+        expect(events.some(event => event.type === 'input.processing' || event.type === 'assistant.message' || event.type === 'usage' || event.type === 'settled')).toBe(false);
+        expect(Object.values(JSON.parse(await readFile(manifest.path, 'utf8')).inputs)).toContainEqual(expect.objectContaining({ inputIds: ['input-new'], observed: false }));
+      } finally {
+        rename.mockRestore();
+        try { await expect(runtime.dispose()).rejects.toMatchObject({ code: 'RUNTIME_TEARDOWN_FAILED' }); }
+        finally { await rm(dataDir, { recursive: true, force: true }); }
+      }
+      return;
+    }
     child.emitFrame({ type: 'message', role: 'assistant', content: 'current response', delta: true });
     const terminal = { type: 'result', status: 'success', stats: { input_tokens: 4, output_tokens: 2 } };
     if (phase === 'without-final-newline') child.stdout.write(JSON.stringify(terminal)); else child.emitFrame(terminal);
-    if(phase==='before-exit'||phase==='without-final-newline'){child.exitCode = 0; child.emit('exit', 0, null);}
+    if(phase==='before-exit'||phase==='without-final-newline'||phase==='throwing-observer'){child.exitCode = 0; child.emit('exit', 0, null);}
     child.stdout.end();child.emit('close',0,null);
     await vi.waitFor(() => expect(events.some(event => event.type === 'settled')).toBe(true));
     expect(events.find(event => event.type === 'assistant.message')).toMatchObject({ content: 'current response', inputIds: ['input-new'] });
     expect(events.filter(event => event.type === 'input.processing').flatMap(event => event.inputIds)).toEqual(['input-new']);
     expect(JSON.parse(await readFile(manifest.path, 'utf8')).sessionId).toBe(manifest.value.sessionId);
     expect(await scratchFiles(manifest.path)).toEqual([]);
+    if (phase === 'throwing-observer') {
+      expect(events.filter(event => event.type === 'settled')).toHaveLength(1);
+      expect(events.some(event => event.type === 'error')).toBe(false);
+    }
     await runtime.dispose();
   });
 });
