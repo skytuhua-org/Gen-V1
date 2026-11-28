@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import fastifyRateLimit from '@fastify/rate-limit';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
@@ -345,12 +346,15 @@ export async function buildRemoteReadSyncServer(pairing: DevicePairingHost, sync
   // detail; everything else collapses to a generic failure.
   app.setErrorHandler((error, _request, reply) => {
     const known = error instanceof HarnessError, malformed = error instanceof z.ZodError;
-    const code = known ? error.code : malformed ? 'INVALID_INPUT' : 'HOST_ERROR';
-    const status = code === 'NOT_FOUND' ? 404
+    const rateLimited = (error as { statusCode?: unknown }).statusCode === 429;
+    const code = rateLimited ? 'RATE_LIMITED' : known ? error.code : malformed ? 'INVALID_INPUT' : 'HOST_ERROR';
+    const status = rateLimited ? 429 : code === 'NOT_FOUND' ? 404
       : code === 'REMOTE_INPUT_DISABLED' || code === 'CAPABILITY_DENIED' || code === 'DEVICE_GRANT_REVOKED' ? 403
       : known || malformed ? 400 : 500;
-    reply.code(status).send({ error: { code, message: known || malformed ? error.message : 'The remote host could not complete this request' } });
+    reply.code(status).send({ error: { code, message: rateLimited ? 'Too many remote requests. Wait before retrying.' : known || malformed ? error.message : 'The remote host could not complete this request' } });
   });
+  // Precise pairing, credential and grant budgets below remain authoritative; this is a coarse per-socket ceiling.
+  await app.register(fastifyRateLimit, { max: 5000, timeWindow: '1 minute' });
   const rateWindowMs = 60_000;
   const pairingRate = new RequestRateLimit(rateWindowMs);
   const missingCredentialRate = new RequestRateLimit(rateWindowMs);

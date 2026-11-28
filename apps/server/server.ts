@@ -1,4 +1,5 @@
 import Fastify, {type FastifyReply} from "fastify";
+import fastifyRateLimit from "@fastify/rate-limit";
 import type { Socket } from "node:net";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile, stat, readdir, lstat } from "node:fs/promises";
@@ -102,11 +103,13 @@ export async function buildServer(service: Service, options: ServerOptions) {
   app.setErrorHandler((error, _request, reply) => {
     const known = error instanceof HarnessError, malformed = error instanceof z.ZodError || error instanceof URIError;
     const native = typeof (error as { statusCode?: unknown }).statusCode === "number" ? (error as { statusCode: number }).statusCode : undefined;
-    const code = known ? error.code : malformed ? "INVALID_INPUT" : native === 413 ? "RESOURCE_LIMIT" : "HOST_ERROR";
+    const code = native === 429 ? "RATE_LIMITED" : known ? error.code : malformed ? "INVALID_INPUT" : native === 413 ? "RESOURCE_LIMIT" : "HOST_ERROR";
     const status = code === "NOT_FOUND" ? 404 : ["CAPABILITY_DENIED", "AUTH_REQUIRED"].includes(code) ? 403 : known || malformed ? 400 : native !== undefined && native >= 400 && native < 500 ? native : 500;
-    const message = known ? error.message : error instanceof z.ZodError ? "Command envelope is invalid" : error instanceof URIError ? "The request path is invalid" : code === "RESOURCE_LIMIT" ? "The request exceeds its byte limit" : "The host could not complete this request";
+    const message = native === 429 ? "Too many requests. Wait before retrying." : known ? error.message : error instanceof z.ZodError ? "Command envelope is invalid" : error instanceof URIError ? "The request path is invalid" : code === "RESOURCE_LIMIT" ? "The request exceeds its byte limit" : "The host could not complete this request";
     reply.code(status).send({ error: { code, message, ...(known && error.details ? { details: error.details } : {}) } });
   });
+  // Precise workload budgets below remain authoritative; this is a coarse per-socket ceiling.
+  await app.register(fastifyRateLimit, { max: 5000, timeWindow: "1 minute" });
   const desktopBudgets = new Map(Object.keys(desktopLimits).map(group => [group, new RequestRateLimit(60_000)]));
   const rejectedRequests = new RequestRateLimit(60_000);
   app.addHook("onRequest", async (request, reply) => {
