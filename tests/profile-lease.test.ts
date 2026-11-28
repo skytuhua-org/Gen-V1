@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
+import {DatabaseSync} from 'node:sqlite';
 import {acquireProfileLease} from '../apps/server/profile-lease.ts';
 
 const cleanup:(()=>Promise<void>)[]=[];
@@ -13,6 +14,16 @@ async function directory(){const root=await mkdtemp(join(tmpdir(),'harness-profi
 it('uses one exclusive canonical profile lock and releases it without deleting the lease file',async()=>{
  const root=await directory(),first=acquireProfileLease(root);expect(()=>acquireProfileLease(join(root,'.'))).toThrow(expect.objectContaining({code:'PROFILE_IN_USE'}));first.close();first.close();
  const next=acquireProfileLease(root);next.close();expect(await readFile(join(root,'.host-lease.sqlite'))).toBeInstanceOf(Buffer);
+});
+it('releases the real SQLite lock at close without a separate rollback step',async()=>{
+ const root=await directory(),lease=acquireProfileLease(root),path=join(root,'.host-lease.sqlite');
+ const probe=new DatabaseSync(path,{timeout:0});
+ try{
+  expect(()=>probe.exec('BEGIN IMMEDIATE')).toThrow(expect.objectContaining({errcode:5}));
+  lease.close();
+  probe.exec('BEGIN IMMEDIATE');probe.exec('ROLLBACK');
+ }finally{probe.close();}
+ const successor=acquireProfileLease(root);successor.close();
 });
 it.skipIf(process.platform!=='win32')('recognizes a second junction spelling as the same live profile',async()=>{
  const root=await directory(),actual=join(root,'actual'),alias=join(root,'alias');await mkdir(actual);await symlink(actual,alias,'junction');const first=acquireProfileLease(actual);
