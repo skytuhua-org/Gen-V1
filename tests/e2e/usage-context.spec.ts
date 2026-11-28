@@ -11,6 +11,7 @@ const usage = (page: Page) => page.getByRole('dialog', { name: 'Usage', exact: t
 const verification = (page: Page) => page.getByRole('region', {name: 'Verification', exact: true});
 const verificationResult = (requirement: string, freshness = 'CURRENT') => ({verification: {
   label: 'VERIFIED', staleBanner: false,
+  findings: {rows: [], omitted: 0},
   summary: {verified: 1, failed: 0, unverified: 0, blocked: 0, missing: []},
   rows: [{requirement, checkId: 'check-one', check: 'node verify.js', phase: 'TEST', sourceRevision: 'abc123', outcome: 'PASS', freshness, verifier: 'execution-one', evidence: [], missing: []}],
 }});
