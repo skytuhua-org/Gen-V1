@@ -1,3 +1,6 @@
+import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import {readOfficialVersion} from '../scripts/verify-official-distributions.ts';
 import { mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -5,6 +8,11 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { officialRuntimeEnvironment, officialRuntimeHome, officialRuntimeCommand } from '../packages/runtime-official/environment.ts';
 import { openManifest, readManifest, saveManifest } from '../packages/runtime-official/manifest.ts';
+
+vi.mock('node:child_process', async original => {
+  const actual = await original<typeof import('node:child_process')>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 vi.mock('node:fs/promises', async original => {
   const actual = await original<typeof import('node:fs/promises')>();
@@ -116,6 +124,16 @@ describe('official distribution version verification',()=>{
  it('rejects malformed UTF-8 version output without discarding valid Unicode',async()=>{
   await expect(probe("process.stdout.write(Buffer.from([0x31,0xc3]))")).rejects.toThrow('Invalid UTF-8 CLI version output.');
   await expect(probe("process.stdout.write('release café 1.2.3')")).resolves.toBe('release café 1.2.3');
+ });
+ it.each(['stdout','stderr'] as const)('returns a native %s pipe error through the version probe',async stream=>{
+  const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stderr:new PassThrough()});
+  vi.mocked(spawn).mockReturnValueOnce(child as unknown as ReturnType<typeof spawn>);
+  const running=probe('0');
+  const result=running.catch(error=>error);
+  try{
+   expect(()=>child[stream].emit('error',new Error('Synthetic version pipe read failure.'))).not.toThrow();
+   expect(await result).toMatchObject({message:'Official distribution version output could not be read.'});
+  }finally{child.emit('close',0);child.stdout.destroy();child.stderr.destroy();await result;}
  });
  it('keeps a nonempty version from a successfully exited process',async()=>{
   await expect(probe("process.stdout.write('1.2.3\\n')")).resolves.toBe('1.2.3');
