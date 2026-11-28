@@ -6,7 +6,7 @@ const fixture = `
 import React, {useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ProjectContextSurface} from './apps/web/src/ProjectContextSurface';
-function Fixture(){const [projectId,setProject]=useState('a');window.selectProject=setProject;const thread={id:'thread-a',projectId,kind:'main'};return <ProjectContextSurface thread={thread} snapshot={{threads:[thread],data:[]}}/>;}
+function Fixture(){const [projectId,setProject]=useState('a');window.selectProject=setProject;const thread={id:'thread-a',title:'Project conversation',projectId,kind:'main'};return <ProjectContextSurface thread={thread} snapshot={{threads:[thread],data:[]}}/>;}
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 const projectApi = `
