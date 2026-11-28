@@ -1,7 +1,7 @@
 import {createElement,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
 import './sentence-reveal.css';
 import {readMotionPolicy,observeMotionPolicy} from './motion-policy';
-export interface SentenceRevealProps {text:string;children:ReactNode;animate?:boolean;initialReveal?:boolean;className?:string;as?:'div'|'p';revealClassName?:string}
+export interface SentenceRevealProps {text:string;children:ReactNode;animate?:boolean;initialReveal?:boolean;className?:string;as?:'div'|'p';revealClassName?:string;renderRevision?:string}
 interface TextRun {node:Text;start:number;end:number}
 interface TextMap {text:string;runs:TextRun[]}
 interface Reveal {start:number;end:number;created:number;duration:number;boundaries:number[];progress:number;covers:HTMLElement[];edge:HTMLElement|null;timer:ReturnType<typeof setTimeout>|null}
@@ -33,8 +33,9 @@ function proseRects(map:TextMap,start:number,end:number,limit:number){
 function background(root:HTMLElement){for(let node:HTMLElement|null=root;node;node=node.parentElement){const color=getComputedStyle(node).backgroundColor;if(color!=='rgba(0, 0, 0, 0)'&&color!=='transparent')return color;}return getComputedStyle(document.documentElement).getPropertyValue('--surface')||'#fff';}
 
 /** Non-textual grapheme masks preserve the real DOM, selection and accessible prose. */
-export function SentenceReveal({text,children,animate=false,initialReveal=false,className='',as='div',revealClassName='sentence-reveal-veil'}:SentenceRevealProps){
+export function SentenceReveal({text,children,animate=false,initialReveal=false,className='',as='div',revealClassName='sentence-reveal-veil',renderRevision=''}:SentenceRevealProps){
  const root=useRef<HTMLElement|null>(null),layer=useRef<HTMLSpanElement|null>(null),previous=useRef<string|null>(null),reveals=useRef<Reveal[]>([]);
+ const previousText=useRef<string|null>(null),previousRevision=useRef('');
  const selected=useRef<{start:number;end:number;content:string;fullText:string}|null>(null);
  const paint=useRef<(()=>void)|null>(null),frame=useRef(0);
  const [publication,setPublication]=useState(0);
@@ -76,8 +77,9 @@ export function SentenceReveal({text,children,animate=false,initialReveal=false,
     const range=domRange(full,start,end);if(range){const current=getSelection();current?.removeAllRanges();current?.addRange(range);selected.current={...selection,start,end,fullText:full.text};}
    }else selected.current=null;
   }
-  if(!map){clear();previous.current=null;return;}
-  const old=previous.current;previous.current=map.text;
+  if(!map){clear();previous.current=null;previousText.current=text;previousRevision.current=renderRevision;return;}
+  const old=previous.current,canonicalChanged=previousText.current!==text,revisionChanged=previousRevision.current!==renderRevision;
+  previous.current=map.text;previousText.current=text;previousRevision.current=renderRevision;
   const reduced=readMotionPolicy()!=='full';
   const position=()=>{
    const current=textMap(element,true);if(!current)return clear();
@@ -108,6 +110,7 @@ export function SentenceReveal({text,children,animate=false,initialReveal=false,
   };
   paint.current=position;
   if(!animate||reduced){clear();return;}
+  if(revisionChanged&&!canonicalChanged){clear();position();return;}
   if(old===map.text){position();return;}
   if(old===null&&!initialReveal&&!element.closest('[data-entry-phase="entering"]'))return;
   const diff=changedRange(old??'',map.text);
@@ -135,6 +138,6 @@ export function SentenceReveal({text,children,animate=false,initialReveal=false,
   }
   position();
   if(!frame.current){const advance=()=>{frame.current=0;paint.current?.();if(reveals.current.length)frame.current=requestAnimationFrame(advance);};frame.current=requestAnimationFrame(advance);}
- },[text,animate,initialReveal,revealClassName,publication]);
+ },[text,animate,initialReveal,revealClassName,renderRevision,publication]);
  return createElement(as,{ref:root,className:`sentence-reveal ${className}`},children,createElement('span',{ref:layer,className:'sentence-reveal-layer','aria-hidden':true}));
 }

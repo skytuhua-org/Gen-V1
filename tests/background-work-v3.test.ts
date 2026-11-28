@@ -129,6 +129,42 @@ describe("M10-S01/T01 scheduler claims and restart", () => {
     expect(occurrences).toHaveLength(1);
     expect(occurrences[0]!.state).toBe("DELIVERED");
   });
+  it("contains a heartbeat write failure and renews independent active leases", async () => {
+    const f = fixture();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    let complete!: () => void;
+    const finishing = new Promise<void>(resolve => { complete = resolve; });
+    const deliver = vi.fn(async () => { await finishing; return { status: "DELIVERED" as const }; });
+    const scheduler = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver });
+    try {
+      const a = scheduler.register(command("background.wakeup.register"), { taskId: "a", trigger: { kind: "AT_UTC", dueAtMs: f.now() } });
+      const b = scheduler.register(command("background.wakeup.register"), { taskId: "b", trigger: { kind: "AT_UTC", dueAtMs: f.now() } });
+      await scheduler.tick();
+      const firstLease = scheduler.occurrences(a.wakeupId)[0]!.leaseExpiresAtMs!;
+      const original = f.store.internal.bind(f.store);
+      let failed = false;
+      vi.spyOn(f.store, "internal").mockImplementation((event, thread, apply) => {
+        if (event === "background.occurrence.heartbeat" && !failed) { failed = true; throw Error("injected heartbeat write failure"); }
+        return original(event, thread, apply);
+      });
+      scheduler.start();
+      f.advance(BACKGROUND_SCHEDULER_LIMITS.heartbeatMs);
+      expect(() => vi.advanceTimersByTime(BACKGROUND_SCHEDULER_LIMITS.heartbeatMs)).not.toThrow();
+      expect(failed).toBe(true);
+      expect(scheduler.occurrences(a.wakeupId)[0]!.leaseExpiresAtMs).toBe(firstLease);
+      expect(scheduler.occurrences(b.wakeupId)[0]!.leaseExpiresAtMs).toBe(f.now() + BACKGROUND_SCHEDULER_LIMITS.leaseMs);
+      f.advance(BACKGROUND_SCHEDULER_LIMITS.heartbeatMs);
+      vi.advanceTimersByTime(BACKGROUND_SCHEDULER_LIMITS.heartbeatMs);
+      expect(scheduler.occurrences(a.wakeupId)[0]!.leaseExpiresAtMs).toBe(f.now() + BACKGROUND_SCHEDULER_LIMITS.leaseMs);
+      expect(deliver).toHaveBeenCalledTimes(2);
+    } finally {
+      scheduler.stop();
+      vi.useRealTimers();
+      complete();
+      await finishing;
+    }
+  });
+
   it("restart before claim delivers once; restart after uncertain claim never redelivers without reconciliation", async () => {
     const f = fixture();
     let deliveries = 0;
@@ -463,6 +499,39 @@ describe("M10 review regressions", () => {
     expect(scheduler.occurrences(wakeup.wakeupId)).toMatchObject([{ state: "CANCELLED", dispatch: "NOT_DISPATCHED", leaseExpiresAtMs: null }]);
     expect(deliver).not.toHaveBeenCalled();
   });
+  it("preserves a held host event without admitting it during shutdown", async () => {
+    const f = fixture();
+    let finishActive!: () => void;
+    const active = new Promise<{ status: "DELIVERED" }>(resolve => { finishActive = () => resolve({ status: "DELIVERED" }); });
+    let park = true;
+    const deliver = vi.fn(async ({ wakeup }: { wakeup: { taskId: string } }) =>
+      wakeup.taskId === "active" ? active : { status: "DELIVERED" as const });
+    const scheduler = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver,
+      revalidate: ({ wakeup }) => wakeup.taskId === "held" && park ? { ok: false, blockedReason: "WAITING_HUMAN" } : { ok: true } });
+    const register = (taskId: string) => scheduler.register(command("background.wakeup.register"),
+      { taskId, trigger: { kind: "HOST_EVENT", eventKind: "runtime.settled", correlationKey: taskId } });
+    const held = register("held");
+    register("active");
+    scheduler.hostEvent("runtime.settled", "held", "held-event");
+    scheduler.hostEvent("runtime.settled", "active", "active-event");
+    expect(scheduler.schedules().find(item => item.wakeupId === held.wakeupId)?.state).toBe("BLOCKED");
+    expect(deliver).toHaveBeenCalledTimes(1);
+    const draining = scheduler.drain(1_000);
+    park = false;
+    try {
+      scheduler.resume(command("background.wakeup.resume"), held.wakeupId);
+      expect(deliver).toHaveBeenCalledTimes(1);
+      expect(scheduler.occurrences(held.wakeupId)).toMatchObject([{ state: "PENDING", dispatch: "NOT_DISPATCHED" }]);
+    } finally {
+      finishActive();
+      await draining;
+    }
+    const replacement = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver });
+    replacement.recover();
+    await waitFor(() => !replacement.busy);
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(replacement.occurrences(held.wakeupId)).toMatchObject([{ state: "DELIVERED", dispatch: "RECEIPT_CONFIRMED" }]);
+  });
   it("a held firing stranded before resume redelivers through recover()", async () => {
     const f = fixture({ executionGate: async () => ({ allowed: true }), enqueueFollowUp: input => { f.store.put("outbox", input.id, input.threadId, { id: input.id, threadId: input.threadId, content: input.content, status: "persisted", runId: null }); } });
     enable("jobs.backgroundV1");
@@ -616,6 +685,26 @@ describe("M10-S12/T06 shutdown and clock movement", () => {
     expect(scheduler.schedules()[0]!.lastRunAtMs).toBeNull();
     expect(f.store.all("backgroundAdmission")).toHaveLength(0);
     expect(() => f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "MAINTENANCE", title: "late" })).toThrowError(expect.objectContaining({ code: "HOST_CLOSING" }));
+  });
+  it("clears the lease for a drained uncertain occurrence without replaying it after restart", async () => {
+    const f = fixture();
+    let finish!: () => void;
+    const outcome = new Promise<{ status: "UNCERTAIN"; reason: string }>(resolve => { finish = () => resolve({ status: "UNCERTAIN", reason: "Receipt unavailable" }); });
+    const old = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver: () => outcome });
+    const deliver = vi.fn(async () => ({ status: "DELIVERED" as const }));
+    const reopened = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver });
+    cleanups.push(() => { old.stop(); reopened.stop(); });
+    const { wakeupId } = old.register(command("background.wakeup.register"), { taskId: "task", trigger: { kind: "AT_UTC", dueAtMs: f.now() } });
+    try {
+      await old.tick();
+      expect(old.schedules()[0]).toMatchObject({ state: "CLAIMED" });
+      expect((await old.drain(1)).uncertain).toBe(1);
+      reopened.recover();
+      expect(reopened.schedules()[0]).toMatchObject({ state: "PENDING", occurrenceKey: null, leaseExpiresAtMs: null, nextDueAtMs: null });
+      expect(reopened.occurrences(wakeupId)).toMatchObject([{ state: "UNKNOWN", dispatch: "DISPATCHED_UNCONFIRMED", leaseExpiresAtMs: null }]);
+      expect(await reopened.tick()).toEqual([]);
+      expect(deliver).not.toHaveBeenCalled();
+    } finally { finish(); await waitFor(() => !old.busy); }
   });
   it("wall-clock jumps preserve occurrence identity and timezone stays display metadata", async () => {
     const f = fixture();

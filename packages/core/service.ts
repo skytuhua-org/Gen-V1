@@ -247,10 +247,10 @@ export class Service {
     this.research=new PersonalResearchRepository(store,{assertHostActive:()=>{if(this.closed||this.updateClosing)throw new HarnessError('HOST_CLOSING','Gen is closing. Saved work is retained.');}});
     this.predictions=new ComposerPredictions({factory:()=>{if(!options.predictionRuntimeFactory)throw new HarnessError('PREDICTION_UNAVAILABLE','Composer predictions are unavailable in this host.');return options.predictionRuntimeFactory();},current:id=>this.predictionBasis(id)});
     this.planning=new PlanningCoordinator({store,assertRun:ctx=>this.assertRun(ctx),domainContext:(ctx,signal)=>this.context(ctx.threadId,signal,undefined,ctx),runtimeFactory:options.planningRuntimeFactory,canonicalJobs:options.canonicalPlanJobs,observeTool:(call,parent,execute)=>{this.effects.assertAdmissionsEnabled();return this.effectFlags.enabled("audit.effectsV1")||this.effectFlags.enabled("security.authorityV1")?this.effects.invoke({call,ctx:parent,thread:this.thread(parent.threadId),role:"planning_child"},execute):execute();}});
-    // M09: typed multi-agent work. No registered M08 managed-worktree profile
-    // or M06 typed-verification proof exists on this host, so CODE_WORKTREE
-    // and QA expose ROLE_UNAVAILABLE while PLAN_READ/RESEARCH_READ run
-    // read-only through the restricted resolver below.
+    // M09: typed multi-agent work. Native child allocation and exact M02/M03
+    // proof are not registered on this host. Keep CODE_WORKTREE and QA
+    // unavailable; parent workspace identity is not native execution proof.
+    // PLAN_READ/RESEARCH_READ retain the restricted read-only resolver.
     this.planExtensions=new PlanExtensionStore({store});
     this.agentWork=new AgentWorkCoordinator({store,assertRun:ctx=>this.assertRun(ctx),isEnabled:capabilityEnabled,
       resourceResolver:async(_grant,_write,call)=>{const domain=await import('../capabilities/index.ts');return domain.handleDomainTool(call.name,call.args,this.agentReadDomain(_grant.threadId));},
@@ -502,7 +502,7 @@ export class Service {
         if(detail.status!=='pending'||input?.runId!==ctx.runId)return detail;
         changed=true;return {...detail,status:'failed' as const,error};
       });
-      if(changed)this.store.put('request',request.id,ctx.threadId,{...request,revision:request.revision+1,detailRequests:details});
+      if(changed)this.store.put('request',request.id,ctx.threadId,{...request,detailRequests:details});
     }
   }
   thread(id: string | undefined): Thread {
@@ -1497,7 +1497,7 @@ export class Service {
         const request=this.request(thread.id,p.requestId,p.revision);
         if(!request.presentation||!['explain','examples','more-options'].includes(String(p.kind)))throw new HarnessError('INVALID_INPUT','This question has no requested detail');
         if(p.kind!=='more-options'&&!request.presentation.options.some(option=>option.id===p.optionId))throw new HarnessError('INVALID_INPUT','Unknown option');
-        const prior=request.detailRequests?.find(detail=>detail.kind===p.kind&&detail.optionId===p.optionId&&this.store.get<Outbox>('outbox',detail.id)?.status!=='handled');if(prior){if(prior.status!=='pending')this.store.put('request',request.id,thread.id,{...request,revision:request.revision+1,detailRequests:request.detailRequests?.map(item=>item.id===prior.id?{...item,status:'pending',error:undefined}:item)});return {inputId:prior.id,pending:true};}
+        const prior=request.detailRequests?.find(detail=>detail.kind===p.kind&&detail.optionId===p.optionId&&this.store.get<Outbox>('outbox',detail.id)?.status!=='handled');if(prior){if(prior.status!=='pending')this.store.put('request',request.id,thread.id,{...request,detailRequests:request.detailRequests?.map(item=>item.id===prior.id?{...item,status:'pending',error:undefined}:item)});return {inputId:prior.id,pending:true};}
         if((request.detailRequests?.filter(detail=>detail.status==='pending').length??0)>=4)throw new HarnessError('REQUEST_BUSY','Wait for the pending explanation before adding more');
         const detail={id:command.id,kind:p.kind as 'explain'|'examples'|'more-options',...(p.kind!=='more-options'?{optionId:String(p.optionId)}:{}),status:'pending' as const};
         this.store.put('request',request.id,thread.id,{...request,detailRequests:[...(request.detailRequests??[]).filter(item=>item.status==='pending'),detail]});

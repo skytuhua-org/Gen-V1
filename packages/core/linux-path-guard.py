@@ -629,7 +629,7 @@ class DirectoryGuard:
                 target = os.open(destination, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
                 try:
                     target_info = os.fstat(target)
-                    if not stat.S_ISREG(target_info.st_mode) or target_info.st_nlink != 1 or (target_dev, target_ino) != (str(target_info.st_dev), str(target_info.st_ino)) or target_info.st_size > 8 * 1024 * 1024:
+                    if not stat.S_ISREG(target_info.st_mode) or target_info.st_nlink != 1 or (target_dev, target_ino) != (str(target_info.st_dev), str(target_info.st_ino)) or target_info.st_size > 32 * 1024 * 1024:
                         raise PermissionError("Replacement destination identity changed")
                     if digest(target) != target_hash:
                         raise PermissionError("Replacement destination bytes changed")
