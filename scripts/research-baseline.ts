@@ -78,9 +78,11 @@ function installedPnpm(declared: string | null): InstalledPnpm | null {
   const shimmed = (path: string) => path.split(/[\\/]/).includes('corepack');
   let fallback: InstalledPnpm | null = null;
   const pnpmHome = process.env.PNPM_HOME;
+  // PATH order governs: a deliberately shadowed install must win. PNPM_HOME is
+  // a fallback search location only, appended after every PATH entry.
   const directories = [
-    ...(pnpmHome ? [pnpmHome, join(pnpmHome, 'bin')] : []),
     ...(process.env.PATH ?? process.env.Path ?? '').split(delimiter),
+    ...(pnpmHome ? [pnpmHome, join(pnpmHome, 'bin')] : []),
   ].filter(Boolean);
   for (const directory of new Set(directories)) {
     for (const name of ['pnpm', 'pnpm.exe', 'pnpm.cmd', 'pnpm.CMD']) {

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { once } from 'node:events';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, constants, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,6 +23,9 @@ beforeAll(() => {
 });
 // Windows can briefly keep the copied Node executable locked after child exit.
 afterAll(() => { if (directory) rmSync(directory, { recursive: true, force: true, maxRetries: 5 }); });
+// CI runners carry a real install at PNPM_HOME; cases that do not explicitly
+// exercise it must not inherit it. Cases that do re-stub afterwards and win.
+beforeEach(() => { vi.stubEnv('PNPM_HOME', ''); });
 
 function fixture(version = '10.30.3') {
   const root = mkdtempSync(join(directory, 'case '));
@@ -81,6 +84,25 @@ describe('M01 installed package manager admission', () => {
       const resolved = resolvePackageManager(value.root);
       expect(resolved.file).toBe(process.execPath);
       expect(resolved.prefix).toEqual([value.entry]);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('keeps a PATH-shadowed pnpm ahead of a versioned PNPM_HOME install', () => {
+    // Regression: PNPM_HOME is a fallback search location only. A decoy install
+    // carrying exact version metadata must not bypass standard PATH ordering.
+    const shadow = fixture();
+    const decoy = mkdtempSync(join(directory, 'pnpm-home-decoy-'));
+    mkdirSync(join(decoy, 'node_modules', 'pnpm', 'bin'), { recursive: true });
+    writeFileSync(join(decoy, 'node_modules', 'pnpm', 'package.json'), JSON.stringify({ name: 'pnpm', version: '10.30.3' }));
+    writeFileSync(join(decoy, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'), 'throw new Error("decoy must not execute");\n');
+    writeFileSync(join(decoy, 'pnpm.cmd'), '@echo off\r\nexit /b 97\r\n');
+    writeFileSync(join(decoy, 'pnpm'), 'throw decoy\n');
+    vi.stubEnv('PNPM_HOME', decoy);
+    vi.stubEnv('PATH', join(shadow.root, 'bin'));
+    try {
+      const resolved = resolvePackageManager(shadow.root);
+      expect(resolved.file).toBe(process.execPath);
+      expect(resolved.prefix).toEqual([shadow.entry]);
     } finally { vi.unstubAllEnvs(); }
   });
   it('inherits only the configured Corepack cache for offline commands, unless explicitly overridden', async () => {

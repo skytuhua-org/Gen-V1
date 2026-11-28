@@ -33,6 +33,7 @@ function fixture(testDelayMs = 0) {
   const calls = join(root, 'calls.jsonl'), out = join(root, 'out');
   const entry = join(bin, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs');
   mkdirSync(join(bin, 'node_modules', 'pnpm', 'bin'), { recursive: true });
+  writeFileSync(join(bin, 'node_modules', 'pnpm', 'package.json'), JSON.stringify({ name: 'pnpm', version: '10.30.3' }));
   writeFileSync(entry, `const fs = require('node:fs');
 const command = process.argv[2];
 fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ command, pid: process.pid }) + '\\n');
