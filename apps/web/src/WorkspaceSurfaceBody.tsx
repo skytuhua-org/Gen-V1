@@ -15,6 +15,7 @@ import {journalRead,journalWrite,journalSubscribe,journalFlush,journalGeneration
 import {useDesktopCloseGuard} from './desktop-context.tsx';
 import {GitHubSignIn} from './GitHubSignIn.tsx';
 import {FileCheckpoints} from './FileCheckpoints';
+import {splitDiffLines} from './diff-line-kind';
 import {GitHistory} from './GitHistory';
 import {createHttpCheckpointAdapter,disabledCheckpointAdapter,type CheckpointOwner} from './file-checkpoint-api';
 import type {TerminalExcerptComposer} from './TerminalBody';
@@ -39,10 +40,20 @@ function FilesBody({base,query,active,fallback}:{base:string;query:URLSearchPara
 }
 function DiffBody({base,query,active,fallback}:{base:string;query:URLSearchParams;active:boolean;fallback:ReactNode}){
  const{value,error,errorCode,load,setError}=useProjectRequest<GitStatus>(base+'/git?'+query,active),[staged,setStaged]=useState(false),[pending,setPending]=useState(false);
+ const [announcement,setAnnouncement]=useState('');
+ const emptyDiff='No tracked changes in this view.';
+ const diff=staged?value?.stagedDiff:value?.diff;
+ const lines=useMemo(()=>diff?.trim()?splitDiffLines(diff):[],[diff]);
+ const changeStage=(next:boolean)=>{
+  setStaged(next);
+  if(!value)return;
+  const first=(next?value.stagedDiff:value.diff)?.trim().split(/\r?\n/,1)[0]?.slice(0,160);
+  setAnnouncement(`${next?'Staged diff':'Unstaged diff'}. ${first||emptyDiff}`);
+ };
  const apply=async(type:string,path:string)=>{if(!value||value.gitWrite!==true||pending)return;setPending(true);try{await post(base+'/actions',{id:crypto.randomUUID(),type,payload:{paths:[path],revision:value.revision,expectedHead:value.head},...(query.get('threadId')?{threadId:query.get('threadId')}:{})});await load();}catch(error){setError(message(error));}finally{setPending(false);}};
  if(errorCode==='PROJECT_NOT_CONNECTED')return fallback;
  const legacy=(value as (GitStatus&{mode?:string})|null)?.mode==='legacy';
- return <div className="live-review"><div className="panel-toolbar"><strong>Changes</strong><span>{value?.branch}</span><button onClick={()=>void load()}>Refresh</button><label><input type="checkbox" checked={staged} onChange={event=>setStaged(event.target.checked)}/>Staged</label></div>{error&&<p role="status" className="error-text">{error}</p>}{legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}{value&&<><small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length} changed files</small><ul className="live-change-list">{value.files.map(file=><li key={file.path}><span>{file.oldPath?file.oldPath+' → ':''}{file.path}</span><small>{file.binary?'Binary':file.untracked?'Untracked':`${file.index}${file.worktree} +${file.added??'?'} −${file.removed??'?'}`}</small><button disabled={pending||value.gitWrite!==true} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button></li>)}</ul><pre className="live-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{(staged?value.stagedDiff:value.diff)||'No tracked changes in this view.'}</pre></>}</div>;
+ return <div className="live-review"><div className="panel-toolbar"><strong>Changes</strong><span>{value?.branch}</span><button onClick={()=>void load()}>Refresh</button><label><input type="checkbox" checked={staged} onChange={event=>changeStage(event.target.checked)}/>Staged</label></div><p className="sr-only live-diff-announcement" role="status">{announcement}</p>{error&&<p role="status" className="error-text">{error}</p>}{legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}{value&&<><small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length} changed files</small><ul className="live-change-list">{value.files.map(file=><li key={file.path}><span>{file.oldPath?file.oldPath+' → ':''}{file.path}</span><small>{file.binary?'Binary':file.untracked?'Untracked':`${file.index}${file.worktree} +${file.added??'?'} −${file.removed??'?'}`}</small><button disabled={pending||value.gitWrite!==true} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button></li>)}</ul>{lines.length?<pre className="live-diff unified-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{lines.map(({text,kind},index)=><span key={index} data-kind={kind==='context'?undefined:kind}>{text||' '}{'\n'}</span>)}</pre>:<p className="file-checkpoints-note">{emptyDiff}</p>}</>}</div>;
 }
 function ChangesBody({base,query,active,recorded,preferences}:{base:string;query:URLSearchParams;active:boolean;recorded:ReactNode;preferences:UiPreferences}){
  // Enable History only with a host adapter and the context's exact workingCopy.id.
