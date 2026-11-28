@@ -15,7 +15,8 @@ export function mapSelectedText(content:string,selected:string):VisibleSourceSel
 const SOURCE_UI='[data-source-selection-ui]',TRANSFORMED='[data-source-transformed="true"]';
 /** Authored bytes exclude app-owned source UI (copy controls, duplicate raw
  * disclosures) — their captions must never contaminate canonical equality. */
-function measureAuthored(root:HTMLElement):string{
+function measureAuthored(root:HTMLElement):string|null{
+  if(root.matches(TRANSFORMED)||root.querySelector(TRANSFORMED))return null;
   let out='';
   const walk=(node:Node)=>{
     if(node instanceof Element&&node.hasAttribute('data-source-selection-ui'))return;
@@ -25,7 +26,6 @@ function measureAuthored(root:HTMLElement):string{
   for(const child of root.childNodes)walk(child);
   return out;
 }
-function transformed(root:HTMLElement):boolean{return Boolean(root.querySelector(TRANSFORMED));}
 function insideSourceUI(node:Node):boolean{const element=node instanceof Element?node:node.parentElement;return Boolean(element?.closest(SOURCE_UI));}
 function carriesMarker(node:Node):boolean{return node instanceof Element&&(node.hasAttribute('data-source-selection-ui')||node.hasAttribute('data-source-transformed')||Boolean(node.querySelector('[data-source-selection-ui],[data-source-transformed]')));}
 /** Mutations wholly inside app-owned source UI are presentation noise; any
@@ -72,28 +72,35 @@ function visible(range:Range,root:HTMLElement):boolean {
 }
 interface Candidate extends VisibleSourceSelection {range:Range;rendered:string}
 export function SourceSelectionActions({children,text,enabled,onAction,onOpenCanonical}:{text:string;enabled:boolean;onAction:(action:SourceSelectionAction,selection:VisibleSourceSelection)=>void|Promise<void>;onOpenCanonical?:()=>void|Promise<void>;children:ReactNode}) {
-  const root=useRef<HTMLDivElement>(null),toolbar=useRef<HTMLDivElement>(null),authored=useRef(''),latest=useRef({text,enabled,onAction,onOpenCanonical});
+  const root=useRef<HTMLDivElement>(null),toolbar=useRef<HTMLDivElement>(null),latest=useRef({text,enabled,onAction,onOpenCanonical});
   latest.current={text,enabled,onAction,onOpenCanonical};
   const [candidate,setCandidate]=useState<Candidate|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [exactRendering,setExactRendering]=useState(true);
   const [note,setNote]=useState('');
   const describedBy=useId();
   const candidateRef=useRef(candidate);candidateRef.current=candidate;
-  const revision=useRef(0),composing=useRef(false),announceDone=useRef(false),prevCandidate=useRef(candidate),presentationEpoch=useRef(0);
-  const measure=(element:HTMLElement)=>{authored.current=measureAuthored(element);setExactRendering(!transformed(element)&&authored.current===latest.current.text);};
-  useLayoutEffect(()=>{const element=root.current;authored.current=element?measureAuthored(element):'';setExactRendering(Boolean(element&&!transformed(element))&&authored.current===text);revision.current++;setCandidate(null);setError('');setBusy(false);},[text,enabled]);
-  // One observer per enabled root: a lazy renderer can replace authored DOM
-  // while canonical text and enabled stay unchanged. Each delivered batch is
-  // coalesced into one epoch+revision increment, synchronously invalidating
-  // the candidate before exactRendering is recomputed.
+  const revision=useRef(0),composing=useRef(false),announceDone=useRef(false),prevCandidate=useRef(candidate);
+  const invalidate=()=>{
+    revision.current++;
+    candidateRef.current=null;
+    setCandidate(null);
+    setError('');
+    setBusy(false);
+  };
+  useLayoutEffect(()=>{
+    const element=root.current;
+    invalidate();
+    setExactRendering(Boolean(element&&measureAuthored(element)===text));
+  },[text,enabled]);
+  // One observer per enabled root. A delivered authored DOM batch retires the
+  // current action UI without canceling any action already sent to its owner.
   useLayoutEffect(()=>{
     const element=root.current;
     if(!enabled||!element)return;
     const observer=new MutationObserver(records=>{
       if(!records.some(relevantMutation))return;
-      presentationEpoch.current++;revision.current++;
-      candidateRef.current=null;setCandidate(null);setError('');
-      measure(element);
+      invalidate();
+      setExactRendering(measureAuthored(element)===latest.current.text);
     });
     observer.observe(element,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['data-source-selection-ui','data-source-transformed']});
     return()=>observer.disconnect();
@@ -124,7 +131,7 @@ export function SourceSelectionActions({children,text,enabled,onAction,onOpenCan
       // same-turn DOM replacement must fail closed here rather than offer a
       // candidate measured from replaced authored bytes.
       const measured=measureAuthored(element);
-      if(measured!==latest.current.text||transformed(element)||!element.contains(range.startContainer)||!element.contains(range.endContainer)||!visible(range,element)){setCandidate(null);return;}
+      if(measured!==latest.current.text||!element.contains(range.startContainer)||!element.contains(range.endContainer)||!visible(range,element)){setCandidate(null);return;}
       const focused=document.activeElement;
       if(focused&&focused!==document.body&&!element.contains(focused)&&!element.parentElement?.contains(focused)){setCandidate(null);return;}
       const mapped=mapSelectedText(latest.current.text,selection.toString());
@@ -176,11 +183,11 @@ export function SourceSelectionActions({children,text,enabled,onAction,onOpenCan
     if(!value||!element||!element.isConnected||busy||!latest.current.enabled)return;
     // Synchronous guard: a mismatch invalidates the candidate before dispatch
     // and remeasures so canonical access appears when the rendering is inexact.
-    const measured=measureAuthored(element),inexact=measured!==latest.current.text||transformed(element);
+    const measured=measureAuthored(element),inexact=measured!==latest.current.text;
     const stale=measured!==value.rendered||value.range.toString()!==value.text||latest.current.text.slice(value.start,value.end)!==value.text;
     if(inexact||stale||!visible(value.range,element)){
       candidateRef.current=null;setCandidate(null);
-      if(inexact)measure(element);
+      if(inexact)setExactRendering(false);
       return;
     }
     const {startContainer,startOffset,endContainer,endOffset}=value.range;
@@ -198,11 +205,21 @@ export function SourceSelectionActions({children,text,enabled,onAction,onOpenCan
     catch(cause){if(version===revision.current)setError(cause instanceof Error?cause.message:'Source could not be captured.');}
     finally{if(version===revision.current)setBusy(false);}
   }
+  async function openCanonical(){
+    const element=root.current,{onOpenCanonical:open,enabled,text}=latest.current;
+    if(!element?.isConnected||!open||!enabled||busy||measureAuthored(element)===text)return;
+    const version=revision.current;
+    setBusy(true);
+    setError('');
+    try{await open();}
+    catch(cause){if(version===revision.current)setError(cause instanceof Error?cause.message:'Canonical source is unavailable.');}
+    finally{if(version===revision.current)setBusy(false);}
+  }
   return <div className="source-selection" data-escape-scope={candidate?'source-selection':undefined}><div ref={root} tabIndex={enabled?0:undefined} className="source-selection-text" aria-keyshortcuts="shift+ArrowRight control+a shift+f10" aria-describedby={describedBy} data-selection={candidate?'active':undefined}>{children}</div>
     {enabled&&exactRendering&&!candidate&&<span className="source-selection-hint" aria-hidden="true">Shift+arrows select · Ctrl+A all · Shift+F10 actions</span>}
     <span id={describedBy} className="sr-only">Selectable source. Use Shift plus arrow keys to select text, Control A to select all, Shift F10 for actions.</span>
     <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{note}</span>
-    {enabled&&!exactRendering&&<p className="muted source-selection-fallback" role="status">Inline selection is unavailable for this formatted message. {onOpenCanonical?<button type="button" disabled={busy} onClick={()=>{const version=revision.current;setBusy(true);void Promise.resolve().then(()=>latest.current.onOpenCanonical?.()).catch(cause=>{if(version===revision.current)setError(cause instanceof Error?cause.message:'Canonical source is unavailable.');}).finally(()=>{if(version===revision.current)setBusy(false);});}}>Select canonical source</button>:'Open Sources to select the canonical message text.'}{error&&<span role="alert">{error}</span>}</p>}
+    {enabled&&!exactRendering&&<p className="muted source-selection-fallback" role="status">Inline selection is unavailable for this formatted message. {onOpenCanonical?<button type="button" disabled={busy} onClick={()=>void openCanonical()}>Select canonical source</button>:'Open Sources to select the canonical message text.'}{error&&<span role="alert">{error}</span>}</p>}
     {candidate&&enabled&&<Popover anchor={root} getAnchorRect={()=>candidate.range.getBoundingClientRect()} contentRef={toolbar} open width={430} height={error?96:52} preferredSide="above" align="start" onDismiss={()=>setCandidate(null)} role="toolbar" aria-label="Selected source" tabIndex={-1} className="ui-control-popup source-selection-toolbar" onPointerDown={event=>event.preventDefault()}>
       <button type="button" disabled={busy} onClick={()=>void act('ask')}>Ask about this</button><button type="button" disabled={busy} onClick={()=>void act('attach')}>Attach to prompt</button><button type="button" disabled={busy} onClick={()=>void act('open')}>Open source</button>
       {error&&<span role="alert">{error}</span>}

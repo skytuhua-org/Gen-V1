@@ -461,5 +461,10 @@ test.describe('SRC01 presentation invalidation',()=>{
   // The late completion is fenced by the revision: the action outcome is
   // still recorded, but no newer selection state is cleared by it.
   await expect(page.locator('[data-mutable-action]')).toHaveText('attach:Mutable');
+  const next=toolbar.getByRole('button',{name:'Ask about this',exact:true});
+  await expect(next).toBeEnabled();
+  await press(page,'[data-hold-action]');
+  await next.click();
+  await expect(page.locator('[data-mutable-action]')).toHaveText('ask:Mutable');
  });
 });
