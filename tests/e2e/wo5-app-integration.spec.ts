@@ -51,10 +51,10 @@ async function host(page:Page,legacyTitle?:string){
 async function panel(page:Page,name:string){
  const open=page.getByRole('button',{name:'Open workspace panel',exact:true});if(await open.count())await open.click();
  const target=page.getByRole('tab',{name,exact:true});
- if(!await target.count()){await page.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name,exact:true}).click();}
+ if(!await target.count()){await page.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitemcheckbox',{name,exact:true}).click();}
  await target.click();
 }
-for(const width of [1440,1024,768])test(`actual App keeps Files, find, Changes and Notes owners at ${width}`,async({page},info)=>{
+for(const width of [1440,1024,768])test(`actual App keeps Files, find, Changes and Memory owners at ${width}`,async({page},info)=>{
  await page.setViewportSize({width,height:1000});const h=await host(page);
  const draft=page.getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep my unsent integration draft');await draft.focus();await page.keyboard.press('Control+f');
  await page.getByRole('textbox',{name:'Find phrase'}).fill('workspace');await expect(page.getByRole('search')).toContainText('1 of 100');
@@ -65,9 +65,9 @@ for(const width of [1440,1024,768])test(`actual App keeps Files, find, Changes a
  await page.getByRole('tab',{name:'Recorded',exact:true}).click();await expect(page.locator('.workspace-diffs')).toContainText('Recorded comparison');
  await page.getByRole('tab',{name:'History',exact:true}).click();await expect(page.getByRole('tabpanel').last()).toContainText('Checkpoint history unavailable.');
  await expect(page.getByRole('button',{name:'Restore selected files'})).toHaveCount(0);
- await panel(page,'Notes');const note=page.getByRole('textbox',{name:'Note decision',exact:true});await expect(note).toBeEnabled();await note.fill('Retain this unsaved owner note.');
- await panel(page,'Output');await expect(page.getByRole('region',{name:'Thread memory'})).toHaveCount(0);
- await panel(page,'Notes');await expect(note).toHaveValue('Retain this unsaved owner note.');
+ await panel(page,'Memory');const note=page.getByRole('textbox',{name:'Note decision',exact:true});await expect(note).toBeEnabled();await note.fill('Retain this unsaved owner note.');
+ await panel(page,'Executor output');await expect(page.getByRole('region',{name:'Thread memory'})).toHaveCount(0);
+ await panel(page,'Memory');await expect(note).toHaveValue('Retain this unsaved owner note.');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);expect(h.unexpected).toEqual([]);expect(h.commands.filter(c=>c.type==='message.send')).toEqual([]);
  const out=info.outputPath('screenshots');await mkdir(out,{recursive:true});await page.screenshot({path:`${out}/notes-${width}.png`,fullPage:true});
 });

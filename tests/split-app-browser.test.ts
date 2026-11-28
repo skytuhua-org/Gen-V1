@@ -700,11 +700,11 @@ describe.runIf(enabled)('actual App split workspace',()=>{
    const message=page.locator('[data-split-view="thread:thread-a"]').getByRole('textbox',{name:'Message',exact:true});await message.waitFor({state:'visible'});
    const overview=page.getByRole('region',{name:'Project overview window',exact:true});await overview.waitFor({state:'visible'});
    await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();
-   const panel=page.getByRole('complementary',{name:'Workspace panel',exact:true});await panel.waitFor({state:'visible'});
+   const panel=page.getByRole('region',{name:'Workspace panel',exact:true});await panel.waitFor({state:'visible'});
     expect(await panel.getByRole('button',{name:'Close workspace panel',exact:true}).count()).toBe(0);
    await overview.waitFor({state:'hidden'});
-    await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name:'Plan',exact:true}).click();
-    await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name:'Notes',exact:true}).click();
+    await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:'Plan',exact:true}).click();
+    await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:'Notes',exact:true}).click();
     expect(await panel.getByRole('tab',{name:'Plan',exact:true}).isVisible()).toBe(true);expect(await panel.getByRole('tab',{name:'Notes',exact:true}).isVisible()).toBe(true);
    await page.getByRole('button',{name:'Hide workspace panel',exact:true}).click();await panel.waitFor({state:'hidden'});await overview.waitFor({state:'visible'});
    expect(await page.getByRole('button',{name:'Undo layout',exact:true}).count()).toBe(0);expect(await page.getByRole('button',{name:'Redo',exact:true}).count()).toBe(0);expect(await page.getByRole('button',{name:'Restore last layout',exact:true}).count()).toBe(0);expect(await page.locator('.split-workspace-hint').count()).toBe(0);
