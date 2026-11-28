@@ -20,6 +20,19 @@ async function setup() {
 }
 const spec={root:"main",elements:{main:{type:"Text",props:{text:"Evidence"}}}};
 describe("thread and UI integrity",()=>{
+ it('stores one-line thread titles without changing the first message',async()=>{
+  const x=await setup();
+  const task=(await x.send('thread.create')).result as Thread;
+  const content='line one of a draft\nline two/zz\tline   three';
+  await x.send('message.send',{content,modelId:'test/model'},task.id);
+  expect(x.store.get<Thread>('thread',task.id)?.title).toBe('line one of a draft line two/zz line three');
+  expect(x.store.all<{role:string;content:string}>('message',task.id).find(message=>message.role==='user')?.content).toBe(content);
+
+  const explicit=(await x.send('thread.create',{title:'  Workspace\r\n  & settings  '})).result as Thread;
+  expect(explicit.title).toBe('Workspace & settings');
+  const renamed=(await x.send('thread.rename',{title:' Review\t  notes '},explicit.id)).result as Thread;
+  expect(renamed.title).toBe('Review notes');
+ });
  it('never silently discards selected skill references before send admission is connected',async()=>{
   const x=await setup(),before=x.store.all('message',x.threadId);
   const skill={version:1,scope:{kind:'personal'},sourceId:'personal:test',skillId:'skill',locator:'a'.repeat(64),revision:'b'.repeat(64),digest:'c'.repeat(64),sourceBinding:'d'.repeat(64)};
