@@ -54,9 +54,24 @@ describe('math renderer',()=>{
   const first=await render(String.raw`\gdef\mthtwoleak{x}\mthtwoleak`,'inline'),second=await render(String.raw`\mthtwoleak`,'inline');
   expect(first.result.kind).not.toBe('engine');expect(second.result).toEqual({kind:'source',reason:'parse'});
  });
+ it('rejects expansion overflow even when option prototypes are polluted',async()=>{
+  await page.evaluate(()=>{Reflect.set(Object.prototype,'maxExpand',100000);Reflect.set(Object.prototype,'trust',true);});
+  try{
+   const out=await render(String.raw`\def\mtha{\mtha}\mtha`,'inline');
+   expect(out.result).toEqual({kind:'source',reason:'parse'});expect(out.html).toBe('');
+  }finally{await page.evaluate(()=>{Reflect.deleteProperty(Object.prototype,'maxExpand');Reflect.deleteProperty(Object.prototype,'trust');});}
+ });
+ it('caps user-specified sizes at the fixed engine maximum',async()=>{
+  const out=await render(String.raw`\rule{500em}{500em}`,'inline');
+  expect(out.result.kind).toBe('rendered');expect(out.html).toContain('height: 10em');expect(out.html).not.toContain('height: 500em');
+ });
  it('enforces caller and per-expression element budgets and discards rejected output',async()=>{
   expect((await render('x','inline',0)).result).toEqual({kind:'source',reason:'budget'});
   const out=await render(String.raw`\sum_{i=0}^{n} i`,'inline',3);expect(out.result).toEqual({kind:'source',reason:'budget'});expect(out.html).toBe('');
+ });
+ it('enforces the fixed per-expression generated-node ceiling',async()=>{
+  const wide=Array.from({length:300},()=> 'x').join('+');
+  const out=await render(wide,'inline',8192);expect(out.result).toEqual({kind:'source',reason:'budget'});expect(out.html).toBe('');
  });
  it('requires a detached target',async()=>{
   const out=await render('x','inline',8192,true);expect(out.result).toEqual({kind:'source',reason:'engine'});expect(out.connected).toBe(true);
