@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
@@ -351,18 +351,35 @@ export async function buildRemoteReadSyncServer(pairing: DevicePairingHost, sync
       : known || malformed ? 400 : 500;
     reply.code(status).send({ error: { code, message: known || malformed ? error.message : 'The remote host could not complete this request' } });
   });
-  const requestRateLimit = new RequestRateLimit(60_000);
+  const rateWindowMs = 60_000;
+  const pairingRate = new RequestRateLimit(rateWindowMs);
+  const missingCredentialRate = new RequestRateLimit(rateWindowMs);
+  const lookupRate = new RequestRateLimit(rateWindowMs);
+  const grantRate = new RequestRateLimit(rateWindowMs);
+  const limited = (reply: FastifyReply) => reply.header('Retry-After', Math.ceil(rateWindowMs / 1000)).code(429)
+    .send({ error: { code: 'RATE_LIMITED', message: 'Too many remote requests. Wait before retrying.' } });
   app.addHook('onRequest', async (request, reply) => {
-    if (!requestRateLimit.consume(`remote:${request.ip}`, 120)) return reply.code(429).send({ error: { code: 'RATE_LIMITED', message: 'Too many remote requests. Wait before retrying.' } });
-    if (request.url === '/remote/pair/claim') return;
     reply.header('Cache-Control', 'no-store');
+    if (request.url === '/remote/pair/claim') {
+      if (!pairingRate.consume(request.ip, 30)) return limited(reply);
+      return;
+    }
     const token = /^Bearer ([a-f0-9]{64})$/.exec(String(request.headers.authorization ?? ''))?.[1];
-    if (!token) return reply.code(401).send({ error: { code: 'AUTH_REQUIRED', message: 'A device credential is required.' } });
-    try { (request as FastifyRequest & { deviceGrant?: DeviceGrantV1 }).deviceGrant = pairing.authenticateDevice(token); }
+    if (!token) {
+      if (!missingCredentialRate.consume(request.ip, 30)) return limited(reply);
+      return reply.code(401).send({ error: { code: 'AUTH_REQUIRED', message: 'A device credential is required.' } });
+    }
+    // Bound credential lookups before reading the Store. The larger socket budget
+    // leaves room for multiple granted devices to share one local or NAT address.
+    if (!lookupRate.consume(request.ip, 300)) return limited(reply);
+    let grant: DeviceGrantV1;
+    try { grant = pairing.authenticateDevice(token); }
     catch (error) {
       const code = error instanceof HarnessError ? error.code : 'CAPABILITY_DENIED';
       return reply.code(code === 'DEVICE_GRANT_REVOKED' ? 403 : 401).send({ error: { code, message: error instanceof Error ? error.message : 'The device credential was rejected.' } });
     }
+    if (!grantRate.consume(grant.grantId, 120)) return limited(reply);
+    (request as FastifyRequest & { deviceGrant?: DeviceGrantV1 }).deviceGrant = grant;
   });
   const grantOf = (request: FastifyRequest) => (request as FastifyRequest & { deviceGrant?: DeviceGrantV1 }).deviceGrant!;
   const claimSchema = z.strictObject({

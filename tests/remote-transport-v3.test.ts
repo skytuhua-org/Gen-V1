@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, Socket } from 'node:net';
@@ -197,4 +197,81 @@ it('M17-S01 owned-test TLS transport: identity enforcement, auth gate, bounded r
     s.connect(port, '127.0.0.1', () => { s.destroy(); reject(new Error('listener still open')); });
   })).resolves.toBeUndefined();
   void store;
+});
+
+
+it('keeps rejected admission, pairing, and each granted device independent and expires their budgets', async () => {
+  const { pairing, sync } = fixture();
+  const certs = mkdtempSync(join(tmpdir(), 'm17-rate-limit-certs-'));
+  cleanup.push(() => rmSync(certs, { recursive: true, force: true }));
+  makeCertificateAuthority(certs, 'm17-rate-limit-ca');
+  makeServerCertificate(certs, 'm17-rate-limit-ca');
+  const identity = { deviceId: 'test-device', label: 'Test Phone', fingerprint: 'fp:test' };
+  const access = { scopes: ['VIEW_TASKS' as const], projects: ['p1'] };
+  const issue = () => pairing.issueChallenge('transport-test');
+  const approve = (deviceId: string) => {
+    const issued = issue();
+    pairing.claimChallenge(issued.challenge, { ...identity, deviceId }, access, 'remote:fixture');
+    return pairing.confirmChallenge(issued.pairingId, access, 'session-transport-test');
+  };
+  const first = approve('first'), second = approve('second');
+  const pending = issue();
+  vi.useFakeTimers({ toFake: ['Date', 'performance'] });
+  try {
+    const app = await buildRemoteReadSyncServer(pairing, sync, {
+      host: '127.0.0.1', port: 9443, tls: { certPath: join(certs, 'server.crt'), keyPath: join(certs, 'server.key') }, clientAuth: true,
+    });
+    cleanup.push(() => app.close());
+    const authenticated = vi.spyOn(pairing, 'authenticateDevice');
+    const snapshots = vi.spyOn(sync, 'snapshot');
+    const claim = vi.spyOn(pairing, 'claimChallenge');
+    const direct = '192.0.2.10';
+    const snapshot = (authorization?: string, remoteAddress = direct, forwarded = '192.0.2.20') =>
+      app.inject({ url: '/remote/sync/snapshot', remoteAddress, headers: { ...(authorization ? { authorization } : {}), 'x-forwarded-for': forwarded } });
+    const pair = (payload: Record<string, unknown>) =>
+      app.inject({ method: 'POST', url: '/remote/pair/claim', remoteAddress: direct, payload });
+    const expectLimited = (response: Awaited<ReturnType<typeof snapshot>>) => {
+      expect(response.statusCode).toBe(429);
+      expect(response.json()).toMatchObject({ error: { code: 'RATE_LIMITED' } });
+      expect(Number(response.headers['retry-after'])).toBeGreaterThan(0);
+      expect(Number(response.headers['retry-after'])).toBeLessThanOrEqual(60);
+      expect(response.headers['cache-control']).toBe('no-store');
+    };
+
+    for (let count = 0; count < 30; count++)
+      expect((await snapshot(count % 2 ? 'Bearer malformed' : undefined)).statusCode).toBe(401);
+    expectLimited(await snapshot(undefined, direct, '192.0.2.21'));
+    expect((await snapshot(undefined, '192.0.2.11')).statusCode).toBe(401);
+    expect(authenticated).not.toHaveBeenCalled();
+
+    for (let count = 0; count < 30; count++)
+      expect((await pair({})).statusCode).toBe(400);
+    expectLimited(await pair({ challenge: pending.challenge, deviceIdentity: identity, ...access }));
+    expect(claim).not.toHaveBeenCalled();
+
+    for (let count = 0; count < 120; count++)
+      expect((await snapshot(`Bearer ${first.deviceToken}`)).statusCode).toBe(200);
+    expectLimited(await snapshot(`Bearer ${first.deviceToken}`));
+    expect(snapshots).toHaveBeenCalledTimes(120);
+    expect((await snapshot(`Bearer ${second.deviceToken}`)).statusCode).toBe(200);
+    expect(snapshots).toHaveBeenCalledTimes(121);
+
+    vi.advanceTimersByTime(60_001);
+    expect((await snapshot()).statusCode).toBe(401);
+    expect((await pair({ challenge: pending.challenge, deviceIdentity: identity, ...access })).statusCode).toBe(200);
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect((await snapshot(`Bearer ${first.deviceToken}`)).statusCode).toBe(200);
+
+    pairing.revokeGrant(first.grant.grantId);
+    for (let count = 1; count < 300; count++)
+      expect((await snapshot(`Bearer ${first.deviceToken}`)).statusCode).toBe(403);
+    const lookupsBeforeLimit = authenticated.mock.calls.length;
+    expectLimited(await snapshot(`Bearer ${first.deviceToken}`));
+    expect(authenticated).toHaveBeenCalledTimes(lookupsBeforeLimit);
+    vi.advanceTimersByTime(60_001);
+    expect((await snapshot(`Bearer ${first.deviceToken}`)).statusCode).toBe(403);
+    expect((await snapshot(`Bearer ${second.deviceToken}`)).statusCode).toBe(200);
+  } finally {
+    vi.useRealTimers();
+  }
 });
