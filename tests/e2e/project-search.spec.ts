@@ -19,6 +19,7 @@ async function fixture(page: Page, query = "") {
 	await page.route("**/api/projects/*/files?*", (route) =>
 		route.fulfill({
 			json: {
+				bindingId: "binding-fixture",
 				entries: new URL(route.request().url()).searchParams.has("path")
 					? []
 					: [
@@ -39,6 +40,7 @@ async function fixture(page: Page, query = "") {
 			line = path === "docs/README.md" ? 12 : 48;
 		return route.fulfill({
 			json: {
+				bindingId: "binding-fixture",
 				text: Array.from({ length: 100 }, (_, index) =>
 					index === line - 1
 						? "const workspace = restoreLayout();"
@@ -494,7 +496,7 @@ test("a denied preview retries and a late file read cannot replace another resul
 			return;
 		}
 		return route.fulfill({
-			json: { text: "Accepted README", binary: false, sha256: "a".repeat(64) },
+			json: { bindingId: "binding-fixture", text: "Accepted README", binary: false, sha256: "a".repeat(64) },
 		});
 	});
 	await hits(page).first().click();
@@ -505,7 +507,7 @@ test("a denied preview retries and a late file read cannot replace another resul
 	await hits(page).nth(1).click();
 	await expect(preview(page)).toContainText("Accepted README");
 	await held!.fulfill({
-		json: { text: "Stale file", binary: false, sha256: "a".repeat(64) },
+		json: { bindingId: "binding-fixture", text: "Stale file", binary: false, sha256: "a".repeat(64) },
 	});
 	await settled(page);
 	await expect(preview(page)).toContainText("Accepted README");

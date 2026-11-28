@@ -119,7 +119,7 @@ test('offscreen tool bodies unmount while zoom leaves the surrounding shell unch
 
  const files=panel('files-panel','task-thread',9000,'files');files.binding.projectId='project';
  const host=await fixture(page,[files]);
- await page.route('**/api/projects/project/files?*',route=>{fileRequests++;return route.fulfill({json:{entries:[{name:'fixture.ts',path:'fixture.ts',kind:'file'}]}});});
+ await page.route('**/api/projects/project/files?*',route=>{fileRequests++;return route.fulfill({json:{bindingId:'binding-fixture',entries:[{name:'fixture.ts',path:'fixture.ts',kind:'file'}]}});});
  const shell=page.locator('[data-panel-id="files-panel"]');
  await expect(shell).toHaveCount(1);await expect(shell.locator('.canvas-panel-body')).toHaveCount(0);expect(fileRequests).toBe(0);
  const sidebar=page.locator('.sidebar'),before=await sidebar.boundingBox();

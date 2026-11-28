@@ -45,11 +45,11 @@ test('saved terminal and pull request tabs restore through the shared panel',asy
 });
 test('directory navigation rejects a file response from the previous selection',async({page})=>{
  await page.route('**/api/bootstrap',route=>route.fulfill({json:{csrfToken:'fixture'}}));
- await page.route('**/api/projects/project-one/files?*',route=>route.fulfill({json:{entries:new URL(route.request().url()).searchParams.has('path')?[]:[{name:'late.txt',path:'late.txt',kind:'file'},{name:'next',path:'next',kind:'directory'}]}}));
+ await page.route('**/api/projects/project-one/files?*',route=>route.fulfill({json:{bindingId:'binding-fixture',entries:new URL(route.request().url()).searchParams.has('path')?[]:[{name:'late.txt',path:'late.txt',kind:'file'},{name:'next',path:'next',kind:'directory'}]}}));
  let pending:import('@playwright/test').Route|undefined;await page.route('**/api/projects/project-one/file?*',route=>{pending=route;});
  await page.goto('/shared-panels-check?project=1');const panel=page.getByRole('complementary',{name:'Workspace panel'});await openSurface(page,panel,'Files');
  const files=page.getByRole('navigation',{name:'Project files'});await files.getByRole('button',{name:'late.txt',exact:true}).click();await expect.poll(()=>Boolean(pending)).toBe(true);await files.getByRole('button',{name:'next',exact:true}).click();
- await pending!.fulfill({json:{text:'Content from the previous directory',binary:false,sha256:'a'.repeat(64)}});
+ await pending!.fulfill({json:{bindingId:'binding-fixture',text:'Content from the previous directory',binary:false,sha256:'a'.repeat(64)}});
  await expect(panel.locator('.live-files .panel-toolbar')).toContainText('next');await expect(panel.getByRole('region',{name:'File content'})).not.toContainText('Content from the previous directory');
 });
 
