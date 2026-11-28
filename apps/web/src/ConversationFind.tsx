@@ -68,7 +68,9 @@ function registerFindShortcut(owner:FindShortcutOwner){
 /** Reusable by ordinary, canvas and scoped transcript owners. No command/draft authority. */
 export function ConversationFind({ownerKey,transcript,scope,active=true,empty=false,onNavigate,onLoadEarlier,historyPending,historyLimited,historyError}:ConversationFindProps){
  const id=useId(),input=useRef<HTMLInputElement>(null),trigger=useRef<HTMLButtonElement>(null),restoreFocus=useRef(false),opener=useRef<HTMLElement|null>(null);
- const [open,setOpen]=useState(false),[query,setQuery]=useState(''),[count,setCount]=useState(0),[index,setIndex]=useState(-1);
+ const [open,setOpen]=useState(false),[present,setPresent]=useState(false);
+ const [query,setQuery]=useState(''),[count,setCount]=useState(0),[index,setIndex]=useState(-1);
+ const presence=useRef<HTMLDivElement>(null);
  const matches=useRef<ConversationMatch[]>([]),selected=useRef<string|null>(null),lastQuery=useRef('');
  const navigateRef=useRef(onNavigate);navigateRef.current=onNavigate;
  const jump=useCallback((value:number)=>{
@@ -84,10 +86,16 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,empty=fa
   selected.current=match.key;setIndex(value);highlightConversation(root.ownerDocument,id,matches.current,value);navigateRef.current?.();
  },[transcript,id]);
  const close=useCallback(()=>{restoreFocus.current=true;setOpen(false);},[]);
- useLayoutEffect(()=>{setOpen(false);setQuery('');selected.current=null;matches.current=[];setCount(0);setIndex(-1);},[ownerKey]);
+ useLayoutEffect(()=>{
+  setOpen(false);setPresent(false);setQuery('');selected.current=null;matches.current=[];
+  setCount(0);setIndex(-1);opener.current=null;restoreFocus.current=false;
+ },[ownerKey,active]);
+ const show=(element:HTMLElement|null)=>{
+  opener.current=element;setPresent(true);setOpen(true);
+ };
  const showFromShortcut=useRef<(element:HTMLElement|null)=>void>(()=>{});
  showFromShortcut.current=element=>{
-  if(!open){opener.current=element;setOpen(true);return;}
+  if(!open){show(element);return;}
   input.current?.focus();input.current?.select();
  };
  useLayoutEffect(()=>{
@@ -96,15 +104,34 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,empty=fa
   return registerFindShortcut({scope:root,transcript,empty,show:element=>showFromShortcut.current(element)});
  },[active,empty,scope,transcript]);
  useLayoutEffect(()=>{
-  if(open){input.current?.focus();return;}
-  if(!restoreFocus.current)return;
-  restoreFocus.current=false;
-  const preferred=opener.current?.isConnected?opener.current:trigger.current;
-  const viewport=transcript.current,root=scope.current;
-  const target=preferred&&!preferred.matches(':disabled')&&!preferred.closest('[hidden],[inert]')?preferred
-   :viewport&&viewport.tabIndex>=0?viewport:root?usableFocusable(root):undefined;
-  target?.focus({preventScroll:true});
- },[open,scope,transcript]);
+  const surface=presence.current;
+  if(open){
+   if(surface){surface.inert=false;surface.removeAttribute('aria-hidden');}
+   input.current?.focus();
+   return;
+  }
+  if(restoreFocus.current){
+   restoreFocus.current=false;
+   const preferred=opener.current?.isConnected?opener.current:trigger.current;
+   const viewport=transcript.current,root=scope.current;
+   const target=preferred&&!preferred.matches(':disabled')&&!preferred.closest('[hidden],[inert]')?preferred
+    :viewport&&viewport.tabIndex>=0?viewport:root?usableFocusable(root):undefined;
+   target?.focus({preventScroll:true});
+  }
+  if(!surface||!active)return;
+  surface.inert=true;
+  surface.setAttribute('aria-hidden','true');
+  // Observe the browser's own transitions so Off, zero duration and live
+  // policy changes also settle without relying on a transitionend event.
+  const exits=surface.getAnimations().filter(animation=>
+   animation instanceof CSSTransition&&['grid-template-rows','opacity'].includes(animation.transitionProperty));
+  if(!exits.length){setPresent(false);return;}
+  let current=true;
+  void Promise.allSettled(exits.map(animation=>animation.finished)).then(()=>{
+   if(current)setPresent(false);
+  });
+  return()=>{current=false;};
+ },[open,active,scope,transcript]);
  useLayoutEffect(()=>{if(empty&&open)close();},[empty,open,close]);
  useLayoutEffect(()=>{
   const root=transcript.current;if(!root)return;
@@ -121,7 +148,8 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,empty=fa
  },[open,active,query,ownerKey,transcript,id,jump]);
  if(!active)return null;
  return <div className="conversation-find-owner">
-  {!open?<button ref={trigger} type="button" className="quiet conversation-find-trigger" aria-label="Find in conversation" disabled={empty} aria-disabled={empty||undefined} title={empty?'No messages to search':'Find in conversation (Ctrl+F)'} onClick={event=>{opener.current=event.currentTarget;setOpen(true);}}><Search size={14}/></button>:
+  <button ref={trigger} type="button" hidden={open} className="quiet conversation-find-trigger" aria-label="Find in conversation" disabled={empty} aria-disabled={empty||undefined} title={empty?'No messages to search':'Find in conversation (Ctrl+F)'} onClick={event=>show(event.currentTarget)}><Search size={14}/></button>
+  {present&&<div ref={presence} className="conversation-find-presence" data-open={open}><div className="conversation-find-inner">
    <div className="conversation-find" role="search" aria-label="Find in conversation" onKeyDown={event=>{
     if(event.nativeEvent.isComposing||event.keyCode===229)return;
     if(matchesShortcut(event,chordFor('close-find'))){event.preventDefault();event.stopPropagation();close();}
@@ -136,6 +164,7 @@ export function ConversationFind({ownerKey,transcript,scope,active=true,empty=fa
     </div>
     <div className="conversation-find-scope"><span>Loaded messages</span>{onLoadEarlier&&<button className="quiet" type="button" disabled={historyPending||historyLimited} onClick={()=>{onLoadEarlier();input.current?.focus({preventScroll:true});}}>{historyLimited?'History limit reached':historyPending?'Loading older messages…':'Load older messages'}</button>}</div>
     {historyError&&<p role="alert">{historyError}</p>}
-   </div>}
+   </div>
+  </div></div>}
  </div>;
 }

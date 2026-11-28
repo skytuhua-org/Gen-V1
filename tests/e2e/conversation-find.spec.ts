@@ -188,3 +188,70 @@ test('the shortcut leaves an active modal in control',async({page})=>{
  await page.keyboard.press('Control+f');
  await expect(phrase(page)).toHaveCount(0);await expect(dialog).toBeVisible();
 });
+
+test('retains Find during interrupted exit while restoring the composer immediately',async({page})=>{
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await setup(page);
+ const composer=page.locator('.composer textarea');
+ await composer.fill('Keep this draft');
+ await composer.evaluate((node:HTMLTextAreaElement)=>node.setSelectionRange(5,5));
+ await open(page);
+ const presence=page.locator('.conversation-find-presence');
+ await expect(presence).toHaveAttribute('data-open','true');
+ await phrase(page).fill('workspace');
+ await expect(page.getByRole('status').filter({hasText:'1 of 3'})).toBeVisible();
+ const node=await phrase(page).elementHandle();
+ await presence.evaluate(async element=>{await Promise.allSettled(element.getAnimations().map(animation=>animation.finished));});
+ await page.keyboard.press('Escape');
+ await expect(composer).toBeFocused();
+ await expect(composer).toHaveJSProperty('selectionStart',5);
+ await expect(page.getByRole('search')).toHaveCount(0);
+ const exit=await presence.evaluate(element=>element.getAnimations().map(animation=>(animation as CSSTransition).transitionProperty));
+ expect(exit).toContain('grid-template-rows');
+ await page.keyboard.press('Control+f');
+ await expect(phrase(page)).toBeFocused();
+ expect(await phrase(page).evaluate((current,original)=>current===original,node)).toBe(true);
+ await expect(phrase(page)).toHaveValue('workspace');
+ await page.keyboard.press('Escape');
+ await expect(presence).toHaveCount(0);
+});
+
+test('controller settles Find when motion is turned off during exit',async({page})=>{
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await setup(page);
+ await open(page);
+ const presence=page.locator('.conversation-find-presence');
+ await presence.evaluate(async element=>{await Promise.allSettled(element.getAnimations().map(animation=>animation.finished));});
+ await page.keyboard.press('Escape');
+ await page.evaluate(()=>document.documentElement.dataset.motion='off');
+ await expect(presence).toHaveCount(0);
+ await page.keyboard.press('Control+f');
+ await expect(phrase(page)).toBeFocused();
+});
+
+test('Find uses the effective timings once and removes grid travel in reduced motion',async({page})=>{
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await setup(page);
+ const presence=page.locator('.conversation-find-presence');
+ for(const speed of [.75,1,1.25]){
+  await page.evaluate(value=>{
+   const root=document.documentElement;
+   root.style.setProperty('--ui-motion-insert',(180/value)+'ms');
+   root.style.setProperty('--ui-motion-remove',(140/value)+'ms');
+  },speed);
+  await open(page);
+  const enter=await presence.evaluate(element=>getComputedStyle(element).transitionDuration);
+  expect(parseFloat(enter)*1000).toBeCloseTo(180/speed,2);
+  await presence.evaluate(async element=>{await Promise.allSettled(element.getAnimations().map(animation=>animation.finished));});
+  await page.keyboard.press('Escape');
+  const exit=await presence.evaluate(element=>getComputedStyle(element).transitionDuration);
+  expect(parseFloat(exit)*1000).toBeCloseTo(140/speed,2);
+  await expect(presence).toHaveCount(0);
+ }
+ await page.evaluate(()=>document.documentElement.dataset.motion='reduced');
+ await open(page);
+ const properties=await presence.evaluate(element=>element.getAnimations().map(animation=>(animation as CSSTransition).transitionProperty));
+ expect(properties).not.toContain('grid-template-rows');
+ await page.keyboard.press('Escape');
+ await expect(presence).toHaveCount(0);
+});
