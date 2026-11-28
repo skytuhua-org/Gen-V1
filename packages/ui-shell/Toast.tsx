@@ -27,6 +27,13 @@ export function toast(message: string, options: ToastOptions = {}) {
     : entry.dedupeKey !== options.dedupeKey);
   const next = [...distinct, { ...options, id, message: text, leaving: false }];
   let visible = next.filter(entry => !entry.leaving).length;
+  const overflow = visible - MAX_VISIBLE;
+  if (overflow > 0 && !listeners.size) {
+    // Without a mounted toaster there is no exit animation to remove evicted entries.
+    let remaining = overflow;
+    publish(next.filter(entry => entry.leaving || remaining-- <= 0));
+    return id;
+  }
   publish(next.map(entry => (visible > MAX_VISIBLE && !entry.leaving ? (visible--, { ...entry, leaving: true }) : entry)));
   return id;
 }
@@ -96,8 +103,7 @@ export function Toaster() {
       }
     }
   }, [list, modal]);
-  if (!portal) return null;
-  return createPortal(<div ref={stack} className="ui-toaster" role="region" aria-label="Notifications" onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
+  const notifications = <div ref={stack} className="ui-toaster" role="region" aria-label="Notifications" onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
     onFocus={() => { setFocused(true); if (stack.current) stack.current.dataset.prevHadFocus = 'true'; }}
     onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) { setFocused(false); event.currentTarget.dataset.prevHadFocus = 'false'; } }}
     onKeyDown={event => {
@@ -118,5 +124,6 @@ export function Toaster() {
       }
     }}>
     {list.map(entry => <ToastItem key={entry.id} entry={entry} paused={hovered || focused} />)}
-  </div>, portal);
+  </div>;
+  return portal ? createPortal(notifications, portal) : notifications;
 }
