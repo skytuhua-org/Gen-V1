@@ -26,7 +26,8 @@ function parseUpdates(input: unknown): UpdatesQuery {
 /** Mounted only by the Personal server, beneath its host/origin/session/CSRF gates. No write endpoint. */
 export function registerAgentInventoryRoutes(app: FastifyInstance, provider: PersonalAgentInventory) {
   if (provider.authority !== 'personal') throw new HarnessError('CAPABILITY_DENIED', 'A Personal inventory provider is required');
-  const streams = new Set<ServerResponse>();
+  const streams = new Map<ServerResponse, () => void>();
+  let closing = false;
   app.get('/api/agents', async (request, reply) => {
     const { status, ...query } = pageQuery.parse(request.query);
     return reply.header('Cache-Control', 'no-store').send(provider.inventory({ ...query, statuses: status }));
@@ -38,6 +39,7 @@ export function registerAgentInventoryRoutes(app: FastifyInstance, provider: Per
   });
   app.get('/api/agents/updates', async (request, reply) => reply.header('Cache-Control', 'no-store').send(provider.updates(parseUpdates(request.query))));
   app.get('/api/agents/events', async (request, reply) => {
+    if (closing) return reply.code(503).send({ error: { code: 'HOST_CLOSING', message: 'Inventory streaming is closing' } });
     const query = parseUpdates(request.query);
     const last = request.headers['last-event-id'];
     if (last !== undefined) query.after = z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).parse(last);
@@ -46,8 +48,8 @@ export function registerAgentInventoryRoutes(app: FastifyInstance, provider: Per
     if (streams.size >= 32) return reply.code(429).send({ error: { code: 'STREAM_LIMIT', message: 'Too many inventory readers' } });
     reply.hijack();
     const response = reply.raw, controller = new AbortController();
+    if (response.destroyed || response.writableEnded) return;
     response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-    streams.add(response);
     let pumping = false, pending = true, closed = false, comment = ': connected\n\n';
     const pump = async () => {
       if (pumping || closed) return;
@@ -63,18 +65,25 @@ export function registerAgentInventoryRoutes(app: FastifyInstance, provider: Per
           if (chunk && !response.write(chunk)) await once(response, 'drain', { signal: controller.signal });
           if (update.resync) { response.end(); break; }
         }
-      } catch { if (!closed) response.destroy(); }
+      } catch { if (!closed) shutdown(); }
       finally { pumping = false; }
     };
-    const unsubscribe = provider.subscribe(() => { pending = true; void pump(); });
+    let unsubscribe: (() => void) | undefined;
     const heartbeat = setInterval(() => { comment = ': heartbeat\n\n'; pending = true; void pump(); }, 15000);
     heartbeat.unref();
     const close = () => {
       if (closed) return;
-      closed = true; controller.abort(); clearInterval(heartbeat); unsubscribe(); streams.delete(response);
+      closed = true; controller.abort(); clearInterval(heartbeat); streams.delete(response); unsubscribe?.();
     };
-    response.once('close', close); response.once('error', close);
+    const shutdown = () => { if (!closed) { close(); response.destroy(); } };
+    response.once('close', close); response.once('error', shutdown);
+    streams.set(response, shutdown);
+    const stop = provider.subscribe(() => { pending = true; void pump(); });
+    if (closed) stop(); else unsubscribe = stop;
     void pump();
   });
-  app.addHook('preClose', async () => { for (const response of streams) response.destroy(); streams.clear(); });
+  app.addHook('preClose', async () => {
+    closing = true;
+    for (const shutdown of streams.values()) shutdown();
+  });
 }

@@ -1,4 +1,4 @@
-import {useEffect,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
+import {useEffect,useId,useLayoutEffect,useRef,useState,type ReactNode} from 'react';
 import {Popover} from '../../../packages/ui-shell/Popover';
 import '../../../packages/ui-shell/controls.css';
 import './source-workbench.css';
@@ -12,6 +12,30 @@ export function mapSelectedText(content:string,selected:string):VisibleSourceSel
   if(start<0||content.indexOf(selected,start+1)!==-1)return null;
   return {start,end:start+selected.length,text:selected};
 }
+const SOURCE_UI='[data-source-selection-ui]',TRANSFORMED='[data-source-transformed="true"]';
+/** Authored bytes exclude app-owned source UI (copy controls, duplicate raw
+ * disclosures) — their captions must never contaminate canonical equality. */
+function measureAuthored(root:HTMLElement):string|null{
+  if(root.matches(TRANSFORMED)||root.querySelector(TRANSFORMED))return null;
+  let out='';
+  const walk=(node:Node)=>{
+    if(node instanceof Element&&node.hasAttribute('data-source-selection-ui'))return;
+    if(node.nodeType===Node.TEXT_NODE){out+=node.textContent;return;}
+    for(const child of node.childNodes)walk(child);
+  };
+  for(const child of root.childNodes)walk(child);
+  return out;
+}
+function insideSourceUI(node:Node):boolean{const element=node instanceof Element?node:node.parentElement;return Boolean(element?.closest(SOURCE_UI));}
+function carriesMarker(node:Node):boolean{return node instanceof Element&&(node.hasAttribute('data-source-selection-ui')||node.hasAttribute('data-source-transformed')||Boolean(node.querySelector('[data-source-selection-ui],[data-source-transformed]')));}
+/** Mutations wholly inside app-owned source UI are presentation noise; any
+ * marker change itself still requires authored remeasurement. */
+function relevantMutation(record:MutationRecord):boolean{
+  if(record.type==='attributes')return true;
+  if(record.type==='characterData')return !insideSourceUI(record.target);
+  if(insideSourceUI(record.target)&&![...record.addedNodes,...record.removedNodes].some(carriesMarker))return false;
+  return true;
+}
 function elementOf(node:Node):Element|null{return node instanceof Element?node:node.parentElement;}
 function visible(range:Range,root:HTMLElement):boolean {
   const interactive='iframe,input,textarea,select,button,a,[contenteditable="true"],object,embed,audio,video';
@@ -22,7 +46,7 @@ function visible(range:Range,root:HTMLElement):boolean {
     for(const endpoint of [range.startContainer,range.endContainer]) {
       for(let element=elementOf(endpoint);element;element=element.parentElement) {
         const style=getComputedStyle(element),bounds=element.getBoundingClientRect();
-        if(element.matches(`[hidden],[inert],[aria-hidden="true"],${interactive}`)||style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||style.contentVisibility==='hidden')return false;
+        if(element.matches(`[hidden],[inert],[aria-hidden="true"],${SOURCE_UI},${interactive}`)||style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||style.contentVisibility==='hidden')return false;
         if(/hidden|clip|auto|scroll/.test(style.overflowX)&& (rect.left<bounds.left-1||rect.right>bounds.right+1))return false;
         if(/hidden|clip|auto|scroll/.test(style.overflowY)&& (rect.top<bounds.top-1||rect.bottom>bounds.bottom+1))return false;
       }
@@ -33,7 +57,7 @@ function visible(range:Range,root:HTMLElement):boolean {
     if(node.matches(interactive))return false;
     if(!node.textContent)continue;
     const style=getComputedStyle(node);
-    if(node.matches('[hidden],[inert],[aria-hidden="true"]')||style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||style.contentVisibility==='hidden')return false;
+    if(node.matches(`[hidden],[inert],[aria-hidden="true"],${SOURCE_UI}`)||style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||style.contentVisibility==='hidden')return false;
     // A selected interior descendant can clip bytes even though neither range
     // endpoint is inside it. Check only this descendant's selected portion.
     const inside=range.cloneRange(),bounds=node.getBoundingClientRect();
@@ -48,13 +72,50 @@ function visible(range:Range,root:HTMLElement):boolean {
 }
 interface Candidate extends VisibleSourceSelection {range:Range;rendered:string}
 export function SourceSelectionActions({children,text,enabled,onAction,onOpenCanonical}:{text:string;enabled:boolean;onAction:(action:SourceSelectionAction,selection:VisibleSourceSelection)=>void|Promise<void>;onOpenCanonical?:()=>void|Promise<void>;children:ReactNode}) {
-  const root=useRef<HTMLDivElement>(null),toolbar=useRef<HTMLDivElement>(null),authored=useRef(''),latest=useRef({text,enabled,onAction,onOpenCanonical});
+  const root=useRef<HTMLDivElement>(null),toolbar=useRef<HTMLDivElement>(null),latest=useRef({text,enabled,onAction,onOpenCanonical});
   latest.current={text,enabled,onAction,onOpenCanonical};
   const [candidate,setCandidate]=useState<Candidate|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [exactRendering,setExactRendering]=useState(true);
+  const [note,setNote]=useState('');
+  const describedBy=useId();
   const candidateRef=useRef(candidate);candidateRef.current=candidate;
-  const revision=useRef(0),composing=useRef(false);
-  useLayoutEffect(()=>{authored.current=root.current?.textContent??'';setExactRendering(authored.current===text);revision.current++;setCandidate(null);setError('');setBusy(false);},[text,enabled]);
+  const revision=useRef(0),composing=useRef(false),announceDone=useRef(false),prevCandidate=useRef(candidate);
+  const invalidate=()=>{
+    revision.current++;
+    candidateRef.current=null;
+    setCandidate(null);
+    setError('');
+    setBusy(false);
+  };
+  useLayoutEffect(()=>{
+    const element=root.current;
+    invalidate();
+    setExactRendering(Boolean(element&&measureAuthored(element)===text));
+  },[text,enabled]);
+  // One observer per enabled root. A delivered authored DOM batch retires the
+  // current action UI without canceling any action already sent to its owner.
+  useLayoutEffect(()=>{
+    const element=root.current;
+    if(!enabled||!element)return;
+    const observer=new MutationObserver(records=>{
+      if(!records.some(relevantMutation))return;
+      invalidate();
+      setExactRendering(measureAuthored(element)===latest.current.text);
+    });
+    observer.observe(element,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['data-source-selection-ui','data-source-transformed']});
+    return()=>observer.disconnect();
+  },[enabled]);
+  useEffect(()=>{
+    const previous=prevCandidate.current;prevCandidate.current=candidate;
+    if(candidate){
+      announceDone.current=false;
+      const text=candidate.text.trim();
+      setNote(`Selected “${text.length>60?text.slice(0,60)+'…':text}”. Press Shift F10 or Tab for actions.`);
+    } else if(previous) {
+      if(announceDone.current)announceDone.current=false;
+      else setNote('Selection cleared.');
+    }
+  },[candidate]);
   useEffect(()=>{
     if(!enabled)return;
     let dismissed:Range|null=null;
@@ -66,12 +127,16 @@ export function SourceSelectionActions({children,text,enabled,onAction,onOpenCan
       const range=selection.getRangeAt(0);
       if(dismissed&&sameRange(dismissed,range))return;
       dismissed=null;
-      if(authored.current!==latest.current.text||!element.contains(range.startContainer)||!element.contains(range.endContainer)||element.textContent!==authored.current||!visible(range,element)){setCandidate(null);return;}
+      // Remeasure synchronously: observer delivery is a later microtask, so a
+      // same-turn DOM replacement must fail closed here rather than offer a
+      // candidate measured from replaced authored bytes.
+      const measured=measureAuthored(element);
+      if(measured!==latest.current.text||!element.contains(range.startContainer)||!element.contains(range.endContainer)||!visible(range,element)){setCandidate(null);return;}
       const focused=document.activeElement;
       if(focused&&focused!==document.body&&!element.contains(focused)&&!element.parentElement?.contains(focused)){setCandidate(null);return;}
       const mapped=mapSelectedText(latest.current.text,selection.toString());
       if(!mapped){setCandidate(null);return;}
-      setCandidate({...mapped,range:range.cloneRange(),rendered:authored.current});setError('');
+      setCandidate({...mapped,range:range.cloneRange(),rendered:measured});setError('');
     };
     const key=(event:KeyboardEvent)=>{
       if(event.isComposing||event.keyCode===229||composing.current)return;
@@ -85,7 +150,7 @@ export function SourceSelectionActions({children,text,enabled,onAction,onOpenCan
         if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'){
           event.preventDefault();const range=document.createRange();range.selectNodeContents(element);selection.removeAllRanges();selection.addRange(range);read();return;
         }
-        const granularity=event.key==='Home'||event.key==='End'?'lineboundary':event.key==='ArrowUp'||event.key==='ArrowDown'?'line':event.key==='ArrowLeft'||event.key==='ArrowRight'?'character':null;
+        const granularity=event.key==='Home'||event.key==='End'?'lineboundary':event.key==='ArrowUp'||event.key==='ArrowDown'?'line':event.key==='ArrowLeft'||event.key==='ArrowRight'?(event.ctrlKey||event.metaKey?'word':'character'):null;
         if(event.shiftKey&&granularity&&typeof selection.modify==='function'){
           event.preventDefault();
           const backward=event.key==='ArrowLeft'||event.key==='ArrowUp'||event.key==='Home';
@@ -115,13 +180,23 @@ export function SourceSelectionActions({children,text,enabled,onAction,onOpenCan
   },[enabled]);
   async function act(action:SourceSelectionAction){
     const value=candidateRef.current,element=root.current,version=revision.current;
-    if(!value||!element||busy||!latest.current.enabled||authored.current!==latest.current.text||element.textContent!==value.rendered||!visible(value.range,element))return;
+    if(!value||!element||!element.isConnected||busy||!latest.current.enabled)return;
+    // Synchronous guard: a mismatch invalidates the candidate before dispatch
+    // and remeasures so canonical access appears when the rendering is inexact.
+    const measured=measureAuthored(element),inexact=measured!==latest.current.text;
+    const stale=measured!==value.rendered||value.range.toString()!==value.text||latest.current.text.slice(value.start,value.end)!==value.text;
+    if(inexact||stale||!visible(value.range,element)){
+      candidateRef.current=null;setCandidate(null);
+      if(inexact)setExactRendering(false);
+      return;
+    }
     const {startContainer,startOffset,endContainer,endOffset}=value.range;
     const sameRange=(range:Range)=>range.startContainer===startContainer&&range.startOffset===startOffset&&range.endContainer===endContainer&&range.endOffset===endOffset;
     setBusy(true);setError('');
     try{
       await latest.current.onAction(action,{start:value.start,end:value.end,text:value.text});
       if(version===revision.current){
+        announceDone.current=true;setNote('Done.');
         const selection=getSelection();
         if(selection?.rangeCount===1&&sameRange(selection.getRangeAt(0)))selection.removeAllRanges();
         setCandidate(current=>current&&sameRange(current.range)?null:current);
@@ -130,8 +205,21 @@ export function SourceSelectionActions({children,text,enabled,onAction,onOpenCan
     catch(cause){if(version===revision.current)setError(cause instanceof Error?cause.message:'Source could not be captured.');}
     finally{if(version===revision.current)setBusy(false);}
   }
-  return <div className="source-selection" data-escape-scope={candidate?'source-selection':undefined}><div ref={root} tabIndex={enabled?0:undefined} className="source-selection-text">{children}</div>
-    {enabled&&!exactRendering&&<p className="muted" role="status">Inline selection is unavailable for this formatted message. {onOpenCanonical?<button type="button" disabled={busy} onClick={()=>{const version=revision.current;setBusy(true);void Promise.resolve().then(()=>latest.current.onOpenCanonical?.()).catch(cause=>{if(version===revision.current)setError(cause instanceof Error?cause.message:'Canonical source is unavailable.');}).finally(()=>{if(version===revision.current)setBusy(false);});}}>Select canonical source</button>:'Open Sources to select the canonical message text.'}{error&&<span role="alert">{error}</span>}</p>}
+  async function openCanonical(){
+    const element=root.current,{onOpenCanonical:open,enabled,text}=latest.current;
+    if(!element?.isConnected||!open||!enabled||busy||measureAuthored(element)===text)return;
+    const version=revision.current;
+    setBusy(true);
+    setError('');
+    try{await open();}
+    catch(cause){if(version===revision.current)setError(cause instanceof Error?cause.message:'Canonical source is unavailable.');}
+    finally{if(version===revision.current)setBusy(false);}
+  }
+  return <div className="source-selection" data-escape-scope={candidate?'source-selection':undefined}><div ref={root} tabIndex={enabled?0:undefined} className="source-selection-text" aria-keyshortcuts="shift+ArrowRight control+a shift+f10" aria-describedby={describedBy} data-selection={candidate?'active':undefined}>{children}</div>
+    {enabled&&exactRendering&&!candidate&&<span className="source-selection-hint" aria-hidden="true">Shift+arrows select · Ctrl+A all · Shift+F10 actions</span>}
+    <span id={describedBy} className="sr-only">Selectable source. Use Shift plus arrow keys to select text, Control A to select all, Shift F10 for actions.</span>
+    <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{note}</span>
+    {enabled&&!exactRendering&&<p className="muted source-selection-fallback" role="status">Inline selection is unavailable for this formatted message. {onOpenCanonical?<button type="button" disabled={busy} onClick={()=>void openCanonical()}>Select canonical source</button>:'Open Sources to select the canonical message text.'}{error&&<span role="alert">{error}</span>}</p>}
     {candidate&&enabled&&<Popover anchor={root} getAnchorRect={()=>candidate.range.getBoundingClientRect()} contentRef={toolbar} open width={430} height={error?96:52} preferredSide="above" align="start" onDismiss={()=>setCandidate(null)} role="toolbar" aria-label="Selected source" tabIndex={-1} className="ui-control-popup source-selection-toolbar" onPointerDown={event=>event.preventDefault()}>
       <button type="button" disabled={busy} onClick={()=>void act('ask')}>Ask about this</button><button type="button" disabled={busy} onClick={()=>void act('attach')}>Attach to prompt</button><button type="button" disabled={busy} onClick={()=>void act('open')}>Open source</button>
       {error&&<span role="alert">{error}</span>}

@@ -28,21 +28,26 @@ test('options open a shared menu without selecting or detaching its thread', asy
   await options(page).click();
   await expect(menu(page)).toBeVisible();
   await expect(options(page)).toHaveAttribute('aria-haspopup', 'menu');
-  await expect(menu(page).getByRole('menuitem')).toHaveText(['Place in workspaceAlt Enter', 'Detach thread', 'Rename thread', 'Pin thread', 'Mark as unread', 'Settle thread', 'Archive thread']);
+  const items=menu(page).getByRole('menuitem');
+  const names=['Place in workspace','Detach thread','Rename thread','Pin thread','Mark as unread','Settle thread','Archive thread'];
+  await expect(items).toHaveCount(names.length);
+  for(const [index,name] of names.entries())await expect(items.nth(index)).toHaveAccessibleName(name);
   await expect(menu(page).getByRole('menuitem', {name: 'Place in workspace'}).locator('kbd')).toHaveText('Alt Enter');
   expect(await calls(page)).toEqual([]);
   await expect(page.locator('.thread-item[aria-current="page"]')).toHaveAttribute('aria-label', 'Selected conversation Ready');
 });
 
-test('keyboard navigation skips disabled archive, supports typeahead and ignores IME', async ({page}) => {
+test('keyboard navigation reaches disabled archive, supports typeahead and ignores IME', async ({page}) => {
   const trigger = options(page);
   await trigger.focus(); await page.keyboard.press('ArrowUp');
-  await expect(menu(page).getByRole('menuitem', {name: 'Settle thread'})).toBeFocused();
   const archive = menu(page).getByRole('menuitem', {name: 'Archive thread'});
+  await expect(archive).toBeFocused();
   await expect(archive).toBeDisabled();
+  await expect(archive).toHaveAccessibleDescription('Stop the task before archiving.');
   await expect(archive).toHaveAttribute('title', 'Stop the task before archiving.');
   await archive.dispatchEvent('click'); expect(await calls(page)).toEqual([]);
   await page.keyboard.press('Home'); await expect(menu(page).getByRole('menuitem', {name: 'Place in workspace'})).toBeFocused();
+  await page.keyboard.press('ArrowUp'); await expect(archive).toBeFocused();
   await page.keyboard.press('ArrowUp'); await expect(menu(page).getByRole('menuitem', {name: 'Settle thread'})).toBeFocused();
   await page.keyboard.press('r'); const rename = menu(page).getByRole('menuitem', {name: 'Rename thread'}); await expect(rename).toBeFocused();
   for (const key of ['Enter', ' ', 'Escape', 'ArrowDown', 'p']) await rename.dispatchEvent('keydown', {key, isComposing: true});
@@ -134,13 +139,13 @@ test('fold, hide, collapse and removed owners dismiss without leaving a popup', 
   }
 });
 
-test('short viewport keeps the portalled menu bounded and its last enabled item reachable', async ({page}, info) => {
+test('short viewport keeps the portalled menu bounded and its last item reachable', async ({page}, info) => {
   await page.setViewportSize({width: 760, height: 240}); await options(page).click();
   const popup = menu(page); await expect(popup).toBeVisible();
   const box = (await popup.boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(8); expect(box.y).toBeGreaterThanOrEqual(8);
   expect(box.x + box.width).toBeLessThanOrEqual(752); expect(box.y + box.height).toBeLessThanOrEqual(232);
-  await page.keyboard.press('End'); const last = popup.getByRole('menuitem', {name: 'Settle thread'}); await expect(last).toBeFocused();
+  await page.keyboard.press('End'); const last = popup.getByRole('menuitem', {name: 'Archive thread'}); await expect(last).toBeFocused();
   const lastBox = (await last.boundingBox())!; expect(lastBox.y).toBeGreaterThanOrEqual(box.y); expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(box.y + box.height);
   await page.screenshot({path: info.outputPath('short-sidebar-menu.png')});
 });
@@ -178,3 +183,11 @@ for(const settled of [false,true])for(const outcome of ['accepted','rejected'] a
   }
  });
 }
+
+test('empty Pinned group names the keyboard path and the options menu provides it', async ({page}) => {
+  const hint = page.locator('.thread-group-pinned .sidebar-pinned-empty');
+  await expect(hint).toHaveText('Pin a thread from its ⋯ menu, or drag it here.');
+  await expect(hint).toHaveAttribute('role', 'note');
+  await options(page).click();
+  await expect(menu(page).getByRole('menuitem', {name: 'Pin thread', exact: true})).toBeVisible();
+});

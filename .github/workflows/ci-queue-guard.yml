@@ -1,9 +1,11 @@
 name: CI queue guard
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [requested, in_progress]
+  # Avoid per-CI fanout replacing the only pending sweep while runners are busy.
+  # GitHub schedules are best-effort; off-hour cron minutes avoid peak load.
+  schedule:
+    - cron: '7,27,47 * * * *'
+  workflow_dispatch:
   push:
     branches: [main]
     paths: [.github/workflows/ci-queue-guard.yml]
@@ -14,26 +16,18 @@ permissions:
 
 jobs:
   guard:
-    # Job admission precedes matrix expansion and scheduling. Invalid notifications
-    # must not replace a pending sweep in the shared job concurrency group.
+    # A fixed concurrency group discards older pending jobs even with
+    # cancel-in-progress:false; low-frequency sweeps can safely queue intact.
     if: >-
-      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
-      (github.event_name == 'workflow_run' &&
-      (github.event.action == 'requested' || github.event.action == 'in_progress') &&
-      github.event.workflow_run.id > 0 && github.event.workflow_run.id != github.run_id &&
-      github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.name == 'CI' &&
-      github.event.workflow_run.path == '.github/workflows/ci.yml' &&
-      github.event.workflow_run.repository.id == github.event.repository.id)
-    concurrency:
-      group: ci-queue-guard
-      cancel-in-progress: false
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push') &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # workflow_run uses this default-branch code, even for stacked old bases.
+      # Scheduled and manual sweeps use the default-branch code; no PR checkout.
       # No PR checkout, artifacts, caches, or event interpolation enter the script.
       - name: Cancel obsolete PR runs using current GitHub metadata
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const api = {...context.repo, request: {timeout: 10000}};
@@ -68,13 +62,9 @@ jobs:
               if (pr.draft === false && associated.head.sha === run.head_sha && pr.head.sha !== run.head_sha) return 'superseded';
               return null;
             }
-            if (context.eventName === 'workflow_run') {
-              const source = context.payload.workflow_run;
-              if (!['requested', 'in_progress'].includes(context.payload.action) || !validId(source?.id) ||
-                  source.id === context.runId || source.event !== 'pull_request' || source.name !== 'CI' ||
-                  source.path !== '.github/workflows/ci.yml' || source.repository?.id !== repositoryId) return finish();
-            } else if (context.eventName !== 'push' || context.ref !== 'refs/heads/' + context.payload.repository.default_branch) return finish();
-            // Pending events coalesce, so every admitted event sweeps the backlog.
+            if (!['push', 'schedule', 'workflow_dispatch'].includes(context.eventName) ||
+                context.ref !== 'refs/heads/' + context.payload.repository.default_branch) return finish();
+            // Sweep current GitHub metadata, not the triggering event's PR payload.
             // Discover both pages before cancelling; cap each sweep at 100 candidates.
             const pages = [];
             for (const status of ['queued', 'in_progress']) {

@@ -17,3 +17,32 @@ it('disables source automatic learning and writes in Plan without removing skill
  const store=await fixture();store.internal('fixture',null,()=>store.put('thread','plan','plan',{id:'plan',mode:'plan'}));
  const settings=await hermesSettings(store,{threadId:'plan'} as StartRun);expect(settings.config).toMatchObject({skills:{creation_nudge_interval:0}});expect(settings.skillPolicy).toMatchObject({enabled:true,allowWrites:false});
 });
+it('refuses typed-child metadata for a stale run owner',async()=>{
+ const store=await fixture();store.internal('fixture',null,()=>{
+  store.put('thread','child','child',{id:'child',kind:'delegate',jobId:'work',runId:'current',epoch:2});
+  store.put('agentWork','work','parent',{role:'PLAN_READ',childOwner:{threadId:'child',runId:'current',epoch:2},expectedOutputSchema:{type:'object'}});
+ });
+ await expect(hermesSettings(store,{threadId:'child',runId:'old',epoch:1} as StartRun)).rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+});
+it('rebases schema references without changing literal objects with a $ref key',async()=>{
+ const store=await fixture(),ctx={threadId:'child',runId:'current',epoch:2};
+ const literal={$ref:'#/literal'};
+ const declared={
+  type:'object',
+  properties:{label:{const:literal},choice:{enum:[literal]},default:{$ref:'#/$defs/text'}},
+  $defs:{text:{type:'string',examples:[literal],default:literal},standalone:{$id:'https://example.invalid/standalone',allOf:[{$ref:'#/$defs/leaf'}],$defs:{leaf:{type:'string'}}}},
+  anyOf:[{$ref:'#/$defs/text'},{type:'object'}],
+ };
+ store.internal('fixture',null,()=>{
+  store.put('thread','child','child',{id:'child',kind:'delegate',jobId:'work',runId:ctx.runId,epoch:ctx.epoch});
+  store.put('agentWork','work','parent',{role:'PLAN_READ',childOwner:ctx,expectedOutputSchema:declared});
+ });
+ const settings=await hermesSettings(store,ctx as StartRun);
+ expect(settings.hostTools!.find(tool=>tool.name==='agent_result')?.parameters).toMatchObject({
+  properties:{output:{allOf:[{
+   ...declared,
+   properties:{...declared.properties,default:{$ref:'#/properties/output/allOf/0/$defs/text'}},
+   anyOf:[{$ref:'#/properties/output/allOf/0/$defs/text'},{type:'object'}],
+  },expect.any(Object)]}},
+ });
+});

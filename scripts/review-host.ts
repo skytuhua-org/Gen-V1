@@ -72,11 +72,14 @@ export class ReviewRuntime implements RuntimeAdapter {
     const ids = input.inputIds ?? [input.inputId]; await writeFile(sessionPath, JSON.stringify([...new Set([...await this.history(sessionPath), ...ids])]));
     this.event(input, 'session', { sessionPath }); this.event(input, 'input.processing', { inputIds: ids });
     const scenario = this.scenarios.get(input.threadId) ?? 'shell';
+    const seededGrants = this.grants.get(input.threadId);
+    const grants = seededGrants ?? { pdf: '', output: '', image: '', database: '', annotation: '' };
+    if (!seededGrants) this.grants.set(input.threadId, grants);
+    const plainShell = scenario === 'shell' && (!grants.pdf || !grants.image);
     const existing = this.store.all<ArtifactRecord>('artifact', input.threadId)[0];
     const accepted = this.store.all<{ actionId: string; payload: Record<string, unknown>; submittedState: Record<string, unknown>; acceptedAt: string }>('acceptedAction', input.threadId).sort((a, b) => b.acceptedAt.localeCompare(a.acceptedAt))[0];
-    this.event(input, 'assistant.message', { messageId: randomUUID(), content: !existing ? scenario === 'faq' ? 'Explore a question, or ask your own.' : scenario === 'signing' ? 'I found the fields. Let’s fill in the remaining details.' : scenario.startsWith('pr-') ? 'The branches overlap in three places.' : scenario === 'migration' ? 'The local migration is ready for exact review.' : scenario === 'map' ? 'Three places to compare. Choose a marker or use the carousel.' : '' : '', inputIds: ids });
+    this.event(input, 'assistant.message', { messageId: randomUUID(), content: plainShell ? 'I received your message in the local review fixture.' : !existing ? scenario === 'faq' ? 'Explore a question, or ask your own.' : scenario === 'signing' ? 'I found the fields. Let’s fill in the remaining details.' : scenario.startsWith('pr-') ? 'The branches overlap in three places.' : scenario === 'migration' ? 'The local migration is ready for exact review.' : scenario === 'map' ? 'Three places to compare. Choose a marker or use the carousel.' : '' : '', inputIds: ids });
     try {
-      const grants = this.grants.get(input.threadId)!;
       if (scenario === 'signing') {
         const exported = this.store.all<Operation>('operation', input.threadId).find(op => op.kind === 'pdf.export' && op.status === 'succeeded');
         if (exported) {
@@ -181,7 +184,7 @@ export class ReviewRuntime implements RuntimeAdapter {
         }
       } else if (scenario === 'context') {
         this.event(input, 'usage', { usage: { contextTokens: 604100, contextWindow: 1000000, inputTokens: 38000, outputTokens: 14200, cost: null, sessionPercent: 68, weeklyPercent: 24, activity: 'idle', contextBreakdown: [{ label: 'System', tokens: 18000 }, { label: 'Tools', tokens: 15500 }, { label: 'Skills', tokens: 12000 }, { label: 'Messages', tokens: 541600 }, { label: 'Reserved', tokens: 17000 }] } });
-      } else {
+      } else if (!plainShell) {
         this.source(input, 'rows', [{ id: 'a', name: 'Evidence', value: 8 }, { id: 'b', name: 'Review', value: 5 }, { id: 'c', name: 'Outcome', value: 12 }]); this.source(input, 'count', 12); this.source(input, 'progress', 8); this.source(input, 'places', MAP_DATA); this.source(input, 'graph', graphData('ready'));
         this.source(input, 'events', [{ title: 'Source imported', status: 'success' }, { title: 'Review accepted', status: 'success' }, { title: 'Next observation', status: 'running' }]); this.source(input, 'tree', [{ label: 'Project', children: [{ label: 'source.ts' }, { label: 'source.test.ts' }] }]); this.source(input, 'operation', { status: 'success', label: accepted ? 'Choice saved locally' : 'Catalog ready',  }); this.source(input, 'evidence', [{ label: 'Bundled source', source: 'Local review fixture' }]);
         for(const [alias,name] of [['diagnostics','Diagnostics'],['changeSet','ChangeSet'],['api','ApiExplorer'],['pipeline','Pipeline']] as const)this.source(input,alias,SOFTWARE_FIXTURE_DATA[name]);

@@ -9,6 +9,23 @@ const evidence=resolve('.harness-markdown-evidence');
 const spec=(text:string)=>({root:'document',elements:{document:{type:'Markdown',props:{text}}}});
 async function documentFixture(page:Page,text:string){const snapshot=taskFixture(spec(text));await serveTaskFixture(page,snapshot);await page.goto('/');const markdown=page.locator('[data-artifact-id="task-surface"] .markdown');await expect(markdown).toBeVisible();return markdown;}
 
+test('reply section navigation keeps Jump to latest available and restores the tail',async({page})=>{
+ await page.emulateMedia({reducedMotion:'reduce'});
+ const snapshot=taskFixture(spec('Unused artifact.'));
+ snapshot.artifacts=[];snapshot.userStates=[];
+ snapshot.messages[0].content=['## Opening',...Array.from({length:28},(_,i)=>`Opening paragraph ${i}.\n`),'## Middle',...Array.from({length:28},(_,i)=>`Middle paragraph ${i}.\n`),'## Ending',...Array.from({length:28},(_,i)=>`Ending paragraph ${i}.\n`)].join('\n');
+ await serveTaskFixture(page,snapshot);await page.goto('/');
+ const reply=page.locator('[data-message-id="reply"]');
+ await reply.getByRole('button',{name:'Contents',exact:true}).click();
+ await reply.getByRole('button',{name:'Middle',exact:true}).click();
+ await expect(reply.getByRole('heading',{name:'Middle',exact:true})).toBeFocused();
+ const latest=page.getByRole('button',{name:'Jump to latest',exact:true});
+ await expect(latest).toBeVisible();
+ await latest.click();
+ await expect(latest).toBeHidden();
+ await expect.poll(()=>page.locator('.conversation-scroll:visible').evaluate(node=>node.scrollHeight-node.clientHeight-node.scrollTop)).toBeLessThanOrEqual(1);
+});
+
 test('renders the genuine Pi trace table with semantic headers and numeric alignment',async({page})=>{
  const markdown=await documentFixture(page,actualTraceTable),table=markdown.getByRole('table');
  await expect(table).toBeVisible();await expect(table.getByRole('columnheader')).toHaveText(['Span','Parent','Interval','Duration','Result']);
