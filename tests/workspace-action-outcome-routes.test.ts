@@ -117,6 +117,20 @@ it('routes an undo write through durable identity and confirms the restored mess
  // A replayed command must not undo another commit.
  const replay=await app.inject({method:'POST',url,payload:input});expect(replay.json()).toEqual(response.json());expect(managedGit('rev-parse','HEAD')).toBe(parent);
 },60000);
+it('rejects an over-limit undo message before mutation as not-applied',async()=>{
+ const f=await fixture(),managedGit=(...args:string[])=>execFileSync('git',['-C',f.binding.path,...args],{windowsHide:true,encoding:'utf8'}).trim();
+ managedGit('config','user.name','Fixture');managedGit('config','user.email','fixture@example.invalid');
+ await writeFile(join(f.binding.path,'one.txt'),'second\n');managedGit('add','.');
+ const message='Oversize tip\n\n'+'x'.repeat(64001);
+ await writeFile(join(f.binding.path,'message.txt'),message);managedGit('commit','-qF','message.txt');await rm(join(f.binding.path,'message.txt'),{force:true});
+ const status=await f.projects.gitStatus(f.projectId,f.thread.id),tip=status.head!;
+ const input={id:randomUUID(),type:'undo' as const,threadId:f.thread.id,payload:{expectedHead:tip,revision:status.revision}};
+ expect(await f.outcomes.execute(f.projectId,input)).toEqual({state:'not-applied'});
+ expect(managedGit('rev-parse','HEAD')).toBe(tip);
+ expect(f.store.get<{status:string}>('workspaceActionOutcome',input.id)?.status).toBe('not-applied');
+ expect(await f.outcomes.execute(f.projectId,input)).toEqual({state:'not-applied'});
+ expect(managedGit('rev-parse','HEAD')).toBe(tip);
+},60000);
 it('returns an unsuccessful response for an unconfirmed action so existing controls retain their draft',async()=>{
  const f=await fixture(),{input}=await f.operation(),app=Fastify(),service={store:f.store} as Service;
  await writeFile(join(f.binding.path,'one.txt'),'changed after the reviewed revision\n');
