@@ -105,6 +105,14 @@ it.each(['mutation','stream','reconnect','busy-stream'] as const)('reconciles %s
  }finally{await browser.close();}
 },30000);
 
+it('names the unread badge for assistive tech and announces the error strip assertively',()=>{
+ const mark=vi.fn(async()=>{});
+ const badge=renderToStaticMarkup(createElement(InboxView,{attention:{items:[],unread:2,error:'',refresh:async()=>{},markRead:mark,markUnread:mark},onOpenThread:()=>{}}));
+ expect(badge).toContain('class="inbox-unread-count" aria-label="2 unread"');
+ const strip=renderToStaticMarkup(createElement(InboxView,{attention:{items:[],unread:0,error:'Could not reach the inbox',refresh:async()=>{},markRead:mark,markUnread:mark},onOpenThread:()=>{}}));
+ expect(strip).toContain('class="agent-inbox-error" role="alert"');expect(strip).toContain('Could not reach the inbox');
+});
+
 it('advances row ages on the mounted tick and clears the interval on unmount',async()=>{
  const {build}=await import('esbuild'),{chromium}=await import('@playwright/test');
  const script=(await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
