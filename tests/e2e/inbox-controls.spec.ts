@@ -142,7 +142,9 @@ test('Escape, outside click, focus departure and Tab dismiss without changing th
   await filter(page).click(); await page.getByRole('searchbox').focus();
   await expect(page.getByRole('listbox')).toHaveCount(0); await expect(page.getByRole('searchbox')).toBeFocused();
   await filter(page).click(); await page.keyboard.press('Tab');
-  await expect(page.getByRole('listbox')).toHaveCount(0); await expect(page.getByRole('button', {name: 'Refresh inbox', exact: true})).toBeFocused();
+  await expect(page.getByRole('listbox')).toHaveCount(0); await expect(page.getByRole('button', {name: 'Mark all as read', exact: true})).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', {name: 'Refresh inbox', exact: true})).toBeFocused();
   await expect(filter(page)).toHaveText('Completed');
   expect(await calls(page)).toEqual([]);
 });
@@ -386,6 +388,8 @@ test('Mark all read retains partial successes and refreshes once per attempt',as
     window.inboxControls.holdRead=new Promise(resolve=>window.addEventListener('release-bulk-read',()=>resolve(),{once:true}));
   });
   const bulk=page.getByRole('button',{name:'Mark all as read',exact:true});
+  await expect(bulk).toBeVisible();
+  expect(await bulk.evaluate(button=>button.nextElementSibling?.getAttribute('aria-label'))).toBe('Refresh inbox');
   await bulk.click();
   await expect(bulk).toBeDisabled();
   await expect(bulk).toHaveText('Marking…');
