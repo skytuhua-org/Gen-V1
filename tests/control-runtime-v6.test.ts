@@ -357,3 +357,13 @@ describe('M16 ControlRuntime host ownership', () => {
     }
   });
 });
+
+it('clears the sidecar acknowledgement timer if the transport throws synchronously', async () => {
+  vi.useFakeTimers();
+  try {
+    const failure = new Error('local IPC send failed');
+    const channel = createControlSidecarChannel({ token: 'test-token', send: () => { throw failure; } });
+    await expect(channel.request('candidates', {})).rejects.toBe(failure);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});

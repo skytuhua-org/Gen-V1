@@ -2,39 +2,80 @@ import {afterAll, beforeAll, describe, expect, it} from 'vitest';
 import {build} from 'esbuild';
 import {chromium, type Browser, type Page} from '@playwright/test';
 
+declare global {
+  interface Window {
+    hostCalls: Array<{actionId:string;payload:unknown;epoch:number}>;
+    hostPending: Array<{actionId:string;resolve:(value?:unknown)=>void;reject:(reason?:unknown)=>void}>;
+    results: Record<string,Promise<boolean>>;
+    runs: Record<string,(actionId:string,payload:unknown)=>Promise<boolean>>;
+    start: (resultKey:string,ownerKey:string,actionId:string)=>void;
+    settle: (index:number,kind?:string,value?:string)=>void;
+    result: (key:string)=>Promise<boolean>;
+    setOwner: (owner:string|null)=>void;
+    unmount: ()=>void;
+    changeCallbackIdentity: ()=>void;
+    editPresentation: ()=>void;
+  }
+}
+
 const fixture = `
 import React, {useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ArtifactActions, useTaskAction} from './apps/web/src/task-context';
 
-window.actionCalls = [];
-window.deferreds = [];
+window.hostCalls = [];
+window.hostPending = [];
 window.results = {};
-const makeHost = () => (actionId, payload) => new Promise((resolve, reject) => {
-  window.actionCalls.push({actionId, payload});
-  window.deferreds.push({resolve, reject});
-});
-function OwnedProbe({owner}){
+window.runs = {};
+window.start = (resultKey, ownerKey, actionId) => {
+  window.results[resultKey] = window.runs[ownerKey](actionId, {source: resultKey});
+};
+window.settle = (index, kind = 'success', value = '') => {
+  const item = window.hostPending.splice(index, 1)[0];
+  if (!item) throw new Error('missing deferred host action');
+  if (kind === 'success') item.resolve();
+  else if (kind === 'error') item.reject(new Error(value));
+  else item.reject(value);
+};
+window.result = async key => await window.results[key];
+
+function Probe({owner}) {
+  const [editRevision, setEditRevision] = useState(0);
+  window.editPresentation = () => setEditRevision(value => value + 1);
   const action = useTaskAction(owner);
-  if (owner === 'A' && !window.firstA) window.firstA = action;
-  window.currentHook = action;
-  return <output id="owned" data-owner={String(owner)} data-busy={String(action.busy)} data-error={action.error}/>;
+  const key = owner ?? 'null';
+  window.runs[key] = action.run;
+  return <>
+    <span id="owner">{key}</span>
+    <span id="edit-revision">{editRevision}</span>
+    <span id="busy">{String(action.busy)}</span>
+    <span id="error">{action.error}</span>
+  </>;
 }
-function LegacyProbe(){
+
+function LegacyProbe() {
   const action = useTaskAction();
-  window.legacyHook = action;
-  return <output id="legacy" data-busy={String(action.busy)} data-error={action.error}/>;
+  window.runs.legacy = action.run;
+  return <span id="legacy-error">{action.error}</span>;
 }
-function Harness(){
-  const [owner,setOwner] = useState('A');
-  const [dispatch,setDispatch] = useState(() => makeHost());
-  const [edits,setEdits] = useState(0);
+
+function Fixture() {
+  const [owner, setOwner] = useState('A');
+  const [mounted, setMounted] = useState(true);
+  const [epoch, setEpoch] = useState(0);
   window.setOwner = setOwner;
-  window.rotateAction = () => setDispatch(() => makeHost());
-  window.editArtifact = () => setEdits(value => value + 1);
-  return <ArtifactActions value={dispatch}><span hidden>{edits}</span>{owner === 'gone' ? null : <OwnedProbe owner={owner}/>}<LegacyProbe/></ArtifactActions>;
+  window.unmount = () => setMounted(false);
+  window.changeCallbackIdentity = () => setEpoch(value => value + 1);
+  const hostAction = (actionId, payload) => {
+    window.hostCalls.push({actionId, payload, epoch});
+    return new Promise((resolve, reject) => {
+      window.hostPending.push({actionId, resolve, reject});
+    });
+  };
+  return <ArtifactActions.Provider value={hostAction}><LegacyProbe/>{mounted ? <Probe owner={owner}/> : null}</ArtifactActions.Provider>;
 }
-createRoot(document.getElementById('root')).render(<Harness/>);
+
+createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 
 describe('task action ownership', () => {
@@ -48,96 +89,124 @@ describe('task action ownership', () => {
     const page = await browser.newPage();
     await page.setContent('<div id="root"></div>');
     await page.addScriptTag({content: script});
-    await expect.poll(() => page.evaluate('Boolean(window.currentHook && window.legacyHook)')).toBe(true);
+    await page.locator('#owner').waitFor();
     return page;
   }
-  const calls = (page: Page) => page.evaluate('window.actionCalls.length');
-  const result = (page: Page, name: string) => page.evaluate(`window.results[${JSON.stringify(name)}]`);
+  const busy = (page: Page) => page.locator('#busy').innerText();
+  const error = (page: Page) => page.locator('#error').innerText();
+  const calls = (page: Page) => page.evaluate(() => window.hostCalls.length);
+  async function start(page: Page, resultKey: string, ownerKey: string, actionId = resultKey) {
+    await page.evaluate(([result, owner, action]) => window.start(result, owner, action), [resultKey, ownerKey, actionId]);
+  }
+  async function settle(page: Page, index: number, kind: 'success'|'error'|'raw' = 'success', value = '') {
+    await page.evaluate(([i, k, v]) => window.settle(i as number, k as string, v as string), [index, kind, value]);
+  }
 
-  it('preserves legacy undefined callers, duplicate suppression and current errors', async () => {
+  it('preserves legacy no-argument duplicates, success and rejection messages', async () => {
     const page = await open();
-    await page.evaluate(`window.results.legacyFirst = undefined; window.legacyHook.run('legacy').then(value => { window.results.legacyFirst = value; }); window.results.legacyDuplicate = undefined; window.legacyHook.run('legacy').then(value => { window.results.legacyDuplicate = value; }); undefined;`);
+    await start(page, 'legacy-current', 'legacy', 'legacy-current');
     expect(await calls(page)).toBe(1);
-    await expect.poll(() => result(page, 'legacyDuplicate')).toBe(false);
-    await page.evaluate(`window.deferreds[0].resolve()`);
-    await expect.poll(() => result(page, 'legacyFirst')).toBe(true);
-    await page.evaluate(`window.results.legacyError = undefined; window.legacyHook.run('legacy').then(value => { window.results.legacyError = value; }); undefined;`);
+    await start(page, 'legacy-duplicate', 'legacy', 'legacy-duplicate');
+    expect(await page.evaluate(async () => await window.result('legacy-duplicate'))).toBe(false);
+    expect(await calls(page)).toBe(1);
+    await settle(page, 0);
+    expect(await page.evaluate(async () => await window.result('legacy-current'))).toBe(true);
+    await start(page, 'legacy-rejection', 'legacy');
     expect(await calls(page)).toBe(2);
-    await page.evaluate(`window.deferreds[1].reject(new Error('Source failed exactly.'))`);
-    await expect.poll(() => result(page, 'legacyError')).toBe(false);
-    await expect.poll(() => page.locator('#legacy').getAttribute('data-error')).toBe('Source failed exactly.');
+    await settle(page, 0, 'error', 'legacy request failed');
+    expect(await page.evaluate(async () => await window.result('legacy-rejection'))).toBe(false);
+    expect(await page.locator('#legacy-error').innerText()).toBe('legacy request failed');
     await page.close();
   });
 
-  it('returns false for an inactive null owner without dispatching', async () => {
+  it('blocks stale owner results while a new owner remains pending', async () => {
     const page = await open();
-    await page.evaluate(`window.setOwner(null)`);
-    await expect.poll(() => page.locator('#owned').getAttribute('data-owner')).toBe('null');
-    await page.evaluate(`window.results.inactive = undefined; window.currentHook.run('inactive').then(value => { window.results.inactive = value; }); undefined;`);
-    await expect.poll(() => result(page, 'inactive')).toBe(false);
+    await start(page, 'a', 'A', 'first');
+    expect(await calls(page)).toBe(1);
+    expect(await busy(page)).toBe('true');
+    await page.evaluate(() => window.setOwner('B'));
+    await expect.poll(() => page.locator('#owner').innerText()).toBe('B');
+    expect(await busy(page)).toBe('false');
+    await start(page, 'b', 'B', 'second');
+    expect(await calls(page)).toBe(2);
+    expect(await busy(page)).toBe('true');
+    await settle(page, 0, 'error', 'old owner failed');
+    expect(await page.evaluate(async () => await window.result('a'))).toBe(false);
+    expect(await busy(page)).toBe('true');
+    expect(await error(page)).toBe('');
+    await settle(page, 0, 'error', 'new owner failed');
+    expect(await page.evaluate(async () => await window.result('b'))).toBe(false);
+    expect(await busy(page)).toBe('false');
+    expect(await error(page)).toBe('new owner failed');
+    await page.close();
+  });
+
+  it('treats A-B-A as a new generation', async () => {
+    const page = await open();
+    await start(page, 'a1', 'A', 'first-a');
+    await page.evaluate(() => window.setOwner('B'));
+    await expect.poll(() => page.locator('#owner').innerText()).toBe('B');
+    await page.evaluate(() => window.setOwner('A'));
+    await expect.poll(() => page.locator('#owner').innerText()).toBe('A');
+    await start(page, 'a2', 'A', 'second-a');
+    expect(await calls(page)).toBe(2);
+    await settle(page, 0);
+    expect(await page.evaluate(async () => await window.result('a1'))).toBe(false);
+    expect(await busy(page)).toBe('true');
+    await settle(page, 0);
+    expect(await page.evaluate(async () => await window.result('a2'))).toBe(true);
+    expect(await busy(page)).toBe('false');
+    await page.close();
+  });
+
+  it('returns false without dispatch while null and suppresses duplicates across callback and presentation changes', async () => {
+    const page = await open();
+    await page.evaluate(() => window.setOwner(null));
+    await expect.poll(() => page.locator('#owner').innerText()).toBe('null');
+    await start(page, 'inactive', 'null', 'inactive');
+    expect(await page.evaluate(async () => await window.result('inactive'))).toBe(false);
     expect(await calls(page)).toBe(0);
+    await page.evaluate(() => window.setOwner('A'));
+    await expect.poll(() => page.locator('#owner').innerText()).toBe('A');
+    await start(page, 'current', 'A', 'current');
+    expect(await calls(page)).toBe(1);
+    await page.evaluate(() => window.changeCallbackIdentity());
+    await page.waitForTimeout(0);
+    await start(page, 'duplicate', 'A', 'duplicate');
+    expect(await page.evaluate(async () => await window.result('duplicate'))).toBe(false);
+    expect(await calls(page)).toBe(1);
+    await page.evaluate(() => window.editPresentation());
+    await expect.poll(() => page.locator('#edit-revision').innerText()).toBe('1');
+    await start(page, 'edit-duplicate', 'A');
+    expect(await page.evaluate(async () => await window.result('edit-duplicate'))).toBe(false);
+    expect(await calls(page)).toBe(1);
+    await settle(page, 0);
+    expect(await page.evaluate(async () => await window.result('current'))).toBe(true);
     await page.close();
   });
 
-  it('invalidates a late prior-owner result without clearing the new owner request', async () => {
+  it('invalidates the request token on unmount without cancelling the host promise', async () => {
     const page = await open();
-    await page.evaluate(`window.results.oldA = undefined; window.firstA.run('act').then(value => { window.results.oldA = value; }); undefined;`);
+    await start(page, 'unmounted', 'A', 'unmounted');
     expect(await calls(page)).toBe(1);
-    await page.evaluate(`window.setOwner('B')`);
-    await expect.poll(() => page.locator('#owned').getAttribute('data-owner')).toBe('B');
-    await page.evaluate(`window.results.currentB = undefined; window.currentHook.run('act').then(value => { window.results.currentB = value; }); undefined;`);
-    expect(await calls(page)).toBe(2);
-    await expect.poll(() => page.locator('#owned').getAttribute('data-busy')).toBe('true');
-    await page.evaluate(`window.deferreds[0].resolve()`);
-    await expect.poll(() => result(page, 'oldA')).toBe(false);
-    await expect.poll(() => page.locator('#owned').getAttribute('data-busy')).toBe('true');
-    await expect.poll(() => page.locator('#owned').getAttribute('data-error')).toBe('');
-    await page.evaluate(`window.deferreds[1].reject('not an Error object')`);
-    await expect.poll(() => result(page, 'currentB')).toBe(false);
-    await expect.poll(() => page.locator('#owned').getAttribute('data-error')).toBe('The request failed. Try again.');
-    await expect.poll(() => page.locator('#owned').getAttribute('data-busy')).toBe('false');
-    await page.evaluate(`window.results.currentError = undefined; window.currentHook.run('act').then(value => { window.results.currentError = value; }); undefined;`);
-    expect(await calls(page)).toBe(3);
-    await page.evaluate(`window.deferreds[2].reject(new Error('Owned source failed exactly.'))`);
-    await expect.poll(() => result(page, 'currentError')).toBe(false);
-    await expect.poll(() => page.locator('#owned').getAttribute('data-error')).toBe('Owned source failed exactly.');
+    await page.evaluate(() => window.unmount());
+    await expect.poll(() => page.locator('#owner').count()).toBe(0);
+    await settle(page, 0);
+    expect(await page.evaluate(async () => await window.result('unmounted'))).toBe(false);
+    expect(await page.evaluate(() => window.hostPending.length)).toBe(0);
     await page.close();
   });
 
-  it('keeps the same-owner guard through callback identity and edit renders', async () => {
+  it('uses source Error messages and the fallback for non-Error rejection in current owners', async () => {
     const page = await open();
-    await page.evaluate(`window.results.initial = undefined; window.currentHook.run('act').then(value => { window.results.initial = value; }); undefined;`);
-    expect(await calls(page)).toBe(1);
-    await page.evaluate(`window.rotateAction(); new Promise(requestAnimationFrame)`);
-    await page.evaluate(`window.results.afterRotate = undefined; window.currentHook.run('act').then(value => { window.results.afterRotate = value; }); undefined;`);
-    await expect.poll(() => result(page, 'afterRotate')).toBe(false);
-    expect(await calls(page)).toBe(1);
-    await page.evaluate(`window.editArtifact(); new Promise(requestAnimationFrame)`);
-    await page.evaluate(`window.results.afterEdit = undefined; window.currentHook.run('act').then(value => { window.results.afterEdit = value; }); undefined;`);
-    await expect.poll(() => result(page, 'afterEdit')).toBe(false);
-    expect(await calls(page)).toBe(1);
-    await page.evaluate(`window.deferreds[0].resolve()`);
-    await expect.poll(() => result(page, 'initial')).toBe(true);
-    expect(await calls(page)).toBe(1);
-    await page.close();
-  });
-
-  it('treats A-B-A as a new generation and invalidates unmounted completion', async () => {
-    const page = await open();
-    await page.evaluate(`window.results.firstA = undefined; window.firstA.run('act').then(value => { window.results.firstA = value; }); undefined;`);
-    await page.evaluate(`window.setOwner('B')`);
-    await expect.poll(() => page.locator('#owned').getAttribute('data-owner')).toBe('B');
-    await page.evaluate(`window.setOwner('A')`);
-    await expect.poll(() => page.locator('#owned').getAttribute('data-owner')).toBe('A');
-    await page.evaluate(`window.results.newA = undefined; window.currentHook.run('act').then(value => { window.results.newA = value; }); undefined;`);
-    expect(await calls(page)).toBe(2);
-    await page.evaluate(`window.deferreds[0].resolve()`);
-    await expect.poll(() => result(page, 'firstA')).toBe(false);
-    await expect.poll(() => page.locator('#owned').getAttribute('data-busy')).toBe('true');
-    await page.evaluate(`window.setOwner('gone')`);
-    await expect.poll(() => page.evaluate(`document.getElementById('owned') === null`)).toBe(true);
-    await page.evaluate(`window.deferreds[1].resolve()`);
-    await expect.poll(() => result(page, 'newA')).toBe(false);
+    await start(page, 'error', 'A', 'error');
+    await settle(page, 0, 'error', 'source failure');
+    expect(await page.evaluate(async () => await window.result('error'))).toBe(false);
+    expect(await error(page)).toBe('source failure');
+    await start(page, 'raw', 'A', 'raw');
+    await settle(page, 0, 'raw', 'not an Error');
+    expect(await page.evaluate(async () => await window.result('raw'))).toBe(false);
+    expect(await error(page)).toBe('The request failed. Try again.');
     await page.close();
   });
 });
