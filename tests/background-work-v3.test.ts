@@ -10,7 +10,7 @@ import { DurableWakeupScheduler } from "../packages/core/durable-wakeups.ts";
 import { ModelCapacity } from "../packages/runtime/model-capacity.ts";
 import { __setCapabilityFlagForTests, registeredCapabilityFlags } from "../packages/core/capability-flags.ts";
 import type { RuntimeAdapter, Thread } from "../packages/contracts/index.ts";
-import { BACKGROUND_HOLD_REASONS, backgroundWorkV1Schema, humanStepV1Schema, intakeV1Schema, occurrenceKeyForEvent, occurrenceKeyForTime, wakeupV1Schema, type BackgroundOccurrenceV1 } from "../packages/contracts/background-work.ts";
+import { BACKGROUND_HOLD_REASONS, BACKGROUND_SCHEDULER_LIMITS, backgroundWorkV1Schema, humanStepV1Schema, intakeV1Schema, occurrenceKeyForEvent, occurrenceKeyForTime, wakeupV1Schema, type BackgroundOccurrenceV1 } from "../packages/contracts/background-work.ts";
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
@@ -114,6 +114,42 @@ describe("M10-S01/T01 scheduler claims and restart", () => {
     expect(occurrences).toHaveLength(1);
     expect(occurrences[0]!.state).toBe("DELIVERED");
   });
+  it("contains a heartbeat write failure and renews independent active leases", async () => {
+    const f = fixture();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    let complete!: () => void;
+    const finishing = new Promise<void>(resolve => { complete = resolve; });
+    const deliver = vi.fn(async () => { await finishing; return { status: "DELIVERED" as const }; });
+    const scheduler = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver });
+    try {
+      const a = scheduler.register(command("background.wakeup.register"), { taskId: "a", trigger: { kind: "AT_UTC", dueAtMs: f.now() } });
+      const b = scheduler.register(command("background.wakeup.register"), { taskId: "b", trigger: { kind: "AT_UTC", dueAtMs: f.now() } });
+      await scheduler.tick();
+      const firstLease = scheduler.occurrences(a.wakeupId)[0]!.leaseExpiresAtMs!;
+      const original = f.store.internal.bind(f.store);
+      let failed = false;
+      vi.spyOn(f.store, "internal").mockImplementation((event, thread, apply) => {
+        if (event === "background.occurrence.heartbeat" && !failed) { failed = true; throw Error("injected heartbeat write failure"); }
+        return original(event, thread, apply);
+      });
+      scheduler.start();
+      f.advance(BACKGROUND_SCHEDULER_LIMITS.heartbeatMs);
+      expect(() => vi.advanceTimersByTime(BACKGROUND_SCHEDULER_LIMITS.heartbeatMs)).not.toThrow();
+      expect(failed).toBe(true);
+      expect(scheduler.occurrences(a.wakeupId)[0]!.leaseExpiresAtMs).toBe(firstLease);
+      expect(scheduler.occurrences(b.wakeupId)[0]!.leaseExpiresAtMs).toBe(f.now() + BACKGROUND_SCHEDULER_LIMITS.leaseMs);
+      f.advance(BACKGROUND_SCHEDULER_LIMITS.heartbeatMs);
+      vi.advanceTimersByTime(BACKGROUND_SCHEDULER_LIMITS.heartbeatMs);
+      expect(scheduler.occurrences(a.wakeupId)[0]!.leaseExpiresAtMs).toBe(f.now() + BACKGROUND_SCHEDULER_LIMITS.leaseMs);
+      expect(deliver).toHaveBeenCalledTimes(2);
+    } finally {
+      scheduler.stop();
+      vi.useRealTimers();
+      complete();
+      await finishing;
+    }
+  });
+
   it("restart before claim delivers once; restart after uncertain claim never redelivers without reconciliation", async () => {
     const f = fixture();
     let deliveries = 0;
