@@ -1,6 +1,6 @@
 import {test,expect,type Page,type Route,type Locator} from '@playwright/test';
 const fixtureRoot=encodeURI('/@fs/'+process.cwd().replaceAll('\\','/'));
-async function openSurface(page:Page,panel:Locator,label:string){await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name:label,exact:true}).click();}
+async function openSurface(page:Page,panel:Locator,label:string){await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:label,exact:true}).click();}
 
 test.beforeEach(async({page})=>{
  await page.route('**/api/**',route=>route.fulfill({status:404,json:{error:{message:'Unconfigured fixture request'}}}));
@@ -255,6 +255,27 @@ for(const outcome of ['success','failure'] as const)test(`retained profile sign-
 
 test('profile cancellation reports sign-in completion when the host commit already won',async({page})=>{
  const host=await profileAuthFixture(page);host.holdPoll();await host.panel.getByRole('button',{name:'Sign in to GitHub',exact:true}).click();await expect.poll(()=>host.actions.some(item=>item.action==='poll')).toBe(true);await page.route('**/api/github/auth/cancel',route=>route.fulfill({json:{status:'authenticated',login:'completed-user'}}));await host.panel.getByRole('button',{name:'Cancel sign-in',exact:true}).click();await expect(host.panel).toContainText('Sign-in completed as completed-user before cancellation.');await host.releasePoll();await expect(host.panel).not.toContainText('stale-user');await expect(host.panel).not.toContainText('Sign-in cancelled');
+});
+
+test('Add surface distinguishes open tabs from the Usage dialog action', async ({page}) => {
+ const panel=page.getByRole('complementary',{name:'Workspace panel',exact:true});
+ await panel.getByRole('button',{name:'Add surface',exact:true}).click();
+ const menu=page.getByRole('menu');
+ await expect(menu.getByRole('menuitemcheckbox')).toHaveCount(8);
+ await expect(menu.getByRole('menuitem',{name:'Usage (dialog)',exact:true})).toHaveAttribute('title','Opens the Usage dialog');
+ const terminal=menu.getByRole('menuitemcheckbox',{name:'Terminal',exact:true});
+ await expect(terminal).toHaveAttribute('aria-checked','false');
+ await terminal.click();
+ await expect(panel.getByRole('tab',{name:'Terminal',exact:true})).toHaveAttribute('aria-selected','true');
+ await panel.getByRole('tab',{name:'Artifact',exact:true}).click();
+ await panel.getByRole('button',{name:'Add surface',exact:true}).click();
+ await expect(terminal).toHaveAttribute('aria-checked','true');
+ await expect(terminal).toHaveAttribute('title','Already open — switches to its tab');
+ await terminal.focus();
+ await terminal.press('Enter');
+ const tab=panel.getByRole('tab',{name:'Terminal',exact:true});
+ await expect(tab).toHaveCount(1);
+ await expect(tab).toHaveAttribute('aria-selected','true');
 });
 
 test('the selected Workspace tab owns the only rendered tabpanel', async ({page}) => {
