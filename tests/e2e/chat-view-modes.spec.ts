@@ -29,7 +29,7 @@ test('draft, selection and reading position survive the workspace panel opening'
   Object.assign(window,{chatNodes:{textarea,scroll,composer:scope.querySelector('.composer'),message:scope.querySelector('.message')}});
  });
  await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();
- await expect(page.getByRole('complementary',{name:'Workspace panel',exact:true})).toBeVisible();
+ await expect(page.getByRole('region',{name:'Workspace panel',exact:true})).toBeVisible();
  await expect(input(page)).toHaveValue('Keep this draft and its selection');
  const state=await page.evaluate(()=>{
   const nodes=(window as unknown as {chatNodes:{textarea:HTMLTextAreaElement;scroll:HTMLElement;composer:Element;message:Element}}).chatNodes;

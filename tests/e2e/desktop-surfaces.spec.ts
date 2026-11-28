@@ -150,7 +150,7 @@ async function checkSinglePanelOpener(page:Page,draft:string){
  const composer=page.getByRole('textbox',{name:'Message',exact:true});await composer.fill(draft);
  await expect(composer).toHaveCount(1);const retained=await composer.elementHandle();
  const opener=page.getByRole('button',{name:'Open workspace panel',exact:true});await expect(opener).toHaveCount(1);await opener.click();
- const panel=page.getByRole('complementary',{name:'Workspace panel',exact:true});await expect(panel).toBeVisible();
+ const panel=page.getByRole('region',{name:'Workspace panel',exact:true});await expect(panel).toBeVisible();
  const close=page.getByRole('button',{name:'Hide workspace panel',exact:true});await expect(close).toHaveCount(1);await close.click();await expect(panel).toBeHidden();
  await expect(opener).toBeFocused();await expect(composer).toHaveValue(draft);await expect(composer).toHaveCount(1);
  expect(await retained!.evaluate(element=>element.isConnected&&element===document.querySelector('textarea[aria-label="Message"]'))).toBe(true);
