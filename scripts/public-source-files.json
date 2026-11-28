@@ -374,6 +374,7 @@
     "apps/web/src/thread-hover/thread-hover.css",
     "apps/web/src/thread-messages.ts",
     "apps/web/src/thread-search.ts",
+    "apps/web/src/thread-title.ts",
     "apps/web/src/time-format.ts",
     "apps/web/src/usage-dialog.css",
     "apps/web/src/usage-presentation.ts",

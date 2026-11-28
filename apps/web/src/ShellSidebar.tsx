@@ -19,6 +19,7 @@ import {
   SquarePen,
   X,
 } from 'lucide-react';
+import {displayThreadTitle} from './thread-title';
 import {threadNavigationRevision,type ThreadNavigationRow as Thread} from '../../../packages/contracts/shell-read-models';
 import type { UiPreferences } from '../../../packages/contracts/preferences';
 import type { ShellLayout } from './shell-layout';
@@ -56,7 +57,7 @@ export const threadStatus = (thread: Thread) =>
         : thread.status.charAt(0).toUpperCase() + thread.status.slice(1);
 
 export const threadRowLabel = (thread: Thread) =>
-  `${thread.title} ${threadStatus(thread)}${thread.presentation?.unread ? ' Unread' : ''}`;
+  `${displayThreadTitle(thread)} ${threadStatus(thread)}${thread.presentation?.unread ? ' Unread' : ''}`;
 
 export function projectMonogram(name?: string | null): string {
   const cleaned = (name ?? '').trim();
@@ -247,8 +248,9 @@ export function ShellSidebar({
   });
 
   const announceThreadAction = (item: Thread, action: string) => {
-    const title = Array.from(item.title);
-    announce((title.length > 60 ? title.slice(0, 57).join('') + '…' : item.title) + ' ' + action);
+    const label = displayThreadTitle(item);
+    const title = Array.from(label);
+    announce((title.length > 60 ? title.slice(0, 57).join('') + '…' : label) + ' ' + action);
   };
   const presentAndAnnounce = async (item: Thread, patch: NonNullable<Thread['presentation']>, action: string) => {
     try {
@@ -262,7 +264,7 @@ export function ShellSidebar({
   };
   const renderMenu = (item: Thread) => (
     <span className="sidebar-thread-menu-button" {...threadMove.menuEvents}>
-      <ActionMenu label={`Options for ${item.title}`} icon={<MoreHorizontal size={14} aria-hidden="true" />} iconOnly
+      <ActionMenu label={`Options for ${displayThreadTitle(item)}`} icon={<MoreHorizontal size={14} aria-hidden="true" />} iconOnly
         open={menuId === item.id} onOpenChange={open => setMenuId(open ? item.id : null)}
         items={[
           ...(onPlaceThread ? [{id: 'place', label: 'Place in workspace', shortcut: 'Alt Enter', onSelect: () => onPlaceThread(item)}] : []),
@@ -276,7 +278,7 @@ export function ShellSidebar({
             onSelect: async () => {
               const next = !item.presentation?.settled;
               if (await presentAndAnnounce(item, {settled: next}, next ? 'settled' : 'restored to working')) {
-                toast(next ? `"${item.title}" settled — find it under Settled` : `"${item.title}" returned to your threads`, {announce:false});
+                toast(next ? `"${displayThreadTitle(item)}" settled — find it under Settled` : `"${displayThreadTitle(item)}" returned to your threads`, {announce:false});
               }
             }},
           {id: 'archive', label: 'Archive thread', icon: <Archive size={13} />, disabled: Boolean(item.runId),
@@ -301,7 +303,7 @@ export function ShellSidebar({
         title={locked ? REORDER_PAUSED : undefined}
         className={`sidebar-thread-row ${compactSettled ? 'sidebar-settled-row' : ''} ${item.id === selectedId ? 'active' : ''} ${item.kind === 'delegate' ? 'sidebar-delegate' : ''} ${reorder.dragging?.id === item.id ? 'sidebar-drag-source' : ''}`}
       >
-        <ThreadHoverCard facts={{scope,title:item.title,project:item.projectName?{name:item.projectName,monogram:projectMonogram(item.projectName)}:undefined,model:item.modelId??undefined,reasoning:item.thinkingLevel??undefined,activity:threadStatus(item),lastActivity:{label:threadAge(item.updatedAt),at:item.updatedAt},parent:item.parentThreadId?{threadId:item.parentThreadId,title:matching.find(parent=>parent.id===item.parentThreadId)?.title}:undefined}}
+        <ThreadHoverCard facts={{scope,title:displayThreadTitle(item),project:item.projectName?{name:item.projectName,monogram:projectMonogram(item.projectName)}:undefined,model:item.modelId??undefined,reasoning:item.thinkingLevel??undefined,activity:threadStatus(item),lastActivity:{label:threadAge(item.updatedAt),at:item.updatedAt},parent:item.parentThreadId?{threadId:item.parentThreadId,title:displayThreadTitle(matching.find(parent=>parent.id===item.parentThreadId), '')||undefined}:undefined}}
           cache={hoverCache} loadFacts={copy&&scope.projectId?loadPersonalThreadHover:undefined} projectColors={preferences.projectColors} onOpenPR={onOpenThreadPR} preferredSide="right"
           blocked={hoverBlocked||Boolean(menuId)||Boolean(reorder.dragging)||(!mobile&&layout.sidebarCollapsed)||(mobile&&!open)}>{trigger=><button {...trigger}
           type="button"
@@ -339,7 +341,7 @@ export function ShellSidebar({
               </span>
               <span className="thread-item-title">
                 {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
-                {item.title}
+                {displayThreadTitle(item)}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
                 {isWorking && <span className="thread-run-badge" aria-hidden="true" />}
@@ -350,7 +352,7 @@ export function ShellSidebar({
             <>
               <span className="thread-item-title">
                 {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
-                {item.title}
+                {displayThreadTitle(item)}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
                 {showStatus && (
@@ -381,7 +383,7 @@ export function ShellSidebar({
           <span className="sr-only thread-item-state">{threadStatus(item)}</span>
         </button>}</ThreadHoverCard>
         <span className="sidebar-thread-actions">
-          <button type="button" className="sidebar-row-action" aria-label={`Archive ${item.title}`}
+          <button type="button" className="sidebar-row-action" aria-label={`Archive ${displayThreadTitle(item)}`}
             title={item.runId ? 'Stop the task before archiving.' : 'Archive'}
             disabled={Boolean(item.runId)}
             onClick={() => archive(item.id)}>
