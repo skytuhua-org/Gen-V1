@@ -98,10 +98,10 @@ describe('ProjectTools.binding', () => {
     const { tools, store, root } = fixture();
     await tools.connect(connect('c1', { name: 'L', path: root }));
     const projectId = store.all<{ id: string }>('workspaceProject')[0].id;
-    const stashed = join(root, '..', 'moved');
-    rmSync(stashed, { recursive: true, force: true });
+    const stashParent = mkdtempSync(join(tmpdir(), 'harness-stash-'));
+    const stashed = join(stashParent, 'moved');
+    cleanups.push(() => rmSync(stashParent, { recursive: true, force: true }));
     renameSync(root, stashed);
-    cleanups.push(() => rmSync(stashed, { recursive: true, force: true }));
     mkdirSync(root);
     await expect(tools.binding(projectId)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
     rmdirSync(root);
