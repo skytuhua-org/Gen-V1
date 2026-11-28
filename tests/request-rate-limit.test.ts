@@ -5,21 +5,36 @@ import { join } from 'node:path';
 import { Store } from '../packages/storage/store.ts';
 import { Service } from '../packages/core/service.ts';
 import type { RuntimeAdapter } from '../packages/contracts/index.ts';
+import { unavailableIdentity, type AccountAuthStatus } from '../packages/contracts/authentication.ts';
+import { EditPreviewRegistry } from '../packages/core/edit-preview.ts';
+import * as accountAuth from '../packages/runtime/account-auth.ts';
 import { buildServer } from '../apps/server/server.ts';
 import { RequestRateLimit } from '../apps/server/request-rate-limit.ts';
+
+const readFixtureAsset = vi.hoisted(() => vi.fn<(path: string) => void>());
 
 vi.mock('node:fs/promises', async (load) => {
   const fs = await load<typeof import('node:fs/promises')>();
   return { ...fs, readFile: async (path: Parameters<typeof fs.readFile>[0], options?: Parameters<typeof fs.readFile>[1]) => {
     const key = String(path).replaceAll('\\', '/');
-    if (key.endsWith('/dist/web/index.html')) return Buffer.from('<!doctype html><title>fixture</title>');
-    if (key.endsWith('/dist/plugin-runtime/runtime.js')) return Buffer.from('/* fixture */');
+    if (key.endsWith('/dist/web/index.html')) {
+      readFixtureAsset('static');
+      return Buffer.from('<!doctype html><title>fixture</title>');
+    }
+    if (key.endsWith('/dist/plugin-runtime/runtime.js')) {
+      readFixtureAsset('plugin');
+      return Buffer.from('/* plug-in fixture */');
+    }
+    if (key.endsWith('/dist/widget-runtime/worker.js')) {
+      readFixtureAsset('widget');
+      return Buffer.from('/* worker fixture */');
+    }
     return fs.readFile(path, options);
   } };
 });
 
 const close: (() => Promise<void>)[] = [];
-afterEach(async()=>{for(const action of close.splice(0))await action();vi.restoreAllMocks();vi.unstubAllEnvs();});
+afterEach(async()=>{for(const action of close.splice(0))await action();vi.restoreAllMocks();vi.unstubAllEnvs();readFixtureAsset.mockClear();});
 
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), 'request-rate-limit-'));
@@ -32,6 +47,27 @@ async function fixture() {
     return {host,cookie:String(response.headers['set-cookie']).split(';')[0],'x-harness-csrf':String(response.json().csrfToken)};
   };
   return {app,dir,store,service,session,headers:await session()};
+}
+
+async function seedPreviewProject(dir: string, store: Store) {
+  const projectDir=join(await realpath(dir),'workspace');
+  await mkdir(projectDir);
+  const identity=await lstat(projectDir,{bigint:true});
+  store.internal('fixture.project',null,()=>{
+    const id='fixture-project';
+    store.put('workspaceProject',id,null,{id,name:'Fixture',authority:{kind:'local'}});
+    store.put('workspaceProjectRoot',id,null,{path:projectDir,identity:{dev:String(identity.dev),ino:String(identity.ino)}});
+  });
+}
+
+async function expectBudget(send: () => PromiseLike<{ statusCode: number; headers: Record<string, unknown>; json(): unknown }>, allowed: number, label: string) {
+  for (let index = 0; index < allowed; index++) {
+    expect((await send()).statusCode, `${label} admitted request ${index + 1}`).toBe(200);
+  }
+  const limited = await send();
+  expect(limited.statusCode, label).toBe(429);
+  expect(limited.json(), label).toMatchObject({ error: { code: 'RATE_LIMITED' } });
+  expect(limited.headers['retry-after'], label).toBe('60');
 }
 
 it('allows ordinary model reads but bounds repeated expensive model discovery requests', async()=>{
@@ -109,18 +145,60 @@ it('keeps the protected preview admission independent from a saturated model bud
   vi.stubEnv('HARNESS_FLAG_CODING_INTELLIGENCE_V1','1');
   const {app,dir,store,headers,service}=await fixture();
   vi.spyOn(service,'models').mockResolvedValue([]);
-  const projectDir=join(await realpath(dir),'workspace');
-  await mkdir(projectDir);
-  const identity=await lstat(projectDir,{bigint:true});
-  store.internal('fixture.project',null,()=>{
-    const id='fixture-project';
-    store.put('workspaceProject',id,null,{id,name:'Fixture',authority:{kind:'local'}});
-    store.put('workspaceProjectRoot',id,null,{path:projectDir,identity:{dev:String(identity.dev),ino:String(identity.ino)}});
-  });
+  await seedPreviewProject(dir,store);
   for(let index=0;index<30;index++)expect((await app.inject({url:'/api/models',headers})).statusCode).toBe(200);
   expect((await app.inject({url:'/api/models',headers})).statusCode).toBe(429);
   const preview=await app.inject({method:'POST',url:'/api/projects/fixture-project/previews',
     headers,payload:{command:'begin',schemaDigest:'a'.repeat(64)}});
   expect(preview.statusCode).toBe(200);
   expect(preview.json().previewId).toEqual(expect.any(String));
+});
+
+
+it('bounds account status and sign-out independently before reaching their operations', async () => {
+  vi.spyOn(performance, 'now').mockReturnValue(1_000);
+  const { app, headers, service } = await fixture();
+  const target = { providerId: 'openai', accountId: null } as const;
+  const result: AccountAuthStatus = {
+    ...target, state: 'signed-out', identity: unavailableIdentity(), lastCheckedAt: null,
+    localSignout: true, message: 'Fixture account',
+  };
+  const status = vi.spyOn(accountAuth, 'readAccountAuth').mockResolvedValue(result);
+  const signout = vi.spyOn(accountAuth, 'signOutAccount').mockResolvedValue(result);
+  const cancel = vi.spyOn(service, 'cancelComposerPredictions').mockResolvedValue(undefined);
+  await expectBudget(() => app.inject({ url: '/api/account-auth?providerId=openai&accountId=', headers }), 30, 'account status');
+  await expectBudget(() => app.inject({ method: 'POST', url: '/api/account-auth/signout', headers, payload: target }), 12, 'account sign-out');
+  expect(status).toHaveBeenCalledTimes(30);
+  expect(cancel).toHaveBeenCalledTimes(12);
+  expect(signout).toHaveBeenCalledTimes(12);
+});
+
+it('bounds widget, plug-in runtime, and static reads independently before reading assets', async () => {
+  vi.spyOn(performance, 'now').mockReturnValue(1_000);
+  const { app, headers: { host } } = await fixture();
+  readFixtureAsset.mockClear();
+  const routes = [
+    { group: 'widget', url: '/widget-runtime/worker.js' },
+    { group: 'plugin', url: '/plugin-runtime/runtime.js' },
+    { group: 'static', url: '/fixture-navigation' },
+  ];
+  for (const { group, url } of routes) {
+    await expectBudget(() => app.inject({ url, headers: { host } }), 600, group);
+    expect(readFixtureAsset.mock.calls.filter(([read]) => read === group)).toHaveLength(600);
+  }
+});
+
+it('bounds admitted preview updates before handing bytes to the registry', async () => {
+  vi.stubEnv('HARNESS_FLAG_CODING_INTELLIGENCE_V1', '1');
+  vi.spyOn(performance, 'now').mockReturnValue(1_000);
+  const { app, dir, store, headers } = await fixture();
+  await seedPreviewProject(dir, store);
+  const append = vi.spyOn(EditPreviewRegistry.prototype, 'append');
+  const url = '/api/projects/fixture-project/previews';
+  const preview = await app.inject({ method: 'POST', url, headers, payload: { command: 'begin', schemaDigest: 'a'.repeat(64) } });
+  expect(preview.statusCode).toBe(200);
+  const previewId = preview.json().previewId as string;
+  await expectBudget(() => app.inject({ method: 'POST', url, headers, payload: { command: 'append', previewId, chunk: ' ' } }),
+    119, 'preview updates');
+  expect(append).toHaveBeenCalledTimes(119);
 });
