@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type RefObject, type ReactNode, type MouseEvent } from 'react';
+import { Fragment, useEffect, useId, useRef, useState, type RefObject, type ReactNode, type MouseEvent } from 'react';
 import {
   Archive,
   BarChart3,
@@ -19,6 +19,7 @@ import {
   SquarePen,
   X,
 } from 'lucide-react';
+import {displayThreadTitle} from './thread-title';
 import {threadNavigationRevision,type ThreadNavigationRow as Thread} from '../../../packages/contracts/shell-read-models';
 import type { UiPreferences } from '../../../packages/contracts/preferences';
 import type { ShellLayout } from './shell-layout';
@@ -36,13 +37,13 @@ import { projectColor, threadDragPayload } from './project-colors';
 import { ActionMenu } from '../../../packages/ui-shell/ActionMenu';
 import { toast } from '../../../packages/ui-shell/Toast';
 import { useThreadMove } from './sidebar-thread-move';
-import { useThreadReorder, type SidebarSection } from './sidebar-reorder';
+import { REORDER_PAUSED, useThreadReorder, type SidebarSection } from './sidebar-reorder';
 import './sidebar-thread-move.css';
 
-const threadAge = (value: string) => {
+const threadAge = (value: string, now: number) => {
   const date = Date.parse(value);
   if (!Number.isFinite(date)) return 'Unknown';
-  const minutes = Math.max(0, Math.floor((Date.now() - date) / 60000));
+  const minutes = Math.max(0, Math.floor((now - date) / 60000));
   return minutes < 1 ? 'now' : minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
 };
 
@@ -56,7 +57,7 @@ export const threadStatus = (thread: Thread) =>
         : thread.status.charAt(0).toUpperCase() + thread.status.slice(1);
 
 export const threadRowLabel = (thread: Thread) =>
-  `${thread.title} ${threadStatus(thread)}${thread.presentation?.unread ? ' Unread' : ''}`;
+  `${displayThreadTitle(thread)} ${threadStatus(thread)}${thread.presentation?.unread ? ' Unread' : ''}`;
 
 export function projectMonogram(name?: string | null): string {
   const cleaned = (name ?? '').trim();
@@ -68,11 +69,13 @@ export function projectMonogram(name?: string | null): string {
   return word.slice(0, 2).toUpperCase();
 }
 
-export function orderSidebarProjects(remaining: Thread[], projectGrouping: boolean, projectOrder: UiPreferences['projectOrder']) {
-  if (!projectGrouping) return remaining;
+const sidebarProjectKey = ({projectId,projectName}:Thread) => projectId ? 'project:id:'+projectId
+  : projectName ? 'project:name:'+projectName : 'project:personal';
+
+function orderedSidebarProjectBuckets(remaining: Thread[], projectOrder: UiPreferences['projectOrder']) {
   const groups = new Map<string, { rows: Thread[]; earliest: string; latest: string; order: number }>();
   for (const item of remaining) {
-    const key = item.projectId ?? item.projectName ?? 'Conversations';
+    const key = sidebarProjectKey(item);
     const order = item.presentation?.order ?? 0;
     const group = groups.get(key);
     if (!group) groups.set(key, { rows: [item], earliest: item.createdAt, latest: item.updatedAt, order });
@@ -83,10 +86,14 @@ export function orderSidebarProjects(remaining: Thread[], projectGrouping: boole
       if (order < group.order) group.order = order;
     }
   }
-  return [...groups.values()].sort((a, b) => projectOrder === 'created'
+  return [...groups].sort(([,a], [,b]) => projectOrder === 'created'
     ? a.earliest.localeCompare(b.earliest)
     : projectOrder === 'manual' ? a.order - b.order : b.latest.localeCompare(a.latest)
-  ).flatMap(group => group.rows);
+  );
+}
+
+export function orderSidebarProjects(remaining: Thread[], projectGrouping: boolean, projectOrder: UiPreferences['projectOrder']) {
+  return projectGrouping ? orderedSidebarProjectBuckets(remaining, projectOrder).flatMap(([,group]) => group.rows) : remaining;
 }
 
 export function ShellSidebar({
@@ -141,7 +148,7 @@ export function ShellSidebar({
   onPlaceThread?: (thread: Thread) => void;
   onConnectProject?: () => void;
   detachNavigation?: () => void;
-  detachThread?: (thread: Thread) => void;
+  detachThread?: (thread: Thread) => boolean | Promise<boolean>;
   details?: Record<string, { branch?: string; provider?: string }>;
   hoverBlocked?: boolean;
   onOpenThreadPR?: (target:ThreadHoverPRTarget,scope:ThreadHoverScope)=>void;
@@ -162,11 +169,40 @@ export function ShellSidebar({
   const [hoverCache]=useState(createThreadHoverCache<ThreadHoverPRTarget>);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'working' | 'waiting'>('all');
+  const [reorderNotice, setReorderNotice] = useState<string | undefined>();
+  const reorderNoticeFrame = useRef<number>(0);
+  const announce = (message: string) => {
+    if (!elementRef.current) return;
+    cancelAnimationFrame(reorderNoticeFrame.current);
+    setReorderNotice('');
+    reorderNoticeFrame.current = requestAnimationFrame(() => setReorderNotice(message));
+  };
+  useEffect(() => {
+    setReorderNotice(undefined);
+    return () => cancelAnimationFrame(reorderNoticeFrame.current);
+  }, [search, filter]);
   const [showAllSettled, setShowAllSettled] = useState(false);
+  const [now, setNow] = useState(Date.now);
   const navRef = useRef<HTMLElement | null>(null);
   const threadMove = useThreadMove(elementRef, matching,
     !mobile && !layout.sidebarCollapsed,
     JSON.stringify([search, filter, showAllSettled, layout.folded, preferences.projectGrouping, preferences.showWorkingSection]));
+
+  useEffect(() => {
+    let timer: number | undefined;
+    const syncClock = () => {
+      window.clearInterval(timer);
+      if (document.hidden) return;
+      setNow(Date.now());
+      timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    };
+    syncClock();
+    document.addEventListener('visibilitychange', syncClock);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', syncClock);
+    };
+  }, []);
 
   const visibleMatching = matching.filter(
     item =>
@@ -188,37 +224,87 @@ export function ShellSidebar({
   const settled = visibleMatching.filter(item => !pinned.includes(item) && !working.includes(item) && item.presentation?.settled);
   const remaining = visibleMatching.filter(item => !pinned.includes(item) && !working.includes(item) && !settled.includes(item));
 
-  const orderedRemaining = orderSidebarProjects(remaining, preferences.projectGrouping, preferences.projectOrder);
+  const projectBuckets = preferences.projectGrouping ? orderedSidebarProjectBuckets(remaining, preferences.projectOrder) : [];
+  const orderedRemaining = preferences.projectGrouping ? projectBuckets.flatMap(([,group]) => group.rows) : remaining;
   const settledFolded = layout.folded['settled'] ?? false;
   const visibleSettled = showAllSettled ? settled : settled.slice(0, 6);
   const locked = search.trim().length > 0 || filter !== 'all';
+  const reorderPauseId = useId();
+  const rowShortcuts = ariaKeyShortcuts([
+    ...(onPlaceThread ? ['thread-place' as const] : []),
+    ...(locked ? [] : ['thread-reorder-up', 'thread-reorder-down'] as const),
+  ]);
   const reorder = useThreadReorder(navRef, {
     // Ordering needs every settled row; only rendering stops at six.
     lists: () => ({ pinned, working, flat: orderedRemaining, settled }),
     locked: () => locked,
     showWorking: preferences.showWorkingSection,
     // Grouped runs are contiguous, so a drop can only land inside the row's own project.
-    groupKey: preferences.projectGrouping ? (item: Thread) => item.projectId ?? item.projectName ?? 'Conversations' : undefined,
+    groupKey: preferences.projectGrouping ? sidebarProjectKey : undefined,
     presentation,
     ensureManualOrder: preferences.projectOrder === 'manual' ? undefined : ensureManualOrder,
     prepareMove: (id, order, viaPointer) => threadMove.prepare(id, order, viaPointer),
     toast,
+    onReorderOutcome: outcome => {
+      let message: string;
+      switch (outcome.kind) {
+        case 'moved':
+          message = `Moved ${outcome.item.title} ${outcome.direction < 0 ? 'up' : 'down'} to position ${outcome.position} of ${outcome.total}`;
+          break;
+        case 'boundary':
+          message = outcome.direction < 0 ? 'Already at the top' : 'Already at the bottom';
+          break;
+        case 'grouping':
+          message = `Cannot move ${outcome.item.title} outside its section`;
+          break;
+        case 'failed':
+          message = `Could not move ${outcome.item.title}`;
+          break;
+        case 'cancelled':
+          message = 'Reorder cancelled';
+          break;
+        case 'locked':
+          message = REORDER_PAUSED;
+          break;
+      }
+      announce(message);
+    },
   });
 
+  const announceThreadAction = (item: Thread, action: string) => {
+    const label = displayThreadTitle(item);
+    const title = Array.from(label);
+    announce((title.length > 60 ? title.slice(0, 57).join('') + '…' : label) + ' ' + action);
+  };
+  const presentAndAnnounce = async (item: Thread, patch: NonNullable<Thread['presentation']>, action: string) => {
+    try {
+      if (!await presentation(item, patch)) return false;
+      announceThreadAction(item, action);
+      return true;
+    } catch (cause) {
+      toast(cause instanceof Error ? cause.message : 'Thread presentation could not save.', {tone: 'error'});
+      return false;
+    }
+  };
   const renderMenu = (item: Thread) => (
     <span className="sidebar-thread-menu-button" {...threadMove.menuEvents}>
-      <ActionMenu label={`Options for ${item.title}`} icon={<MoreHorizontal size={14} aria-hidden="true" />} iconOnly
+      <ActionMenu label={`Options for ${displayThreadTitle(item)}`} icon={<MoreHorizontal size={14} aria-hidden="true" />} iconOnly
         open={menuId === item.id} onOpenChange={open => setMenuId(open ? item.id : null)}
         items={[
           ...(onPlaceThread ? [{id: 'place', label: 'Place in workspace', shortcut: 'Alt Enter', onSelect: () => onPlaceThread(item)}] : []),
-          ...(detachThread ? [{id: 'detach', label: 'Detach thread', icon: <ExternalLink size={13} />, onSelect: () => detachThread(item)}] : []),
+          ...(detachThread ? [{id: 'detach', label: 'Detach thread', icon: <ExternalLink size={13} />, onSelect: async () => { if (await detachThread(item)) announceThreadAction(item, 'detached'); }}] : []),
           {id: 'rename', label: 'Rename thread', onSelect: () => rename(item)},
           {id: 'pin', label: item.presentation?.pinned ? 'Unpin thread' : 'Pin thread', icon: <Pin size={13} />,
-            onSelect: () => presentation(item, {pinned: !item.presentation?.pinned})},
+            onSelect: () => void presentAndAnnounce(item, {pinned: !item.presentation?.pinned}, item.presentation?.pinned ? 'unpinned' : 'pinned')},
           {id: 'unread', label: item.presentation?.unread ? 'Mark as read' : 'Mark as unread', icon: <Circle size={12} />,
-            onSelect: () => presentation(item, {unread: !item.presentation?.unread})},
+            onSelect: () => void presentAndAnnounce(item, {unread: !item.presentation?.unread}, item.presentation?.unread ? 'marked read' : 'marked unread')},
           {id: 'settle', label: item.presentation?.settled ? 'Return to inbox' : 'Settle thread', icon: <Check size={13} />,
-            onSelect: async () => { const next = !item.presentation?.settled; try { if (await presentation(item, {settled: next})) toast(next ? `"${item.title}" settled — find it under Settled` : `"${item.title}" returned to your threads`); } catch (cause) { toast(cause instanceof Error ? cause.message : 'Thread presentation could not save.', {tone: 'error'}); } }},
+            onSelect: async () => {
+              const next = !item.presentation?.settled;
+              if (await presentAndAnnounce(item, {settled: next}, next ? 'settled' : 'restored to working')) {
+                toast(next ? `"${displayThreadTitle(item)}" settled — find it under Settled` : `"${displayThreadTitle(item)}" returned to your threads`, {announce:false});
+              }
+            }},
           {id: 'archive', label: 'Archive thread', icon: <Archive size={13} />, disabled: Boolean(item.runId),
             title: item.runId ? 'Stop the task before archiving.' : undefined, onSelect: () => archive(item.id)},
         ]}/>
@@ -237,21 +323,25 @@ export function ShellSidebar({
       <div
         key={item.id}
         data-thread-id={item.id}
+        data-reorder-locked={locked || undefined}
+        title={locked ? REORDER_PAUSED : undefined}
         className={`sidebar-thread-row ${compactSettled ? 'sidebar-settled-row' : ''} ${item.id === selectedId ? 'active' : ''} ${item.kind === 'delegate' ? 'sidebar-delegate' : ''} ${reorder.dragging?.id === item.id ? 'sidebar-drag-source' : ''}`}
       >
-        <ThreadHoverCard facts={{scope,title:item.title,project:item.projectName?{name:item.projectName,monogram:projectMonogram(item.projectName)}:undefined,model:item.modelId??undefined,reasoning:item.thinkingLevel??undefined,activity:threadStatus(item),lastActivity:{label:threadAge(item.updatedAt),at:item.updatedAt},parent:item.parentThreadId?{threadId:item.parentThreadId,title:matching.find(parent=>parent.id===item.parentThreadId)?.title}:undefined}}
+        <ThreadHoverCard facts={{scope,title:displayThreadTitle(item),project:item.projectName?{name:item.projectName,monogram:projectMonogram(item.projectName)}:undefined,model:item.modelId??undefined,reasoning:item.thinkingLevel??undefined,activity:threadStatus(item),lastActivity:{label:threadAge(item.updatedAt, now),at:item.updatedAt},parent:item.parentThreadId?{threadId:item.parentThreadId,title:displayThreadTitle(matching.find(parent=>parent.id===item.parentThreadId), '')||undefined}:undefined}}
           cache={hoverCache} loadFacts={copy&&scope.projectId?loadPersonalThreadHover:undefined} projectColors={preferences.projectColors} onOpenPR={onOpenThreadPR} preferredSide="right"
           blocked={hoverBlocked||Boolean(menuId)||Boolean(reorder.dragging)||(!mobile&&layout.sidebarCollapsed)||(mobile&&!open)}>{trigger=><button {...trigger}
           type="button"
           className="thread-item"
           draggable={!locked}
           onDragStart={event => {
+            if (locked) { event.preventDefault(); return; }
             event.dataTransfer.effectAllowed = 'copyMove';
             event.dataTransfer.setData('application/x-gen-thread', threadDragPayload(item));
             reorder.begin(item);
           }}
           onDragEnd={reorder.end}
-          aria-keyshortcuts={ariaKeyShortcuts(onPlaceThread ? ['thread-place', 'thread-reorder-up', 'thread-reorder-down'] : ['thread-reorder-up', 'thread-reorder-down'])}
+          aria-keyshortcuts={rowShortcuts}
+          aria-describedby={locked ? reorderPauseId : undefined}
           onKeyDown={event => {
             if (onPlaceThread && event.altKey && event.key === 'Enter') {
               event.preventDefault();
@@ -275,18 +365,18 @@ export function ShellSidebar({
               </span>
               <span className="thread-item-title">
                 {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
-                {item.title}
+                {displayThreadTitle(item)}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
                 {isWorking && <span className="thread-run-badge" aria-hidden="true" />}
-                <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
+                <time dateTime={item.updatedAt}>{threadAge(item.updatedAt, now)}</time>
               </span>
             </span>
           ) : (
             <>
               <span className="thread-item-title">
                 {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
-                {item.title}
+                {displayThreadTitle(item)}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
                 {showStatus && (
@@ -299,7 +389,7 @@ export function ShellSidebar({
                     <span>{item.runId ? 'Working' : threadStatus(item)}</span>
                   </span>
                 )}
-                <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
+                <time dateTime={item.updatedAt}>{threadAge(item.updatedAt, now)}</time>
               </span>
               {(branch || item.kind === 'delegate') && (
                 <span className="thread-item-submeta">
@@ -317,7 +407,7 @@ export function ShellSidebar({
           <span className="sr-only thread-item-state">{threadStatus(item)}</span>
         </button>}</ThreadHoverCard>
         <span className="sidebar-thread-actions">
-          <button type="button" className="sidebar-row-action" aria-label={`Archive ${item.title}`}
+          <button type="button" className="sidebar-row-action" aria-label={`Archive ${displayThreadTitle(item)}`}
             title={item.runId ? 'Stop the task before archiving.' : 'Archive'}
             disabled={Boolean(item.runId)}
             onClick={() => archive(item.id)}>
@@ -329,23 +419,28 @@ export function ShellSidebar({
     );
   };
 
-  const group = (key: string, label: string, items: Thread[], opts: { list?: SidebarSection; keepVisible?: boolean; empty?: ReactNode } = {}) => {
+  const group = (key: string, label: string, items: Thread[], opts: { list?: SidebarSection; keepVisible?: boolean; empty?: ReactNode; project?: Thread } = {}) => {
     if (!items.length && !opts.keepVisible) return null;
     const folded = layout.folded[key] ?? false;
     return (
-      <section key={key} className={`thread-group thread-group-${key}`} data-thread-list={opts.list}>
+      <section key={key} className={`thread-group thread-group-${opts.project ? 'project' : key}`} data-thread-list={opts.list}>
         <h2>
           <button
             type="button"
             aria-expanded={!folded}
+            aria-label={opts.project ? `${label}, ${items.length} ${items.length === 1 ? 'thread' : 'threads'}` : undefined}
+            className={opts.project ? 'thread-project-header' : undefined}
             onClick={() => {
               setMenuId(null);
               setFolded(key, !folded);
             }}
           >
-            <ChevronRight size={11} />
-            <span>{label}</span>
-            <small>{items.length}</small>
+            {opts.project
+              ? <span className="thread-project-monogram" style={{color:projectColor({kind:'local'},opts.project.projectId,preferences.projectColors)}} aria-hidden="true">{projectMonogram(opts.project.projectName)}</span>
+              : <ChevronRight size={11} />}
+            <span className={opts.project ? 'thread-project-header-label' : undefined}>{label}</span>
+            <small aria-hidden={opts.project ? true : undefined}>{items.length}</small>
+            {opts.project && <ChevronDown size={12} aria-hidden="true" className={`settled-chevron ${folded ? 'is-folded' : ''}`} />}
           </button>
         </h2>
         <MotionRegion open={!folded} animate={preferences.panelAnimations && preferences.motionDuration > 0} className="thread-group-content">
@@ -393,7 +488,24 @@ export function ShellSidebar({
             placeholder="Search"
             value={search}
             onChange={event => setSearch(event.target.value)}
+            onKeyDown={event => {
+              if (event.key !== 'Escape') return;
+              // Keep the keyup from reaching other Escape handlers (mobile sidebar close).
+              event.stopPropagation();
+              if (search) setSearch('');
+              else event.currentTarget.blur();
+            }}
           />
+          {search.trim().length > 0 && (
+            <button
+              type="button"
+              className="icon-button sidebar-search-clear"
+              aria-label="Clear search"
+              onClick={() => { setSearch(''); searchRef.current?.focus(); }}
+            >
+              <X size={12} />
+            </button>
+          )}
         </div>
         <button
           type="button"
@@ -427,12 +539,16 @@ export function ShellSidebar({
           <SquarePen size={15} />
         </button>
       </div>
+      {locked && <span id={reorderPauseId} className="sr-only">{REORDER_PAUSED}</span>}
       {/* Persistent live region: announcements must update an existing
           element — mounting a status region is missed by some screen readers. */}
       <div className="sr-only" role="status" aria-atomic="true">
+        {reorderNotice ?? <>
         {loaded && !visibleMatching.length
           ? (search ? (filter === 'all' ? 'No matching threads.' : `No matching ${filter} threads.`) : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.')
+          : search.trim() ? `${visibleMatching.length} matching ${visibleMatching.length === 1 ? 'thread' : 'threads'}`
           : filter === 'all' ? 'Showing all threads' : `Showing ${filter} threads`}
+        </>}
       </div>
       {filter !== 'all' && (
         <div className="sidebar-filter-chip">
@@ -447,7 +563,9 @@ export function ShellSidebar({
           empty: <div className="sidebar-pinned-empty" role="note">Pin a thread from its ⋯ menu, or drag it here.</div>,
         })}
         {group('working', 'Working', working, { list: 'working' })}
-        {orderedRemaining.length > 0 && <div className="thread-flat-list" data-thread-list="flat">{orderedRemaining.map((item, index) => {
+        {orderedRemaining.length > 0 && <div className="thread-flat-list" data-thread-list="flat">{preferences.projectGrouping
+          ? projectBuckets.map(([key, {rows}]) => group(key, rows[0]!.projectName || 'Personal', rows, {project:rows[0]}))
+          : orderedRemaining.map((item, index) => {
           const projectKey = item.projectId ?? item.projectName ?? 'Conversations';
           const previous = orderedRemaining[index - 1];
           const previousKey = previous ? previous.projectId ?? previous.projectName ?? 'Conversations' : null;

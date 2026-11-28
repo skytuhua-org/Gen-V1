@@ -4,9 +4,21 @@ import { isComposing } from './list-navigation';
 import { retainFocus } from './focus-retention';
 import './controls.css';
 
-export interface ModalProps { open: boolean; title: string; onClose: () => void; children: ReactNode; className?: string; initialFocusRef?: RefObject<HTMLElement | null> }
+export interface ModalProps { open: boolean; title: string; onClose: () => void; children: ReactNode; className?: string; initialFocusRef?: RefObject<HTMLElement | null>; closeDisabled?: boolean }
 
-export function Modal({ open, title, onClose, children, className = '', initialFocusRef }: ModalProps) {
+const openModals = new Set<HTMLDialogElement>();
+const modalListeners = new Set<() => void>();
+
+export const topModal = () => [...openModals].at(-1) ?? null;
+export function subscribeTopModal(listener: () => void) {
+  modalListeners.add(listener);
+  return () => { modalListeners.delete(listener); };
+}
+function publishModals() {
+  for (const listener of modalListeners) listener();
+}
+
+export function Modal({ open, title, onClose, children, className = '', initialFocusRef, closeDisabled }: ModalProps) {
   const dialog = useRef<HTMLDialogElement>(null), close = useRef(onClose), pressedBackdrop = useRef(false), armedEscape = useRef<Element | null>(null);
   const titleId = useId(); close.current = onClose;
   // The closed dialog stays mounted, showing its last open content, until the CSS exit finishes.
@@ -20,6 +32,7 @@ export function Modal({ open, title, onClose, children, className = '', initialF
     if (!open || !element) return;
     const previous = element.ownerDocument.activeElement as HTMLElement | null;
     element.showModal();
+    openModals.add(element); publishModals();
     // showModal() focuses the first focusable control (the header Close).
     // A dialog naming an initial-focus target claims it instead.
     const initial = initialFocusRef?.current;
@@ -33,6 +46,7 @@ export function Modal({ open, title, onClose, children, className = '', initialF
     return () => {
       release();
       element.removeEventListener('close', closed); element.close();
+      openModals.delete(element); publishModals();
       if (previous?.isConnected) previous.focus();
     };
   }, [open]);
@@ -80,7 +94,7 @@ export function Modal({ open, title, onClose, children, className = '', initialF
         if (event.shiftKey ? (active === first || !scope.contains(active)) : (active === last || !scope.contains(active))) { event.preventDefault(); (event.shiftKey ? last : first).focus(); }
       }
     }}>
-    <header className="ui-modal-header"><h2 id={titleId}>{shown.current.title}</h2><button type="button" className="ui-modal-close" aria-label="Close dialog" onClick={onClose}><X size={17} /></button></header>
+    <header className="ui-modal-header"><h2 id={titleId}>{shown.current.title}</h2><button type="button" className="ui-modal-close" aria-label="Close dialog" disabled={closeDisabled} onClick={onClose}><X size={17} /></button></header>
     {shown.current.children}
   </dialog>;
 }

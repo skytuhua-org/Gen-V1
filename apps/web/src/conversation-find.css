@@ -1,4 +1,4 @@
-.conversation-find-owner {display:flex;justify-content:flex-end;flex:0 1 auto;min-width:0;padding:var(--ui-space-2) var(--ui-content-inset);}
+.conversation-find-owner {display:grid;justify-items:end;flex:0 1 auto;min-width:0;padding:var(--ui-space-2) var(--ui-content-inset);}
 .conversation-find {width:380px;max-width:100%;background:var(--surface);border:1px solid var(--control-border);border-radius:var(--control-radius,8px);padding:var(--ui-space-1);color:var(--text);}
 .conversation-find-row {display:flex;align-items:center;gap:var(--ui-space-1);padding-inline-start:var(--ui-space-1);}
 .conversation-find input {flex:1;min-width:96px;width:0;border:0;background:transparent;padding:var(--ui-space-1);font:inherit;}
@@ -10,3 +10,36 @@
 .conversation-find :is(input,button):focus-visible,.conversation-find-trigger:focus-visible {outline:2px solid var(--ui-focus-ring,#808080);outline-offset:-2px;}
 ::highlight(conversation-find-all) {background-color:var(--pending);color:var(--canvas);}
 ::highlight(conversation-find-current) {background-color:var(--accent);color:var(--canvas);text-decoration:underline;}
+.conversation-find-trigger:disabled{cursor:default}
+
+.conversation-find-owner > * {grid-area:1 / 1;}
+.conversation-find-trigger[hidden] {display:none;}
+.conversation-find-presence {
+ --find-duration:var(--ui-motion-remove);
+ /* Keep the reduced fade capped even when the configured motion speed slows tokens down. */
+ --find-reduced-duration:min(calc(var(--ui-motion-press) * var(--motion-speed, 1)),var(--find-duration));
+ display:grid;
+ grid-template-rows:0fr;
+ min-width:0;
+ max-width:100%;
+ opacity:0;
+ transition:grid-template-rows var(--find-duration) var(--ui-ease-enter),opacity var(--find-duration) var(--ui-ease-enter);
+}
+.conversation-find-presence[data-open=true] {
+ --find-duration:var(--ui-motion-insert);
+ grid-template-rows:1fr;
+ opacity:1;
+}
+.conversation-find-inner {min-height:0;overflow:hidden;}
+@starting-style {
+ .conversation-find-presence[data-open=true] {grid-template-rows:0fr;opacity:0;}
+}
+@media (prefers-reduced-motion: reduce) {
+ .conversation-find-presence {
+  transition:opacity var(--find-reduced-duration) var(--ui-ease-enter);
+ }
+}
+:root[data-motion=reduced] .conversation-find-presence {
+ transition:opacity var(--find-reduced-duration) var(--ui-ease-enter);
+}
+.app-shell[data-panel-animations=false] .conversation-find-presence {transition:none;}

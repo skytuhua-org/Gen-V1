@@ -44,7 +44,7 @@ import type {HermesEvent} from '../runtime-hermes/client.ts';
 import type {HermesRuntime} from '../runtime-hermes/index.ts';
 import type {HermesSourceLibrary} from '../runtime-hermes/library.ts';
 import type {ApprovedWriteOrigin,CompletedWriteReceipt,WriteHookDiagnostic} from '../contracts/index.ts';
-import { HarnessError, EMPTY_USAGE, type ArtifactRecord, type DataRecord, type HostCommand, type InputRequest, type Message, type Operation, type ResourceGrant, type RunContext, type CommandReceipt, type RuntimeAdapter, type RuntimeEvent, type RuntimeUsage, type Snapshot, type StartRun, type SurfaceSpec, type Thread, type ToolCall, type UserStateRecord } from "../contracts/index.ts";
+import { HarnessError, EMPTY_USAGE, normalizeThreadTitle, type ArtifactRecord, type DataRecord, type HostCommand, type InputRequest, type Message, type Operation, type ResourceGrant, type RunContext, type CommandReceipt, type RuntimeAdapter, type RuntimeEvent, type RuntimeUsage, type Snapshot, type StartRun, type SurfaceSpec, type Thread, type ToolCall, type UserStateRecord } from "../contracts/index.ts";
 import { hostFlagEnabled } from "./host-flags.ts";
 import { OperationProjectTrustHost } from './operation-project-trust.ts';
 import { OperationExecutionAdviceHost } from './operation-execution-advice.ts';
@@ -84,7 +84,7 @@ import {ExternalIntakeCoordinator,type IntakeAuth,type IntakeRecord} from './ext
 import type {ModelRequestGate} from '../runtime/model-capacity.ts';
 import type {BackgroundWorkKind} from '../contracts/background-work.ts';
 
-type Outbox = WorkbenchQueuedInput & {messageId?:string;completedWrite?:CompletedWriteReceipt;hookClaimed?:boolean;hookDiagnostic?:WriteHookDiagnostic;sendMode?:SendModeV1};
+type Outbox = WorkbenchQueuedInput & {messageId?:string;completedWrite?:CompletedWriteReceipt;hookClaimed?:boolean;hookDiagnostic?:WriteHookDiagnostic;sendMode?:SendModeV1;attachmentIds?:string[]};
 type Lease = { id: string; threadId: string; clientId: string; fields: string[]; expiresAt: number };
 type FinishRecord = { inputIds: string[]; invalidated?: boolean; [key: string]: unknown };
 const text = (p: Record<string, unknown>, key: string, max = 128 * 1024): string => {
@@ -779,8 +779,9 @@ export class Service {
             await retainSourceFiles(0);
           };
           if(expected||capabilityEnabled('context.compilerV1')){
-            const nativeInput:StartRun={...ctx,modelId:thread.modelId!,thinkingLevel:thread.thinkingLevel,sessionPath:thread.sessionPath!,inputId:ctx.runId,prompt:'',resources:this.store.all<ResourceGrant>('resource',thread.id)};
-            await withApprovedProjectContext(this.store,nativeInput,control.signal,compact);
+            const authorityGrants = this.store.all<ResourceGrant>('resource',thread.id);
+            const nativeInput:StartRun={...ctx,modelId:thread.modelId!,thinkingLevel:thread.thinkingLevel,sessionPath:thread.sessionPath!,inputId:ctx.runId,prompt:'',resources:authorityGrants.filter(grant=>!grant.composerAttachment?.hidden)};
+            await withApprovedProjectContext(this.store,nativeInput,control.signal,compact,authorityGrants);
           }else await compact(undefined,()=>{});
         }catch(cause){
           // A checked native receipt records an applied historical fact. A later
@@ -840,7 +841,7 @@ export class Service {
     const rootIdentity=root?physical(root.path,root.identity):null,workspaceIdentity=workspace?physical(workspace.path,workspace.identity):null;
     const resources=(this.store.db.prepare("SELECT body FROM entities WHERE kind='resource' AND thread_id=? ORDER BY id LIMIT 257").all(thread.id) as {body:string}[]).map(row=>JSON.parse(row.body) as ResourceGrant);
     if(resources.length>256)throw new HarnessError('INVALID_REQUEST_CONTEXT','The host source cut exceeds its supported bounds.');
-    const grantDigest=digest(resources.map(resource=>{if(resource.threadId!==thread.id)throw new HarnessError('STALE_REQUEST_CONTEXT','A resource grant changed owner.');return{resource,physical:physical(resource.path,resource.identity)};}));
+    const grantDigest=digest(resources.map(resource=>{if(resource.threadId!==thread.id)throw new HarnessError('STALE_REQUEST_CONTEXT','A resource grant changed owner.');const {draftAttachmentConsumedBy:_sent,...grant}=resource;return{resource:grant,physical:physical(resource.path,resource.identity)};}));
     const workspaceId=thread.workspaceId??(thread.projectId?'project:'+thread.projectId:'thread:'+thread.id);
     const instructionDigest=digest([PLAN_RUNTIME_GUIDANCE,LEARN_REQUEST,thread.mode??'build',Boolean(this.source),Boolean(thread.sideParentId)]);
     return{profileId,threadId:thread.id,projectId:thread.projectId??null,workspaceId,modelId,accountId,thinkingLevel:thinkingLevel??null,
@@ -1203,7 +1204,7 @@ export class Service {
       if(projectId&&!/^[\w:.-]+$/.test(projectId))throw new HarnessError('INVALID_INPUT','Choose a valid connected project.');
       const project=projectId?this.store.get<{name:string;authority:{kind:string}}>('workspaceProject',projectId):null;
       if(projectId&&(!project||project.authority?.kind!=='local'))throw new HarnessError('CAPABILITY_DENIED','Choose a connected personal project.');
-      const thread: Thread = { id: randomUUID(),kind:parent?'side':'main',...(projectId?{projectId}:{}),...(parent?.workspaceId?{workspaceId:parent.workspaceId}:{}), title: typeof p.title === "string" ? p.title.slice(0, 140) || "New thread" : parent?'Side question':"New thread", projectName:project?.name??(typeof p.projectName === "string" ? p.projectName : parent?.projectName??null), createdAt: now(), updatedAt: now(), status: "ready", epoch: 0, runId: null, modelId: null, sessionPath: null,...(parent?{sideParentId:parent.id,parentThreadId:parent.id,mode:'plan' as const,...(this.isAccountBound(parent)?{accountId:parent.accountId??null,modelId:parent.modelId}:{})}:{}) };
+      const thread: Thread = { id: randomUUID(),kind:parent?'side':'main',...(projectId?{projectId}:{}),...(parent?.workspaceId?{workspaceId:parent.workspaceId}:{}), title: typeof p.title === "string" ? normalizeThreadTitle(p.title).slice(0, 140).trimEnd() || "New thread" : parent?'Side question':"New thread", projectName:project?.name??(typeof p.projectName === "string" ? p.projectName : parent?.projectName??null), createdAt: now(), updatedAt: now(), status: "ready", epoch: 0, runId: null, modelId: null, sessionPath: null,...(parent?{sideParentId:parent.id,parentThreadId:parent.id,mode:'plan' as const,...(this.isAccountBound(parent)?{accountId:parent.accountId??null,modelId:parent.modelId}:{})}:{}) };
       this.store.put("thread", thread.id, thread.id, thread);
       if(parent)this.store.put('sideContext',thread.id,thread.id,{parentId:parent.id,title:parent.title,capturedAt:now(),messages:this.store.all<Message>('message',parent.id).filter(message=>message.role!=='activity').slice(-8).map(message=>({id:message.id,role:message.role,content:message.content.slice(0,1500)}))});
       return thread;
@@ -1338,14 +1339,32 @@ export class Service {
       if (!grant || grant.threadId !== thread.id) throw new HarnessError("CAPABILITY_DENIED", "Operation resource is not granted");
       return this.store.command(command, () => { this.store.remove("resource", resourceId); return { removed: resourceId }; });
     }
+    if (command.type === "resource.remove-composer-attachment") return this.store.command(command, () => {
+      const id = text(p, "resourceId", 200);
+      const grant = this.store.get<ResourceGrant>("resource", id);
+      if (!grant || grant.threadId !== thread.id || grant.kind !== "attachment" || !grant.composerAttachment || grant.draftAttachmentConsumedBy) {
+        throw new HarnessError("CAPABILITY_DENIED", "The generated attachment does not belong to this composer");
+      }
+      if (!grant.composerAttachment.hidden) this.store.put("resource", id, thread.id, {
+        ...grant, composerAttachment: { ...grant.composerAttachment, hidden: true },
+      });
+      return { removed: id };
+    });
     if (command.type === "resource.upload") {
+      let composerAttachment: ResourceGrant["composerAttachment"];
+      if (p.attachmentArtifactId !== undefined) {
+        const artifactId = text(p, "attachmentArtifactId", 200);
+        const artifact = this.store.get<ArtifactRecord>("artifact", artifactId);
+        if (!artifact || artifact.threadId !== thread.id) throw new HarnessError("CAPABILITY_DENIED", "The attachment source does not belong to this conversation");
+        composerAttachment = { artifactId, title: artifact.title, ...(p.composerHidden === true ? { hidden: true } : {}) };
+      }
       const name = basename(text(p, "name", 200)).replace(/[^a-zA-Z0-9._ -]/g, "_");
       const base64 = text(p, "base64", 28 * 1024 * 1024);
       if (!/^[a-zA-Z0-9+/]*={0,2}$/.test(base64)) throw new HarnessError("INVALID_INPUT", "Invalid attachment encoding");
       const bytes = Buffer.from(base64, "base64"); if (bytes.length > 20 * 1024 * 1024) throw new HarnessError("INVALID_INPUT", "Attachments are limited to 20 MiB");
       const folder = join(this.store.dataDir, "attachments", thread.id); await mkdir(folder, { recursive: true });
       const path = join(folder, command.id + "-" + name); try { await writeFile(path, bytes, { flag: "wx" }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; if (!(await readFile(path)).equals(bytes)) throw new HarnessError("DUPLICATE_COMMAND", "Upload ID already has different content"); }
-      const grant: ResourceGrant = { id: command.id, threadId: thread.id, path, label: name, kind: "attachment", writable: false, createdAt: now() };
+      const grant: ResourceGrant = { id: command.id, threadId: thread.id, path, label: name, kind: "attachment", writable: false, createdAt: now(), ...(composerAttachment ? { composerAttachment } : {}) };
       return this.store.command(command, () => { this.store.put("resource", grant.id, thread.id, grant); return grant; });
     }
     const receipt = this.store.command(command, () => this.applyCommand(command, this.thread(thread.id)));
@@ -1431,7 +1450,7 @@ export class Service {
         if(!['plan','build'].includes(String(p.mode)))throw new HarnessError('INVALID_INPUT','Unknown task mode');
         const next={...thread,mode:p.mode as 'plan'|'build'};this.store.put('thread',thread.id,thread.id,next);return next;
       }
-      case "thread.rename": { const next = { ...thread, title: text(p, "title", 140), updatedAt: now() }; this.store.put("thread", thread.id, thread.id, next); return next; }
+      case "thread.rename": { const next = { ...thread, title: normalizeThreadTitle(text(p, "title", 140)), updatedAt: now() }; this.store.put("thread", thread.id, thread.id, next); return next; }
       case 'thread.presentation': {
         if (Object.keys(p).some(key => !['pinned', 'unread', 'settled', 'order'].includes(key)) || Object.entries(p).some(([key, value]) => key === 'order' ? typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1_000_000 : typeof value !== 'boolean')) throw new HarnessError('INVALID_INPUT', 'Invalid thread presentation');
         const next = { ...thread, presentation: { ...thread.presentation, ...p } }; this.store.put('thread', thread.id, thread.id, next); return next;
@@ -1608,6 +1627,18 @@ export class Service {
     const sourceOwner = sourceRefs.length ? this.sourceWorkbench.owner(thread.id) : null;
     this.assertNoOtherRun(thread.id);
     if (["stopped", "interrupted"].includes(thread.status)) throw new HarnessError("RESUME_REQUIRED", "Resume this thread before sending more work");
+    const rawAttachments = command.payload.attachmentIds;
+    let attachmentIds: string[] | undefined;
+    if (rawAttachments !== undefined) {
+      if (!Array.isArray(rawAttachments) || rawAttachments.length > 64 || new Set(rawAttachments).size !== rawAttachments.length
+        || rawAttachments.some(id => typeof id !== "string" || !id.length || id.length > 200)) {
+        throw new HarnessError("INVALID_INPUT", "Choose up to 64 distinct composer attachments", {sendAccepted:false});
+      }
+      if (rawAttachments.length && (thread.sideParentId || thread.kind === "side" || thread.kind === "delegate")) {
+        throw new HarnessError("CAPABILITY_DENIED", "This conversation does not admit attachments", {sendAccepted:false});
+      }
+      attachmentIds = rawAttachments;
+    }
     const content = text(command.payload, "content", 64 * 1024), modelId = text(command.payload, "modelId", 300);
     const providerId=modelProvider(modelId),binding=this.binding(thread,providerId);
     if(this.reviewing){await this.cancelReview();this.assertBinding(this.thread(thread.id),providerId,binding);}
@@ -1643,10 +1674,20 @@ export class Service {
       const before=requestContextId?this.requestBasis(this.thread(thread.id),modelId,thinkingLevel):null;
       if(requestContextId)rollbackClaim=this.requestCustody.claim(requestContextId,command.id,content,before!);
       const sourceFields = {...(sourceRefs.length ? {sourceRefs} : {}), ...(sendMode === 'AFTER_CURRENT' ? {sendMode} : {})};
-      const message: Message = { id: randomUUID(), threadId: thread.id, role: "user", content, createdAt: now(), runId: current.runId, ...sourceFields };
-      const input: Outbox = { id: command.id, threadId: thread.id, content, status: "persisted", runId: null,messageId:message.id,...(requestContextId?{requestContextId}:{}), ...sourceFields };
+      const grants = (attachmentIds ?? []).map(id => {
+        const grant = this.store.get<ResourceGrant>("resource", id);
+        if (!grant || grant.threadId !== thread.id || grant.kind !== "attachment" || grant.composerAttachment?.hidden || grant.draftAttachmentConsumedBy) {
+          throw new HarnessError("CAPABILITY_DENIED", "An attachment is no longer available in this composer", {sendAccepted:false});
+        }
+        return grant;
+      });
+      const message: Message = { id: randomUUID(), threadId: thread.id, role: "user", content, createdAt: now(), runId: current.runId, ...sourceFields,
+        ...(grants.length ? { attachments: grants.map(({id,label,writable}) => ({id,label,writable})) } : {}),
+      };
+      for (const grant of grants) this.store.put("resource", grant.id, thread.id, { ...grant, draftAttachmentConsumedBy: message.id });
+      const input: Outbox = { id: command.id, threadId: thread.id, content, status: "persisted", runId: null,messageId:message.id,...(attachmentIds ? {attachmentIds} : {}),...(requestContextId?{requestContextId}:{}), ...sourceFields };
       this.store.put("message", message.id, thread.id, message); this.enqueueInput(input);
-      this.store.put("thread", thread.id, thread.id, { ...current, accountId:binding.accountId,modelId, thinkingLevel, error: null, ...(["completed", "failed"].includes(current.status) ? { status: "ready" } : {}), updatedAt: now(), ...(current.title === "New thread" ? { title: content.slice(0, 65) } : {}) });
+      this.store.put("thread", thread.id, thread.id, { ...current, accountId:binding.accountId,modelId, thinkingLevel, error: null, ...(["completed", "failed"].includes(current.status) ? { status: "ready" } : {}), updatedAt: now(), ...(current.title === "New thread" ? { title: normalizeThreadTitle(content).slice(0, 65).trimEnd() || "New thread" } : {}) });
       bindCapturedAccount?.();
       preparedSources?.assertCurrent();
       if(before)rollbackAdmission=this.requestCustody.advanceAdmission(before,this.requestBasis(this.thread(thread.id),modelId,thinkingLevel));
@@ -1792,7 +1833,13 @@ export class Service {
     if(!requestContextId&&this.source&&!thread.sideParentId&&contents.some(content=>/^\/learn(?:\s|$)/i.test(content.trim())))try{contents=await Promise.all(contents.map(async content=>/^\/learn(?:\s|$)/i.test(content.trim())?(await this.source!.runtime.sourceRequest<{prompt:string}>('learn.prompt',{request:content.trim().replace(/^\/learn\s*/i,'')})).prompt:content));}catch(error){this.runtimeFailure(ctx,error);return;}
     const userPrompt=inputs.map((input,index) => "Input " + input.id + ":\n" + contents[index]).join("\n\n");
     const sourceContext = sourceContexts.map(context => context.text).join(''), deliveredRefs = sourceContexts.flatMap(context => context.refs);
-    let input: StartRun = { ...ctx,accountId:binding.accountId, memory: taskMemoryContext(this.store, threadId), modelId, thinkingLevel:thread.thinkingLevel, sessionPath: thread.sessionPath, inputId: inputs[0].id, inputIds: inputs.map(i => i.id), resources: thread.sideParentId?[]:this.store.all("resource", threadId), ...(completedWrites.length?{completedWrites}:{}), ...(deliveredRefs.length ? {sourceRefs: deliveredRefs} : {}), prompt: guidance+userPrompt+sourceContext };
+    const authorityGrants = thread.sideParentId ? [] : this.store.all<ResourceGrant>("resource", threadId);
+    const acceptedAttachments = new Set(inputs.flatMap(input => input.attachmentIds ?? []));
+    const legacyAttachments = inputs.some(input => input.attachmentIds === undefined);
+    const resources = authorityGrants.filter(grant =>
+      grant.kind !== "attachment" || (!grant.composerAttachment?.hidden && (acceptedAttachments.has(grant.id) || legacyAttachments && !grant.draftAttachmentConsumedBy)),
+    );
+    let input: StartRun = { ...ctx,accountId:binding.accountId, memory: taskMemoryContext(this.store, threadId), modelId, thinkingLevel:thread.thinkingLevel, sessionPath: thread.sessionPath, inputId: inputs[0].id, inputIds: inputs.map(i => i.id), resources, ...(completedWrites.length?{completedWrites}:{}), ...(deliveredRefs.length ? {sourceRefs: deliveredRefs} : {}), prompt: guidance+userPrompt+sourceContext };
     // A live controller may already serve a queued or in-flight approved
     // effect; replacing it would orphan that work from Stop.
     const retainedControl=this.aborts.get(threadId);
@@ -1831,7 +1878,7 @@ export class Service {
       dispatched=true;
       if(thread.sideParentId)await this.sideRuntime.start(input);else if (thread.runId) await this.runtime.followUp(input); else await this.runtime.start(input);
       };
-      if(!thread.sideParentId&&capabilityEnabled('context.compilerV1'))await withApprovedProjectContext(this.store,input,control.signal,admit);
+      if(!thread.sideParentId&&capabilityEnabled('context.compilerV1'))await withApprovedProjectContext(this.store,input,control.signal,admit,authorityGrants);
       else await admit(undefined,()=>{});
     }
     catch (error) { if (!dispatched) this.blockSourceInputs(sourceInputs, error, ctx.runId); this.runtimeFailure(ctx, error); }
