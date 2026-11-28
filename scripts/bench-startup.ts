@@ -158,23 +158,25 @@ async function main(){
  // review_host_boot_ms + snapshot_serialize_ms + browser metrics share
  // seeded review hosts — the plan's sanctioned in-process launch (scripts/review-host.ts).
  const reviewBoot:number[]=[];const reviewDirs:string[]=[];
- for(let i=0;i<runs;i++){const dir=await mkdtemp(join(tmpdir(),'bench-review-boot-'));reviewDirs.push(dir);const started=performance.now();const h=await openReviewHost(dir,await freePort());reviewBoot.push(performance.now()-started);await h.close();}
- results.push(summarize('review_host_boot_ms',reviewBoot,{note:'in-process Store+Service+Fastify via openReviewHost; excludes the desktop guard broker'}));
- const hostDir=await mkdtemp(join(tmpdir(),'bench-review-'));reviewDirs.push(hostDir);
- const host=await openReviewHost(hostDir,await freePort());
  try{
-  seedStore(host.store);
-  const origin=`http://127.0.0.1:${(host.app.addresses()[0] as {port:number}).port}`,cookie=await sessionCookie(origin);
-  const timing=await snapshotTiming(origin,cookie);
-  results.push(summarize('snapshot_serialize_ms',timing.samples,{bytes:timing.bytes,note:`review host + ${SEED_THREADS} threads x ${SEED_MESSAGES} messages; includes per-seq JSON cache warm reads`}));
-  if(!skipBrowser){
-   if(!existsSync(join(root,'dist/web/index.html')))results.push(summarize('first_render_ms',[],{note:'SKIPPED: dist/web is not built; run pnpm build first'}));
-   else{
-    const metrics=await browserMetrics(origin,3,'bench-thread-0');
-    results.push(summarize('first_render_ms',metrics.first,{note:'goto -> [data-thread-id] visible; FCP '+JSON.stringify(metrics.fcp)}),summarize('split_interaction_ms',metrics.split,{note:'pane.split + pane.resize command -> two painted frames'}));
+  for(let i=0;i<runs;i++){const dir=await mkdtemp(join(tmpdir(),'bench-review-boot-'));reviewDirs.push(dir);const started=performance.now();const h=await openReviewHost(dir,await freePort());reviewBoot.push(performance.now()-started);await h.close();}
+  results.push(summarize('review_host_boot_ms',reviewBoot,{note:'in-process Store+Service+Fastify via openReviewHost; excludes the desktop guard broker'}));
+  const hostDir=await mkdtemp(join(tmpdir(),'bench-review-'));reviewDirs.push(hostDir);
+  const host=await openReviewHost(hostDir,await freePort());
+  try{
+   seedStore(host.store);
+   const origin=`http://127.0.0.1:${(host.app.addresses()[0] as {port:number}).port}`,cookie=await sessionCookie(origin);
+   const timing=await snapshotTiming(origin,cookie);
+   results.push(summarize('snapshot_serialize_ms',timing.samples,{bytes:timing.bytes,note:`review host + ${SEED_THREADS} threads x ${SEED_MESSAGES} messages; includes per-seq JSON cache warm reads`}));
+   if(!skipBrowser){
+    if(!existsSync(join(root,'dist/web/index.html')))results.push(summarize('first_render_ms',[],{note:'SKIPPED: dist/web is not built; run pnpm build first'}));
+    else{
+     const metrics=await browserMetrics(origin,3,'bench-thread-0');
+     results.push(summarize('first_render_ms',metrics.first,{note:'goto -> [data-thread-id] visible; FCP '+JSON.stringify(metrics.fcp)}),summarize('split_interaction_ms',metrics.split,{note:'pane.split + pane.resize command -> two painted frames'}));
+    }
    }
-  }
- }finally{await host.close();for(const dir of reviewDirs)await rm(dir,{recursive:true,force:true}).catch(()=>{});}
+  }finally{await host.close();}
+ }finally{for(const dir of reviewDirs)await rm(dir,{recursive:true,force:true}).catch(()=>{});}
  const storeDir=await mkdtemp(join(tmpdir(),'bench-store-'));
  try{await seedDir(storeDir);const store=new Store(storeDir);const samples:number[]=[];try{for(let i=0;i<10;i++){const started=performance.now();store.snapshot();samples.push(performance.now()-started);}}finally{store.close();}results.push(summarize('store_snapshot_ms',samples,{note:'in-process Store.snapshot() on seeded data; excludes HTTP and JSON.stringify'}));}finally{await rm(storeDir,{recursive:true,force:true});}
  const output={sha,node:process.version,platform:`${process.platform}/${process.arch}`,generatedAt:new Date().toISOString(),seed:{threads:SEED_THREADS,messages:SEED_MESSAGES},budgets:BUDGETS,runs:results};
