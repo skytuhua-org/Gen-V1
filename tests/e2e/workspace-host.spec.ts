@@ -15,13 +15,13 @@ declare global { interface Window {
   releaseSettingsGuard?: () => void;
 } }
 
-async function fixture(page: Page, {native = false, delayed = false, unavailable = false, invalidOwner = false, working = true, pinned = false, archiveConfirmation = true, emptyAgents = false, retiredActive = '', retiredSelectionFailsOnce = false, plugins = {} as {fail?: boolean; manifests?: unknown[]}} = {}) {
+async function fixture(page: Page, {native = false, delayed = false, unavailable = false, invalidOwner = false, working = true, pinned = false, archiveConfirmation = true, sameThreadTitles = false, emptyAgents = false, retiredActive = '', retiredSelectionFailsOnce = false, plugins = {} as {fail?: boolean; manifests?: unknown[]; error?: string}} = {}) {
   const snapshot = taskFixture({root: 'text', elements: {text: {type: 'Text', props: {text: 'Synthetic host fixture'}}}});
   snapshot.threads[0] = {...snapshot.threads[0], id: 'parent-a', title: 'Project investigation', projectId: 'project-a', projectName: 'Alpha', status: working ? 'working' : 'ready', runId: working ? 'run-a' : null};
   snapshot.activeThreadId = 'parent-a'; snapshot.artifacts = []; snapshot.userStates = []; snapshot.data = []; snapshot.messages = [];
   snapshot.settings = {theme: 'dark', modelId: 'test/model', preferences: {showUsageFooter: false, archiveConfirmation, unpinConfirmation: true}};
   if (pinned) snapshot.threads[0].presentation = {pinned: true};
-  const emptyDraft = {...snapshot.threads[0], id: 'empty-draft', title: 'Empty draft stays in navigation', status: 'ready' as const, runId: null};
+  const emptyDraft = {...snapshot.threads[0], id: 'empty-draft', title: sameThreadTitles ? snapshot.threads[0].title : 'Empty draft stays in navigation', status: 'ready' as const, runId: null};
   snapshot.threads.push(emptyDraft);
   const {commands,publish} = await serveTaskFixture(page, snapshot);
   await page.addInitScript(({native}) => {
@@ -76,7 +76,7 @@ async function fixture(page: Page, {native = false, delayed = false, unavailable
   await page.route('**/api/shell/archive?*', route => route.fulfill({json: {sequence: 1, total: 0, items: [], nextCursor: null}}));
   await page.route('**/api/shell/navigation?*', route => {const archived = new URL(route.request().url()).searchParams.get('archived') === 'true'; return route.fulfill({json: {sequence: 1, total: archived ? 0 : rows.length, items: archived ? [] : rows, nextCursor: null, order: 'created-desc', stats: {pinned: 0, working: 1, waiting: 0, settled: 0, minOrder: 0, maxOrder: 0}}});});
   await page.route('**/api/shell/navigation/*', route => route.fulfill({json: rows.find(row => row.id === new URL(route.request().url()).pathname.split('/').at(-1))}));
-  await page.route('**/api/plugins', route => plugins.fail ? route.fulfill({status: 503, json: {error: {code: 'UNAVAILABLE', message: 'Plugin catalog unavailable'}}}) : route.fulfill({json: {plugins: plugins.manifests ?? []}}));
+  await page.route('**/api/plugins', route => plugins.fail ? route.fulfill({status: 503, json: {error: {code: 'UNAVAILABLE', message: 'Plugin catalog unavailable'}}}) : route.fulfill({json: {plugins: plugins.manifests ?? [], error: plugins.error}}));
   const agent: AgentSummary = {agentId: 'thread:parent-a', parentId: null, rootId: 'thread:parent-a', jobId: null, threadId: 'parent-a', projectId: 'project-a', projectName: 'Alpha', title: 'Project investigation', status: working ? 'working' : 'ready', modelId: 'test/model', currentAction: 'Reviewing sources', reportedPercent: null, createdAt: '2026-11-06', updatedAt: '2026-11-06', orderKey: 'a', revision: 1, archived: false, readOnly: false, metadata: 'thread'};
   await page.route(url => url.pathname.startsWith('/api/agents'), route => {
     const url = new URL(route.request().url());
@@ -322,6 +322,70 @@ test('monitor honors disabled archive confirmation without creating an extra dia
   await page.getByRole('menuitem', {name: 'Archive thread', exact: true}).click();
   await expect.poll(() => h.commands.filter(command => command.type === 'thread.archive').length).toBe(1);
   await expect(page.getByRole('dialog', {name: 'Archive thread', exact: true})).toHaveCount(0);
+});
+
+for(const preset of ['All Agents','Workspace'])test(`${preset} offers Undo only after accepting an archive`,async({page})=>{
+ const h=await fixture(page,{working:false});
+ if(preset==='Workspace'){
+  await page.getByRole('button',{name:'Workspace',exact:true}).click();
+  await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeVisible();
+ }
+ const options=page.getByRole('button',{name:'Options for Project investigation',exact:true});
+ const chooseArchive=async()=>{await options.click();await page.getByRole('menuitem',{name:'Archive thread',exact:true}).click();};
+ const dialog=page.getByRole('dialog',{name:/^Archive thread/});
+ const archived=page.getByRole('region',{name:'Notifications',exact:true}).getByRole('status').filter({hasText:'Archived "Project investigation"'});
+ await chooseArchive();
+ await expect(dialog).toBeVisible();await expect(archived).toHaveCount(0);
+ await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);
+ expect(h.commands.filter(command=>command.type==='thread.archive')).toHaveLength(0);
+ await chooseArchive();
+ await dialog.getByRole('button',{name:preset==='Workspace'?'Archive thread':'Archive',exact:true}).click();
+ await expect(dialog).toHaveCount(0);
+ await expect(archived).toBeVisible();
+ await archived.getByRole('button',{name:'Undo',exact:true}).click();
+ await expect.poll(()=>h.commands.filter(command=>command.type==='thread.archive'||command.type==='thread.restore').map(({type,threadId,payload})=>({type,threadId,payload}))).toEqual([
+  {type:'thread.archive',threadId:'parent-a',payload:{}},
+  {type:'thread.restore',threadId:'parent-a',payload:{}},
+ ]);
+ await expect(archived).toHaveCount(0);
+});
+
+test('same-title conversations retain separate Archive Undo targets',async({page})=>{
+ const h=await fixture(page,{archiveConfirmation:false,working:false,sameThreadTitles:true});
+ for(const id of ['parent-a','empty-draft']){
+  await page.locator('[data-thread-id="'+id+'"]').getByRole('button',{name:'Options for Project investigation',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Archive thread',exact:true}).click();
+  await expect.poll(()=>h.commands.filter(command=>command.type==='thread.archive').at(-1)?.threadId).toBe(id);
+ }
+ const notices=page.getByRole('region',{name:'Notifications',exact:true}).getByRole('status').filter({hasText:'Archived "Project investigation"'});
+ await expect(notices).toHaveCount(2);
+ await notices.first().getByRole('button',{name:'Undo',exact:true}).click();
+ await expect.poll(()=>h.commands.filter(command=>command.type==='thread.restore').map(command=>command.threadId)).toEqual(['parent-a']);
+ await expect(notices).toHaveCount(1);
+ await notices.getByRole('button',{name:'Undo',exact:true}).click();
+ await expect.poll(()=>h.commands.filter(command=>command.type==='thread.restore').map(command=>command.threadId)).toEqual(['parent-a','empty-draft']);
+});
+
+test('a rejected archive stays silent and a rejected Undo gives the archive recovery path',async({page})=>{
+ const h=await fixture(page,{archiveConfirmation:false,working:false});
+ let rejectArchive=true;
+ await page.route('**/api/commands',async route=>{
+  const {type}=route.request().postDataJSON();
+  if(type==='thread.restore'||(type==='thread.archive'&&rejectArchive))return route.fulfill({status:409,json:{error:{code:'CONFLICT',message:'Synthetic archive failure'}}});
+  return route.fallback();
+ });
+ const selectArchive=async()=>{
+  await page.getByRole('button',{name:'Options for Project investigation',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Archive thread',exact:true}).click();
+ };
+ const stack=page.getByRole('region',{name:'Notifications',exact:true});
+ await selectArchive();
+ await expect(page.getByText('Synthetic archive failure',{exact:true})).toBeVisible();
+ await expect(stack.getByText('Archived "Project investigation"',{exact:true})).toHaveCount(0);
+ rejectArchive=false;await selectArchive();
+ await stack.getByRole('button',{name:'Undo',exact:true}).click();
+ await expect(stack.getByRole('alert')).toHaveText('The thread could not be restored. Restore it from Settings → Archive.');
+ expect(h.commands.filter(command=>command.type==='thread.archive')).toHaveLength(1);
 });
 
 test('a consumed New thread intent is not replayed after returning through the monitor', async ({page}) => {
@@ -817,15 +881,40 @@ test('plugin workspace tabs stay reachable from All Agents and open through the 
 test('a failed plug-in catalog keeps a dismissible toast and a persistent inline retry in All Agents',async({page})=>{
  const plugins:{fail?:boolean;manifests?:unknown[]}={fail:true};
  await fixture(page,{working:false,plugins});
- const inline=page.locator('.workspace-plugin-notice'),toast=page.locator('.shell-notice');
+ const inline=page.locator('.workspace-plugin-notice');
+ const stack=page.getByRole('region',{name:'Notifications',exact:true});
+ const toast=stack.getByRole('status').filter({hasText:'Plug-ins could not be loaded.'});
+ await expect(stack).toHaveCount(1);
  await expect(inline).toContainText('Plug-ins could not be loaded.');
  await expect(toast).toContainText('Plug-ins could not be loaded.');
  await toast.hover();await toast.getByRole('button',{name:'Dismiss notification',exact:true}).click();
  await expect(toast).toHaveCount(0);await expect(inline).toBeVisible();
+ const failedRetry=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/plugins'&&response.status()===503);
+ await inline.getByRole('button',{name:'Retry',exact:true}).click();await failedRetry;
+ await expect(inline.getByRole('button',{name:'Retry',exact:true})).toBeVisible();
+ await expect(toast).toHaveCount(0);
  plugins.fail=false;plugins.manifests=[pluginWorkspaceManifest];
  await inline.getByRole('button',{name:'Retry',exact:true}).click();
  await expect(page.getByRole('button',{name:'Overview',exact:true})).toBeVisible();
  await expect(inline).toHaveCount(0);
+});
+
+test('a plug-in catalog error shares one notification stack across workspace presets',async({page})=>{
+ const message='The sample plug-in could not start.';
+ await fixture(page,{working:false,plugins:{error:message}});
+ const stack=page.getByRole('region',{name:'Notifications',exact:true});
+ const notice=stack.getByRole('status').filter({hasText:message});
+ await expect(notice).toHaveCount(1);
+ await page.getByRole('button',{name:'Workspace',exact:true}).click();
+ await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeVisible();
+ await expect(stack).toHaveCount(1);
+ await expect(stack.getByText(message,{exact:true})).toHaveCount(1);
+ await expect(notice).toHaveCount(1);
+ await notice.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+ await expect(notice).toHaveCount(0);
+ await page.getByRole('button',{name:'All Agents',exact:true}).click();
+ await expect(page.getByRole('region',{name:'Agent workspace',exact:true})).toBeVisible();
+ await expect(notice).toHaveCount(0);
 });
 
 test('All Agents empty copy reconciles with existing conversations and shows a live status dot',async({page})=>{
