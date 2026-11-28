@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, lstatSync, rmdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync, lstatSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../packages/storage/store.ts';
@@ -100,7 +100,7 @@ describe('ProjectTools.binding', () => {
     const projectId = store.all<{ id: string }>('workspaceProject')[0].id;
     const stashed = join(root, '..', 'moved');
     rmSync(stashed, { recursive: true, force: true });
-    execFileSync('mv', [root, stashed]);
+    renameSync(root, stashed);
     cleanups.push(() => rmSync(stashed, { recursive: true, force: true }));
     mkdirSync(root);
     await expect(tools.binding(projectId)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
