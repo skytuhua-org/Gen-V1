@@ -26,8 +26,9 @@ test('Current and Recorded remain separate, keyboard reachable sources',async({p
  await page.keyboard.press('ArrowRight');await expect(page.getByText('Synthetic recorded executor comparison',{exact:true})).toBeVisible();
  await page.getByRole('tab',{name:'Recorded',exact:true}).dispatchEvent('keydown',{key:'ArrowRight',isComposing:true});
  await expect(page.getByRole('tab',{name:'Recorded',exact:true})).toHaveAttribute('aria-selected','true');
- await page.keyboard.press('End');await expect(history).toBeFocused();
- expect(await history.evaluate(el=>getComputedStyle(el).outlineStyle)).not.toBe('none');
+ const last=page.getByRole('tab',{name:'Git history',exact:true});
+ await page.keyboard.press('End');await expect(last).toBeFocused();
+ expect(await last.evaluate(el=>getComputedStyle(el).outlineStyle)).not.toBe('none');
 });
 test('empty, failed/retry, denied and unavailable are honest read states',async({page})=>{
  await page.goto('/file-checkpoints?state=empty');await expect(page.getByText('No file checkpoints available.',{exact:true})).toBeVisible();
@@ -182,4 +183,28 @@ test('recorded comparison preferences have real renderer effects with explicit s
  await recorded('?ws=1&prefs=colors');
  const altTint=await page.locator('.workspace-diff-pair section').first().evaluate(node=>getComputedStyle(node).backgroundColor);
  expect(altTint).not.toBe(defaultTint);
+});
+
+test('each Changes source owns a unique panel and only the selected panel is tabbable', async ({page}) => {
+ await page.goto('/file-checkpoints');
+ const tablist=page.getByRole('tablist',{name:'Changes source'});
+ const sources=['Current','Recorded','History','Git history'];
+ await expect(tablist.getByRole('tab')).toHaveCount(sources.length);
+ await expect(page.getByRole('tabpanel',{includeHidden:true})).toHaveCount(sources.length);
+ for (const source of sources) {
+  const tab=tablist.getByRole('tab',{name:source,exact:true});
+  await tab.click();
+  const panel=page.getByRole('tabpanel',{name:source,exact:true});
+  await expect(panel).toBeVisible();
+  const pairs=await tablist.getByRole('tab').evaluateAll(tabs=>tabs.map(tab=>{
+   const target=tab.getAttribute('aria-controls')??'';
+   const panel=document.getElementById(target);
+   return {target,paired:panel?.getAttribute('aria-labelledby')===tab.id,hidden:panel?.hidden,tabIndex:panel?.tabIndex,selected:tab.getAttribute('aria-selected')==='true'};
+  }));
+  expect(new Set(pairs.map(pair=>pair.target)).size).toBe(sources.length);
+  expect(pairs.every(pair=>pair.paired&&pair.hidden===!pair.selected&&pair.tabIndex===(pair.selected?0:-1))).toBe(true);
+  await tab.focus();
+  await page.keyboard.press('Tab');
+  await expect(panel).toBeFocused();
+ }
 });

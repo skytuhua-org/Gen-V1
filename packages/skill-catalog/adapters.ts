@@ -15,7 +15,7 @@ import {catalogHash,catalogItem,deniedItem,personalScope,unavailable,type Catalo
 import {SkillCatalogRepository} from './repository.ts';
 
 export function harnessCatalog(store:Store):SkillCatalogCapabilityProvider{
- return{scope:personalScope,async read(){
+ return{scope:personalScope,cacheRevision:()=>store.inTransaction?null:String(store.sequence),async read(){
   const source={id:'harness:library',kind:'harness' as const,label:'Harness',availability:{status:'available' as const}},items:CatalogItem[]=[];
   for(const summary of store.all<SkillSummary>('skill')){
    const saved=store.get<{skill:SkillSummary&{content:string;files:Record<string,string>};document?:string}>('skillVersion',`${summary.name}@${summary.revision}`);

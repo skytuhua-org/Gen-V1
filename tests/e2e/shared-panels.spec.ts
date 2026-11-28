@@ -10,6 +10,7 @@ test.beforeEach(async({page})=>{
 test('default launcher opens the real tool tabs and keeps browser and device boundaries',async({page})=>{
  const panel=page.getByRole('complementary',{name:'Workspace panel'}),launcher=panel.getByRole('region',{name:'Workspace launcher'});
  await expect(launcher.getByRole('button',{name:'Browser',exact:true})).toHaveCount(0);await expect(launcher.getByRole('button',{name:'Device',exact:true})).toBeDisabled();
+ await expect(launcher.getByRole('button',{name:'Notes',exact:true})).toBeEnabled();await expect(launcher.getByRole('button',{name:'Plan',exact:true})).toBeEnabled();
  for(const label of ['Terminal','Pull request','Linked pull requests']){
   await panel.getByRole('tab',{name:'Artifact',exact:true}).click();await launcher.getByRole('button',{name:label,exact:true}).click();
   await expect(panel.getByRole('tab',{name:label,exact:true})).toHaveAttribute('aria-selected','true');await expect(panel.getByRole('tabpanel')).toContainText('Connect a project to use '+label.toLowerCase());
@@ -18,9 +19,18 @@ test('default launcher opens the real tool tabs and keeps browser and device bou
 });
 test('canvas launch requests go to the owning canvas callback',async({page})=>{
  const canvas=page.getByRole('region',{name:'Canvas launcher'});
- for(const name of ['Terminal','Files','Diff','Pull request','Linked pull requests','Executor output','Usage'])await canvas.getByRole('button',{name,exact:true}).click();
- expect(await page.evaluate(()=>(window as any).__opened)).toEqual(['terminal','files','diff','pull-request','linked-pull-requests','output','usage']);
+ for(const name of ['Terminal','Files','Diff','Pull request','Linked pull requests','Executor output','Usage','Notes','Plan'])await canvas.getByRole('button',{name,exact:true}).click();
+ expect(await page.evaluate(()=>(window as any).__opened)).toEqual(['terminal','files','diff','pull-request','linked-pull-requests','output','usage','notes','plan']);
  await expect(page.getByRole('tab',{name:'Artifact',exact:true})).toHaveAttribute('aria-selected','true');
+});
+test('a rejected canvas launch surfaces the launcher error without opening a surface',async({page})=>{
+ const canvas=page.getByRole('region',{name:'Canvas launcher'});
+ await page.evaluate(()=>{(window as any).__reject=true});await canvas.getByRole('button',{name:'Notes',exact:true}).click();
+ await expect(canvas.getByRole('status')).toContainText('Fixture opener refused');
+ expect(await page.evaluate(()=>(window as any).__opened??null)).toBeNull();
+ await page.evaluate(()=>{(window as any).__reject=false});
+ await canvas.getByRole('button',{name:'Notes',exact:true}).focus();await page.keyboard.press('Enter');
+ expect(await page.evaluate(()=>(window as any).__opened)).toEqual(['notes']);
 });
 test('browser layout handoff saves every duplicate editor and refuses a failed save',async({page})=>{
  await page.getByRole('textbox',{name:'first editor'}).fill('unsaved first');await page.getByRole('textbox',{name:'second editor'}).fill('unsaved second');
@@ -35,11 +45,11 @@ test('saved terminal and pull request tabs restore through the shared panel',asy
 });
 test('directory navigation rejects a file response from the previous selection',async({page})=>{
  await page.route('**/api/bootstrap',route=>route.fulfill({json:{csrfToken:'fixture'}}));
- await page.route('**/api/projects/project-one/files?*',route=>route.fulfill({json:{entries:new URL(route.request().url()).searchParams.has('path')?[]:[{name:'late.txt',path:'late.txt',kind:'file'},{name:'next',path:'next',kind:'directory'}]}}));
+ await page.route('**/api/projects/project-one/files?*',route=>route.fulfill({json:{bindingId:'checkout-one',entries:new URL(route.request().url()).searchParams.has('path')?[]:[{name:'late.txt',path:'late.txt',kind:'file'},{name:'next',path:'next',kind:'directory'}]}}));
  let pending:import('@playwright/test').Route|undefined;await page.route('**/api/projects/project-one/file?*',route=>{pending=route;});
  await page.goto('/shared-panels-check?project=1');const panel=page.getByRole('complementary',{name:'Workspace panel'});await openSurface(page,panel,'Files');
  const files=page.getByRole('navigation',{name:'Project files'});await files.getByRole('button',{name:'late.txt',exact:true}).click();await expect.poll(()=>Boolean(pending)).toBe(true);await files.getByRole('button',{name:'next',exact:true}).click();
- await pending!.fulfill({json:{text:'Content from the previous directory',binary:false,sha256:'a'.repeat(64)}});
+ await pending!.fulfill({json:{bindingId:'checkout-one',text:'Content from the previous directory',binary:false,sha256:'a'.repeat(64)}});
  await expect(panel.locator('.live-files .panel-toolbar')).toContainText('next');await expect(panel.getByRole('region',{name:'File content'})).not.toContainText('Content from the previous directory');
 });
 
@@ -262,4 +272,19 @@ for(const outcome of ['success','failure'] as const)test(`retained profile sign-
 
 test('profile cancellation reports sign-in completion when the host commit already won',async({page})=>{
  const host=await profileAuthFixture(page);host.holdPoll();await host.panel.getByRole('button',{name:'Sign in to GitHub',exact:true}).click();await expect.poll(()=>host.actions.some(item=>item.action==='poll')).toBe(true);await page.route('**/api/github/auth/cancel',route=>route.fulfill({json:{status:'authenticated',login:'completed-user'}}));await host.panel.getByRole('button',{name:'Cancel sign-in',exact:true}).click();await expect(host.panel).toContainText('Sign-in completed as completed-user before cancellation.');await host.releasePoll();await expect(host.panel).not.toContainText('stale-user');await expect(host.panel).not.toContainText('Sign-in cancelled');
+});
+
+test('the selected Workspace tab owns the only rendered tabpanel', async ({page}) => {
+  const panel = page.getByRole('complementary', {name: 'Workspace panel', exact: true});
+  await openSurface(page, panel, 'Terminal');
+  await openSurface(page, panel, 'Files');
+  for (const [label, id] of [['Artifact','artifact'], ['Terminal','terminal'], ['Files','files']]) {
+    const tab = panel.getByRole('tab', {name: label, exact: true});
+    await tab.click();
+    await expect(panel.getByRole('tablist').locator('[role=tab][aria-controls]')).toHaveCount(1);
+    await expect(tab).toHaveAttribute('aria-selected', 'true');
+    await expect(tab).toHaveAttribute('aria-controls', 'workspace-view-' + id);
+    await expect(panel.getByRole('tabpanel')).toHaveAttribute('id', 'workspace-view-' + id);
+    await expect(panel.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'workspace-tab-' + id);
+  }
 });

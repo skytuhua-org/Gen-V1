@@ -4,15 +4,15 @@ import { branchGraphData, branchGraphSpec, growingQaSpec, linkedMapData, linkedM
 
 const enter = 'cubic-bezier(0.16, 1, 0.3, 1)', move = 'cubic-bezier(0.4, 0, 0.2, 1)';
 type MotionRecord = { name: string; target: string; from?: string; to?: string; duration: number; easing: string; frames: ComputedKeyframe[] };
-type MotionWindow = Window & { motionRecords: MotionRecord[] };
+type MotionWindow = Window & { motionRecords: MotionRecord[]; motionAnimations: Animation[] };
 async function recordMotion(page: Page) {
   await page.addInitScript(() => {
-    const records: MotionRecord[] = [];
-    Object.assign(window, { motionRecords: records });
+    const records: MotionRecord[] = [], animations: Animation[] = [];
+    Object.assign(window, { motionRecords: records, motionAnimations: animations });
     const animate = Element.prototype.animate;
     Element.prototype.animate = function (frames, options) {
       const animation = animate.call(this, frames, options), timing = animation.effect!.getTiming();
-      if (this.matches('.floating-window,.document-text-window')) records.push({ name: 'panel', target: this.className, duration: Number(timing.duration), easing: timing.easing!, frames: (animation.effect as KeyframeEffect).getKeyframes() });
+      if (this.matches('.floating-window,.document-text-window')) { records.push({ name: 'panel', target: this.className, duration: Number(timing.duration), easing: timing.easing!, frames: (animation.effect as KeyframeEffect).getKeyframes() }); animations.push(animation); }
       return animation;
     };
     document.addEventListener('animationstart', event => {
@@ -173,7 +173,40 @@ test('imperative panel motion resolves inherited tokens and the selected speed',
   });
   await launcher.click(); await expect(page.locator('.document-text-window')).toBeVisible();
   const panels = (await records(page)).filter(item => item.name === 'panel');
-  expect(panels).toHaveLength(1); expect(panels[0].duration).toBe(240); expect(panels[0].easing).toBe('linear');
+  expect(panels).toHaveLength(1); expect(panels[0].duration).toBe(300); expect(panels[0].easing).toBe('linear');
+});
+
+for (const motionSpeed of [.75, 1, 1.25] as const) test(`panel entrance applies real preference speed ${motionSpeed} exactly once`, async ({ page }) => {
+  await recordMotion(page);
+  const snapshot = taskFixture({ root: 'doc', elements: { doc: { type: 'Document', props: { title: 'Handoff', text: 'Prepared document.', presentation: 'window' } } } });
+  snapshot.settings.preferences = { motionSpeed };
+  await serveTaskFixture(page, snapshot); await page.goto('/');
+  await page.getByRole('button', { name: 'Open document', exact: true }).click();
+  await expect(page.locator('.document-text-window')).toBeVisible();
+  const panels = (await records(page)).filter(item => item.name === 'panel');
+  expect(panels).toHaveLength(1); expect(panels[0].duration).toBeCloseTo(220 / motionSpeed, 6);
+});
+
+test('changing only motion speed does not restart or retime an active panel effect', async ({ page }) => {
+  await recordMotion(page);
+  const snapshot = taskFixture({ root: 'doc', elements: { doc: { type: 'Document', props: { title: 'Handoff', text: 'Prepared document.', presentation: 'window' } } } });
+  snapshot.settings.preferences = { motionSpeed: 1 };
+  const host = await serveTaskFixture(page, snapshot); await page.goto('/');
+  await page.getByRole('button', { name: 'Open document', exact: true }).click();
+  await expect(page.locator('.document-text-window')).toBeVisible();
+  const before = await page.evaluate(() => {
+    const animation = (window as unknown as MotionWindow).motionAnimations[0];
+    animation.pause(); Object.assign(animation, { motionProbe: 'kept' });
+    return { duration: Number(animation.effect!.getTiming().duration), playState: animation.playState, count: (window as unknown as MotionWindow).motionRecords.filter(item => item.name === 'panel').length };
+  });
+  expect(before).toEqual({ duration: 220, playState: 'paused', count: 1 });
+  host.snapshot.settings.preferences = { motionSpeed: 1.25 }; await host.publish();
+  await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--motion-speed'))).toBe('1.25');
+  const after = await page.evaluate(() => {
+    const animation = (window as unknown as MotionWindow).motionAnimations[0];
+    return { duration: Number(animation.effect!.getTiming().duration), playState: animation.playState, count: (window as unknown as MotionWindow).motionRecords.filter(item => item.name === 'panel').length, kept: Reflect.get(animation, 'motionProbe') };
+  });
+  expect(after).toEqual({ duration: 220, playState: 'paused', count: 1, kept: 'kept' });
 });
 
 test('tab crossfade and shared control press feedback resolve motion tokens and policies', async ({ page }) => {

@@ -43,7 +43,17 @@ export async function runProcess(command: string, args: string[], cwd: string, s
         const executable = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe");
         treeKill = new Promise(done => {
           const killer = spawn(executable, ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, shell: false, stdio: "ignore" });
-          killer.once("error", () => { child.kill(); done(); }); killer.once("close", () => done());
+          let finished = false;
+          const finish = (treeStopped: boolean) => {
+            if (finished) return;
+            finished = true;
+            if (!treeStopped && child.exitCode === null && child.signalCode === null) {
+              try { child.kill(); } catch { /* A late exit can already have retired the direct handle. */ }
+            }
+            done();
+          };
+          killer.once("error", () => finish(false));
+          killer.once("close", code => finish(code === 0));
         });
       } else { try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); } treeKill = Promise.resolve(); }
     }

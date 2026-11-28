@@ -1,6 +1,6 @@
 import {lstat,mkdir,mkdtemp,open,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {dirname,isAbsolute,join,relative,sep} from 'node:path';
+import {dirname,isAbsolute,join,relative,resolve,sep} from 'node:path';
 import {HarnessError} from '../contracts/index.ts';
 import type {Store} from '../storage/store.ts';
 import type {ManagedGitFamily} from '../capabilities/git-access.ts';
@@ -8,7 +8,19 @@ import {runProcess} from '../capabilities/process.ts';
 import {copyBoundGitMetadata,readBoundFile,removeOwnedFile,withPathGuard,type GuardEntry} from '../core/file-access.ts';
 
 export type Identity={dev:string;ino:string};
-export interface PrivateGitFamily {projectId:string;commonDirectory:string;commonDirectoryIdentity:Identity;origin?:string}
+export interface PrivateGitFamily {projectId:string;commonDirectory:string;commonDirectoryIdentity:Identity;origin?:string;recoveryAttempt?:number}
+interface GitImportStage {projectId:string;attempt:number;identity:Identity}
+const MAX_IMPORT_RECOVERY_ATTEMPTS=3;
+function privateGitDirectory(storage:string,projectId:string,attempt=0){
+ // Local project identities are issued by the host. Validate the path segment
+ // here as well so callers and persisted custody records share one boundary.
+ if(!/^[A-Za-z0-9_-]{1,200}$/.test(projectId)||!Number.isSafeInteger(attempt)||attempt<0||attempt>MAX_IMPORT_RECOVERY_ATTEMPTS)throw denied();
+ const directory=resolve(storage,projectId,attempt===0?'repository.git':'recovery-'+attempt+'.git');
+ if(!directory.startsWith(storage+sep))throw denied();
+ return directory;
+}
+const importStageKey=(projectId:string,attempt:number)=>projectId+':'+attempt;
+const incompleteImport=()=>new HarnessError('CAPABILITY_DENIED','An incomplete private Git import is retained for recovery.');
 export interface PrivateGitAttestation extends ManagedGitFamily {privateFamily:PrivateGitFamily;privateStorageRoot:string}
 type Owned={path:string;dev:bigint;ino:bigint;directory:boolean};
 const denied=()=>new HarnessError('CAPABILITY_DENIED','Private Git family identity or metadata changed.');
@@ -19,12 +31,20 @@ export async function directoryIdentity(path:string):Promise<Identity>{const s=a
 export function privateFamilyForBinding(store:Store,binding:ManagedGitFamily&{familyId?:string;projectId?:string}):PrivateGitAttestation|undefined{
  if(!binding.familyId)return undefined;
  const family=store.get<PrivateGitFamily>('workspaceGitFamily',binding.familyId),privateStorageRoot=join(store.dataDir,'git');
- if(!family||family.projectId!==binding.projectId||binding.familyId!==binding.projectId||family.commonDirectory!==join(privateStorageRoot,family.projectId,'repository.git')||binding.commonDirectory!==family.commonDirectory||!sameIdentity(binding.commonDirectoryIdentity,family.commonDirectoryIdentity))throw denied();
+ if(!family||family.projectId!==binding.projectId||binding.familyId!==binding.projectId||family.commonDirectory!==privateGitDirectory(privateStorageRoot,family.projectId,family.recoveryAttempt)||binding.commonDirectory!==family.commonDirectory||!sameIdentity(binding.commonDirectoryIdentity,family.commonDirectoryIdentity))throw denied();
  return{...binding,privateFamily:family,privateStorageRoot};
 }
 const nullFile=process.platform==='win32'?'NUL':'/dev/null';
 const bareConfig='[core]\nrepositoryformatversion = 0\nbare = true\nfilemode = false\nsymlinks = false\n[gc]\nauto = 0\n[maintenance]\nauto = false\n';
 const viewConfig=bareConfig.replace('bare = true','bare = false');
+/** `status -b` header → branch name; empty on a detached HEAD. */
+export function statusBranch(header:string):string{
+ if(!header.startsWith('## '))throw new HarnessError('GIT_ERROR','Git status did not report a branch header.');
+ if(header.startsWith('## HEAD (no branch)'))return '';
+ if(header.startsWith('## No commits yet on '))return header.slice('## No commits yet on '.length);
+ return header.slice(3).split('...')[0]!.split(' ')[0]!;
+}
+
 export async function nativeGit(executable:string,metadata:string,worktree:string|undefined,args:string[],signal:AbortSignal,environment:NodeJS.ProcessEnv={}){
  const prefix=['--no-pager','--no-replace-objects','--git-dir='+metadata,...(worktree?['--work-tree='+worktree]:[]),'-c','core.hooksPath='+nullFile,'-c','core.fsmonitor=false','-c','core.untrackedCache=false','-c','submodule.recurse=false','-c','diff.external=','-c','core.attributesFile=','-c','core.excludesFile=','-c','credential.helper=','-c','gc.auto=0','-c','maintenance.auto=false'];
  const result=await runProcess(executable,[...prefix,...args],worktree??metadata,signal,()=>{},120000,environment,4*1024*1024);
@@ -42,7 +62,7 @@ async function verifyManaged(family:ManagedGitFamily){
 /** Only host Store attestation admits direct access to the protected mutable family. */
 export async function withPrivateGitFamily<T>(attestation:PrivateGitAttestation,signal:AbortSignal,action:(metadata:string,worktree:string,signal:AbortSignal)=>Promise<T>):Promise<T>{
  const family=attestation.privateFamily;
- if(!family||attestation.commonDirectory!==join(attestation.privateStorageRoot,family.projectId,'repository.git')||family.commonDirectory!==attestation.commonDirectory||!sameIdentity(family.commonDirectoryIdentity,attestation.commonDirectoryIdentity))throw denied();
+ if(!family||attestation.commonDirectory!==privateGitDirectory(attestation.privateStorageRoot,family.projectId,family.recoveryAttempt)||family.commonDirectory!==attestation.commonDirectory||!sameIdentity(family.commonDirectoryIdentity,attestation.commonDirectoryIdentity))throw denied();
  const controller=new AbortController(),active=AbortSignal.any([signal,controller.signal]),common=family.commonDirectory,gitDirectory=attestation.gitDirectory,path=attestation.path;
  const paths=[{path,leaf:false,allowChildWrites:true},{path:common,leaf:false,allowChildWrites:true},{path:gitDirectory,leaf:false,allowChildWrites:true},{path:join(common,'config'),leaf:true,readOnly:true,allowChildWrites:true,childWriteRoot:common},...[[join(path,'.git'),path],[join(gitDirectory,'gitdir'),common],[join(gitDirectory,'commondir'),common]].map(([path,root])=>({path:path!,leaf:true,readOnly:true,allowChildWrites:true,childWriteRoot:root!}))];
  return withPathGuard(paths,active,async()=>{await verifyManaged(attestation);return action(gitDirectory,path,active);},()=>controller.abort());
@@ -98,23 +118,48 @@ async function copyEntries(entries:Map<string,GuardEntry>,destination:string,obj
 }
 /** One history copy per project, published in Store only after native validation. */
 export async function importGitFamily(store:Store,projectId:string,root:string,workspace:ManagedGitFamily|undefined,executable:string,signal:AbortSignal):Promise<PrivateGitFamily>{
+ const storage=join(store.dataDir,'git'),parent=dirname(privateGitDirectory(storage,projectId));
  const existing=store.get<PrivateGitFamily>('workspaceGitFamily',projectId);
- if(existing){if(existing.projectId!==projectId||existing.commonDirectory!==join(store.dataDir,'git',projectId,'repository.git')||!sameIdentity(await directoryIdentity(existing.commonDirectory),existing.commonDirectoryIdentity))throw denied();return existing;}
- const parent=join(store.dataDir,'git',projectId),commonDirectory=join(parent,'repository.git');
- await mkdir(dirname(parent),{recursive:true});await makeDirectory(parent);
- // An incomplete import is never silently reused or recursively removed.
- try{await mkdir(commonDirectory);}catch(e){if((e as NodeJS.ErrnoException).code==='EEXIST')throw new HarnessError('CAPABILITY_DENIED','An incomplete private Git import is retained for recovery.');throw e;}
+ if(existing){
+  if(existing.projectId!==projectId||existing.commonDirectory!==privateGitDirectory(storage,projectId,existing.recoveryAttempt)
+   ||!sameIdentity(await directoryIdentity(existing.commonDirectory),existing.commonDirectoryIdentity))throw denied();
+  return existing;
+ }
+ const source=store.get<{path:string;identity:Identity}>('workspaceProjectRoot',projectId);
+ if(!workspace&&source?.path!==root)throw denied();
+ await makeDirectory(storage);await makeDirectory(parent);
+ let attempt=0;
+ // Retry only past stages with verified ownership. A legacy or replaced
+ // directory remains in place for explicit recovery.
+ for(;attempt<=MAX_IMPORT_RECOVERY_ATTEMPTS;attempt++){
+  const recorded=store.get<GitImportStage>('workspaceGitImportStage',importStageKey(projectId,attempt));
+  if(!recorded)break;
+  if(recorded.projectId!==projectId||recorded.attempt!==attempt)throw incompleteImport();
+  try{
+   const current=await directoryIdentity(privateGitDirectory(storage,projectId,attempt));
+   if(!sameIdentity(recorded.identity,current))throw incompleteImport();
+  }catch(error){
+   if((error as NodeJS.ErrnoException).code==='ENOENT')break;
+   throw error;
+  }
+ }
+ if(attempt>MAX_IMPORT_RECOVERY_ATTEMPTS)throw new HarnessError('CAPABILITY_DENIED','Interrupted Git imports are retained and the retry limit has been reached.');
+ const commonDirectory=privateGitDirectory(storage,projectId,attempt),stageKey=importStageKey(projectId,attempt);
+ try{await mkdir(commonDirectory);}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')throw incompleteImport();throw error;}
  const owned:Owned[]=[];await remember(commonDirectory,true,owned);
+ const stage:GitImportStage={projectId,attempt,identity:{dev:String(owned[0]!.dev),ino:String(owned[0]!.ino)}};
  try{
+  store.internal('workspace.git-family.stage',null,()=>{
+   if(store.get('workspaceGitFamily',projectId))throw denied();
+   store.put('workspaceGitImportStage',stageKey,null,stage);
+  });
   const controller=new AbortController(),active=AbortSignal.any([signal,controller.signal]);
-  const source=store.get<{path:string;identity:Identity}>('workspaceProjectRoot',projectId);
-  if(!workspace&&source?.path!==root)throw denied();
   const family=await capture(root,workspace,active,async({entries})=>{
    await copyEntries(entries,commonDirectory,true,active,owned);
    const metadata=new Map(entries);metadata.delete('index');await copyEntries(metadata,commonDirectory,false,active,owned);
    await makeDirectory(join(commonDirectory,'refs'),owned);await makeDirectory(join(commonDirectory,'objects'),owned);
    await writeOwned(join(commonDirectory,'config'),bareConfig,owned);
-   const config=entries.get('config')!,capturedConfig=join(parent,'import-config-'+Date.now());
+   const config=entries.get('config')!,capturedConfig=join(parent,'import-config-'+attempt+'-'+Date.now());
    let capturedConfigIdentity:{dev:bigint;ino:bigint}|undefined;
    await copyBoundGitMetadata(config,capturedConfig,active,s=>{capturedConfigIdentity=s;owned.push({path:capturedConfig,...s,directory:false});});
    let author='';
@@ -122,11 +167,21 @@ export async function importGitFamily(store:Store,projectId:string,root:string,w
     let origin:string|undefined;try{const value=(await nativeGit(executable,commonDirectory,undefined,['config','--file',capturedConfig,'--get','remote.origin.url'],active)).trim();if(/^(?:https:\/\/github\.com\/|git@github\.com:)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value)&&value.length<=2048)origin=value;}catch{/* No admitted origin. */}
     if(author||origin)await writeFile(join(commonDirectory,'config'),bareConfig+author+(origin?'\n[remote "origin"]\nurl = '+JSON.stringify(origin)+'\nfetch = +refs/heads/*:refs/remotes/origin/*\n':''));
     await nativeGit(executable,commonDirectory,undefined,['fsck','--full','--no-reflogs'],active);
-    return{projectId,commonDirectory,commonDirectoryIdentity:await directoryIdentity(commonDirectory),...(origin?{origin}:{})};
+    return{projectId,commonDirectory,commonDirectoryIdentity:await directoryIdentity(commonDirectory),...(origin?{origin}:{}),...(attempt ? {recoveryAttempt:attempt} : {})};
    }finally{if(capturedConfigIdentity)await removeOwnedFile(capturedConfig,capturedConfigIdentity,new AbortController().signal);}
   },()=>controller.abort(),source?.identity);
-  store.internal('workspace.git-family.imported',null,()=>store.put('workspaceGitFamily',projectId,null,family));return family;
- }catch(error){await cleanupOwned(commonDirectory,owned);throw error;}
+  store.internal('workspace.git-family.imported',null,()=>{
+   const current=store.get<GitImportStage>('workspaceGitImportStage',stageKey);
+   if(store.get('workspaceGitFamily',projectId)||!current||current.projectId!==projectId||current.attempt!==attempt||!sameIdentity(current.identity,stage.identity)
+    ||!sameIdentity(family.commonDirectoryIdentity,stage.identity))throw denied();
+   store.put('workspaceGitFamily',projectId,null,family);
+   store.remove('workspaceGitImportStage',stageKey);
+  });
+  return family;
+ }catch(error){
+  try{await cleanupOwned(commonDirectory,owned);}catch{/* The original failure remains authoritative; retain the recorded stage. */}
+  throw error;
+ }
 }
 /** Legacy reads use a small metadata view and an ordinary tracked-source projection. */
 export async function withLegacyGitView<T>(family:PrivateGitFamily,root:string,workspace:ManagedGitFamily|undefined,executable:string,signal:AbortSignal,action:(metadata:string,worktree:string,signal:AbortSignal)=>Promise<T>,expectedRoot:Identity):Promise<T>{

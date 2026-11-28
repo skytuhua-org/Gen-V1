@@ -24,9 +24,9 @@ hooks {
       // cmd.exe has no command substitution, so Windows uses PowerShell.
       ["tests"] = new Step {
         check = new Script {
-          linux = "pnpm exec vitest run --changed \"$(git merge-base HEAD origin/main)\""
-          macos = "pnpm exec vitest run --changed \"$(git merge-base HEAD origin/main)\""
-          windows = "powershell -NoProfile -Command \"pnpm exec vitest run --changed (git merge-base HEAD origin/main)\""
+          linux = "pnpm test --changed \"$(git merge-base HEAD origin/main)\""
+          macos = "pnpm test --changed \"$(git merge-base HEAD origin/main)\""
+          windows = "powershell -NoProfile -Command \"pnpm test --changed (git merge-base HEAD origin/main)\""
         }
       }
     }

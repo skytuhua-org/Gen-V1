@@ -101,7 +101,8 @@ export async function launchDesktopSignIn(options:DesktopSignInOptions):Promise<
    else {invalid();return;}
   }
  });
- child.once('exit',settle);
+ // The helper's final receipt can still be buffered when the process exits.
+ child.once('close',settle);
  startTimer=setTimeout(()=>{failure='The subscription sign-in console did not become ready.';void terminateTree().catch(retainFailure);},15000);
  child.stdin?.on('error',()=>{});child.stdin?.write(JSON.stringify({nodePath:options.nodePath,hostRoot:options.hostRoot,arguments:launch.arguments})+'\n');
  options.signal?.addEventListener('abort',abort,{once:true});if(options.signal?.aborted)abort();

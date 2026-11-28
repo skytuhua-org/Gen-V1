@@ -41,6 +41,7 @@ export async function findGeminiNativeSession(dataDir: string, manifest: Manifes
   const suffix = `-${manifest.value.sessionId.slice(0, 8)}.jsonl`;
   const matches = entries.filter(entry => entry.name.startsWith('session-') && entry.name.endsWith(suffix));
   if (matches.length > 16) throw new HarnessError('OFFICIAL_HISTORY_LIMIT', 'Too many native Gemini sessions share this identifier prefix.');
+  let selected: { path: string; text: string } | null = null;
   for (const entry of matches) {
     if (!entry.isFile()) throw mismatch();
     const path = join(actualChats, entry.name);
@@ -50,9 +51,10 @@ export async function findGeminiNativeSession(dataDir: string, manifest: Manifes
     if (header === null || typeof header !== 'object' || !('sessionId' in header) || typeof header.sessionId !== 'string') throw mismatch();
     if (header.sessionId !== manifest.value.sessionId) continue;
     if (!('projectHash' in header) || header.projectHash !== createHash('sha256').update(taskDir).digest('hex')) throw mismatch();
-    return { path, text };
+    if (selected) throw mismatch(); // A copied transcript can contain a different set of receipts.
+    selected = { path, text };
   }
-  return null;
+  return selected;
 }
 
 /** Null means no native snapshot matched; an empty array means the matched snapshot has no receipts. */

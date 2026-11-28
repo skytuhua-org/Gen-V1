@@ -2,13 +2,13 @@ import {test,expect,type Page} from '@playwright/test';
 import {serveTaskFixture,taskFixture,growingQaSpec} from './task-interface-fixture';
 import {expectArtifactGeometry,holdArtifactJournal,releaseArtifactJournal,serveArtifactSettleFixture} from './artifact-settle-host';
 
-async function mount(page:Page,kind:'markdown'|'artifact',props:Record<string,unknown>){
+async function mount(page:Page,kind:'markdown'|'artifact'|'reveal',props:Record<string,unknown>){
  await serveTaskFixture(page,taskFixture({root:'retained',elements:{retained:{type:'Text',props:{text:'Retained history.'}}}}));await page.goto('/');await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeEnabled();await expect(page.locator('html')).toHaveAttribute('data-motion','system');
  const motionSource=await(await page.request.get('/src/task-motion.tsx')).text(),mainSource=await(await page.request.get('/src/main.tsx')).text();
  const modules={react:motionSource.match(/["']([^"']*\/react\.js[^"']*)["']/)![1],dom:mainSource.match(/["']([^"']*\/react-dom_client\.js[^"']*)["']/)![1]};
  await page.evaluate(async({kind,props,modules})=>{
   const reactModule=await import(modules.react),domModule=await import(modules.dom),React=reactModule.default??reactModule,DOM=domModule.default??domModule;
-  const motionPath='/src/task-motion.tsx',markdownPath='/src/Markdown.tsx';const motion=await import(motionPath),markdown=await import(markdownPath);
+  const motionPath='/src/task-motion.tsx',markdownPath='/src/Markdown.tsx',revealPath='/src/SentenceReveal.tsx';const motion=await import(motionPath),markdown=await import(markdownPath),reveal=await import(revealPath);
   const target=document.createElement('section');target.className='micro-motion-fixture';target.setAttribute('aria-label','Micro motion fixture');target.style.cssText='position:fixed;inset:0;padding:40px;background:var(--surface);z-index:10000;overflow:auto';document.body.append(target);
   function ArtifactProbe({value}:{value:Record<string,unknown>}){
    const ref=React.useRef(null),body=React.useRef(null);motion.useArtifactEntrance(ref,value.enter===true,body);
@@ -18,13 +18,56 @@ async function mount(page:Page,kind:'markdown'|'artifact',props:Record<string,un
      React.createElement(markdown.Markdown,{text:String(value.text??'Live task description.'),animate:true}),
      React.createElement('input',{'aria-label':'Live task draft',defaultValue:'Keep my draft'})));
   }
+  function RevealProbe({value}:{value:Record<string,unknown>}){
+   const text=String(value.text),formatted=value.child==='formatted';
+   const content=React.createElement(formatted?'em':'span',{className:'reveal-content','data-child':formatted?'formatted':'plain'},formatted?React.createElement('strong',null,text):text);
+   return React.createElement('div',{className:'render-revision-probe'},React.createElement('span',{className:'retained-sibling'},'Retained sibling'),React.createElement(reveal.SentenceReveal,{text,animate:true,initialReveal:false,renderRevision:String(value.renderRevision??'')},content));
+  }
   let current={...props};const root=DOM.createRoot(target);
-  const render=()=>root.render(kind==='artifact'?React.createElement(ArtifactProbe,{value:current}):React.createElement(markdown.Markdown,{text:current.text,animate:true,initialReveal:false}));
+  const render=()=>root.render(kind==='artifact'?React.createElement(ArtifactProbe,{value:current}):kind==='reveal'?React.createElement(RevealProbe,{value:current}):React.createElement(markdown.Markdown,{text:current.text,animate:true,initialReveal:false}));
   render();Object.assign(window,{microMotionFixture:{update:(next:Record<string,unknown>)=>{current={...current,...next};render();},unmount:()=>root.unmount()}});
  },{kind,props,modules});
  await expect(page.getByRole('region',{name:'Micro motion fixture',exact:true})).toBeVisible();
 }
 const update=(page:Page,value:Record<string,unknown>)=>page.evaluate(value=>(window as unknown as{microMotionFixture:{update:(value:Record<string,unknown>)=>void}}).microMotionFixture.update(value),value);
+const selectPhrase=(page:Page,phrase:string)=>page.evaluate(phrase=>{
+ const root=document.querySelector('.render-revision-probe .sentence-reveal');if(!root)return '';
+ const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let node=walker.nextNode();
+ while(node){
+  const at=(node.textContent??'').indexOf(phrase);if(at>=0){getSelection()!.setBaseAndExtent(node,at,node,at+phrase.length);break;}
+  node=walker.nextNode();
+ }
+ return getSelection()!.toString();
+},phrase);
+const revisionCount=(page:Page)=>page.evaluate(()=>(window as unknown as{renderRevisionAnimations:number}).renderRevisionAnimations);
+
+test('same-text render revisions retire masks without replay and preserve a stable selection',async({page})=>{
+ await page.addInitScript(()=>{const animate=Element.prototype.animate;Object.assign(window,{renderRevisionAnimations:0});Element.prototype.animate=function(...args){if(this.closest('.render-revision-probe'))(window as unknown as{renderRevisionAnimations:number}).renderRevisionAnimations++;return animate.apply(this,args);};});
+ const base='A stable selected phrase remains.',full=base+' New prose arrives.';await mount(page,'reveal',{text:base,renderRevision:'provisional',child:'plain'});
+ await update(page,{text:full});await expect(page.locator('.render-revision-probe .sentence-reveal-veil').first()).toBeAttached();
+ expect(await selectPhrase(page,'selected phrase')).toBe('selected phrase');await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ const before=await revisionCount(page),oldContent=await page.locator('.render-revision-probe .reveal-content').elementHandle(),oldSibling=await page.locator('.render-revision-probe .retained-sibling').elementHandle();
+ await update(page,{renderRevision:'static',child:'formatted'});await expect(page.locator('.render-revision-probe strong')).toHaveText(full);
+ expect(await revisionCount(page)).toBe(before);expect(await page.locator('.render-revision-probe .sentence-reveal-layer>*').count()).toBe(0);
+ expect(await page.locator('.render-revision-probe .reveal-content').evaluate((node,old)=>node!==old,oldContent)).toBe(true);
+ expect(await page.locator('.render-revision-probe .retained-sibling').evaluate((node,old)=>node===old,oldSibling)).toBe(true);
+ expect(await page.evaluate(()=>getSelection()!.toString())).toBe('selected phrase');
+ for(const mode of ['full','reduced','off','system']){
+  await page.evaluate(mode=>{document.documentElement.dataset.motion=mode;},mode);
+  const count=await revisionCount(page),child=mode==='full'||mode==='off'?'plain':'formatted';
+  await update(page,{renderRevision:'static-'+mode,child});await expect(page.locator('.render-revision-probe .reveal-content')).toHaveAttribute('data-child',child);
+  expect(await revisionCount(page)).toBe(count);expect(await page.locator('.render-revision-probe .sentence-reveal-layer>*').count()).toBe(0);
+ }
+});
+
+test('simultaneous canonical text and revision changes keep reveal policy and invalidate intersecting selection',async({page})=>{
+ await page.addInitScript(()=>{const animate=Element.prototype.animate;Object.assign(window,{renderRevisionAnimations:0});Element.prototype.animate=function(...args){if(this.closest('.render-revision-probe'))(window as unknown as{renderRevisionAnimations:number}).renderRevisionAnimations++;return animate.apply(this,args);};});
+ await mount(page,'reveal',{text:'A stable selected phrase remains.',renderRevision:'provisional',child:'plain'});
+ expect(await selectPhrase(page,'selected phrase')).toBe('selected phrase');await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ const before=await revisionCount(page);await update(page,{text:'A stable replacement remains.',renderRevision:'static',child:'formatted'});
+ await expect(page.locator('.render-revision-probe strong')).toHaveText('A stable replacement remains.');await expect.poll(()=>revisionCount(page)).toBeGreaterThan(before);
+ expect(await page.evaluate(()=>getSelection()!.toString())).not.toBe('selected phrase');
+});
 
 test('new prose has a moving soft edge while prior text and code stay fully readable',async({page})=>{
  const before='Keep this sentence.\n\n```ts\nconst stable = true;\n```';await mount(page,'markdown',{text:before});
@@ -110,6 +153,10 @@ test('interaction and reduced motion immediately settle arriving prose',async({p
  await mount(page,'markdown',{text:'Retained prose.'});await update(page,{text:'Retained prose. '+('A newly arriving sentence. ').repeat(30)});
  await expect(page.locator('.micro-motion-fixture .sentence-reveal-veil').first()).toBeAttached();
  await page.locator('.micro-motion-fixture .markdown').dispatchEvent('pointerdown');expect(await page.locator('.micro-motion-fixture .sentence-reveal-layer>*').count()).toBe(0);
+ await update(page,{text:'Retained prose. '+('Focus cancellation sentence. ').repeat(30)});await expect(page.locator('.micro-motion-fixture .sentence-reveal-veil').first()).toBeAttached();
+ await page.locator('.micro-motion-fixture .markdown').dispatchEvent('focusin');expect(await page.locator('.micro-motion-fixture .sentence-reveal-layer>*').count()).toBe(0);
+ await update(page,{text:'Retained prose. '+('Keyboard cancellation sentence. ').repeat(30)});await expect(page.locator('.micro-motion-fixture .sentence-reveal-veil').first()).toBeAttached();
+ await page.locator('.micro-motion-fixture .markdown').dispatchEvent('keydown');expect(await page.locator('.micro-motion-fixture .sentence-reveal-layer>*').count()).toBe(0);
  await page.emulateMedia({reducedMotion:'reduce'});await update(page,{text:'Retained prose. A reduced motion result.'});await expect(page.locator('.micro-motion-fixture .sentence-reveal-layer>*')).toHaveCount(0);
 });
 
