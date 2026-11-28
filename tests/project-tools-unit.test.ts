@@ -34,9 +34,8 @@ describe('ProjectTools.connect', () => {
     mkdirSync(nested, { recursive: true });
     await expect(tools.connect(connect('c1', { name: 'nested', path: nested }))).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
     const parent = mkdtempSync(join(tmpdir(), 'harness-parent-'));
-    cleanups.push(() => rmSync(parent, { recursive: true, force: true }));
     const store = new Store(join(parent, 'data'));
-    cleanups.push(() => store.close());
+    cleanups.push(() => { store.close(); rmSync(parent, { recursive: true, force: true }); });
     await expect(new ProjectTools(store, { git: 'git' }).connect(connect('c2', { name: 'parent', path: parent }))).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
   });
   it('enrolls a local folder, replays the same command id and rejects a changed payload under it', async () => {
