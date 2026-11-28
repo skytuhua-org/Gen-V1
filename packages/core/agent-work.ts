@@ -641,6 +641,7 @@ export class AgentWorkCoordinator {
   }
   lateArtifacts(workId: string): WorkArtifact[] { return this.hooks.store.all<WorkArtifact>(ARTIFACT_KIND).filter(item => item.workId === workId && item.kind === 'late-output'); }
   budgetLedger(): BudgetLedger { return this.ledger(); }
+  budgetLimits(): {tokens: number | null; ms: number | null} { return this.hooks.globalBudget ?? {tokens: null, ms: null}; }
 
   async cancel(ctx: RunContext): Promise<void> { await this.revokeForParent(ctx.threadId); }
 

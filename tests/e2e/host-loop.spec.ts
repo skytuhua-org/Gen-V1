@@ -94,12 +94,15 @@ test('agent work evidence reaches the supported all-agents UI through the real h
       value: { outcome: 'BLOCKED', summary: 'Missing current proof.', requirementIds: ['r1'], observations: [], evidenceRefs: [{ id: 'ev-current', revision: 1 }, { id: 'ev-stale', revision: 1 }, { id: 'ev-missing', revision: 1 }] } });
     host.store.put('data', 'ev-current', parent.id, { id: 'ev-current', threadId: parent.id, revision: 1, provenance: 'harness:verification', createdAt: now, value: { outcome: 'PASS', requirementId: 'r1' } });
     host.store.put('data', 'ev-stale', parent.id, { id: 'ev-stale', threadId: parent.id, revision: 2, provenance: 'harness:verification', createdAt: now, value: { outcome: 'PASS', requirementId: 'r1' } });
+    host.store.put('agentWorkBudget', 'global', null, { reservedTokens: 0, reservedMs: 0, spentTokens: 10, spentMs: 1000, admitted: 1, completed: 1, failed: 0, cancelled: 0, interrupted: 0 });
   });
   await page.getByRole('button', { name: 'All Agents', exact: true }).click();
   await page.getByRole('button', { name: 'Agent work · 1', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Agent work', exact: true });
   await expect(panel).toContainText('reported blocked — not verified');
   await expect(panel).toContainText('2/3 refs stale');
+  await expect(panel).toContainText('10tok/1000ms conservatively charged · no reservation remaining');
+  await expect(panel).toContainText('global budget reserved 0tok/0ms · lifetime charged 10tok/1000ms · remaining uncapped');
   const outputRequest = page.waitForResponse(response => response.url().includes('/api/agent-work/output?') && response.url().includes(`workId=${workId}`) && response.ok());
   await panel.getByRole('button', { name: `Open evidence for ${workId}`, exact: true }).click();
   await outputRequest;

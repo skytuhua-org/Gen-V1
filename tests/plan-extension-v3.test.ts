@@ -278,7 +278,7 @@ it('agent work rows and output evidence expose reported outcome and per-ref fres
     planExtensions: f.extensions,
     agentWork: {
       listForParent: () => [work], inspect: () => work, lateArtifacts: () => [], dispatchedGrants: () => [], supportsLiveSteer: () => false,
-      roleAvailability: () => ({available: true}), budgetLedger: () => ({reservedTokens: 0, spentTokens: 0, admitted: 1, completed: 0, failed: 0, cancelled: 0, interrupted: 0}),
+      roleAvailability: () => ({available: true}), budgetLedger: () => ({reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 1, completed: 0, failed: 0, cancelled: 0, interrupted: 0}), budgetLimits: () => ({tokens: null, ms: null}),
       inbox: {text: () => null, messages: () => []},
     },
   } as unknown as Service);
@@ -286,6 +286,7 @@ it('agent work rows and output evidence expose reported outcome and per-ref fres
   const list = await app.inject({url: '/api/agent-work?taskId=' + f.threadId});
   expect(list.statusCode).toBe(200);
   expect(list.json().works[0]).toMatchObject({workId, state: 'COMPLETED_REPORTED', reportedOutcome: 'BLOCKED', verification: 'REPORTED_BLOCKED'});
+  expect(list.json().budget).toMatchObject({reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, limits: {tokens: null, ms: null}});
   const detail = await app.inject({url: `/api/agent-work/output?taskId=${f.threadId}&workId=${workId}`});
   expect(detail.statusCode).toBe(200);
   expect(detail.json()).toMatchObject({workId, reportedOutcome: 'BLOCKED', verification: 'REPORTED_BLOCKED', outputStatus: 'current'});

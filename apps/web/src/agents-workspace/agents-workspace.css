@@ -70,8 +70,9 @@
 @media (forced-colors: active) { .agents-agent-state, .agents-project-mark { color: CanvasText; } }
 
 /* M09 agent work surface */
-.agents-work { margin: 4px 12px 0; border-top: 1px solid var(--border); }
-.agents-work-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
+.agents-work { margin: 4px 12px 0; border-top: 1px solid var(--border); flex: 0 1 auto; min-height: 32px; display: flex; flex-direction: column; overflow: hidden; }
+.agents-work > .agents-disclosure { flex: 0 0 auto; }
+.agents-work-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .agents-work-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .agents-work-progress progress { flex: 1; height: 6px; }
 .agents-work-row { border: 1px solid var(--border); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }

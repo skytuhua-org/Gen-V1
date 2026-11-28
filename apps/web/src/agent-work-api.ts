@@ -17,7 +17,7 @@ export interface AgentWorkRow {
   updatedAt: string; revision: number;
 }
 export interface AgentWorkList {
-  enabled: boolean; works: AgentWorkRow[]; budget: {reservedTokens: number; spentTokens: number; admitted: number; completed: number; failed: number; cancelled: number; interrupted: number};
+  enabled: boolean; works: AgentWorkRow[]; budget: {reservedTokens: number; reservedMs: number; spentTokens: number; spentMs: number; admitted: number; completed: number; failed: number; cancelled: number; interrupted: number; limits: {tokens: number | null; ms: number | null}};
   roles: Record<string, {available: boolean; reason?: string}>;
 }
 export interface AgentInputRow {

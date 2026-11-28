@@ -99,10 +99,32 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
     if (work.outputStatus === 'changed') return 'reported output changed';
     return work.evidence.refs ? `${work.evidence.stale}/${work.evidence.refs} refs stale` : 'no evidence yet';
   };
+  const amount = (value: number | null, unit: string) => value === null ? null : `${value}${unit}`;
+  const budgetLabel = (work: AgentWorkRow) => {
+    const reserved = [amount(work.budget.tokens, 'tok'), amount(work.budget.ms, 'ms')].filter(Boolean).join('/');
+    // Every earlier epoch reached a terminal state before resume and conservatively charged this same reservation.
+    const priorEpochs = Math.max(0, work.owner.epoch - 1);
+    const priorAmount = [
+      work.budget.tokens === null ? null : amount(work.budget.tokens * priorEpochs, 'tok'),
+      work.budget.ms === null ? null : amount(work.budget.ms * priorEpochs, 'ms'),
+    ].filter(Boolean).join('/');
+    const chargedPrior = priorEpochs === 0 ? '' : ` · prior epochs charged ${priorAmount}`;
+    return work.state === 'QUEUED' || work.state === 'RUNNING' || work.state === 'WAITING_HUMAN' ? `${reserved} reserved · used/remaining unknown${chargedPrior}` : `${reserved} conservatively charged · no reservation remaining${chargedPrior}`;
+  };
+  const ledgerLabel = [
+    amount(list.budget.reservedTokens, 'tok'), amount(list.budget.reservedMs, 'ms')
+  ].filter(Boolean).join('/');
+  const chargedLabel = [
+    amount(list.budget.spentTokens, 'tok'), amount(list.budget.spentMs, 'ms')
+  ].filter(Boolean).join('/');
+  const remainingLabel = [
+    list.budget.limits.tokens === null ? null : amount(Math.max(0, list.budget.limits.tokens - list.budget.reservedTokens - list.budget.spentTokens), 'tok'),
+    list.budget.limits.ms === null ? null : amount(Math.max(0, list.budget.limits.ms - list.budget.reservedMs - list.budget.spentMs), 'ms')
+  ].filter(Boolean).join('/') || 'uncapped';
   return <section className="agents-work" aria-label="Agent work">
     <button type="button" className="agents-disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>Agent work · {list.works.length}</button>
     {open && <div className="agents-work-body">
-      <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ' (unavailable)'}`).join(', ')} · budget reserved {list.budget.reservedTokens}tok</div>
+      <div className="agents-work-meta">roles: {Object.entries(list.roles).map(([role, r]) => `${role}${r.available ? '' : ' (unavailable)'}`).join(', ')} · global budget reserved {ledgerLabel} · lifetime charged {chargedLabel} · remaining {remainingLabel}</div>
       {progress && <div className="agents-work-progress">
         <progress aria-label="Task progress" aria-valuetext={progressLabel} max={progress.total || 1} value={progress.completed}/><span>{progressLabel}</span>
         <PlanTree plan={plan!}/>
@@ -113,7 +135,7 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
           <span className="agents-work-meta" title={work.owner.threadId}>owner {work.owner.threadId.slice(0, 8)}</span>
           {work.worktree && <span className="agents-work-meta" title={work.worktree}>{work.worktree.split(/[\\/]/).pop()}</span>}
           <span className="agents-work-state" data-state={work.state} data-verification={work.verification}>{stateLabel(work)}{work.blockedReason ? ` — ${work.blockedReason}` : ''}</span>
-          <span className="agents-work-meta">{work.budget.tokens !== null ? `${work.budget.tokens}tok ` : ''}{evidenceLabel(work)}</span>
+          <span className="agents-work-meta">{budgetLabel(work)} · {evidenceLabel(work)}</span>
           <button type="button" className="agents-icon" aria-label={`Open evidence for ${work.workId}`} onClick={() => openEvidence(work.workId)}><Eye size={14}/></button>
           {(work.state === 'RUNNING' || work.state === 'QUEUED') && <button type="button" className="agents-icon" aria-label={`Stop ${work.workId}`} onClick={() => { void stopAgentWork(threadId, work.workId).then(refresh).catch(e => setError(e instanceof Error ? e.message : 'Stop failed')); }}><Square size={13}/></button>}
           {work.state === 'INTERRUPTED' && <button type="button" className="agents-icon" aria-label={`Resume ${work.workId}`} onClick={() => { void resumeAgentWork(threadId, work.workId).then(refresh).catch(e => setError(e instanceof Error ? e.message : 'Resume failed')); }}><Play size={13}/></button>}

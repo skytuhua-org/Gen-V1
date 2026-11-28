@@ -108,9 +108,9 @@ test('a slower evidence request cannot replace the latest selected child', async
  let finish!: () => void;
  const delayed = new Promise<void>(resolve => {finish = resolve;});
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
-  enabled: true, roles: {}, budget: {reservedTokens: 0}, works: ['first', 'second'].map(id => ({
-   workId: id, role: 'QA', state: 'VERIFIED', owner: {threadId: id},
-   budget: {tokens: null}, evidence: {refs: 1, stale: 0},
+  enabled: true, roles: {}, budget: {reservedTokens: 10, reservedMs: 1000, spentTokens: 20, spentMs: 2000, admitted: 2, completed: 2, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: 100, ms: 5000}}, works: ['first', 'second'].map(id => ({
+   workId: id, role: 'QA', state: 'VERIFIED', owner: {threadId: id, epoch: 1},
+   budget: {tokens: 10, ms: 1000}, evidence: {refs: 1, stale: 0},
   })),
  }}));
  await page.route(/\/api\/agent-work\/(plan|messages)\?/, route => route.fulfill({json: {extension: false, messages: []}}));
@@ -122,6 +122,9 @@ test('a slower evidence request cannot replace the latest selected child', async
  try {
   fixtureHost.release();
   await page.getByRole('button', {name: 'Agent work · 2', exact: true}).click();
+  const panel = page.getByRole('region', {name: 'Agent work', exact: true});
+  await expect(panel).toContainText('global budget reserved 10tok/1000ms · lifetime charged 20tok/2000ms · remaining 70tok/2000ms');
+  await expect(panel).toContainText('10tok/1000ms conservatively charged · no reservation remaining');
   const first = page.waitForRequest(request => request.url().includes('/api/agent-work/output?') && request.url().includes('workId=first'));
   await page.getByRole('button', {name: 'Open evidence for first', exact: true}).click();
   await first;
@@ -224,10 +227,10 @@ test('agent evidence separates reported outcome from verification and explains u
  const fixtureHost = await setup(page, false, false, true);
  const work = {
   workId: 'evidence-work', role: 'QA', state: 'COMPLETED_REPORTED', reportedOutcome: 'BLOCKED', verification: 'REPORTED_BLOCKED', outputStatus: 'current',
-  owner: {threadId: 'child-active'}, budget: {tokens: null}, evidence: {refs: 2, stale: 1}, blockedReason: null,
+  owner: {threadId: 'child-active', epoch: 1}, budget: {tokens: 10, ms: null}, evidence: {refs: 2, stale: 1}, blockedReason: null,
  };
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
-  enabled: true, roles: {}, budget: {reservedTokens: 0}, works: [work],
+  enabled: true, roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [work],
  }}));
  await page.route(/\/api\/agent-work\/(plan|messages)\?/, route => route.fulfill({json: {extension: false, messages: []}}));
  await page.route('**/api/agent-work/output?*', route => route.fulfill({json: {
@@ -260,9 +263,9 @@ test('agent evidence separates reported outcome from verification and explains u
 test('agent task progress exposes its name and unknown share to assistive technology', async ({page}) => {
  const fixtureHost = await setup(page, false, false, true);
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
-  enabled: true, roles: {}, budget: {reservedTokens: 0}, works: [{
-   workId: 'demo-progress', role: 'QA', state: 'VERIFIED', owner: {threadId: 'child-active'},
-   budget: {tokens: null}, evidence: {refs: 0},
+  enabled: true, roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [{
+   workId: 'demo-progress', role: 'QA', state: 'VERIFIED', owner: {threadId: 'child-active', epoch: 1},
+   budget: {tokens: 10, ms: null}, evidence: {refs: 0},
   }],
  }}));
  await page.route('**/api/agent-work/plan?*', route => route.fulfill({json: {
@@ -312,9 +315,9 @@ test('a child input acknowledgement preserves a newer draft', async ({page}) => 
  const acknowledgement = new Promise<void>(resolve => {finish = resolve;});
  const sent: unknown[] = [];
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
-  enabled: true, roles: {}, budget: {reservedTokens: 0}, works: [{
+  enabled: true, roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [{
    workId: 'demo-child', role: 'QA', state: 'RUNNING', steerSupported: true,
-   owner: {threadId: 'child-active'}, budget: {tokens: null}, evidence: {refs: 0},
+   owner: {threadId: 'child-active', epoch: 2}, budget: {tokens: 10, ms: null}, evidence: {refs: 0},
   }],
  }}));
  await page.route(/\/api\/agent-work\/(plan|messages|inputs)\?/, route => route.fulfill({json: {extension: false, messages: [], inputs: []}}));
@@ -328,6 +331,7 @@ test('a child input acknowledgement preserves a newer draft', async ({page}) => 
   fixtureHost.release();
   await page.getByRole('button', {name: 'Agent work · 1', exact: true}).click();
   const work = page.getByRole('region', {name: 'Agent work', exact: true});
+  await expect(work).toContainText('10tok reserved · used/remaining unknown · prior epochs charged 10tok');
   const input = work.getByRole('textbox', {name: 'Message work demo-child'});
   const queue = work.getByRole('button', {name: 'Queue next'});
   await input.fill('First instruction');
@@ -353,9 +357,9 @@ test('a message board post acknowledgement preserves edits for the next post', a
  const acknowledgement = new Promise<void>(resolve => {finish = resolve;});
  const sent: unknown[] = [];
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
-  enabled: true, roles: {}, budget: {reservedTokens: 0}, works: [{
-   workId: 'demo-child', role: 'QA', state: 'VERIFIED', owner: {threadId: 'child-active'},
-   budget: {tokens: null}, evidence: {refs: 0},
+  enabled: true, roles: {}, budget: {reservedTokens: 0, reservedMs: 0, spentTokens: 0, spentMs: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, interrupted: 0, limits: {tokens: null, ms: null}}, works: [{
+   workId: 'demo-child', role: 'QA', state: 'VERIFIED', owner: {threadId: 'child-active', epoch: 1},
+   budget: {tokens: 10, ms: null}, evidence: {refs: 0},
   }],
  }}));
  await page.route(/\/api\/agent-work\/(plan|messages)\?/, route => route.fulfill({json: {extension: false, messages: []}}));
