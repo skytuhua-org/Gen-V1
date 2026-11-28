@@ -31,15 +31,9 @@ interface PrCheckObservation{version:1;repo:string;number:number;headOid:string;
 export class GitHubTools{
  readonly auth:GitHubAuth;
  private readonly reviewComparisons=new ComparisonSnapshots();
-<<<<<<< HEAD
- constructor(private readonly projects:ProjectTools,_terminals:TerminalHost,private readonly executable=bundledGh,private readonly remoteUrl:(repo:string)=>string=(repo)=>'https://github.com/'+repo+'.git'){this.auth=new GitHubAuth(projects.store.dataDir);}
-||||||| de8dcf54
- constructor(private readonly projects:ProjectTools,_terminals:TerminalHost,private readonly executable=bundledGh){this.auth=new GitHubAuth(projects.store.dataDir);}
-=======
  private static readonly CHECK_BACKOFF_BASE_MS=5_000;
  private static readonly CHECK_BACKOFF_MAX_MS=60_000;
- constructor(private readonly projects:ProjectTools,_terminals:TerminalHost,private readonly executable=bundledGh){this.auth=new GitHubAuth(projects.store.dataDir);}
->>>>>>> origin/devin/44b1bf-1626-git-sync-t02
+ constructor(private readonly projects:ProjectTools,_terminals:TerminalHost,private readonly executable=bundledGh,private readonly remoteUrl:(repo:string)=>string=(repo)=>'https://github.com/'+repo+'.git'){this.auth=new GitHubAuth(projects.store.dataDir);}
  private environment(){const root=join(this.projects.store.dataDir,'github');return{...processEnvironment(),HOME:root,USERPROFILE:root,GH_CONFIG_DIR:join(root,'config'),GH_HOST:'github.com',GH_PROMPT_DISABLED:'1',GH_NO_UPDATE_NOTIFIER:'1',GIT_TERMINAL_PROMPT:'0'};}
  private parseOutput(output:string){try{return JSON.parse(output) as unknown;}catch{throw new HarnessError('GITHUB_CLI_OUTPUT_INVALID','The GitHub CLI returned unreadable output. Check the bundled gh tool and the repository state.');}}
  private async run(path:string,args:string[]){
