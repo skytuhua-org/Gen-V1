@@ -193,9 +193,10 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  const beginCorner=(event:ReactPointerEvent<HTMLButtonElement>,paneId:string)=>{if(event.button!==0||busy||corner.current||resize.current||floatGesture.current)return;event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);corner.current={pointerId:event.pointerId,paneId,x:event.clientX,y:event.clientY,element:event.currentTarget,revision:layout.revision};};
  const moveCorner=(event:ReactPointerEvent<HTMLButtonElement>)=>{const gesture=corner.current;if(!gesture||gesture.pointerId!==event.pointerId)return;const dx=event.clientX-gesture.x,dy=event.clientY-gesture.y;if(Math.hypot(dx,dy)<16)return;const basis=root.current?.getBoundingClientRect(),other=basis&&Object.entries(rects).find(([paneId,rect])=>paneId!==gesture.paneId&&event.clientX>=basis.left+rect.left&&event.clientX<=basis.left+rect.left+rect.width&&event.clientY>=basis.top+rect.top&&event.clientY<=basis.top+rect.top+rect.height);if(other){setDrop({paneId:other[0],edge:'center',joinFrom:gesture.paneId});return;}const edge=Math.abs(dx)>Math.abs(dy)?dx>0?'right':'left':dy>0?'bottom':'top';setDrop(fitSplit(gesture.paneId,edge,false,undefined)?{paneId:gesture.paneId,edge}:null);};
  const endCorner=(event:ReactPointerEvent<HTMLButtonElement>)=>{const gesture=corner.current;if(!gesture||gesture.pointerId!==event.pointerId)return;corner.current=null;const target=drop;setDrop(null);if(target&&gesture.revision===layout.revision){if(target.joinFrom)void send('pane.join',{paneId:target.joinFrom,targetPaneId:target.paneId});else void splitPane(gesture.paneId,target.edge);}};
+ const paneTitle=(view?:SurfaceRef)=>view?title(view):'Empty area';
  const renderPane=(paneId:string)=>{
   const pane=layout.panes[paneId]!,current=pane.activeViewId?layout.views[pane.activeViewId]:undefined;
-  return <section key={paneId} className={`split-pane${pane.collapsed?' is-collapsed':''}${layout.focusedPaneId===paneId?' is-focused':''}`} data-split-pane={paneId} aria-label={current?title(current):'Empty area'}>
+  return <section key={paneId} className={`split-pane${pane.collapsed?' is-collapsed':''}${layout.focusedPaneId===paneId?' is-focused':''}`} data-split-pane={paneId} aria-label={paneTitle(current)}>
     <header className="split-pane-header" onPointerDown={event=>{if(!(event.target as HTMLElement).closest('button,summary,select')&&!busy&&layout.focusedPaneId!==paneId)void send('pane.focus',{paneId},false);}}>
     <button className="split-corner" aria-label="Split this area" title="Drag to split. Use the area menu for keyboard actions." disabled={busy} onPointerDown={event=>beginCorner(event,paneId)} onPointerMove={moveCorner} onPointerUp={endCorner} onPointerCancel={event=>{if(corner.current?.pointerId===event.pointerId)cancel();}} onLostPointerCapture={event=>{if(corner.current?.pointerId===event.pointerId)cancel();}} onContextMenu={event=>{event.preventDefault();cancel();}}>◩</button>
     <div className="split-tab-strip" role="tablist" aria-label="Area views">{pane.viewIds.map(viewId=><button key={viewId} role="tab" aria-selected={pane.activeViewId===viewId} draggable={!busy} onDragStart={event=>{draggingView.current=layout.views[viewId]??null;event.dataTransfer.setData(GEN_VIEW_DRAG_TYPE,JSON.stringify({workspaceId:layout.id,viewId,revision:layout.revision}));event.dataTransfer.effectAllowed='move';}} onDragEnd={()=>{draggingView.current=null;}} onClick={()=>{void send('view.activate',{paneId,viewId},false);}} title={title(layout.views[viewId]!)}><span className="split-tab-label">{title(layout.views[viewId]!)}</span></button>)}</div>
@@ -203,6 +204,12 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
      {id:'split-columns',label:'Split left / right',disabled:busy||narrow,onSelect:()=>{void splitPane(paneId,'right');}},
      {id:'split-rows',label:'Split above / below',disabled:busy||narrow,onSelect:()=>{void splitPane(paneId,'bottom');}},
      {id:'join',label:'Join adjacent area',disabled:busy||Object.keys(layout.panes).length<2,onSelect:()=>{void send('pane.join',{paneId});}},
+     ...(current?splitPaneIds(layout.root).filter(targetId=>targetId!==paneId).map(targetId=>{
+      const targetViewId=layout.panes[targetId]!.activeViewId;
+      return {id:`move-to:${targetId}`,label:`Move to ${paneTitle(targetViewId?layout.views[targetViewId]:undefined)}`,disabled:busy,onSelect:()=>{
+       void send('view.move',{viewId:current.id,paneId:targetId});
+      }};
+     }):[]),
      ...(current?[{id:'park',label:'Park current view',disabled:busy,onSelect:()=>{void send('view.park',{viewId:current.id});}}]:[]),
      ...(current&&onDetachView&&current.kind==='thread'?[{id:'detach',label:'Detach conversation',disabled:busy,onSelect:()=>{onDetachView(current);}}]:[]),
 
