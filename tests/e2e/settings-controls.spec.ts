@@ -258,23 +258,35 @@ test('preferences and supported environment actions remain usable after search r
 });
 
 for (const theme of ['dark', 'light'] as const) for (const zoom of [1, 1.25, 1.5]) {
-  test(`${theme} navigation keeps selection, hover and keyboard focus separate at ${zoom * 100}% CSS zoom`, async ({ page }, info) => {
-    const { dialog, nav } = await openSettings(page, theme);
+  test(`${theme} navigation separates hover from selection and shows keyboard focus at ${zoom * 100}% CSS zoom`, async ({ page }, info) => {
+    const { dialog, nav, search } = await openSettings(page, theme);
     await page.evaluate(value => { document.documentElement.style.zoom = String(value); }, zoom);
-    const labs = nav.getByRole('tab', { name: 'Projects & Working Copies', exact: true }), about = nav.getByRole('tab', { name: 'Source Control & Reviews', exact: true });
-    await labs.click();
-    await about.hover();
+    const projects = nav.getByRole('tab', { name: 'Projects & Working Copies', exact: true }), sourceControl = nav.getByRole('tab', { name: 'Source Control & Reviews', exact: true });
+    await projects.click();
+    const restingBackground = await sourceControl.evaluate(node => getComputedStyle(node).backgroundColor);
+    await sourceControl.hover();
+    await expect.poll(() => sourceControl.evaluate(node => getComputedStyle(node).backgroundColor)).not.toBe(restingBackground);
     await dialog.screenshot({ path: info.outputPath('navigation.png') });
-    const selected = await labs.boundingBox(), hovered = await about.boundingBox();
+    const selected = await projects.boundingBox(), hovered = await sourceControl.boundingBox();
     expect(hovered!.y - selected!.y - selected!.height).toBeGreaterThanOrEqual(4 * zoom - 0.1);
     await expect(nav.locator('[aria-current]')).toHaveCount(1);
-    await expect(labs).toHaveAttribute('aria-current', 'page');
-    await expect(about).not.toHaveAttribute('aria-current');
-    const selectedStyle = await labs.evaluate(node => { const style = getComputedStyle(node); return [style.backgroundColor, style.boxShadow]; });
-    await expect.poll(() => about.evaluate(node => { const style = getComputedStyle(node); return [style.backgroundColor, style.boxShadow]; })).not.toEqual(selectedStyle);
+    await expect(projects).toHaveAttribute('aria-current', 'page');
+    await expect(sourceControl).not.toHaveAttribute('aria-current');
+    const selectedStyle = await projects.evaluate(node => { const style = getComputedStyle(node); return [style.backgroundColor, style.color, style.fontWeight]; });
+    await expect.poll(() => sourceControl.evaluate(node => { const style = getComputedStyle(node); return [style.backgroundColor, style.color, style.fontWeight]; })).not.toEqual(selectedStyle);
+    await search.focus();
     await page.keyboard.press('Tab');
-    await expect(about).toBeFocused();
-    const focus = await about.evaluate(node => { const style = getComputedStyle(node); return { visible: node.matches(':focus-visible'), width: style.outlineWidth, offset: style.outlineOffset, style: style.outlineStyle, pixelRatio: devicePixelRatio }; });
+    await expect(projects).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(nav.locator(':focus')).toHaveCount(0);
+    await page.keyboard.press('Shift+Tab');
+    await expect(projects).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(sourceControl).toBeFocused();
+    await expect(sourceControl).toHaveAttribute('aria-current', 'page');
+    await expect(projects).not.toHaveAttribute('aria-current');
+    await expect(dialog.getByRole('tabpanel', { name: 'Source Control & Reviews', exact: true })).toBeVisible();
+    const focus = await sourceControl.evaluate(node => { const style = getComputedStyle(node); return { visible: node.matches(':focus-visible'), width: style.outlineWidth, offset: style.outlineOffset, style: style.outlineStyle, pixelRatio: devicePixelRatio }; });
     expect(focus.visible).toBe(true);
     expect(focus.style).toBe('solid');
     expect(parseFloat(focus.width) * zoom).toBeGreaterThanOrEqual(1.9);
@@ -282,20 +294,19 @@ for (const theme of ['dark', 'light'] as const) for (const zoom of [1, 1.25, 1.5
     const inset = -(parseFloat(focus.offset) + parseFloat(focus.width)) * zoom * focus.pixelRatio;
     expect(inset).toBeGreaterThanOrEqual(0);
     expect(inset).toBeLessThanOrEqual(1);
-    await expect(labs).toHaveAttribute('aria-current', 'page');
     const geometry = await nav.getByRole('tab').evaluateAll(nodes => nodes.map(node => {
       const rect = node.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(node);
       const text = range.getBoundingClientRect();
       return { label: node.textContent, height: rect.height, width: rect.width, unclipped: text.left >= rect.left && text.right <= rect.right && text.top >= rect.top && text.bottom <= rect.bottom, overflow: node.scrollWidth > node.clientWidth };
     }));
     expect(geometry.filter(row => row.height < 32 * zoom - 0.1 || row.width < 32 * zoom - 0.1 || !row.unclipped || row.overflow)).toEqual([]);
-    const longLabel = nav.getByRole('tab', { name: 'Skills & Integrations' });
-    await longLabel.evaluate(node => { node.textContent = 'Skills & Integrations with a longer localized label'; });
+    const localizedLabel = 'Skills & Integrations with a longer localized label';
+    await nav.getByRole('tab', { name: 'Skills & Integrations', exact: true }).evaluate((node, label) => { node.textContent = label; }, localizedLabel);
+    const longLabel = nav.getByRole('tab', { name: localizedLabel, exact: true });
     await longLabel.scrollIntoViewIfNeeded();
     expect(await longLabel.evaluate(node => { const range = document.createRange(); range.selectNodeContents(node); const text = range.getBoundingClientRect(), rect = node.getBoundingClientRect(); return text.right <= rect.right && text.bottom <= rect.bottom && node.scrollWidth <= node.clientWidth; })).toBe(true);
     await dialog.screenshot({ path: info.outputPath('long-label.png') });
     await page.setViewportSize({width:1440,height:520});
-    const search=dialog.getByRole('searchbox',{name:'Search all settings'});
     for(const label of ['Composer font','Code font','Chat width']){
       await search.fill(label);await dialog.getByRole('button',{name:new RegExp('^'+label)}).click();
       const field=dialog.getByRole('combobox',{name:label,exact:true});await expect(field).toBeFocused();
