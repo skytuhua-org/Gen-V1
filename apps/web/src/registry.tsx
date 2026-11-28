@@ -31,7 +31,9 @@ const DocumentPreview = lazy(() => import('./DocumentPreview').then(module => ({
 const SignaturePad = lazy(() => import('./SignaturePad').then(module => ({ default: module.SignaturePad })));
 
 export { ArtifactActions } from './task-context';
-import { mapActionPayload, statePath, useChoiceValidation, useTaskAction } from './task-context';
+import { mapActionPayload, statePath, useChoiceValidation, useTaskAction, type ChoiceCapture } from './task-context';
+import { useSecureArtifact } from './secure-artifact-context';
+import { ActionIndicator } from '../../../packages/ui-shell/Feedback';
 import { Disclosure } from './TaskDisclosure';
 import { Table } from './TaskTable';
 import { MapView } from './MapView';
@@ -115,10 +117,133 @@ function Select({ element: { props }, bindings }: ComponentRenderProps) {
   const selected = value == null ? '' : String(value);
   return <label className="field">{string(props.label)}<ShellSelect aria-label={string(props.label, 'Choose an option')} value={selected} onValueChange={setValue} options={options}/></label>;
 }
+type SubmissionFocus = { stop: () => void; restore: () => void };
+
+function watchSubmissionFocus(button: HTMLButtonElement | null): SubmissionFocus | null {
+  if (!button || button.ownerDocument.activeElement !== button) return null;
+  const document = button.ownerDocument;
+  const window = document.defaultView;
+  let ownsFocus = true;
+  const relinquish = () => { ownsFocus = false; };
+  const onFocus = (event: FocusEvent) => {
+    if (event.target !== button && event.target !== document.body) relinquish();
+  };
+  const onVisibility = () => { if (document.hidden) relinquish(); };
+  document.addEventListener('focusin', onFocus, true);
+  document.addEventListener('pointerdown', relinquish, true);
+  document.addEventListener('keydown', relinquish, true);
+  document.addEventListener('visibilitychange', onVisibility);
+  window?.addEventListener('blur', relinquish);
+  window?.addEventListener('pagehide', relinquish);
+  const stop = () => {
+    document.removeEventListener('focusin', onFocus, true);
+    document.removeEventListener('pointerdown', relinquish, true);
+    document.removeEventListener('keydown', relinquish, true);
+    document.removeEventListener('visibilitychange', onVisibility);
+    window?.removeEventListener('blur', relinquish);
+    window?.removeEventListener('pagehide', relinquish);
+  };
+  return { stop, restore: () => {
+    stop();
+    if (ownsFocus && button.isConnected && !button.disabled && document.activeElement === document.body) {
+      button.focus({ preventScroll: true });
+    }
+  } };
+}
+
+function useArtifactSubmission(actionId: string) {
+  const scope = useSecureArtifact();
+  const owner = scope && scope.active !== false && scope.threadId && scope.artifactId && actionId
+    ? JSON.stringify([scope.threadId, scope.artifactId, scope.revision, actionId]) : null;
+  const action = useTaskAction(owner);
+  const choices = useChoiceValidation();
+  const attempt = useRef<object | null>(null);
+  const focus = useRef<SubmissionFocus | null>(null);
+  const acknowledgmentCleanup = useRef<(() => void) | undefined>(undefined);
+  const [acknowledgment, setAcknowledgment] = useState<ChoiceCapture[] | null>(null);
+  const [focusReady, setFocusReady] = useState<SubmissionFocus | null>(null);
+  const clearAcknowledgment = () => {
+    acknowledgmentCleanup.current?.();
+    acknowledgmentCleanup.current = undefined;
+    setAcknowledgment(null);
+  };
+  useLayoutEffect(() => {
+    setAcknowledgment(null);
+    setFocusReady(null);
+    return () => {
+      attempt.current = null;
+      focus.current?.stop();
+      focus.current = null;
+      acknowledgmentCleanup.current?.();
+      acknowledgmentCleanup.current = undefined;
+    };
+  }, [owner]);
+  useLayoutEffect(() => {
+    if (action.busy || !focusReady || focus.current !== focusReady) return;
+    focus.current = null;
+    focusReady.restore();
+    setFocusReady(null);
+  }, [action.busy, focusReady]);
+
+  const submit = (payload: unknown, captures: ChoiceCapture[], button: HTMLButtonElement | null, clearAccepted?: () => void) => {
+    if (owner === null || attempt.current) return;
+    clearAcknowledgment();
+    focus.current?.stop();
+    const initiatingFocus = watchSubmissionFocus(button);
+    focus.current = initiatingFocus;
+    const token = {};
+    attempt.current = token;
+    void action.run(actionId, payload).then(accepted => {
+      if (attempt.current !== token) return;
+      attempt.current = null;
+      setFocusReady(initiatingFocus);
+      if (!accepted) return;
+      clearAccepted?.();
+      setAcknowledgment(captures);
+      const timeout = setTimeout(clearAcknowledgment, 4_000);
+      const stop = choices?.subscribeUserEdit((instanceId, version) => {
+        if (captures.some(capture => capture.instanceId === instanceId && version !== capture.userEditVersion)) clearAcknowledgment();
+      });
+      acknowledgmentCleanup.current = () => { clearTimeout(timeout); stop?.(); };
+    });
+  };
+  const indicator = action.busy ? 'busy' : acknowledgment ? 'acknowledged' : 'idle';
+  return { busy: action.busy, error: action.error, active: owner !== null, acknowledgment, choices, submit, indicator } as const;
+}
+
+function SubmissionFeedback({ submission, retry }: { submission: ReturnType<typeof useArtifactSubmission>; retry: () => void }) {
+  if (submission.error) return <span className="widget-action-feedback">
+    <span className="widget-action-error" role="alert">{submission.error}</span>
+    <button type="button" className="widget-action-retry secondary" onClick={retry}>Retry</button>
+  </span>;
+  if (submission.busy) return <span className="widget-action-feedback" role="status">Submitting request</span>;
+  if (!submission.acknowledgment) return null;
+  return <span className="widget-action-feedback" role="status">
+    <span>Request submitted</span>
+    {submission.acknowledgment.filter(capture => capture.valueLabel).map(capture =>
+      <span key={capture.instanceId}>Submitted choice: {capture.valueLabel}</span>)}
+  </span>;
+}
+
 function Button({ element: { props } }: ComponentRenderProps) {
-  const action = useTaskAction(), store = useStateStore(), choices = useChoiceValidation();
+  const submission = useArtifactSubmission(string(props.actionId));
+  const store = useStateStore();
   const mappedKeys = Object.values(obj(props.payloadFromState)).filter((key): key is string => typeof key === 'string');
-  return <span className="surface-action"><button type="button" className={props.tone === 'primary' || props.variant === 'primary' ? 'primary' : props.tone === 'danger' ? 'secondary tone-danger' : 'secondary'} disabled={action.busy || props.disabled === true || !props.actionId} title={!props.actionId ? 'This control has no registered action.' : undefined} onClick={() => { if (choices && !choices.validate({ mappedKeys }).valid) return; if (props.actionId) void action.run(string(props.actionId), mapActionPayload(props, store.getSnapshot().values)); }}>{action.busy && props.disabled !== true ? 'Submitting…' : string(props.label, 'Continue')}</button>{action.error && <span role="alert" className="error-text">{action.error}</span>}</span>;
+  const disabled = !submission.active || props.disabled === true || submission.busy;
+  const submit = (button: HTMLButtonElement | null) => {
+    if (disabled) return;
+    const validation = submission.choices?.validate({ mappedKeys });
+    if (validation && !validation.valid) return;
+    submission.submit(mapActionPayload(props, store.getSnapshot().values), validation?.captures ?? [], button);
+  };
+  const tone = props.tone === 'primary' || props.variant === 'primary' ? 'primary' : props.tone === 'danger' ? 'secondary tone-danger' : 'secondary';
+  return <span className="surface-action">
+    <button type="button" className={`widget-action-trigger ${tone}`} disabled={disabled} aria-busy={submission.busy || undefined}
+      title={!props.actionId ? 'This control has no registered action.' : undefined} onClick={event => submit(event.currentTarget)}>
+      {string(props.label, 'Continue')}<ActionIndicator state={submission.indicator} />
+    </button>
+    <SubmissionFeedback submission={submission} retry={() => submit(null)} />
+  </span>;
 }
 function Chart({ element: { props } }: ComponentRenderProps) {
   const data = list(useData(props) ?? props.data);
@@ -259,17 +384,59 @@ function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) 
 }
 function Badge({ element: { props } }: ComponentRenderProps) { return <span className={`badge tone-${string(props.tone)}`}>{string(props.text, string(props.label))}</span>; }
 function Form({ element: { props }, children }: ComponentRenderProps) {
-  const action = useTaskAction(), store = useStateStore(), artifactTitle = useContext(ArtifactTitle), composing = useRef(false), form = useRef<HTMLFormElement>(null), choices = useChoiceValidation();
+  const submission = useArtifactSubmission(string(props.actionId));
+  const store = useStateStore();
+  const artifactTitle = useContext(ArtifactTitle);
+  const composing = useRef(false);
+  const form = useRef<HTMLFormElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
   const mappedKeys = Object.values(obj(props.payloadFromState)).filter((key): key is string => typeof key === 'string');
-  const syncChoices = () => { if (form.current) choices?.syncNativeParticipation(form.current); };
-  return <form ref={form} className="surface-form" aria-busy={action.busy} onCompositionStartCapture={() => { composing.current = true; }} onCompositionEndCapture={() => { composing.current = false; }} onClickCapture={syncChoices} onKeyDownCapture={event => { if (event.key === 'Enter') syncChoices(); }} onInvalidCapture={event => { if (form.current && event.target instanceof HTMLElement && event.target.closest('.task-choices')) choices?.validate({ form: form.current, mappedKeys }); }} onKeyDown={event => { if (event.key === 'Enter' && (composing.current || event.nativeEvent.isComposing || event.keyCode === 229)) event.preventDefault(); }} onSubmit={event => {
-    event.preventDefault(); if (!props.actionId || composing.current || action.busy) return;
-    if (form.current && choices && !choices.validate({ form: form.current, mappedKeys }).valid) return;
-    const submitted = { ...obj(store.getSnapshot().values) };
-    void action.run(string(props.actionId), mapActionPayload(props, submitted)).then(accepted => {
-      if (accepted) for (const key of list(props.clearOnSuccess)) if (typeof key === 'string' && store.get(statePath(key)) === submitted[key]) store.set(statePath(key), '');
-    });
-  }}>{props.title && props.title !== artifactTitle ? <h3>{string(props.title)}</h3> : null}{children}{action.error && <p className="error-text" role="alert">{action.error}</p>}<button type="submit" className="primary" title={string(props.submitLabel, 'Submit')} disabled={action.busy || !props.actionId}><span className="form-submit-label">{action.busy ? 'Submitting…' : string(props.submitLabel, 'Submit')}</span><CornerDownLeft className="form-submit-icon" size={15} aria-hidden="true" /></button></form>;
+  const label = string(props.submitLabel, 'Submit');
+  const disabled = !submission.active || submission.busy || props.disabled === true;
+  const syncChoices = () => { if (form.current) submission.choices?.syncNativeParticipation(form.current); };
+  const retry = () => {
+    if (disabled || !form.current || !button.current) return;
+    syncChoices();
+    form.current.requestSubmit(button.current);
+  };
+  return <div className="widget-action-form">
+    <form ref={form} className="surface-form" aria-busy={submission.busy}
+      onCompositionStartCapture={() => { composing.current = true; }} onCompositionEndCapture={() => { composing.current = false; }}
+      onClickCapture={syncChoices}
+      onKeyDownCapture={event => {
+        if (event.key !== 'Enter') return;
+        if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) event.preventDefault();
+        else syncChoices();
+      }}
+      onInvalidCapture={event => {
+        if (form.current && event.target instanceof HTMLElement && event.target.closest('.task-choices')) {
+          submission.choices?.validate({ form: form.current, mappedKeys });
+        }
+      }}
+      onSubmit={event => {
+        event.preventDefault();
+        if (disabled || composing.current || !form.current) return;
+        const validation = submission.choices?.validate({ form: form.current, mappedKeys });
+        if (validation && !validation.valid) return;
+        const submitted = { ...obj(store.getSnapshot().values) };
+        const submitter = event.nativeEvent instanceof SubmitEvent ? event.nativeEvent.submitter : null;
+        submission.submit(mapActionPayload(props, submitted), validation?.captures ?? [],
+          submitter instanceof HTMLButtonElement ? submitter : null, () => {
+            for (const key of list(props.clearOnSuccess)) {
+              if (typeof key === 'string' && store.get(statePath(key)) === submitted[key]) store.set(statePath(key), '');
+            }
+          });
+      }}>
+      {props.title && props.title !== artifactTitle ? <h3>{string(props.title)}</h3> : null}
+      {children}
+      <button ref={button} type="submit" className="widget-action-trigger primary" title={label} disabled={disabled}
+        aria-busy={submission.busy || undefined}>
+        <span className="form-submit-label">{label}</span>
+        <ActionIndicator state={submission.indicator} idleIcon={<CornerDownLeft className="form-submit-icon" size={15} aria-hidden="true" />} />
+      </button>
+    </form>
+    <SubmissionFeedback submission={submission} retry={retry} />
+  </div>;
 }
 function BoundMarkdown({ element: { props } }: ComponentRenderProps) { const data = useData(props); return <Markdown text={string(props.text, string(data))} animate />; }
 function Metric({ element: { props } }: ComponentRenderProps) { const data = useData(props), value = data ?? props.value; return <div className="surface-metric"><span className="muted">{string(props.label)}</span><strong>{typeof value === 'number' ? value.toLocaleString(undefined, { maximumSignificantDigits: 21 }) : display(value)}{props.unit ? ` ${string(props.unit)}` : ''}</strong></div>; }

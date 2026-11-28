@@ -59,7 +59,11 @@
 .surface-form:has(>.field:only-of-type)>button[type=submit]:hover { background:var(--accent-soft); }
 .surface-form:has(>.field:only-of-type)>button .form-submit-label { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
 .surface-form:has(>.field:only-of-type)>button .form-submit-icon { display:block; }
-.surface-form:has(>.field:only-of-type)>.error-text { grid-column:1 / -1; }
+.widget-action-trigger { display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+.widget-action-feedback { display:flex; flex-direction:column; align-items:flex-start; gap:3px; margin-top:6px; color:var(--muted); font:400 13px Inter, sans-serif; }
+.surface-action>.widget-action-feedback { flex-basis:100%; }
+.widget-action-error { color:var(--danger); }
+.widget-action-retry.secondary { min-height:0; padding:2px 6px; }
 @media(max-width:700px) { .task-node { padding-left:64px; } .task-node-copy small { font-size:10px; } }
 
 .artifact-flash-live{display:flex;min-inline-size:0}
