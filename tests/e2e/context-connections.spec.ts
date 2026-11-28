@@ -3,7 +3,7 @@ import { serveTaskFixture, taskFixture } from './task-interface-fixture';
 import type { HostCommand } from '../../packages/contracts';
 import {SUBSCRIPTION_CONNECTIONS} from '../../packages/contracts/connections';
 
-async function openNotes(page:Page){await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();await page.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name:'Notes',exact:true}).click();}
+async function openMemory(page:Page){await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();await page.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:'Memory',exact:true}).click();}
 
 const simple = { root: 'text', elements: { text: { type: 'Text', props: { text: 'Review the supplied brief.' } } } };
 test('thread note drafts survive reload and accepted notes can be forgotten', async ({ page }) => {
@@ -18,7 +18,7 @@ test('thread note drafts survive reload and accepted notes can be forgotten', as
     if (command.type === 'memory.save') snapshot.memory.push({ id: `task-thread:${p.key}`, threadId: 'task-thread', key: String(p.key), content: String(p.content), revision: (previous?.revision ?? 0) + 1, author: 'user', updatedAt: new Date().toISOString() });
     await route.fulfill({ json: { commandId: command.id, eventSeq: ++snapshot.seq, result: snapshot.memory.at(-1) } }); await host.publish();
   });
-  await page.goto('/'); await openNotes(page);
+  await page.goto('/'); await openMemory(page);
   await page.getByRole('button', { name: 'Add memory note' }).click(); await page.getByRole('textbox', { name: 'Note key', exact: true }).fill('date-format'); await page.getByRole('textbox', { name: 'New thread note' }).fill('Use UTC for exported dates.');
   await page.reload(); await expect(page.getByRole('textbox', { name: 'New thread note' })).toHaveValue('Use UTC for exported dates.');
   await page.getByRole('button', { name: 'Add note', exact: true }).click(); await expect(page.getByRole('textbox', { name: 'Note date-format' })).toHaveValue('Use UTC for exported dates.');
@@ -55,7 +55,7 @@ test('an older note draft cannot silently overwrite a newer agent note, includin
     snapshot.memory![0] = { ...current, content: String(command.payload.content), revision: current.revision + 1 };
     await route.fulfill({ json: { commandId: command.id, eventSeq: ++snapshot.seq, result: snapshot.memory![0] } }); await host.publish();
   });
-  await page.goto('/'); await openNotes(page);
+  await page.goto('/'); await openMemory(page);
   await page.getByRole('textbox', { name: 'Note constraint', exact: true }).fill('My pending draft');
   snapshot.memory![0] = { ...snapshot.memory![0], revision: 2, content: 'Newer agent constraint' }; await host.publish();
   await page.getByRole('button', { name: 'Save note', exact: true }).click(); await expect(page.getByRole('status').filter({hasText:'This note changed'})).toBeVisible(); expect(submitted).toEqual([1]); expect(snapshot.memory![0].content).toBe('Newer agent constraint');
@@ -64,7 +64,7 @@ test('an older note draft cannot silently overwrite a newer agent note, includin
 });
 test('a saved note named new never shares a journal or mount identity with a fresh note', async ({ page }) => {
   const snapshot = taskFixture(simple); snapshot.memory = [{ id: 'm', threadId: 'task-thread', key: 'new', content: 'Existing saved note', revision: 1, author: 'user', updatedAt: '' }];
-  await serveTaskFixture(page, snapshot); await page.goto('/'); await openNotes(page);
+  await serveTaskFixture(page, snapshot); await page.goto('/'); await openMemory(page);
   await page.getByRole('button', { name: 'Add memory note' }).click(); await page.getByRole('textbox', { name: 'Note key', exact: true }).fill('followup'); await page.getByRole('textbox', { name: 'New thread note', exact: true }).fill('A separate draft');
   await page.reload(); await expect(page.getByRole('textbox', { name: 'Note new', exact: true })).toHaveValue('Existing saved note'); await expect(page.getByRole('textbox', { name: 'New thread note', exact: true })).toHaveValue('A separate draft'); await expect(page.getByRole('textbox', { name: 'Note new', exact: true })).toHaveValue('Existing saved note');
 });
@@ -75,7 +75,7 @@ test.describe('absolute local clock format (T07/R10)', () => {
     const snapshot=taskFixture(simple);snapshot.data.push({id:'clock-output',threadId:'task-thread',revision:1,value:{stdout:'Clock format fixture',exitCode:0},provenance:'Synthetic recorded output',createdAt:'2026-11-16T13:05:00.000Z'});
     await serveTaskFixture(page,snapshot);await page.goto('/');
     await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();
-    const panel=page.getByRole('complementary',{name:'Workspace panel',exact:true});await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name:'Output',exact:true}).click();
+    const panel=page.getByRole('region',{name:'Workspace panel',exact:true});await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:'Executor output',exact:true}).click();
     const checked=panel.locator('.executor-record>header>small');await expect(checked).toHaveText('1:05 PM');
     const setFormat=async(label:string)=>{
       await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('button',{name:'General',exact:true}).click();

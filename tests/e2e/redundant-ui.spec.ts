@@ -57,6 +57,48 @@ test('actual detached composer restores overview Changes until its owner docks a
  await page.evaluate(()=>(window as unknown as {wo5SetDetached:(value:boolean)=>void}).wo5SetDetached(false));
  await expect(page.getByRole('button',{name:'Inspect changes',exact:true})).toBeEnabled();await expect(fallback).toHaveCount(0);
 });
+test('a parked conversation float resizes with the focused keyboard handle',async({page})=>{
+ await ownerApp(page,'split');
+ await page.getByRole('button',{name:'Area actions',exact:true}).click();
+ await page.getByRole('menuitem',{name:'Detach conversation',exact:true}).click();
+ const surface=page.locator('[data-split-view="owner-thread"][data-floating="true"]');
+ const handle=surface.getByRole('button',{name:/^Resize /});
+ await expect(handle).toBeVisible();
+ const geometry=()=>surface.evaluate(node=>({
+  x:parseFloat((node as HTMLElement).style.left), y:parseFloat((node as HTMLElement).style.top),
+  width:parseFloat((node as HTMLElement).style.width),height:parseFloat((node as HTMLElement).style.height),
+ }));
+ const start=await geometry();
+ await handle.focus();
+ await page.keyboard.press('ArrowRight');
+ await expect.poll(geometry).toEqual({...start,width:start.width+8});
+ await page.keyboard.press('Shift+ArrowDown');
+ await expect.poll(geometry).toEqual({...start,width:start.width+8,height:start.height+24});
+ await page.keyboard.press('ArrowLeft');await page.keyboard.press('ArrowUp');
+ const resized={...start,height:start.height+16};
+ await expect.poll(geometry).toEqual(resized);
+ await page.keyboard.press('Enter');await page.keyboard.press('Space');
+ expect(await geometry()).toEqual(resized);
+ await expect(handle).toBeFocused();
+ await expect(handle).toHaveAttribute('title','Resize. Arrow keys adjust size; Shift for larger steps.');
+ for(let step=0;step<20;step++){await page.keyboard.press('Shift+ArrowLeft');await page.keyboard.press('Shift+ArrowUp');}
+ await expect.poll(geometry).toEqual({...start,width:320,height:300});
+ await expect(handle).toBeFocused();
+ const box=(await handle.boundingBox())!;
+ await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
+ await page.mouse.down();await page.mouse.move(box.x+box.width/2+18,box.y+box.height/2+20);
+ await page.mouse.up();
+ await expect.poll(geometry).toEqual({...start,width:338,height:320});
+ await handle.focus();await page.keyboard.press('ArrowRight');
+ await expect.poll(geometry).toEqual({...start,width:346,height:320});
+ const persisted=()=>surface.evaluate(node=>{
+  const workspaceId=node.closest<HTMLElement>('[data-workspace-id]')?.dataset.workspaceId;
+  const record=JSON.parse(localStorage.getItem('harness:conversation-placement:v1:'+workspaceId)??'{}');
+  return record.floating?.['owner-thread']?.rect;
+ });
+ await expect.poll(persisted).toEqual({...start,width:346,height:320});
+});
+
 for(const state of ['parked','minimized'] as const)test(`actual ${state} split composer retains its same-owner overview Changes route`,async({page},info)=>{
  const {fallback}=await ownerApp(page,'split');await expect(fallback).toHaveCount(0);
  if(state==='parked'){
@@ -142,14 +184,14 @@ test('a proven custom owner can use the equivalent composer action',async({page}
 test('ownerless usage retains details rather than assuming a destination',async({page})=>{
  await page.goto('/redundant-ui?mode=ownerless');await expect(page.locator('.floating-usage-details dl')).toContainText('Input tokens');
 });
-test('Notes preserves its unsaved draft through navigation and reload',async({page})=>{
- await page.goto('/redundant-ui');await page.getByRole('button',{name:'Notes',exact:true}).click();
+test('Memory preserves its unsaved draft through navigation and reload',async({page})=>{
+ await page.goto('/redundant-ui');await page.getByRole('button',{name:'Memory',exact:true}).click();
  const editor=page.getByRole('textbox',{name:'Note decision',exact:true});await expect(editor).toBeEnabled();await editor.fill('Keep this unsaved owner A note.');
  await page.getByRole('button',{name:'Usage panel',exact:true}).click();
  await expect(page.getByRole('region',{name:'Thread memory',exact:true})).toHaveCount(0);
  await expect(editor).toHaveCount(0);
- await page.getByRole('button',{name:'Notes',exact:true}).click();await expect(editor).toHaveValue('Keep this unsaved owner A note.');
- await page.reload();await page.getByRole('button',{name:'Notes',exact:true}).click();await expect(editor).toHaveValue('Keep this unsaved owner A note.');
+ await page.getByRole('button',{name:'Memory',exact:true}).click();await expect(editor).toHaveValue('Keep this unsaved owner A note.');
+ await page.reload();await page.getByRole('button',{name:'Memory',exact:true}).click();await expect(editor).toHaveValue('Keep this unsaved owner A note.');
  await expect(page.getByRole('region',{name:'Thread memory',exact:true})).toHaveCount(1);
 });
 test('retained destinations surface actual loading/error/empty boundaries',async({page})=>{
