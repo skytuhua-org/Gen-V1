@@ -27,11 +27,16 @@ function Fixture() {
   const [layout, setLayout] = useState<ShellLayout>({ sidebarCollapsed: false, sidebarWidth: 248, rightPanelOpen: false,
     rightPanelWidth: 520, rightPanelMaximized: false, activeTab: 'artifact', openTabs: ['artifact'], activeArtifactId: null, folded: { settled: true } });
   const requestedSpeed = Number(query.get('speed'));
-  const motionSpeed = (requestedSpeed === .75 || requestedSpeed === 1 || requestedSpeed === 1.25 ? requestedSpeed : 1) as .75 | 1 | 1.25;
+  const motionSpeed: .75 | 1 | 1.25 = requestedSpeed === .75 ? .75 : requestedSpeed === 1.25 ? 1.25 : 1;
   const preferences = useMemo(() => ({ ...DEFAULT_PREFERENCES, projectGrouping: false, showWorkingSection: false, motionSpeed,
     projectOrder: query.has('recent') ? 'recent' as const : 'manual' as const }), [motionSpeed]);
   useEffect(() => {
-    if (query.has('speed')) void import('../../apps/web/src/useAppearance').then(({ applyAppearance }) => applyAppearance(preferences));
+    if (!query.has('speed')) return;
+    let active = true;
+    void import('../../apps/web/src/useAppearance').then(({ applyAppearance }) => {
+      if (active) applyAppearance(preferences);
+    });
+    return () => { active = false; };
   }, [preferences]);
   const matching = useMemo(() => matchingThreads(rows, [], search, preferences.projectOrder), [rows, search, preferences.projectOrder]);
   return <div className="app-shell" data-theme="dark" style={{ height: '100vh' }}>

@@ -187,7 +187,7 @@ for (const motionSpeed of [.75, 1, 1.25] as const) test(`popup entrance applies 
   expect(panels).toHaveLength(1); expect(panels[0].duration).toBeCloseTo(180 / motionSpeed, 6);
 });
 
-test('changing only motion speed does not restart or retime an active popup effect', async ({ page }) => {
+test('changing only motion speed does not restart or retime an active popup effect but applies to the next one', async ({ page }) => {
   await recordMotion(page);
   const snapshot = taskFixture({ root: 'doc', elements: { doc: { type: 'Document', props: { title: 'Handoff', text: 'Prepared document.', presentation: 'window' } } } });
   snapshot.settings.preferences = { motionSpeed: 1 };
@@ -207,6 +207,18 @@ test('changing only motion speed does not restart or retime an active popup effe
     return { duration: Number(animation.effect!.getTiming().duration), playState: animation.playState, count: (window as unknown as MotionWindow).motionRecords.filter(item => item.name === 'panel').length, kept: Reflect.get(animation, 'motionProbe') };
   });
   expect(after).toEqual({ duration: 180, playState: 'paused', count: 1, kept: 'kept' });
+  await page.evaluate(() => {
+    const animation = (window as unknown as MotionWindow).motionAnimations[0];
+    animation.play(); animation.finish();
+  });
+  await page.getByRole('button', { name: 'Close document', exact: true }).click();
+  await expect(page.locator('.document-text-window')).toBeHidden();
+  await page.getByRole('button', { name: 'Open document', exact: true }).click();
+  await expect(page.locator('.document-text-window')).toBeVisible();
+  const entrances = (await records(page)).filter(item => item.name === 'panel' && item.easing === enter);
+  expect(entrances).toHaveLength(2);
+  expect(entrances[0].duration).toBe(180);
+  expect(entrances[1].duration).toBeCloseTo(180 / 1.25, 6);
 });
 
 test('tab crossfade and shared control press feedback resolve motion tokens and policies', async ({ page }) => {

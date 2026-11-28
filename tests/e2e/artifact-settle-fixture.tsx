@@ -13,9 +13,14 @@ const source = taskFixture({ root: 'body', elements: {
 
 function Fixture() {
   const requestedSpeed = Number(new URLSearchParams(location.search).get('speed'));
-  const motionSpeed = requestedSpeed === .75 || requestedSpeed === 1 || requestedSpeed === 1.25 ? requestedSpeed : 1;
+  const motionSpeed: .75 | 1 | 1.25 = requestedSpeed === .75 ? .75 : requestedSpeed === 1.25 ? 1.25 : 1;
   useEffect(() => {
-    if (new URLSearchParams(location.search).has('speed')) void import('../../apps/web/src/useAppearance').then(({ applyAppearance }) => applyAppearance(mergePreferences(DEFAULT_PREFERENCES, { motionSpeed })));
+    if (!new URLSearchParams(location.search).has('speed')) return;
+    let active = true;
+    void import('../../apps/web/src/useAppearance').then(({ applyAppearance }) => {
+      if (active) applyAppearance(mergePreferences(DEFAULT_PREFERENCES, { motionSpeed }));
+    });
+    return () => { active = false; };
   }, [motionSpeed]);
   const restored = new URLSearchParams(location.search).has('restored');
   const [snapshot, setSnapshot] = useState(() => {
