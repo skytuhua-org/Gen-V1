@@ -8,6 +8,30 @@ const FOCUS_DWELL_MS = 100, GAP = 6, GUTTER = 8;
 
 /** Elements whose `title=""` mutation came from `adopt` itself, not a rerender. */
 const suppressing = new WeakSet<Element>();
+type TooltipAria='aria-label'|'aria-description';
+const generatedAria:Record<TooltipAria,WeakMap<Element,string>>={
+  'aria-label':new WeakMap(),
+  'aria-description':new WeakMap(),
+};
+
+function releaseAria(target:Element,attribute:TooltipAria) {
+  const values=generatedAria[attribute],owned=values.get(target);
+  values.delete(target);
+  if(owned!==undefined&&target.getAttribute(attribute)===owned)target.removeAttribute(attribute);
+}
+
+function syncTitleAria(target:Element,title:string) {
+  const callerOwns=(attribute:TooltipAria)=>target.hasAttribute(attribute)
+    &&target.getAttribute(attribute)!==generatedAria[attribute].get(target);
+  const label=!target.textContent?.trim()&&!target.hasAttribute('aria-labelledby')&&!callerOwns('aria-label');
+  const description=!label&&!target.hasAttribute('aria-describedby')&&!callerOwns('aria-description');
+  for(const [attribute,needed] of [['aria-label',label],['aria-description',description]] as const){
+    if(!needed){releaseAria(target,attribute);continue;}
+    generatedAria[attribute].set(target,title);
+    if(target.getAttribute(attribute)!==title)target.setAttribute(attribute,title);
+  }
+}
+
 /** Reads the tooltip text and silences the native bubble so only one tooltip shows. */
 function adopt(target: Element) {
   const title = target.getAttribute('title');
@@ -18,16 +42,8 @@ function adopt(target: Element) {
     target.setAttribute('data-tooltip-adopted', '');
     suppressing.add(target);
     target.setAttribute('title', '');
-    // A title was the control's only name; keep it reachable for assistive technology.
-    if (title && !target.hasAttribute('aria-labelledby') && (!target.hasAttribute('aria-label') || target.hasAttribute('data-tooltip-named')) && !target.textContent?.trim()) {
-      target.setAttribute('aria-label', title);
-      target.setAttribute('data-tooltip-named', '');
-      if (target.hasAttribute('data-tooltip-described')) { target.removeAttribute('aria-description'); target.removeAttribute('data-tooltip-described'); }
-    } else if (title && !target.hasAttribute('aria-describedby') && (target.hasAttribute('data-tooltip-described') || !target.hasAttribute('aria-description'))) {
-      // Named controls still get the title's help text via aria-description; keep it in sync when the title changes.
-      target.setAttribute('aria-description', title);
-      target.setAttribute('data-tooltip-described', '');
-    }
+    // Preserve the browser's accessible fallback when native title is silenced.
+    syncTitleAria(target,title);
   }
   const text = target.getAttribute('data-tooltip')?.trim() ?? '';
   return text && text !== target.textContent?.trim() ? text : '';
@@ -76,10 +92,20 @@ export function TooltipLayer() {
     document.addEventListener('focusin', focus); document.addEventListener('focusout', hide); document.addEventListener('keydown', key, true);
     document.addEventListener('scroll', hide, true); window.addEventListener('blur', hide);
     const observer = new MutationObserver(records => {
-      const targets = new Set(records.map(record => record.target));
-      for (const element of targets) {
-        if (!(element instanceof Element)) continue;
-        const names = new Set(records.filter(record => record.target === element).map(record => record.attributeName));
+      const changes=new Map<Element,Set<string>>();
+      for(const {target,attributeName,oldValue} of records){
+        if(!(target instanceof Element)||!attributeName)continue;
+        if(attributeName==='aria-label'||attributeName==='aria-description'){
+          const values=generatedAria[attributeName],owned=values.get(target);
+          // Our writes always change the attribute. An assignment of the
+          // existing generated value also hands ownership back to the caller.
+          if(owned!==undefined&&(target.getAttribute(attributeName)!==owned||oldValue===owned))values.delete(target);
+        }
+        const names=changes.get(target)??new Set<string>();
+        names.add(attributeName);
+        changes.set(target,names);
+      }
+      for(const [element,names] of changes){
         // A caller-provided data-tooltip update refreshes or dismisses the shown
         // tooltip; it never touches the adopted-title bookkeeping.
         if (names.has('data-tooltip') && current.current === element) {
@@ -87,7 +113,13 @@ export function TooltipLayer() {
           if (!text) hide();
           else if (opened.current) setShown({ text, target: element, leaving: false });
         }
-        if (!names.has('title') || !element.hasAttribute('data-tooltip-adopted')) continue;
+        if(!element.hasAttribute('data-tooltip-adopted'))continue;
+        if(!names.has('title')){
+          if((names.has('aria-labelledby')||names.has('aria-describedby'))&&element.hasAttribute('data-tooltip')){
+            syncTitleAria(element,element.getAttribute('data-tooltip')!);
+          }
+          continue;
+        }
         const title = element.getAttribute('title');
         if (title) {
           if (current.current !== element) continue;
@@ -99,12 +131,13 @@ export function TooltipLayer() {
         if (title === '' && suppressing.has(element)) { suppressing.delete(element); continue; } // our own suppression
         // A rerender removed or emptied the source title: drop the mirrored tooltip and generated names.
         element.removeAttribute('data-tooltip'); element.removeAttribute('data-tooltip-adopted');
-        if (element.hasAttribute('data-tooltip-named')) { element.removeAttribute('aria-label'); element.removeAttribute('data-tooltip-named'); }
-        if (element.hasAttribute('data-tooltip-described')) { element.removeAttribute('aria-description'); element.removeAttribute('data-tooltip-described'); }
+        releaseAria(element,'aria-label');
+        releaseAria(element,'aria-description');
         if (current.current === element) hide();
       }
     });
-    observer.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['title', 'data-tooltip'] });
+    observer.observe(document.documentElement, { subtree:true, attributes:true, attributeOldValue:true,
+      attributeFilter:['title','data-tooltip','aria-label','aria-description','aria-labelledby','aria-describedby'] });
     return () => {
       observer.disconnect();
       clearTimeout(timer.current);
