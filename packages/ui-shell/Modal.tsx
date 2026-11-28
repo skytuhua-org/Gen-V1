@@ -4,9 +4,9 @@ import { isComposing } from './list-navigation';
 import { retainFocus } from './focus-retention';
 import './controls.css';
 
-export interface ModalProps { open: boolean; title: string; onClose: () => void; children: ReactNode; className?: string; initialFocusRef?: RefObject<HTMLElement | null> }
+export interface ModalProps { open: boolean; title: string; onClose: () => void; children: ReactNode; className?: string; initialFocusRef?: RefObject<HTMLElement | null>; closeDisabled?: boolean }
 
-export function Modal({ open, title, onClose, children, className = '', initialFocusRef }: ModalProps) {
+export function Modal({ open, title, onClose, children, className = '', initialFocusRef, closeDisabled }: ModalProps) {
   const dialog = useRef<HTMLDialogElement>(null), close = useRef(onClose), pressedBackdrop = useRef(false), armedEscape = useRef<Element | null>(null);
   const titleId = useId(); close.current = onClose;
   // The closed dialog stays mounted, showing its last open content, until the CSS exit finishes.
@@ -80,7 +80,7 @@ export function Modal({ open, title, onClose, children, className = '', initialF
         if (event.shiftKey ? (active === first || !scope.contains(active)) : (active === last || !scope.contains(active))) { event.preventDefault(); (event.shiftKey ? last : first).focus(); }
       }
     }}>
-    <header className="ui-modal-header"><h2 id={titleId}>{shown.current.title}</h2><button type="button" className="ui-modal-close" aria-label="Close dialog" onClick={onClose}><X size={17} /></button></header>
+    <header className="ui-modal-header"><h2 id={titleId}>{shown.current.title}</h2><button type="button" className="ui-modal-close" aria-label="Close dialog" disabled={closeDisabled} onClick={onClose}><X size={17} /></button></header>
     {shown.current.children}
   </dialog>;
 }
