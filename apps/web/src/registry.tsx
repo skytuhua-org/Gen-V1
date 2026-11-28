@@ -4,6 +4,7 @@ import { Children, createContext, lazy, Suspense, useContext, useId, useRef, use
 import { useStateStore, type ComponentRegistry, type ComponentRenderProps } from '@json-render/react';
 import { ExternalLink, FileText, Check, AlertTriangle, CornerDownLeft } from 'lucide-react';
 import { Markdown } from './Markdown';
+import {useSecureArtifact} from './secure-artifact-context';
 import { ArtifactTitle, ChoiceList, RelationshipGraph, Status, Steps } from './task-interface';
 export { ArtifactTitle } from './task-interface';
 import type { DocumentPreviewProps, SignaturePadProps } from '../../../packages/ui-catalog/documents';
@@ -195,7 +196,12 @@ function Form({ element: { props }, children }: ComponentRenderProps) {
     });
   }}>{props.title && props.title !== artifactTitle ? <h3>{string(props.title)}</h3> : null}{children}{action.error && <p className="error-text" role="alert">{action.error}</p>}<button type="submit" className="primary" title={string(props.submitLabel, 'Submit')} disabled={action.busy || !props.actionId}><span className="form-submit-label">{action.busy ? 'Submitting…' : string(props.submitLabel, 'Submit')}</span><CornerDownLeft className="form-submit-icon" size={15} aria-hidden="true" /></button></form>;
 }
-function BoundMarkdown({ element: { props } }: ComponentRenderProps) { const data = useData(props); return <Markdown text={string(props.text, string(data))} animate />; }
+function BoundMarkdown({element:{props}}: ComponentRenderProps) {
+  const data = useData(props);
+  const scope = useSecureArtifact();
+  const renderOwner = scope ? JSON.stringify([scope.threadId, scope.artifactId, scope.revision]) : undefined;
+  return <Markdown text={string(props.text,string(data))} math={renderOwner !== undefined && scope?.active !== false} renderOwner={renderOwner} animate />;
+}
 function Metric({ element: { props } }: ComponentRenderProps) { const data = useData(props), value = data ?? props.value; return <div className="surface-metric"><span className="muted">{string(props.label)}</span><strong>{typeof value === 'number' ? value.toLocaleString(undefined, { maximumSignificantDigits: 21 }) : display(value)}{props.unit ? ` ${string(props.unit)}` : ''}</strong></div>; }
 function EvidenceList({ element: { props } }: ComponentRenderProps) { const rows = list(useData(props)); return <section>{props.title ? <h3>{string(props.title)}</h3> : null}<ul className="evidence-list">{rows.map((row, i) => { const item = obj(row); return <li key={i}><Check size={13} /><div>{typeof row === 'string' ? row : string(item.label, string(item.title, string(item.text, display(row))))}{item.source ? <small>{display(item.source)}</small> : null}</div></li>; })}</ul></section>; }
 function Image({ element: { props } }: ComponentRenderProps) { const src = typeof props.resourceId === 'string' ? `/api/resources/${encodeURIComponent(props.resourceId)}/content` : /^https?:\/\//.test(string(props.src)) ? string(props.src) : undefined; return src ? <img className="surface-image" src={src} alt={string(props.alt)} loading="lazy" referrerPolicy="no-referrer" /> : <p className="muted">No granted image is available.</p>; }

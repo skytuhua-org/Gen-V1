@@ -175,3 +175,39 @@ export const migrationTableSpec: TaskSpec = { root: 'tabs', elements: {
   people: { type: 'Table', props: { rowsBinding: 'rows', changesBinding: 'changes', columns: [{ key: 'name', label: 'Name' }, { key: 'workspace_id', label: 'workspace_id' }], rowKey: 'id', caption: 'Source records' } },
   projects: { type: 'Table', props: { rowsBinding: 'projects', columns: [{ key: 'name', label: 'Project' }], caption: 'Projects' } },
 } };
+
+export const mathTrialReply = [
+  String.raw`Fraction \(\frac{a}{b}\) in this reply.`, '',
+  '$$\r\n\\sum_{i=1}^n i\r\n$$', '',
+  'Price $5 and $10.', '',
+  '`$code$` [Literal $link$](https://example.test)',
+].join('\n');
+export const mathTrialBound = String.raw`Matrix \(\begin{matrix}a&b\\c&d\end{matrix}\) in this artifact.`;
+export const mathTrialDefault = String.raw`Literal \(x+1\) belongs to this surface.`;
+
+export function taskMathFixture({formulas = true} = {}) {
+  const snapshot = taskFixture({root:'stack', elements:{
+    stack:{type:'Stack', props:{gap:'md'}, children:['formula', 'document']},
+    formula:{type:'Markdown', props:{text:formulas ? mathTrialBound : 'No formula in this artifact.'}},
+    document:{type:'Document', props:{title:'Literal document', text:mathTrialDefault}},
+  }});
+  snapshot.messages[0]!.content = formulas ? mathTrialReply : 'Price $5 and $10.\n\n`$code$` [Literal $link$](https://example.test)';
+  snapshot.messages.unshift({...snapshot.messages[0]!, id:'user-literal', role:'user', content:mathTrialDefault});
+  return snapshot;
+}
+
+export async function serveTaskMathCanvas(page: Page, snapshot: Snapshot) {
+  const host = await serveTaskFixture(page,snapshot);
+  await page.addInitScript(() => localStorage.setItem('harness:workspace-mode:v3', 'retained-canvas'));
+  await page.route('**/api/workspace', route => route.fulfill({json:{
+    projects:[], state:{version:1, revision:0, activeCanvasId:'math-canvas',
+      canvases:[{version:1, id:'math-canvas', name:'Saved formula canvas', preset:'custom',
+        viewport:{x:0,y:0,zoom:1}, filter:'active', projectIds:[],
+        panels:[{id:'math-conversation', kind:'thread', binding:{authority:{kind:'local'}, threadId:'task-thread'},
+          canvasId:'math-canvas', placement:'canvas', visible:true, collapsed:false,
+          bounds:{x:0,y:0,width:650,height:650}, order:0, alwaysOnTop:false}],
+      }], profiles:[], disabledKinds:[], integrations:{},
+    },
+  }}));
+  return host;
+}

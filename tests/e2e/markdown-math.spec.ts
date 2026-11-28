@@ -1,5 +1,6 @@
 import {expect, type Page} from '@playwright/test';
 import {test} from './markdown-math-browser';
+import {mathTrialDefault, mathTrialReply, serveTaskFixture, serveTaskMathCanvas, taskMathFixture} from './task-interface-fixture';
 
 const math = (page: Page) => page.locator('.markdown [data-markdown-math]');
 const source = (page: Page) => page.getByRole('textbox', {name:'Markdown source'});
@@ -111,4 +112,151 @@ test('changing the supplied owner invalidates pending math without changing the 
   release();
   await expect(math(page).locator('annotation')).toHaveText('z');
   await expect(math(page)).toHaveCount(1);
+});
+
+const appSurface = (page: Page) => ({
+  reply:page.locator('.conversation-scroll [data-message-id="reply"] .message-content'),
+  artifact:page.locator('[data-artifact-id="task-surface"]'),
+  user:page.locator('.conversation-scroll [data-message-id="user-literal"] .markdown'),
+  canvas:page.locator('.canvas-thread-transcript'),
+});
+
+test('actual App main and registered artifact keep canonical copy and excluded consumers literal', async ({page}) => {
+  const snapshot = taskMathFixture();
+  await serveTaskFixture(page,snapshot);
+  const copied: string[] = [];
+  await page.exposeFunction('recordFormulaCopy', (text: string) => copied.push(text));
+  await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', {
+    value:{writeText:Reflect.get(window,'recordFormulaCopy')},
+  }));
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/');
+  const {reply,artifact,user} = appSurface(page);
+  await expect(reply).toContainText('in this reply.');
+  await expect(artifact).toContainText('in this artifact.');
+  await expect(user).toHaveText(mathTrialDefault);
+  await expect(artifact.locator('.document .markdown')).toHaveText(mathTrialDefault);
+  await reply.getByRole('button', {name:'Copy message'}).click();
+  expect(copied).toEqual([mathTrialReply]);
+
+  if (process.env.GEN_MATH_CONTROL === '1') {
+    await expect(reply.locator('math')).toHaveCount(0);
+    await expect(artifact.locator('math')).toHaveCount(0);
+    await expect(reply).toContainText(String.raw`\frac{a}{b}`);
+    await expect(artifact).toContainText(String.raw`\begin{matrix}`);
+  } else {
+    await expect(reply.locator('annotation')).toHaveText([String.raw`\frac{a}{b}`, String.raw`\sum_{i=1}^n i`]);
+    await expect(artifact.locator('annotation')).toHaveText([String.raw`\begin{matrix}a&b\\c&d\end{matrix}`]);
+    await reply.getByText('Formula source', {exact:true}).click();
+    await reply.getByRole('button', {name:'Copy formula source'}).click();
+    expect(copied[1]).toBe('$$\r\n\\sum_{i=1}^n i\r\n$$');
+  }
+  if (process.env.GEN_MATH_CAPTURE) await page.screenshot({path:process.env.GEN_MATH_CAPTURE + '-main.png'});
+});
+
+test('actual App currency, code, links, a user message and Document load no math assets', async ({page}) => {
+  const requests: string[] = [];
+  page.on('request', request => { if (/math-renderer|katex/i.test(request.url())) requests.push(request.url()); });
+  await serveTaskFixture(page,taskMathFixture({formulas:false}));
+  await page.goto('/');
+  const {reply,artifact,user} = appSurface(page);
+  await expect(reply).toContainText('Price $5 and $10.');
+  await expect(reply.locator('code')).toHaveText('$code$');
+  await expect(reply.getByRole('link', {name:'Literal $link$'})).toBeVisible();
+  await expect(artifact.locator('.document .markdown')).toHaveText(mathTrialDefault);
+  await expect(user).toHaveText(mathTrialDefault);
+  await expect(page.locator('[data-markdown-math]')).toHaveCount(0);
+  expect(requests).toHaveLength(0);
+});
+
+test('actual App retained canvas renders assistant formulas and keeps user Markdown literal', async ({page}) => {
+  await serveTaskMathCanvas(page,taskMathFixture());
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/');
+  const {canvas} = appSurface(page);
+  const assistant = canvas.locator('[data-message-id="reply"] .markdown');
+  await expect(assistant).toContainText('in this reply.');
+  await expect(canvas.locator('[data-message-id="user-literal"] .markdown')).toHaveText(mathTrialDefault);
+  if (process.env.GEN_MATH_CONTROL === '1') {
+    await expect(assistant.locator('math')).toHaveCount(0);
+    await expect(assistant).toContainText(String.raw`\frac{a}{b}`);
+  } else {
+    await expect(assistant.locator('annotation')).toHaveText([String.raw`\frac{a}{b}`, String.raw`\sum_{i=1}^n i`]);
+  }
+  if (process.env.GEN_MATH_CAPTURE) await page.screenshot({path:process.env.GEN_MATH_CAPTURE + '-canvas.png'});
+});
+
+test('actual App admits a newly closed formula while the run remains active', async ({page}) => {
+  const snapshot = taskMathFixture({formulas:false});
+  snapshot.threads[0]!.status = 'working';
+  snapshot.threads[0]!.runId = 'math-stream';
+  const message = snapshot.messages.find(item => item.id === 'reply')!;
+  message.runId = 'math-stream';
+  message.content = String.raw`Streaming \(x+1`;
+  const host = await serveTaskFixture(page,snapshot);
+  await page.goto('/');
+  const {reply} = appSurface(page);
+  await expect(reply.locator('.markdown')).toHaveText(message.content);
+  await expect(reply.locator('[data-markdown-math]')).toHaveCount(0);
+  message.content += String.raw`\)`;
+  await host.publish();
+  await expect(reply.locator('annotation')).toHaveText('x+1');
+  await expect(page.getByRole('button', {name:'Stop agent', exact:true})).toBeVisible();
+});
+
+test('actual App drops delayed work on thread and artifact revisions and preserves surrounding selection', async ({page}) => {
+  const snapshot = taskMathFixture();
+  const message = snapshot.messages.find(item => item.id === 'reply')!;
+  message.content = 'A selectable paragraph.\n\n$old$';
+  const artifact = snapshot.artifacts[0]!;
+  artifact.spec!.elements.formula!.props.text = '$prior$';
+  const host = await serveTaskFixture(page,snapshot);
+  let release = () => {};
+  const untilReleased = new Promise<void>(done => {release = done;});
+  await page.route('**/src/math-renderer.ts*', async route => {
+    await untilReleased;
+    await route.continue();
+  });
+  const requested = page.waitForRequest('**/src/math-renderer.ts*');
+  await page.goto('/');
+  const surfaces = appSurface(page);
+  await requested;
+  await expect(surfaces.reply.locator('.markdown')).toContainText('$old$');
+
+  snapshot.threads[0]!.epoch++;
+  message.content = 'A selectable paragraph.\n\n$new$';
+  artifact.revision++;
+  artifact.spec!.elements.formula!.props.text = '$current$';
+  await host.publish();
+  await expect(surfaces.reply.locator('.markdown')).toContainText('$new$');
+  await expect(surfaces.artifact.locator('[data-markdown-math]')).toHaveText('$current$');
+  await surfaces.reply.locator('.markdown p').first().evaluate(paragraph => {
+    paragraph.ownerDocument.getSelection()?.selectAllChildren(paragraph);
+  });
+  release();
+  await expect(surfaces.reply.locator('annotation')).toHaveText('new');
+  await expect(surfaces.artifact.locator('annotation')).toHaveText('current');
+  expect(await page.evaluate(() => getSelection()?.toString())).toBe('A selectable paragraph.');
+});
+
+test('actual App held canvas keeps pending formulas in source until Settings closes', async ({page}) => {
+  await serveTaskMathCanvas(page,taskMathFixture());
+  let release = () => {};
+  const untilReleased = new Promise<void>(done => {release = done;});
+  await page.route('**/src/math-renderer.ts*', async route => {
+    await untilReleased;
+    await route.continue();
+  });
+  const requested = page.waitForRequest('**/src/math-renderer.ts*');
+  await page.goto('/');
+  await requested;
+  const {canvas} = appSurface(page);
+  const assistant = canvas.locator('[data-message-id="reply"] .markdown');
+  await page.getByRole('button', {name:'Settings', exact:true}).click();
+  await expect(page.getByRole('dialog', {name:'Settings'})).toBeVisible();
+  await expect(assistant.locator('[data-markdown-math]')).toHaveCount(0);
+  await expect(assistant).toContainText(String.raw`\frac{a}{b}`);
+  release();
+  await page.getByRole('button', {name:'Close dialog'}).click();
+  await expect(assistant.locator('annotation')).toHaveText([String.raw`\frac{a}{b}`, String.raw`\sum_{i=1}^n i`]);
 });
