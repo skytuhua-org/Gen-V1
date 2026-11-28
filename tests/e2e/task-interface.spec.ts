@@ -778,6 +778,108 @@ test.describe('ACT04 artifact submission feedback', () => {
   });
 });
 
+test.describe('ACT05 artifact submission functional acceptance', () => {
+  for (const compact of [true, false]) {
+    test(`keeps ${compact ? 'compact' : 'regular'} submit bounds through held error and fast retry`, async ({ page }) => {
+      const spec: TaskSpec = {root: 'form', elements: {
+        form: {type: 'Form', props: {actionId: 'ask', submitLabel: 'Check item', payloadFromState: {note: 'note'}}, children: compact ? ['note'] : ['note', 'detail']},
+        note: {type: 'Input', props: {stateKey: 'note', label: 'Note'}},
+        detail: {type: 'Input', props: {stateKey: 'detail', label: 'Detail'}},
+      }};
+      const fixture = await serveTaskFixture(page, taskFixture(spec, {}, {note: 'first'}));
+      let release = () => {};
+      const held = new Promise<void>(resolve => { release = resolve; });
+      let attempts = 0;
+      await page.route('**/api/commands', async route => {
+        if (route.request().postDataJSON().type !== 'action.submit') return route.fallback();
+        if (++attempts !== 1) return route.fallback();
+        await held;
+        await route.fulfill({status: 500, json: {error: {code: 'ACTION_FAILED', message: 'Check failed.'}}});
+      });
+      await openApp(page);
+      const owner = page.locator('[data-artifact-id="task-surface"]');
+      const submit = owner.getByRole('button', {name: 'Check item', exact: true});
+      const note = owner.getByRole('textbox', {name: 'Note', exact: true});
+      const indicator = submit.locator('.ui-action-indicator');
+      const ready = await submit.boundingBox();
+      expect(ready).not.toBeNull();
+      expect(compact ? ready!.width : ready!.width > 29).toBe(compact ? 29 : true);
+      const expectStable = async () => {
+        const bounds = await submit.boundingBox();
+        expect(bounds).not.toBeNull();
+        expect(Math.abs(bounds!.width - ready!.width)).toBeLessThanOrEqual(1);
+        expect(Math.abs(bounds!.height - ready!.height)).toBeLessThanOrEqual(1);
+      };
+      await page.clock.install();
+      await page.clock.pauseAt(new Date(Date.now() + 500));
+      try {
+        await note.press('Enter');
+        await expect(submit).toBeDisabled();
+        await expect(submit).toHaveAccessibleName('Check item');
+        await expect(note).toBeFocused();
+        await expect(owner.getByRole('status').filter({hasText: /^Submitting request$/})).toHaveCount(1);
+        expect(attempts).toBe(1);
+        await expectStable();
+        await page.clock.runFor(149);
+        await expect(indicator).not.toHaveAttribute('data-spinner-visible', 'true');
+        await page.clock.runFor(1);
+        await expect(indicator).toHaveAttribute('data-spinner-visible', 'true');
+        await expectStable();
+      } finally {
+        release();
+      }
+      await expect(owner.getByRole('alert')).toHaveText('Check failed.');
+      await expect(owner.getByRole('alert')).toHaveCount(1);
+      await expect(note).toBeFocused();
+      await expectStable();
+      await note.fill('retry value');
+      const retry = owner.getByRole('button', {name: 'Retry', exact: true});
+      await retry.press('Space');
+      await expect(owner.getByRole('status').filter({hasText: /^Request submitted$/})).toHaveCount(1);
+      await expect(indicator).not.toHaveAttribute('data-spinner-visible', 'true');
+      await expectStable();
+      await page.clock.runFor(150);
+      await expect(indicator).not.toHaveAttribute('data-spinner-visible', 'true');
+      await expect(owner.getByRole('alert')).toHaveCount(0);
+      expect(attempts).toBe(2);
+      expect(fixture.commands.filter(command => command.type === 'action.submit').map(command => command.payload.payload)).toEqual([{note: 'retry value'}]);
+    });
+  }
+
+  test('keeps disabled and unbound controls inert and applies ordinary Input validity before a hidden choice', async ({ page }) => {
+    const spec: TaskSpec = {root: 'root', elements: {
+      root: {type: 'Stack', children: ['disabled', 'unbound', 'form'], props: {}},
+      disabled: {type: 'Button', props: {actionId: 'ask', disabled: true, label: 'Disabled action'}},
+      unbound: {type: 'Button', props: {label: 'Unbound action'}},
+      form: {type: 'Form', props: {actionId: 'ask', submitLabel: 'Send item', payloadFromState: {note: 'note', choice: 'delivery'}}, children: ['steps']},
+      steps: {type: 'Steps', props: {stateKey: 'step', steps: [{key: 'input', label: 'Input'}, {key: 'choice', label: 'Choice'}]}, children: ['note', 'choice']},
+      note: {type: 'Input', props: {stateKey: 'note', label: 'Required note', required: true}},
+      choice: {type: 'ChoiceList', props: {stateKey: 'delivery', label: 'Delivery', required: true, options: [{value: 'pickup', label: 'Pick up'}]}},
+    }};
+    const fixture = await serveTaskFixture(page, taskFixture(spec));
+    await openApp(page);
+    const actions = () => fixture.commands.filter(command => command.type === 'action.submit');
+    const note = page.getByRole('textbox', {name: 'Required note', exact: true});
+    for (const label of ['Disabled action', 'Unbound action']) {
+      const button = page.getByRole('button', {name: label, exact: true});
+      await expect(button).toBeDisabled();
+      await button.evaluate((element: HTMLButtonElement) => element.click());
+    }
+    await expect(page.getByRole('radio', {name: 'Pick up'})).toHaveCount(0);
+    await note.press('Enter');
+    expect(await note.evaluate((element: HTMLInputElement) => element.validity.valueMissing)).toBe(true);
+    await expect(note).toBeFocused();
+    await expect(page.getByText('Pick an option first.', {exact: true})).toHaveCount(0);
+    expect(actions()).toHaveLength(0);
+    await note.fill('Native input accepted');
+    await note.press('Enter');
+    await expect.poll(() => actions().map(command => command.payload.payload)).toEqual([{note: 'Native input accepted'}]);
+    await expect(page.getByRole('status').filter({hasText: /^Request submitted$/})).toHaveCount(1);
+    await expect(note).toBeFocused();
+    await expect(page.getByText('Pick an option first.', {exact: true})).toHaveCount(0);
+  });
+});
+
 test('a standalone button validates only its keyed associated choice', async ({ page }) => {
   const spec = { root: 'stack', elements: {
     stack: { type: 'Stack', props: {}, children: ['choice', 'unrelated', 'action'] },
