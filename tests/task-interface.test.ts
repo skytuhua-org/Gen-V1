@@ -83,7 +83,7 @@ const choiceFixture = `
 import React, {useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {StateProvider, useStateStore} from '@json-render/react';
-import {ChoiceValidationProvider, useChoiceValidation} from './apps/web/src/task-context';
+import {ChoiceValidationProvider, mapActionPayload, useChoiceValidation} from './apps/web/src/task-context';
 import {ChoiceList} from './apps/web/src/task-interface';
 
 function Probe(){
@@ -91,6 +91,7 @@ function Probe(){
   const store = useStateStore();
   window.choiceValidation = validation;
   window.stateStore = store;
+  window.optionalChoicePayload = () => mapActionPayload({payloadFromState: {choice: 'optionalChoice'}}, store.getSnapshot().values);
   window.evaluateChoice = mappedKeys => {
     const result = validation.validate({mappedKeys});
     return {valid: result.valid, captures: result.captures};
@@ -98,13 +99,14 @@ function Probe(){
   return null;
 }
 const customChoice = {stateKey: 'delivery', label: 'Choose delivery', required: true, options: [{value: 'download', label: 'Prepare a local export'}], custom: {label: 'Other delivery method'}};
+const optionalChoice = {stateKey: 'optionalChoice', label: 'Optional choice', options: [{value: 'known', label: 'Known option'}]};
 const hiddenChoice = {stateKey: 'requiredChoice', label: 'Required witness', required: true, options: [{value: 'yes', label: 'Include a witness'}]};
 const allDisabledChoice = {stateKey: 'allDisabled', label: 'Unavailable witness', required: true, options: [{value: 'yes', label: 'Include a witness', disabled: true}]};
 function Harness(){
   const [choiceDisabled, setChoiceDisabled] = useState(true);
   window.setChoiceDisabled = setChoiceDisabled;
   const dynamicChoice = {stateKey: 'dynamicChoice', label: 'Dynamic witness', required: true, disabled: choiceDisabled, options: [{value: 'yes', label: 'Include dynamic witness'}]};
-  return <StateProvider initialState={{values: {delivery: 'Typed freeform value'}}}><ChoiceValidationProvider><Probe/><ChoiceList element={{props: customChoice}}/><div id="boundary"><ChoiceList element={{props: hiddenChoice}}/></div><div id="dynamic"><ChoiceList element={{props: dynamicChoice}}/></div><ChoiceList element={{props: allDisabledChoice}}/></ChoiceValidationProvider></StateProvider>;
+  return <StateProvider initialState={{values: {delivery: 'Typed freeform value', optionalChoice: 'Retired stored selection'}}}><ChoiceValidationProvider><Probe/><ChoiceList element={{props: customChoice}}/><ChoiceList element={{props: optionalChoice}}/><div id="boundary"><ChoiceList element={{props: hiddenChoice}}/></div><div id="dynamic"><ChoiceList element={{props: dynamicChoice}}/></div><ChoiceList element={{props: allDisabledChoice}}/></ChoiceValidationProvider></StateProvider>;
 }
 createRoot(document.getElementById('root')).render(<Harness/>);
 `;
@@ -145,6 +147,23 @@ describe('required choice registration capture', () => {
   });
 
 
+
+  it('keeps a stale optional selection out of its display label without changing the payload', async () => {
+    const page = await open();
+    try {
+      const stale = await evaluateChoice(page, 'optionalChoice');
+      expect(stale.valid).toBe(true);
+      expect(stale.captures).toHaveLength(1);
+      expect(stale.captures[0].valueLabel).toBe('');
+      expect(await page.evaluate('window.optionalChoicePayload()')).toEqual({choice: 'Retired stored selection'});
+      const option = page.getByRole('radio', {name: 'Known option'});
+      expect(await option.evaluate((input: HTMLInputElement) => input.checkValidity())).toBe(true);
+      await option.click();
+      expect((await evaluateChoice(page, 'optionalChoice')).captures[0].valueLabel).toBe('Known option');
+    } finally {
+      await page.close();
+    }
+  });
 
   it('re-enables an in-place choice when its disabled prop clears', async () => {
     const page = await open();
