@@ -1,4 +1,5 @@
-import {useCallback, useEffect, useRef, useState} from 'react';
+import {useCallback, useRef, useState} from 'react';
+import {useDisposal, usePolling, type PollingTaskState} from '../usePolling.ts';
 import {Ban, Eye, Play, Square} from 'lucide-react';
 import {Select} from '../../../../packages/ui-shell/Select';
 import {
@@ -25,21 +26,24 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
   const [open, setOpen] = useState(false);
   const busy = useRef(false);
   const evidenceRequest = useRef(0);
-  const refresh = useCallback(async () => {
+  const lifecycle = useDisposal();
+  const refresh = useCallback(async (polling: PollingTaskState = lifecycle) => {
     if (busy.current) return;
     busy.current = true;
     try {
       const next = await getAgentWork(threadId);
-      setList(next); setPlan(await getAgentWorkPlan(threadId)); setMessages((await getAgentWorkMessages(threadId)).messages);
+      const nextPlan = await getAgentWorkPlan(threadId);
+      const nextMessages = await getAgentWorkMessages(threadId);
       // Every active child's queue is shown — inputs to any child get real
       // delivery status and cancellation controls.
       const targets = next.works.filter(work => work.state === 'RUNNING' || work.state === 'QUEUED').map(work => work.owner.threadId);
-      setInputs((await Promise.all(targets.map(owner => getAgentWorkInputs(threadId, owner)))).flatMap(batch => batch.inputs));
-      setError(null);
-    } catch (e) { setError(e instanceof Error ? e.message : 'Agent work unavailable'); }
+      const nextInputs = (await Promise.all(targets.map(owner => getAgentWorkInputs(threadId, owner)))).flatMap(batch => batch.inputs);
+      if (polling.disposed || lifecycle.disposed) return;
+      setList(next); setPlan(nextPlan); setMessages(nextMessages.messages); setInputs(nextInputs); setError(null);
+    } catch (e) { if (!polling.disposed && !lifecycle.disposed) setError(e instanceof Error ? e.message : 'Agent work unavailable'); throw e; }
     finally { busy.current = false; }
-  }, [threadId]);
-  useEffect(() => { void refresh(); const timer = setInterval(() => void refresh(), 4000); return () => clearInterval(timer); }, [refresh]);
+  }, [threadId, lifecycle]);
+  usePolling(refresh, 4000);
   if (error && !list) return null;
   if (!list || list.works.length === 0) return null;
   const progress = plan?.extension ? plan.progress : undefined;
@@ -115,8 +119,8 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
           <span className="agents-work-state" data-state={work.state} data-verification={work.verification}>{stateLabel(work)}{work.blockedReason ? ` — ${work.blockedReason}` : ''}</span>
           <span className="agents-work-meta">{work.budget.tokens !== null ? `${work.budget.tokens}tok ` : ''}{evidenceLabel(work)}</span>
           <button type="button" className="agents-icon" aria-label={`Open evidence for ${work.workId}`} onClick={() => openEvidence(work.workId)}><Eye size={14}/></button>
-          {(work.state === 'RUNNING' || work.state === 'QUEUED') && <button type="button" className="agents-icon" aria-label={`Stop ${work.workId}`} onClick={() => { void stopAgentWork(threadId, work.workId).then(refresh).catch(e => setError(e instanceof Error ? e.message : 'Stop failed')); }}><Square size={13}/></button>}
-          {work.state === 'INTERRUPTED' && <button type="button" className="agents-icon" aria-label={`Resume ${work.workId}`} onClick={() => { void resumeAgentWork(threadId, work.workId).then(refresh).catch(e => setError(e instanceof Error ? e.message : 'Resume failed')); }}><Play size={13}/></button>}
+          {(work.state === 'RUNNING' || work.state === 'QUEUED') && <button type="button" className="agents-icon" aria-label={`Stop ${work.workId}`} onClick={() => { void stopAgentWork(threadId, work.workId).then(() => refresh()).catch(e => setError(e instanceof Error ? e.message : 'Stop failed')); }}><Square size={13}/></button>}
+          {work.state === 'INTERRUPTED' && <button type="button" className="agents-icon" aria-label={`Resume ${work.workId}`} onClick={() => { void resumeAgentWork(threadId, work.workId).then(() => refresh()).catch(e => setError(e instanceof Error ? e.message : 'Resume failed')); }}><Play size={13}/></button>}
         </header>
         <div className="agents-work-send">
           <input aria-label={`Message work ${work.workId}`} placeholder="Steer or queue a follow-up…" value={drafts[work.workId]?.text ?? ''} onChange={e => {const text = e.target.value; setDrafts(d => ({...d, [work.workId]: {text}}));}} disabled={work.state !== 'RUNNING' && work.state !== 'QUEUED'}/>
@@ -128,7 +132,7 @@ export function AgentWorkPanel({threadId}: {threadId: string}) {
         {inputs.filter(input => input.delivery === 'ACCEPTED' || input.delivery === 'ENTERED_RUNTIME').map(input => <div key={input.inputId} className="agents-work-input" data-delivery={input.delivery}>
           <span className="agents-work-meta">#{input.order}</span><span className="agents-input-kind">{input.kind}</span><span className="agents-input-text">{input.text}</span>
           <span className="agents-input-delivery">{input.delivery.replaceAll('_', ' ').toLowerCase()}</span>
-          {input.editable && <button type="button" className="agents-icon" aria-label="Cancel input" onClick={() => { void cancelAgentInput(threadId, input.targetOwner.threadId, input.inputId).then(refresh).catch(e => setError(e instanceof Error ? e.message : 'Cancel failed')); }}><Ban size={13}/></button>}
+          {input.editable && <button type="button" className="agents-icon" aria-label="Cancel input" onClick={() => { void cancelAgentInput(threadId, input.targetOwner.threadId, input.inputId).then(() => refresh()).catch(e => setError(e instanceof Error ? e.message : 'Cancel failed')); }}><Ban size={13}/></button>}
         </div>)}
       </div>}
       {output && <section className="agents-work-output" aria-label="Work output evidence">

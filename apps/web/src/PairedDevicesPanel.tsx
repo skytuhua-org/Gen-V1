@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { authenticated, csrfToken, read } from './api';
+import { useDisposal, usePolling, type PollingTaskState } from './usePolling';
 
 /** M17 paired devices management surface (U01/G). The approval screen names
  * the claimed device fingerprint, the exact requested project scopes and the
@@ -36,14 +37,12 @@ export function PairedDevicesPanel() {
   const [busy, setBusy] = useState(false);
   const [challenge, setChallenge] = useState<{ pairingId: string; challenge: string; expiresAt: string } | null>(null);
   const [evidenceConsent, setEvidenceConsent] = useState(false);
-  const load = () => authenticated(() => fetch('/api/devices', { credentials: 'same-origin', cache: 'no-store' }))
-    .then(read<DeviceSurface>).then(value => { setSurface(value); setError(''); }).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
-  useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), 5000);
-    return () => clearInterval(timer);
-  }, []);
-  const run = (action: () => Promise<unknown>) => { setBusy(true); void action().then(load).catch(cause => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setBusy(false)); };
+  const lifecycle = useDisposal();
+  const load = useCallback((polling: PollingTaskState) => authenticated(() => fetch('/api/devices', { credentials: 'same-origin', cache: 'no-store' }))
+    .then(read<DeviceSurface>).then(value => { if (!polling.disposed && !lifecycle.disposed) { setSurface(value); setError(''); } }), [lifecycle]);
+  const report = useCallback((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)), []);
+  usePolling(load, 5000, report);
+  const run = (action: () => Promise<unknown>) => { setBusy(true); void action().then(() => load(lifecycle)).catch(cause => setError(cause instanceof Error ? cause.message : String(cause))).finally(() => setBusy(false)); };
 
   const issue = () => run(async () => { setChallenge(await post('/api/device-pairing/challenges') as { pairingId: string; challenge: string; expiresAt: string }); });
   const confirm = (pending: PendingRow) => run(async () => {
