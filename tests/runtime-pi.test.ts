@@ -584,6 +584,22 @@ describe("isolated process adapter", () => {
     }
   });
 
+  it("reports Pi settlement after confirmed cancel even when usage observation throws", async () => {
+    const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
+    const events: RuntimeEvent[] = [];
+    runtime.configure({ onTool: async () => null, onEvent: event => {
+      events.push(event);
+      if (event.type === "usage") throw new Error("synthetic usage observer failure");
+    } });
+    try {
+      await runtime.start(input);
+      await expect(runtime.cancel(ctx)).resolves.toBeUndefined();
+      expect(workers.terminate).toHaveBeenCalledOnce();
+      expect(events).toContainEqual({ ...ctx, type: "settled", aborted: true });
+      await expect(runtime.start({ ...input, runId: "successor" })).resolves.toBeUndefined();
+    } finally { await runtime.dispose(); }
+  });
+
   it("retains worker custody after a transport error without confirmed native exit", async () => {
     const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
     const onEvent = vi.fn();
@@ -799,6 +815,32 @@ describe("isolated process adapter", () => {
 });
 
 describe("subscription login storage", () => {
+  it("removes its temporary device ID after a synthetic partial write", async () => {
+    const root = await temp(), agent = join(root, "pi");
+    const native = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const failure = Object.assign(new Error("synthetic full disk"), { code: "ENOSPC" });
+    const scratch = (path: unknown) => typeof path === "string" && path.includes(".device-id-") && path.endsWith(".tmp");
+    const write = vi.spyOn(fileSystem, "writeFile").mockImplementation(async (path, data, options) => {
+      if (!scratch(path)) return native.writeFile(path, data, options);
+      await native.writeFile(path, "partial", options); throw failure;
+    });
+    const open = vi.spyOn(fileSystem, "open").mockImplementation(async (path, flags, mode) => {
+      const handle = await native.open(path, flags, mode);
+      if (scratch(path)) {
+        const real = handle.writeFile.bind(handle);
+        handle.writeFile = async () => { await real("partial"); throw failure; };
+      }
+      return handle;
+    });
+    try {
+      await expect(getOrCreateDeviceId(root)).rejects.toBe(failure);
+      expect(await native.readdir(agent)).toEqual([]);
+    } finally { open.mockRestore(); write.mockRestore(); }
+    const id = await getOrCreateDeviceId(root);
+    expect(await native.readFile(join(agent, "device-id"), "utf8")).toBe(id);
+    expect(await native.readdir(agent)).toEqual(["device-id"]);
+  });
+
   it("uses one stable app installation ID across logins, including concurrent first use", async () => {
     const dir = await temp();
     const ids = await Promise.all([getOrCreateDeviceId(dir), getOrCreateDeviceId(dir), getOrCreateDeviceId(dir)]);
