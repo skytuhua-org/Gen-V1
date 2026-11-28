@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -9,13 +9,8 @@ import { SelectiveCommitService } from "../packages/workspace/selective-commit.t
 import { checkpointScope, EditJournal } from "../packages/workspace/edit-journal.ts";
 import type { ProjectTools, WorkspaceBinding } from "../packages/workspace/tools.ts";
 
-// T02 regression for issue #2027: selective commit must preserve unrelated
-// staged content and fence stale approvals. The current commit ends with a
-// whole-index `read-tree HEAD` on the shared managed worktree index, which
-// unstages unrelated staged entries, and never binds the approval to the
-// previewed branch — a branch switch at equal HEAD silently redirects the
-// commit. Both regressions below fail until T03 lands the repair.
-
+// Use real Git in a disposable repository while controlling the boundary
+// between the selective commit service and the Git subprocess.
 const roots: string[] = [];
 const stores: Store[] = [];
 afterEach(async () => {
@@ -33,7 +28,7 @@ const git = (cwd: string, ...args: string[]) =>
 
 const gitAsync = promisify(execFile);
 
-async function fixture() {
+async function fixture(beforeGit?: (worktree: string, args: string[]) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "harness-staged-v3-"));
   roots.push(root);
   const worktree = join(root, "worktree");
@@ -60,8 +55,12 @@ async function fixture() {
     store,
     managedWorktree: async (_projectId: string, _threadId: string, run: (ctx: { git: (args: string[], env?: NodeJS.ProcessEnv) => Promise<string>; binding: WorkspaceBinding; signal: AbortSignal }) => Promise<unknown>) =>
       run({
-        git: async (args, env) =>
-          (await gitAsync("git", args, { cwd: worktree, encoding: "utf8", env: { ...process.env, ...env } })).stdout as string,
+        git: async (args, env, stdin?: string) => {
+          await beforeGit?.(worktree, args);
+          const command = gitAsync("git", args, { cwd: worktree, encoding: "utf8", env: { ...process.env, ...env } });
+          if (stdin !== undefined) command.child.stdin!.end(stdin);
+          return (await command).stdout;
+        },
         binding,
         signal: new AbortController().signal,
       }),
@@ -118,6 +117,60 @@ it("refuses a commit when the branch moved since the preview, even at equal HEAD
   expect(git(f.worktree, "log", "-1", "--format=%s", "feature")).toContain("base");
 });
 
+it("preserves an unrelated staged hunk inside a partly selected file", async () => {
+  const f = await fixture();
+  const baseLines = Array.from({ length: 30 }, (_, i) => `line-${i + 1}`);
+  await writeFile(join(f.worktree, "chosen.txt"), `${baseLines.join("\n")}\n`);
+  git(f.worktree, "add", "chosen.txt");
+  git(f.worktree, "commit", "-qm", "chosen base");
+  const stagedLines = [...baseLines];
+  stagedLines[2] = "staged-top";
+  await writeFile(join(f.worktree, "chosen.txt"), `${stagedLines.join("\n")}\n`);
+  git(f.worktree, "add", "chosen.txt");
+  const worktreeLines = [...stagedLines];
+  worktreeLines[27] = "selected-bottom";
+  await writeFile(join(f.worktree, "chosen.txt"), `${worktreeLines.join("\n")}\n`);
+
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const hunks = preview.candidates.filter((c) => c.path === "chosen.txt");
+  const selected = hunks.filter((c) => c.patch.includes("+selected-bottom")).map(({ path, index, digest }) => ({ path, index, digest }));
+  expect(selected).toHaveLength(1);
+  expect(hunks.some((c) => c.patch.includes("+staged-top"))).toBe(true);
+  await f.service.commit("project", "thread", {
+    expectedHead: preview.expectedHead,
+    selectedHunks: selected,
+    message: "commit only selected bottom hunk",
+    approvalId: "approval-partial-file",
+  });
+
+  const committed = git(f.worktree, "show", "HEAD:chosen.txt");
+  expect(committed).toContain("selected-bottom");
+  expect(committed).not.toContain("staged-top");
+  const cached = git(f.worktree, "diff", "--cached", "--", "chosen.txt");
+  expect(cached).toContain("+staged-top");
+  expect(cached).not.toContain("+selected-bottom");
+  expect(git(f.worktree, "diff", "--", "chosen.txt")).toBe("");
+  expect(git(f.worktree, "show", ":chosen.txt")).toContain("staged-top");
+});
+
+it("refuses a commit when only the caller index changed after preview", async () => {
+  const f = await fixture();
+  await writeFile(join(f.worktree, "chosen.txt"), "chosen-1\n");
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const chosen = preview.candidates.filter((c) => c.path === "chosen.txt").map(({ path, index, digest }) => ({ path, index, digest }));
+  await writeFile(join(f.worktree, "index-only.txt"), "index mutation\n");
+  git(f.worktree, "add", "index-only.txt");
+  await expect(
+    f.service.commit("project", "thread", {
+      expectedHead: preview.expectedHead,
+      selectedHunks: chosen,
+      message: "index moved commit",
+      approvalId: "approval-index-moved",
+    }),
+  ).rejects.toMatchObject({ code: "REVISION_CHANGED" });
+  expect(git(f.worktree, "log", "-1", "--format=%s")).toContain("base");
+});
+
 it("still commits cleanly for the unambiguous single-branch flow (control)", async () => {
   const f = await fixture();
   await writeFile(join(f.worktree, "chosen.txt"), "chosen-1\n");
@@ -131,4 +184,112 @@ it("still commits cleanly for the unambiguous single-branch flow (control)", asy
   });
   expect(git(f.worktree, "log", "-1", "--format=%s")).toContain("clean selective commit");
   expect(git(f.worktree, "show", "--format=", "--name-only", "HEAD").trim()).toBe("chosen.txt");
+});
+
+
+it("rejects a caller index edit during Git preparation before moving the branch", async () => {
+  let stagedEntry = "";
+  const f = await fixture(async (worktree, args) => {
+    if (args[0] !== "merge-tree") return;
+    const path = join(worktree, "late.txt");
+    await writeFile(path, "late staged bytes\n");
+    git(worktree, "add", "late.txt");
+    stagedEntry = git(worktree, "ls-files", "-s", "--", "late.txt");
+    await writeFile(path, "different unstaged bytes\n");
+  });
+  await writeFile(join(f.worktree, "chosen.txt"), "chosen-1\n");
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const selectedHunks = preview.candidates.filter(hunk => hunk.path === "chosen.txt").map(({ path, index, digest }) => ({ path, index, digest }));
+
+  await expect(f.service.commit("project", "thread", {
+    expectedHead: preview.expectedHead, selectedHunks, message: "stale caller index", approvalId: "approval-race",
+  })).rejects.toMatchObject({ code: "REVISION_CHANGED" });
+  expect(stagedEntry).not.toBe("");
+  expect(git(f.worktree, "ls-files", "-s", "--", "late.txt")).toBe(stagedEntry);
+  expect(git(f.worktree, "show", ":late.txt")).toBe("late staged bytes\n");
+  expect(git(f.worktree, "rev-parse", "HEAD").trim()).toBe(preview.expectedHead);
+});
+
+it("blocks a standard Git writer while publishing the protected caller index", async () => {
+  let writerError = "";
+  const f = await fixture(async (worktree, args) => {
+    if (args[0] !== "update-ref") return;
+    try { git(worktree, "add", "late.txt"); }
+    catch (error) { writerError = String(error); }
+  });
+  await writeFile(join(f.worktree, "chosen.txt"), "chosen-1\n");
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const selectedHunks = preview.candidates.filter(hunk => hunk.path === "chosen.txt").map(({ path, index, digest }) => ({ path, index, digest }));
+  // The unselected path appears after preview without changing the caller index.
+  await writeFile(join(f.worktree, "late.txt"), "writer tried to stage this\n");
+
+  const result = await f.service.commit("project", "thread", {
+    expectedHead: preview.expectedHead, selectedHunks, message: "protected index", approvalId: "approval-lock",
+  }).finally(() => expect(writerError).toMatch(/index\.lock/i));
+  expect(result.applied).toBe(true);
+  expect(git(f.worktree, "rev-parse", "HEAD").trim()).toBe(result.head);
+  expect(git(f.worktree, "show", "HEAD:chosen.txt")).toBe("chosen-1\n");
+  expect(git(f.worktree, "status", "--porcelain", "--", "late.txt")).toBe("?? late.txt\n");
+  await expect(access(join(f.worktree, ".git", "index.lock"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("preserves unrelated caller index flags", async () => {
+  const f = await fixture();
+  const flags = () => git(f.worktree, "ls-files", "-v", "--", "unrelated.txt");
+  git(f.worktree, "update-index", "--assume-unchanged", "unrelated.txt");
+  expect(flags()).toBe("h unrelated.txt\n");
+  await writeFile(join(f.worktree, "chosen.txt"), "chosen-1\n");
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const selectedHunks = preview.candidates.map(({ path, index, digest }) => ({ path, index, digest }));
+
+  await f.service.commit("project", "thread", {
+    expectedHead: preview.expectedHead, selectedHunks, message: "keep caller flags", approvalId: "approval-flags",
+  });
+  expect(flags()).toBe("h unrelated.txt\n");
+});
+
+it.each([
+  { description: "updates the private index", alreadyStaged: false },
+  { description: "reuses the prepared index bytes", alreadyStaged: true },
+])("keeps a same-size unselected edit visible when it races the caller index and $description", async ({ alreadyStaged }) => {
+  const f = await fixture();
+  // Model coarse stat comparison without sleeps or platform-specific timing.
+  git(f.worktree, "config", "core.trustctime", "false");
+  git(f.worktree, "config", "core.checkStat", "minimal");
+  const timestamp = Math.floor(Date.now() / 1000) - 8;
+  const unrelated = join(f.worktree, "unrelated.txt");
+  await utimes(unrelated, timestamp, timestamp);
+  git(f.worktree, "add", "unrelated.txt");
+
+  await writeFile(join(f.worktree, "staged.txt"), "ordinary staged content\n");
+  await writeFile(join(f.worktree, "flagged.txt"), "tracked flagged content\n");
+  git(f.worktree, "add", "staged.txt", "flagged.txt");
+  git(f.worktree, "update-index", "--assume-unchanged", "flagged.txt");
+  const carried = git(f.worktree, "ls-files", "-sv", "--", "staged.txt", "flagged.txt");
+
+  await writeFile(join(f.worktree, "chosen.txt"), "chosen-1\n");
+  if (alreadyStaged) {
+    git(f.worktree, "add", "chosen.txt");
+    git(f.worktree, "write-tree");
+  }
+  await writeFile(unrelated, "unrelated-1\n");
+  await utimes(unrelated, timestamp, timestamp);
+  await utimes(join(f.worktree, ".git", "index"), timestamp, timestamp);
+  expect(stagedStatus(f.worktree, "unrelated.txt")).toBe(" M");
+
+  const preview = await f.service.preview("project", "thread", f.scope);
+  expect(preview.candidates.map(candidate => candidate.path)).toContain("unrelated.txt");
+  const selectedHunks = preview.candidates.filter(candidate => candidate.path === "chosen.txt").map(({ path, index, digest }) => ({ path, index, digest }));
+  const result = await f.service.commit("project", "thread", {
+    expectedHead: preview.expectedHead,
+    selectedHunks,
+    message: "commit chosen only",
+    approvalId: "racy-index-approval",
+  });
+
+  expect(result.applied).toBe(true);
+  expect(await readFile(unrelated, "utf8")).toBe("unrelated-1\n");
+  expect(git(f.worktree, "ls-files", "-sv", "--", "staged.txt", "flagged.txt")).toBe(carried);
+  expect(stagedStatus(f.worktree, "unrelated.txt")).toBe(" M");
+  expect(git(f.worktree, "diff", "HEAD", "--", "unrelated.txt")).toContain("+unrelated-1");
 });

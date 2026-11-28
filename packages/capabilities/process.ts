@@ -16,10 +16,11 @@ export function processEnvironment(): NodeJS.ProcessEnv {
   for (const name of ["PATH", "Path", "SystemRoot", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]) if (process.env[name]) env[name] = process.env[name];
   return { ...env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_LAZY_FETCH: "1" };
 }
-export async function runProcess(command: string, args: string[], cwd: string, signal: AbortSignal, progress: (message: string) => void, timeoutMs = 120_000, environment:NodeJS.ProcessEnv={},outputLimit=256*1024): Promise<ProcessResult> {
+export async function runProcess(command: string, args: string[], cwd: string, signal: AbortSignal, progress: (message: string) => void, timeoutMs = 120_000, environment:NodeJS.ProcessEnv={},outputLimit=256*1024, input?:string): Promise<ProcessResult> {
+  if (input!==undefined&&Buffer.byteLength(input)>4*1024*1024) throw new HarnessError("RESOURCE_LIMIT", "Process input exceeds its byte limit");
   if (signal.aborted) throw new HarnessError("CANCELLED", "Operation cancelled before process start");
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env: {...processEnvironment(),...environment}, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd, env: {...processEnvironment(),...environment}, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: [input===undefined?"ignore":"pipe", "pipe", "pipe"] });
     let truncated = false, cancelled = false, timedOut = false, settled = false;
     // Observability cannot interrupt process cleanup or replace its outcome.
     const report = (message: string) => { try { progress(message); } catch { /* Progress is best-effort. */ } };
@@ -34,7 +35,11 @@ export async function runProcess(command: string, args: string[], cwd: string, s
       });
       return () => text;
     };
-    const stdout = capture(child.stdout), stderr = capture(child.stderr);
+    const stdout = capture(child.stdout!), stderr = capture(child.stderr!);
+    if (input!==undefined) {
+      child.stdin!.on("error", () => { /* Process exit supplies the command result. */ });
+      child.stdin!.end(input);
+    }
     let treeKill: Promise<void> | undefined;
     function stop() {
       if (!child.pid || settled || treeKill) return;

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { open, rm } from "node:fs/promises";
+import { lstat, open, rename, rm, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { HarnessError } from "../contracts/index.ts";
 import { readBoundFile } from "../core/file-access.ts";
@@ -14,11 +14,12 @@ import type { ProjectTools, WorkspaceBinding } from "./tools.ts";
 
 // M08 hunk-exact selective commit. A preview builds candidate hunks from the
 // proven pre/post images (git diff HEAD in the attested managed worktree) and
-// labels each hunk with the journal's attribution. A commit copies nothing
-// through the shared index: it reads HEAD into a private temporary index,
+// labels each hunk with the journal's attribution. A commit reads HEAD into
+// a private temporary index,
 // applies only the approved hunk bodies, writes the tree and the commit
 // object, verifies the commit, and only then advances the branch with a
-// compare-and-swap update-ref. If the commit object exists but the ref/index
+// compare-and-swap update-ref while holding the caller index lock, then
+// publishes the staged delta. If the commit object exists but the ref/index
 // outcome is uncertain, the record carries observedCommit — never a blind
 // retry, never `git add -A`/`commit -a`/`reset --hard`.
 
@@ -58,6 +59,7 @@ interface SelectivePreviewBinding {
   managedWorktreeId: string;
   branch: string;
   expectedHead: string;
+  indexDigest: string;
   createdAt: string;
 }
 
@@ -107,6 +109,45 @@ const newFilePatch = (path: string, text: string): FileSection => {
 const repositoryIdentity = (binding: WorkspaceBinding) =>
   sha256hex(JSON.stringify(["repository", binding.commonDirectory, binding.commonDirectoryIdentity.dev, binding.commonDirectoryIdentity.ino]));
 
+const indexLimit = 32 * 1024 * 1024;
+const callerIndex = async (path: string) => {
+  const info = await lstat(path, { bigint: true });
+  if (!info.isFile() || info.nlink !== 1n) throw new HarnessError("CAPABILITY_DENIED", "The caller index is not an owned regular file.");
+  const bytes = await readBoundFile(path, indexLimit, { dev: String(info.dev), ino: String(info.ino), size: Number(info.size) });
+  return { bytes, mtimeNs: info.mtimeNs };
+};
+
+const copyIndex = async (file: FileHandle, snapshot: Awaited<ReturnType<typeof callerIndex>>) => {
+  await file.writeFile(snapshot.bytes);
+  // Git uses the index file's mtime to detect racily clean entries. Copying
+  // only the bytes can make those entries look clean against a newer index.
+  const nsPerSecond = 1_000_000_000n;
+  const seconds = snapshot.mtimeNs / nsPerSecond - (snapshot.mtimeNs % nsPerSecond < 0n ? 1n : 0n);
+  const timestamp = new Date(Number(seconds) * 1000);
+  await file.utimes(timestamp, timestamp);
+};
+
+const indexDelta = (diff: string, selectedPaths: Set<string>) => {
+  const fields = diff.split("\0");
+  const entries: string[] = [];
+  for (let offset = 0; offset < fields.length - 1; offset += 2) {
+    const entry = /^:[0-7]{6} ([0-7]{6}) [0-9a-f]{40} ([0-9a-f]{40}) [ADMT]$/.exec(fields[offset]);
+    const path = fields[offset + 1];
+    if (!entry || !path || path.includes("\uFFFD"))
+      throw new HarnessError("CAPABILITY_DENIED", "Git returned an unsupported index change.");
+    if (!selectedPaths.has(path))
+      throw new HarnessError("REVISION_CHANGED", "The approved selection overlaps another staged path. Refresh the preview.");
+    entries.push(`${entry[1]} ${entry[2]}\t${path}\0`);
+  }
+  return entries.join("");
+};
+
+type Publication = {
+  branch: "not-updated" | "updated" | "unknown";
+  index: "not-published" | "published" | "unknown";
+};
+type SelectiveRecord = SelectiveCommitV1 & { uncertain?: boolean; observedHead?: string; publication?: Publication };
+
 export class SelectiveCommitService {
   constructor(private readonly projects: ProjectTools, private readonly journal?: EditJournal) {}
 
@@ -115,7 +156,9 @@ export class SelectiveCommitService {
     worktree: string,
     scope: CheckpointScope | undefined,
   ): Promise<FileSection[]> {
-    const entries = (await git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])).split("\0");
+    // Git status may refresh the caller index by default, even for review.
+    const readOnlyGit = { GIT_OPTIONAL_LOCKS: "0" };
+    const entries = (await git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], readOnlyGit)).split("\0");
     const names: string[] = [];
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
@@ -129,7 +172,7 @@ export class SelectiveCommitService {
     }
     const sections: FileSection[] = [];
     for (const path of names) {
-      const status = (await git(["status", "--porcelain=v1", "--", path])).slice(0, 2);
+      const status = (await git(["status", "--porcelain=v1", "--", path], readOnlyGit)).slice(0, 2);
       if (status === "??") {
         const bytes = await readBoundFile(join(worktree, path), 8 * 1024 * 1024 + 1).catch(() => null);
         if (bytes === null || bytes.includes(0) || bytes.length > 8 * 1024 * 1024) continue;
@@ -145,7 +188,7 @@ export class SelectiveCommitService {
         sections.push({ ...newFilePatch(path, text), postDigest: sha256hex(bytes) });
         continue;
       }
-      const patch = await git(["diff", "--full-index", "--no-ext-diff", "--no-textconv", "HEAD", "--", path]);
+      const patch = await git(["diff", "--full-index", "--no-ext-diff", "--no-textconv", "HEAD", "--", path], readOnlyGit);
       if (!patch) continue;
       const post = await readBoundFile(join(worktree, path), 8 * 1024 * 1024 + 1).catch(() => null);
       sections.push({ ...splitFileDiff(patch, path), postDigest: post && post.length <= 8 * 1024 * 1024 ? sha256hex(post) : null });
@@ -164,20 +207,26 @@ export class SelectiveCommitService {
       const head = (await git(["rev-parse", "HEAD"])).trim();
       const branch = (await git(["branch", "--show-current"])).trim();
       if (!/^[0-9a-f]{40}$/.test(head) || !branch) throw new HarnessError("CAPABILITY_DENIED", "A managed working copy needs a branch and a commit head.");
+      const indexPath = join(binding.gitDirectory, "index");
+      const indexDigest = sha256hex((await callerIndex(indexPath)).bytes);
       const sections = await this.candidates(git, binding.path, scope);
+      if (sha256hex((await callerIndex(indexPath)).bytes) !== indexDigest)
+        throw new HarnessError("REVISION_CHANGED", "The caller index changed while preparing the preview.");
       const candidates: SelectiveCandidate[] = [];
       for (const section of sections) {
         section.hunks.forEach((patch, index) => {
           candidates.push({ path: section.path, index, digest: sha256hex(section.header + patch), patch: section.header + patch, ...this.attributionFor(scope, section.path, section.postDigest ?? null) });
         });
       }
-      // Bind any later approval to this exact branch and head: a checkout
-      // elsewhere at the same commit must not redirect the commit.
+      // Bind any later approval to this exact branch, head and semantic
+      // caller index: a checkout or index edit elsewhere is not the approval
+      // the user took.
       this.storePreview(binding, {
         version: 1,
         managedWorktreeId: binding.id,
         branch,
         expectedHead: head,
+        indexDigest,
         createdAt: new Date().toISOString(),
       });
       return { repositoryIdentity: repositoryIdentity(binding), managedWorktreeId: binding.id, branch, expectedHead: head, candidates };
@@ -191,6 +240,7 @@ export class SelectiveCommitService {
   ): Promise<SelectiveCommitResult> {
     const selected = selectiveCommitV1Schema.shape.selectedHunks.parse(input.selectedHunks);
     if (!selected.length) throw new HarnessError("INVALID_INPUT", "Select at least one hunk.");
+    const selectedPaths = new Set(selected.map(hunk => hunk.path));
     const message = input.message?.trim();
     if (!message || message.length > 4000) throw new HarnessError("INVALID_INPUT", "A commit message is required.");
     return this.projects.managedWorktree(projectId, threadId, async ({ git, binding, signal }) => {
@@ -200,6 +250,13 @@ export class SelectiveCommitService {
       const previewed = this.projects.store.get<SelectivePreviewBinding>(SELECTIVE_PREVIEW_KIND, binding.id);
       if (!previewed || previewed.expectedHead !== input.expectedHead || previewed.branch !== branch)
         throw new HarnessError("REVISION_CHANGED", "The approved selection is not bound to the current branch. Refresh the preview before committing.");
+      if (this.records(binding.id).some(receipt => receipt.approvalId === input.approvalId && receipt.uncertain))
+        throw new HarnessError("REVISION_CHANGED", "The previous selective commit may have been published. Inspect the branch and index before retrying.");
+      const indexPath = join(binding.gitDirectory, "index");
+      const snapshot = await callerIndex(indexPath);
+      const indexDigest = sha256hex(snapshot.bytes);
+      if (previewed.indexDigest !== indexDigest)
+        throw new HarnessError("REVISION_CHANGED", "The approved selection is not bound to the current index. Refresh the preview before committing.");
 
       // Rebuild the candidate set from live proven images and match the approved selection exactly.
       const sections = await this.candidates(git, binding.path, input.scope);
@@ -214,11 +271,21 @@ export class SelectiveCommitService {
       }
 
       const privateIndex = join(binding.gitDirectory, `gen-selective-${randomUUID()}.index`);
+      const reconciledIndex = join(binding.gitDirectory, `gen-selective-${randomUUID()}.index`);
       const patchFile = join(binding.gitDirectory, `gen-selective-${randomUUID()}.patch`);
+      const lockPath = indexPath + ".lock";
       const environment = { GIT_INDEX_FILE: privateIndex };
-      let commitOid: string | undefined;
-      let applied = false;
-      let record: SelectiveCommitV1;
+      const reconcileEnvironment = { GIT_INDEX_FILE: reconciledIndex };
+      const publication: Publication = { branch: "not-updated", index: "not-published" };
+      let record: SelectiveCommitV1 | undefined;
+      let lockIdentity: { dev: bigint; ino: bigint } | undefined;
+      const ownsLock = async () => {
+        const current = await lstat(lockPath, { bigint: true }).catch(() => undefined);
+        return !!current && current.isFile() && current.nlink === 1n && current.dev === lockIdentity?.dev && current.ino === lockIdentity.ino;
+      };
+      const active = () => {
+        if (signal.aborted) throw new HarnessError("CANCELLED", "Selective commit was cancelled.");
+      };
       try {
         const file = await open(patchFile, "wx", 0o600);
         try {
@@ -226,10 +293,15 @@ export class SelectiveCommitService {
         } finally {
           await file.close();
         }
+        // Materialize the approved snapshot without refreshing the caller index.
+        const snapshotFile = await open(reconciledIndex, "wx", 0o600);
+        try { await copyIndex(snapshotFile, snapshot); }
+        finally { await snapshotFile.close(); }
+        const callerTree = (await git(["write-tree"], reconcileEnvironment)).trim();
         await git(["read-tree", input.expectedHead], environment);
         // Recheck selected preimage blobs: the private index must contain the
         // exact expectedHead blob for every selected path.
-        for (const path of new Set(selected.map((hunk) => hunk.path))) {
+        for (const path of selectedPaths) {
           const staged = await git(["ls-files", "-s", "--", path], environment);
           const expected = await git(["ls-tree", input.expectedHead, "--", path]);
           const stagedOid = /^[0-9]+ ([0-9a-f]{40}) /.exec(staged)?.[1] ?? null;
@@ -238,8 +310,26 @@ export class SelectiveCommitService {
         }
         await git(["apply", "--cached", "--whitespace=nowarn", "--verbose", patchFile], environment);
         const tree = (await git(["write-tree"], environment)).trim();
+        // Merge the caller's staged tree with the approved commit tree before
+        // publication. Git reports overlapping staged/selected edits as a
+        // conflict here, before the branch or caller index is mutated.
+        let mergedIndexTree: string;
+        try {
+          mergedIndexTree = (await git(["merge-tree", "--write-tree", "--merge-base", input.expectedHead, callerTree, tree])).split(/\r?\n/, 1)[0].trim();
+        } catch (error) {
+          const details = error instanceof HarnessError ? error.details as {exitCode?: number} | undefined : undefined;
+          if (error instanceof HarnessError && error.code === "GIT_ERROR" && details?.exitCode === 1)
+            throw new HarnessError("REVISION_CHANGED", "The approved hunks conflict with staged content. Refresh the selection before committing.");
+          throw error;
+        }
+        if (!/^[0-9a-f]{40}$/.test(mergedIndexTree)) throw new HarnessError("CAPABILITY_DENIED", "Git could not reconcile the approved caller index.");
+        const delta = indexDelta(await git(["diff-tree", "-r", "--raw", "--no-renames", "--no-abbrev", "-z", callerTree, mergedIndexTree]), selectedPaths);
+        if (delta) await git(["update-index", "-z", "--index-info"], reconcileEnvironment, delta);
+        if ((await git(["write-tree"], reconcileEnvironment)).trim() !== mergedIndexTree)
+          throw new HarnessError("CAPABILITY_DENIED", "The reconciled index does not match the verified staged tree.");
+        const reconciled = await callerIndex(reconciledIndex);
         const author = input.author ?? { name: "Gen V1", email: "gen-v1@localhost" };
-        commitOid = (
+        const commitOid = (
           await git(
             ["-c", `user.name=${author.name}`, "-c", `user.email=${author.email}`, "commit-tree", tree, "-p", input.expectedHead, "-m", message],
             environment,
@@ -251,18 +341,10 @@ export class SelectiveCommitService {
         const verifyTree = (await git(["rev-parse", `${commitOid}^{tree}`])).trim();
         if (verifyTree !== tree) throw new HarnessError("CAPABILITY_DENIED", "The selective commit does not match its verified tree.");
         const touched = (await git(["diff-tree", "-r", "--name-only", "--no-commit-id", commitOid])).split("\n").filter(Boolean).sort();
-        const approved = [...new Set(selected.map((hunk) => hunk.path))].sort();
+        const approved = [...selectedPaths].sort();
         if (JSON.stringify(touched) !== JSON.stringify(approved))
           throw new HarnessError("CAPABILITY_DENIED", "The selective commit touched files outside the approved selection.");
         const privateIndexDigest = sha256hex(await readBoundFile(privateIndex, 64 * 1024 * 1024));
-        // Compare-and-swap the branch reference; a stale ref refuses the update.
-        await git(["update-ref", `refs/heads/${branch}`, commitOid, input.expectedHead]);
-        applied = true;
-        // Reconcile the managed worktree index only for the selected paths:
-        // their bytes already equal the committed postimage, so their index
-        // entries become HEAD. Unrelated staged content for other paths must
-        // survive; a whole-index read-tree would silently unstage it.
-        await git(["reset", "-q", "HEAD", "--", ...new Set(selected.map((hunk) => hunk.path))]);
         record = selectiveCommitV1Schema.parse({
           version: 1,
           repositoryIdentity: repositoryIdentity(binding),
@@ -274,38 +356,70 @@ export class SelectiveCommitService {
           approvalId: input.approvalId,
           observedCommit: commitOid,
         });
+        active();
+        const lock = await open(lockPath, "wx", 0o600).catch(error => {
+          if ((error as NodeJS.ErrnoException).code === "EEXIST")
+            throw new HarnessError("REVISION_CHANGED", "The caller index is locked by another Git operation. Refresh the preview.");
+          throw error;
+        });
+        try {
+          lockIdentity = await lock.stat({ bigint: true });
+          const lockedSnapshot = await callerIndex(indexPath);
+          if (lockedSnapshot.mtimeNs !== snapshot.mtimeNs || sha256hex(lockedSnapshot.bytes) !== indexDigest)
+            throw new HarnessError("REVISION_CHANGED", "The caller index changed before publication. Refresh the preview.");
+          await copyIndex(lock, reconciled);
+          await lock.sync();
+        } finally { await lock.close(); }
+
+        const ref = `refs/heads/${branch}`;
+        const currentRef = await git(["symbolic-ref", "-q", "HEAD"]).catch(error => {
+          const details = error instanceof HarnessError ? error.details as {exitCode?: number} | undefined : undefined;
+          if (error instanceof HarnessError && error.code === "GIT_ERROR" && details?.exitCode === 1) return "";
+          throw error;
+        });
+        if (currentRef.trim() !== ref)
+          throw new HarnessError("REVISION_CHANGED", "The branch changed before publication. Refresh the preview.");
+        if (!(await ownsLock()))
+          throw new HarnessError("REVISION_CHANGED", "Git no longer holds the caller index lock.");
+        active();
+
+        // The durable pending receipt precedes the first shared mutation.
+        // Holding Git's index lock also prevents ordinary checkout and staging.
+        this.storeRecord(binding, commitOid, { ...record, uncertain: true, publication: { ...publication, branch: "unknown" } });
+        publication.branch = "unknown";
+        await git(["update-ref", ref, commitOid, input.expectedHead]);
+        publication.branch = "updated";
+        if (!(await ownsLock())) throw new HarnessError("REVISION_CHANGED", "Git no longer holds the caller index lock.");
+        active();
+        this.storeRecord(binding, commitOid, { ...record, uncertain: true, observedHead: commitOid, publication: { ...publication, index: "unknown" } });
+        publication.index = "unknown";
+        // This callback holds the verified managed directory guard. Git
+        // writers cannot publish a concurrent index while our lock exists.
+        await rename(lockPath, indexPath);
+        lockIdentity = undefined;
+        publication.index = "published";
+        this.storeRecord(binding, commitOid, { ...record, publication });
+        return { record, applied: true, head: commitOid };
       } catch (error) {
-        if (commitOid) {
-          // Uncertain outcome: the commit object exists but the ref/index
-          // result is unknown. Record the SHA and the actual observed head.
-          const observedHead = (await git(["rev-parse", branch]).catch(() => "")).trim();
-          record = selectiveCommitV1Schema.parse({
-            version: 1,
-            repositoryIdentity: repositoryIdentity(binding),
-            managedWorktreeId: binding.id,
-            expectedHead: input.expectedHead,
-            privateIndexDigest: sha256hex(JSON.stringify([commitOid, observedHead])),
-            selectedHunks: selected,
-            messageDigest: sha256hex(message),
-            approvalId: input.approvalId,
-            observedCommit: commitOid,
-          });
-          this.storeRecord(binding, commitOid, { ...record, uncertain: true, observedHead });
-          throw new HarnessError("REVISION_CHANGED", `The selective commit ${commitOid} was created but the branch update was uncertain. Inspect ${branch} at ${observedHead || "an unknown head"} before retrying.`, { observedCommit: commitOid });
+        if (record?.observedCommit && publication.branch !== "not-updated") {
+          const commitOid = record.observedCommit;
+          const observedHead = publication.branch === "updated" ? commitOid :
+            signal.aborted ? "" : (await git(["rev-parse", `refs/heads/${branch}`]).catch(() => "")).trim();
+          this.storeRecord(binding, commitOid, { ...record, uncertain: true, observedHead, publication });
+          throw new HarnessError("REVISION_CHANGED", `The selective commit ${commitOid} was created, but publication may be incomplete. Inspect the branch and index before retrying.`, { observedCommit: commitOid, publication });
         }
         throw error;
       } finally {
+        if (lockIdentity && await ownsLock()) await rm(lockPath, { force: true }).catch(() => {});
         await rm(privateIndex, { force: true }).catch(() => {});
+        await rm(reconciledIndex, { force: true }).catch(() => {});
         await rm(patchFile, { force: true }).catch(() => {});
       }
-      this.storeRecord(binding, commitOid!, record);
-      void signal;
-      return { record, applied, head: commitOid! };
     });
   }
 
-  records(bindingId: string): (SelectiveCommitV1 & { uncertain?: boolean; observedHead?: string })[] {
-    return this.projects.store.all<SelectiveCommitV1 & { managedWorktreeId: string; uncertain?: boolean; observedHead?: string }>(SELECTIVE_COMMIT_KIND).filter((entry) => entry.managedWorktreeId === bindingId);
+  records(bindingId: string): SelectiveRecord[] {
+    return this.projects.store.all<SelectiveRecord>(SELECTIVE_COMMIT_KIND).filter((entry) => entry.managedWorktreeId === bindingId);
   }
 
   private storePreview(binding: WorkspaceBinding, record: SelectivePreviewBinding): void {
@@ -314,7 +428,7 @@ export class SelectiveCommitService {
     });
   }
 
-  private storeRecord(binding: WorkspaceBinding, commitOid: string, record: SelectiveCommitV1 & { uncertain?: boolean; observedHead?: string }): void {
+  private storeRecord(binding: WorkspaceBinding, commitOid: string, record: SelectiveRecord): void {
     this.projects.store.internal("workspace.selective-commit.recorded", binding.threadId, () => {
       this.projects.store.put(SELECTIVE_COMMIT_KIND, commitOid, binding.threadId, record);
     });

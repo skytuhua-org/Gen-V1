@@ -282,12 +282,12 @@ it("records the commit and observed head when the branch update is uncertain", a
     original(projectId, threadId, (context) =>
       action({
         ...context,
-        git: async (args: string[], environment?: NodeJS.ProcessEnv) => {
+        git: async (args: string[], environment?: NodeJS.ProcessEnv, stdin?: string) => {
           if (args[0] === "update-ref" && !moved) {
             moved = true;
             await context.git(["update-ref", `refs/heads/${branch}`, concurrent]);
           }
-          return context.git(args, environment);
+          return context.git(args, environment, stdin);
         },
       }) as Promise<T>,
     );
