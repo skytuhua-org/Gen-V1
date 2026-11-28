@@ -13,6 +13,7 @@ const verificationResult = (requirement: string, freshness = 'CURRENT') => ({ver
   label: 'VERIFIED', staleBanner: false,
   summary: {verified: 1, failed: 0, unverified: 0, blocked: 0, missing: []},
   rows: [{requirement, checkId: 'check-one', check: 'node verify.js', phase: 'TEST', sourceRevision: 'abc123', outcome: 'PASS', freshness, verifier: 'execution-one', evidence: [], missing: []}],
+  findings: {rows: [], omitted: 0},
 }});
 test.beforeEach(async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });

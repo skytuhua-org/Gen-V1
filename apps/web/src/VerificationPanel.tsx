@@ -163,7 +163,11 @@ function VerificationReadPanel({ threadId }: { threadId: string }) {
   if (current?.unavailable) return <section className="verification-panel" aria-label="Verification">
     <p role="status">Verification unavailable. The current evidence could not be refreshed.</p>
   </section>;
-  if (!model || (!model.label && !model.rows.length && !model.findings.rows.length)) return null;
+  // Responses pre-dating the scoped-findings contract can omit the field;
+  // absent findings are unknown evidence, not an empty list, so the section
+  // is skipped rather than rendered as clean.
+  const findings = model?.findings as Model['findings'] | undefined;
+  if (!model || (!model.label && !model.rows.length && !findings?.rows.length)) return null;
   return (
     <section className="verification-panel" aria-label="Verification" tabIndex={0}>
       <header>
@@ -194,7 +198,7 @@ function VerificationReadPanel({ threadId }: { threadId: string }) {
         </tbody>
       </table></div>
       {expandedRow && <CheckDetails key={expanded} id={`${id}-details`} row={expandedRow} threadId={threadId} close={() => {setExpanded(null); opener.current?.focus();}} />}
-      <Findings findings={model.findings} />
+      {findings && <Findings findings={findings} />}
     </section>
   );
 }
