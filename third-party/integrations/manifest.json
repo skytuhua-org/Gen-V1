@@ -583,7 +583,8 @@
           "bytes": 5418,
           "sha256": "941bd99e52b2ba21449719bb7969607ac8117e3dc173d0c9dfe64fd274c65938",
           "source": "https://raw.githubusercontent.com/blader/humanizer/225a6f39ac85f76ee48dbad772ea4abe4ed6c9d8/scripts/validate-package.py",
-          "gitBlob": "9b20d72cecd28bb4589ca05039e8586f902e74b6"
+          "gitBlob": "9b20d72cecd28bb4589ca05039e8586f902e74b6",
+          "use": "upstream-validator"
         }
       ],
       "skills": [
@@ -1719,7 +1720,8 @@
           "bytes": 5054,
           "sha256": "40ae5ebe497fdf310200e43fe986552546d0a22837c0d39e855db1cfd33eb88e",
           "source": "https://raw.githubusercontent.com/obra/superpowers/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/skills/systematic-debugging/condition-based-waiting-example.ts",
-          "gitBlob": "703a06b653160d060bbf46ab5c6e0cd7446bd592"
+          "gitBlob": "703a06b653160d060bbf46ab5c6e0cd7446bd592",
+          "use": "reference-example"
         },
         {
           "path": "third-party/integrations/superpowers/skills/systematic-debugging/condition-based-waiting.md",
