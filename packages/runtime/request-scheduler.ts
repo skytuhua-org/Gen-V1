@@ -166,6 +166,7 @@ export interface StatelessTransport {
 export class StatelessTransportPool {
   private readonly idle = new Map<string, { transport: StatelessTransport; expiresAt: number }>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly timedClosures = new Map<string, { transport: StatelessTransport; closing?: Promise<void> }>();
   constructor(private readonly now: () => number = () => Date.now()) {}
 
   /**
@@ -175,12 +176,8 @@ export class StatelessTransportPool {
    */
   async take(key: WarmTransportKey): Promise<StatelessTransport | null> {
     const id = warmTransportKeyId(key);
-    const entry = this.idle.get(id);
+    const entry = this.detachIdle(id);
     if (!entry) return null;
-    this.idle.delete(id);
-    const timer = this.timers.get(id);
-    if (timer !== undefined) clearTimeout(timer);
-    this.timers.delete(id);
     if (this.now() >= entry.expiresAt || entry.transport.outstanding !== 0) {
       await entry.transport.close();
       return null;
@@ -202,21 +199,42 @@ export class StatelessTransportPool {
   offer(key: WarmTransportKey, transport: StatelessTransport): boolean {
     if (transport.outstanding !== 0) return false;
     const id = warmTransportKeyId(key);
-    if (this.idle.has(id)) return false;
+    if (this.idle.has(id) || this.timedClosures.has(id)) return false;
     this.idle.set(id, { transport, expiresAt: this.now() + STATELESS_IDLE_EXPIRY_MS });
-    const timer = setTimeout(() => { void this.expire(id); }, STATELESS_IDLE_EXPIRY_MS);
+    const timer = setTimeout(() => {
+      const entry = this.detachIdle(id);
+      if (!entry) return;
+      this.timedClosures.set(id, { transport: entry.transport });
+      // No timer caller can receive a close error. Retain the detached owner
+      // for explicit retry, rather than leaking an unhandled rejection.
+      void this.expire(id).catch(() => {});
+    }, STATELESS_IDLE_EXPIRY_MS);
     timer.unref?.();
     this.timers.set(id, timer);
     return true;
   }
 
-  private async expire(id: string): Promise<void> {
+  private detachIdle(id: string) {
     const timer = this.timers.get(id);
     if (timer !== undefined) clearTimeout(timer);
     this.timers.delete(id);
     const entry = this.idle.get(id);
     this.idle.delete(id);
-    if (entry) await entry.transport.close();
+    return entry;
+  }
+
+  private async expire(id: string): Promise<void> {
+    const retained = this.timedClosures.get(id);
+    if (retained) {
+      retained.closing ??= Promise.resolve().then(() => retained.transport.close()).then(() => {
+        this.timedClosures.delete(id);
+      }, error => {
+        retained.closing = undefined;
+        throw error;
+      });
+      return retained.closing;
+    }
+    await this.detachIdle(id)?.transport.close();
   }
 
   /** Account or config change: close every transport for the old key. */
@@ -225,7 +243,8 @@ export class StatelessTransportPool {
   }
 
   async close(): Promise<void> {
-    const outcomes = await Promise.allSettled([...this.idle.keys()].map(id => this.expire(id)));
+    const ids = new Set([...this.idle.keys(), ...this.timedClosures.keys()]);
+    const outcomes = await Promise.allSettled([...ids].map(id => this.expire(id)));
     const failures = outcomes.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
     if (failures.length) throw new AggregateError(failures, 'Could not close all idle transports.');
   }

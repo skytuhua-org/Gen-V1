@@ -9,7 +9,7 @@ export function createHermesTaskPool(options:HermesRuntimeOptions,dependencies:H
  const catalog=options.nativeCatalog??nativeFactory({dataDir:options.dataDir,accounts:options.accounts,modelOnly:true});
  const borrowed:RuntimeAdapter={configure(){},models:query=>catalog.models(query),async invalidateModels(query){await catalog.invalidateModels?.(query);},start:async()=>{throw new HarnessError('HERMES_INTERNAL','The catalog cannot execute tasks.');},followUp:async()=>{},cancel:async()=>{},compact:async()=>{},history:(path,account)=>catalog.history(path,account),dispose:async()=>{}};
  const canonical=createEngine({...options,nativeCatalog:borrowed},dependencies),engines=new Set<HermesEngine>([canonical]),main=new Map<string,HermesEngine>();
- let callbacks:RuntimeCallbacks|undefined,primaryThread:string|undefined,disposed=false,disposing:Promise<void>|undefined;
+ let callbacks:RuntimeCallbacks|undefined,primaryThread:string|undefined,disposed=false,catalogPending=true,disposing:Promise<void>|undefined;
  const check=()=>{if(disposed)throw new HarnessError('HERMES_DISPOSED','The Hermes runtime has closed.');};
  const secondary=(readOnly=false)=>{const engine=createEngine({...options,nativeCatalog:borrowed,readOnly,sharedLibrary:(params,authority)=>canonical.sourceTool(params,authority),onSourceEvent:event=>{if(event.event==='settled'&&event.ctx)void canonical.sourceTool({releaseOwner:true,ctx:event.ctx}).catch(()=>{});options.onSourceEvent?.(event);}},dependencies);engines.add(engine);return engine;};
  const task=(threadId:string)=>{check();let engine=main.get(threadId);if(engine)return engine;if([...main.values()].filter(value=>value.sourceBusy).length>=3)throw new HarnessError('HERMES_SOURCE_BUSY','Three personal main agents already own source workers.');if(primaryThread===undefined){primaryThread=threadId;engine=canonical;}else{
@@ -35,6 +35,12 @@ export function createHermesTaskPool(options:HermesRuntimeOptions,dependencies:H
   // S07: a review/idle fork is an isolated read-only engine driven by the host
   // under the caller's auxiliary budget; ambient plugins stay disabled.
   fork(request){return{forkId:`fork-${request.sourceCutDigest.slice(0,12)}-${randomUUID()}`,runtime:newTaskRuntime()};},
-  dispose(){return disposing??=(async()=>{disposed=true;const outcomes=await Promise.allSettled([...engines].map(engine=>engine.dispose()).concat([catalog.dispose()]));const failures=outcomes.flatMap(result=>result.status==='rejected'?[result.reason]:[]);if(failures.length)throw new AggregateError(failures,'Hermes task pool cleanup could not be confirmed.');})();},
+  dispose(){return disposing??=(async()=>{
+   disposed=true;
+   const cleanup=[...engines].map(async engine=>{await engine.dispose();engines.delete(engine);});
+   if(catalogPending)cleanup.push((async()=>{await catalog.dispose();catalogPending=false;})());
+   const outcomes=await Promise.allSettled(cleanup),failures=outcomes.flatMap(result=>result.status==='rejected'?[result.reason]:[]);
+   if(failures.length)throw new AggregateError(failures,'Hermes task pool cleanup could not be confirmed.');
+  })().catch(error=>{disposing=undefined;throw error;});},
  };
 }

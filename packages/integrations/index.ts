@@ -36,6 +36,8 @@ interface Context7Permit {operationId:string;binding:Context7ExecutionBinding;si
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex').slice(0,24);
 const promptfooTools=new Set(['run_evaluation','list_evaluations','get_evaluation_details']);
 const graphTools=new Set(['query_graph','get_node','get_neighbors','get_community','god_nodes','graph_stats','shortest_path']);
+// Evaluator calls time out after five minutes; only much older owned inputs are definitely abandoned.
+const evaluationAbandonedAfterMs=15*60*1000;
 const deterministicAssertions=new Set(['equals','contains','icontains','not-contains','not-icontains','starts-with','regex','not-regex','is-json','contains-json','rouge-n','levenshtein','latency','cost','is-xml','contains-xml']);
 // V8's native Error.stack accessor remains an accessor after materialization.
 // Match its descriptor by identity, never by function name or source text.
@@ -119,7 +121,7 @@ export class IntegrationManager {
   session={id,key,scope:{...effectiveScope,...(scoped.epoch===undefined?{}:{epoch:scoped.epoch,runId:scoped.runId})},generation:this.generations.get(id)??0,client,transport,starting:Promise.resolve(),ready:false,controllers:new Set()};this.sessions.set(key,session);
   permit?.selected(session);
   const selected=session;client.onclose=()=>{void this.closeSession(selected).catch(()=>this.failures.set(id,'Integration teardown did not confirm completion'));};client.onerror=()=>{void this.closeSession(selected).catch(()=>this.failures.set(id,'Integration teardown did not confirm completion'));};session.starting=(async()=>{try{
-   if(id==='promptfoo')await rm(this.evaluationStaging(key),{recursive:true,force:true});await mkdir(directory,{recursive:true});permit?.assertCurrent();if(id==='context7'){const secret=permit?await permit.resolveSecret():await this.options.context7Key?.();if(secret){
+   if(id==='promptfoo'){await this.sweepEvaluationStaging(key);await rm(this.evaluationStaging(key),{recursive:true,force:true});}await mkdir(directory,{recursive:true});permit?.assertCurrent();if(id==='context7'){const secret=permit?await permit.resolveSecret():await this.options.context7Key?.();if(secret){
     // The declared redactor cannot track short secrets. Never deliver one to a
     // child that can echo it into a model-visible result or error.
     if(!createSecretRedactor([secret]).tracked)throw new HarnessError('SECRET_REF_REDACTION_UNSUPPORTED','Context7 credential cannot be protected by the supported output-redaction scope.');
@@ -312,6 +314,20 @@ export class IntegrationManager {
  }
  async listTools(id:IntegrationId,scope:IntegrationScope):Promise<Tool[]>{const list=async()=>{const session=await this.session(id,scope);const result=await session.client.listTools().catch(error=>{throw this.redactFailure(session,error);});return this.redactOutput(session,result.tools.filter(tool=>id==='promptfoo'?promptfooTools.has(tool.name):id==='graphify'?graphTools.has(tool.name):id==='spec-kit'?['specify_version','specify_list_commands','specify_describe_command','specify_run_command'].includes(tool.name):true));};return id==='graphify'?this.graphRead(scope,list):list();}
  private evaluationStaging(key:string){return join(this.options.dataRoot,'integrations','evaluations',key);}
+ private async sweepEvaluationStaging(activeKey:string){
+  const root=join(this.options.dataRoot,'integrations','evaluations');let entries;
+  try{entries=await readdir(root,{withFileTypes:true});}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}
+  const active=new Set([activeKey,...[...this.sessions.values()].filter(session=>session.id==='promptfoo').map(session=>session.key)]);
+  for(const entry of entries){
+   if(!entry.isDirectory()||!/^[0-9a-f]{24}$/.test(entry.name)||active.has(entry.name))continue;
+   const directory=join(root,entry.name);let children;try{children=await readdir(directory,{withFileTypes:true});}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error;}let owned=true,newest=0;
+   for(const child of children){
+    if(!child.isFile()||!/^[0-9a-f]{24}\.json$/.test(child.name)){owned=false;break;}
+    try{newest=Math.max(newest,(await lstat(join(directory,child.name))).mtimeMs);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+   }
+   if(owned&&(children.length===0||Date.now()-newest>=evaluationAbandonedAfterMs))await rm(directory,{recursive:true,force:true});
+  }
+ }
  private async prepareEvaluation(args:Record<string,unknown>,scope:IntegrationScope,session:Session){
   const {scoped}=await this.admitted('promptfoo',scope,'evaluate');const root=scoped.projectRoot!;
   let config:Record<string,unknown>;if(args.config!==undefined)config=object(args.config);else{if(typeof args.configPath!=='string')throw Error('Evaluation requires an explicit configuration');const path=await scopedFile(root,args.configPath);if(!path.endsWith('.json'))throw Error('Native evaluations require a JSON configuration');const data=await withPathGuard([{path,leaf:true,readOnly:true}],new AbortController().signal,()=>readBoundFile(path,1024*1024));config=object(JSON.parse(data.toString()));}

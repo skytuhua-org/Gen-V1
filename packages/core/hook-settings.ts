@@ -25,7 +25,7 @@ export class HookSettings {
  private readonly file:string;
  private cached:HooksDocument|undefined;
  constructor(dataDir:string){this.directory=resolve(dataDir,'hooks');this.file=join(this.directory,'hooks.json');}
- private async load():Promise<HooksDocument>{try{const info=await lstat(this.file);if(!info.isFile()||info.isSymbolicLink()||info.size>2*1024*1024)throw Error('Invalid hooks storage');this.cached=hooksDocumentSchema.parse(JSON.parse(await readFile(this.file,'utf8')));return this.cached;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return empty();throw new HarnessError('HOOKS_UNAVAILABLE','Hooks could not be read. Existing hooks are kept on disk.');}}
+ private async load():Promise<HooksDocument>{try{const info=await lstat(this.file);if(!info.isFile()||info.isSymbolicLink()||info.size>2*1024*1024)throw Error('Invalid hooks storage');this.cached=hooksDocumentSchema.parse(JSON.parse(await readFile(this.file,'utf8')));return this.cached;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT'){this.cached=empty();return this.cached;}throw new HarnessError('HOOKS_UNAVAILABLE','Hooks could not be read. Existing hooks are kept on disk.');}}
  async read():Promise<HooksDocument>{await this.queue.catch(()=>{});return this.load();}
  /** Cached parsed document for the runner: one in-memory lookup per tool call, no file read. */
  snapshot():HooksDocument{return this.cached??empty();}

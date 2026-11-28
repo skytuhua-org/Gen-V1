@@ -16,6 +16,8 @@ export function readOfficialVersion(command:{file:string;args:string[]},cwd:stri
   };
   const timer=setTimeout(()=>fail(Error('Official distribution version check exceeded its deadline.')),30000);
   child.once('error',fail);
+  const pipeFailed=()=>fail(Error('Official distribution version output could not be read.'));
+  child.stdout.on('error',pipeFailed);child.stderr.on('error',pipeFailed);
   const capture=(chunk:Buffer,keep:boolean)=>{
    if(settled)return;
    bytes+=chunk.length;

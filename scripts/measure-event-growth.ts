@@ -72,8 +72,9 @@ function plan(db: Store['db'], sql: string, ...args: (string | number)[]) {
 
 for (const events of targets) {
   const dir = mkdtempSync(join(tmpdir(), `gen-growth-${events}-`));
+  let owned: Store | undefined;
   try {
-    const store = new Store(dir);
+    const store = owned = new Store(dir);
     const seededIn = ms(() => seed(store, events));
     const counts = {
       entities: (store.db.prepare('SELECT COUNT(*) c FROM entities').get() as { c: number }).c,
@@ -118,8 +119,8 @@ for (const events of targets) {
       return { sweepMs: result, ...measure() };
     })();
     console.log(JSON.stringify({ events, seededInMs: seededIn, counts, bytes, timingsMs: timings, plans, swept }));
-    store.close();
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    try { owned?.close(); }
+    finally { rmSync(dir, { recursive: true, force: true }); }
   }
 }

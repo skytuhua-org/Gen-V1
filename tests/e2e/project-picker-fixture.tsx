@@ -19,7 +19,12 @@ const sized = (n: number) => Array.from({ length: n }, (_, i) => project(`projec
 function Fixture() {
   const query = new URLSearchParams(location.search);
   const [open, setOpen] = useState(false), [selected, setSelected] = useState(query.has('last') ? 'project-59' : 'alpha');
-  const [count, setCount] = useState(0), [adds, setAdds] = useState(0), [projects, setProjects] = useState(query.has('count') ? sized(Number(query.get('count'))) : initialProjects);
+  const [count, setCount] = useState(0), [adds, setAdds] = useState(0), [projects, setProjects] = useState(()=>{
+    const entries=query.has('count') ? sized(Number(query.get('count'))) : initialProjects;
+    if(!query.has('legacy'))return entries;
+    return [...entries.map(value=>value.id==='foreign'?{...value,rootPath:undefined}:value),
+      {...project('legacy','Unconnected legacy project'),rootPath:undefined}];
+  });
   const [pulse, setPulse] = useState(0);
   const [preferences, setPreferences] = useState(() => mergePreferences(DEFAULT_PREFERENCES, { projectColors: JSON.parse(localStorage.getItem('synthetic-project-colors') ?? '{}') }));
   const sidebar = useRef<HTMLElement>(null), search = useRef<HTMLInputElement>(null);

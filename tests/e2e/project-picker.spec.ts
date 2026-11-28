@@ -246,3 +246,40 @@ test('modal height fits content on short lists and caps at 520px on long lists',
   const list = page.getByRole('listbox', { name: 'Projects' });
   expect(await list.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
 });
+
+test('local project choices exclude legacy projects without a connected root', async ({page},info) => {
+  await page.setViewportSize({width:360,height:640});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/project-picker?count=0&legacy=1');
+  const opener=page.getByRole('button',{name:'Open project picker',exact:true});
+  await opener.click();
+  const dialog=page.getByRole('dialog',{name:'Select project',exact:true});
+  const search=dialog.getByRole('combobox',{name:'Search projects'});
+  const noProject=dialog.getByRole('option',{name:'No project',exact:true});
+  await expect(dialog.getByRole('option')).toHaveText(['No project']);
+  await expect(dialog.getByRole('button',{name:/^Color for/})).toHaveCount(0);
+  await search.press('ArrowDown');
+  await expect(search).toHaveAttribute('aria-activedescendant',(await noProject.getAttribute('id'))!);
+  await page.screenshot({path:info.outputPath('connected-project-picker.png')});
+  await search.fill('legacy');
+  await expect(dialog.getByText('No matching projects.',{exact:true})).toBeVisible();
+  await expect(search).not.toHaveAttribute('aria-activedescendant');
+  await search.fill('');
+  await search.press('Enter');
+  await expect(dialog).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  await expect(page.getByLabel('Created threads')).toHaveText('1');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+
+  await page.goto('/project-picker?legacy=1');
+  await opener.click();
+  await expect(dialog.getByRole('button',{name:'Color for Alpha',exact:true})).toBeEnabled();
+  await expect(dialog.getByRole('option',{name:'Unconnected legacy project'})).toHaveCount(0);
+  await dialog.getByRole('option',{name:'Alpha',exact:true}).click();
+  await expect(page.getByLabel('Created threads')).toHaveText('1');
+
+  await page.goto('/project-picker?plugin=1&legacy=1');
+  await opener.click();
+  await expect(dialog.getByRole('option',{name:'Foreign',exact:true})).toBeVisible();
+  await expect(dialog.getByRole('option',{name:'Unconnected legacy project'})).toHaveCount(0);
+});

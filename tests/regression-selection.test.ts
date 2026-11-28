@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { changedSources, discoverTestFiles, selectRegressionTests, type SourceChange } from '../scripts/select-regression-tests.ts';
 import { dirname, join } from 'node:path';
-import { mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -151,6 +151,18 @@ describe('regression test selection', () => {
       [...existing, 'tests/m01-m02-compatibility.test.ts'], map);
     expect(result).toMatchObject({ coverage: 'FULL', needsReview: true });
     expect(result.tests).toContain('tests/m01-m02-compatibility.test.ts');
+  });
+
+  it('does not treat a consumed v6 verification receipt as prose', () => {
+    const path = 'docs/implementation/v6/M16/logs/vitest-browser-consent-v3.log';
+    const receipt = JSON.parse(readFileSync(join(testsDir, '../docs/implementation/v3/M16-verification.json'), 'utf8'));
+    expect(receipt.phases.some((phase: {commands: {boundedLogRef: string}[]}) => phase.commands.some(command => command.boundedLogRef === path))).toBe(true);
+    expect(select([{ path, status: 'M' }])).toMatchObject({
+      tests: [...existing].sort(), coverage: 'FULL', needsReview: true,
+    });
+    expect(select([{ path: 'docs/implementation/v6/M13/handoff.md', status: 'M' }])).toMatchObject({
+      tests: [], coverage: 'NONE', needsReview: false,
+    });
   });
 
   it('still selects regressions when an evidence source lock is renamed to prose', () => {

@@ -15,9 +15,7 @@ interface Seed { threads: number; messagesPerThread: number; artifacts: number; 
 const SMALL: Seed = { threads: 5, messagesPerThread: 40, artifacts: 5, usage: 5, archived: 1 };
 const LARGE: Seed = { threads: 60, messagesPerThread: 800, artifacts: 200, usage: 60, archived: 20 };
 
-async function seed(scale: Seed) {
-  const dataDir = await mkdtemp(join(tmpdir(), "store-read-bench-"));
-  const store = new Store(dataDir);
+function seed(store: Store, scale: Seed) {
   store.internal("bench.seed", null, () => {
     for (let t = 0; t < scale.threads; t++) {
       const threadId = `thread-${t}`;
@@ -34,7 +32,6 @@ async function seed(scale: Seed) {
     for (let r = 0; r < 10; r++)
       store.put("request", `request-${r}`, `thread-${r}`, { id: `request-${r}`, threadId: `thread-${r}`, basis: [] });
   });
-  return { dataDir, store };
 }
 
 function percentile(values: number[], p: number) {
@@ -54,10 +51,8 @@ function plan(store: Store, label: string, sql: string, ...params: (string | num
   console.log(`  ${label}: ${rows.map((row) => row.detail).join(" | ")}`);
 }
 
-const sizes = process.argv.includes("--large-only") ? [LARGE] : [SMALL, LARGE];
-for (const scale of sizes) {
+function benchmark(store: Store, scale: Seed) {
   const name = scale === SMALL ? "small" : "large";
-  const { dataDir, store } = await seed(scale);
   console.log(`\n=== ${name}: ${scale.threads} threads x ${scale.messagesPerThread} messages, ${scale.artifacts} artifacts, ${scale.usage} usage rows ===`);
   let prepares = 0;
   const original = store.db.prepare.bind(store.db);
@@ -82,6 +77,22 @@ for (const scale of sizes) {
     WHERE entity.kind='message' AND entity.thread_id IS tails.thread_id AND entity.rowid >= tails.first_retained
     ORDER BY entity.rowid`);
   plan(store, "usage N+1 get", "SELECT body FROM entities WHERE kind=? AND id=?", "usage", "thread-1");
-  store.close();
-  await rm(dataDir, { recursive: true, force: true });
 }
+
+async function runFixture(scale: Seed): Promise<void> {
+  const dataDir = await mkdtemp(join(tmpdir(), "store-read-bench-"));
+  let store: Store | undefined;
+  const failures: unknown[] = [];
+  try {
+    store = new Store(dataDir);
+    seed(store, scale);
+    benchmark(store, scale);
+  } catch (error) { failures.push(error); }
+  try { store?.close(); } catch (error) { failures.push(error); }
+  try { await rm(dataDir, { recursive: true, force: true }); } catch (error) { failures.push(error); }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length) throw new AggregateError(failures, "The store-read benchmark or fixture cleanup failed.");
+}
+
+const sizes = process.argv.includes("--large-only") ? [LARGE] : [SMALL, LARGE];
+for (const scale of sizes) await runFixture(scale);

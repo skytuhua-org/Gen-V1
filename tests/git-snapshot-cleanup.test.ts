@@ -1,6 +1,6 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {execFileSync} from 'node:child_process';
-import {lstat,mkdir,mkdtemp,readFile,rm,stat,writeFile} from 'node:fs/promises';
+import {execFileSync,spawnSync} from 'node:child_process';
+import {lstat,mkdir,mkdtemp,readFile,readdir,rm,stat,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {opendir} from 'node:fs/promises';
@@ -92,3 +92,25 @@ it('removes every owned file on the normal path',async()=>{
  expect(result).toBe('ok');expect(worktree).not.toBe('');
  await expect(lstat(worktree)).rejects.toThrow();
 });
+
+it.skipIf(process.platform !== 'linux')('removes the workspace cost benchmark fixture even when Git startup fails',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'harness-cost-cleanup-'));roots.push(root);
+ const env:NodeJS.ProcessEnv={...process.env,TMPDIR:root,GIT_CONFIG_COUNT:'1'};
+ delete env.GIT_CONFIG_KEY_0;
+ const result=spawnSync(process.execPath,['--import','tsx','scripts/measure-workspace-costs.ts','5','2','3'],{encoding:'utf8',env,timeout:10000});
+ expect(result.error).toBeUndefined();
+ expect(result.status).toBe(1);
+ expect(result.stderr).toContain('missing config key GIT_CONFIG_KEY_0');
+ expect(result.stdout).toBe('');
+ expect((await readdir(root)).filter(name=>name.startsWith('gen-costs-'))).toEqual([]);
+},15000);
+
+it.skipIf(process.platform !== 'linux')('still measures a successful workspace fixture and removes it',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'harness-cost-cleanup-'));roots.push(root);
+ const env={...process.env,TMPDIR:root,GIT_CONFIG_COUNT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null'};
+ const result=spawnSync(process.execPath,['--import','tsx','scripts/measure-workspace-costs.ts','5','2','3'],{encoding:'utf8',env,timeout:10000});
+ expect(result.error).toBeUndefined();
+ expect(result.status).toBe(0);
+ expect(result.stdout).toContain('fixture: 5 tracked, 2 modified (2 staged), 3 untracked');
+ expect((await readdir(root)).filter(name=>name.startsWith('gen-costs-'))).toEqual([]);
+},15000);

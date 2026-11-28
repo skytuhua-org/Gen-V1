@@ -162,6 +162,12 @@ export function ShellSidebar({
   const [hoverCache]=useState(createThreadHoverCache<ThreadHoverPRTarget>);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'working' | 'waiting'>('all');
+  const [reorderNotice, setReorderNotice] = useState<string | undefined>();
+  const reorderNoticeFrame = useRef<number>(0);
+  useEffect(() => {
+    setReorderNotice(undefined);
+    return () => cancelAnimationFrame(reorderNoticeFrame.current);
+  }, [search, filter]);
   const [showAllSettled, setShowAllSettled] = useState(false);
   const navRef = useRef<HTMLElement | null>(null);
   const threadMove = useThreadMove(elementRef, matching,
@@ -203,6 +209,29 @@ export function ShellSidebar({
     ensureManualOrder: preferences.projectOrder === 'manual' ? undefined : ensureManualOrder,
     prepareMove: (id, order, viaPointer) => threadMove.prepare(id, order, viaPointer),
     toast,
+    onReorderOutcome: outcome => {
+      let message: string;
+      switch (outcome.kind) {
+        case 'moved':
+          message = `Moved ${outcome.item.title} ${outcome.direction < 0 ? 'up' : 'down'} to position ${outcome.position} of ${outcome.total}`;
+          break;
+        case 'boundary':
+          message = outcome.direction < 0 ? 'Already at the top' : 'Already at the bottom';
+          break;
+        case 'grouping':
+          message = `Cannot move ${outcome.item.title} outside its section`;
+          break;
+        case 'failed':
+          message = `Could not move ${outcome.item.title}`;
+          break;
+        case 'cancelled':
+          message = 'Reorder cancelled';
+          break;
+      }
+      cancelAnimationFrame(reorderNoticeFrame.current);
+      setReorderNotice('');
+      reorderNoticeFrame.current = requestAnimationFrame(() => setReorderNotice(message));
+    },
   });
 
   const renderMenu = (item: Thread) => (
@@ -393,7 +422,24 @@ export function ShellSidebar({
             placeholder="Search"
             value={search}
             onChange={event => setSearch(event.target.value)}
+            onKeyDown={event => {
+              if (event.key !== 'Escape') return;
+              // Keep the keyup from reaching other Escape handlers (mobile sidebar close).
+              event.stopPropagation();
+              if (search) setSearch('');
+              else event.currentTarget.blur();
+            }}
           />
+          {search.trim().length > 0 && (
+            <button
+              type="button"
+              className="icon-button sidebar-search-clear"
+              aria-label="Clear search"
+              onClick={() => { setSearch(''); searchRef.current?.focus(); }}
+            >
+              <X size={12} />
+            </button>
+          )}
         </div>
         <button
           type="button"
@@ -430,9 +476,12 @@ export function ShellSidebar({
       {/* Persistent live region: announcements must update an existing
           element — mounting a status region is missed by some screen readers. */}
       <div className="sr-only" role="status" aria-atomic="true">
+        {reorderNotice ?? <>
         {loaded && !visibleMatching.length
           ? (search ? (filter === 'all' ? 'No matching threads.' : `No matching ${filter} threads.`) : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.')
+          : search.trim() ? `${visibleMatching.length} matching ${visibleMatching.length === 1 ? 'thread' : 'threads'}`
           : filter === 'all' ? 'Showing all threads' : `Showing ${filter} threads`}
+        </>}
       </div>
       {filter !== 'all' && (
         <div className="sidebar-filter-chip">

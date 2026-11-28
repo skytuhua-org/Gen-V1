@@ -6,6 +6,7 @@ import {artifactSourceContent,openArtifactSourceLink} from './artifact-source';
 import {ArtifactTitle,inputPath,statePath,useTaskAction} from './task-context';
 import {animateTask,MotionRegion,reducedMotion} from './task-motion';
 import {Select} from '../../../packages/ui-shell/Select';
+import {useSecureArtifact} from './secure-artifact-context';
 import './interaction-tools.css';
 
 const object=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
@@ -82,19 +83,75 @@ function FieldControl({field,value,label,onChange,invalid=false,range=false}:{fi
  if(field.type==='range'&&range)return <div className="parameter-range"><input type="range" aria-label={field.label} min={field.min} max={field.max} step={field.step??'any'} value={typeof value==='number'?value:typeof value==='string'&&value!==''&&Number.isFinite(Number(value))?Number(value):field.min} disabled={field.readOnly||value==null||value===''} aria-valuetext={value==null||value===''?'Not set':String(value)} onChange={event=>onChange(event.target.valueAsNumber)}/>{input}</div>;
  return input;
 }
+type EditableChange={rowId:string;columnId:string;value:InteractionScalar;previous:unknown;error?:string};
+function editableReviewKey(scope:string,changes:readonly EditableChange[]){
+ return JSON.stringify([scope,changes.map(({rowId,columnId,value,previous,error})=>
+  JSON.stringify([rowId,columnId,value,previous,error??null])).sort()]);
+}
+
 export function EditableTable({element:{props}}:ComponentRenderProps){
- const outerTitle=useContext(ArtifactTitle),p=INTERACTION_SCHEMAS.EditableTable.parse(props),store=useStateStore(),action=useTaskAction(),raw=store.get(inputPath(p.dataBinding)),[error,setError]=useState(''),[checked,setChecked]=useState(false);
+ const outerTitle=useContext(ArtifactTitle),p=INTERACTION_SCHEMAS.EditableTable.parse(props),store=useStateStore(),action=useTaskAction();
+ const raw=store.get(inputPath(p.dataBinding)),artifact=useSecureArtifact();
+ const [error,setError]=useState(''),[checked,setChecked]=useState(false),[receipt,setReceipt]=useState<string|null>(null);
  const parsed=useMemo(()=>boundedInteractionData('EditableTable',raw)?INTERACTION_DATA_SCHEMAS.EditableTable.safeParse(raw):null,[raw]);
- if(!parsed?.success)return <p className="interaction-unavailable" role="status">Editable records are unavailable from the connected source.</p>;
- const data=parsed.data,edits=object(object(store.get(statePath(p.stateKey))).edits);
+ const data=parsed?.success?parsed.data:undefined,edits=object(object(store.get(statePath(p.stateKey))).edits);
  const value=(rowId:string,column:InteractionField,source:unknown)=>column.readOnly?source:own(object(edits[rowId]),column.id,source);
- const changes=data.rows.flatMap(row=>data.columns.filter(column=>!column.readOnly&&Object.hasOwn(object(edits[row.id]),column.id)).flatMap(column=>{const typed=typedInteractionValue(column,object(edits[row.id])[column.id]);return typed.error||!Object.is(typed.value,row.values[column.id]??null)?[{rowId:row.id,columnId:column.id,value:typed.value,error:typed.error}]:[];}));
- const update=(rowId:string,columnId:string,next:InteractionScalar)=>{const latest=object(store.get(statePath(p.stateKey))),rows=object(latest.edits);store.set(statePath(p.stateKey),{...latest,edits:{...rows,[rowId]:{...object(rows[rowId]),[columnId]:next}}});setError('');};
- const submit=async()=>{setChecked(true);const latest=object(object(store.get(statePath(p.stateKey))).edits),result:{rowId:string;columnId:string;value:InteractionScalar}[]=[];for(const row of data.rows)for(const column of data.columns){if(column.readOnly)continue;const edited=object(latest[row.id]),current=own(edited,column.id,row.values[column.id]??null),typed=typedInteractionValue(column,current);if(typed.error){setError(`${row.label??row.id} · ${column.label}: ${typed.error}`);return;}if(Object.hasOwn(edited,column.id)&&!Object.is(typed.value,row.values[column.id]??null))result.push({rowId:row.id,columnId:column.id,value:typed.value});}setError('');if(p.actionId)await action.run(p.actionId,{changes:result});};
+ const changes=data?.rows.flatMap(row=>data.columns.filter(column=>!column.readOnly&&Object.hasOwn(object(edits[row.id]),column.id)).flatMap(column=>{
+  const typed=typedInteractionValue(column,object(edits[row.id])[column.id]),previous=row.values[column.id]??null;
+  return typed.error||!Object.is(typed.value,previous)?[{rowId:row.id,columnId:column.id,value:typed.value,previous,error:typed.error}]:[];
+ }))??[];
+ const scope=JSON.stringify([artifact?.threadId,artifact?.artifactId,artifact?.revision,p.dataBinding,p.stateKey,p.actionId]);
+ const changeKey=editableReviewKey(scope,changes),currentKey=useRef(changeKey),reviewGeneration=useRef(0);
+ useLayoutEffect(()=>{
+  if(currentKey.current===changeKey)return;
+  currentKey.current=changeKey;
+  reviewGeneration.current++;
+  setReceipt(null);
+ },[changeKey]);
+ if(!data)return <p className="interaction-unavailable" role="status">Editable records are unavailable from the connected source.</p>;
+ const acknowledged=receipt===changeKey&&changes.length>0;
+ const unavailable=action.busy||!changes.length||acknowledged;
+ const label=p.actionLabel??'Review changes';
+ const actionLabel=action.busy?'Sending…':acknowledged?'Review sent':label;
+
+ const update=(rowId:string,columnId:string,next:InteractionScalar)=>{
+  reviewGeneration.current++;
+  setReceipt(null);
+  const latest=object(store.get(statePath(p.stateKey))),rows=object(latest.edits);
+  store.set(statePath(p.stateKey),{...latest,edits:{...rows,[rowId]:{...object(rows[rowId]),[columnId]:next}}});
+  setError('');
+ };
+ const submit=async()=>{
+  if(!p.actionId||unavailable)return;
+  setChecked(true);
+  const latest=object(object(store.get(statePath(p.stateKey))).edits),result:EditableChange[]=[];
+  for(const row of data.rows)for(const column of data.columns){
+   if(column.readOnly)continue;
+   const edited=object(latest[row.id]),previous=row.values[column.id]??null;
+   const typed=typedInteractionValue(column,own(edited,column.id,previous));
+   if(typed.error){setError(`${row.label??row.id} · ${column.label}: ${typed.error}`);return;}
+   if(Object.hasOwn(edited,column.id)&&!Object.is(typed.value,previous)){
+    result.push({rowId:row.id,columnId:column.id,value:typed.value,previous});
+   }
+  }
+  setError('');
+  if(!result.length)return;
+  const key=editableReviewKey(scope,result),generation=reviewGeneration.current;
+  const accepted=await action.run(p.actionId,{changes:result.map(({rowId,columnId,value})=>({rowId,columnId,value}))});
+  if(accepted&&reviewGeneration.current===generation&&currentKey.current===key)setReceipt(key);
+ };
  return <section className="interaction-tools interaction-table editable-table" aria-label={data.title??'Editable records'}>{data.title&&data.title!==outerTitle&&<h3 className="editable-table-title">{data.title}</h3>}
   <div className="editable-table-scroll" tabIndex={0} aria-label="Editable records grid"><table><caption className="sr-only">Editable records</caption><thead><tr><th scope="col">Record</th>{data.columns.map(column=><th key={column.id} scope="col" data-field-type={column.type} data-readonly={column.readOnly||undefined}>{column.label}{column.readOnly&&<small>Read only</small>}{column.required&&<span className="sr-only">Required</span>}</th>)}</tr></thead><tbody>{data.rows.map(row=><tr key={row.id}><th scope="row">{row.label??row.id}</th>{data.columns.map(column=>{const source=row.values[column.id]??null,current=value(row.id,column,source),typed=typedInteractionValue(column,current),invalid=checked&&Boolean(typed.error),edited=!column.readOnly&&Object.hasOwn(object(edits[row.id]),column.id)&&(Boolean(typed.error)||!Object.is(typed.value,source));return <td key={column.id} data-label={column.label} data-field-type={column.type} data-readonly={column.readOnly||undefined} className={edited?'is-edited':''}>{column.readOnly?<span className="editable-readonly">{showField(column,current)}</span>:<><FieldControl field={column} label={`${row.label??row.id} · ${column.label}`} value={current} invalid={invalid} onChange={next=>update(row.id,column.id,next)}/>{edited&&<small className="editable-original">Was {showField(column,source)}</small>}</>}</td>;})}</tr>)}</tbody></table></div>
   {!data.rows.length&&<p className="interaction-note">No records supplied.</p>}
-  <div className="interaction-footer"><span className="interaction-note">{`${changes.length} ${changes.length===1?'cell':'cells'} changed`}</span>{p.actionId&&<button type="button" className="primary" disabled={action.busy||!changes.length} onClick={()=>void submit()}>{action.busy?'Sending…':p.actionLabel??'Review changes'}</button>}</div>
+  <div className="interaction-footer">
+   <span className="interaction-note" role="status">{acknowledged
+    ?`${changes.length} ${changes.length===1?'change':'changes'} sent for review`
+    :`${changes.length} ${changes.length===1?'cell':'cells'} changed`}</span>
+   {p.actionId&&<button type="button" className="primary editable-review-action" aria-disabled={unavailable||undefined}
+    aria-busy={action.busy||undefined} aria-label={actionLabel} onClick={()=>void submit()}>
+    {[...new Set([label,'Sending…','Review sent'])].map(text=><span key={text} data-active={text===actionLabel||undefined} aria-hidden="true">{text}</span>)}
+   </button>}
+  </div>
   {(error||action.error)&&<p className="error-text" role="status">{error||action.error}</p>}<Source text={data.source}/></section>;
 }
 export function ParameterControls({element:{props}}:ComponentRenderProps){

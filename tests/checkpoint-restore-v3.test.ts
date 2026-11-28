@@ -436,3 +436,15 @@ it("uses three exterior lines around each checkpoint diff hunk and joins meeting
   expect(joined.match(/^@@[^\n]+/gm)).toEqual(["@@ -2,14 +2,14 @@"]);
   expect(joined).toContain("+changed 12\n line 13\n line 14\n line 15\n");
 });
+
+it("reports a checkpoint preview as unavailable for changed bytes outside UTF-8", () => {
+  const before = Buffer.from("café\n", "latin1"), after = Buffer.from("cafè\n", "latin1");
+  expect(before.equals(after)).toBe(false);
+  expect(unifiedDiff("legacy.txt", before, after)).toEqual({
+    diff: "Text preview unavailable for non-UTF-8 file legacy.txt.", truncated: true,
+  });
+  expect(unifiedDiff("legacy.txt", before, Buffer.from(before))).toEqual({ diff: null, truncated: false });
+  expect(unifiedDiff("utf8.txt", Buffer.from("caf�\n"), Buffer.from("café\n"))).toMatchObject({
+    diff: expect.stringContaining("-caf�\n+café"), truncated: false,
+  });
+});

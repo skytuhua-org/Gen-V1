@@ -114,3 +114,17 @@ Source checked at `main@20da5f2ef7830fbcdee419c3e5f8c8b9cfcc5645`. Locators refe
 | `15:L385` | 385 | Historical or repeated evidence | #1959, #1960, #1963 | Supporting benchmark inventory. Keep exact query/poll measurement under existing scan, stream or catalog workload heads. |
 | `15:L386` | 386 | Historical or repeated evidence | #1959, #1960, #1963 | Supporting benchmark inventory. Keep exact query/poll measurement under existing scan, stream or catalog workload heads. |
 
+
+## Hermes custody and reachability check, 2026-11-28 UTC
+
+The Linux checkout at `50ee8a36fc20c9e7e547c593bfdf3da8954f74ea` retained the upstream Hermes pin `c627ec84664d43e0b18b95d9d86d8963747d56c7`. Source-custody checks used Python 3.14.10 and the repository's hashed Hermes requirements. Python 3.12 selected an artifact outside the lock and the installation stopped at hash validation. The Python 3.14 install honored the existing lock.
+
+| Scoped verification | Observed result | Disposition |
+| --- | --- | --- |
+| `python tests/hermes_source_contract.py -v` | 7 passed. Official blob IDs and SHA-256 values matched, and the original ACP parser, session retirement, storage diagnostics, learning entry point, and fuzzy-patching helper executed. | Verified retained source and the #1861 session-database path. |
+| `pnpm exec vitest run tests/hermes-runtime.test.ts tests/project-memory-maintenance-host.test.ts tests/hermes-desktop-assets.test.ts` | 104 passed. Coverage includes fake-runtime lifecycle, project-memory maintenance and desktop dependency and source inventory. | Keep #2198 throughput and #2307 managed-maintenance acceptance with their existing owners. |
+| `python -I -S -B tests/hermes_atomic_controls.py -v` | 4 passed. Failure during a protection-state write preserved the existing state and legacy metrics retained their expected import behavior. | Verified existing ordinary wrapper behavior. |
+| `python -I -S -B tests/hermes_source_worker.py -v` | 44 passed, 1 failed. The approved-write fixture expected the original integration callback to report `applied` and received `failed`. The repository's companion integration lock includes Windows-only wheels and could not be installed on Linux. | Carry the callback result forward as an unresolved acceptance check. Recheck with the locked integration environment on Windows before classifying the result as a product defect or a fixture limitation. |
+| `pnpm exec vitest run tests/hermes-host.test.ts tests/hermes-service.test.ts` within the broader baseline run | Eleven host/service cases stopped at the Linux directory guard. This executor does not supply the guarded child-process setup required by those paths. | Retain guarded integration and Windows timeout/reaping acceptance as open. |
+
+This check exercised synthetic data and repository fixtures. Optional vendored surfaces still require a supported app call path before any change to dependency admission, and native timeout/reaping needs a Windows receipt. The upstream files, shipped authority and integration defaults are unchanged by this evidence update. [#1977](https://github.com/skytuhua-org/Gen-V1/issues/1977)

@@ -1,5 +1,5 @@
 import {afterEach,expect,it} from 'vitest';
-import {link,mkdir,mkdtemp,readFile,readdir,rm,symlink,writeFile} from 'node:fs/promises';
+import {link,mkdir,mkdtemp,readFile,readdir,rm,symlink,utimes,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {IntegrationManager,type IntegrationManagerOptions} from '../packages/integrations/index.ts';
@@ -76,6 +76,16 @@ it('bounds staged evaluation configuration lifetime across success failure and r
  const unowned=join(dataRoot,'integrations','evaluations','unowned');await mkdir(unowned,{recursive:true});await writeFile(join(unowned,'keep.json'),'keep',{flag:'wx'});
  await manager.releaseOwner(scope);await mkdir(staged,{recursive:true});await writeFile(join(staged,'abandoned.json'),'{}',{flag:'wx'});
  await manager.listTools('promptfoo',scope);expect(await names()).toEqual([]);expect(await readFile(join(unowned,'keep.json'),'utf8')).toBe('keep');
+},90000);
+it('sweeps only expired key-shaped abandoned evaluation staging',async()=>{
+ const {manager,dataRoot}=await setup(),root=join(dataRoot,'integrations','evaluations');
+ const expired=join(root,'a'.repeat(24)),empty=join(root,'b'.repeat(24)),fresh=join(root,'c'.repeat(24)),foreign=join(root,'d'.repeat(24)),unowned=join(root,'unowned');
+ for(const directory of [expired,empty,fresh,join(foreign,'nested'),unowned])await mkdir(directory,{recursive:true});
+ await writeFile(join(expired,'e'.repeat(24)+'.json'),'{}');await writeFile(join(fresh,'f'.repeat(24)+'.json'),'{}');await writeFile(join(unowned,'keep.json'),'{}');
+ const oldTime=new Date(Date.now()-16*60*1000);await utimes(join(expired,'e'.repeat(24)+'.json'),oldTime,oldTime);await utimes(join(unowned,'keep.json'),oldTime,oldTime);
+ const exists=async(path:string)=>await readdir(path).then(()=>true,(error:NodeJS.ErrnoException)=>{if(error.code==='ENOENT')return false;throw error;});
+ await manager.listTools('promptfoo',scope);
+ expect(await exists(expired)).toBe(false);expect(await exists(empty)).toBe(false);expect(await exists(fresh)).toBe(true);expect(await exists(foreign)).toBe(true);expect(await readFile(join(unowned,'keep.json'),'utf8')).toBe('{}');
 },90000);
 it('builds a real Graphify code graph, queries its stdio server and exports GraphML without a model',async()=>{
  const {manager,completions,dataRoot}=await setup();await writeFile(join(dataRoot,'sample.py'),'def add(first, second):\n    return first + second\n\ndef run():\n    return add(1, 2)\n');

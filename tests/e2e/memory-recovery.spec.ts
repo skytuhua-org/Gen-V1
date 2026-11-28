@@ -296,3 +296,46 @@ test('busy copy names the in-flight action for save, delete and add', async ({ p
   await expect(page.getByRole('button', { name: 'Add note', exact: true })).toBeEnabled();
   await expect(page.locator('.task-memory [role=status].error-text')).toContainText('Synthetic save failed.');
 });
+
+test('editing either field clears a failed save and a later failure is still announced', async ({page}) => {
+  const commands = await mount(page, {notes: []}, async route => {
+    await route.fulfill({status:503,json:{error:{code:'SYNTHETIC_FAILURE',message:'Synthetic note save failed.'}}});
+  });
+  await page.getByRole('button',{name:'Add memory note'}).click();
+  const key = page.getByRole('textbox',{name:'Note key',exact:true});
+  const content = page.getByRole('textbox',{name:'New thread note',exact:true});
+  const save = page.getByRole('button',{name:'Add note',exact:true});
+  const error = page.getByRole('status').filter({hasText:'Synthetic note save failed.'});
+  await key.fill('initial');
+  await content.fill('Initial note.');
+  await save.click();
+  await expect(error).toBeVisible();
+  await key.fill('corrected');
+  await expect(error).toHaveCount(0);
+  await save.click();
+  await expect(error).toBeVisible();
+  await content.fill('Corrected note.');
+  await expect(error).toHaveCount(0);
+  expect(commands).toHaveLength(2);
+});
+
+test('a successful edit clears the preceding note draft journal error', async ({page}) => {
+  await mount(page);
+  await expect(editor(page)).toBeEnabled();
+  await page.evaluate(() => {
+    const transaction = IDBDatabase.prototype.transaction;
+    IDBDatabase.prototype.transaction = function (store, mode, options) {
+      if (mode === 'readwrite' && store === 'entries') {
+        IDBDatabase.prototype.transaction = transaction;
+        throw new DOMException('Synthetic note journal write failure');
+      }
+      return transaction.call(this,store,mode,options);
+    };
+  });
+  const error = page.getByRole('status').filter({hasText:'Draft recovery could not be saved.'});
+  await editor(page).fill('Unpersisted edit.');
+  await expect(error).toBeVisible();
+  await editor(page).fill('Persisted edit.');
+  await expect(error).toHaveCount(0);
+  await page.evaluate(() => window.memoryFixture.flush());
+});
