@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { buildServer, buildWidgetServer, type MountRegistry } from '../apps/server/server.ts';
+import { configureHostCapabilityFlags } from '../packages/core/capability-flags.ts';
 import { Service, type ServiceOptions } from '../packages/core/service.ts';
 import { Store, digest } from '../packages/storage/store.ts';
 import type { ArtifactRecord, DataRecord, HostCommand, Operation, RuntimeAdapter, RuntimeCallbacks, RunContext, Snapshot, StartRun, SurfaceSpec, ToolCall } from '../packages/contracts/index.ts';
@@ -161,19 +162,38 @@ export class HostFixture {
   widgets!: Awaited<ReturnType<typeof buildWidgetServer>>;
   readonly commands: HostCommand[] = [];
   readonly generations: ContractRuntime[] = [];
+  readonly typedChildStarts: Array<{ workId: string; ctx: RunContext; inputId: string; grants: Array<{ id: string; writable: boolean }> }> = [];
   readonly closeStages: Array<{ phase: string; generation: number; startedAt: string; startedMs: number; finishedAt?: string; elapsedMs?: number; status: 'pending' | 'succeeded' | 'failed'; sockets?: number }> = [];
   beforeCommand?: (command: HostCommand) => Promise<void>;
   private closing?: Promise<void>;
   private readonly effectOptions: { toolEffectFlags?: ServiceOptions['toolEffectFlags']; toolEffectAuthenticator?: ReturnType<typeof fixtureEffectAuthenticator> };
-  constructor(readonly folder: string, readonly sourceFile: string, readonly toolEffectFlags?: ServiceOptions['toolEffectFlags']) {
+  constructor(readonly folder: string, readonly sourceFile: string, readonly toolEffectFlags?: ServiceOptions['toolEffectFlags'], private readonly scriptedTypedChild = false) {
     this.effectOptions = { toolEffectFlags, ...(toolEffectFlags?.['audit.effectsV1'] || toolEffectFlags?.['security.authorityV1']
       ? { toolEffectAuthenticator: fixtureEffectAuthenticator() } : {}) };
   }
+  private readonly typedChildFactory: NonNullable<ServiceOptions['agentWorkRuntimeFactory']> = (work, spec) => {
+    if (work.role !== 'PLAN_READ' || spec.allowSpawn || spec.grants.length !== 1 || spec.grants.some(grant => grant.writable))
+      throw new Error('The scripted host fixture accepts one read-only PLAN_READ child');
+    return {
+      supportsLiveSteer: false,
+      send: async input => {
+        if (input.kind !== 'START' || this.typedChildStarts.length !== 0)
+          throw new Error('The scripted host fixture accepts only one child START');
+        this.typedChildStarts.push({ workId: work.workId, ctx: spec.ctx(), inputId: input.inputId,
+          grants: spec.grants.map(({ id, writable }) => ({ id, writable })) });
+      },
+      async cancel() {},
+      async dispose() {},
+    };
+  };
   async start() {
     this.store = new Store(join(this.folder, 'storage'));
     this.closing = undefined;
     this.runtime = new ContractRuntime(this.folder); this.generations.push(this.runtime);
-    this.service = new Service(this.store, this.runtime, this.effectOptions); await this.service.recover();
+    this.service = new Service(this.store, this.runtime, {
+      ...this.effectOptions,
+      ...(this.scriptedTypedChild ? { agentWorkRuntimeFactory: this.typedChildFactory } : {}),
+    }); await this.service.recover();
     const mounts: MountRegistry = new Map();
     this.host = await buildServer(this.service, { port: 4337, widgetPort: 4338, mounts, dev: false });
     // Browsers may open a connection before they have a request to send.
@@ -237,21 +257,28 @@ export class HostFixture {
   artifact(kind: 'structured' | 'widget'): ArtifactRecord { const item = this.snapshot().artifacts.find(value => value.kind === kind); if (!item) throw new Error(`Missing ${kind} artifact`); return item; }
 }
 
-export const test = base.extend<{ host: HostFixture; toolEffectFlags: ServiceOptions['toolEffectFlags'] }>({
+export const test = base.extend<{ host: HostFixture; toolEffectFlags: ServiceOptions['toolEffectFlags']; scriptedTypedChild: boolean }>({
   toolEffectFlags: [undefined, { option: true }],
-  host: async ({ toolEffectFlags }, use, info) => {
+  scriptedTypedChild: [false, { option: true }],
+  host: async ({ toolEffectFlags, scriptedTypedChild }, use, info) => {
     await mkdir(info.outputDir, { recursive: true });
     // Keep native guard and SQLite paths below Windows path limits.
     const folder = await mkdtemp(join(tmpdir(), 'gen-host-'));
     const sourceFile = join(folder, 'evidence-ledger.md'); await writeFile(sourceFile, BEFORE, { flag: 'wx' });
-    const host = new HostFixture(folder, sourceFile, toolEffectFlags); await host.start();
-    try { await use(host); } finally {
-      const observations = { fixture: FIXTURE_LABEL, folder, ports: [4337, 4338], commands: host.commands, runtimeDeliveries: host.generations.map(runtime => runtime.deliveries), runtimeStages: host.generations.map(runtime => runtime.observations), closeStages: host.closeStages, snapshot: host.snapshot() };
-      const closing = host.close();
-      await writeFile(info.outputPath('host-observations.json'), JSON.stringify(observations, null, 2));
-      try { await closing; }
-      finally { await writeFile(info.outputPath('host-observations.json'), JSON.stringify(observations, null, 2)); }
-    }
+    const host = new HostFixture(folder, sourceFile, toolEffectFlags, scriptedTypedChild);
+    // Scope trusted configuration to this test worker and restore it after the
+    // fixture closes, including across its deliberate Service restart.
+    const releaseCapabilities = scriptedTypedChild ? configureHostCapabilityFlags({ 'agents.workV1': true }) : undefined;
+    try {
+      await host.start();
+      try { await use(host); } finally {
+        const observations = { fixture: FIXTURE_LABEL, folder, ports: [4337, 4338], commands: host.commands, runtimeDeliveries: host.generations.map(runtime => runtime.deliveries), runtimeStages: host.generations.map(runtime => runtime.observations), closeStages: host.closeStages, snapshot: host.snapshot() };
+        const closing = host.close();
+        await writeFile(info.outputPath('host-observations.json'), JSON.stringify(observations, null, 2));
+        try { await closing; }
+        finally { await writeFile(info.outputPath('host-observations.json'), JSON.stringify(observations, null, 2)); }
+      }
+    } finally { releaseCapabilities?.(); }
   },
 });
 export { expect };
