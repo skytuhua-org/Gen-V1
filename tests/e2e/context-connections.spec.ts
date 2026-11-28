@@ -3,7 +3,7 @@ import { serveTaskFixture, taskFixture } from './task-interface-fixture';
 import type { HostCommand } from '../../packages/contracts';
 import {SUBSCRIPTION_CONNECTIONS} from '../../packages/contracts/connections';
 
-async function openNotes(page:Page){await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();await page.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name:'Notes',exact:true}).click();}
+async function openNotes(page:Page){await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();await page.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:'Notes',exact:true}).click();}
 
 const simple = { root: 'text', elements: { text: { type: 'Text', props: { text: 'Review the supplied brief.' } } } };
 test('thread note drafts survive reload and accepted notes can be forgotten', async ({ page }) => {
@@ -75,7 +75,7 @@ test.describe('absolute local clock format (T07/R10)', () => {
     const snapshot=taskFixture(simple);snapshot.data.push({id:'clock-output',threadId:'task-thread',revision:1,value:{stdout:'Clock format fixture',exitCode:0},provenance:'Synthetic recorded output',createdAt:'2026-11-16T13:05:00.000Z'});
     await serveTaskFixture(page,snapshot);await page.goto('/');
     await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();
-    const panel=page.getByRole('region',{name:'Workspace panel',exact:true});await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name:'Output',exact:true}).click();
+    const panel=page.getByRole('region',{name:'Workspace panel',exact:true});await panel.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:'Output',exact:true}).click();
     const checked=panel.locator('.executor-record>header>small');await expect(checked).toHaveText('1:05 PM');
     const setFormat=async(label:string)=>{
       await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('button',{name:'General',exact:true}).click();
