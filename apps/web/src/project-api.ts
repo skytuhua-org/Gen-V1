@@ -26,7 +26,7 @@ export function useProjectContext(projectId?:string,threadId?:string,workspaceId
   const controller=new AbortController();pending.current=controller;
   setState(previous=>({owner,context:previous.owner===owner?previous.context:null,loading:true,error:''}));
   try{const next=await authenticated(()=>fetch(`/api/projects/${encodeURIComponent(projectId)}/context${threadId?'?threadId='+encodeURIComponent(threadId):''}`,{credentials:'same-origin',cache:'no-store',signal:controller.signal})).then(read<ProjectContext>);if(captured!==generation.current)return;const malformed=!isProjectContext(next);setState({owner,context:malformed?null:next,loading:false,error:malformed?'The project context response was malformed.':''});}
-  catch(reason){if(captured===generation.current&&!controller.signal.aborted)setState({owner,context:null,loading:false,error:reason instanceof Error?reason.message:'Project context could not be loaded.'});}
+  catch(reason){if(captured===generation.current&&!controller.signal.aborted)setState({owner,context:null,loading:false,error:reason instanceof Error&&(reason as {code?:unknown}).code==='PROJECT_NOT_CONNECTED'?'':reason instanceof Error?reason.message:'Project context could not be loaded.'});}
   finally{if(pending.current===controller)pending.current=null;}
  },[projectId,threadId,owner]);
  useLayoutEffect(()=>{activeLoad.current=load;},[load]);
