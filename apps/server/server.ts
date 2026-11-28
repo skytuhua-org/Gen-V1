@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, {type FastifyReply} from "fastify";
 import type { Socket } from "node:net";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile, stat, readdir, lstat } from "node:fs/promises";
@@ -36,7 +36,7 @@ import {registerConversationReadRoutes} from './conversation-read-routes.ts';
 import {registerToolEffectReadRoutes} from './tool-effect-read-routes.ts';
 import {DevicePairingHost, registerDevicePairingRoutes} from './device-pairing.ts';
 import {ReadSyncHost} from '../../packages/core/read-sync.ts';
-import {RequestRateLimit} from './request-rate-limit.ts';
+import {RequestRateLimit, type DesktopRequestBudget} from './request-rate-limit.ts';
 import {registerProjectMemoryRoutes} from './project-memory-routes.ts';
 import {registerOperationProjectTrustRoutes} from './operation-project-trust-routes.ts';
 import {registerOperationExecutionReviewRoutes} from './operation-execution-review-routes.ts';
@@ -56,6 +56,17 @@ export type MountRegistry = Map<string, Mount>;
 export interface ServerOptions { port: number; dev: boolean; widgetPort?: number; mounts?: MountRegistry; plugins?:PluginRegistry; pluginError?:string; admitPluginRequest?:()=>boolean; skillCatalog?:SkillCatalogRepository; agentInventory?:PersonalAgentInventory; launchToken?:string; isolatedExtensions?:IsolatedExtensionHost }
 const commandSchema = z.object({ id: z.string().min(1).max(200).regex(/^[a-zA-Z0-9:_-]+$/), type: z.string().min(1).max(100), threadId: z.string().max(200).optional(), payload: z.record(z.string(), z.unknown()) }).strict();
 const mime = (path: string) => ({ ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".woff2": "font/woff2", ".woff": "font/woff", ".pdf": "application/pdf", ".json": "application/json", ".txt": "text/plain", ".md": "text/plain", ".csv": "text/csv" })[extname(path).toLowerCase()] ?? "application/octet-stream";
+// Public assets need launch and reload bursts. Native/provider work gets a smaller per-session budget.
+const desktopLimits = {
+  models: 30, 'account-status': 30, 'account-signout': 12, preview: 120,
+  'widget-worker': 600, 'plugin-runtime': 600, static: 600,
+} satisfies Record<DesktopRequestBudget, number>;
+
+function tooManyRequests(reply: FastifyReply, retryAfter: number) {
+  return reply.header('Retry-After', retryAfter).header('Cache-Control', 'no-store').code(429)
+    .send({ error: { code: 'RATE_LIMITED', message: 'Too many requests. Wait before retrying.' } });
+}
+
 // Build output resolves beside this module; the launch directory is not trusted input.
 const assets = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -79,7 +90,7 @@ export async function buildServer(service: Service, options: ServerOptions) {
       if (closing && remaining === 0) socket.end();
     });
   });
-  const sessions = new Map<string, { csrf: string; expiresAt: number }>();
+  const sessions = new Map<string, { csrf: string; expiresAt: number; budgetKey: string }>();
   let snapshotCache: { seq: number; json: string } | undefined;
   const credentials=new SessionCredentials(service.store);
   app.addHook('onClose',async()=>{snapshotCache=undefined;return credentials.dispose();});
@@ -96,24 +107,45 @@ export async function buildServer(service: Service, options: ServerOptions) {
     const message = known ? error.message : error instanceof z.ZodError ? "Command envelope is invalid" : error instanceof URIError ? "The request path is invalid" : code === "RESOURCE_LIMIT" ? "The request exceeds its byte limit" : "The host could not complete this request";
     reply.code(status).send({ error: { code, message, ...(known && error.details ? { details: error.details } : {}) } });
   });
-  const requestRateLimit = new RequestRateLimit(60_000);
+  const desktopBudgets = new Map(Object.keys(desktopLimits).map(group => [group, new RequestRateLimit(60_000)]));
+  const rejectedRequests = new RequestRateLimit(60_000);
   app.addHook("onRequest", async (request, reply) => {
     reply.header("X-Content-Type-Options", "nosniff").header("Referrer-Policy", "no-referrer");
-    const path = request.url.split("?")[0] ?? request.url;
-    const sensitive = path === "/api/models" || path.startsWith("/api/account-auth") || path.startsWith("/api/device-pairing") || path.startsWith("/api/devices") || path.startsWith("/api/plugins") || /^\/api\/projects\/[^/]+\/(?:previews|intelligence|debug)(?:\/|$)/.test(path);
-    const limit = sensitive ? 30 : path === "/api/bootstrap" ? 1200 : path.startsWith("/api/") ? 300 : 600;
-    if (!requestRateLimit.consume(`${request.ip}:${limit}`, limit)) return reply.code(429).send({ error: { code: "RATE_LIMITED", message: "Too many requests. Wait before retrying." } });
     if(/^\/api\/artifacts\/[^/?]+\/credentials\//.test(request.url))reply.header('Cache-Control','no-store');
     if (!hosts.has(String(request.headers.host))) return reply.code(403).send({ error: { code: "INVALID_HOST", message: "Host is not allowed" } });
     const origin = request.headers.origin;
     if (origin && !origins.has(String(origin))) return reply.code(403).send({ error: { code: "INVALID_ORIGIN", message: "Origin is not allowed" } });
-    if (!request.url.startsWith("/api/") || request.url.split("?")[0] === "/api/bootstrap") return;
+    const group = request.routeOptions.config?.desktopRequestBudget;
+    const budget = group ? desktopBudgets.get(group) : undefined;
+    const socketKey = request.raw.socket.remoteAddress ?? 'unknown';
+    if (!request.url.startsWith("/api/") || request.url.split("?")[0] === "/api/bootstrap") {
+      if (group && budget) {
+        const retry = budget.retryAfter(socketKey, desktopLimits[group]);
+        if (retry !== null) return tooManyRequests(reply, retry);
+      }
+      return;
+    }
+    // The production static fallback can match unknown API URLs. It must not
+    // turn those requests into authenticated desktop-budget work.
+    const protectedGroup = group !== 'static' ? group : undefined;
     const cookie = /(?:^|;\s*)harness_session=([a-f0-9]+)/.exec(request.headers.cookie ?? "")?.[1];
     const session = cookie ? sessions.get(cookie) : undefined;
-    if (!session || session.expiresAt < Date.now()) return reply.code(401).send({ error: { code: "AUTH_REQUIRED", message: "Reconnect to the local host" } });
+    if (!session || session.expiresAt < Date.now()) {
+      const retry = protectedGroup ? rejectedRequests.retryAfter(socketKey, 20) : null;
+      if (retry !== null) return tooManyRequests(reply, retry);
+      return reply.code(401).send({ error: { code: "AUTH_REQUIRED", message: "Reconnect to the local host" } });
+    }
     if (request.method !== "GET" && request.method !== "HEAD") {
       const csrf = Buffer.from(String(request.headers["x-harness-csrf"] ?? "")), expected = Buffer.from(session.csrf);
-      if (csrf.length !== expected.length || !timingSafeEqual(csrf, expected)) return reply.code(403).send({ error: { code: "CSRF_REQUIRED", message: "Refresh the local session before sending commands" } });
+      if (csrf.length !== expected.length || !timingSafeEqual(csrf, expected)) {
+        const retry = protectedGroup ? rejectedRequests.retryAfter(socketKey, 20) : null;
+        if (retry !== null) return tooManyRequests(reply, retry);
+        return reply.code(403).send({ error: { code: "CSRF_REQUIRED", message: "Refresh the local session before sending commands" } });
+      }
+    }
+    if (protectedGroup && budget) {
+      const retry = budget.retryAfter(session.budgetKey, desktopLimits[protectedGroup]);
+      if (retry !== null) return tooManyRequests(reply, retry);
     }
   });
   app.get("/api/bootstrap", async (request, reply) => {
@@ -127,7 +159,7 @@ export async function buildServer(service: Service, options: ServerOptions) {
     }
     const existing = /(?:^|;\s*)harness_session=([a-f0-9]+)/.exec(request.headers.cookie ?? "")?.[1];
     let token = existing, session = token ? sessions.get(token) : undefined;
-    if (!session || session.expiresAt < Date.now()) { token = randomBytes(32).toString("hex"); session = { csrf: randomBytes(32).toString("hex"), expiresAt: Date.now() + 24 * 60 * 60 * 1000 }; sessions.set(token, session); }
+    if (!session || session.expiresAt < Date.now()) { token = randomBytes(32).toString("hex"); session = { csrf: randomBytes(32).toString("hex"), budgetKey: randomUUID(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 }; sessions.set(token, session); }
     if (sessions.size > 1000) {
       for (const [key, entry] of sessions) if (entry.expiresAt < Date.now()) sessions.delete(key);
       while (sessions.size > 1000) sessions.delete(sessions.keys().next().value!);
@@ -286,7 +318,7 @@ export async function buildServer(service: Service, options: ServerOptions) {
       && service.store.all<{ content: string }>('message', id).some(message => message.content.toLocaleLowerCase().includes(query)));
     return { threadIds };
   });
-  app.get("/api/models", async (request, reply) => {
+  app.get("/api/models", { config: { desktopRequestBudget: "models" } }, async (request, reply) => {
     reply.header("Cache-Control", "no-store");
     const { refresh,threadId,providerId,accountId } = request.query as { refresh?: unknown;threadId?:unknown;providerId?:unknown;accountId?:unknown };
     const target=providerId!==undefined||accountId!==undefined?parseAccountAuthTarget({providerId,accountId:accountId===''?null:accountId}):undefined;
@@ -416,12 +448,12 @@ export async function buildServer(service: Service, options: ServerOptions) {
     });
   });
   app.get("/health", async () => ({ ok: true }));
-  app.get(WIDGET_WORKER_PATH, async (_request, reply) => {
+  app.get(WIDGET_WORKER_PATH, { config: { desktopRequestBudget: "widget-worker" } }, async (_request, reply) => {
     reply.header("Content-Security-Policy", WIDGET_WORKER_CSP).header("Cache-Control", "no-cache");
     try { return reply.type("text/javascript; charset=utf-8").send(await readFile(resolve(assets, "dist/widget-runtime/worker.js"))); }
     catch { return reply.code(503).type("text/plain").send("Build the trusted widget runtime with pnpm build:widgets."); }
   });
-  if (!options.dev) app.get("/*", async (request, reply) => {
+  if (!options.dev) app.get("/*", { config: { desktopRequestBudget: "static" } }, async (request, reply) => {
     if (request.url.startsWith("/api/")) throw new HarnessError("NOT_FOUND", "Route not found");
     const root = resolve(assets, "dist/web"); let path = resolve(root, "." + decodeURIComponent(request.url.split("?")[0]));
     if (!inside(root, path)) throw new HarnessError("CAPABILITY_DENIED", "Path is unavailable");

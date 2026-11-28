@@ -5,7 +5,7 @@ import { parseAccountAuthTarget, readAccountAuth, signOutAccount } from '../../p
 
 /** Registered on the existing session/CSRF-protected API. Never accepts secrets. */
 export function registerAccountAuthRoutes(app: FastifyInstance, service: Service) {
-  app.get('/api/account-auth', async (request, reply) => {
+  app.get('/api/account-auth', { config: { desktopRequestBudget: 'account-status' } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const query = request.query as Record<string, unknown>;
     if (!Object.hasOwn(query, 'accountId')) throw new HarnessError('INVALID_INPUT', 'An explicit account target is required.');
@@ -15,7 +15,7 @@ export function registerAccountAuthRoutes(app: FastifyInstance, service: Service
     try {return await readAccountAuth(service.store, target, undefined, controller.signal);}
     finally {request.raw.removeListener('aborted',abort);reply.raw.removeListener('close',disconnected);}
   });
-  app.post('/api/account-auth/signout', { bodyLimit: 2048 }, async (request, reply) => {
+  app.post('/api/account-auth/signout', { bodyLimit: 2048, config: { desktopRequestBudget: 'account-signout' } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store'); const target = parseAccountAuthTarget(request.body);
     await service.cancelComposerPredictions();
     const status = await signOutAccount(service.store, target);
