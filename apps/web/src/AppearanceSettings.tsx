@@ -44,23 +44,36 @@ export const APPEARANCE_FIELDS: readonly { id: string; label: string; terms: str
   { id: 'appearance-motionSpeed', label: 'Motion speed', terms: '0.75 1 1.25 duration' },
 ];
 export interface AppearanceLeaveGuard { dirty: () => boolean; apply: () => Promise<boolean>; discard: () => void; }
-export function AppearanceSettings({ preferences, theme, threads = [], projects: projectMetadata, busy, save, registerLeaveGuard }: { preferences: UiPreferences; theme: Theme; threads?: Pick<Thread, 'projectId' | 'projectName'>[]; projects?: {id: string; name: string}[]; busy: boolean; save: (patch: Partial<UiPreferences>, theme?: Theme) => Promise<boolean>; registerLeaveGuard?: (guard: AppearanceLeaveGuard | null) => void }) {
+export function AppearanceSettings({ preferences, theme, threads = [], projects: projectMetadata, busy, save, registerLeaveGuard }: { preferences: UiPreferences; theme: Theme; threads?: Pick<Thread, 'projectId' | 'projectName'>[]; projects?: {id: string; name: string}[]; busy: boolean; save: (patch: Partial<UiPreferences>, theme?: Theme, onAccepted?: () => void) => Promise<boolean>; registerLeaveGuard?: (guard: AppearanceLeaveGuard | null) => void }) {
   const [draft, setDraft] = useState(preferences), [draftTheme, setDraftTheme] = useState(theme), [preview, setPreview] = useState(false), [error, setError] = useState('');
   const [projectError, setProjectError] = useState('');
+  const [accepted, setAccepted] = useState({ preferences, theme });
   const [numberDrafts,setNumberDrafts]=useState<Partial<Record<'uiFontSize'|'chatFontSize'|'codeFontSize',string>>>({});
   const edited = useRef(new Set<string>());
-  const current = useRef({ preferences, theme }); current.current = { preferences, theme };
+  const current = useRef({ preferences: accepted.preferences, theme: accepted.theme }); current.current = { preferences: accepted.preferences, theme: accepted.theme };
+  const acceptedProps = useRef<{ key: string; theme: Theme } | null>(null);
   useEffect(() => () => { applyAppearance(current.current.preferences); applyTheme(current.current.theme); }, []);
-  // Rebase untouched fields from the latest acknowledged preferences; keep user-edited fields (AUD-08).
-  useEffect(() => { setDraft(value => rebaseAppearanceDraft(value, preferences, edited.current)); if (!edited.current.has('theme')) setDraftTheme(theme); }, [preferences, theme]);
-  const dirty = JSON.stringify(appearancePatch(draft)) !== JSON.stringify(appearancePatch(preferences)) || draftTheme !== theme;
+  // Rebase untouched fields only when acknowledged appearance content actually changes;
+  // getPreferences creates a fresh object each parent render, while a just-accepted save
+  // may still be waiting for its post-save refresh.
+  useEffect(() => {
+    const key = JSON.stringify(appearancePatch(preferences));
+    const unchanged = acceptedProps.current?.key === key && acceptedProps.current.theme === theme;
+    acceptedProps.current = { key, theme };
+    if (unchanged) return;
+    setAccepted({ preferences, theme });
+    setDraft(value => rebaseAppearanceDraft(value, preferences, edited.current));
+    if (!edited.current.has('theme')) setDraftTheme(theme);
+  }, [preferences, theme]);
+  const dirty = JSON.stringify(appearancePatch(draft)) !== JSON.stringify(appearancePatch(accepted.preferences)) || draftTheme !== accepted.theme;
   const accentError = draft.customAccent !== null && (!projectColorSchema.safeParse(draft.customAccent).success ? 'Use a six-digit hex color.' : Math.min(accentContrast(draft.customAccent, '#0F0F0F'), accentContrast(draft.customAccent, '#FFFFFF')) < 3 ? 'Choose a color with at least 3:1 contrast on both light and dark surfaces.' : '');
   const change = (patch: Partial<UiPreferences>) => { for (const key of Object.keys(patch)) edited.current.add(key); const next = { ...draft, ...patch }; setDraft(next); setError(''); if (preview && (!next.customAccent || projectColorSchema.safeParse(next.customAccent).success && Math.min(accentContrast(next.customAccent, '#0F0F0F'), accentContrast(next.customAccent, '#FFFFFF')) >= 3)) applyAppearance(next); };
-  const restore = () => { edited.current.clear(); setDraft(preferences); setDraftTheme(theme); setPreview(false); setError(''); setProjectError(''); applyAppearance(preferences); applyTheme(theme); };
+  const restore = () => { edited.current.clear(); setDraft(accepted.preferences); setDraftTheme(accepted.theme); setPreview(false); setError(''); setProjectError(''); applyAppearance(accepted.preferences); applyTheme(accepted.theme); };
+  const markSaved = () => { edited.current.clear(); setAccepted({ preferences: draft, theme: draftTheme }); setPreview(false); };
   const applyChanges = async () => {
     const patch = editedAppearancePatch(draft, edited.current), themeArg = edited.current.has('theme') ? draftTheme : undefined;
-    const ok = await save(patch, themeArg);
-    if (ok) { edited.current.clear(); setPreview(false); } else setError('Appearance could not be saved. Your changes are ready to retry.');
+    const ok = await save(patch, themeArg, markSaved);
+    if (ok) markSaved(); else setError('Appearance could not be saved. Your changes are ready to retry.');
     return ok;
   };
   const actionsRef = useRef({ dirty, applyChanges, restore }); actionsRef.current = { dirty, applyChanges, restore };
@@ -96,7 +109,7 @@ export function AppearanceSettings({ preferences, theme, threads = [], projects:
       {APPEARANCE_FIELDS.map(field => <AppearanceRow key={field.id} id={field.id} label={field.label} description={field.description}>{controls[field.id]}</AppearanceRow>)}
       {accentError && <p id="appearance-accent-error" role="status" className="error-text appearance-error">{accentError}</p>}
       {error && <p role="status" className="error-text appearance-error">{error}</p>}
-      <div className="appearance-actions"><button type="button" className="quiet" onClick={() => { appearanceKeys.forEach(key => edited.current.add(key)); edited.current.add('theme'); setDraft({ ...preferences, ...appearancePatch(DEFAULT_PREFERENCES) }); setDraftTheme('dark'); setPreview(false); applyAppearance(preferences); applyTheme(theme); }}><RotateCcw size={13}/>Reset appearance</button><span/>{dirty && <span className="appearance-dirty" role="status">Unsaved changes — Apply to keep them</span>}{preview && <span role="status">Preview</span>}<button type="button" className="secondary" disabled={!dirty || Boolean(accentError)} onClick={() => { applyAppearance(draft); applyTheme(draftTheme); setPreview(true); }}>Preview</button><button type="button" className="quiet" disabled={!dirty && !preview} onClick={restore}>Cancel</button><button type="button" className="primary" disabled={!dirty || Boolean(accentError)} onClick={() => void applyChanges()}>Apply</button></div>
+      <div className="appearance-actions"><button type="button" className="quiet" onClick={() => { appearanceKeys.forEach(key => edited.current.add(key)); edited.current.add('theme'); setDraft({ ...preferences, ...appearancePatch(DEFAULT_PREFERENCES) }); setDraftTheme('dark'); setPreview(false); applyAppearance(accepted.preferences); applyTheme(accepted.theme); }}><RotateCcw size={13}/>Reset appearance</button><span/>{dirty && <span className="appearance-dirty" role="status">Unsaved changes — Apply to keep them</span>}{preview && <span role="status">Preview</span>}<button type="button" className="secondary" disabled={!dirty || Boolean(accentError)} onClick={() => { applyAppearance(draft); applyTheme(draftTheme); setPreview(true); }}>Preview</button><button type="button" className="quiet" disabled={!dirty && !preview} onClick={restore}>Cancel</button><button type="button" className="primary" disabled={!dirty || Boolean(accentError)} onClick={() => void applyChanges()}>Apply</button></div>
     </fieldset>
     <section className="settings-card" data-setting-id="harness-project-colors" aria-labelledby="project-colors-heading"><h2 id="project-colors-heading">Project colors</h2>{projectError && <p role="status" className="error-text appearance-error">{projectError}</p>}{projects.length > 0 ? projects.map(project => {
       const key = projectColorKey({ kind: 'local' }, project.id), selected = projectColor({ kind: 'local' }, project.id, preferences.projectColors);

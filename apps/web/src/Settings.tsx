@@ -127,6 +127,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const [leaveRequest, setLeaveRequest] = useState<null | {proceed: () => void}>(null), [applying, setApplying] = useState(false);
   const leaveRequestRef = useRef(leaveRequest); leaveRequestRef.current = leaveRequest;
   const requestLeave = (proceed: () => void) => { if (appearanceGuard.current?.dirty()) setLeaveRequest({ proceed }); else proceed(); };
+  const keepEditing = () => { setLeaveRequest(null); if (section === 'appearance') { setQuery(''); setPendingTarget('harness-personalization'); } };
   // The "Saved" chip only describes the save just performed (issue #1929):
   // it clears on section/search change, on any refresh that did not come
   // from the save itself, and after 4000ms so it never lingers.
@@ -170,10 +171,10 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
     const focusable = [...node.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], summary, [tabindex]')].find(element=>!element.matches(':disabled')&&element.tabIndex>=0&&element.getClientRects().length&&!element.closest('[inert], [hidden]')&&getComputedStyle(element).visibility!=='hidden');
     if (focusable) focusable.focus({preventScroll:true}); else { node.tabIndex = -1; node.focus({preventScroll:true}); }
   }, [pendingTarget, section]);
-  const persist = async (payload: Record<string, unknown>) => {
+  const persist = async (payload: Record<string, unknown>, onAccepted?: () => void) => {
     if (busy) return false;
     setBusy(true); setSaved(false); setError('');
-    try { fromSave.current = true; await persistSettingsChange(() => command('settings.update', payload), guardedRefresh); setSaved(true); return true; }
+    try { fromSave.current = true; await persistSettingsChange(async () => { const result = await command('settings.update', payload); onAccepted?.(); return result; }, guardedRefresh); setSaved(true); return true; }
     catch (cause) {
       if (cause instanceof SettingsRefreshError) { setSaved(true); setError('Saved, but the view could not refresh. Reopen Settings to resync.'); return true; }
       setError(cause instanceof Error ? cause.message : 'Settings could not be saved. Retry your change.'); return false;
@@ -192,7 +193,7 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
   const heading = searching ? `Search results (${rows.length})` : visibleSections.find(([id]) => id === section)?.[1];
   const HeadingIcon = searching ? Search : SECTION_ICONS[section] ?? Settings2;
   const customRows = new Set(['harness-personalization', 'chat-width', 'word-wrap', 'harness-project-colors', 'harness-notification-controls', 'harness-accounts', 'harness-skills', 'harness-integrations', 'harness-keyboard-reference', 'harness-paired-devices', 'browser-start-page', 'app-version', 'agent-file-protection', ...APPEARANCE_FIELDS.map(field => field.id), ...SUBSCRIPTION_CONNECTIONS.map(connection => `provider-${connection.id}`)]);
-  const chooseSection = (id: string, after?: () => void) => { requestLeave(() => { if(id==='providers')setConnectionsOpened(true);setQuery(''); setSection(id); after?.(); }); };
+  const chooseSection = (id: string, after?: () => void) => { if (id === section) { if(id==='providers')setConnectionsOpened(true);setQuery(''); after?.(); return; } requestLeave(() => { if(id==='providers')setConnectionsOpened(true);setQuery(''); setSection(id); after?.(); }); };
   const revealTarget = (item: SupportedSettingRow) => { chooseSection(item.section, () => { if(item.targetId.startsWith('provider-'))setConnectionProvider(item.targetId.slice('provider-'.length)); setPendingTarget(item.targetId); }); };
   const details = (item: SettingsInventoryRow): { description: string; control: ReactNode } => {
     if (item.id === 'thread-notifications') return { description: desktop ? preferenceRows[item.id]!.description : `${preferenceRows[item.id]!.description} Desktop notifications and sounds only work in the Windows app.`, control: <PreferenceControl item={item} preferences={preferences} update={update} busy={busy} disabled={!desktop}/> };
@@ -227,8 +228,8 @@ export function SettingsView({data, draftReferences, modelError, refresh, loadMo
     <main ref={content} className="settings-content" aria-label="Settings content"><div className="settings-page-heading"><span className="settings-heading-icon"><HeadingIcon size={21} aria-hidden="true"/></span><div><h1>{heading}</h1></div><span className="settings-save-state" data-state={busy ? 'saving' : saved ? 'saved' : 'idle'} role="status">{busy ? 'Saving…' : saved ? <><Check size={12}/>Saved</> : null}</span></div>
       {error && <p role="status" className="notice error-text">{error}</p>}
       {connectionsOpened && <div data-setting-id="harness-accounts" hidden={searching||section!=='providers'}><Connections snapshot={data} refresh={guardedRefresh} loadModels={refreshModels} onAuthChanged={notifyAccountAuthChanged} providerId={connectionProvider} onProviderChange={setConnectionProvider}/></div>}
-      {section === 'appearance' && <div data-setting-id="harness-personalization" hidden={searching}><AppearanceSettings preferences={preferences} theme={data.settings.theme} projects={data.projects} busy={busy} save={(patch, theme) => persist({ preferences: patch, ...(theme ? { theme } : {}) })} registerLeaveGuard={guard => { appearanceGuard.current = guard; }}/></div>}
-      <DiscardAppearanceDialog open={!!leaveRequest} applying={applying} onKeep={() => { setLeaveRequest(null); if (section === 'appearance') { setQuery(''); setPendingTarget('harness-personalization'); } }} onDiscard={() => { appearanceGuard.current?.discard(); const proceed = leaveRequest?.proceed; setLeaveRequest(null); proceed?.(); }} onApply={() => { const proceed = leaveRequest?.proceed; setApplying(true); void appearanceGuard.current?.apply().then(ok => { setApplying(false); if (ok) { setLeaveRequest(null); proceed?.(); } }).catch(() => setApplying(false)); }}/>
+      {section === 'appearance' && <div data-setting-id="harness-personalization" hidden={searching}><AppearanceSettings preferences={preferences} theme={data.settings.theme} projects={data.projects} busy={busy} save={(patch, theme, onAccepted) => persist({ preferences: patch, ...(theme ? { theme } : {}) }, onAccepted)} registerLeaveGuard={guard => { appearanceGuard.current = guard; }}/></div>}
+      <DiscardAppearanceDialog open={!!leaveRequest} applying={applying} onKeep={keepEditing} onDiscard={() => { appearanceGuard.current?.discard(); const proceed = leaveRequest?.proceed; setLeaveRequest(null); proceed?.(); }} onApply={() => { const proceed = leaveRequest?.proceed; setApplying(true); void appearanceGuard.current?.apply().then(ok => { setApplying(false); if (ok) { setLeaveRequest(null); proceed?.(); } else keepEditing(); }).catch(() => { setApplying(false); keepEditing(); }); }}/>
       {searching ? <>
         <div className="settings-results">
           {rows.map(item => <button type="button" key={item.id} className="settings-result" onClick={() => revealTarget(item)}><strong>{item.title}</strong><span className="settings-result-section">{item.group} · {item.sectionLabel}</span></button>)}

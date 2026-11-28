@@ -7,15 +7,17 @@ const thread = (id: string): ThreadNavigationRow => ({id, title: 'Archived ' + i
 async function setup(page: Page) {
   const model: ShellSettingsReadModel = {sequence: 7, settings: {theme: 'dark', modelId: 'model-one'}, accounts: [], skills: [], skillProposals: [], learning: {supported: true, status: 'idle', lastReview: null}, projects: [{id: 'project', name: 'Synthetic project'}], resources: [], resourcePage: {total: 0, nextCursor: null}, counts: {threads: 2, archivedThreads: 1, artifacts: 0, resources: 0, uncertainOperations: 0}};
   const commands: HostCommand[] = [];
+  const control: {settingsGate: Promise<void> | null; failSaves: boolean} = {settingsGate: null, failSaves: false};
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url()), path = url.pathname;
     if (path === '/api/bootstrap') return route.fulfill({json: {csrfToken: 'fixture'}});
-    if (path === '/api/shell/settings') return route.fulfill({json: model});
+    if (path === '/api/shell/settings') { if (control.settingsGate) await control.settingsGate; return route.fulfill({json: model}); }
     if (path === '/api/shell/resources') return route.fulfill({json: {sequence: 7, total: 0, items: [], nextCursor: null}});
     if (path === '/api/shell/archive') return route.fulfill({json: {sequence: 7, total: 1, items: [thread('a1')], nextCursor: null}});
     if (path === '/api/models') return route.fulfill({json: {models: [{id: 'model-one', name: 'First model', provider: 'openai'}]}});
     if (path === '/api/commands') {
       const command = route.request().postDataJSON() as HostCommand; commands.push(command);
+      if (command.type === 'settings.update' && control.failSaves) return route.fulfill({status: 503, json: {error: {message: 'Synthetic save failure'}}});
       if (command.type === 'settings.update') model.settings = {...model.settings, ...command.payload};
       return route.fulfill({json: {commandId: command.id, seq: ++model.sequence, result: {}}});
     }
@@ -36,7 +38,7 @@ async function setup(page: Page) {
     await settings.getByRole('switch', {name: 'Code line wrap', exact: true}).click();
     await expect(settings.getByText('Unsaved changes', {exact: false})).toBeVisible();
   };
-  return {model, commands, settings, confirm, nav, makeDirty};
+  return {model, commands, control, settings, confirm, nav, makeDirty};
 }
 
 test.describe('appearance leave guard (#1728)', () => {
@@ -83,6 +85,24 @@ test.describe('appearance leave guard (#1728)', () => {
     await expect(host.settings.getByRole('heading', {level: 1, name: 'Appearance', exact: true})).toBeVisible();
     await expect(host.settings.getByText('Unsaved changes', {exact: false})).toBeVisible();
   });
+  test('failed Apply from the confirm dialog keeps editing and shows the save error', async ({page}) => {
+    const host = await setup(page); await host.makeDirty();
+    host.control.failSaves = true;
+    await host.nav.getByRole('button', {name: 'General', exact: true}).click();
+    await host.confirm.getByRole('button', {name: 'Apply changes', exact: true}).click();
+    await expect(host.confirm).toBeHidden();
+    await expect(host.settings.getByRole('heading', {level: 1, name: 'Appearance', exact: true})).toBeVisible();
+    await expect(host.settings.getByText('Appearance could not be saved. Your changes are ready to retry.', {exact: true})).toBeVisible();
+    await expect(host.settings.getByText('Unsaved changes', {exact: false})).toBeVisible();
+  });
+  test('same-section search reveal is not treated as leaving Appearance', async ({page}) => {
+    const host = await setup(page); await host.makeDirty();
+    await host.settings.getByRole('searchbox', {name: 'Search all settings', exact: true}).fill('Chat width');
+    await host.settings.getByRole('button', {name: /^Chat width/}).click();
+    await expect(host.confirm).toBeHidden();
+    await expect(host.settings.getByRole('combobox', {name: 'Chat width', exact: true})).toBeFocused();
+    await expect(host.settings.getByText('Unsaved changes', {exact: false})).toBeVisible();
+  });
   test('Escape and backdrop on the confirm dialog keep editing', async ({page}) => {
     const host = await setup(page); await host.makeDirty();
     await host.nav.getByRole('button', {name: 'General', exact: true}).click();
@@ -97,6 +117,21 @@ test.describe('appearance leave guard (#1728)', () => {
     await expect(host.settings.getByRole('heading', {level: 1, name: 'Appearance', exact: true})).toBeVisible();
     await expect(host.settings.getByText('Unsaved changes', {exact: false})).toBeVisible();
   });
+  test('an accepted Appearance save does not hold closing during a pending refresh', async ({page}) => {
+    const host = await setup(page); await host.makeDirty();
+    let releaseRefresh!: () => void;
+    host.control.settingsGate = new Promise<void>(resolve => { releaseRefresh = resolve; });
+    await host.settings.getByRole('button', {name: 'Apply', exact: true}).click();
+    try {
+      await expect.poll(() => host.commands.filter(command => command.type === 'settings.update').length).toBe(1);
+      await expect(host.settings.getByText('Unsaved changes', {exact: false})).toBeHidden();
+      await page.keyboard.press('Escape');
+      await expect(host.settings).toBeHidden();
+    } finally {
+      releaseRefresh();
+      host.control.settingsGate = null;
+    }
+  });
   test('closing Settings with unsaved edits asks; Discard closes the dialog', async ({page}) => {
     const host = await setup(page); await host.makeDirty();
     await page.keyboard.press('Escape');
@@ -105,6 +140,19 @@ test.describe('appearance leave guard (#1728)', () => {
     await host.confirm.getByRole('button', {name: 'Discard changes', exact: true}).click();
     await expect(host.confirm).toBeHidden();
     await expect(host.settings).toBeHidden();
+  });
+  test('close button and keyboard section activation are guarded', async ({page}) => {
+    const host = await setup(page); await host.makeDirty();
+    await host.settings.getByRole('button', {name: 'Close dialog', exact: true}).click();
+    await expect(host.confirm).toBeVisible();
+    await host.confirm.getByRole('button', {name: 'Keep editing', exact: true}).click();
+    await expect(host.confirm).toBeHidden();
+    const appearance = host.nav.getByRole('button', {name: 'Appearance', exact: true});
+    await appearance.focus();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await expect(host.confirm).toBeVisible();
+    await expect(host.settings.getByRole('heading', {level: 1, name: 'Appearance', exact: true})).toBeVisible();
   });
   test('clean Appearance navigates and closes without asking', async ({page}) => {
     const host = await setup(page);
