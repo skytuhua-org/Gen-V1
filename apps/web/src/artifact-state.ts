@@ -78,13 +78,17 @@ export function useArtifactState(artifact: ArtifactRecord, record: UserStateReco
     const task = send(baseRevision, store.getSnapshot().values).then(async receipt => {
       revision.current = Math.max(revision.current, baseRevision + 1);
       lane.acknowledgedRevision = revision.current;
-      const newer = await journalReadRecord<PendingState | null>(key);
-      if (newer?.value && newer.value.baseRevision === baseRevision) await journalCompareAndSwap(key, newer.generation, { ...newer.value, baseRevision: revision.current });
+      try {
+        const newer = await journalReadRecord<PendingState | null>(key);
+        if (newer?.value && newer.value.baseRevision === baseRevision) await journalCompareAndSwap(key, newer.generation, { ...newer.value, baseRevision: revision.current });
+      } catch (cause) {
+        if (lane.owner === owner) setStatus(cause instanceof Error ? `Local draft sync failed · ${cause.message}` : 'Local draft sync failed');
+      }
       return receipt;
     });
     lane.action = task;
     try { return await task; } finally { lane.action = null; }
-  }, [flush, lane, revision, store, key]);
+  }, [flush, lane, revision, store, key, owner]);
 
   useEffect(() => {
     let alive = true;

@@ -1,5 +1,7 @@
 import {isTaskHistoryScrollKey} from '../apps/web/src/TaskHistory';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { build } from 'esbuild';
+import { chromium, type Browser, type Page } from '@playwright/test';
 import { CAPABILITIES, SURFACE_LIMITS, validateSurface } from '../packages/ui-catalog';
 import { disclosureData, mapData, relationshipData, tableChangesData } from '../packages/ui-catalog/workflow';
 import { HarnessError } from '../packages/contracts';
@@ -74,4 +76,126 @@ it('does not interrupt bounded-history follow for arrow and caret keys inside co
  expect(isTaskHistoryScrollKey({...event,defaultPrevented:true})).toBe(false);
  expect(isTaskHistoryScrollKey({...event,nativeEvent:{isComposing:true}})).toBe(false);
  expect(isTaskHistoryScrollKey({...event,key:'Enter'})).toBe(false);
+});
+
+
+const choiceFixture = `
+import React, {useState} from 'react';
+import {createRoot} from 'react-dom/client';
+import {StateProvider, useStateStore} from '@json-render/react';
+import {ChoiceValidationProvider, mapActionPayload, useChoiceValidation} from './apps/web/src/task-context';
+import {ChoiceList} from './apps/web/src/task-interface';
+
+function Probe(){
+  const validation = useChoiceValidation();
+  const store = useStateStore();
+  window.choiceValidation = validation;
+  window.stateStore = store;
+  window.optionalChoicePayload = () => mapActionPayload({payloadFromState: {choice: 'optionalChoice'}}, store.getSnapshot().values);
+  window.evaluateChoice = mappedKeys => {
+    const result = validation.validate({mappedKeys});
+    return {valid: result.valid, captures: result.captures};
+  };
+  return null;
+}
+const customChoice = {stateKey: 'delivery', label: 'Choose delivery', required: true, options: [{value: 'download', label: 'Prepare a local export'}], custom: {label: 'Other delivery method'}};
+const optionalChoice = {stateKey: 'optionalChoice', label: 'Optional choice', options: [{value: 'known', label: 'Known option'}]};
+const hiddenChoice = {stateKey: 'requiredChoice', label: 'Required witness', required: true, options: [{value: 'yes', label: 'Include a witness'}]};
+const allDisabledChoice = {stateKey: 'allDisabled', label: 'Unavailable witness', required: true, options: [{value: 'yes', label: 'Include a witness', disabled: true}]};
+function Harness(){
+  const [choiceDisabled, setChoiceDisabled] = useState(true);
+  window.setChoiceDisabled = setChoiceDisabled;
+  const dynamicChoice = {stateKey: 'dynamicChoice', label: 'Dynamic witness', required: true, disabled: choiceDisabled, options: [{value: 'yes', label: 'Include dynamic witness'}]};
+  return <StateProvider initialState={{values: {delivery: 'Typed freeform value', optionalChoice: 'Retired stored selection'}}}><ChoiceValidationProvider><Probe/><ChoiceList element={{props: customChoice}}/><ChoiceList element={{props: optionalChoice}}/><div id="boundary"><ChoiceList element={{props: hiddenChoice}}/></div><div id="dynamic"><ChoiceList element={{props: dynamicChoice}}/></div><ChoiceList element={{props: allDisabledChoice}}/></ChoiceValidationProvider></StateProvider>;
+}
+createRoot(document.getElementById('root')).render(<Harness/>);
+`;
+
+type ChoiceEvaluation = { valid: boolean; captures: Array<{ valueLabel: string; userEditVersion: number }> };
+
+describe('required choice registration capture', () => {
+  let browser: Browser, script: string;
+  beforeAll(async () => {
+    script = (await build({stdin: {contents: choiceFixture, resolveDir: process.cwd(), loader: 'tsx'}, bundle: true, write: false, format: 'iife', platform: 'browser', jsx: 'automatic', loader: {'.css': 'empty'}, define: {'process.env.NODE_ENV': '"production"'}})).outputFiles[0]!.text;
+    browser = await chromium.launch({headless: true, ...(process.env.GEN_TEST_CHROMIUM_EXECUTABLE ? {executablePath: process.env.GEN_TEST_CHROMIUM_EXECUTABLE} : process.platform === 'win32' ? {channel: 'msedge'} : {})});
+  });
+  afterAll(async () => { await browser?.close(); });
+  async function open(): Promise<Page> {
+    const page = await browser.newPage();
+    await page.setContent('<div id="root"></div>');
+    await page.addScriptTag({content: script});
+    await expect.poll(() => page.evaluate('Boolean(window.choiceValidation && window.stateStore)')).toBe(true);
+    return page;
+  }
+  const evaluateChoice = async (page: Page, key: string) => (await page.evaluate(`window.evaluateChoice([${JSON.stringify(key)}])`)) as ChoiceEvaluation;
+
+  it('captures renderer-approved custom labels and only user edit versions', async () => {
+    const page = await open();
+    const initial = await evaluateChoice(page, 'delivery');
+    expect(initial.valid).toBe(true);
+    expect(initial.captures).toHaveLength(1);
+    expect(initial.captures[0].valueLabel).toBe('Other delivery method');
+    expect(initial.captures[0].valueLabel).not.toBe('Typed freeform value');
+    expect(initial.captures[0].userEditVersion).toBe(0);
+    await page.locator('.task-choice-custom-input').fill('Typed replacement');
+    const edited = await evaluateChoice(page, 'delivery');
+    expect(edited.captures[0].userEditVersion).toBe(1);
+    await page.evaluate(`window.stateStore.set('/values/delivery', 'Programmatic replacement')`);
+    const programmatic = await evaluateChoice(page, 'delivery');
+    expect(programmatic.captures[0].userEditVersion).toBe(1);
+    await page.close();
+  });
+
+
+
+  it('keeps a stale optional selection out of its display label without changing the payload', async () => {
+    const page = await open();
+    try {
+      const stale = await evaluateChoice(page, 'optionalChoice');
+      expect(stale.valid).toBe(true);
+      expect(stale.captures).toHaveLength(1);
+      expect(stale.captures[0].valueLabel).toBe('');
+      expect(await page.evaluate('window.optionalChoicePayload()')).toEqual({choice: 'Retired stored selection'});
+      const option = page.getByRole('radio', {name: 'Known option'});
+      expect(await option.evaluate((input: HTMLInputElement) => input.checkValidity())).toBe(true);
+      await option.click();
+      expect((await evaluateChoice(page, 'optionalChoice')).captures[0].valueLabel).toBe('Known option');
+    } finally {
+      await page.close();
+    }
+  });
+
+  it('re-enables an in-place choice when its disabled prop clears', async () => {
+    const page = await open();
+    await expect.poll(() => page.evaluate(`document.querySelector('#dynamic fieldset').disabled`)).toBe(true);
+    await page.evaluate(`window.setChoiceDisabled(false)`);
+    await expect.poll(() => page.evaluate(`document.querySelector('#dynamic fieldset').disabled`)).toBe(false);
+    expect((await evaluateChoice(page, 'dynamicChoice')).valid).toBe(false);
+    await page.getByRole('radio', { name: 'Include dynamic witness' }).click();
+    expect((await evaluateChoice(page, 'dynamicChoice')).valid).toBe(true);
+    await page.close();
+  });
+
+  it('does not require a choice when every option is disabled and no custom entry exists', async () => {
+    const page = await open();
+    expect((await evaluateChoice(page, 'allDisabled')).valid).toBe(true);
+    await page.close();
+  });
+
+  it('excludes inert and aria-hidden required choices until their ancestor is usable', async () => {
+    const page = await open();
+    await page.evaluate(`document.getElementById('boundary').inert = true`);
+    await expect.poll(() => page.evaluate(`document.querySelector('#boundary fieldset').disabled`)).toBe(true);
+    expect(await evaluateChoice(page, 'requiredChoice')).toEqual({valid: true, captures: []});
+    await page.evaluate(`document.getElementById('boundary').inert = false; document.getElementById('boundary').setAttribute('aria-hidden', 'true')`);
+    await expect.poll(() => page.evaluate(`document.querySelector('#boundary fieldset').disabled`)).toBe(true);
+    expect(await evaluateChoice(page, 'requiredChoice')).toEqual({valid: true, captures: []});
+    await page.evaluate(`document.getElementById('boundary').removeAttribute('aria-hidden')`);
+    await expect.poll(() => page.evaluate(`document.querySelector('#boundary fieldset').disabled`)).toBe(false);
+    const active = await evaluateChoice(page, 'requiredChoice');
+    expect(active.valid).toBe(false);
+    expect(active.captures).toEqual([]);
+    await expect.poll(() => page.locator('#boundary .task-choice-error').textContent()).toBe('Pick an option first.');
+    await page.close();
+  });
 });

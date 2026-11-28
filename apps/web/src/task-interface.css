@@ -9,6 +9,7 @@
 .task-choice-copy { min-width:0; width:100%; overflow-wrap:anywhere; }
 .task-choice-copy small { display:block; margin-top:3px; font-size:12px; }
 .task-choice-detail { min-width:0; width:100%; overflow-wrap:anywhere; font-size:12px; color:var(--muted); }
+.task-choice-error { margin:2px 0 0; color:var(--danger); font-size:13px; line-height:1.4; }
 .task-steps { display:flex; flex-direction:column; gap:10px; min-width:0; min-height:0; align-self:start; }
 .task-step-label { display:flex; justify-content:flex-start; flex-wrap:wrap; align-items:center; gap:8px; color:var(--muted); font-size:12px; line-height:1.5; }
 .task-step-label>span { font-size:10px; font-variant-numeric:tabular-nums; }
@@ -58,5 +59,17 @@
 .surface-form:has(>.field:only-of-type)>button[type=submit]:hover { background:var(--accent-soft); }
 .surface-form:has(>.field:only-of-type)>button .form-submit-label { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
 .surface-form:has(>.field:only-of-type)>button .form-submit-icon { display:block; }
-.surface-form:has(>.field:only-of-type)>.error-text { grid-column:1 / -1; }
+.widget-action-trigger { display:inline-flex; align-items:center; justify-content:center; gap:6px; }
+.widget-action-feedback { display:flex; flex-direction:column; align-items:flex-start; gap:3px; margin-top:6px; color:var(--muted); font:400 13px Inter, sans-serif; }
+.surface-action>.widget-action-feedback { flex-basis:100%; }
+.widget-action-error { color:var(--danger); }
+.widget-action-retry.secondary { min-height:0; padding:2px 6px; }
 @media(max-width:700px) { .task-node { padding-left:64px; } .task-node-copy small { font-size:10px; } }
+
+.artifact-flash-live{display:flex;min-inline-size:0}
+.artifact-flash-live:empty{position:absolute}
+.artifact-tools:has(.artifact-flash){flex-shrink:1;min-inline-size:0}
+.artifact-flash{display:inline-flex;align-items:center;gap:5px;min-inline-size:0;max-inline-size:180px;height:23px;padding:0 8px;border-radius:7px;font-size:10px;font-weight:500;white-space:nowrap;overflow:hidden;color:var(--muted);background:var(--hover)}
+.artifact-flash>span{overflow:hidden;text-overflow:ellipsis}
+.artifact-flash.status-success{color:var(--success-fg);background:var(--success-bg)}
+.artifact-flash.status-error{color:var(--danger-fg);background:var(--danger-bg)}

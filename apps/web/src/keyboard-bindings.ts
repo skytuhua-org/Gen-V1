@@ -37,6 +37,7 @@ export const KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
   {id: 'thread-place', label: 'Place a focused thread in the workspace', scope: 'Sidebar', chords: ['Alt+Enter'], handlers: [module('ShellSidebar.tsx')]},
   {id: 'thread-reorder-up', label: 'Move a focused thread up', scope: 'Sidebar', chords: ['Alt+ArrowUp'], handlers: [module('sidebar-reorder.ts')]},
   {id: 'thread-reorder-down', label: 'Move a focused thread down', scope: 'Sidebar', chords: ['Alt+ArrowDown'], handlers: [module('sidebar-reorder.ts')]},
+  {id: 'sidebar-search-clear', label: 'Clear the thread search or leave the empty search field', scope: 'Sidebar', chords: ['Escape'], handlers: [module('ShellSidebar.tsx')]},
   {id: 'thread-drag-cancel', label: 'Cancel a sidebar drag', scope: 'Sidebar', chords: ['Escape'], handlers: [module('sidebar-reorder.ts')]},
   {id: 'settings-next-section', label: 'Next settings section', scope: 'Settings', chords: ['ArrowDown'], handlers: [module('Settings.tsx')]},
   {id: 'settings-previous-section', label: 'Previous settings section', scope: 'Settings', chords: ['ArrowUp'], handlers: [module('Settings.tsx')]},

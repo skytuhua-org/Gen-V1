@@ -1,9 +1,13 @@
+import {ArtifactImage} from './ArtifactImage';
 import {SentenceReveal} from './SentenceReveal';
 import {WindowDocument} from './DocumentWindow';
-import { Children, createContext, lazy, Suspense, useContext, useId, useRef, useState, type ReactNode } from 'react';
+import { Children, createContext, lazy, Suspense, useContext, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useStateStore, type ComponentRegistry, type ComponentRenderProps } from '@json-render/react';
 import { ExternalLink, FileText, Check, AlertTriangle, CornerDownLeft } from 'lucide-react';
 import { Markdown } from './Markdown';
+import { isComposing } from '../../../packages/ui-shell/list-navigation';
+import { readMotionPolicy } from './motion-policy';
+import {splitDiffLines} from './diff-line-kind';
 import { ArtifactTitle, ChoiceList, RelationshipGraph, Status, Steps } from './task-interface';
 export { ArtifactTitle } from './task-interface';
 import type { DocumentPreviewProps, SignaturePadProps } from '../../../packages/ui-catalog/documents';
@@ -27,7 +31,9 @@ const DocumentPreview = lazy(() => import('./DocumentPreview').then(module => ({
 const SignaturePad = lazy(() => import('./SignaturePad').then(module => ({ default: module.SignaturePad })));
 
 export { ArtifactActions } from './task-context';
-import { mapActionPayload, statePath, useTaskAction } from './task-context';
+import { mapActionPayload, statePath, useChoiceValidation, useTaskAction, type ChoiceCapture } from './task-context';
+import { useSecureArtifact } from './secure-artifact-context';
+import { ActionIndicator } from '../../../packages/ui-shell/Feedback';
 import { Disclosure } from './TaskDisclosure';
 import { Table } from './TaskTable';
 import { MapView } from './MapView';
@@ -111,9 +117,140 @@ function Select({ element: { props }, bindings }: ComponentRenderProps) {
   const selected = value == null ? '' : String(value);
   return <label className="field">{string(props.label)}<ShellSelect aria-label={string(props.label, 'Choose an option')} value={selected} onValueChange={setValue} options={options}/></label>;
 }
+type SubmissionFocus = { stop: () => void; restore: () => void };
+
+function watchSubmissionFocus(button: HTMLButtonElement | null): SubmissionFocus | null {
+  if (!button || button.ownerDocument.activeElement !== button) return null;
+  const document = button.ownerDocument;
+  const window = document.defaultView;
+  let ownsFocus = true;
+  const relinquish = () => { ownsFocus = false; };
+  const onFocus = (event: FocusEvent) => {
+    if (event.target !== button && event.target !== document.body) relinquish();
+  };
+  const onVisibility = () => { if (document.hidden) relinquish(); };
+  document.addEventListener('focusin', onFocus, true);
+  document.addEventListener('pointerdown', relinquish, true);
+  document.addEventListener('keydown', relinquish, true);
+  document.addEventListener('visibilitychange', onVisibility);
+  window?.addEventListener('blur', relinquish);
+  window?.addEventListener('pagehide', relinquish);
+  const stop = () => {
+    document.removeEventListener('focusin', onFocus, true);
+    document.removeEventListener('pointerdown', relinquish, true);
+    document.removeEventListener('keydown', relinquish, true);
+    document.removeEventListener('visibilitychange', onVisibility);
+    window?.removeEventListener('blur', relinquish);
+    window?.removeEventListener('pagehide', relinquish);
+  };
+  return { stop, restore: () => {
+    stop();
+    if (ownsFocus && button.isConnected && !button.disabled && document.activeElement === document.body) {
+      button.focus({ preventScroll: true });
+    }
+  } };
+}
+
+function useArtifactSubmission(actionId: string) {
+  const scope = useSecureArtifact();
+  const owner = scope && scope.active !== false && scope.threadId && scope.artifactId && actionId
+    ? JSON.stringify([scope.threadId, scope.artifactId, scope.revision, actionId]) : null;
+  const action = useTaskAction(owner);
+  const choices = useChoiceValidation();
+  const attempt = useRef<object | null>(null);
+  const focus = useRef<SubmissionFocus | null>(null);
+  const acknowledgmentCleanup = useRef<(() => void) | undefined>(undefined);
+  const [acknowledgment, setAcknowledgment] = useState<ChoiceCapture[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [focusReady, setFocusReady] = useState<SubmissionFocus | null>(null);
+  const clearAcknowledgment = () => {
+    acknowledgmentCleanup.current?.();
+    acknowledgmentCleanup.current = undefined;
+    setAcknowledgment(null);
+  };
+  useLayoutEffect(() => {
+    setAcknowledgment(null);
+    setFailed(false);
+    setFocusReady(null);
+    return () => {
+      attempt.current = null;
+      focus.current?.stop();
+      focus.current = null;
+      acknowledgmentCleanup.current?.();
+      acknowledgmentCleanup.current = undefined;
+    };
+  }, [owner]);
+  useLayoutEffect(() => {
+    if (action.busy || !focusReady || focus.current !== focusReady) return;
+    focus.current = null;
+    focusReady.restore();
+    setFocusReady(null);
+  }, [action.busy, focusReady]);
+
+  const submit = (payload: unknown, captures: ChoiceCapture[], button: HTMLButtonElement | null, clearAccepted?: () => void) => {
+    if (owner === null || attempt.current) return;
+    clearAcknowledgment();
+    setFailed(false);
+    focus.current?.stop();
+    const initiatingFocus = watchSubmissionFocus(button);
+    focus.current = initiatingFocus;
+    const token = {};
+    attempt.current = token;
+    void action.run(actionId, payload).then(accepted => {
+      if (attempt.current !== token) return;
+      attempt.current = null;
+      setFocusReady(initiatingFocus);
+      if (!accepted) {
+        setFailed(true);
+        return;
+      }
+      clearAccepted?.();
+      setAcknowledgment(captures);
+      const timeout = setTimeout(clearAcknowledgment, 4_000);
+      const stop = choices?.subscribeUserEdit((instanceId, version) => {
+        if (captures.some(capture => capture.instanceId === instanceId && version !== capture.userEditVersion)) clearAcknowledgment();
+      });
+      acknowledgmentCleanup.current = () => { clearTimeout(timeout); stop?.(); };
+    });
+  };
+  const indicator = action.busy ? 'busy' : acknowledgment ? 'acknowledged' : 'idle';
+  const error = failed ? action.error || 'The request failed. Try again.' : '';
+  return { busy: action.busy, error, active: owner !== null, acknowledgment, choices, submit, indicator } as const;
+}
+
+function SubmissionFeedback({ submission, retry }: { submission: ReturnType<typeof useArtifactSubmission>; retry: () => void }) {
+  if (submission.error) return <span className="widget-action-feedback">
+    <span className="widget-action-error" role="alert">{submission.error}</span>
+    <button type="button" className="widget-action-retry secondary" onClick={retry}>Retry</button>
+  </span>;
+  if (submission.busy) return <span className="widget-action-feedback" role="status">Submitting request</span>;
+  if (!submission.acknowledgment) return null;
+  return <span className="widget-action-feedback" role="status">
+    <span>Request submitted</span>
+    {submission.acknowledgment.filter(capture => capture.valueLabel).map(capture =>
+      <span key={capture.instanceId}>Submitted choice: {capture.valueLabel}</span>)}
+  </span>;
+}
+
 function Button({ element: { props } }: ComponentRenderProps) {
-  const action = useTaskAction(), store = useStateStore();
-  return <span className="surface-action"><button type="button" className={props.tone === 'primary' || props.variant === 'primary' ? 'primary' : props.tone === 'danger' ? 'secondary tone-danger' : 'secondary'} disabled={action.busy || props.disabled === true || !props.actionId} title={!props.actionId ? 'This control has no registered action.' : undefined} onClick={() => { if (props.actionId) void action.run(string(props.actionId), mapActionPayload(props, store.getSnapshot().values)); }}>{action.busy && props.disabled !== true ? 'Submitting…' : string(props.label, 'Continue')}</button>{action.error && <span role="alert" className="error-text">{action.error}</span>}</span>;
+  const submission = useArtifactSubmission(string(props.actionId));
+  const store = useStateStore();
+  const mappedKeys = Object.values(obj(props.payloadFromState)).filter((key): key is string => typeof key === 'string');
+  const disabled = !submission.active || props.disabled === true || submission.busy;
+  const submit = (button: HTMLButtonElement | null) => {
+    if (disabled) return;
+    const validation = submission.choices?.validate({ mappedKeys });
+    if (validation && !validation.valid) return;
+    submission.submit(mapActionPayload(props, store.getSnapshot().values), validation?.captures ?? [], button);
+  };
+  const tone = props.tone === 'primary' || props.variant === 'primary' ? 'primary' : props.tone === 'danger' ? 'secondary tone-danger' : 'secondary';
+  return <span className="surface-action">
+    <button type="button" className={`widget-action-trigger ${tone}`} disabled={disabled} aria-busy={submission.busy || undefined}
+      title={!props.actionId ? 'This control has no registered action.' : undefined} onClick={event => submit(event.currentTarget)}>
+      {string(props.label, 'Continue')}<ActionIndicator state={submission.indicator} />
+    </button>
+    <SubmissionFeedback submission={submission} retry={() => submit(null)} />
+  </span>;
 }
 function Chart({ element: { props } }: ComponentRenderProps) {
   const data = list(useData(props) ?? props.data);
@@ -154,16 +291,69 @@ function TreeNode({ value, depth = 0 }: { value: unknown; depth?: number }) {
 }
 function Tree({ element: { props } }: ComponentRenderProps) { const data = useData(props) ?? props.items; return <ul className="tree">{list(data).map((node, i) => <TreeNode key={i} value={node} />)}</ul>; }
 function Code({ element: { props } }: ComponentRenderProps) { const data = useData(props); return <figure className="code-block">{props.title ? <figcaption>{string(props.title)}</figcaption> : null}<pre><code>{typeof data === 'string' ? data : string(props.code, string(props.content, data ? display(data) : ''))}</code></pre></figure>; }
-function Diff({ element: { props } }: ComponentRenderProps) { const data = useData(props); const pair = data && typeof data === 'object' ? obj(data) : props; const code = typeof data === 'string' ? data : typeof pair.before === 'string' || typeof pair.after === 'string' ? [...string(pair.before).split('\n').map(line => `- ${line}`), ...string(pair.after).split('\n').map(line => `+ ${line}`)].join('\n') : string(props.diff, string(props.content)); return <pre className="diff">{code.split('\n').map((line, i) => <div key={i} className={line.startsWith('+') ? 'added' : line.startsWith('-') ? 'removed' : ''}>{line || ' '}</div>)}</pre>; }
+const artifactDiffClass = {context:'',add:'added',remove:'removed',header:'diff-header',hunk:'diff-hunk'};
+function Diff({ element: { props } }: ComponentRenderProps) {
+  const data = useData(props);
+  const pair = data && typeof data === 'object' ? obj(data) : props;
+  const code = typeof data === 'string' ? data : typeof pair.before === 'string' || typeof pair.after === 'string'
+    ? [...string(pair.before).split('\n').map(line => `- ${line}`), ...string(pair.after).split('\n').map(line => `+ ${line}`)].join('\n')
+    : string(pair.diff, string(pair.content, string(props.diff, string(props.content))));
+  return <pre className="diff">{splitDiffLines(code).map((line, index) => <span key={index} className={artifactDiffClass[line.kind]}>{line.text || ' '}</span>)}</pre>;
+}
 function Document({ element: { props }, children }: ComponentRenderProps) { const data = useData(props); const text=typeof props.text==='string'?props.text:typeof data==='string'?data:undefined;const path = typeof props.resourcePath === 'string' ? '?' + new URLSearchParams({ path: props.resourcePath }) : '';if(props.presentation==='window')return <WindowDocument props={props} text={text}/>; return <section className={`document${props.download ? ' document-download' : ''}`}><div className="document-heading"><FileText size={16} />{string(props.title, 'Document')}</div>{props.text || props.content || typeof data === 'string' ? <Markdown text={string(props.text, string(props.content, string(data)))} /> : null}{children}{typeof props.resourceId === 'string' && <a href={`/api/resources/${encodeURIComponent(props.resourceId)}/content${path}`} download={props.download === true || undefined} target={props.download ? undefined : '_blank'} rel="noreferrer">{string(props.linkLabel, props.download ? 'Download PDF' : 'Open granted document')}<ExternalLink size={12} /></a>}</section>; }
 function Progress({ element: { props } }: ComponentRenderProps) { const source = useData(props); const value = Number(source ?? props.value); const max = Number(props.max) || 100; return <div className="surface-progress"><div>{string(props.label)}{Number.isFinite(value) && <span>{value} / {max}</span>}</div><progress aria-label={string(props.label, 'Progress')} value={Number.isFinite(value) ? value : undefined} max={max} /></div>; }
 const timelineStatusKind:Record<string,StatusKind>={...operationStatusKind,pending:'pending',working:'running',completed:'success',success:'success',error:'error',stopped:'neutral','needs-input':'pending',awaiting_input:'pending'};
 function Timeline({ element: { props } }: ComponentRenderProps) { const items = list(useData(props) ?? props.items); return <ol className="timeline">{items.map((entry, i) => { const item = obj(entry),status=string(item.status),tone=Object.hasOwn(timelineStatusKind,status)?timelineStatusKind[status]:'neutral'; return <li key={i}><span className={`timeline-dot status-${tone}`} /><div><strong>{string(item.title, string(item.label))}</strong>{item.description ? <p>{string(item.description)}</p> : null}</div><small>{string(item.time, string(item.status))}</small></li>; })}</ol>; }
 function Evidence({ element: { props } }: ComponentRenderProps) { const data = useData(props); const href = string(props.href); return <div className="evidence"><Check size={14} /><div>{string(props.label, string(props.title, 'Evidence'))}{props.source ? <small>{string(props.source)}</small> : null}{data !== undefined && <pre>{display(data)}</pre>}</div>{/^https?:\/\//.test(href) && <a aria-label="Open evidence source" href={href} target="_blank" rel="noreferrer"><ExternalLink size={14} /></a>}</div>; }
 function Notice({ element: { props }, children }: ComponentRenderProps) { return <div className={`notice tone-${string(props.tone)}`}><AlertTriangle size={15} /><div>{props.title ? <strong>{string(props.title)}</strong> : null}{props.text ? <p>{string(props.text)}</p> : null}{children}</div></div>; }
+function revealViewTab(tab: HTMLElement, strip: HTMLElement, behavior: ScrollBehavior = 'instant') {
+  const view = strip.getBoundingClientRect(), item = tab.getBoundingClientRect();
+  if (!view.width) return;
+  const inset = 8;
+  const distance = item.left < view.left + inset ? item.left - view.left - inset
+    : item.right > view.right - inset ? item.right - view.right + inset : 0;
+  if (distance) strip.scrollBy({ left: distance, behavior });
+}
+
 function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) {
   const [value, setValue] = useField(props, bindings), store = useStateStore(), artifactTitle = useContext(ArtifactTitle);
   const labels = list(props.labels), active = labels.includes(value) ? value : labels[0];
+  const strip = useRef<HTMLDivElement>(null), keyboardTab = useRef<HTMLElement|null>(null);
+  const [overflow, setOverflow] = useState({start:false,end:false});
+  const labelsKey = JSON.stringify(labels);
+  useLayoutEffect(() => {
+    const row = strip.current;
+    if (!row) return;
+    const update = () => {
+      const left = Math.abs(row.scrollLeft), remaining = row.scrollWidth - row.clientWidth - left;
+      const start = left > 1, end = remaining > 1;
+      setOverflow(previous => previous.start === start && previous.end === end ? previous : {start,end});
+    };
+    const wheel = (event: WheelEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.deltaX || !event.deltaY || row.scrollWidth <= row.clientWidth) return;
+      const step = event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? row.clientWidth
+        : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? Number.parseFloat(getComputedStyle(row).lineHeight) || 16 : 1;
+      const before = row.scrollLeft, direction = getComputedStyle(row).direction === 'rtl' ? -1 : 1;
+      row.scrollLeft += direction * event.deltaY * step;
+      if (row.scrollLeft !== before && event.cancelable) event.preventDefault();
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(row);
+    for (const tab of row.children) observer.observe(tab);
+    row.addEventListener('scroll', update, {passive:true});
+    row.addEventListener('wheel', wheel, {passive:false});
+    update();
+    return () => {
+      observer.disconnect();
+      row.removeEventListener('scroll',update);
+      row.removeEventListener('wheel',wheel);
+    };
+  }, [labelsKey]);
+  useLayoutEffect(() => {
+    const row = strip.current, tab = row?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (tab && row && tab !== keyboardTab.current) revealViewTab(tab,row);
+    keyboardTab.current = null;
+  }, [active,labelsKey]);
   const [visited, setVisited] = useState<ReadonlySet<unknown>>(() => new Set([active]));
   if (!visited.has(active)) setVisited(new Set(visited).add(active));
   const parsed = tabStateData.safeParse(typeof props.statusBinding === 'string' ? store.get(`/inputs/${props.statusBinding}`) : undefined);
@@ -172,33 +362,93 @@ function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) 
   if (new Set(labels).size !== labels.length) return <p role="alert">This saved tab view is invalid because its labels are not unique.</p>;
   return <div className={source ? 'task-tabs-operation' : undefined}>
     {source && (source.title || source.detail || source.status) && <header className="task-tabs-operation-header"><div>{source.title && source.title !== artifactTitle && <strong>{source.title}</strong>}{source.detail && <span>{source.detail}</span>}</div>{source.status && <StatusIcon status={source.status} />}</header>}
-    <div className="surface-tabs" role="tablist" aria-label={string(props.label, 'Views')}>{labels.map((label, i) => {
+    <div className="surface-tabs-scroll" data-overflow-start={overflow.start} data-overflow-end={overflow.end}>
+      <div className="surface-tabs" ref={strip} role="tablist" aria-label={string(props.label, 'Views')}>{labels.map((label, i) => {
       const status = source?.items.find(item => item.label === label)?.status;
-      return <button type="button" key={i} role="tab" tabIndex={active === label ? 0 : -1} aria-selected={active === label} onKeyDown={event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const index = event.key === 'Home' ? 0 : event.key === 'End' ? labels.length - 1 : (i + (event.key === 'ArrowRight' ? 1 : -1) + labels.length) % labels.length; setValue(labels[index]); (event.currentTarget.parentElement?.children[index] as HTMLElement | undefined)?.focus(); } }} onClick={() => setValue(label)}>{source && <span className={`task-tab-status-slot status-${status??'neutral'}`} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:14,height:14,flex:'0 0 14px'}} aria-hidden="true">{status && status !== 'neutral' && <StatusIcon status={status} />}</span>}<span className="task-tab-label">{display(label)}</span></button>;
-    })}</div>
+      return <button type="button" key={i} role="tab" tabIndex={active === label ? 0 : -1} aria-selected={active === label} onKeyDown={event => {
+        if (isComposing(event) || !['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+        const row = strip.current;
+        if (!row) return;
+        event.preventDefault();
+        const direction = (event.key === 'ArrowRight' ? 1 : -1) * (getComputedStyle(row).direction === 'rtl' ? -1 : 1);
+        const index = event.key === 'Home' ? 0 : event.key === 'End' ? labels.length - 1 : (i + direction + labels.length) % labels.length;
+        const target = row.children[index] as HTMLElement | undefined;
+        if (!target) return;
+        keyboardTab.current = labels[index] === active ? null : target;
+        setValue(labels[index]);
+        target.focus({preventScroll:true});
+        revealViewTab(target,row,readMotionPolicy() === 'full' ? 'smooth' : 'instant');
+      }} onClick={() => setValue(label)}>{source && <span className={`task-tab-status-slot status-${status??'neutral'}`} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:14,height:14,flex:'0 0 14px'}} aria-hidden="true">{status && status !== 'neutral' && <StatusIcon status={status} />}</span>}<span className="task-tab-label">{display(label)}</span></button>;
+      })}</div>
+    </div>
     {Children.toArray(children).map((child, i) => {
       const label = labels[i];
       return active === label || visited.has(label) ? <div role="tabpanel" className="task-tab-panel" key={i} hidden={active !== label}>{child}</div> : null;
     })}
-    {source?.footer && <footer className="task-tabs-operation-footer"><span>{source.footer.label}</span><div>{(selected?.code ?? source.footer.code) && <code>{selected?.code ?? source.footer.code}</code>}{(selected?.detail ?? source.footer.detail) && <small>{selected?.detail ?? source.footer.detail}</small>}</div></footer>}
+    {source?.footer && <footer className="task-tabs-operation-footer"><span>{source.footer.label}</span>{' '}<div>{(selected?.code ?? source.footer.code) && <code>{selected?.code ?? source.footer.code}</code>}{(selected?.detail ?? source.footer.detail) && <small>{' '}{selected?.detail ?? source.footer.detail}</small>}</div></footer>}
     {typeof props.statusBinding === 'string' && !parsed.success && <small className="muted">Operation details unavailable.</small>}
   </div>;
 }
 function Badge({ element: { props } }: ComponentRenderProps) { return <span className={`badge tone-${string(props.tone)}`}>{string(props.text, string(props.label))}</span>; }
 function Form({ element: { props }, children }: ComponentRenderProps) {
-  const action = useTaskAction(), store = useStateStore(), artifactTitle = useContext(ArtifactTitle), composing = useRef(false);
-  return <form className="surface-form" aria-busy={action.busy} onCompositionStartCapture={() => { composing.current = true; }} onCompositionEndCapture={() => { composing.current = false; }} onKeyDown={event => { if (event.key === 'Enter' && (composing.current || event.nativeEvent.isComposing || event.keyCode === 229)) event.preventDefault(); }} onSubmit={event => {
-    event.preventDefault(); if (!props.actionId || composing.current || action.busy) return;
-    const submitted = { ...obj(store.getSnapshot().values) };
-    void action.run(string(props.actionId), mapActionPayload(props, submitted)).then(accepted => {
-      if (accepted) for (const key of list(props.clearOnSuccess)) if (typeof key === 'string' && store.get(statePath(key)) === submitted[key]) store.set(statePath(key), '');
-    });
-  }}>{props.title && props.title !== artifactTitle ? <h3>{string(props.title)}</h3> : null}{children}{action.error && <p className="error-text" role="alert">{action.error}</p>}<button type="submit" className="primary" title={string(props.submitLabel, 'Submit')} disabled={action.busy || !props.actionId}><span className="form-submit-label">{action.busy ? 'Submitting…' : string(props.submitLabel, 'Submit')}</span><CornerDownLeft className="form-submit-icon" size={15} aria-hidden="true" /></button></form>;
+  const submission = useArtifactSubmission(string(props.actionId));
+  const store = useStateStore();
+  const artifactTitle = useContext(ArtifactTitle);
+  const composing = useRef(false);
+  const form = useRef<HTMLFormElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const mappedKeys = Object.values(obj(props.payloadFromState)).filter((key): key is string => typeof key === 'string');
+  const label = string(props.submitLabel, 'Submit');
+  const disabled = !submission.active || submission.busy || props.disabled === true;
+  const syncChoices = () => { if (form.current) submission.choices?.syncNativeParticipation(form.current); };
+  const retry = () => {
+    if (disabled || !form.current || !button.current) return;
+    syncChoices();
+    form.current.requestSubmit(button.current);
+  };
+  return <div className="widget-action-form">
+    <form ref={form} className="surface-form" aria-busy={submission.busy}
+      onCompositionStartCapture={() => { composing.current = true; }} onCompositionEndCapture={() => { composing.current = false; }}
+      onClickCapture={syncChoices}
+      onKeyDownCapture={event => {
+        if (event.key !== 'Enter') return;
+        if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) event.preventDefault();
+        else syncChoices();
+      }}
+      onInvalidCapture={event => {
+        if (form.current && event.target instanceof HTMLElement && event.target.closest('.task-choices')) {
+          submission.choices?.validate({ form: form.current, mappedKeys });
+        }
+      }}
+      onSubmit={event => {
+        event.preventDefault();
+        if (disabled || composing.current || !form.current) return;
+        const validation = submission.choices?.validate({ form: form.current, mappedKeys });
+        if (validation && !validation.valid) return;
+        const submitted = { ...obj(store.getSnapshot().values) };
+        const submitter = event.nativeEvent instanceof SubmitEvent ? event.nativeEvent.submitter : null;
+        submission.submit(mapActionPayload(props, submitted), validation?.captures ?? [],
+          submitter instanceof HTMLButtonElement ? submitter : null, () => {
+            for (const key of list(props.clearOnSuccess)) {
+              if (typeof key === 'string' && store.get(statePath(key)) === submitted[key]) store.set(statePath(key), '');
+            }
+          });
+      }}>
+      {props.title && props.title !== artifactTitle ? <h3>{string(props.title)}</h3> : null}
+      {children}
+      <button ref={button} type="submit" className="widget-action-trigger primary" title={label} disabled={disabled}
+        aria-busy={submission.busy || undefined}>
+        <span className="form-submit-label">{label}</span>
+        <ActionIndicator state={submission.indicator} idleIcon={<CornerDownLeft className="form-submit-icon" size={15} aria-hidden="true" />} />
+      </button>
+    </form>
+    <SubmissionFeedback submission={submission} retry={retry} />
+  </div>;
 }
 function BoundMarkdown({ element: { props } }: ComponentRenderProps) { const data = useData(props); return <Markdown text={string(props.text, string(data))} animate />; }
 function Metric({ element: { props } }: ComponentRenderProps) { const data = useData(props), value = data ?? props.value; return <div className="surface-metric"><span className="muted">{string(props.label)}</span><strong>{typeof value === 'number' ? value.toLocaleString(undefined, { maximumSignificantDigits: 21 }) : display(value)}{props.unit ? ` ${string(props.unit)}` : ''}</strong></div>; }
 function EvidenceList({ element: { props } }: ComponentRenderProps) { const rows = list(useData(props)); return <section>{props.title ? <h3>{string(props.title)}</h3> : null}<ul className="evidence-list">{rows.map((row, i) => { const item = obj(row); return <li key={i}><Check size={13} /><div>{typeof row === 'string' ? row : string(item.label, string(item.title, string(item.text, display(row))))}{item.source ? <small>{display(item.source)}</small> : null}</div></li>; })}</ul></section>; }
-function Image({ element: { props } }: ComponentRenderProps) { const src = typeof props.resourceId === 'string' ? `/api/resources/${encodeURIComponent(props.resourceId)}/content` : /^https?:\/\//.test(string(props.src)) ? string(props.src) : undefined; return src ? <img className="surface-image" src={src} alt={string(props.alt)} loading="lazy" referrerPolicy="no-referrer" /> : <p className="muted">No granted image is available.</p>; }
+function Image({ element: { props } }: ComponentRenderProps) { if (typeof props.resourceId === 'string') return <ArtifactImage key={props.resourceId} resourceId={props.resourceId} alt={string(props.alt)} />; const src = /^https?:\/\//.test(string(props.src)) ? string(props.src) : undefined; return src ? <img className="surface-image" src={src} alt={string(props.alt)} loading="lazy" referrerPolicy="no-referrer" /> : <p className="muted">No granted image is available.</p>; }
 function Link({ element: { props } }: ComponentRenderProps) { return /^https?:\/\//.test(string(props.href)) ? <a href={string(props.href)} target="_blank" rel="noreferrer">{string(props.label, string(props.href))}<ExternalLink size={12} /></a> : <span>{string(props.label)}</span>; }
 
 export const registry: ComponentRegistry = {

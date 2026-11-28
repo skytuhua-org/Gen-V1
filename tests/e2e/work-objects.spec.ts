@@ -15,6 +15,7 @@ async function fixture(page:Page,kind:'WorkflowBoard'|'ArchitectureCanvas'|'Trac
 
 test('shared board move keyboard commits the exact proposal and a source change disables an open choice',async({page})=>{
  const {host}=await fixture(page,'WorkflowBoard',suppliedBoard);await page.goto('/');
+ await expect.poll(()=>page.locator('.workflow-board .work-object-footer').textContent()).toBe('Drag cards or use Alt + Left / Right Send move proposal');
  await page.getByRole('button',{name:'Keep retries ordered',exact:true}).click();
  const move=page.getByRole('combobox',{name:'Move selected card',exact:true});await move.focus();await move.press('ArrowDown');
  await expect(page.getByRole('listbox',{name:'Move selected card',exact:true})).toBeVisible();
