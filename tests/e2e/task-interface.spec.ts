@@ -580,6 +580,41 @@ test.describe('ACT04 artifact submission feedback', () => {
     expect(payloads).toEqual([{ delivery: 'Original arrangement', note: 'Original note' }, { delivery: 'Current arrangement', note: 'Current note' }]);
   });
 
+  for (const intent of ['none', 'keyboard', 'focus'] as const) {
+    test(`restores only the initiating compact Form button after ${intent} intent`, async ({ page }) => {
+      let release = () => {};
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const { form, note } = deliveryForm().elements;
+      const spec = { root: 'form', elements: { form: { ...form, children: ['note'] }, note } };
+      const fixture = await serveTaskFixture(page, submissionFixture(spec), async () => { await gate; });
+      await openApp(page);
+      const field = page.getByRole('textbox', { name: 'Delivery note' });
+      const submit = page.getByRole('button', { name: 'Save choice', exact: true });
+      const submittedCount = () => fixture.commands.filter(command => command.type === 'action.submit').length;
+      const popup = page.getByRole('status').filter({ hasText: /^Request submitted$/ });
+      await expect(submit).toHaveCSS('width', '29px');
+      await expect(submit).toHaveCSS('height', '29px');
+      await submit.focus();
+      await expect(submit).toBeFocused();
+      await submit.press('Space');
+      try {
+        await expect.poll(submittedCount).toBe(1);
+        await expect(submit).toBeDisabled();
+        await expect(submit).toHaveCSS('width', '29px');
+        await expect(submit).toHaveCSS('height', '29px');
+        await expect(page.locator('body')).toBeFocused();
+        if (intent === 'keyboard') await page.keyboard.press('Shift');
+        if (intent === 'focus') await field.focus();
+      } finally {
+        release();
+      }
+      await expect(submit).toBeEnabled();
+      await expect(popup).toBeVisible();
+      await expect(intent === 'none' ? submit : intent === 'focus' ? field : page.locator('body')).toBeFocused();
+      expect(submittedCount()).toBe(1);
+    });
+  }
+
   test('standalone Button preserves its name and acknowledges one Space activation', async ({ page }) => {
     let release = () => {};
     const gate = new Promise<void>(resolve => { release = resolve; });
