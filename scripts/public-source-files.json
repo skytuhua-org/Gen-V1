@@ -3755,6 +3755,8 @@
     "tests/e2e/graph-popovers.playwright.config.ts",
     "tests/e2e/graph-popovers.spec.ts",
     "tests/e2e/graph-popovers.vite.config.ts",
+    "tests/e2e/history-menu.playwright.config.ts",
+    "tests/e2e/history-menu.spec.ts",
     "tests/e2e/host-loop.spec.ts",
     "tests/e2e/image-compare.spec.ts",
     "tests/e2e/inbox-controls.playwright.config.ts",

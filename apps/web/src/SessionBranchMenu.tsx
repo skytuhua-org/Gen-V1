@@ -195,12 +195,13 @@ export function SessionBranchMenu({ thread, messages, onOpenThread, onChanged, o
       icon: <GitBranch size={14} />, disabled: !branchEnabled || !messages.some(message => message.role !== 'activity'),
       onSelect: () => setQuoteOpen(true),
     },
-    {
-      id: 'fork', label: forkSupported ? 'Fork conversation' : `Fork conversation — unavailable (${(overview?.capabilities?.nativeFork ?? 'UNPROVEN').toLowerCase()})`,
-      title: forkSupported ? 'Create a native continuation at this point. Files don\'t change.' : 'No tested native fork API exists for this engine. Quote or inspect instead.',
-      icon: <GitBranch size={14} />, disabled: !branchEnabled || !forkSupported,
+    // Fork is omitted entirely when the engine can never support it; a
+    // permanently dead row would read as a defect (issue #1613).
+    ...(forkSupported ? [{
+      id: 'fork', label: 'Fork conversation', title: 'Create a native continuation at this point. Files don\'t change.',
+      icon: <GitBranch size={14} />, disabled: !branchEnabled,
       onSelect: () => run(forkConversation(thread.id)),
-    },
+    }] : []),
     {
       id: 'import', label: 'Import ArchiveV1 JSON…', title: 'Stage and preview an inert ArchiveV1 history import. Files don\'t change.',
       icon: <Import size={14} />, disabled: !importEnabled,
