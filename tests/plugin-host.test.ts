@@ -126,14 +126,14 @@ it('refuses to return a dispatch result after a same-length asset change during 
 });
 
 const shutdownError='A plug-in host could not confirm shutdown.';
-const shutdownHost=(synchronousFailure=false)=>`
+const shutdownHost=(synchronousFailure=false,transientFailure=false)=>`
  function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
   export const control={gate:deferred(),entered:deferred(),request:deferred(),busy:deferred(),checking:deferred(),holdBusy:false,closes:0,aborted:false};
  control.gate.promise.catch(()=>{});
  export default {async activate(){return {
   operations:{wait:async(_input,signal)=>{control.request.resolve();return new Promise(resolve=>signal.addEventListener('abort',()=>{control.aborted=true;resolve(null);},{once:true}));}},
   validateSurface:async()=>true,isBusy:async()=>{if(control.holdBusy){control.checking.resolve();await control.busy.promise;}return false;},
-  close(){control.closes++;control.entered.resolve();${synchronousFailure?"throw Error('SYNTHETIC_PRIVATE_CLOSE_DETAIL');":"return control.gate.promise;"}}
+  close(){control.closes++;control.entered.resolve();${transientFailure?"if(control.closes===1)return Promise.reject(Error('SYNTHETIC_PRIVATE_CLOSE_DETAIL'));":""}${synchronousFailure?"throw Error('SYNTHETIC_PRIVATE_CLOSE_DETAIL');":"return control.gate.promise;"}}
  };}};
 `;
 interface ShutdownControl {
@@ -170,8 +170,29 @@ it('keeps pending and failed registry shutdown busy',async()=>{
   control.gate.reject(Error('SYNTHETIC_PRIVATE_CLOSE_DETAIL'));
   for(const result of await Promise.all([first.result,second.result]))expect(result?.message).toBe(shutdownError);
   expect((await observeClose(registry).result)?.message).toBe(shutdownError);
-  expect(await registry.isBusy()).toBe(true);expect(control.closes).toBe(1);await expectAdmissionRevoked(registry);
+  expect(await registry.isBusy()).toBe(true);expect(control.closes).toBe(2);await expectAdmissionRevoked(registry);
  }finally{control?.gate.resolve();await registry?.close().catch(()=>{});await rm(f.directory,{recursive:true,force:true});}
+});
+
+it('retries a rejected host close without repeating confirmed shutdown',async()=>{
+ const failedFixture=await fixture({manifest:{id:'shutdown-retry'},host:shutdownHost(false,true)});
+ let confirmedFixture:Awaited<ReturnType<typeof fixture>>|undefined,registry:PluginRegistry|undefined,retryHost:ShutdownControl|undefined,confirmedHost:ShutdownControl|undefined;
+ try{
+  confirmedFixture=await fixture({manifest:{id:'shutdown-confirmed'},host:shutdownHost()});
+  retryHost=await installShutdownHost(failedFixture);confirmedHost=await installShutdownHost(confirmedFixture,failedFixture.root);
+  registry=await loadInstalledPlugins(failedFixture.root,'0.6.3');
+  const first=observeClose(registry);await retryHost.entered.promise;await confirmedHost.entered.promise;
+  confirmedHost.gate.resolve();
+  expect((await first.result)?.message).toBe(shutdownError);
+  expect(await registry.isBusy()).toBe(true);expect(retryHost.closes).toBe(1);expect(confirmedHost.closes).toBe(1);await expectAdmissionRevoked(registry);
+  const retry=observeClose(registry);retryHost.gate.resolve();
+  expect(await retry.result).toBeUndefined();
+  expect(await registry.isBusy()).toBe(false);expect(retryHost.closes).toBe(2);expect(confirmedHost.closes).toBe(1);await expectAdmissionRevoked(registry);
+  await registry.close();expect(retryHost.closes).toBe(2);expect(confirmedHost.closes).toBe(1);
+ }finally{
+  retryHost?.gate.resolve();confirmedHost?.gate.resolve();await registry?.close().catch(()=>{});
+  await rm(failedFixture.directory,{recursive:true,force:true});if(confirmedFixture)await rm(confirmedFixture.directory,{recursive:true,force:true});
+ }
 });
 
 it('successful registry shutdown is idempotent and idle',async()=>{
@@ -211,7 +232,7 @@ it.each([false,true])('waits for every host and preserves aggregate shutdown fai
   secondHost.gate.resolve();
   for(const result of await Promise.all([first.result,second.result]))expect(result?.message).toBe(shutdownError);
   expect((await observeClose(registry).result)?.message).toBe(shutdownError);
-  expect(await registry.isBusy()).toBe(true);expect(firstHost.closes).toBe(1);expect(secondHost.closes).toBe(1);
+  expect(await registry.isBusy()).toBe(true);expect(firstHost.closes).toBe(2);expect(secondHost.closes).toBe(1);
  }finally{
   firstHost?.gate.resolve();secondHost?.gate.resolve();await registry?.close().catch(()=>{});
   await rm(firstFixture.directory,{recursive:true,force:true});if(secondFixture)await rm(secondFixture.directory,{recursive:true,force:true});
