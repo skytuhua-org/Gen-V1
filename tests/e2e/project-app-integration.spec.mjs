@@ -94,6 +94,28 @@ test('blocking project connection reserves the native caption at short height',a
  await page.keyboard.press('Escape');await expect(page.getByRole('dialog',{name:'Select project'})).toBeVisible();
 });
 
+test('project tools Undo last commit confirms the reviewed subject and restores the draft',async({page})=>{
+ await host(page);
+ const tip='a'.repeat(40),parent='b'.repeat(40),rev='c'.repeat(64);
+ await page.route('**/api/projects/project-a/context?*',route=>route.fulfill({json:{project:p,threadId:'task-thread',threadRevision:'1',machineName:'Fixture',editor:{available:false,label:'Editor'},branch:'gen/main',head:tip,revision:rev,changes:{added:1,removed:0,files:1},lineage:[],scripts:[],capabilities:{git:true,gitWrite:true,untrackedIncluded:false,terminal:false,pullRequests:true},undo:{eligible:true,head:tip,branch:'gen/main',subject:'Undoable subject'}}}));
+ const actions=[];
+ await page.route('**/api/projects/project-a/actions',route=>{const body=route.request().postDataJSON();actions.push(body);return route.fulfill({json:{commandId:body.id,result:{undoneHead:tip,head:parent,message:'Undoable subject\n\nRestored body.'}}});});
+ await page.goto('/');
+ const card=page.locator('.project-context-card');
+ await expect(card.getByText('Project tools')).toBeVisible({timeout:15000});
+ await card.getByText('Project tools').click();
+ await card.getByRole('button',{name:'Commit',exact:true}).click();
+ const undo=card.locator('.project-undo-button');
+ await expect(undo).toBeEnabled();await undo.click();
+ const dialog=page.getByRole('dialog',{name:'Undo last commit?'});
+ await expect(dialog).toBeVisible();await expect(dialog).toContainText('Undoable subject');await expect(dialog).toContainText('aaaaaaaa');
+ await dialog.getByRole('button',{name:'Cancel'}).click();await expect(dialog).not.toBeVisible();expect(actions).toHaveLength(0);
+ await undo.click();await dialog.getByRole('button',{name:'Undo last commit'}).click();
+ await expect.poll(()=>actions.map(action=>action.type)).toEqual(['undo']);
+ expect(actions[0].payload).toEqual({expectedHead:tip,revision:rev});
+ await expect(card.getByRole('textbox',{name:'Commit message'})).toHaveValue('Undoable subject\n\nRestored body.');
+ await expect(card.getByText('Commit undone. Changes are staged.')).toBeVisible();
+});
 test('shows project connection errors inside the active dialog and lets the user retry',async({page})=>{
  const h=await host(page,true);
  let attempts=0;

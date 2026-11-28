@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
 import type { Message } from '../../../packages/contracts';
 import { getToolEffectObservation, type ToolEffectObservation } from './api';
 import { hasPendingDocumentAssets } from './signature-assets';
@@ -6,7 +6,8 @@ import { journalFlush } from './journal';
 import { useDesktop } from './desktop-context';
 import { LoadingState } from './LoadingState';
 import { SettingsSkeleton } from './ViewSkeletons';
-import { Markdown } from './Markdown';
+import { Markdown, ReplyMarkdown, type ReplyHeading } from './Markdown';
+import { ReplyContents } from './ReplyContents';
 import { Modal } from '../../../packages/ui-shell/Modal';
 import { ErrorState } from '../../../packages/ui-shell/Feedback';
 
@@ -15,8 +16,8 @@ export const messageOf = (error: unknown) => error instanceof Error ? error.mess
 type SettingsComponent = typeof import('./Settings').Settings;
 let loadedSettings: SettingsComponent | undefined;
 
-export function Dialog({ title, children, close }: { title: string; children: ReactNode; close: () => void }) {
-  return <Modal open title={title} onClose={close} className="dialog">{children}</Modal>;
+export function Dialog({ title, children, close, initialFocusRef }: { title: string; children: ReactNode; close: () => void; initialFocusRef?: RefObject<HTMLElement | null> }) {
+  return <Modal open title={title} onClose={close} className="dialog" initialFocusRef={initialFocusRef}>{children}</Modal>;
 }
 
 export function SettingsWindow(props: ComponentProps<SettingsComponent>) {
@@ -24,7 +25,11 @@ export function SettingsWindow(props: ComponentProps<SettingsComponent>) {
   const opener = useRef(document.activeElement as HTMLElement | null);
   const [Settings, setSettings] = useState(() => loadedSettings);
   const [error, setError] = useState(''), [reloading, setReloading] = useState(false);
-  useEffect(() => () => { if (opener.current?.isConnected) opener.current.focus({ preventScroll: true }); }, []);
+  useEffect(() => () => {
+    const invoker = opener.current;
+    if (invoker && invoker !== document.body && invoker !== document.documentElement && invoker.isConnected && invoker.getClientRects().length) { invoker.focus({ preventScroll: true }); return; }
+    (document.querySelector<HTMLElement>('aside[aria-label="Thread navigation"] button[aria-label="Settings"]') ?? document.querySelector<HTMLElement>('input[aria-label="Search threads"]'))?.focus({ preventScroll: true });
+  }, []);
   useEffect(() => {
     if (Settings) return;
     let active = true;
@@ -42,10 +47,12 @@ export function SettingsWindow(props: ComponentProps<SettingsComponent>) {
   return <Modal open title="Settings" onClose={props.close} className="settings-dialog">{Settings ? <Settings {...props} /> : <>{error ? <ErrorState message={error} retryLabel="Reload to retry" busy={reloading} onRetry={() => void reload()}/> : <LoadingState pending hasContent={false} label="Opening settings…" skeleton={<SettingsSkeleton/>} className="view-loading-state"/>}</>}</Modal>;
 }
 
-export const AssistantProse = memo(function AssistantProse({message,arrivals,active}:{message:Message;arrivals:Set<string>;active:boolean}){
+export const AssistantProse = memo(function AssistantProse({message,arrivals,active,onJump}:{message:Message;arrivals:Set<string>;active:boolean;onJump?:(top:number)=>void}){
   const initial=useRef(arrivals.has(message.id));useEffect(()=>{arrivals.delete(message.id);},[message.id,arrivals]);
+  const renderOutline=useCallback((headings:ReplyHeading[])=>onJump&&headings.length>=3?<ReplyContents headings={headings} onJump={onJump}/>:null,[onJump]);
+  if(onJump)return <ReplyMarkdown text={message.content} animate={active||initial.current} initialReveal={initial.current} renderOutline={active?undefined:renderOutline}/>;
   return <Markdown text={message.content} animate={active||initial.current} initialReveal={initial.current}/>;
-}, (previous, next) => previous.message === next.message && previous.arrivals === next.arrivals && previous.active === next.active);
+}, (previous, next) => previous.message === next.message && previous.arrivals === next.arrivals && previous.active === next.active && previous.onJump === next.onJump);
 
 /** M02 action details drawer: ledger view of one invocation. Uncertain states
  * surface as Inspect outcome / View evidence — never a generic Retry — and the

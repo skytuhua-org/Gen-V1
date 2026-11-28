@@ -1,10 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../packages/storage/store.ts";
 import { checkpointScope } from "../packages/workspace/edit-journal.ts";
 import { CheckpointService, unifiedDiff } from "../packages/workspace/checkpoints.ts";
+import { withPathGuard } from "../packages/core/file-access.ts";
 import { readCheckpointDetail, readCheckpointList, readCheckpointReview } from "../apps/web/src/file-checkpoint-api.ts";
 import type { CheckpointOwner } from "../apps/web/src/file-checkpoint-api.ts";
 
@@ -374,4 +375,76 @@ it("clips checkpoint diff previews at a complete UTF-8 scalar within the byte li
 it("reports no change for identical files beyond the line comparison limit", () => {
   const text = Array.from({ length: 2_100 }, (_, index) => `line ${index}\n`).join("");
   expect(unifiedDiff("large.txt", Buffer.from(text), Buffer.from(text))).toEqual({ diff: null, truncated: false });
+});
+
+
+// These exercise the real Windows guard and replacement implementation, unlike
+// the deterministic sharing/custody model in checkpoint-store-atomic-v3.
+it.runIf(process.platform === "win32")("reuses a natively pinned blob and atomically repairs corrupt prior-format bytes", async () => {
+  const { project, service, owner, store } = await fixture();
+  const bytes = Buffer.from("native checkpoint bytes\n");
+  await writeFile(join(project, "native.txt"), bytes);
+  const first = await service.create({ owner, root: project, paths: ["native.txt"] });
+  const ref = first.files[0]!.blobRef;
+  const blob = join(store.dataDir, "checkpoint-store", "blobs", ref);
+  const identity = await lstat(blob, { bigint: true });
+  await withPathGuard([{ path: blob, leaf: true, readOnly: true }], new AbortController().signal, async () => {
+    const reused = await service.createFromBytes({ owner, files: [{ path: "native.txt", data: bytes }] });
+    expect(reused.files[0]!.blobRef).toBe(ref);
+    expect((await lstat(blob, { bigint: true })).ino).toBe(identity.ino);
+  });
+  await writeFile(blob, "partial");
+  await service.detail(owner, first.id);
+  expect(store.get<{ retention: string }>("workspaceCheckpoint", first.id)!.retention).toBe("MISSING");
+  const repaired = await service.create({ owner, root: project, paths: ["native.txt"] });
+  expect(repaired.files[0]!.blobRef).toBe(ref);
+  expect(await readFile(blob)).toEqual(bytes);
+  expect((await service.detail(owner, repaired.id)).files[0]!.restorable).toBe(true);
+  expect(store.get<{ retention: string }>("workspaceCheckpoint", first.id)!.retention).toBe("MISSING");
+  expect((await readdir(join(store.dataDir, "checkpoint-store", "blobs"))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+});
+
+it.runIf(process.platform === "win32")("demotes a blob rejected by native hardlink custody before its read callback", async () => {
+  const { project, service, owner, store } = await fixture();
+  await writeFile(join(project, "linked.txt"), "retained bytes\n");
+  const checkpoint = await service.create({ owner, root: project, paths: ["linked.txt"] });
+  const blob = join(store.dataDir, "checkpoint-store", "blobs", checkpoint.files[0]!.blobRef);
+  const twin = join(store.dataDir, "checkpoint-store", "twin");
+  await link(blob, twin);
+  const detail = await service.detail(owner, checkpoint.id);
+  expect(detail.files[0]!.bytes).toBe(0);
+  expect(store.get<{ retention: string }>("workspaceCheckpoint", checkpoint.id)!.retention).toBe("MISSING");
+  await expect(service.create({ owner, root: project, paths: ["linked.txt"] })).rejects.toMatchObject({ code: "CAPABILITY_DENIED" });
+  expect(await readFile(twin, "utf8")).toBe("retained bytes\n");
+});
+
+it("uses three exterior lines around each checkpoint diff hunk and joins meeting context windows", () => {
+  const lines = Array.from({ length: 26 }, (_, i) => `line ${i + 1}`);
+  const bytes = (items: string[]) => Buffer.from(items.join("\n") + "\n");
+  const before = bytes(lines);
+  const replace = (first: number, last: number) => lines.map((line, i) => i + 1 >= first && i + 1 <= last ? `changed ${i + 1}` : line);
+  const separated = replace(15, 18);
+  separated[4] = "changed 5";
+  const diff = unifiedDiff("note.txt", before, bytes(separated)).diff!;
+  expect(diff.match(/^@@[^\n]+/gm)).toEqual(["@@ -2,7 +2,7 @@", "@@ -12,10 +12,10 @@"]);
+  expect(diff).toContain("+changed 5\n line 6\n line 7\n line 8\n@@");
+  expect(diff).toContain("+changed 18\n line 19\n line 20\n line 21\n");
+  expect(diff).not.toContain("\n line 9\n");
+  const touching = replace(12, 12);
+  touching[4] = "changed 5";
+  const joined = unifiedDiff("note.txt", before, bytes(touching)).diff!;
+  expect(joined.match(/^@@[^\n]+/gm)).toEqual(["@@ -2,14 +2,14 @@"]);
+  expect(joined).toContain("+changed 12\n line 13\n line 14\n line 15\n");
+});
+
+it("reports a checkpoint preview as unavailable for changed bytes outside UTF-8", () => {
+  const before = Buffer.from("café\n", "latin1"), after = Buffer.from("cafè\n", "latin1");
+  expect(before.equals(after)).toBe(false);
+  expect(unifiedDiff("legacy.txt", before, after)).toEqual({
+    diff: "Text preview unavailable for non-UTF-8 file legacy.txt.", truncated: true,
+  });
+  expect(unifiedDiff("legacy.txt", before, Buffer.from(before))).toEqual({ diff: null, truncated: false });
+  expect(unifiedDiff("utf8.txt", Buffer.from("caf�\n"), Buffer.from("café\n"))).toMatchObject({
+    diff: expect.stringContaining("-caf�\n+café"), truncated: false,
+  });
 });

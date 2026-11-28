@@ -8,7 +8,7 @@ import { Service } from "../packages/core/service.ts";
 import { ExternalIntakeCoordinator, type IntakeRecord } from "../packages/core/external-intake.ts";
 import { buildServer } from "../apps/server/server.ts";
 import { __setCapabilityFlagForTests } from "../packages/core/capability-flags.ts";
-import type { RuntimeAdapter, Thread } from "../packages/contracts/index.ts";
+import type { Message, RuntimeAdapter, Thread } from "../packages/contracts/index.ts";
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
@@ -354,4 +354,205 @@ it("keeps valid intake records when the upstream list also contains a null item"
   await expect(f.intake.pollOnce()).resolves.toMatchObject({status:"OK",proposals:1,rejected:1});
   expect(f.intake.records().map(r=>r.eventId)).toEqual(["I_issue1"]);
   expect(f.executorCalls).toHaveLength(0);
+});
+
+describe("M10 durable approval identity across crash and rejection races", () => {
+  const propose = async (intake: ExternalIntakeCoordinator) => {
+    await intake.pollOnce();
+    const record = intake.records()[0]!;
+    expect(record.disposition).toBe("PROPOSED");
+    return record;
+  };
+  it("reuses the durable claim's stable command ids on restart instead of creating a second task", async () => {
+    const created: string[] = [];
+    const taskFor = (store: Store) => async (request: { threadCommandId: string; messageCommandId: string }) => {
+      store.command({ id: request.threadCommandId, type: "intake.thread", payload: {} }, () => {
+        store.put("thread", request.threadCommandId, request.threadCommandId, { id: request.threadCommandId, kind: "delegate" });
+        created.push(request.threadCommandId);
+        return request.threadCommandId;
+      });
+      return { threadId: request.threadCommandId };
+    };
+    const f = fixture();
+    const record = await propose(f.intake);
+    // Crash window: the thread command committed but the decision never did.
+    const crashing = new ExternalIntakeCoordinator({ store: f.store, createTask: async (request: { threadCommandId: string; messageCommandId: string }) => {
+      await taskFor(f.store)(request);
+      throw new Error("simulated host loss before the decision commit");
+    } });
+    cleanups.push(() => crashing.stop());
+    await expect(crashing.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" })).rejects.toThrow("simulated host loss");
+    expect(created).toHaveLength(1);
+    expect(f.intake.records()[0]!.disposition).toBe("PROPOSED");
+    // A restarted host re-approves: the claim replays the same thread command.
+    const restarted = new ExternalIntakeCoordinator({ store: f.store, createTask: taskFor(f.store) });
+    cleanups.push(() => restarted.stop());
+    const approved = await restarted.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" });
+    expect(approved.disposition).toBe("APPROVED");
+    expect(created).toHaveLength(1);
+    expect(f.store.all("thread").filter(t => (t as { kind?: string }).kind === "delegate")).toHaveLength(1);
+    expect(approved.decision?.threadId).toBe(created[0]);
+  });
+  it("a rejection landing during task creation is not overwritten by the in-flight approval", async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const f = fixture({ createTask: async () => { await barrier; return { threadId: "late-thread" }; } });
+    const record = await propose(f.intake);
+    const approval = f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" });
+    await vi.waitFor(() => expect(f.store.get<{ intakeId: string }>("intakeApprovalClaim", `approve:${record.intakeId}`)).toBeTruthy());
+    const rejected = f.intake.reject(command("intake.reject"), { intakeId: record.intakeId, reason: "USER_REJECTED" });
+    expect(rejected.disposition).toBe("REJECTED");
+    release();
+    const settled = await approval;
+    const current = f.intake.records()[0]!;
+    expect(current.disposition).toBe("REJECTED");
+    expect(settled.disposition).toBe("REJECTED");
+    // The already-created thread keeps a visible link instead of being hidden.
+    expect(current.decision?.threadId).toBe("late-thread");
+  });
+  it("a second host with different approval input conflicts against the durable claim", async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const f = fixture({ createTask: async () => { await barrier; return { threadId: "t" }; } });
+    const record = await propose(f.intake);
+    const approval = f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" });
+    await vi.waitFor(() => expect(f.store.get("intakeApprovalClaim", `approve:${record.intakeId}`)).toBeTruthy());
+    const otherHost = new ExternalIntakeCoordinator({ store: f.store, createTask: async () => ({ threadId: "other" }) });
+    cleanups.push(() => otherHost.stop());
+    await expect(otherHost.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "other/model" })).rejects.toMatchObject({ code: "STALE_REVISION" });
+    release();
+    await approval;
+    expect(f.intake.records()[0]!.disposition).toBe("APPROVED");
+  });
+  it("a failure before any durable command releases the claim so a corrected model can approve", async () => {
+    let calls = 0;
+    const f = fixture({ createTask: async () => { calls++; if (calls === 1) throw new Error("model unavailable"); return { threadId: "fixed-thread" }; } });
+    const record = await propose(f.intake);
+    await expect(f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "gone/model" })).rejects.toThrow("model unavailable");
+    expect(f.store.get("intakeApprovalClaim", `approve:${record.intakeId}`)).toBeNull();
+    const approved = await f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "good/model" });
+    expect(approved.disposition).toBe("APPROVED");
+    expect(approved.decision?.threadId).toBe("fixed-thread");
+  });
+  it("a failure after a durable command keeps the claim, so a different model still conflicts", async () => {
+    const f = fixture();
+    const record = await propose(f.intake);
+    const crashing = new ExternalIntakeCoordinator({ store: f.store, createTask: async (request: { threadCommandId: string }) => {
+      f.store.command({ id: request.threadCommandId, type: "intake.thread", payload: {} }, () => {
+        f.store.put("thread", request.threadCommandId, request.threadCommandId, { id: request.threadCommandId, kind: "delegate" });
+        return request.threadCommandId;
+      });
+      throw new Error("simulated host loss mid-creation");
+    } });
+    cleanups.push(() => crashing.stop());
+    await expect(crashing.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" })).rejects.toThrow("simulated host loss");
+    // The thread command has a receipt, so releasing the claim would let a new
+    // approval mint fresh command ids and duplicate the task.
+    expect(f.store.get("intakeApprovalClaim", `approve:${record.intakeId}`)).toBeTruthy();
+    await expect(f.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "other/model" })).rejects.toMatchObject({ code: "STALE_REVISION" });
+  });
+  const realServiceFixture = () => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-intake-retention-"));
+    let store = new Store(join(root, "state"));
+    const runtime: RuntimeAdapter = {
+      configure: () => {}, models: async () => [{ id: "test/model", provider: "test", name: "Test" }],
+      start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {},
+      history: async () => [], dispose: async () => {},
+    };
+    const options = { background: { intakeAuth: { token: async () => "gh-token", login: "octocat" }, intakeFetch: (async () => jsonResponse([issue()])) as typeof fetch } };
+    let service = new Service(store, runtime, options);
+    cleanups.push(async () => { await service.dispose().catch(() => {}); try { store.close(); } catch {} rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); });
+    __setCapabilityFlagForTests("integrations.intakeV1", true);
+    service.intake.configure(command("intake.configure"), { repositoryId: REPO, enabled: true });
+    return {
+      get store() { return store; },
+      get service() { return service; },
+      async reopen() {
+        await service.dispose().catch(() => {});
+        store.close();
+        store = new Store(join(root, "state"));
+        service = new Service(store, runtime, options);
+      },
+    };
+  };
+  const receiptBody = (store: Store, id: string) => {
+    const row = store.db.prepare("SELECT body FROM receipts WHERE id=?").get(id) as { body: string } | undefined;
+    return row ? JSON.parse(row.body) as { result: unknown; expired?: boolean; eventSeq: number } : null;
+  };
+  it("pins an unresolved intake claim's command receipts through retention and replays them once", async () => {
+    const f = realServiceFixture();
+    await f.service.intake.pollOnce();
+    const record = f.service.intake.records()[0]!;
+    const original = f.service.command.bind(f.service);
+    const interrupt = vi.spyOn(f.service, "command").mockImplementation(async cmd => {
+      const receipt = await original(cmd);
+      if (cmd.type === "thread.create") throw new Error("simulated host loss after durable thread creation");
+      return receipt;
+    });
+    await expect(f.service.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" })).rejects.toThrow("simulated host loss");
+    interrupt.mockRestore();
+    const claimKey = `approve:${record.intakeId}`;
+    const claim = f.store.get<{ threadCommandId: string; messageCommandId: string }>("intakeApprovalClaim", claimKey)!;
+    expect(claim).toBeTruthy();
+    const createdReceipt = receiptBody(f.store, claim.threadCommandId)!;
+    for (let i = 0; i < 8; i++) f.store.internal("fixture.event", null, () => i);
+    f.store.retentionSweep({ keepEvents: 1, batchSize: 100 });
+    const retained = receiptBody(f.store, claim.threadCommandId)!;
+    expect(retained.expired).not.toBe(true);
+    expect(retained.result).toMatchObject({ id: expect.any(String) });
+    await f.reopen();
+    const approved = await f.service.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" });
+    expect(approved.disposition).toBe("APPROVED");
+    expect(approved.decision?.threadId).toBe((createdReceipt.result as Thread).id);
+    expect(f.store.all("thread")).toHaveLength(1);
+    const messages = f.store.all<Message>("message");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ threadId: approved.decision?.threadId, role: "user", content: expect.stringContaining(record.proposedTask.sourceUrl) });
+    expect(f.store.get("intakeApprovalClaim", claimKey)).toBeNull();
+    for (let i = 0; i < 8; i++) f.store.internal("fixture.after-settlement", null, () => i);
+    f.store.retentionSweep({ keepEvents: 1, batchSize: 100 });
+    expect(receiptBody(f.store, claim.threadCommandId)?.expired).toBe(true);
+    expect(receiptBody(f.store, claim.messageCommandId)?.expired).toBe(true);
+  });
+  it("treats an already-expired thread receipt as uncertain recovery instead of dereferencing or redispatching", async () => {
+    const f = realServiceFixture();
+    await f.service.intake.pollOnce();
+    const record = f.service.intake.records()[0]!;
+    const original = f.service.command.bind(f.service);
+    const interrupt = vi.spyOn(f.service, "command").mockImplementation(async cmd => {
+      const receipt = await original(cmd);
+      if (cmd.type === "thread.create") throw new Error("simulated host loss after durable thread creation");
+      return receipt;
+    });
+    await expect(f.service.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" })).rejects.toThrow("simulated host loss");
+    interrupt.mockRestore();
+    const claimKey = `approve:${record.intakeId}`;
+    const claim = f.store.get<{ threadCommandId: string; messageCommandId: string }>("intakeApprovalClaim", claimKey)!;
+    const old = receiptBody(f.store, claim.threadCommandId)!;
+    f.store.db.prepare("UPDATE receipts SET body=? WHERE id=?").run(JSON.stringify({ commandId: claim.threadCommandId, eventSeq: old.eventSeq, result: null, expired: true }), claim.threadCommandId);
+    await f.reopen();
+    await expect(f.service.intake.approve(command("intake.approve"), { intakeId: record.intakeId, modelId: "test/model" })).rejects.toMatchObject({ code: "INTAKE_RECOVERY_UNCERTAIN" });
+    expect(f.store.get("intakeApprovalClaim", claimKey)).toBeTruthy();
+    expect(f.store.all("thread")).toHaveLength(1);
+    expect(f.store.all("message")).toHaveLength(0);
+    const altered = { id: claim.threadCommandId, type: "thread.create", payload: { title: "altered" } };
+    await expect(f.service.command(altered)).rejects.toMatchObject({ code: "DUPLICATE_COMMAND" });
+  });
+  it("recovery re-delivers a persisted input that a crash left on an approved task", async () => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-intake-recover-"));
+    const store = new Store(join(root, "state"));
+    const runtime: RuntimeAdapter = { configure: () => {}, models: async () => [{ id: "test/model", provider: "test", name: "Test" }], start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {}, history: async () => [], dispose: async () => {} };
+    const service = new Service(store, runtime);
+    cleanups.push(async () => { await service.dispose().catch(() => {}); store.close(); rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); });
+    // Stranded state: the approval decision and persisted input both committed,
+    // then the host died before the queued delivery ran.
+    store.internal("intake.stranded", null, () => {
+      store.put("thread", "t1", "t1", { id: "t1", kind: "delegate", status: "ready", modelId: "test/model", accountId: null, epoch: 0, runId: null, createdAt: "x", updatedAt: "x" });
+      store.put("outbox", "o1", "t1", { id: "o1", threadId: "t1", content: "approved external work", status: "persisted", runId: null });
+      store.put("intakeRecord", "i1", null, { intakeId: "i1", eventId: "e1", disposition: "APPROVED", sourceInstallation: "octocat", proposedTask: { title: "t", sourceUrl: "u", issueNumber: 1 }, receivedAt: "x", updatedAt: "x", rejectionReason: null, decision: { commandId: "c1", at: "x", threadId: "t1" } });
+    });
+    const spy = vi.spyOn(service, "deliverOutbox");
+    await service.recover();
+    expect(spy).toHaveBeenCalledWith("t1");
+  });
 });

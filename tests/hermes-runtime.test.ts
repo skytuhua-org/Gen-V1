@@ -1,3 +1,4 @@
+import {createHermesTaskPool} from '../packages/runtime-hermes/task-pool.ts';
 import {expect,it,vi} from 'vitest';
 import {mkdtemp,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -6,7 +7,7 @@ import {spawn} from 'node:child_process';
 import type {RuntimeAdapter,RuntimeCallbacks,RuntimeEvent,StartRun} from '../packages/contracts/index.ts';
 import type {MemoryCheckpointAckV1,MemoryCheckpointRequestV1} from '../packages/contracts/memory-checkpoint.ts';
 import {NATIVE_COMPACTION_CAPABILITY,nativeCompactionPlanSchema,type NativeCompactionOwnerV1,type NativeCompactionPlanV1,type NativeCompactionEnvelopeV1,type NativeCompactionReceiptV1,type NativeCompactionAckV1} from '../packages/contracts/native-compaction.ts';
-import {createHermesRuntime,type HermesRuntimeOptions,type HermesSourceClient} from '../packages/runtime-hermes/index.ts';
+import {createHermesRuntime,type HermesEngine,type HermesRuntimeOptions,type HermesSourceClient} from '../packages/runtime-hermes/index.ts';
 import type {HermesClient,HermesEvent} from '../packages/runtime-hermes/client.ts';
 import {__setCapabilityFlagForTests} from '../packages/core/capability-flags.ts';
 import {encodeInput} from '../packages/runtime-pi/input-envelope.ts';
@@ -744,4 +745,58 @@ it('preserves opaque source evidence revisions while approvals still require int
  expect(nativeCompactionPlanSchema.parse(plan).references).toEqual(plan.references);
  expect(nativeCompactionPlanSchema.safeParse({...plan,references:[{...plan.references[0],kind:'PENDING_APPROVAL'}]}).success).toBe(false);
  expect(nativeCompactionPlanSchema.safeParse({...plan,references:[{...plan.references[0],revision:'x'.repeat(201)}]}).success).toBe(false);
+});
+
+
+it('retries only cleanup not confirmed by the first Hermes pool shutdown',async()=>{
+ const failure=Error('synthetic worker still stopping');
+ const dispose=vi.fn<()=>Promise<void>>().mockRejectedValueOnce(failure).mockResolvedValue(undefined);
+ const healthy=vi.fn<()=>Promise<void>>().mockResolvedValue(undefined);
+ const catalog=vi.fn<()=>Promise<void>>().mockResolvedValue(undefined);
+ const pool=createHermesTaskPool({dataDir:'unused',nativeCatalog:{dispose:catalog} as unknown as RuntimeAdapter},{},
+  vi.fn().mockReturnValueOnce({dispose} as unknown as HermesEngine).mockReturnValueOnce({dispose:healthy} as unknown as HermesEngine));
+ pool.createTaskRuntime();
+ const first=pool.dispose();
+ expect(pool.dispose()).toBe(first);
+ await expect(first).rejects.toMatchObject({errors:[failure]});
+ expect(()=>pool.createTaskRuntime()).toThrow(/closed/);
+ await expect(pool.dispose()).resolves.toBeUndefined();
+ await pool.dispose();
+ expect(dispose).toHaveBeenCalledTimes(2);
+ expect(healthy).toHaveBeenCalledTimes(1);
+ expect(catalog).toHaveBeenCalledTimes(1);
+});
+
+it('retries real engine source cleanup without reopening the task pool or releasing the lease early',async()=>{
+ const f=await fixture();
+ await f.runtime.start(run());
+ const source=f.source().client;
+ let confirm!:()=>void;
+ const retry=new Promise<void>(done=>{confirm=done;});
+ const failure=Error('synthetic source exit not yet confirmed');
+ const close=vi.mocked(source.dispose).mockRejectedValueOnce(failure).mockImplementationOnce(()=>retry);
+ try{
+  const first=f.runtime.dispose();
+  expect(f.runtime.dispose()).toBe(first);
+  await expect(first).rejects.toMatchObject({errors:[{errors:[{errors:[failure]}]}]});
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(f.catalog.dispose).toHaveBeenCalledTimes(1);
+  expect(f.accounts.releaseUse).not.toHaveBeenCalled();
+  await expect(f.runtime.start(run({runId:'refused'}))).rejects.toMatchObject({code:'HERMES_DISPOSED'});
+
+  const second=f.runtime.dispose();
+  expect(f.runtime.dispose()).toBe(second);
+  const outcome=second.then(()=>null,(error:unknown)=>error);
+  await vi.waitFor(()=>expect(close).toHaveBeenCalledTimes(2));
+  expect(f.accounts.releaseUse).not.toHaveBeenCalled();
+  await expect(f.runtime.start(run({runId:'still-refused'}))).rejects.toMatchObject({code:'HERMES_DISPOSED'});
+  confirm();
+  expect(await outcome).toBeNull();
+  await f.runtime.dispose();
+  expect(close).toHaveBeenCalledTimes(2);
+  expect(f.source().calls.filter(call=>call.method==='agent.dispose')).toHaveLength(1);
+  expect(f.catalog.dispose).toHaveBeenCalledTimes(1);
+  expect(f.accounts.releaseUse).toHaveBeenCalledTimes(1);
+  await expect(f.runtime.start(run({runId:'after-close'}))).rejects.toMatchObject({code:'HERMES_DISPOSED'});
+ }finally{confirm();await f.runtime.dispose().catch(()=>{});}
 });

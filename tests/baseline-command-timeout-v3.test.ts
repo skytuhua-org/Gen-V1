@@ -54,7 +54,7 @@ else {
     links.push(path);
   }
   const execute = (args: string[]) => spawnSync(executable, ['--import', loader, ...args], {
-    cwd: root, env: { ...process.env, PATH: bin, Path: bin }, encoding: 'utf8',
+    cwd: root, env: { ...process.env, PATH: bin, Path: bin, PNPM_HOME: '' }, encoding: 'utf8',
     timeout: 20_000, windowsHide: true, maxBuffer: 128 * 1024,
   });
   const api = (timeout: string) => execute(['--input-type=module', '--eval', `

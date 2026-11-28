@@ -190,6 +190,47 @@ describe('M01 current dependency compatibility execution', () => {
     expect(receipt.contracts.some(contract => contract.status === 'PASS')).toBe(false);
   });
 
+  it.each(['--assume-unchanged', '--skip-worktree'])('rejects hidden index state %s before running contract tests', async flag => {
+    const value = fixture(passingTest.replace('../packages/contracts/index.ts', '../packages/contracts/helper.ts'));
+    const helper = 'packages/contracts/helper.ts';
+    value.put(helper, 'export const value = 99;\n');
+    value.git('add', '--', helper);
+    value.git('commit', '-m', 'Pin imported helper');
+    const head = value.git('rev-parse', 'HEAD');
+    value.lock.auditAncestorSha = head;
+    value.lock.executionBaseSha = head;
+    value.lock.acceptedDependencyCommits = [head];
+    value.saveLock();
+    // The pinned helper would fail the assertion; hidden working bytes would pass it.
+    value.git('update-index', flag, helper);
+    value.put(helper, 'export const value = 42;\n');
+    expect(value.git('status', '--porcelain', '--untracked-files=all')).toBe('');
+    expect(value.git('hash-object', '--no-filters', '--', helper)).not.toBe(value.git('rev-parse', head + ':' + helper));
+    const receipt = await value.run();
+    expect(receipt.status).toBe('BLOCKED');
+    expect(receipt.commands).toEqual([]);
+    expect(receipt.issues.some(issue => issue.code === 'COMPATIBILITY_SETUP_BLOCKED'
+      && issue.message.includes('Checkout index must not contain'))).toBe(true);
+  });
+
+  it('blocks a successful test that leaves a hidden tracked change during execution', async () => {
+    const value = fixture([
+      "import { expect, test } from 'vitest';",
+      "import { execFileSync } from 'node:child_process';",
+      "import { writeFileSync } from 'node:fs';",
+      "test('changes an owned fixture helper', () => {",
+      "  execFileSync('git', ['update-index', '--assume-unchanged', 'tests/gate.test.tsx']);",
+      "  writeFileSync('tests/gate.test.tsx', 'export {};\\n');",
+      "  expect(true).toBe(true);",
+      "});",
+    ].join('\n'));
+    const receipt = await value.run();
+    expect(receipt.commands[1]?.status, JSON.stringify(receipt.issues)).toBe('PASS');
+    expect(receipt.status).toBe('BLOCKED');
+    expect(receipt.issues.some(issue => issue.code === 'SOURCE_CHANGED_DURING_EXECUTION'
+      && issue.message.includes('Checkout index must not contain'))).toBe(true);
+  }, 120_000);
+
   it('requires exact working bytes even when local Git attributes normalize them to the locked blob', async () => {
     const value = fixture();
     writeFileSync(join(value.root, '.git/info/attributes'), 'packages/contracts/index.ts text eol=lf\n');

@@ -11,12 +11,22 @@ import {TooltipLayer} from './packages/ui-shell/Tooltip';
 import {ErrorState, BusyButton} from './packages/ui-shell/Feedback';
 
 window.toast = toast;
+function BusyProbe(){
+ const [state,setState] = React.useState('idle');
+ return <>
+  <button id="probe-busy" onClick={() => setState('busy')}>Start</button>
+  <button id="probe-ack" onClick={() => setState('acknowledged')}>Acknowledge</button>
+  <button id="probe-idle" onClick={() => setState('idle')}>Reset</button>
+  <BusyButton id="probe" busy={state === 'busy'} acknowledged={state === 'acknowledged'}>Send the report</BusyButton>
+ </>;
+}
 function Fixture(){
  return <>
   <Toaster/><TooltipLayer/>
   <button id="tip" title="Save the current draft">Save</button>
   <ErrorState message="The save did not finish. Retry." onRetry={() => {window.retried = true;}} />
   <BusyButton id="busy" busy>Sending</BusyButton>
+  <BusyProbe/>
  </>;
 }
 createRoot(document.getElementById('root')).render(<Fixture/>);
@@ -53,6 +63,24 @@ describe('feedback primitives', () => {
     await expect.poll(() => page.locator('.ui-toast').count()).toBe(2);
     await page.locator('.ui-toast [aria-label="Dismiss notification"]').first().click();
     await expect.poll(() => page.locator('.ui-toast').count()).toBe(1);
+    await page.close();
+  });
+
+  it('evicts the oldest toast through the leaving animation, not instantly (#1705)', async () => {
+    const page = await open();
+    await page.evaluate(`for (const m of ['First','Second','Third']) window.toast(m)`);
+    // The evicted item enters `leaving` (data-state=closed) in the same publish, then unmounts on animation end.
+    const state = await page.evaluate(`window.toast('Fourth'), new Promise(resolve => setTimeout(() => resolve(document.querySelector('.ui-toast').dataset.state), 0))`);
+    expect(state).toBe('closed');
+    const first = page.locator('.ui-toast', {hasText: 'First'});
+    await first.waitFor({state: 'detached', timeout: 3000});
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(3);
+    // Rapid pushes: every evicted item exits through the same path; only the newest three stay open.
+    const rest = await page.evaluate<string[]>(`for (const m of ['Five','Six','Seven','Eight']) window.toast(m); new Promise(resolve => setTimeout(() => resolve([...document.querySelectorAll('.ui-toast')].map(n => n.dataset.state + ':' + n.querySelector('span').textContent)), 0))`);
+    expect(rest.filter(item => item.startsWith('closed'))).toHaveLength(4);
+    await expect.poll(() => page.locator('.ui-toast').count(), {timeout: 4000}).toBe(3);
+    const remaining = await page.evaluate(`[...document.querySelectorAll('.ui-toast span')].map(n => n.textContent).join()`);
+    expect(remaining).toBe('Six,Seven,Eight');
     await page.close();
   });
 
@@ -134,6 +162,19 @@ describe('feedback primitives', () => {
     await page.close();
   });
 
+  it('evicts with the opacity-only fade under reduced motion', async () => {
+    const page = await open();
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    for (const m of ['r1', 'r2', 'r3']) await page.evaluate(`window.toast('${m}', {durationMs: 60000})`);
+    await page.evaluate(`window.toast('r4', {durationMs: 60000})`);
+    const evicted = page.locator('.ui-toast[data-state="closed"]', {hasText: 'r1'});
+    await evicted.waitFor();
+    expect(await evicted.evaluate(el => getComputedStyle(el).animationDuration)).toBe('0.08s');
+    expect(await evicted.evaluate(el => getComputedStyle(el).transform)).toBe('none');
+    await expect.poll(() => page.locator('.ui-toast').count()).toBe(3);
+    await page.close();
+  });
+
   it('uses brief opacity-only fades under reduced motion', async () => {
     const page = await open();
     await page.emulateMedia({reducedMotion: 'reduce'});
@@ -187,4 +228,69 @@ describe('feedback primitives', () => {
     await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
     await page.close();
   });
+  it('keeps a BusyButton label and bounding box stable across busy and acknowledged states', async () => {
+    const page = await open();
+    const probe = page.locator('#probe');
+    await probe.waitFor();
+    const measure = async () => {
+      const box = await probe.boundingBox();
+      return {width: box?.width, height: box?.height, text: await probe.innerText()};
+    };
+    const idle = await measure();
+    await page.locator('#probe-busy').click();
+    const busy = await measure();
+    await page.locator('#probe-ack').click();
+    const acknowledged = await measure();
+    expect(busy.text).toBe(idle.text);
+    expect(acknowledged.text).toBe(idle.text);
+    expect(Math.abs(busy.width! - idle.width!)).toBeLessThanOrEqual(1);
+    expect(Math.abs(acknowledged.width! - idle.width!)).toBeLessThanOrEqual(1);
+    expect(Math.abs(busy.height! - idle.height!)).toBeLessThanOrEqual(1);
+    expect(Math.abs(acknowledged.height! - idle.height!)).toBeLessThanOrEqual(1);
+    await page.close();
+  });
+
+  it('delays the busy spinner for 150ms and cancels it on settle', async () => {
+    const page = await open();
+    await page.clock.install();
+    const spinner = page.locator('#probe .ui-action-indicator-busy[data-current="true"]');
+    await page.locator('#probe-busy').click();
+    await page.clock.runFor(149);
+    expect(await spinner.count()).toBe(0);
+    await page.clock.runFor(1);
+    expect(await spinner.count()).toBe(1);
+    await page.locator('#probe-ack').click();
+    await page.clock.runFor(300);
+    expect(await spinner.count()).toBe(0);
+    expect(await page.locator('#probe .ui-action-indicator-acknowledged[data-current="true"]').count()).toBe(1);
+    await page.locator('#probe-idle').click();
+    await page.locator('#probe-busy').click();
+    await page.clock.runFor(100);
+    await page.locator('#probe-idle').click();
+    await page.clock.runFor(300);
+    expect(await spinner.count()).toBe(0);
+    await page.close();
+  });
+
+  it('uses opacity-only status motion and disables rotation under reduced or off motion', async () => {
+    const page = await open();
+    await page.clock.install();
+    await page.locator('#probe-busy').click();
+    await page.clock.runFor(160);
+    const busyLayer = page.locator('#probe .ui-action-indicator-busy');
+    const timing = await busyLayer.evaluate(el => ({transition: getComputedStyle(el).transitionDuration, property: getComputedStyle(el).transitionProperty, animation: getComputedStyle(el.querySelector('svg')!).animationName}));
+    expect(timing.transition).toBe('0.16s');
+    expect(timing.property).toBe('opacity');
+    expect(timing.animation).toBe('ui-spin');
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    const reduced = await busyLayer.evaluate(el => ({transition: getComputedStyle(el).transitionDuration, animation: getComputedStyle(el.querySelector('svg')!).animationName}));
+    expect(reduced.transition).toBe('0.08s');
+    expect(reduced.animation).toBe('none');
+    await page.evaluate(() => { document.documentElement.dataset.motion = 'off'; });
+    const off = await busyLayer.evaluate(el => ({transition: getComputedStyle(el).transitionDuration, animation: getComputedStyle(el.querySelector('svg')!).animationName}));
+    expect(off.transition).toBe('0s');
+    expect(off.animation).toBe('none');
+    await page.close();
+  });
+
 });

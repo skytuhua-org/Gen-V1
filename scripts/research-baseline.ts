@@ -6,7 +6,7 @@
 // real corepack executable (or a resolved JS entry under process.execPath).
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,8 +78,9 @@ function installedPnpm(declared: string | null): InstalledPnpm | null {
   const shimmed = (path: string) => path.split(/[\\/]/).includes('corepack');
   let fallback: InstalledPnpm | null = null;
   const pnpmHome = process.env.PNPM_HOME;
-  // PATH order governs: a deliberately shadowed install must win. PNPM_HOME is
-  // a fallback search location only, appended after every PATH entry.
+  // pnpm/action-setup supplies PNPM_HOME even when its .CMD shim is absent
+  // from PATH, but PATH order still governs: a deliberately shadowed install
+  // must win. PNPM_HOME is a fallback search location only, after PATH.
   const directories = [
     ...(process.env.PATH ?? process.env.Path ?? '').split(delimiter),
     ...(pnpmHome ? [pnpmHome, join(pnpmHome, 'bin')] : []),
@@ -358,11 +359,43 @@ export function verifySourceLock(rootDir: string, lock: SourceLockV3): EvidenceI
     if (actual !== contract.version)
       issues.push({ code: 'CONTRACT_VERSION_MISMATCH', message: `Contract ${contract.name} version ${contract.version} does not match ${source} blob ${actual ?? 'missing'} at base.` });
     for (const testId of contract.testIds) {
-      let isFile = false;
-      // Missing or inaccessible test files cannot establish compatibility.
-      try { isFile = statSync(join(rootDir, testId), { throwIfNoEntry: false })?.isFile() ?? false; }
-      catch { /* collect the issue and continue checking the other entries */ }
-      if (!isFile) issues.push({ code: 'CONTRACT_TEST_MISSING', message: `Contract ${contract.name} test is not an accessible regular file: ${testId}` });
+      // A mutable checkout or untracked fixture cannot prove that a required
+      // contract test existed at the source-locked execution base.
+      const parts = testId.split('/');
+      if (isAbsolute(testId) || testId.includes('\\') || testId.includes(':') ||
+          parts.some(part => !part || part === '.' || part === '..')) {
+        issues.push({ code: 'CONTRACT_TEST_INVALID_PATH', message: `Contract ${contract.name} test path must be repository-relative: ${testId}` });
+        continue;
+      }
+      let committedBlob: string | null = null;
+      try {
+        const spec = `${lock.executionBaseSha}:${testId}`;
+        if (git(rootDir, ['cat-file', '-t', spec]) === 'blob')
+          committedBlob = git(rootDir, ['rev-parse', spec]);
+      } catch { /* Missing from the locked commit, even if present locally. */ }
+      let isFile = false, isPhysicalPath = false;
+      try {
+        const testPath = join(rootDir, testId);
+        isFile = lstatSync(testPath, { throwIfNoEntry: false })?.isFile() ?? false;
+        // A parent symlink or junction can redirect a byte-identical test into
+        // an external tree with different, untracked relative dependencies.
+        if (isFile) isPhysicalPath = realpathSync(testPath) === join(realpathSync(rootDir), ...parts);
+      } catch { /* Missing, inaccessible or unresolved local test. */ }
+      if (!committedBlob || !isFile) {
+        issues.push({ code: 'CONTRACT_TEST_MISSING', message: `Contract ${contract.name} test is not a committed and accessible regular file: ${testId}` });
+        continue;
+      }
+      if (!isPhysicalPath) {
+        issues.push({ code: 'CONTRACT_TEST_UNSAFE_PATH', message: `Contract ${contract.name} test path resolves through an external alias: ${testId}` });
+        continue;
+      }
+      let workingBlob: string | null = null;
+      // --path applies mutable local Git attributes and clean filters, which can
+      // disguise changed executable bytes as the committed blob.
+      try { workingBlob = git(rootDir, ['hash-object', '--no-filters', '--', testId]); }
+      catch { /* Unreadable local content cannot prove the committed test bytes. */ }
+      if (workingBlob !== committedBlob)
+        issues.push({ code: 'CONTRACT_TEST_DRIFT', message: `Contract ${contract.name} test does not match the source-locked blob: ${testId}` });
     }
   }
   return issues;

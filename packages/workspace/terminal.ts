@@ -110,7 +110,12 @@ export class TerminalHost{
  }
  private result(session:Session,cursor:number){const end=session.offset+session.output.length,start=Math.min(end,Math.max(session.offset,cursor));return{id:session.id,projectId:session.projectId,threadId:session.threadId,output:session.output.slice(start-session.offset),start,cursor:end,exited:session.exited,exitCode:session.exitCode};}
  private async owned(id:string,projectId:string,threadId?:string,stopping=false){const session=this.sessions.get(identifier.parse(id));if(!session){const old=this.projects.store.get<{projectId:string;threadId?:string}>('terminalSession',id);if(old&&old.projectId===projectId&&old.threadId===threadId)throw new HarnessError('TERMINAL_ENDED','The host restarted or this terminal ended. Open a new terminal.');throw new HarnessError('NOT_FOUND','Terminal is unavailable.');}if(session.projectId!==projectId||session.threadId!==threadId)throw new HarnessError('CAPABILITY_DENIED','Terminal belongs to another working copy.');if(!stopping){const binding=await this.projects.binding(projectId,threadId);if(session.path!==binding.path)throw new HarnessError('CAPABILITY_DENIED','Terminal belongs to another working copy.');this.assertStartupAvailable(session);}return session;}
- async read(id:string,projectId:string,threadId?:string,cursor=0){return this.result(await this.owned(id,projectId,threadId),z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(cursor));}
+ async read(id:string,projectId:string,threadId?:string,cursor=0){
+  const session=await this.owned(id,projectId,threadId),requested=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(cursor),index=requested-session.offset;
+  // A caller-provided UTF-16 cursor may land between the halves of a retained character.
+  const before=session.output.charCodeAt(index-1),after=session.output.charCodeAt(index);
+  return this.result(session,before>=0xd800&&before<=0xdbff&&after>=0xdc00&&after<=0xdfff?requested+1:requested);
+ }
  private async stop(session:Session){
   if(session.exited)return;
   session.pty.kill();
