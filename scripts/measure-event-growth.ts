@@ -16,10 +16,24 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { Store } from '../packages/storage/store.ts';
 
-const args = process.argv.slice(2);
-const sweepKeep = (() => { const flag = args.find(arg => arg.startsWith('--sweep=')); return flag ? Number(flag.slice(8)) : null; })();
-if (sweepKeep !== null && (!Number.isSafeInteger(sweepKeep) || sweepKeep < 1)) throw new Error('--sweep must be a positive integer');
-const sizes = args.filter(arg => !arg.startsWith('--')).map(Number).filter(n => Number.isSafeInteger(n) && n > 0);
+const positiveInteger = (raw: string) => {
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+};
+const sizes: number[] = [];
+let sweepKeep: number | null = null;
+for (const arg of process.argv.slice(2)) {
+  if (arg.startsWith('--sweep=')) {
+    if (sweepKeep !== null) throw new Error('--sweep can only be specified once');
+    sweepKeep = positiveInteger(arg.slice('--sweep='.length));
+    if (sweepKeep === null) throw new Error('--sweep must be a positive integer');
+    continue;
+  }
+  if (arg.startsWith('--')) throw new Error('Unknown option: ' + arg);
+  const size = positiveInteger(arg);
+  if (size === null) throw new Error('Invalid event count: expected a positive integer, got ' + JSON.stringify(arg));
+  sizes.push(size);
+}
 const targets = sizes.length ? sizes : [1000, 10000, 50000, 100000];
 const THREADS = 20;
 
