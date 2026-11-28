@@ -307,14 +307,14 @@ test('workspace layout persists and context unknowns never appear as zero', asyn
   const launcher = page.getByRole('region', { name: 'Workspace launcher' });
   await expect(launcher.getByRole('button', { name: 'Device', exact: true })).toBeDisabled();
   await expect(launcher.getByRole('button', { name: 'Files', exact: true })).toBeEnabled();
-  await page.getByRole('complementary', { name: 'Workspace panel', exact: true }).getByRole('button', { name: 'Add surface', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Usage', exact: true }).click();
+  await page.getByRole('region', { name: 'Workspace panel', exact: true }).getByRole('button', { name: 'Add surface', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Usage (dialog)', exact: true }).click();
   const usageDialog = page.getByRole('dialog', { name: 'Usage', exact: true });
   await expect(usageDialog).toContainText('No usage recorded yet');
   await usageDialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await page.reload();
   await expect(page.locator('.app-shell:not(.embedded-thread-app)')).toHaveAttribute('data-sidebar-collapsed', 'true');
-  await expect(page.getByRole('complementary', { name: 'Workspace panel', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Workspace panel', exact: true })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Artifact', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('button', { name: 'Hide workspace panel', exact: true }).click();
   await page.getByRole('button', { name: 'Inspect context usage' }).click();
@@ -331,10 +331,10 @@ test('workspace artifact tabs preserve the exact authenticated widget mount and 
   await page.getByRole('button', { name: 'Open artifact in workspace', exact: true }).click();
   await expect(page.locator('.artifact-in-workspace')).toBeVisible();
   await expect(frame.getByRole('textbox', { name: 'Widget note' })).toHaveValue('Keep the same mounted editor');
-  const tools = page.getByRole('complementary', { name: 'Workspace panel', exact: true });
+  const tools = page.getByRole('region', { name: 'Workspace panel', exact: true });
   await tools.getByRole('button', { name: 'Add surface', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Notes', exact: true }).click();
-  await tools.getByRole('tab', { name: 'Notes', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Memory', exact: true }).click();
+  await tools.getByRole('tab', { name: 'Memory', exact: true }).click();
   await tools.getByRole('tab', { name: 'Artifact', exact: true }).click();
   await frame.getByRole('textbox', { name: 'Widget note' }).click();
   await expect(frame.getByRole('textbox', { name: 'Widget note' })).toBeFocused();
@@ -355,18 +355,18 @@ test('workspace files, diffs and executor output show actual scoped snapshot evi
   await page.route('**/api/resources/project-one/content**', async route => { reads.push(new URL(route.request().url()).search); await route.fulfill({ contentType: 'text/plain', body: 'Scoped fixture contents' }); });
   await page.goto('/');
   await page.getByRole('button', { name: 'Open workspace panel', exact: true }).click();
-  const panel = page.getByRole('complementary', { name: 'Workspace panel' });
+  const panel = page.getByRole('region', { name: 'Workspace panel' });
   await panel.getByRole('button', { name: 'Add surface', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Files', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Files', exact: true }).click();
   await panel.getByRole('button', { name: /example.txt/ }).click();
   await expect(panel.getByText('Scoped fixture contents', { exact: true })).toBeVisible();
   expect(reads).toEqual(['/api/resources/project-one/tree', '?path=example.txt']);
   await panel.getByRole('button', { name: 'Add surface', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Diff', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Diff', exact: true }).click();
   await expect(panel.getByText('old value', { exact: true })).toBeVisible();
   await expect(panel.getByText('new value', { exact: true })).toBeVisible();
   await panel.getByRole('button', { name: 'Add surface', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Output', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Executor output', exact: true }).click();
   await expect(panel).toContainText('one real fixture check passed');
   await expect(panel).not.toContainText('Recorded executor receipts and output. Open Terminal for an interactive host session.');
 });
@@ -1245,7 +1245,7 @@ test('real submit, pending input and operation approval carry exact host identit
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Inspect the actual project');
   await page.getByRole('textbox', { name: 'Message', exact: true }).press('Enter');
   await expect(page.getByText('Inspect the actual project', { exact: true })).toBeVisible();
-  expect(state.commands.find(item => item.type === 'message.send')?.payload).toEqual({ content: 'Inspect the actual project', modelId: 'test/model',thinkingLevel:null });
+  expect(state.commands.find(item => item.type === 'message.send')?.payload).toEqual({ content: 'Inspect the actual project', modelId: 'test/model',thinkingLevel:null,attachmentIds:[] });
 });
 
 test('arbitrary sandboxed widget checkpoints only through its current authenticated mount', async ({ page }) => {
