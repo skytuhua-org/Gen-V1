@@ -4,6 +4,8 @@
 // #1291 publish routes; no real host or git is involved.
 import { test, expect, type Page, type Route } from '@playwright/test';
 import { resolve } from 'node:path';
+import { serveTaskFixture, taskFixture } from './task-interface-fixture';
+import { quiescent } from './settle';
 
 const HEAD = 'a'.repeat(40), REVISION = 'c'.repeat(64);
 const DRAFT = {
@@ -307,5 +309,42 @@ test('an in-flight Publish remains owner-scoped when the composer changes thread
     expect(publishes).toBe(1);
   } finally {
     settle();
+  }
+});
+
+test('a delayed Publish probe cannot insert a prompt after the same thread changes project', async ({ page }) => {
+  const snapshot = taskFixture({ root: 'text', elements: { text: { type: 'Text', props: { text: 'Synthetic task' } } } });
+  const thread = snapshot.threads[0];
+  thread.projectId = 'project-one';
+  thread.projectName = 'Original project';
+  snapshot.artifacts = [];
+  const host = await serveTaskFixture(page, snapshot);
+  await page.route('**/api/plugins', route => route.fulfill({ json: { plugins: [] } }));
+  let markProbed!: () => void, release!: () => void;
+  const probed = new Promise<void>(resolve => { markProbed = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/projects/project-one/publish/draft?**', async route => {
+    markProbed();
+    await held;
+    await route.fulfill({ status: 403, json: { error: { code: 'CAPABILITY_DENIED', message: 'Fixture rejects the old owner.' } } });
+  });
+  try {
+    await page.goto('/');
+    const message = page.getByRole('textbox', { name: 'Message', exact: true });
+    await expect(message).toBeEnabled({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Create PR', exact: true }).click();
+    await probed;
+    thread.projectId = 'project-two';
+    thread.projectName = 'Replacement project';
+    await host.publish();
+    await expect(page.getByRole('button', { name: 'Select project' })).toHaveAttribute('title', 'Select project · Replacement project');
+    const response = page.waitForResponse(url => new URL(url.url()).pathname === '/api/projects/project-one/publish/draft');
+    release();
+    await (await response).finished();
+    const samples = await quiescent(page, 350, () => message.inputValue());
+    expect(samples).toEqual(['""']);
+    await expect(dialog(page)).toHaveCount(0);
+  } finally {
+    release();
   }
 });

@@ -361,15 +361,22 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
     if(!thread){await journalWrite('mode:'+key,mode);setDraftMode(mode);return;}
     await command('thread.mode',{mode},thread.id);await refresh();
   };
-  const [publishReview,setPublishReview]=useState<PublishReviewOpen|null>(null);
+  const publishProjectId=thread?.projectId,publishThreadId=thread?.id;
+  const publishOwner=useMemo(()=>publishProjectId&&publishThreadId?{projectId:publishProjectId,threadId:publishThreadId}:null,
+    [publishProjectId,publishThreadId,thread?.epoch,thread?.workspaceId,thread?.accountId]);
+  const [publishReview,setPublishReview]=useState<{owner:NonNullable<typeof publishOwner>;outcome:PublishReviewOpen}|null>(null);
+  const publishProbe=useRef(0);
+  useLayoutEffect(()=>()=>{publishProbe.current++;},[publishOwner]);
   const preparePR=async()=>{
     const insertIntent=()=>{const intent='Create a pull request for the current changes.';const current=draftLatest.current;updateDraft(current.startsWith(intent)?current:intent+(current.trim()?'\n\n'+current:''));input.current?.focus();};
     // R8: with publishV1 on and a writable managed copy the chip opens the
     // review sheet; every other outcome keeps the legacy prompt insert.
-    if(!thread?.projectId){insertIntent();return;}
-    const outcome=await probePublishDraft(thread.projectId,thread.id);
+    if(!publishOwner){insertIntent();return;}
+    const probe=++publishProbe.current;
+    const outcome=await probePublishDraft(publishOwner.projectId,publishOwner.threadId);
+    if(publishProbe.current!==probe)return;
     if(outcome.kind==='unavailable'){insertIntent();return;}
-    setPublishReview(outcome);
+    setPublishReview({owner:publishOwner,outcome});
   };
   return <div className="composer-dock">
     {thread && !working && ['stopped', 'interrupted', 'failed'].includes(thread.status) && <div className="resume-strip" role="status"><span>{thread.status === 'interrupted' ? 'This session was interrupted.' : thread.status === 'stopped' ? 'Agent stopped. Your work is saved.' : 'The agent could not finish this run.'}</span><button className="secondary" disabled={!modelId || resuming} title={!modelId ? 'Choose an available model before resuming.' : undefined} onClick={resume} aria-busy={resuming || undefined}>{resuming ? <><Spinner size={12} />Resuming…</> : <>Resume<ChevronRight size={13} /></>}</button></div>}
@@ -405,7 +412,7 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
       />
     </ComposerView>
     <div className="composer-caption">{prediction.candidate ? <span className="composer-prediction-controls"><span className="composer-prediction-keyboard" aria-hidden="true">Tab to accept · Esc to dismiss</span><button type="button" className="composer-prediction-use" onPointerDown={event => event.preventDefault()} onClick={acceptPrediction}>Use suggestion</button></span> : unavailable ? <button onClick={setup}>Connect a model to start<ChevronRight size={12} /></button> : null}</div>
-    {publishReview&&thread?.projectId&&<PublishReview open projectId={thread.projectId} threadId={thread.id} initial={publishReview} loadDraft={signal=>probePublishDraft(thread.projectId!,thread.id,signal)} onClose={()=>setPublishReview(null)} timeFormat={getPreferences(snapshot.settings).timeFormat}/>}
+    {publishReview&&publishReview.owner===publishOwner&&<PublishReview open projectId={publishOwner.projectId} threadId={publishOwner.threadId} initial={publishReview.outcome} loadDraft={signal=>probePublishDraft(publishOwner.projectId,publishOwner.threadId,signal)} onClose={()=>setPublishReview(null)} timeFormat={getPreferences(snapshot.settings).timeFormat}/>}
   </div>;
 }
 
