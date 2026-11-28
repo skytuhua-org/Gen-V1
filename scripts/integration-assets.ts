@@ -4,7 +4,7 @@ import {copyFile,lstat,mkdir,readFile,readdir,writeFile} from 'node:fs/promises'
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
-import {dependencyFile,ordinaryFile,payloadPath,readManifest,sha256,verifyDefinition,type IntegrationFile} from '../packages/integrations/manifest.ts';
+import {dependencyFile,ordinaryFile,payloadPath,readManifest,installedIntegrationFiles,sha256,verifyDefinition,type IntegrationFile} from '../packages/integrations/manifest.ts';
 
 interface LockedFile {path:string;bytes:number;sha256:string}
 interface Distribution {name:string;version:string;wheelSha256?:string;sourceUrl?:string}
@@ -76,7 +76,7 @@ async function lockIntegrationDependencies(root:string,pipReport?:string){
 export async function collectIntegrationPayload(root:string,options:{canonicalPython?:CanonicalPythonOptions}={}):Promise<IntegrationPayload>{
  root=resolve(root);const manifest=await readManifest(root),payload:IntegrationPayload={files:[],bytes:0,integrations:manifest.integrations.length};
  const add=async(file:LockedFile|IntegrationFile)=>{const data=await ordinaryFile(payloadPath(root,file.path));if(data.length!==file.bytes||sha256(data)!==file.sha256)throw Error('Integration custody checksum mismatch: '+file.path);payload.bytes+=data.length;if(payload.bytes>MAX_BYTES||payload.files.length>=MAX_FILES)throw Error('Integration payload exceeds packaging budget');payload.files.push({path:file.path,bytes:data.length,sha256:file.sha256,source:payloadPath(root,file.path)});};
- for(const item of manifest.integrations){await verifyDefinition(root,item);for(const file of item.files)await add(file);}
+ for(const item of manifest.integrations){await verifyDefinition(root,item,{includeUpstream:true});for(const file of installedIntegrationFiles(item))await add(file);}
  const python=JSON.parse((await ordinaryFile(join(root,'third-party/integrations/PYTHON_LOCK.json'),8*1024*1024)).toString()) as PythonLock;
  if(python.version!==1||python.python!=='3.14'||python.files.length>MAX_FILES)throw Error('Invalid integration Python lock');
  if(options.canonicalPython){

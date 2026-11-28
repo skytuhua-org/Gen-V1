@@ -3,7 +3,7 @@ import {lstat,readFile} from 'node:fs/promises';
 import {relative,resolve} from 'node:path';
 import type {IntegrationId,IntegrationStatus} from '../contracts/integrations.ts';
 
-export interface IntegrationFile {path:string;bytes:number;sha256:string;source:string;gitBlob?:string}
+export interface IntegrationFile {path:string;bytes:number;sha256:string;source:string;gitBlob?:string;use?:'upstream-validator'|'reference-example'}
 export interface IntegrationDefinition {
  id:IntegrationId;name:string;version:string;license:string[];
  upstream:{repository:string;pin:string};additionalSources?:{repository:string;pin:string}[];
@@ -24,12 +24,16 @@ export async function ordinaryFile(path:string,maxBytes=64*1024*1024,allowPackag
 }
 /** pnpm dependencies can be hardlinked; native Biome exceeds source-file limits. */
 export const dependencyFile=(path:string)=>ordinaryFile(path,256*1024*1024,true);
+export const installedIntegrationFiles=(item:IntegrationDefinition)=>item.files.filter(file=>file.use!=='upstream-validator');
 export async function readManifest(root:string):Promise<IntegrationManifest>{
  const value=JSON.parse((await ordinaryFile(resolve(root,'third-party/integrations/manifest.json'),4*1024*1024)).toString()) as IntegrationManifest;
  if(value.version!==1||value.integrations.length!==integrationIds.length||new Set(value.integrations.map(item=>item.id)).size!==integrationIds.length||integrationIds.some(id=>!value.integrations.some(item=>item.id===id)))throw Error('Bundled integration registry does not match the explicit allowlist');
- const paths=new Set<string>();for(const item of value.integrations)for(const file of item.files){payloadPath(root,file.path);if(paths.has(file.path)||!file.path.startsWith('third-party/integrations/')||!Number.isSafeInteger(file.bytes)||file.bytes<0||!/^([a-f0-9]{64})$/.test(file.sha256))throw Error('Invalid integration custody record');paths.add(file.path);}
+ const paths=new Set<string>();for(const item of value.integrations)for(const file of item.files){payloadPath(root,file.path);if(paths.has(file.path)||!file.path.startsWith('third-party/integrations/')||!Number.isSafeInteger(file.bytes)||file.bytes<0||!/^([a-f0-9]{64})$/.test(file.sha256)
+  ||file.use!==undefined&&file.use!=='upstream-validator'&&file.use!=='reference-example'
+  ||file.use==='upstream-validator'&&item.skills.some(skill=>skill.path===file.path))throw Error('Invalid integration custody record');paths.add(file.path);}
  return value;
 }
-export async function verifyDefinition(root:string,item:IntegrationDefinition){
- for(const file of item.files){const data=await ordinaryFile(payloadPath(root,file.path));if(data.length!==file.bytes||sha256(data)!==file.sha256)throw Error('Integration payload checksum mismatch: '+file.path);}
+export async function verifyDefinition(root:string,item:IntegrationDefinition,options:{includeUpstream?:boolean}={}){
+ const files=options.includeUpstream?item.files:installedIntegrationFiles(item);
+ for(const file of files){const data=await ordinaryFile(payloadPath(root,file.path));if(data.length!==file.bytes||sha256(data)!==file.sha256)throw Error('Integration payload checksum mismatch: '+file.path);}
 }

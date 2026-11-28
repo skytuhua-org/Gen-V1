@@ -33,6 +33,10 @@ function destination(id:string,path:string){
  if(id==='graphify'&&path.startsWith('graphify/skills/claw/'))return base+'skills/graphify/'+path.slice('graphify/skills/claw/'.length);
  return base+path;
 }
+function integrationFileUse(id:string,path:string):IntegrationFile['use']{
+ if(id==='humanizer'&&path==='scripts/validate-package.py')return 'upstream-validator';
+ if(id==='superpowers'&&path==='skills/systematic-debugging/condition-based-waiting-example.ts')return 'reference-example';
+}
 function frontmatter(text:string,key:string){const front=/^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1]??'';return new RegExp('^'+key+':\\s*(.+)$','m').exec(front)?.[1]?.replace(/^['"]|['"]$/g,'')??'';}
 export async function vendorIntegrations(root:string){
  root=resolve(root);let total=0;const definitions:IntegrationDefinition[]=[];
@@ -49,7 +53,7 @@ export async function vendorIntegrations(root:string){
   const item:IntegrationDefinition={id:source.id,name:source.name,version:source.version,license:[...source.license],upstream:{repository:'https://github.com/'+source.repo,pin:source.pin},files:[],skills:[],capabilities:{skills:[],mcp:source.id==='graphify',hooks:source.id==='impeccable'?['transform_tool_result','pre_verify']:['superpowers','ponytail'].includes(source.id)?['pre_llm_call']:[],commands:[]}};
   const files=tree.tree.filter(file=>file.type==='blob'&&selected(source.id,file.path));
   // Four concurrent bounded raw-blob requests; no archives, histories or duplicate trees.
-  for(let offset=0;offset<files.length;offset+=4){const batch=await Promise.all(files.slice(offset,offset+4).map(async file=>{const url=`https://raw.githubusercontent.com/${source.repo}/${source.pin}/${file.path}`;const data=await fetchBytes(url);return save(destination(source.id,file.path),data,url,file.sha);}));item.files.push(...batch);}
+  for(let offset=0;offset<files.length;offset+=4){const batch=await Promise.all(files.slice(offset,offset+4).map(async file=>{const url=`https://raw.githubusercontent.com/${source.repo}/${source.pin}/${file.path}`;const data=await fetchBytes(url);const record=await save(destination(source.id,file.path),data,url,file.sha);const use=integrationFileUse(source.id,file.path);return use?{...record,use}:record;}));item.files.push(...batch);}
   if(source.id==='impeccable'){
    const pin='e89e3ada3e875a89ac2c5d33d11e65ebef6fe285';item.additionalSources=[{repository:'https://github.com/pbakaus/impeccable',pin}];
    for(const name of ['__init__.py','plugin.yaml']){const url=`https://raw.githubusercontent.com/pbakaus/impeccable/${pin}/.hermes/plugins/impeccable-design-hook/${name}`;item.files.push(await save(`third-party/integrations/impeccable/hook/${name}`,await fetchBytes(url),url));}

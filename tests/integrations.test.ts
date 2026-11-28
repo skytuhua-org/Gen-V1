@@ -1,8 +1,9 @@
 import {afterEach,expect,it} from 'vitest';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {copyFile,mkdir,mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {dirname,join,resolve} from 'node:path';
 import {IntegrationManager} from '../packages/integrations/index.ts';
+import {installedIntegrationFiles,payloadPath,readManifest,verifyDefinition} from '../packages/integrations/manifest.ts';
 import type {IntegrationPreferences,IntegrationScope} from '../packages/contracts/integrations.ts';
 
 const roots:string[]=[];
@@ -49,4 +50,26 @@ it('records original upstream payload hashes and keeps the later Impeccable hook
  expect(impeccable.upstream.pin).toBe('414603bf14c7a344edb466bb1f85690c77ce8b7d');
  expect(impeccable.additionalSources[0].pin).toBe('e89e3ada3e875a89ac2c5d33d11e65ebef6fe285');
  expect(impeccable.files.some((file:{path:string;sha256:string})=>file.path.endsWith('.exe')&&file.sha256==='8f61e96b0c97001546a824d79b44f46b423b560f3eb1a0cc44a8695a1b395d9f')).toBe(true);
+});
+
+it('keeps upstream validation in source custody and includes only runnable Humanizer assets in the install',async()=>{
+ const repo=resolve('.'),manifest=await readManifest(repo);
+ const humanizer=manifest.integrations.find(item=>item.id==='humanizer')!;
+ const validator=humanizer.files.find(file=>file.path.endsWith('/validate-package.py'))!;
+ expect(validator.use).toBe('upstream-validator');
+ const root=await mkdtemp(join(tmpdir(),'harness-install-inventory-'));roots.push(root);
+ const files=installedIntegrationFiles(humanizer);
+ expect(files).toHaveLength(4);
+ for(const file of files){
+  const target=payloadPath(root,file.path);await mkdir(dirname(target),{recursive:true});
+  await copyFile(payloadPath(repo,file.path),target);
+ }
+ await expect(verifyDefinition(root,humanizer)).resolves.toBeUndefined();
+ await expect(verifyDefinition(root,humanizer,{includeUpstream:true})).rejects.toMatchObject({code:'ENOENT'});
+ await expect(verifyDefinition(repo,humanizer,{includeUpstream:true})).resolves.toBeUndefined();
+ expect(humanizer.capabilities.commands).toEqual(['humanizer']);
+ const superpowers=manifest.integrations.find(item=>item.id==='superpowers')!;
+ const example=installedIntegrationFiles(superpowers).find(file=>file.use==='reference-example')!;
+ expect(example.path).toMatch(/\/condition-based-waiting-example\.ts$/);
+ expect(superpowers.capabilities.commands).not.toContain('condition-based-waiting-example');
 });
