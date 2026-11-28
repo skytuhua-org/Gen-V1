@@ -10,7 +10,7 @@ import '../../apps/web/src/shell.css';
 
 const query = new URLSearchParams(location.search);
 const threads: Thread[] = Array.from({ length: query.has('overflow') ? 35 : 6 }, (_, index) => ({
-  id: `thread-${index + 1}`, title: `Thread ${index + 1}`, projectName: 'Synthetic project',
+  id: `thread-${index + 1}`, title: `Thread ${index + 1}`, projectName: query.has('grouped') && index >= 2 ? 'Other project' : 'Synthetic project',
   status: 'ready', epoch: 0, runId: null, modelId: null, sessionPath: null,
   createdAt: '2026-11-01T00:00:00Z', updatedAt: `2026-11-01T00:00:${String(59 - index).padStart(2, '0')}Z`,
   presentation: { order: index },
@@ -26,7 +26,7 @@ function Fixture() {
   const [search, setSearch] = useState(''), [request, setRequest] = useState<(() => void) | null>(null);
   const [layout, setLayout] = useState<ShellLayout>({ sidebarCollapsed: false, sidebarWidth: 248, rightPanelOpen: false,
     rightPanelWidth: 520, rightPanelMaximized: false, activeTab: 'artifact', openTabs: ['artifact'], activeArtifactId: null, folded: { settled: true } });
-  const preferences = { ...DEFAULT_PREFERENCES, projectGrouping: false, showWorkingSection: false,
+  const preferences = { ...DEFAULT_PREFERENCES, projectGrouping: query.has('grouped'), showWorkingSection: false,
     projectOrder: query.has('recent') ? 'recent' as const : 'manual' as const };
   const matching = useMemo(() => matchingThreads(rows, [], search, preferences.projectOrder), [rows, search, preferences.projectOrder]);
   return <div className="app-shell" data-theme="dark" style={{ height: '100vh' }}>
