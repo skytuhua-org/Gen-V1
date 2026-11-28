@@ -1245,7 +1245,7 @@ test('real submit, pending input and operation approval carry exact host identit
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Inspect the actual project');
   await page.getByRole('textbox', { name: 'Message', exact: true }).press('Enter');
   await expect(page.getByText('Inspect the actual project', { exact: true })).toBeVisible();
-  expect(state.commands.find(item => item.type === 'message.send')?.payload).toEqual({ content: 'Inspect the actual project', modelId: 'test/model',thinkingLevel:null });
+  expect(state.commands.find(item => item.type === 'message.send')?.payload).toEqual({ content: 'Inspect the actual project', modelId: 'test/model',thinkingLevel:null,attachmentIds:[] });
 });
 
 test('arbitrary sandboxed widget checkpoints only through its current authenticated mount', async ({ page }) => {
