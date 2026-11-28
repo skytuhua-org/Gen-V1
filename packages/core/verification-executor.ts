@@ -158,9 +158,14 @@ export function createVerificationExecutorFactory(config: VerificationExecutorHo
           const timer = setTimeout(() => { termination = 'TIMEOUT'; launchStop.abort(); void terminate().catch(() => {}); }, Math.max(0, deadlineAt - Date.now()));
           const cancel = () => { termination ??= 'CANCELLED'; void terminate().catch(() => {}); };
           signal.addEventListener('abort', cancel, { once: true });
-          const wait = Promise.race([backendCall(() => raw.wait()), forced.then(() => ({ exitCode: null, termination: termination ?? 'CANCELLED' as const }))]).then(result => {
+          const wait = Promise.race([backendCall(() => raw.wait()), forced.then(() => ({ exitCode: null, termination: termination ?? 'CANCELLED' as const }))]).then(async result => {
             if (cleanupError) throw cleanupError;
-            if (termination) return { exitCode: result.exitCode, termination };
+            if (termination) {
+              const reason = termination;
+              // Exit can be observed before the backend confirms owned teardown.
+              await terminate();
+              return { exitCode: result.exitCode, termination: reason };
+            }
             active();
             if (!['NONE', 'TIMEOUT', 'CANCELLED', 'SPAWN_ERROR'].includes(result.termination) || (result.exitCode !== null && !Number.isInteger(result.exitCode)))
               throw executorDenied('INVALID_PROCESS_EVIDENCE', 'The backend returned invalid process completion evidence.');

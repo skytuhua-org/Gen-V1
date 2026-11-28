@@ -1966,6 +1966,157 @@
     "docs/implementation/v6/M10/logs-pm/provenance-map.json",
     "docs/implementation/v6/M10/logs-pm/ci-installed-lane/default-off/default-off-verification.summary.md"
    ]
+  },
+  {
+   "id": "m10.issue-2049-t04-postmerge-windows-live-intake",
+   "status": "PASS",
+   "requiredCases": [
+    {
+     "id": "#2049-A01",
+     "status": "PASS",
+     "evidence": "43/43 focused vitest on current main; merged durable claim/replay regressions"
+    },
+    {
+     "id": "#2049-A02",
+     "status": "PASS",
+     "evidence": "43/43 focused vitest; second-host/replay cases in tests/external-intake-v3.test.ts"
+    },
+    {
+     "id": "#2049-A03",
+     "status": "PASS",
+     "evidence": "43/43 focused vitest; rejection race cases in tests/external-intake-v3.test.ts"
+    },
+    {
+     "id": "#2049-A04",
+     "status": "PASS",
+     "evidence": "12/12 background-work browser lane, including proposed/approved/rejected inbox and manual approval gate"
+    },
+    {
+     "id": "#2049-A05",
+     "status": "PASS",
+     "evidence": "authenticated read-only live GitHub polling: first poll 228 proposals/0 duplicates, second poll 0 proposals/228 duplicates, 8 HTTP 200 calls, no executor invocation"
+    }
+   ],
+   "commands": [
+    {
+     "argv": [
+      "node",
+      "C:/hostedtoolcache/node/24.22.2/x64/node_modules/corepack/dist/pnpm.js",
+      "exec",
+      "vitest",
+      "run",
+      "tests/external-intake-v3.test.ts",
+      "tests/background-contract-decisions-v6.test.ts",
+      "--maxWorkers=1"
+     ],
+     "cwdIdentity": "skytuhua-org/Gen-V1: devin/dfca0e-2049-intake-verify",
+     "executableIdentity": "node C:/hostedtoolcache/node/24.22.2/x64/node_modules/corepack/dist/pnpm.js",
+     "startedAt": "2026-11-25T21:15:39.908188Z",
+     "endedAt": "2026-11-25T21:15:47.585707Z",
+     "exitCode": 0,
+     "termination": "NONE",
+     "status": "PASS",
+     "boundedLogRef": "docs/implementation/v6/M10/issue-2049-focused-vitest.log",
+     "logDigest": "f48c85deea9f7a90ac8ca209b638f44545d1de4f10b6dfbee790a8a36443c756"
+    },
+    {
+     "argv": [
+      "node",
+      "C:/hostedtoolcache/node/24.22.2/x64/node_modules/corepack/dist/pnpm.js",
+      "exec",
+      "playwright",
+      "test",
+      "--config",
+      "tests/e2e/background-work.playwright.config.ts",
+      "--reporter=list"
+     ],
+     "cwdIdentity": "skytuhua-org/Gen-V1: devin/dfca0e-2049-intake-verify",
+     "executableIdentity": "node C:/hostedtoolcache/node/24.22.2/x64/node_modules/corepack/dist/pnpm.js",
+     "startedAt": "2026-11-25T21:15:47.586043Z",
+     "endedAt": "2026-11-25T21:16:07.601301Z",
+     "exitCode": 0,
+     "termination": "NONE",
+     "status": "PASS",
+     "boundedLogRef": "docs/implementation/v6/M10/issue-2049-browser.log",
+     "logDigest": "1d16b3694b9600210a40a8f0c55f9b99674285664f5649fd881c9100f87e21b4"
+    },
+    {
+     "argv": [
+      "node",
+      "--import",
+      "tsx",
+      "docs/implementation/v6/M10/issue-2049-live-intake-check.ts"
+     ],
+     "cwdIdentity": "skytuhua-org/Gen-V1: devin/dfca0e-2049-intake-verify",
+     "executableIdentity": "node --import tsx",
+     "startedAt": "2026-11-25T21:18:07.353559Z",
+     "endedAt": "2026-11-25T21:18:16.355234Z",
+     "exitCode": 0,
+     "termination": "NONE",
+     "status": "PASS",
+     "boundedLogRef": "docs/implementation/v6/M10/issue-2049-live-intake.log",
+     "logDigest": "d4755eb814294a4cf981aaac7574ba268d16fd2c36df34a88609d724d839bcd2"
+    },
+    {
+     "argv": [
+      "node",
+      "C:/hostedtoolcache/node/24.22.2/x64/node_modules/corepack/dist/pnpm.js",
+      "typecheck"
+     ],
+     "cwdIdentity": "skytuhua-org/Gen-V1: devin/dfca0e-2049-intake-verify",
+     "executableIdentity": "node C:/hostedtoolcache/node/24.22.2/x64/node_modules/corepack/dist/pnpm.js",
+     "startedAt": "2026-11-25T21:16:15.937507Z",
+     "endedAt": "2026-11-25T21:16:17.170648Z",
+     "exitCode": 0,
+     "termination": "NONE",
+     "status": "PASS",
+     "boundedLogRef": "docs/implementation/v6/M10/issue-2049-typecheck.log",
+     "logDigest": "03cca324bad2ade23cd71750d611ad449e78f7c06af6e716e2cf18cb3866559c"
+    },
+    {
+     "argv": [
+      "node",
+      "C:/hostedtoolcache/node/24.22.2/x64/node_modules/corepack/dist/pnpm.js",
+      "lint"
+     ],
+     "cwdIdentity": "skytuhua-org/Gen-V1: devin/dfca0e-2049-intake-verify",
+     "executableIdentity": "node C:/hostedtoolcache/node/24.22.2/x64/node_modules/corepack/dist/pnpm.js",
+     "startedAt": "2026-11-25T21:16:17.171009Z",
+     "endedAt": "2026-11-25T21:16:40.098311Z",
+     "exitCode": 0,
+     "termination": "NONE",
+     "status": "PASS",
+     "boundedLogRef": "docs/implementation/v6/M10/issue-2049-lint.log",
+     "logDigest": "79729e8d5d5a801f0b992d0bc5aa758d70cf39d3ac89cf4a73b9497d85cbeaf6"
+    },
+    {
+     "argv": [
+      "node",
+      "C:/hostedtoolcache/node/24.22.2/x64/node_modules/corepack/dist/pnpm.js",
+      "build"
+     ],
+     "cwdIdentity": "skytuhua-org/Gen-V1: devin/dfca0e-2049-intake-verify",
+     "executableIdentity": "node C:/hostedtoolcache/node/24.22.2/x64/node_modules/corepack/dist/pnpm.js",
+     "startedAt": "2026-11-25T21:16:40.098645Z",
+     "endedAt": "2026-11-25T21:16:48.387964Z",
+     "exitCode": 0,
+     "termination": "NONE",
+     "status": "PASS",
+     "boundedLogRef": "docs/implementation/v6/M10/issue-2049-build.log",
+     "logDigest": "26f3e370ca309d7786c41feb036f96e0d595212f8d76e8e18d62dbd39d5dd90a"
+    }
+   ],
+   "artifactRefs": [
+    "docs/implementation/v6/M10/issue-2049-live-intake-check.ts",
+    "docs/implementation/v6/M10/issue-2049-live-intake-evidence.json",
+    "docs/implementation/v6/M10/issue-2049-command-receipts.json",
+    "docs/implementation/v6/M10/issue-2049-focused-vitest.log",
+    "docs/implementation/v6/M10/issue-2049-browser.log",
+    "docs/implementation/v6/M10/issue-2049-live-intake.log",
+    "docs/implementation/v6/M10/issue-2049-typecheck.log",
+    "docs/implementation/v6/M10/issue-2049-lint.log",
+    "docs/implementation/v6/M10/issue-2049-build.log"
+   ]
   }
  ],
  "changedFiles": [
@@ -2156,7 +2307,16 @@
   "tests/split-app-browser.test.ts",
   "tests/tool-effect-read-owner-v3.test.ts",
   "tests/tool-effect-replay-authority-v3.test.ts",
-  "tests/tool-effect-replay-owner-v3.test.ts"
+  "tests/tool-effect-replay-owner-v3.test.ts",
+  "docs/implementation/v6/M10/issue-2049-live-intake-check.ts",
+  "docs/implementation/v6/M10/issue-2049-live-intake-evidence.json",
+  "docs/implementation/v6/M10/issue-2049-command-receipts.json",
+  "docs/implementation/v6/M10/issue-2049-focused-vitest.log",
+  "docs/implementation/v6/M10/issue-2049-browser.log",
+  "docs/implementation/v6/M10/issue-2049-live-intake.log",
+  "docs/implementation/v6/M10/issue-2049-typecheck.log",
+  "docs/implementation/v6/M10/issue-2049-lint.log",
+  "docs/implementation/v6/M10/issue-2049-build.log"
  ],
  "dependencyContracts": [
   {
@@ -2219,7 +2379,6 @@
   "HOLD_FORK_API: pinned Hermes wrapper exposes no callable fork API; review forks and idle model review remain UNSUPPORTED_FORK.",
   "HOLD_EXECUTION_PROFILE: production command launch requires an operator-approved M03 profile, trust and installed backend; none is configured on this host.",
   "Foreground-timeout Continue-in-background offer is not wired to the operation timeout surface; the permitted-profile command path itself is implemented and gated.",
-  "Live GitHub polling evidence absent; intake tested with injected authenticated fetch fixtures.",
   "Full pnpm test on the merged cut: 304 failed / 4115 passed / 62 skipped (4481) vs same-base baseline at 56749856: 306 failed / 4053 passed / 62 skipped (4421). All 304 candidate failure identities are shared with the baseline run \u2014 zero candidate-only failures; the 60-test delta is the new M10 suites, all passing. The 2 baseline-only identities (desktop-host startup collision, dev-plugin-runtime) are the same environmental/flaky class as the prior cut. Dominant causes unchanged: python3.14 absent (Hermes source worker), linux-path-guard denials, native/platform-specific suites.",
   "Full pnpm test:browser on the merged cut: terminal FAIL exit 1 at 19:41Z (tbf receipt, ~1.9h wall, 29.7k-line log). 68/78 suite groups failed \u2014 dominant class is environmental: 545x browserType.launch 'msedge' channel absent at /opt/microsoft/msedge, 24x ERR_CONNECTION_REFUSED fixture servers, 4x page.goto fixture timeouts. The M10-scoped suite failed 2/9 in-run \u2014 both page.goto 30s timeouts to the fixed-port 127.0.0.1:5821 fixture (fixture-server collision under the full suite), while the focused receipt pnpm test:browser --suite background-work exits 0 (11/11) on this cut and 12/12 on Windows ff38c62c. Missing Edge channel and shared-host fixture-port collisions are recorded, not waived; a green whole-repo browser run remains an unmet gate on this host.",
   "HOLD_SOURCE_DRIFT resolved in session 4: the conflicted join with origin/main (then 33639138, re-captured as 567498568611bc33379b31a0630dfaf3691b339f after further main drift) was resolved under explicit user authorization. Resolution kept both integrations \u2014 M15/M04 flag keys beside the four M10 keys, main's customDock/onActiveViewsChange split-root plus background-work wiring, main's CRLF server.ts plus both route registrations \u2014 no blanket ours/theirs. The earlier abort-and-hold record stays in the v6 handoff.",

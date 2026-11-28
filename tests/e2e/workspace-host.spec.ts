@@ -863,6 +863,32 @@ test('an unavailable main layout gives the user a retry without reloading the pa
   expect(navigations).toBe(0);
 });
 
+test('pressing ? opens Settings at the keyboard reference', async ({ page }) => {
+  await fixture(page);
+  await page.waitForSelector('input[aria-label="Search threads"]');
+  await page.evaluate(() => document.body.focus());
+  await page.keyboard.press('Shift+Slash');
+  const reference = page.locator('[data-setting-id="harness-keyboard-reference"]');
+  await expect(reference).toBeVisible();
+  await expect(reference).toContainText('Show keyboard shortcuts');
+});
+
+test('rebinding a global shortcut updates the control tooltip', async ({ page }) => {
+  await fixture(page);
+  await page.waitForSelector('input[aria-label="Search threads"]');
+  await expect(page.locator('input[aria-label="Search threads"]')).toHaveAttribute('title', /Ctrl\+K/);
+  await page.keyboard.press('Control+,');
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button', { name: 'Keyboard Shortcuts' }).click();
+  const input = page.getByRole('textbox', { name: 'Search threads shortcut' });
+  await input.click();
+  await page.keyboard.press('Control+L');
+  await expect(input).toHaveValue('Ctrl+L');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('input[aria-label="Search threads"]')).toHaveAttribute('title', /Ctrl\+L/);
+});
+
+
 test('closing Settings returns focus to the invoker', async ({page}) => {
   await fixture(page);
   const search = page.getByRole('textbox', {name: 'Search threads'});
@@ -887,3 +913,4 @@ test('closing Settings with a gone invoker falls back to the sidebar Settings bu
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('button', {name: 'Settings', exact: true})).toBeFocused();
 });
+

@@ -155,7 +155,7 @@ export async function replaceOwnedFile(source: string, destination: string, iden
     // Catch edits since the capability read. Native verification repeats this
     // on one opened handle and denies in-place writes until the rename ends.
     // An external atomic save can still replace the destination pathname.
-    if(target&&createHash('sha256').update(await readBoundFile(destination,8*1024*1024)).digest('hex')!==expectedDestinationHash)throw new HarnessError('PRECONDITION_FAILED','File changed before guarded replacement');
+    if(target&&createHash('sha256').update(await readBoundFile(destination,32*1024*1024)).digest('hex')!==expectedDestinationHash)throw new HarnessError('PRECONDITION_FAILED','File changed before guarded replacement');
     active(signal);
     await sessions.getStore()!.rpc({ command: "replaceOwned", id: randomUUID(), source, destination, dev: String(identity.dev), ino: String(identity.ino), sha256, targetDev:target&&String(target.dev), targetIno:target&&String(target.ino), targetSha256:expectedDestinationHash });
   });

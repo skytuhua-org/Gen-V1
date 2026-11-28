@@ -78,3 +78,25 @@ it("serves every provider when none is signing in", async () => {
   const models = await runtime.models();
   expect(models.map((model) => model.id)).toEqual(expect.arrayContaining([`${BUSY}/m`, `${HEALTHY}/m`, "claude-code/m"]));
 });
+
+it("replaces failed discovery adapters without recreating or re-closing the healthy sibling", async () => {
+  const failedAdapters: ReturnType<typeof fakeAdapter>[] = [];
+  const makePi = vi.fn(() => {
+    const adapter = fakeAdapter(piCatalog);
+    if (failedAdapters.length < 3) {
+      adapter.models.mockRejectedValue(new Error("synthetic discovery failure"));
+      failedAdapters.push(adapter);
+    }
+    return adapter;
+  });
+  const makeOfficial = vi.fn(() => fakeAdapter(officialCatalog));
+  const runtime = createRuntime({ dataDir: "mock-adapter-retirement" }, { pi: makePi, official: makeOfficial });
+  try {
+    for (let i = 0; i < 3; ++i) expect(await runtime.models()).toEqual(officialCatalog);
+    expect(await runtime.models()).toEqual([...piCatalog, ...officialCatalog]);
+    expect(makePi).toHaveBeenCalledTimes(4);
+    expect(makeOfficial).toHaveBeenCalledTimes(1);
+  } finally { await runtime.dispose(); }
+  for (const adapter of failedAdapters) expect(adapter.dispose).toHaveBeenCalledTimes(1);
+  for (const { value: adapter } of makeOfficial.mock.results) expect(adapter.dispose).toHaveBeenCalledTimes(1);
+});

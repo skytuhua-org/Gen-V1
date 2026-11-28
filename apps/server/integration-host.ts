@@ -44,7 +44,7 @@ const integrationTools=[
 /** Personal-host authority and native completion composition; no global integrations. */
 export function createIntegrationHost(options:IntegrationHostOptions){
  const {store}=options,workspace=options.workspace??new WorkspaceRepository(store),captured=new Map<string,{preferences:IntegrationPreferences;scope:BoundScope;root?:string}>(),retained=new Set<Retained>(),operations=new Set<Promise<NativeCompletion>>(),stops=new Set<()=>void>(),releases=new Set<Promise<void>>();
- let closed=false,closing:Promise<void>|undefined,context7Key:string|undefined;
+ let closed=false,managerClosed=false,closing:Promise<void>|undefined,context7Key:string|undefined;
  const secretReferences=new Context7SecretReferences(options.secretRefsEnabled??hostFlagEnabled('security.secretRefsV1'),options.nodeExecutable??process.execPath,()=>context7Key);
  function binding(input:IntegrationScope,ctx?:RunContext):Binding{
   if(closed)throw denied('The integration host has closed.');
@@ -114,7 +114,9 @@ export function createIntegrationHost(options:IntegrationHostOptions){
   for(const [key,value] of captured){
    let current=false;try{const owner=binding(value.scope);current=Boolean(owner.thread?.runId&&runKey(owner.thread)===key&&owner.root===value.root);}catch{/* Replaced, archived, or removed owners must drain. */}
    if(current)continue;captured.delete(key);
-   const release=manager.releaseOwner(value.scope);releases.add(release);void release.then(()=>releases.delete(release),()=>{});
+   const release=manager.releaseOwner(value.scope);releases.add(release);
+   // The manager retains any native resource whose release did not confirm.
+   const forget=()=>releases.delete(release);void release.then(forget,forget);
   }
  });
  async function settingsFor(input?:StartRun):Promise<HermesSettings>{
@@ -187,9 +189,27 @@ export function createIntegrationHost(options:IntegrationHostOptions){
  return {manager,settingsFor,additionalTool,operationExecutors,complete,secretReferences:()=>secretReferences.status(),
   async configurePrivate(value:{context7ApiKey?:string}){if(closed)throw denied('The integration host has closed.');if(Object.keys(value).some(key=>key!=='context7ApiKey')||value.context7ApiKey!==undefined&&(typeof value.context7ApiKey!=='string'||value.context7ApiKey.length>4096))throw denied('Invalid private integration configuration.');const next=value.context7ApiKey||undefined;if(next!==context7Key||secretReferences.requiresConfiguration()){secretReferences.invalidate();await manager.restart('context7',()=>{context7Key=next;secretReferences.configure(Boolean(next));});}},
   async close(){
-   if(closing)return closing;closed=true;secretReferences.close();
-   // One settlement: concurrent or repeated close calls must not dispose twice.
-   closing=(async()=>{unsubscribeOwners();captured.clear();context7Key=undefined;for(const stop of stops)stop();await manager.dispose();await Promise.allSettled([...operations,...releases]);releases.clear();for(const owner of retained){await owner.runtime.dispose();owner.release();retained.delete(owner);}})();
+   if(closing)return closing;
+   const first=!closed;closed=true;
+   // Wait for completion finalizers to register newly unconfirmed native owners
+   // even when the integration manager itself reports a failed close.
+   closing=Promise.resolve().then(async()=>{
+    if(first){
+     secretReferences.close();unsubscribeOwners();captured.clear();context7Key=undefined;
+     for(const stop of stops)stop();
+    }
+    const errors:unknown[]=[];
+    await Promise.all([
+     ...(managerClosed?[]:[Promise.resolve().then(()=>manager.dispose()).then(()=>{managerClosed=true;},error=>{errors.push(error);})]),
+     Promise.allSettled([...operations,...releases]),
+    ]);
+    const outcomes=await Promise.allSettled([...retained].map(async owner=>{
+     await owner.runtime.dispose();owner.release();retained.delete(owner);
+    }));
+    for(const outcome of outcomes)if(outcome.status==='rejected')errors.push(outcome.reason);
+    if(errors.length===1)throw errors[0];
+    if(errors.length)throw new AggregateError(errors,'Integration shutdown did not confirm all resources.');
+   }).catch(error=>{closing=undefined;throw error;});
    return closing;
   },
  };

@@ -15,19 +15,24 @@ import {agentWorkToolNames} from '../core/agent-work.ts';
  * the standalone schema. A schema carrying its own `$id` is a separate
  * resource whose refs already resolve inside itself, so it — and any
  * `$id`-scoped subtree — passes through unchanged. */
+const schemaMaps=new Set(['properties','patternProperties','$defs','definitions','dependentSchemas','dependencies']);
+const schemaChildren=new Set([
+ 'additionalProperties','additionalItems','unevaluatedProperties','propertyNames','items','prefixItems','contains',
+ 'unevaluatedItems','contentSchema','not','if','then','else','allOf','anyOf','oneOf',
+]);
 function embedSchema(schema:unknown,prefix:string):unknown{
- const walk=(node:unknown,scoped:boolean):unknown=>{
-  if(Array.isArray(node))return node.map(item=>walk(item,scoped));
-  if(!node||typeof node!=='object')return node;
-  const own=typeof(node as Record<string,unknown>).$id==='string'||scoped;
-  const out:Record<string,unknown>={};
-  for(const[key,value]of Object.entries(node)){
-   if(key==='$ref'&&!own&&typeof value==='string'&&(value==='#'||value.startsWith('#/')))out[key]='#'+prefix+value.slice(1);
-   else out[key]=walk(value,own);
-  }
-  return out;
- };
- return walk(schema,false);
+ function walk(node:unknown):unknown{
+  if(Array.isArray(node))return node.map(walk);
+  if(!node||typeof node!=='object'||typeof(node as Record<string,unknown>).$id==='string')return node;
+  return Object.fromEntries(Object.entries(node).map(([key,value])=>{
+   if(key==='$ref'&&typeof value==='string'&&(value==='#'||value.startsWith('#/')))return [key,'#'+prefix+value.slice(1)];
+   if(schemaMaps.has(key)&&value&&typeof value==='object'&&!Array.isArray(value))
+    return [key,Object.fromEntries(Object.entries(value).map(([name,child])=>[name,walk(child)]))];
+   // Other keywords can contain literal data, not schema references.
+   return [key,schemaChildren.has(key)?walk(value):value];
+  }));
+ }
+ return walk(schema);
 }
 
 /** Capture the app's role and controls; original Hermes owns cadence and tool schemas. */

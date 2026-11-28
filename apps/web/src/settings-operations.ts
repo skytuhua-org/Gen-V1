@@ -21,9 +21,13 @@ export class SettingsRefreshError extends Error {
 
 /** The write is the save acknowledgment: it alone holds the handoff guard and
  * alone decides failure. A pending or failed refresh neither reports a saved
- * value as failed nor keeps navigation/close waiting. */
+ * value as failed nor keeps navigation/close waiting; one bounded retry covers
+ * a transient read failure before the saved-but-stale status is exposed. */
 export async function persistSettingsChange(write: () => Promise<unknown>, refresh: () => Promise<unknown>): Promise<void> {
  await settingsOperation(write);
  try { await refresh(); }
- catch (cause) { throw new SettingsRefreshError(cause); }
+ catch {
+  try { await refresh(); }
+  catch (cause) { throw new SettingsRefreshError(cause); }
+ }
 }
