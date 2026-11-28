@@ -10,7 +10,7 @@ import {ProjectTools} from '../packages/workspace/tools.ts';
 import {assertNotStorage} from '../packages/core/security.ts';
 import type {Thread} from '../packages/contracts/index.ts';
 import {copyBoundGitMetadata,withPathGuard} from '../packages/core/file-access.ts';
-import {directoryIdentity,withLegacyGitView,type PrivateGitFamily} from '../packages/workspace/git-storage.ts';
+import {directoryIdentity,importGitFamily,withLegacyGitView,type PrivateGitFamily} from '../packages/workspace/git-storage.ts';
 
 const cleanup:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
@@ -142,3 +142,57 @@ it('returns a stable opaque bindingId on folder and file reads per admitted copy
  const again=await f.tools.files(f.projectId,'bind-one'),sub=await f.tools.files(f.projectId,'bind-one','sub');
  expect(again.bindingId).toBe(folderA.bindingId);expect(sub.bindingId).toBe(folderA.bindingId);
 },60000);
+
+it('retries a recorded interrupted import without requiring or consuming its partial bytes',async()=>{
+ const f=await fixture(),parent=join(f.store.dataDir,'git',f.projectId),staged=join(parent,'repository.git');
+ await mkdir(staged,{recursive:true});
+ await writeFile(join(staged,'incomplete-marker'),'retained partial metadata');
+ const identity=await directoryIdentity(staged);
+ f.store.internal('fixture.interrupted-import',null,()=>f.store.put('workspaceGitImportStage',f.projectId+':0',null,{projectId:f.projectId,attempt:0,identity}));
+ const binding=await f.add('retry').catch(error=>{
+  if(process.platform==='win32'||!String((error as Error).message).includes('File access check failed'))throw error;
+  return undefined;
+ });
+ expect(f.store.eventsAfter(0).some(event=>event.type==='workspace.git-family.stage')).toBe(true);
+ if(binding){
+  expect(binding.workspace?.familyId).toBe(f.projectId);
+  expect(binding.workspace?.commonDirectory).toBe(join(parent,'recovery-1.git'));
+  expect(await f.tools.gitStatus(f.projectId,'retry')).toMatchObject({mode:'managed'});
+  expect((await f.add('retry-again')).workspace?.commonDirectory).toBe(binding.workspace?.commonDirectory);
+ }else expect(f.store.get('workspaceGitFamily',f.projectId)).toBeNull();
+ expect(await readFile(join(staged,'incomplete-marker'),'utf8')).toBe('retained partial metadata');
+ expect(await directoryIdentity(staged)).toEqual(identity);
+ expect(await readFile(join(f.path,'one.txt'),'utf8')).toBe('base\n');
+},60000);
+
+it('holds an ambiguous legacy import intact without publishing it',async()=>{
+ const f=await fixture(),staged=join(f.store.dataDir,'git',f.projectId,'repository.git');
+ await mkdir(staged,{recursive:true});
+ await writeFile(join(staged,'unknown'),'do not replace');
+ await expect(f.add('retry')).rejects.toThrow(/incomplete private Git import/i);
+ expect(await readFile(join(staged,'unknown'),'utf8')).toBe('do not replace');
+ expect(f.store.get('workspaceGitFamily',f.projectId)).toBeNull();
+});
+
+
+it('bounds retained retries and holds an import whose recorded directory has changed',async()=>{
+ const f=await fixture(),parent=join(f.store.dataDir,'git',f.projectId);
+ const stages=await Promise.all(['repository.git','recovery-1.git','recovery-2.git','recovery-3.git'].map(async name=>{
+  const path=join(parent,name);await mkdir(path,{recursive:true});await writeFile(join(path,'retained'),'incomplete');return {path,identity:await directoryIdentity(path)};
+ }));
+ const storeStage=(attempt:number,identity:Awaited<ReturnType<typeof directoryIdentity>>)=>f.store.put('workspaceGitImportStage',f.projectId+':'+attempt,null,{projectId:f.projectId,attempt,identity});
+ f.store.internal('fixture.changed-stage',null,()=>storeStage(0,stages[1]!.identity));
+ await expect(f.add('changed')).rejects.toThrow(/incomplete private Git import/);
+ f.store.internal('fixture.retained-stages',null,()=>stages.forEach(({identity},attempt)=>storeStage(attempt,identity)));
+ await expect(f.add('limit')).rejects.toThrow(/retry limit/);
+ for(const stage of stages)expect(await readFile(join(stage.path,'retained'),'utf8')).toBe('incomplete');
+ expect(f.store.get('workspaceGitFamily',f.projectId)).toBeNull();
+});
+
+it('declines a noncanonical local project identifier before creating private import state',async()=>{
+ const f=await fixture();
+ await expect(importGitFamily(f.store,'unbound local project',f.path,undefined,'git',new AbortController().signal))
+  .rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+ expect(f.store.eventsAfter(0).some(event=>event.type==='workspace.git-family.stage')).toBe(false);
+ await expect(lstat(join(f.store.dataDir,'git'))).rejects.toMatchObject({code:'ENOENT'});
+});
