@@ -251,3 +251,12 @@ it('fails closed after disposal or synchronous host revocation', () => {
   expect(() => reads.history({...f.target, scopeKey: context.scopeKey})).toThrow(/revoked/i);
   f.reads.dispose(); expect(() => f.reads.context(f.target)).toThrow(/unavailable/i);
 });
+
+it('bounds per-event admission work for open scopes', () => {
+  const f = fixture();
+  f.reads.context(f.target);
+  const spy = vi.spyOn(f.store.db, 'prepare');
+  for (let i = 0; i < 10; i++) f.message('m' + i, 'chunk' + i);
+  // Admission statements are static; preparing them per event is unbounded.
+  expect(spy.mock.calls.length).toBeLessThanOrEqual(4);
+});
