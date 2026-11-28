@@ -2,6 +2,7 @@ import {useContext,useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type 
 import {useStateStore,type ComponentRegistry,type ComponentRenderProps} from '@json-render/react';
 import {ArrowDown,CalendarDays,Check,ChevronRight,Filter,MapPin,Plus,Search,Trash2} from 'lucide-react';
 import {EXPLORATION_SCHEMAS,EXPLORATION_DATA_SCHEMAS,boundedExplorationData,readAnnotationState,type AnnotationState,type ScheduleData} from '../../../packages/ui-catalog/exploration';
+import {imageLoadMessages} from './ArtifactImage';
 import {artifactSourceContent,openArtifactSourceLink} from './artifact-source';
 import {ArtifactInline,ArtifactTitle,inputPath,statePath,useTaskAction} from './task-context';
 import {useDocumentEvidence} from './document-evidence';
@@ -19,7 +20,7 @@ type AnnotatorProps={resourceId:string;alt:string;stateKey:string;title?:string;
 function AnnotationCanvas({p,value,read,change}:{p:AnnotatorProps;value:AnnotationState;read:()=>AnnotationState;change:(value:AnnotationState)=>void}){
  const [ready,setReady]=useState(false),[error,setError]=useState(''),[retry,setRetry]=useState(0),action=useTaskAction(),stage=useRef<HTMLDivElement>(null),detail=useSelectionMotion(value.selectedId);
  const selected=value.annotations.find(pin=>pin.id===value.selectedId),count=value.annotations.length;
- useEffect(()=>{if(ready||error)return;const timeout=setTimeout(()=>setError('The image is taking too long to load. Check access and retry.'),15000);return()=>clearTimeout(timeout);},[ready,error,retry]);
+ useEffect(()=>{if(ready||error)return;const timeout=setTimeout(()=>setError(imageLoadMessages.timeout),15000);return()=>clearTimeout(timeout);},[ready,error,retry]);
  const add=(x=.5,y=.5)=>{const current=read();if(!ready||current.annotations.length>=32)return;const id='pin_'+crypto.randomUUID();change({...current,selectedId:id,annotations:[...current.annotations,{id,x:clamp(x),y:clamp(y),text:''}]});requestAnimationFrame(()=>{const pin=stage.current?.querySelector<HTMLButtonElement>(`[data-pin-id="${id}"]`);pin?.scrollIntoView({block:'nearest'});pin?.focus({preventScroll:true});});};
  const patch=(update:Partial<AnnotationState['annotations'][number]>)=>{const current=read();if(current.selectedId)change({...current,annotations:current.annotations.map(pin=>pin.id===current.selectedId?{...pin,...update}:pin)});};
  const move=(event:KeyboardEvent<HTMLButtonElement>)=>{const current=read(),pin=current.annotations.find(item=>item.id===current.selectedId);if(!pin||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();const delta=event.shiftKey ? .05 : .01;patch({x:clamp(pin.x+(event.key==='ArrowRight'?delta:event.key==='ArrowLeft'?-delta:0)),y:clamp(pin.y+(event.key==='ArrowDown'?delta:event.key==='ArrowUp'?-delta:0))});};
@@ -27,7 +28,7 @@ function AnnotationCanvas({p,value,read,change}:{p:AnnotatorProps;value:Annotati
  return <><div className="annotation-toolbar"><span>{count} {count===1?'pin':'pins'}</span><button type="button" className="secondary" disabled={!ready||count>=32} onClick={()=>add()}><Plus size={14}/>Add pin</button></div>
   <div className="annotation-layout"><div className="annotation-image-wrap"><div ref={stage} className="annotation-image" data-ready={ready}>
    <button type="button" className="annotation-image-button" aria-label="Add pin to image" disabled={!ready||count>=32} onClick={event=>{if(event.detail===0){add();return;}const bounds=event.currentTarget.getBoundingClientRect();if(bounds.width&&bounds.height)add((event.clientX-bounds.left)/bounds.width,(event.clientY-bounds.top)/bounds.height);}}>
-   <img key={retry} src={`/api/resources/${encodeURIComponent(p.resourceId)}/content`} alt={p.alt} draggable={false} onLoad={event=>{if(!event.currentTarget.naturalWidth||!event.currentTarget.naturalHeight){setError('This resource is not a readable image.');return;}setError('');setReady(true);}} onError={()=>{setReady(false);setError('The image is unavailable. Check its grant and retry.');}}/>
+   <img key={retry} src={`/api/resources/${encodeURIComponent(p.resourceId)}/content`} alt={p.alt} draggable={false} onLoad={event=>{if(!event.currentTarget.naturalWidth||!event.currentTarget.naturalHeight){setError(imageLoadMessages.unreadable);return;}setError('');setReady(true);}} onError={()=>{setReady(false);setError(imageLoadMessages.unavailable);}}/>
    </button>
    {ready&&value.annotations.map((pin,index)=><button type="button" key={pin.id} data-pin-id={pin.id} className="annotation-pin" aria-label={`Pin ${index+1}`} aria-pressed={pin.id===value.selectedId} title={pin.text||`Pin ${index+1}`} style={{left:`${pin.x*100}%`,top:`${pin.y*100}%`}} onClick={event=>{event.stopPropagation();change({...value,selectedId:pin.id});}} onKeyDown={move}>{index+1}</button>)}
   </div>{!ready&&!error&&<p className="exploration-empty" role="status">Loading image…</p>}</div>
