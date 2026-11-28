@@ -58,7 +58,7 @@ export function ActionMenu({ label, icon, iconOnly, open, onOpenChange, disabled
     restoreAfterAction.current = true;
     close(); items[index]?.onSelect();
   };
-  const navigation = useListNavigation(items, choose, close);
+  const navigation = useListNavigation(items, choose, close, {focusDisabled: true});
   return <>
     <button ref={anchor} type="button" className="ui-action-trigger" disabled={disabled} aria-label={iconOnly ? label : undefined}
       aria-haspopup="menu" aria-expanded={open && !effectivelyDisabled} aria-controls={open && !effectivelyDisabled ? id : undefined}
@@ -74,12 +74,18 @@ export function ActionMenu({ label, icon, iconOnly, open, onOpenChange, disabled
       id={id} role="menu" aria-label={label} tabIndex={-1} className="ui-control-popup"
       onDismiss={() => onOpenChange(false)} onKeyDown={navigation.onKeyDown}
       onReady={() => { content.current?.focus(); navigation.focus(navigation.edge(start.current)); }}>
-      {items.map((item, index) => <button key={item.id} ref={node => { navigation.rows.current[index] = node; }}
-        type="button" tabIndex={-1} role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
-        aria-checked={item.checked} aria-label={item.accessibleLabel} title={item.title} disabled={item.disabled}
-        className="ui-control-option" onFocus={() => navigation.onFocus(index)} onClick={() => choose(index)}>
-        {item.icon}<span>{item.label}</span>{item.shortcut && <kbd className="ui-control-shortcut" aria-hidden="true">{item.shortcut}</kbd>}{item.checked !== undefined && <Check size={14} aria-hidden="true" style={{ visibility: item.checked ? 'visible' : 'hidden' }} />}
-      </button>)}
+      {items.map((item, index) => {
+        const reason = item.disabled && item.title && item.title !== item.label ? item.title : undefined;
+        const reasonId = reason ? id + '-reason-' + index : undefined;
+        return <button key={item.id} ref={node => { navigation.rows.current[index] = node; }}
+          type="button" tabIndex={-1} role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+          aria-checked={item.checked} aria-label={item.accessibleLabel} aria-describedby={reasonId} title={item.title} aria-disabled={item.disabled || undefined}
+          className="ui-control-option" onFocus={() => navigation.onFocus(index)} onClick={() => choose(index)}>
+          {item.icon}<span>{item.label}{reason && <small id={reasonId} className="ui-control-reason" aria-hidden="true">{reason}</small>}</span>
+          {item.shortcut && <kbd className="ui-control-shortcut" aria-hidden="true">{item.shortcut}</kbd>}
+          {item.checked !== undefined && <Check size={14} aria-hidden="true" style={{ visibility: item.checked ? 'visible' : 'hidden' }} />}
+        </button>;
+      })}
     </Popover>
   </>;
 }

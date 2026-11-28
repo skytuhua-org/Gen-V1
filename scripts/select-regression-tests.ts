@@ -23,6 +23,8 @@ export interface SelectionResult {
 const TEST_NAME = /^[A-Za-z0-9_./-]+\.test\.(?:[jt]sx?|[cm][jt]s)$/;
 const TEST_FILE = /\.test\.(?:[jt]sx?|[cm][jt]s)$/;
 const DOC_ONLY = /^(?:docs\/|.*\.md$|.*\.mdx$|CHANGELOG\.md$|LICENSE$|SECURITY\.md$|THIRD_PARTY_NOTICES\.md$)/i;
+// Versioned evidence inputs are consumed by executable verification, not just read as prose.
+const EVIDENCE_INPUT = /^docs\/implementation\/(?:v3|v6)\/.+\.(?:json|jsonl|log)$/i;
 
 const DEFAULT_SOURCE_TEST_MAP: Record<string, string[]> = {
   'packages/storage/store.ts': ['tests/store.test.ts'],
@@ -118,7 +120,7 @@ export function selectRegressionTests(changes: readonly SourceChange[], existing
       sawCodeChange = true;
       continue;
     }
-    if (DOC_ONLY.test(path)) continue;
+    if (DOC_ONLY.test(path) && !EVIDENCE_INPUT.test(path)) continue;
     sawCodeChange = true;
     selectFor(path);
   }

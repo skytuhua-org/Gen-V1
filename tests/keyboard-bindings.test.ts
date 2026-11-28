@@ -3,7 +3,7 @@ import {readdirSync, readFileSync} from 'node:fs';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {DEFAULT_PREFERENCES} from '../packages/contracts/preferences';
-import {KEYBOARD_BINDINGS, KEYBOARD_SCOPES, PREFERENCE_BINDINGS, ariaKeyShortcuts, ariaShortcut, bindingChords, readChord, shortcutKeys, shortcutPlatform, type KeyboardBinding} from '../apps/web/src/keyboard-bindings';
+import {KEYBOARD_BINDINGS, KEYBOARD_SCOPES, PREFERENCE_BINDINGS, RESERVED_CHORDS, ariaKeyShortcuts, ariaShortcut, bindingChords, isReservedChord, readChord, shortcutKeys, shortcutPlatform, type KeyboardBinding} from '../apps/web/src/keyboard-bindings';
 import {KeyboardReference} from '../apps/web/src/KeyboardReference';
 import {SettingsView} from '../apps/web/src/Settings';
 import type {SettingsData} from '../apps/web/src/settings-data';
@@ -174,5 +174,22 @@ describe('keyboard binding registry', () => {
     expect(html).toContain('data-setting-id="harness-keyboard-reference"');
     expect(html.split('data-binding-id="').length - 1).toBe(KEYBOARD_BINDINGS.length);
     for (const binding of KEYBOARD_BINDINGS) expect(html, binding.id).toContain(`data-binding-id="${binding.id}"`);
+  });
+});
+
+describe('isReservedChord', () => {
+  it('rejects every chord the browser keeps for itself', () => {
+    for (const chord of RESERVED_CHORDS) expect(isReservedChord(chord), chord).toBe(true);
+    for (const chord of ['F5', 'Ctrl+W', 'Ctrl+3', 'Meta+9', 'Ctrl+Tab', 'Alt+ArrowLeft', 'Ctrl+Shift+R']) expect(isReservedChord(chord), chord).toBe(true);
+    expect(RESERVED_CHORDS).toContain('Ctrl+1');
+    expect(RESERVED_CHORDS).toContain('Meta+9');
+  });
+  it('normalizes modifier order and case before comparing', () => {
+    expect(isReservedChord('Shift+Ctrl+W')).toBe(true);
+    expect(isReservedChord('ctrl+w')).toBe(true);
+    expect(isReservedChord('META+r')).toBe(true);
+  });
+  it('keeps deliverable chords bindable', () => {
+    for (const chord of ['Ctrl+K', 'Alt+Enter', 'Shift+F5', 'Ctrl+Shift+P', 'Alt+K', 'Ctrl+,']) expect(isReservedChord(chord), chord).toBe(false);
   });
 });

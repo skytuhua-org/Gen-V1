@@ -128,3 +128,8 @@
  .editable-table-scroll td.is-edited :is(input,.ui-select-trigger){background:var(--subtle)}
  .editable-table-scroll .editable-original{margin-top:2px;white-space:normal}
 }
+
+.editable-table .editable-review-action {display:inline-grid;align-items:center;justify-items:center;max-width:100%;}
+.editable-review-action > span {grid-area:1 / 1;visibility:hidden;}
+.editable-review-action > span[data-active] {visibility:visible;}
+.editable-review-action[aria-disabled=true] {opacity:.55;cursor:default;}

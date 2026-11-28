@@ -75,10 +75,10 @@ describe('current artifact custody in the verification gate', () => {
 
   it.each(['deleted', 'changed'] as const)('loses current verification in every production projection when screenshot bytes are %s', async change => {
     const f = fixture();
-    expect(verificationPanelModel(f.store, f.thread.id).label).toBe('VERIFIED');
+    expect((await verificationPanelModel(f.store, f.thread.id)).label).toBe('VERIFIED');
     expect((await f.service.sourceWorkbench.evidence(f.thread.id)).items.find(item => item.id === 'requirement:app-ready')).toMatchObject({grade: 'VERIFIED', outcome: 'VERIFIED'});
     if (change === 'deleted') rmSync(f.path); else writeFileSync(f.path, Buffer.from('changed screenshot'));
-    expect(verificationPanelModel(f.store, f.thread.id).label).toBe('BLOCKED');
+    expect((await verificationPanelModel(f.store, f.thread.id)).label).toBe('BLOCKED');
     expect((await f.service.sourceWorkbench.evidence(f.thread.id)).items.find(item => item.id === 'requirement:app-ready')).toMatchObject({grade: 'REPORTED', outcome: 'BLOCKED'});
     expect((await f.finish()).label).toBe('BLOCKED');
     expect(f.store.get('visualObservation', f.observed.checkId)).toEqual(f.observed);

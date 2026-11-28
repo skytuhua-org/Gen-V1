@@ -61,6 +61,38 @@ test('Escape dismisses a pointer-opened thread card without moving keyboard focu
   await expect(outside).toBeFocused();
 });
 
+test('Escape that dismisses the card is consumed for global stop/sidebar handlers', async ({page}) => {
+  await fixture(page);
+  // Mirror of App.tsx: an Escape that reaches window unprevented would stop the run/close the sidebar.
+  await page.evaluate(() => {
+    (window as unknown as {globalEscapes: number}).globalEscapes = 0;
+    window.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !event.defaultPrevented) (window as unknown as {globalEscapes: number}).globalEscapes++;
+    });
+  });
+  await open(page);
+  await page.keyboard.press('Escape');
+  await expect(card(page)).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as {globalEscapes: number}).globalEscapes)).toBe(0);
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => (window as unknown as {globalEscapes: number}).globalEscapes)).toBe(1);
+});
+
+test('modified Escape chords pass through a pointer-opened card to rebound shortcuts', async ({page}) => {
+  await fixture(page);
+  await page.evaluate(() => {
+    (window as unknown as {globalEscapes: number}).globalEscapes = 0;
+    window.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !event.defaultPrevented) (window as unknown as {globalEscapes: number}).globalEscapes++;
+    });
+  });
+  await open(page);
+  // A rebound stop chord (e.g. Shift+Escape) must reach global handlers; the card ignores it.
+  await page.keyboard.press('Shift+Escape');
+  expect(await page.evaluate(() => (window as unknown as {globalEscapes: number}).globalEscapes)).toBe(1);
+  await expect(card(page)).toBeVisible();
+});
+
 test('pointer exit dismisses after transfer grace and outside focus dismisses immediately', async ({page}) => {
   await fixture(page); await page.clock.install(); await page.clock.pauseAt(new Date()); await trigger(page).hover();
   await page.clock.runFor(350); await expect(card(page)).toBeVisible();
