@@ -9,7 +9,7 @@ import {existsSync} from 'node:fs';
 import {createServer} from 'node:net';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {chromium} from '@playwright/test';
 import {nodeSidecarArguments} from '../apps/desktop/backend-policy.ts';
 import {Store} from '../packages/storage/store.ts';
@@ -46,17 +46,23 @@ function seedStore(store:Store){
 }
 async function seedDir(dataDir:string){const store=new Store(dataDir);try{seedStore(store);}finally{store.close();}}
 
+export function startupHostLaunch(hostRoot:string,bundle:boolean){
+ const bundlePath=join(hostRoot,'dist/host/main.mjs');
+ if(bundle&&existsSync(bundlePath))return {args:[bundlePath],note:'dist/host/main.mjs'};
+ const source='node --import tsx apps/server/main.ts';
+ return {args:nodeSidecarArguments(hostRoot),note:bundle?source+' (source fallback: host bundle missing)':source};
+}
+
 interface Booted{origin:string;child:ChildProcess;dataDir:string;cookie:string;stderr:string}
 /** Real desktop spawn: `node --import tsx apps/server/main.ts` (or dist/host bundle).
  * Requires the packaged guard supervisor (fd 3 broker socket + fd 4 root); on
  * platforms without it the child exits before listening and the error is
  * reported as an empty-sample metric, never retried into a fabricated number. */
-async function bootSpawned(options:{seed:boolean;bundle:boolean}):Promise<{origin:string;child:ChildProcess;dataDir:string;bootMs:number;cookie:string;stderr:string}>{
+async function bootSpawned(options:{seed:boolean;launch:ReturnType<typeof startupHostLaunch>}):Promise<{origin:string;child:ChildProcess;dataDir:string;bootMs:number;cookie:string;stderr:string}>{
  const dataDir=await mkdtemp(join(tmpdir(),'bench-harness-'));
  if(options.seed)await seedDir(dataDir);
  const port=await freePort(),widgetPort=await freePort(),stderr:string[]=[];
- const args=options.bundle&&existsSync(join(root,'dist/host/main.mjs'))?[join(root,'dist/host/main.mjs')]:nodeSidecarArguments(root);
- const child=spawn(process.execPath,args,{cwd:root,env:{...process.env,HARNESS_DATA_DIR:dataDir,HARNESS_PORT:String(port),HARNESS_WIDGET_PORT:String(widgetPort)},stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,options.launch.args,{cwd:root,env:{...process.env,HARNESS_DATA_DIR:dataDir,HARNESS_PORT:String(port),HARNESS_WIDGET_PORT:String(widgetPort)},stdio:['ignore','pipe','pipe']});
  child.stderr.on('data',(chunk:Buffer)=>{stderr.push(String(chunk));if(stderr.join('').length>8192)stderr.splice(0,stderr.length-8);});
  child.stdout.resume();
  const started=performance.now(),origin=`http://127.0.0.1:${port}`;
@@ -152,9 +158,10 @@ async function main(){
  // host_boot_ms: the real desktop spawn shape. On hosts without the packaged
  // guard supervisor the sidecar exits before listen; the metric records the
  // observed failure rather than substituting another number.
+ const launch=startupHostLaunch(root,bundle);
  const bootSamples:number[]=[];let bootError:string|undefined;
- for(let i=0;i<runs;i++){try{const booted=await bootSpawned({seed:false,bundle});try{bootSamples.push(booted.bootMs);}finally{await stopSpawned(booted);}}catch(error){bootError=(error instanceof Error?error.message:String(error)).slice(0,240);break;}}
- results.push(summarize('host_boot_ms',bootSamples,{note:(bundle?'dist/host/main.mjs':'node --import tsx apps/server/main.ts')+(bootError?'; UNAVAILABLE: '+bootError:'')}));
+ for(let i=0;i<runs;i++){try{const booted=await bootSpawned({seed:false,launch});try{bootSamples.push(booted.bootMs);}finally{await stopSpawned(booted);}}catch(error){bootError=(error instanceof Error?error.message:String(error)).slice(0,240);break;}}
+ results.push(summarize('host_boot_ms',bootSamples,{note:launch.note+(bootError?'; UNAVAILABLE: '+bootError:'')}));
  // review_host_boot_ms + snapshot_serialize_ms + browser metrics share
  // seeded review hosts — the plan's sanctioned in-process launch (scripts/review-host.ts).
  const reviewBoot:number[]=[];const reviewDirs:string[]=[];
@@ -186,7 +193,7 @@ async function main(){
  if(check)for(const run of results){const budget=BUDGETS[run.name];if(!budget)continue;if(budget.p50!==undefined&&run.p50>budget.p50){console.error(`BUDGET ${run.name} p50 ${run.p50}ms > ${budget.p50}ms`);failed=true;}if(budget.p95!==undefined&&run.p95>budget.p95){console.error(`BUDGET ${run.name} p95 ${run.p95}ms > ${budget.p95}ms`);failed=true;}}
  if(failed)process.exitCode=1;
 }
-main().catch(error=>{console.error(error instanceof Error?error.message:error);process.exitCode=1;})
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(error=>{console.error(error instanceof Error?error.message:error);process.exitCode=1;})
  .finally(()=>{
   // Unref'd backstop: pooled fetch keep-alives/fixture internals can hold the loop
   // past the summary; exits once stdout has flushed or sooner if the loop drains.

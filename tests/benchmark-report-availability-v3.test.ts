@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { BenchmarkMeasurement, BenchmarkRecord, BenchmarkRun } from '../packages/contracts/implementation-evidence.ts';
 import { benchmarkReportHtml } from '../scripts/research-baseline.ts';
 
@@ -59,4 +62,33 @@ describe('M01 unavailable paired benchmark evidence', () => {
     expect(result.map(row => row[4])).toEqual(['SETUP_FAILED', 'EXPECTED_NEGATIVE']);
     for (const row of result) expect(row.slice(6, 17)).toEqual(Array(11).fill('unavailable'));
   });
+});
+
+
+// This decision does not open a review server or load its native PTY.
+vi.mock('../scripts/review-host.ts',()=>({openReviewHost:vi.fn()}));
+const {startupHostLaunch}=await import('../scripts/bench-startup.ts');
+
+it('labels a missing startup bundle as a source fallback',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'harness-startup-launch-'));
+ try {
+  const source=join(root,'apps/server/main.ts');
+  expect(startupHostLaunch(root,true)).toEqual({
+   args:['--import',expect.stringContaining('tsx/dist/loader.mjs'),source],
+   note:expect.stringMatching(/source fallback/i),
+  });
+ } finally { await rm(root,{recursive:true,force:true}); }
+});
+
+it('reports the actually selected source or available bundle',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'harness-startup-launch-'));
+ try {
+  const bundleDirectory=join(root,'dist/host'),bundle=join(bundleDirectory,'main.mjs');
+  await mkdir(bundleDirectory,{recursive:true});await writeFile(bundle,'// synthetic bundle fixture');
+  expect(startupHostLaunch(root,false)).toEqual({
+   args:['--import',expect.stringContaining('tsx/dist/loader.mjs'),join(root,'apps/server/main.ts')],
+   note:'node --import tsx apps/server/main.ts',
+  });
+  expect(startupHostLaunch(root,true)).toEqual({args:[bundle],note:'dist/host/main.mjs'});
+ } finally { await rm(root,{recursive:true,force:true}); }
 });
