@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -246,4 +246,50 @@ it("preserves unrelated caller index flags", async () => {
     expectedHead: preview.expectedHead, selectedHunks, message: "keep caller flags", approvalId: "approval-flags",
   });
   expect(flags()).toBe("h unrelated.txt\n");
+});
+
+it.each([
+  { description: "updates the private index", alreadyStaged: false },
+  { description: "reuses the prepared index bytes", alreadyStaged: true },
+])("keeps a same-size unselected edit visible when it races the caller index and $description", async ({ alreadyStaged }) => {
+  const f = await fixture();
+  // Model coarse stat comparison without sleeps or platform-specific timing.
+  git(f.worktree, "config", "core.trustctime", "false");
+  git(f.worktree, "config", "core.checkStat", "minimal");
+  const timestamp = Math.floor(Date.now() / 1000) - 8;
+  const unrelated = join(f.worktree, "unrelated.txt");
+  await utimes(unrelated, timestamp, timestamp);
+  git(f.worktree, "add", "unrelated.txt");
+
+  await writeFile(join(f.worktree, "staged.txt"), "ordinary staged content\n");
+  await writeFile(join(f.worktree, "flagged.txt"), "tracked flagged content\n");
+  git(f.worktree, "add", "staged.txt", "flagged.txt");
+  git(f.worktree, "update-index", "--assume-unchanged", "flagged.txt");
+  const carried = git(f.worktree, "ls-files", "-sv", "--", "staged.txt", "flagged.txt");
+
+  await writeFile(join(f.worktree, "chosen.txt"), "chosen-1\n");
+  if (alreadyStaged) {
+    git(f.worktree, "add", "chosen.txt");
+    git(f.worktree, "write-tree");
+  }
+  await writeFile(unrelated, "unrelated-1\n");
+  await utimes(unrelated, timestamp, timestamp);
+  await utimes(join(f.worktree, ".git", "index"), timestamp, timestamp);
+  expect(stagedStatus(f.worktree, "unrelated.txt")).toBe(" M");
+
+  const preview = await f.service.preview("project", "thread", f.scope);
+  expect(preview.candidates.map(candidate => candidate.path)).toContain("unrelated.txt");
+  const selectedHunks = preview.candidates.filter(candidate => candidate.path === "chosen.txt").map(({ path, index, digest }) => ({ path, index, digest }));
+  const result = await f.service.commit("project", "thread", {
+    expectedHead: preview.expectedHead,
+    selectedHunks,
+    message: "commit chosen only",
+    approvalId: "racy-index-approval",
+  });
+
+  expect(result.applied).toBe(true);
+  expect(await readFile(unrelated, "utf8")).toBe("unrelated-1\n");
+  expect(git(f.worktree, "ls-files", "-sv", "--", "staged.txt", "flagged.txt")).toBe(carried);
+  expect(stagedStatus(f.worktree, "unrelated.txt")).toBe(" M");
+  expect(git(f.worktree, "diff", "HEAD", "--", "unrelated.txt")).toContain("+unrelated-1");
 });

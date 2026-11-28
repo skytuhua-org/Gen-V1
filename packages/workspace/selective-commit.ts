@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, open, rename, rm } from "node:fs/promises";
+import { lstat, open, rename, rm, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { HarnessError } from "../contracts/index.ts";
 import { readBoundFile } from "../core/file-access.ts";
@@ -113,7 +113,18 @@ const indexLimit = 32 * 1024 * 1024;
 const callerIndex = async (path: string) => {
   const info = await lstat(path, { bigint: true });
   if (!info.isFile() || info.nlink !== 1n) throw new HarnessError("CAPABILITY_DENIED", "The caller index is not an owned regular file.");
-  return readBoundFile(path, indexLimit, { dev: String(info.dev), ino: String(info.ino), size: Number(info.size) });
+  const bytes = await readBoundFile(path, indexLimit, { dev: String(info.dev), ino: String(info.ino), size: Number(info.size) });
+  return { bytes, mtimeNs: info.mtimeNs };
+};
+
+const copyIndex = async (file: FileHandle, snapshot: Awaited<ReturnType<typeof callerIndex>>) => {
+  await file.writeFile(snapshot.bytes);
+  // Git uses the index file's mtime to detect racily clean entries. Copying
+  // only the bytes can make those entries look clean against a newer index.
+  const nsPerSecond = 1_000_000_000n;
+  const seconds = snapshot.mtimeNs / nsPerSecond - (snapshot.mtimeNs % nsPerSecond < 0n ? 1n : 0n);
+  const timestamp = new Date(Number(seconds) * 1000);
+  await file.utimes(timestamp, timestamp);
 };
 
 const indexDelta = (diff: string, selectedPaths: Set<string>) => {
@@ -197,9 +208,9 @@ export class SelectiveCommitService {
       const branch = (await git(["branch", "--show-current"])).trim();
       if (!/^[0-9a-f]{40}$/.test(head) || !branch) throw new HarnessError("CAPABILITY_DENIED", "A managed working copy needs a branch and a commit head.");
       const indexPath = join(binding.gitDirectory, "index");
-      const indexDigest = sha256hex(await callerIndex(indexPath));
+      const indexDigest = sha256hex((await callerIndex(indexPath)).bytes);
       const sections = await this.candidates(git, binding.path, scope);
-      if (sha256hex(await callerIndex(indexPath)) !== indexDigest)
+      if (sha256hex((await callerIndex(indexPath)).bytes) !== indexDigest)
         throw new HarnessError("REVISION_CHANGED", "The caller index changed while preparing the preview.");
       const candidates: SelectiveCandidate[] = [];
       for (const section of sections) {
@@ -243,7 +254,7 @@ export class SelectiveCommitService {
         throw new HarnessError("REVISION_CHANGED", "The previous selective commit may have been published. Inspect the branch and index before retrying.");
       const indexPath = join(binding.gitDirectory, "index");
       const snapshot = await callerIndex(indexPath);
-      const indexDigest = sha256hex(snapshot);
+      const indexDigest = sha256hex(snapshot.bytes);
       if (previewed.indexDigest !== indexDigest)
         throw new HarnessError("REVISION_CHANGED", "The approved selection is not bound to the current index. Refresh the preview before committing.");
 
@@ -284,7 +295,7 @@ export class SelectiveCommitService {
         }
         // Materialize the approved snapshot without refreshing the caller index.
         const snapshotFile = await open(reconciledIndex, "wx", 0o600);
-        try { await snapshotFile.writeFile(snapshot); }
+        try { await copyIndex(snapshotFile, snapshot); }
         finally { await snapshotFile.close(); }
         const callerTree = (await git(["write-tree"], reconcileEnvironment)).trim();
         await git(["read-tree", input.expectedHead], environment);
@@ -316,7 +327,7 @@ export class SelectiveCommitService {
         if (delta) await git(["update-index", "-z", "--index-info"], reconcileEnvironment, delta);
         if ((await git(["write-tree"], reconcileEnvironment)).trim() !== mergedIndexTree)
           throw new HarnessError("CAPABILITY_DENIED", "The reconciled index does not match the verified staged tree.");
-        const reconciledBytes = await callerIndex(reconciledIndex);
+        const reconciled = await callerIndex(reconciledIndex);
         const author = input.author ?? { name: "Gen V1", email: "gen-v1@localhost" };
         const commitOid = (
           await git(
@@ -353,9 +364,10 @@ export class SelectiveCommitService {
         });
         try {
           lockIdentity = await lock.stat({ bigint: true });
-          if (sha256hex(await callerIndex(indexPath)) !== indexDigest)
+          const lockedSnapshot = await callerIndex(indexPath);
+          if (lockedSnapshot.mtimeNs !== snapshot.mtimeNs || sha256hex(lockedSnapshot.bytes) !== indexDigest)
             throw new HarnessError("REVISION_CHANGED", "The caller index changed before publication. Refresh the preview.");
-          await lock.writeFile(reconciledBytes);
+          await copyIndex(lock, reconciled);
           await lock.sync();
         } finally { await lock.close(); }
 
