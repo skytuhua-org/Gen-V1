@@ -123,60 +123,101 @@ function wholeLineEnd(source:string,end:number,lineEndIndex:number):boolean{
   return true;
 }
 
-function closeLines(source:string,lineStarts:readonly number[],firstLine:number,close:string):Map<number,number>{
-  const positions=new Map<number,number>();
-  for(let line=firstLine;line<lineStarts.length;line++){
-    const current=physicalLine(source,lineStarts,line);
-    if(!current)continue;
-    const indent=indentation(current.text);
-    if(indent<0)continue;
-    const offset=current.start+indent;
-    if(!source.startsWith(close,offset))continue;
-    let spaces=true;
-    for(let index=offset+close.length;index<current.end;index++)if(source[index]!==' '&&source[index]!=='\t')spaces=false;
-    if(spaces)positions.set(offset,line);
-  }
-  return positions;
+type PositionsByDepth = Map<number, number[]>;
+type DisplayClose = '$$' | '\\]';
+
+function recordPosition(positions: PositionsByDepth, depth: number, index: number) {
+  const existing = positions.get(depth);
+  if (existing) existing.push(index);
+  else positions.set(depth, [index]);
 }
 
-function scanMultilineDisplay(source:string,start:number,open:string,close:string,openerLine:number,lineStarts:readonly number[],escaped:Uint8Array):{span:MathSpan;nextLine:number}|null{
-  const positions=closeLines(source,lineStarts,openerLine+1,close),bodyStart=start+open.length;
-  let depth=0,comment=false;
-  for(let index=bodyStart;index<source.length;index++){
-    const character=source[index]!;
-    if(character==='\r'||character==='\n'){comment=false;continue;}
-    if(comment)continue;
-    const closeLine=positions.get(index);
-    if(closeLine!==undefined&&depth===0&&!escaped[index]){
-      const end=index+close.length,tex=source.slice(bodyStart,index);
-      if(!tex.trim())return null;
-      return {span:{start,end,raw:source.slice(start,end),tex,mode:'display'},nextLine:closeLine+1};
+function firstAfter(positions: readonly number[] | undefined, start: number): number {
+  if (!positions) return Number.POSITIVE_INFINITY;
+  let first = 0, last = positions.length;
+  while (first < last) {
+    const middle = (first + last) >>> 1;
+    if (positions[middle]! <= start) first = middle + 1;
+    else last = middle;
+  }
+  return positions[first] ?? Number.POSITIVE_INFINITY;
+}
+
+function indexDisplayCloses(source: string, lineStarts: readonly number[], escaped: Uint8Array) {
+  const depthAt = new Int32Array(source.length);
+  const underflows: PositionsByDepth = new Map();
+  let depth = 0, comment = false;
+  for (let index = 0; index < source.length; index++) {
+    depthAt[index] = depth;
+    const character = source[index]!;
+    if (character === '\r' || character === '\n') {
+      comment = false;
+      continue;
     }
-    if(character==='%'&&!escaped[index]){comment=true;continue;}
-    if(character==='{'&&!escaped[index]){depth++;continue;}
-    if(character==='}'&&!escaped[index]){
-      if(depth===0)return null;
+    if (comment || escaped[index]) continue;
+    if (character === '%') comment = true;
+    if (character === '{') depth++;
+    if (character === '}') {
+      recordPosition(underflows, depth, index);
       depth--;
     }
   }
-  return null;
+
+  const closes: Record<DisplayClose, PositionsByDepth> = {'$$':new Map(), '\\]':new Map()};
+  const lineOfClose = new Map<number, number>();
+  for (let line = 0; line < lineStarts.length; line++) {
+    const current = physicalLine(source, lineStarts, line);
+    if (!current) continue;
+    const indent = indentation(current.text);
+    if (indent < 0) continue;
+    const index = current.start + indent;
+    const close = source.slice(index, index + 2);
+    if ((close !== '$$' && close !== '\\]') || escaped[index] || !wholeLineEnd(source, index + 2, current.end)) continue;
+    recordPosition(closes[close], depthAt[index]!, index);
+    lineOfClose.set(index, line);
+  }
+
+  return (start: number, close: DisplayClose) => {
+    // Every opener occupies its own line. Comments reset there and relative
+    // brace depth starts at zero, so equal absolute depth yields a matching
+    // closer only if the body never drops below the opener's depth first.
+    const baseline = depthAt[start]!;
+    const end = firstAfter(closes[close].get(baseline), start);
+    if (end >= firstAfter(underflows.get(baseline), start)) return null;
+    const tex = source.slice(start + close.length, end);
+    if (!tex.trim()) return null;
+    return {
+      span:{start, end:end + close.length, raw:source.slice(start, end + close.length), tex, mode:'display'} as const,
+      nextLine:lineOfClose.get(end)! + 1,
+    };
+  };
 }
 
-export function findDisplayMath(source:string,lineStarts:readonly number[],line:number):{span:MathSpan;nextLine:number}|null{
-  const current=physicalLine(source,lineStarts,line);
-  if(!current)return null;
-  const indent=indentation(current.text);
-  if(indent<0)return null;
-  const start=current.start+indent;
-  const open=source.startsWith('$$',start)?'$$':source.startsWith('\\[',start)?'\\[':'';
-  if(!open||open==='$$'&&source[start+2]==='$')return null;
-  const close=open==='$$'?'$$':'\\]',escaped=escaping(source);
-  const openerLength=current.start+indent+open.length;
-  if(openerLength===current.end||/^[ \t]*$/.test(source.slice(openerLength,current.end)))
-    return scanMultilineDisplay(source,start,open,close,line,lineStarts,escaped);
-  const result=scanCandidate(source,start,open,close,'display',false,escaped);
-  if(!result.span||result.span.end>current.end||!wholeLineEnd(source,result.span.end,current.end))return null;
-  return {span:result.span,nextLine:line+1};
+export function createDisplayMathScanner(source: string, lineStarts: readonly number[]) {
+  let escaped: Uint8Array | undefined;
+  let findStandalone: ReturnType<typeof indexDisplayCloses> | undefined;
+  return (line: number): {span: MathSpan; nextLine: number} | null => {
+    const current = physicalLine(source,lineStarts,line);
+    if (!current) return null;
+    const indent = indentation(current.text);
+    if (indent < 0) return null;
+    const start = current.start + indent;
+    const open = source.startsWith('$$',start) ? '$$' : source.startsWith('\\[',start) ? '\\[' : '';
+    if (!open || open === '$$' && source[start + 2] === '$') return null;
+    const close = open === '$$' ? '$$' : '\\]';
+    escaped ??= escaping(source);
+    if (wholeLineEnd(source, start + open.length, current.end)) {
+      findStandalone ??= indexDisplayCloses(source, lineStarts, escaped);
+      return findStandalone(start, close);
+    }
+    const result = scanCandidate(source,start,open,close,'display',false,escaped);
+    if (!result.span || result.span.end > current.end || !wholeLineEnd(source,result.span.end,current.end)) return null;
+    return {span:result.span, nextLine:line + 1};
+  };
+}
+
+export function findDisplayMath(source: string, lineStarts: readonly number[], line: number) {
+  return createDisplayMathScanner(source, lineStarts)(line);
 }
 
 export function admitMath(span:MathSpan,budget:MathBudget):boolean{
