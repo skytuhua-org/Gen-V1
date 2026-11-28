@@ -4,6 +4,7 @@ import type {UiPreferences} from '../../../packages/contracts/preferences';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import {displayFilePath} from './files/FilesView';
 import {checkpointOwnerKey,checkpointReviewPaths,disabledCheckpointAdapter,readCheckpointDetail,readCheckpointList,readCheckpointReview,readRestorePlan,readRestoreResult,type CheckpointOwner,type CheckpointRestorePlan,type CheckpointReview,type FileCheckpoint,type FileCheckpointAdapter} from './file-checkpoint-api';
+import {splitDiffLines} from './diff-line-kind';
 import './file-checkpoints.css';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
 
@@ -40,13 +41,12 @@ export const plural=(count:number,word:string)=>`${count} ${word}${count===1?'':
 export const formatTime=(value:string,preferences:UiPreferences)=>new Date(value).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short',hour12:preferences.timeFormat==='system'?undefined:preferences.timeFormat==='12h'});
 const provenance=(checkpoint:FileCheckpoint)=>checkpoint.provenance.kind==='restore_backup'?'Saved before a restore':'Saved before an edit';
 const statusNote=(status:string)=>status==='missing'?'Not in your files now':status==='binary'?'Binary file, no preview':status==='too_large'?'Too large to preview':status==='unreadable'?'Could not be read':'No preview available';
-const diffLineKind=(line:string)=>line.startsWith('@@')?'hunk':line.startsWith('+')?'add':line.startsWith('-')?'remove':'context';
 export function CheckpointDiff({diff}:{diff:string}){
-  const all=diff.split('\n'),firstHunk=all.findIndex(line=>line.startsWith('@@'));
+  const all=splitDiffLines(diff),firstHunk=all.findIndex(line=>line.text.startsWith('@@'));
   const headerEnd=firstHunk===-1?Math.min(2,all.length):firstHunk;
-  const lines=all.filter((line,index)=>index>=headerEnd||!(line.startsWith('--- ')||line.startsWith('+++ ')));
-  if(!lines.some(line=>line.trim()))return <pre className="unified-diff"><span data-kind="context">No differences.</span></pre>;
-  return <pre className="unified-diff">{lines.map((line,index)=><span key={index} data-kind={diffLineKind(line)}>{line||' '}{'\n'}</span>)}</pre>;
+  const lines=all.filter(({text},index)=>index>=headerEnd||!(text.startsWith('--- ')||text.startsWith('+++ ')));
+  if(!lines.some(line=>line.text.trim()))return <pre className="unified-diff"><span data-kind="context">No differences.</span></pre>;
+  return <pre className="unified-diff">{lines.map((line,index)=><span key={index} data-kind={line.kind}>{line.text||' '}{'\n'}</span>)}</pre>;
 }
 function CheckpointHistory({owner,adapter,preferences}:{owner:CheckpointOwner;preferences:UiPreferences}&{adapter:FileCheckpointAdapter}){
   const [items,setItems]=useState<FileCheckpoint[]>([]),[nextCursor,setNextCursor]=useState<string>(),[error,setError]=useState(''),[loading,setLoading]=useState(true),[attempt,setAttempt]=useState(0),[cursor,setCursor]=useState<string>(),[checkpoint,setCheckpoint]=useState<FileCheckpoint>();
