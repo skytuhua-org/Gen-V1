@@ -13,7 +13,7 @@ import {fileURLToPath} from 'node:url';
 import {DESKTOP_CHANNELS as channels,desktopId,desktopSurfaceKey,parseDesktopSurface,parseDesktopLayout,parseDesktopWindowControl,type DesktopLayout,type DesktopLayoutEntry,type DesktopSurface,type DesktopWindowInfo,type DesktopContext,type DesktopState,type DesktopBrowserState} from '../../packages/desktop-contract/index.ts';
 import {allowRemoteBrowserUrl,clampDesktopBounds,pluginDesktopChannelAllowed,pluginDesktopRequiresGrant,nativeTitlebarOptions,nativeTitlebarTheme,needsEditorHandoff,desktopSurfaceAllowed,isTrustedDesktopSender,parseBrowserCommand,remoteBrowserUrl,surfaceSize,trustedDesktopUrl,trustedDesktopSubframe,type DesktopBounds} from './window-policy.ts';
 import {createBrowserProxy,type BrowserProxy} from './browser-proxy.ts';
-import {createStartupOutputCapture,finishBackendStartup,nodeSidecarArguments,requestBackendShutdown,startupErrorDiagnostic,waitForBackendReady,writeStartupDiagnostic,type StartupDiagnostic,type StartupObservation} from './backend-policy.ts';
+import {createBackendStderrTail,createStartupOutputCapture,finishBackendStartup,nodeSidecarArguments,requestBackendShutdown,startupErrorDiagnostic,waitForBackendReady,writeStartupDiagnostic,type StartupDiagnostic,type StartupObservation} from './backend-policy.ts';
 import {releaseOwnedBrowsers,detachOwnedBrowser} from './browser-lifecycle.ts';
 import {ensureMainDockedBrowser} from './docked-browser.ts';
 import {nativeBrowserBounds,nativeBrowserPreviewBounds} from './browser-bounds.ts';
@@ -332,12 +332,12 @@ async function startBackend():Promise<void>{
  const child=spawn(nodePath,nodeSidecarArguments(root),{cwd:root,env,stdio:['ignore','pipe','pipe','ipc'],windowsHide:true,serialization:'json'});backend=child;
  let output:ReturnType<typeof createStartupOutputCapture>|undefined;
  if(testData&&!startupSettled)try{output=createStartupOutputCapture(Date.now,value=>{if(value.stage==='backend-error')startupDiagnostic('backend-stream-error',value.error);});}catch{}
- let stderr='';child.stderr?.on('data',bytes=>{stderr=(stderr+String(bytes)).slice(-8000);output?.write('stderr',bytes);});child.stdout?.on('data',(bytes:Buffer)=>output?.write('stdout',bytes));
+ const stderr=createBackendStderrTail();child.stderr?.on('data',(bytes:Buffer)=>{stderr.write(bytes);output?.write('stderr',bytes);});child.stderr?.once('end',stderr.end);child.stdout?.on('data',(bytes:Buffer)=>output?.write('stdout',bytes));
  try{
- const value=await waitForBackendReady(child,token,backendPort,()=>stderr,observeStartup);
+ const value=await waitForBackendReady(child,token,backendPort,stderr.read,observeStartup);
  if(quitting||backend!==child)return;
  const oldRelay=workspaceRelay;workspaceRelay=undefined;
- await finishBackendStartup(child,oldRelay?.close(),()=>stderr,()=>{
+ await finishBackendStartup(child,oldRelay?.close(),stderr.read,()=>{
   if(quitting||backend!==child)return;
   backendOrigin=value.origin as string;
   if(value.nativeLayout!==undefined)try{hostLayout=parseDesktopLayout(value.nativeLayout);}catch{layoutError='The saved host workspace layout is invalid. The local backup is retained.';}

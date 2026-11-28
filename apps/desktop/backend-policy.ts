@@ -1,6 +1,7 @@
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
+import {StringDecoder} from 'node:string_decoder';
 import type {ChildProcess} from 'node:child_process';
 const STARTUP_CODES=['ENOENT','EACCES','EPERM','EADDRINUSE','EADDRNOTAVAIL','EPIPE','ECONNRESET','ECONNREFUSED','ETIMEDOUT','ENOSPC','EMFILE','ENFILE','EIO','EINVAL','EBUSY','ERR_MODULE_NOT_FOUND','MODULE_NOT_FOUND','ERR_DLOPEN_FAILED','ERR_INVALID_ARG_TYPE','ERR_INVALID_ARG_VALUE','ERR_SQLITE_ERROR','SQLITE_BUSY','SQLITE_LOCKED','SQLITE_CANTOPEN','SQLITE_CORRUPT','ERR_CONNECTION_REFUSED','ERR_ABORTED','ERR_FAILED','ERR_FILE_NOT_FOUND','ERR_TIMED_OUT'] as const;
 const STARTUP_CATEGORIES=['error','type-error','range-error','syntax-error','aggregate-error','unknown'] as const;
@@ -83,6 +84,11 @@ export function createStartupOutputCapture(clock:()=>number=Date.now,observe?:(v
  };
 }
 
+export function createBackendStderrTail(){
+ const decoder=new StringDecoder('utf8');let tail='';
+ const append=(text:string)=>{tail=(tail+text).slice(-8000);};
+ return {write:(bytes:Buffer)=>append(decoder.write(bytes)),end:()=>append(decoder.end()),read:()=>tail};
+}
 export function nodeSidecarArguments(hostRoot:string):string[]{return ['--import',pathToFileURL(join(hostRoot,'node_modules/tsx/dist/loader.mjs')).href,join(hostRoot,'apps/server/main.ts')];}
 export function requestBackendShutdown(child:Pick<ChildProcess,'connected'|'send'>,token:string,failed:()=>void):void{
  if(!child.connected){failed();return;}
