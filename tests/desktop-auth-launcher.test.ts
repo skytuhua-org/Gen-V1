@@ -1,10 +1,17 @@
-import {describe,it,expect} from 'vitest';
+import {describe,it,expect,vi} from 'vitest';
 import {mkdtemp,mkdir,writeFile,readFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {pathToFileURL} from 'node:url';
 import {launchDesktopSignIn,desktopSignInArguments,parseDesktopSignInTarget,quoteWindowsArgument} from '../apps/desktop/auth-launcher.ts';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawn} from 'node:child_process';
+import {EventEmitter} from 'node:events';
+import {PassThrough} from 'node:stream';
+
+vi.mock('node:child_process',async importOriginal=>{
+ const original=await importOriginal<typeof import('node:child_process')>();
+ return {...original,spawn:vi.fn(original.spawn)};
+});
 
 describe('packaged subscription sign-in',()=>{
  it('validates both IPC account fields and preserves legacy provider calls',()=>{
@@ -28,6 +35,22 @@ describe('packaged subscription sign-in',()=>{
  it('quotes Windows argument data without turning it into script text',()=>{
   expect(quoteWindowsArgument('C:\\folder with spaces\\')).toBe('"C:\\folder with spaces\\\\"');
   expect(quoteWindowsArgument('a"b')).toBe('"a\\"b"');
+ });
+ it('waits for a successful native sign-in receipt buffered after process exit',async()=>{
+  const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough()});
+  vi.mocked(spawn).mockReturnValueOnce(child as unknown as ReturnType<typeof spawn>);
+  const platform=Object.getOwnPropertyDescriptor(process,'platform')!;
+  let starting:ReturnType<typeof launchDesktopSignIn>;
+  try{
+   Object.defineProperty(process,'platform',{...platform,value:'win32'});
+   starting=launchDesktopSignIn({nodePath:resolve('node.exe'),hostRoot:resolve('.'),dataDir:resolve('data')});
+  }finally{Object.defineProperty(process,'platform',platform);}
+  child.stdout.write('{"type":"started","pid":123}\n');
+  const handle=await starting;
+  child.emit('exit',0,null);
+  child.stdout.end('{"type":"complete","exitCode":0}\n');
+  child.emit('close',0,null);
+  await expect(handle.completion).resolves.toBeUndefined();
  });
  it.runIf(process.platform==='win32')('rejects arbitrary executables before opening a console',async()=>{
   await expect(launchDesktopSignIn({nodePath:resolve('cmd.exe'),hostRoot:resolve('.'),dataDir:resolve('data')})).rejects.toThrow(/bundled Node/);

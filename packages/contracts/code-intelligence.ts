@@ -27,7 +27,6 @@ const codeRangeSchema = z.strictObject({
 export type CodeRange = z.infer<typeof codeRangeSchema>;
 
 const diagnosticSeveritySchema = z.enum(["error", "warning", "information", "hint"]);
-export type DiagnosticSeverity = z.infer<typeof diagnosticSeveritySchema>;
 
 const codeDiagnosticSchema = z.strictObject({
   path: nonEmpty,
@@ -96,11 +95,13 @@ const textEditSchema = z.strictObject({
 });
 export type TextEdit = z.infer<typeof textEditSchema>;
 
+export const renamePlanIdSchema = z.uuidv4();
+
 /** First version supports text edits to existing files only. create/delete/
  * move/resource operations and ungranted roots are rejected. */
 export const renamePlanV1Schema = z.strictObject({
   version: z.literal(1),
-  planId: nonEmpty,
+  planId: renamePlanIdSchema,
   workspaceIdentity: nonEmpty,
   serverVersion: z.string().max(512),
   sourceVersions: z.array(z.strictObject({
@@ -169,4 +170,6 @@ export const CODE_INTELLIGENCE_LIMITS = Object.freeze({
   renameFiles: 256,
   debugStackFrames: 100,
   debugVariables: 100,
+  debugThreads: 100,
+  debugScopes: 100,
 });

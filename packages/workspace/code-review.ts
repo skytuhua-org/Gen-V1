@@ -14,6 +14,7 @@ import {
   type LocalComparisonIdentity,
 } from "../contracts/code-review.ts";
 import { withPathGuard } from "../core/file-access.ts";
+import { statusBranch } from "./git-storage.ts";
 
 type Git = (args: string[]) => Promise<string>;
 export interface LocalReviewContext {
@@ -57,7 +58,7 @@ export class ComparisonSnapshots {
     return structuredClone(entry);
   }
 }
-const localPath = (value: string) =>
+export const localPath = (value: string) =>
   value.length <= 1024 &&
   !/[\\:\0]/.test(value) &&
   !value.startsWith("/") &&
@@ -110,17 +111,19 @@ async function fileBytes(
   });
 }
 async function localSnapshot(context: LocalReviewContext) {
-  const head = (await context.git(["rev-parse", "HEAD"])).trim(),
-    branch = (await context.git(["branch", "--show-current"])).trim();
+  const head = (await context.git(["rev-parse", "HEAD"])).trim();
   const index = await context.git(["ls-files", "--stage", "-z"]);
   const raw = await context.git([
     "status",
     "--porcelain=v1",
+    "-b",
     "-z",
     context.managed ? "--untracked-files=all" : "--untracked-files=no",
   ]);
   const entries = raw.split("\0"),
-    files: ComparisonFile[] = [],
+    branch = statusBranch(entries[0] ?? "");
+  entries.shift();
+  const files: ComparisonFile[] = [],
     digests: unknown[] = [],
     budget = { remaining: CODE_REVIEW_LIMITS.hashBytes as number };
   for (let i = 0; i < entries.length; i++) {
@@ -172,6 +175,25 @@ async function localSnapshot(context: LocalReviewContext) {
     files,
   };
 }
+function localIdentity(
+  owner: LocalReviewContext["owner"],
+  scope: "staged" | "worktree",
+  snapshot: Awaited<ReturnType<typeof localSnapshot>>,
+): LocalComparisonIdentity {
+  const identity: LocalComparisonIdentity = {
+    kind: "local",
+    id: "",
+    scope,
+    headOid: snapshot.head,
+    branch: snapshot.branch,
+    revision: snapshot.revision,
+    base: scope === "staged" ? { kind: "commit", revision: snapshot.head } : { kind: "index", revision: snapshot.index },
+    head:
+      scope === "staged" ? { kind: "index", revision: snapshot.index } : { kind: "worktree", revision: snapshot.revision },
+  };
+  identity.id = reviewHash([owner, identity]);
+  return identity;
+}
 export async function readLocalComparison(
   context: LocalReviewContext,
   scope: "staged" | "worktree",
@@ -180,20 +202,8 @@ export async function readLocalComparison(
     after = await localSnapshot(context);
   if (before.revision !== after.revision)
     throw new HarnessError("REVISION_CHANGED", "The working copy changed. Refresh the comparison.");
-  const identity: LocalComparisonIdentity = {
-    kind: "local",
-    id: "",
-    scope,
-    headOid: before.head,
-    branch: before.branch,
-    revision: before.revision,
-    base: scope === "staged" ? { kind: "commit", revision: before.head } : { kind: "index", revision: before.index },
-    head:
-      scope === "staged" ? { kind: "index", revision: before.index } : { kind: "worktree", revision: before.revision },
-  };
-  identity.id = reviewHash([context.owner, identity]);
   return {
-    identity,
+    identity: localIdentity(context.owner, scope, before),
     files: before.files.filter((file) =>
       scope === "staged" ? file.index !== " " && !file.untracked : file.worktree !== " ",
     ),
@@ -217,8 +227,9 @@ export async function readLocalComparisonFile(
 ): Promise<ComparisonPatch> {
   const identity = comparison.identity;
   if (identity.kind !== "local") throw new HarnessError("INVALID_INPUT", "Choose a local comparison.");
-  const current = await readLocalComparison(context, identity.scope);
-  if (identity.id !== current.identity.id)
+  const before = await localSnapshot(context);
+  const current = localIdentity(context.owner, identity.scope, before);
+  if (identity.id !== current.id)
     throw new HarnessError("REVISION_CHANGED", "The working copy changed. Refresh the comparison.");
   const file = comparison.files.find((file) => file.path === name);
   if (!file) throw new HarnessError("NOT_FOUND", "The selected file is not in this comparison.");
@@ -251,10 +262,38 @@ export async function readLocalComparisonFile(
       ...[name, ...(file.oldPath ? [file.oldPath] : [])].map((path) => ":(literal)" + path),
     ];
     try {
-      const read = async () => ({
-        text: await context.git(args),
-        stats: await context.git(["diff", "--numstat", "-z", ...args.slice(1)]),
-      });
+      // One subprocess: `--numstat -z` output precedes the patch. Records are
+      // `A\tD\tpath\0`, or `A\tD\t\0old\0new\0` for a rename — walk them rather
+      // than searching for `diff --git a/`, which a rename path can literally
+      // start with.
+      const read = async () => {
+        const combined = await context.git(["diff", "--numstat", "-z", "--patch", ...args.slice(1)]);
+        let cut = 0;
+        while (cut < combined.length) {
+          const count = (s: string) => s.length > 0 && /^[-0-9]+$/.test(s),
+            t1 = combined.indexOf("\t", cut),
+            t2 = t1 === -1 ? -1 : combined.indexOf("\t", t1 + 1);
+          if (
+            t1 === -1 ||
+            t2 === -1 ||
+            !count(combined.slice(cut, t1)) ||
+            !count(combined.slice(t1 + 1, t2))
+          )
+            break;
+          const p = t2 + 1, e1 = combined.indexOf("\0", p);
+          if (e1 === -1) break;
+          if (e1 === p) {
+            // Rename: empty third field, then old\0new\0.
+            const e2 = combined.indexOf("\0", e1 + 1),
+              e3 = e2 === -1 ? -1 : combined.indexOf("\0", e2 + 1);
+            if (e3 === -1) break;
+            cut = e3 + 1;
+          } else cut = e1 + 1;
+        }
+        // A NUL separates the numstat block from the patch.
+        while (combined[cut] === "\0") cut += 1;
+        return { text: combined.slice(cut), stats: combined.slice(0, cut) };
+      };
       // Pin existing worktree input through both Git reads. Cached/deleted reads use index objects.
       const { text, stats } =
         identity.scope === "worktree" && file.worktree !== "D"

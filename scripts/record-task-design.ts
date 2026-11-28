@@ -15,6 +15,7 @@ import {taskDesignScenes,TASK_DESIGN_SELECTORS,TASK_DESIGN_PROVENANCE,type TaskD
 
 const argument=(name:string)=>{const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1];};
 const requestedTheme=captureTheme(argument('--theme'));
+const cursorMode:'synthetic'|'none'=process.argv.includes('--no-cursor')?'none':'synthetic';
 const scenes=taskDesignScenes(),advertised=CAPABILITIES.map(item=>item.name).sort();
 const componentNames=(scene:TaskDesignScene)=>[...new Set(Object.values(scene.spec.elements).map(node=>node.type))].sort();
 for(const scene of scenes)validateSurface(scene.spec);
@@ -22,7 +23,7 @@ const missing=advertised.filter(name=>!scenes.some(scene=>componentNames(scene).
 if(missing.length)throw new Error('Recording scenes omit advertised components: '+missing.join(', '));
 for(const name of advertised)if(!TASK_DESIGN_SELECTORS[name])throw new Error('No visible selector for '+name);
 if(process.argv.includes('--list')||process.argv.includes('--dry-run')){
- console.log(JSON.stringify({provenance:TASK_DESIGN_PROVENANCE,advertised,missing,scenes:scenes.map(scene=>({id:scene.id,title:scene.title,components:componentNames(scene)})),command:'pnpm exec tsx scripts/record-task-design.ts --output <fresh-directory> [--stills-only] [--scenes id,id] [--variants light,dark,narrow]'},null,2));
+ console.log(JSON.stringify({provenance:TASK_DESIGN_PROVENANCE,advertised,missing,scenes:scenes.map(scene=>({id:scene.id,title:scene.title,components:componentNames(scene)})),command:'pnpm exec tsx scripts/record-task-design.ts --output <fresh-directory> [--stills-only] [--scenes id,id] [--variants light,dark,narrow] [--no-cursor]'},null,2));
 }else await record();
 
 type Fixture=Awaited<ReturnType<typeof serveTaskFixture>>;
@@ -83,7 +84,7 @@ async function record(){
  const variants=stills?(argument('--variants')??'light,dark,narrow').split(','):['recording'];if(variants.some(value=>!['light','dark','narrow','recording'].includes(value)))throw new Error('Variants: light,dark,narrow');
  const output=resolve(argument('--output')??`docs/evidence/task-specific-ui-${new Date().toISOString().replace(/[:.]/g,'-')}`);await mkdir(output,{recursive:true});
  try{await access(join(output,'manifest.json'));throw new Error('Choose a fresh output directory; prior evidence will not be overwritten.');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
- const manifest={provenance:TASK_DESIGN_PROVENANCE,renderer:'Actual Vite source renderer on an exclusively owned loopback server; HTTP/SSE protocol is intercepted by explicit fixtures.',mode:stills?'stills':'video',createdAt:new Date().toISOString(),advertised,sourceCompositionPairs:[['time-offered','time-visits'],['review-copy','review-patch'],['investigation-failure','investigation-latency']].filter(pair=>pair.every(id=>selected.some(scene=>scene.id===id))),captures:[] as SceneResult[],coverage:[] as Observation[],missing:advertised.slice()};
+ const manifest={provenance:TASK_DESIGN_PROVENANCE,cursorMode,renderer:'Actual Vite source renderer on an exclusively owned loopback server; HTTP/SSE protocol is intercepted by explicit fixtures.',mode:stills?'stills':'video',createdAt:new Date().toISOString(),advertised,sourceCompositionPairs:[['time-offered','time-visits'],['review-copy','review-patch'],['investigation-failure','investigation-latency']].filter(pair=>pair.every(id=>selected.some(scene=>scene.id===id))),captures:[] as SceneResult[],coverage:[] as Observation[],missing:advertised.slice()};
  const save=async()=>{manifest.coverage=manifest.captures.flatMap(result=>result.observations);manifest.missing=advertised.filter(name=>!manifest.coverage.some(row=>row.component===name));await writeFile(join(output,'manifest.json'),JSON.stringify(manifest,null,2));};
  const owned=await startVite();let browser:Awaited<ReturnType<typeof openCaptureBrowser>>|undefined;
  try{
@@ -96,7 +97,7 @@ async function record(){
    let stop:undefined|(()=>Promise<Record<string,unknown>>);let started=performance.now();const base=scene.id+'-'+variant,observed=new Set<string>(),interactions=new Map<string,string>();
    try{
     const host=await installFixture(page,scene,theme,stills);await page.goto('http://127.0.0.1:5465/');await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeVisible();
-    if(stills){audit.reset();}else{result.video=base+'.mp4';stop=await recordWindow(browser.server,page,join(output,result.video));started=performance.now();await delay(900);await host.publishInitial();}
+    if(stills){audit.reset();}else{result.video=base+'.mp4';stop=await recordWindow(browser.server,page,join(output,result.video),{cursor:cursorMode});started=performance.now();await delay(900);await host.publishInitial();}
     await expect(page.locator('.artifact')).toBeVisible();if(stills)audit.reset();await audit.assert();
     if(scene.id==='document')await expect(page.locator('.document-preview')).toHaveAttribute('data-preview-state','ready',{timeout:25000});
     if(scene.id==='image-work')await expect(page.locator('.image-compare-stage')).toHaveAttribute('data-ready','true');
@@ -126,7 +127,7 @@ async function record(){
    finally{try{await context.close();}finally{await save();}}
   }
   if(!wanted)expect(manifest.missing,'Every advertised component has visible chapter evidence').toEqual([]);
-  await writeFile(join(output,'index.html'),reviewIndex(manifest));await writeFile(join(output,'README.md'),`# Task-specific interface review\n\n${TASK_DESIGN_PROVENANCE}\n\nOpen index.html for chaptered recordings or captures. manifest.json records per-component visible selector evidence, state interactions and failures. No fixture is claimed as genuine generation, approved execution or production-host acceptance.\n\nCommand: pnpm exec tsx scripts/record-task-design.ts --output <fresh-directory>${stills?' --stills-only':''}\n`);console.log('REVIEW_OUTPUT '+output);
+  await writeFile(join(output,'index.html'),reviewIndex(manifest));await writeFile(join(output,'README.md'),`# Task-specific interface review\n\n${TASK_DESIGN_PROVENANCE}\n\nOpen index.html for chaptered recordings or captures. manifest.json records per-component visible selector evidence, state interactions, cursor mode and failures. Cursor mode is ${cursorMode}; pass --no-cursor to omit the synthetic cursor overlay in a fresh recording context. No fixture is claimed as genuine generation, approved execution or production-host acceptance.\n\nCommand: pnpm exec tsx scripts/record-task-design.ts --output <fresh-directory>${stills?' --stills-only':''}${cursorMode==='none'?' --no-cursor':''}\n`);console.log('REVIEW_OUTPUT '+output);
  }finally{try{await browser?.browser.close();}finally{try{await browser?.server.close();}finally{await owned.stop();await save();}}}
 }
 
@@ -154,7 +155,7 @@ async function actions(c:Context){
   await click(tab('Adjust export proposal'));const sourceImage=page.getByAltText('Source image for the export proposal');await expect(sourceImage).toBeVisible();await sourceImage.scrollIntoViewIfNeeded();await chapter('Inspect the supplied image');const width=page.getByRole('spinbutton',{name:'Width',exact:true});await width.fill('1920');check('ParameterControls','Source→draft proposal shows only changed parameters; source image remains unchanged.');check('Image','The actual source image remains visible beside its export proposal.');await chapter('Source image beside precise adjustment proposal');await recordedAction(button('Review export proposal'));await click(button('Reset Width'));await expect(width).toBeFocused();await chapter('Reset the proposal and return to its source control');
   await click(tab('Image feedback'));await expect(button('Add pin')).toBeEnabled();await click(button('Add pin'));await page.getByRole('textbox',{name:'Pin feedback',exact:true}).fill('Keep more separation around the export controls.');await button('Pin 1').focus();await button('Pin 1').press('Shift+ArrowRight');check('ImageAnnotator','A normalized feedback pin and its comment remain attached to the supplied image.');await chapter('Feedback attached to the image');await recordedAction(button('Send image feedback'));
  }else if(scene.id==='measurements'){
-  await click(tab('Cost'));await expect(page.getByRole('region',{name:'Selected statistic',exact:true})).toContainText('Unavailable');await click(tab('Response time'));check('Stats','Unknown cost remains unavailable; known latency retains units.');await chapter('Useful trend and honest unknown');await click(tab('Compare options'));await click(button('Select Studio'));await click(page.getByRole('checkbox',{name:'Differences only',exact:true}));check('Comparison','Source criteria drive differences-only inspection and explicit selection.');await chapter('Compare actual differences');await recordedAction(button('Save preference'));
+  await click(tab('Cost'));await expect(page.getByRole('region',{name:'Selected statistic',exact:true})).toContainText('Unavailable');await click(tab('Response time'));check('Stats','Unknown cost remains unavailable; known latency retains units.');await chapter('Useful trend and honest unknown');await click(tab('Compare options'));await click(page.getByRole('radio',{name:'Studio',exact:true}));await click(page.getByRole('checkbox',{name:'Differences only',exact:true}));check('Comparison','Source criteria drive differences-only inspection and explicit selection.');await chapter('Compare actual differences');await recordedAction(button('Save preference'));
  }else if(scene.id==='private-entry'){
   const field=page.getByLabel('Project API token',{exact:true});await expect(field).toBeEnabled();await field.fill('SYNTHETIC_RECORDING_TOKEN_NOT_A_SECRET');await click(button('Save token'));await expect(page.getByText('Saved for this host session',{exact:true})).toBeVisible();await expect(field).toHaveValue('');check('CredentialEntry','An explicitly synthetic token uses only the private fixture endpoint; ordinary state/commands contain no token.');await chapter('Private in-memory save · synthetic value');expect(JSON.stringify(host.snapshot)).not.toContain('SYNTHETIC_RECORDING_TOKEN_NOT_A_SECRET');await click(button('Remove token'));await expect(page.getByText('No token saved',{exact:true})).toBeVisible();await chapter('Remove the saved fixture credential');
  }else if(scene.id==='document'){

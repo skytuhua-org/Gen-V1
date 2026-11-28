@@ -14,11 +14,17 @@ const local = { kind: 'local' } as const;
 const plugin = { kind: 'plugin', pluginId: 'fixture-plugin', scopeId: 'fixture-scope' } as const;
 const project = (id: string, name: string, authority: WorkspaceAuthority = local): ProjectSummary => ({ id, name, authority, rootPath: `C:/Synthetic/${name}`, createdAt: '2026-01-01T00:00:00.000Z' });
 const initialProjects = [project('alpha', 'Alpha'), project('beta', 'Beta'), project('foreign', 'Foreign', plugin), ...Array.from({ length: 60 }, (_, i) => project(`project-${i}`, `Project ${String(i).padStart(2, '0')}`))];
+const sized = (n: number) => Array.from({ length: n }, (_, i) => project(`project-${i}`, `Project ${String(i).padStart(2, '0')}`));
 
 function Fixture() {
   const query = new URLSearchParams(location.search);
   const [open, setOpen] = useState(false), [selected, setSelected] = useState(query.has('last') ? 'project-59' : 'alpha');
-  const [count, setCount] = useState(0), [adds, setAdds] = useState(0), [projects, setProjects] = useState(initialProjects);
+  const [count, setCount] = useState(0), [adds, setAdds] = useState(0), [projects, setProjects] = useState(()=>{
+    const entries=query.has('count') ? sized(Number(query.get('count'))) : initialProjects;
+    if(!query.has('legacy'))return entries;
+    return [...entries.map(value=>value.id==='foreign'?{...value,rootPath:undefined}:value),
+      {...project('legacy','Unconnected legacy project'),rootPath:undefined}];
+  });
   const [pulse, setPulse] = useState(0);
   const [preferences, setPreferences] = useState(() => mergePreferences(DEFAULT_PREFERENCES, { projectColors: JSON.parse(localStorage.getItem('synthetic-project-colors') ?? '{}') }));
   const sidebar = useRef<HTMLElement>(null), search = useRef<HTMLInputElement>(null);
