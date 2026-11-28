@@ -1,6 +1,6 @@
 import {lstat,mkdir,mkdtemp,open,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {dirname,isAbsolute,join,relative,sep} from 'node:path';
+import {dirname,isAbsolute,join,relative,resolve,sep} from 'node:path';
 import {HarnessError} from '../contracts/index.ts';
 import type {Store} from '../storage/store.ts';
 import type {ManagedGitFamily} from '../capabilities/git-access.ts';
@@ -12,8 +12,12 @@ export interface PrivateGitFamily {projectId:string;commonDirectory:string;commo
 interface GitImportStage {projectId:string;attempt:number;identity:Identity}
 const MAX_IMPORT_RECOVERY_ATTEMPTS=3;
 function privateGitDirectory(storage:string,projectId:string,attempt=0){
- if(!Number.isSafeInteger(attempt)||attempt<0||attempt>MAX_IMPORT_RECOVERY_ATTEMPTS)throw denied();
- return join(storage,projectId,attempt===0?'repository.git':'recovery-'+attempt+'.git');
+ // Local project identities are issued by the host. Validate the path segment
+ // here as well so callers and persisted custody records share one boundary.
+ if(!/^[A-Za-z0-9_-]{1,200}$/.test(projectId)||!Number.isSafeInteger(attempt)||attempt<0||attempt>MAX_IMPORT_RECOVERY_ATTEMPTS)throw denied();
+ const directory=resolve(storage,projectId,attempt===0?'repository.git':'recovery-'+attempt+'.git');
+ if(!directory.startsWith(storage+sep))throw denied();
+ return directory;
 }
 const importStageKey=(projectId:string,attempt:number)=>projectId+':'+attempt;
 const incompleteImport=()=>new HarnessError('CAPABILITY_DENIED','An incomplete private Git import is retained for recovery.');
@@ -114,14 +118,16 @@ async function copyEntries(entries:Map<string,GuardEntry>,destination:string,obj
 }
 /** One history copy per project, published in Store only after native validation. */
 export async function importGitFamily(store:Store,projectId:string,root:string,workspace:ManagedGitFamily|undefined,executable:string,signal:AbortSignal):Promise<PrivateGitFamily>{
- const storage=join(store.dataDir,'git'),parent=join(storage,projectId);
+ const storage=join(store.dataDir,'git'),parent=dirname(privateGitDirectory(storage,projectId));
  const existing=store.get<PrivateGitFamily>('workspaceGitFamily',projectId);
  if(existing){
   if(existing.projectId!==projectId||existing.commonDirectory!==privateGitDirectory(storage,projectId,existing.recoveryAttempt)
    ||!sameIdentity(await directoryIdentity(existing.commonDirectory),existing.commonDirectoryIdentity))throw denied();
   return existing;
  }
- await mkdir(storage,{recursive:true});await makeDirectory(parent);
+ const source=store.get<{path:string;identity:Identity}>('workspaceProjectRoot',projectId);
+ if(!workspace&&source?.path!==root)throw denied();
+ await makeDirectory(storage);await makeDirectory(parent);
  let attempt=0;
  // Retry only past stages with verified ownership. A legacy or replaced
  // directory remains in place for explicit recovery.
@@ -148,8 +154,6 @@ export async function importGitFamily(store:Store,projectId:string,root:string,w
    store.put('workspaceGitImportStage',stageKey,null,stage);
   });
   const controller=new AbortController(),active=AbortSignal.any([signal,controller.signal]);
-  const source=store.get<{path:string;identity:Identity}>('workspaceProjectRoot',projectId);
-  if(!workspace&&source?.path!==root)throw denied();
   const family=await capture(root,workspace,active,async({entries})=>{
    await copyEntries(entries,commonDirectory,true,active,owned);
    const metadata=new Map(entries);metadata.delete('index');await copyEntries(metadata,commonDirectory,false,active,owned);

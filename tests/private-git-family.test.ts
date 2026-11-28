@@ -10,7 +10,7 @@ import {ProjectTools} from '../packages/workspace/tools.ts';
 import {assertNotStorage} from '../packages/core/security.ts';
 import type {Thread} from '../packages/contracts/index.ts';
 import {copyBoundGitMetadata,withPathGuard} from '../packages/core/file-access.ts';
-import {directoryIdentity,withLegacyGitView,type PrivateGitFamily} from '../packages/workspace/git-storage.ts';
+import {directoryIdentity,importGitFamily,withLegacyGitView,type PrivateGitFamily} from '../packages/workspace/git-storage.ts';
 
 const cleanup:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
@@ -187,4 +187,12 @@ it('bounds retained retries and holds an import whose recorded directory has cha
  await expect(f.add('limit')).rejects.toThrow(/retry limit/);
  for(const stage of stages)expect(await readFile(join(stage.path,'retained'),'utf8')).toBe('incomplete');
  expect(f.store.get('workspaceGitFamily',f.projectId)).toBeNull();
+});
+
+it('declines a noncanonical local project identifier before creating private import state',async()=>{
+ const f=await fixture();
+ await expect(importGitFamily(f.store,'unbound local project',f.path,undefined,'git',new AbortController().signal))
+  .rejects.toMatchObject({code:'CAPABILITY_DENIED'});
+ expect(f.store.eventsAfter(0).some(event=>event.type==='workspace.git-family.stage')).toBe(false);
+ await expect(lstat(join(f.store.dataDir,'git'))).rejects.toMatchObject({code:'ENOENT'});
 });
