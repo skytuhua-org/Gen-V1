@@ -106,6 +106,9 @@ importers:
       fastify:
         specifier: 5.12.7
         version: 5.12.7
+      katex:
+        specifier: 0.19.1
+        version: 0.19.1
       lucide-react:
         specifier: 1.78.0
         version: 1.78.0(@types/react@19.2.2)(react@19.2.3)
@@ -3980,6 +3983,10 @@ packages:
   kareem@3.4.1:
     resolution: {integrity: sha512-UlgCAFNAdk/HLSsbfkmbH8pJqpEN52Ek8RG53Ys1i3Q3gbCQruSrWpplZlgIGyDHX/LNoLW97ei3OG43s7UhUA==}
     engines: {node: '>=18.0.0'}
+
+  katex@0.19.1:
+    resolution: {integrity: sha512-jG8uKntjSEcm2EpQOh0XturpPuuC9r3Sq5HLHdsFdWZT27E672SF19QEi+of0/YeOy15lDgRhKvr5614uRrEfA==}
+    hasBin: true
 
   keyv-file@5.3.5:
     resolution: {integrity: sha512-0JFTTi55d1HdhIrSOnPngUw0fyHLn3BHqoLJ8TyGKM/fQfuZsz8HkcFxpl6YzU2mj1ZfRF/6BXlSqOpyfXYAmw==}
@@ -9878,6 +9885,10 @@ snapshots:
 
   kareem@3.4.1:
     optional: true
+
+  katex@0.19.1:
+    dependencies:
+      commander: 15.0.0
 
   keyv-file@5.3.5:
     dependencies:

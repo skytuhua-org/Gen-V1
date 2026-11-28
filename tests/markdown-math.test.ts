@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {admitMath, findDisplayMath, findInlineMath, mathScanAllowed, type MathBudget, type MathSpan} from '../apps/web/src/markdown-math';
+import {admitMath, createDisplayMathScanner, findDisplayMath, findInlineMath, mathScanAllowed, type MathBudget, type MathSpan} from '../apps/web/src/markdown-math';
 
 const lineStarts=(source:string)=>{
   const starts=[0];
@@ -161,5 +161,19 @@ describe('markdown math admission and scan budgets',()=>{
     const text=Array.from({length:200},(_,index)=>`$open${index} `).join('')+'\\(x\\)';
     const found=findInlineMath(text);
     expect(found.at(-1)?.tex).toBe('x');
+  });
+});
+
+it('indexes repeated malformed standalone openings without losing the final valid formula', () => {
+  const prefix = '\\[\n{\n'.repeat(14000);
+  const source = prefix + '\\[\r\nx+1\r\n\\]';
+  const starts = lineStarts(source);
+  const scan = createDisplayMathScanner(source, starts);
+  for (let line = 0; line < 28000; line += 2) {
+    if (scan(line)) throw new Error('Unexpected matching close for opening on line ' + line);
+  }
+  expect(scan(28000)).toEqual({
+    span:span(prefix.length,source.length,'\\[\r\nx+1\r\n\\]','\r\nx+1\r\n','display'),
+    nextLine:28003,
   });
 });
