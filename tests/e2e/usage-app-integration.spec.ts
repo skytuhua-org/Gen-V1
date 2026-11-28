@@ -38,7 +38,11 @@ for(const width of [375,768,1440])test(`actual App live usage launcher starts cl
  await summary.getByRole('button',{name:'Inspect live usage',exact:true}).click();await expect(summary.getByRole('region',{name:'Runtime usage details'})).toBeVisible();
  await hide.click();await expect(summary).toBeHidden();await expect(show).toHaveAttribute('aria-pressed','false');
  await show.click();await expect(summary.getByRole('region',{name:'Runtime usage details'})).toBeVisible();
- await page.reload();await expect(show).toBeVisible();await expect(show).toHaveAttribute('aria-pressed','false');await expect(summary).toBeHidden();
+ await page.reload();await expect(hide).toHaveAttribute('aria-pressed','true');
+ await expect(summary.getByRole('region',{name:'Runtime usage details'})).toBeVisible();
+ await hide.click();await expect(summary).toBeHidden();
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('harness:task-tool-open:usage:v1') ?? 'null'))).toEqual({open:false});
+ await page.reload();await expect(show).toHaveAttribute('aria-pressed','false');await expect(summary).toBeHidden();
 });
 test('actual App Live usage preference controls the composer launcher without opening the summary',async({page})=>{
  const h=await host(page),launcher=page.locator('.composer-usage-launcher'),summary=page.getByRole('region',{name:'Live usage',exact:true});
@@ -47,7 +51,7 @@ test('actual App Live usage preference controls the composer launcher without op
  await launcher.click();await expect(summary).toBeVisible();
  h.snapshot.settings.preferences={...h.snapshot.settings.preferences,showUsageFooter:false};await h.publish();await expect(launcher).toHaveCount(0);await expect(summary).toBeHidden();
 });
-test('split conversation launchers control the shared summary for the active pane and start closed after reload',async({page})=>{
+test('split conversation launchers control the shared summary for the active pane and restore shared open state after reload',async({page})=>{
  await host(page,{split:true});
  const first=page.locator('[data-split-view="thread:task-thread"]'),second=page.locator('[data-split-view="thread:other"]');
  const summary=page.getByRole('region',{name:'Live usage',exact:true}),launchers=page.locator('.composer-usage-launcher');
@@ -69,8 +73,11 @@ test('split conversation launchers control the shared summary for the active pan
  await summary.getByRole('button',{name:'Inspect live usage',exact:true}).click();
  await summary.getByRole('button',{name:'Open Usage',exact:true}).click();await expect(modal(page)).toBeVisible();
  await modal(page).getByRole('tab',{name:'Tokens',exact:true}).click();await expect(modal(page)).toContainText('Other synthetic owner');await expect(modal(page)).toContainText('999');
- await page.keyboard.press('Escape');await page.reload();await expect(launchers).toHaveCount(2);await expect(summary).toBeHidden();
- for(const pane of [first,second])await expect(pane.getByRole('button',{name:'Show live usage',exact:true})).toHaveAttribute('aria-pressed','false');
+ await page.keyboard.press('Escape');
+ await summary.getByRole('button',{name:'Minimize live usage',exact:true}).click();
+ await page.reload();await expect(launchers).toHaveCount(2);await expect(summary).toBeVisible();
+ await expect(summary.getByRole('button',{name:'Inspect live usage',exact:true})).toHaveAttribute('aria-expanded','false');
+ for(const pane of [first,second])await expect(pane.getByRole('button',{name:'Hide live usage',exact:true})).toHaveAttribute('aria-pressed','true');
  await expect(first.getByRole('textbox',{name:'Message',exact:true})).toHaveValue('Keep the first pane draft');
  await expect(second.getByRole('textbox',{name:'Message',exact:true})).toHaveValue('Keep the second pane draft');
 });
@@ -126,4 +133,37 @@ for(const mode of ['missing','v2-chat','v3-chat','split'] as const)test(`restore
  await expect(first).toHaveValue('Keep the first split draft');await expect(second).toHaveValue('Keep the second split draft');
  await expect(modal(page)).toHaveCount(0);
  expect(h.commands.filter(command=>command.type==='thread.create'||command.type==='message.send')).toHaveLength(0);
+});
+
+for (const state of ['malformed','storage denied'] as const) test(`actual App Live Usage stays usable with ${state} state`,async({page})=>{
+ await page.addInitScript(state=>{
+  const key='harness:task-tool-open:usage:v1';
+  if(state==='malformed'){localStorage.setItem(key,'{"open":"true"}');return;}
+  const read=Storage.prototype.getItem,write=Storage.prototype.setItem;
+  Storage.prototype.getItem=function(name){if(name===key)throw new DOMException('Fixture storage denied','SecurityError');return read.call(this,name);};
+  Storage.prototype.setItem=function(name,value){if(name===key)throw new DOMException('Fixture storage denied','SecurityError');write.call(this,name,value);};
+ },state);
+ await host(page);
+ const show=page.getByRole('button',{name:'Show live usage',exact:true});
+ const hide=page.getByRole('button',{name:'Hide live usage',exact:true});
+ const summary=page.getByRole('region',{name:'Live usage',exact:true});
+ await expect(show).toHaveAttribute('aria-pressed','false');
+ await show.click();await expect(summary).toBeVisible();
+ await hide.click();await expect(summary).toBeHidden();
+ if(state==='storage denied'){
+  await show.click();await expect(summary).toBeVisible();
+  await page.reload();await expect(show).toHaveAttribute('aria-pressed','false');
+  await expect(summary).toBeHidden();
+ }
+});
+
+test('actual App reads a saved open Live Usage object with the existing collapsed state',async({page})=>{
+ await page.addInitScript(()=>{
+  localStorage.setItem('harness:task-tool-open:usage:v1','{"open":true}');
+  localStorage.setItem('harness:summary:usage:v1','{"collapsed":true}');
+ });
+ await host(page);
+ await expect(page.getByRole('button',{name:'Hide live usage',exact:true})).toHaveAttribute('aria-pressed','true');
+ const summary=page.getByRole('region',{name:'Live usage',exact:true});
+ await expect(summary.getByRole('button',{name:'Inspect live usage',exact:true})).toHaveAttribute('aria-expanded','false');
 });
