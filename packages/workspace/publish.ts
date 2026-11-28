@@ -200,11 +200,17 @@ export class PublishService {
           return operation;
         }
         current = await this.projects.gitStatus(projectId, threadId);
+        // Staging may change the index revision, but cannot advance the reviewed HEAD.
+        if (current.head !== request.head) {
+          return this.setStep(operation, 'commit', step('not-applied', {
+            error: { code: 'REVISION_CHANGED', message: 'The reviewed HEAD changed after staging. Refresh before publishing.' },
+          }));
+        }
         if (current.gitWrite !== true) throw new HarnessError('PROJECT_READ_ONLY', 'The working copy is no longer writable.');
         const committed = await this.outcomes.execute(projectId, {
           id: request.id + ':commit',
           type: 'commit',
-          payload: { revision: current.revision, expectedHead: current.head, message: request.commitMessage },
+          payload: { revision: current.revision, expectedHead: request.head, message: request.commitMessage },
           threadId,
         });
         if (committed.state !== 'confirmed') {

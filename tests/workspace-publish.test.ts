@@ -20,7 +20,7 @@ import {buildServer} from '../apps/server/server.ts';
 
 const cleanup:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
-const head='a'.repeat(40),revision='c'.repeat(64),next='b'.repeat(40),nextRevision='d'.repeat(64);
+const head='a'.repeat(40),revision='c'.repeat(64),next='b'.repeat(40),nextRevision='d'.repeat(64),stagedRevision='f'.repeat(64);
 const file=(path:string,extra:Partial<GitStatus['files'][number]>={})=>({path,index:' ',worktree:'M',staged:false,untracked:false,binary:false,added:10,removed:2,...extra});
 const status=(overrides:Partial<GitStatus>={}):GitStatus=>({head,branch:'gen/review',revision,files:[file('src/app.ts'),file('notes.txt',{index:'?',untracked:true,added:null,removed:null})],diff:'',stagedDiff:'',truncated:false,mode:'managed',gitWrite:true,untrackedIncluded:true,...overrides});
 const validRequest={id:'publish-1',threadId:'thread',head,revision,selectedPaths:['src/app.ts','notes.txt'],commitMessage:'Publish reviewed changes',title:'Publish reviewed changes',body:'Reviewed body',base:'main'};
@@ -105,7 +105,7 @@ it('truncates the subject at 72 characters and surfaces the fallback base note',
 async function runFixture(kind:'clean'|'dirty'='dirty'){
  const statuses=kind==='clean'
   ?[status({files:[]}),status({files:[],head:next,revision:nextRevision})]
-  :[status(),status({files:[file('src/app.ts',{index:'M',worktree:' ',staged:true}),file('notes.txt',{index:'A',worktree:' ',staged:true})]}),status({files:[],head:next,revision:nextRevision})];
+  :[status(),status({revision:stagedRevision,files:[file('src/app.ts',{index:'M',worktree:' ',staged:true}),file('notes.txt',{index:'A',worktree:' ',staged:true})]}),status({files:[],head:next,revision:nextRevision})];
  const fixture=await serviceFixture({status:statuses});
  const execute=vi.mocked(fixture.outcomes.execute);
  execute.mockImplementation(async(_project:string,input:unknown)=>{
@@ -120,6 +120,7 @@ it('commits, pushes and links a confirmed draft pull request',async()=>{
  expect(publishOperationV1Schema.parse(operation).steps).toMatchObject({commit:{state:'confirmed'},push:{state:'confirmed'},pr:{state:'confirmed'},link:{state:'confirmed'}});
  expect(operation.result).toMatchObject({url:createdPull.url,number:12,head:next,repo:'example/fixture'});
  expect(vi.mocked(outcomes.execute).mock.calls.map(([,input])=>(input as {id:string}).id)).toEqual(['publish-1:stage','publish-1:commit','publish-1:pr']);
+ expect(outcomes.execute).toHaveBeenNthCalledWith(2,'project',expect.objectContaining({type:'commit',payload:expect.objectContaining({expectedHead:head,revision:stagedRevision})}));
  expect(store.get('linkedPullRequest',JSON.stringify(['project','thread','example/fixture',12]))).toMatchObject({threadId:'thread',repo:'example/fixture'});
  expect(await publish.read('project','thread')).toMatchObject({id:'publish-1'});
 });
@@ -137,6 +138,20 @@ it('rejects a changed revision before any write step or operation record',async(
  const{publish,outcomes,store}=await serviceFixture({status:status({revision:'e'.repeat(64)})});
  await expect(publish.execute('project',validRequest)).rejects.toMatchObject({code:'REVISION_CHANGED'});
  expect(outcomes.execute).not.toHaveBeenCalled();expect(store.all('workspacePublish')).toHaveLength(0);
+});
+it('durably stops before commit when HEAD moves after staging confirms',async()=>{
+ const{publish,outcomes,store,details}=await serviceFixture({status:[status(),status({head:next,revision:stagedRevision})]});
+ const operation=publishOperationV1Schema.parse(await publish.execute('project',validRequest));
+ expect(operation.steps).toMatchObject({
+  commit:{state:'not-applied',error:{code:'REVISION_CHANGED'}},
+  push:{state:'not-started'},pr:{state:'not-started'},link:{state:'not-started'},
+ });
+ expect(operation.result).toBeUndefined();
+ expect(outcomes.execute).toHaveBeenCalledExactlyOnceWith('project',expect.objectContaining({type:'stage',payload:expect.objectContaining({expectedHead:head,revision})}));
+ expect(details).not.toHaveBeenCalled();
+ expect(store.get('workspacePublish',validRequest.id)).toEqual(operation);
+ expect(await publish.execute('project',validRequest)).toEqual(operation);
+ expect(outcomes.execute).toHaveBeenCalledOnce();
 });
 it('rejects duplicate request IDs carrying different content',async()=>{
  const{publish}=await runFixture();
