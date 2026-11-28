@@ -204,19 +204,20 @@ export async function readHistoryPage(
     `--max-count=${page + 1}`,
     `--skip=${offset}`,
     "-z",
-    "--format=%H%x1f%P%x1f%an%x1f%aI%x1f%s%x1f",
+    "--format=tformat:%H%x00%P%x00%an%x00%aI%x00%s",
     "--end-of-options",
     entry.headOid,
     "--",
   ]);
-  const rows = raw
-    .split("\0")
-    .filter((record) => record.length > 0)
-    .map((record) => record.split("\x1f"));
-  const hasMore = rows.length > page;
-  const visible = rows.slice(0, page);
+  // -z terminates each tformat record with NUL. Git author and subject
+  // fields may contain other control bytes; keep empty fields (e.g. root parents).
+  const fields = raw.split("\0");
+  if (fields.pop() !== "" || fields.length % 5 !== 0)
+    throw new HarnessError("UNSUPPORTED", "History enumeration returned malformed data.");
+  const hasMore = fields.length > page * 5;
   const commits: GitHistoryCommit[] = [];
-  for (const [oid, parents, author, authoredAt, subject] of visible) {
+  for (let i = 0; i < Math.min(fields.length, page * 5); i += 5) {
+    const [oid, parents, author, authoredAt, subject] = fields.slice(i, i + 5);
     if (!oid || !parseOid(oid)) throw new HarnessError("UNSUPPORTED", "History enumeration returned malformed data.");
     let parentOid = parseOid((parents ?? "").split(" ").filter(Boolean)[0] ?? "");
     // %P hides a shallow graft's parent; only a genuine root counts as root.
