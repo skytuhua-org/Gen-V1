@@ -165,3 +165,74 @@ test('a tall tooltip stays visible in a short viewport when neither side fits', 
     return Boolean(box && box.y >= 7 && box.y + box.height <= 203);
   }).toBe(true);
 });
+
+test('caller improvements to tooltip name and description survive title retirement',async({page})=>{
+  await page.goto('/ui-shell-overlays?tooltip');
+  await expect(page.getByRole('button',{name:'Tooltip anchor'})).toBeVisible();
+  await page.evaluate(()=>{
+    for(const kind of ['name','description'] as const){
+      const control=document.createElement('button');
+      control.id='tooltip-'+kind;
+      control.type='button';
+      control.title='Initial delegated help';
+      control.style.cssText='position:fixed;top:220px;width:100px;height:30px;left:'+(kind==='name'?100:250)+'px';
+      if(kind==='description')control.textContent='Named action';
+      document.body.appendChild(control);
+    }
+  });
+  for(const [kind,attribute] of [['name','aria-label'],['description','aria-description']] as const){
+    const control=page.locator('#tooltip-'+kind);
+    await control.hover();
+    await expect(page.getByRole('tooltip')).toHaveText('Initial delegated help');
+    await expect(control).toHaveAttribute(attribute,'Initial delegated help');
+    await control.evaluate((node,attributeName)=>{
+      node.setAttribute(attributeName,'Caller retained value');
+      node.setAttribute('title','Refreshed delegated help');
+    },attribute);
+    await expect(page.getByRole('tooltip')).toHaveText('Refreshed delegated help');
+    await expect(control).toHaveAttribute(attribute,'Caller retained value');
+    await control.evaluate(node=>node.removeAttribute('title'));
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await expect(control).toHaveAttribute(attribute,'Caller retained value');
+  }
+});
+
+test('retiring a tooltip drops its own fallback and preserves caller naming references',async({page})=>{
+  await page.goto('/ui-shell-overlays?tooltip');
+  await expect(page.getByRole('button',{name:'Tooltip anchor'})).toBeVisible();
+  await page.evaluate(()=>{
+    const label=document.createElement('span');
+    label.id='caller-tooltip-label';
+    label.textContent='Caller reference';
+    document.body.appendChild(label);
+    for(const [index,kind] of ['generated','same','references'].entries()){
+      const button=document.createElement('button');
+      button.id='tooltip-'+kind;
+      button.type='button';
+      button.title='Adopted label';
+      button.style.cssText='position:fixed;top:220px;width:100px;height:30px;left:'+(100+150*index)+'px';
+      document.body.appendChild(button);
+    }
+  });
+  for(const kind of ['generated','same','references']){
+    const control=page.locator('#tooltip-'+kind);
+    await control.hover();
+    await expect(page.getByRole('tooltip')).toHaveText('Adopted label');
+    await expect(control).toHaveAttribute('aria-label','Adopted label');
+    await control.evaluate((node,mode)=>{
+      if(mode==='same')node.setAttribute('aria-label','Adopted label');
+      if(mode==='references'){
+        node.setAttribute('aria-labelledby','caller-tooltip-label');
+        node.setAttribute('aria-describedby','caller-tooltip-label');
+      }
+      node.removeAttribute('title');
+    },kind);
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    if(kind==='same')await expect(control).toHaveAttribute('aria-label','Adopted label');
+    else await expect(control).not.toHaveAttribute('aria-label',/./);
+    if(kind==='references'){
+      await expect(control).toHaveAttribute('aria-labelledby','caller-tooltip-label');
+      await expect(control).toHaveAttribute('aria-describedby','caller-tooltip-label');
+    }
+  }
+});
