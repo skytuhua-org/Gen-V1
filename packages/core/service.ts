@@ -84,7 +84,7 @@ import {ExternalIntakeCoordinator,type IntakeAuth,type IntakeRecord} from './ext
 import type {ModelRequestGate} from '../runtime/model-capacity.ts';
 import type {BackgroundWorkKind} from '../contracts/background-work.ts';
 
-type Outbox = WorkbenchQueuedInput & {messageId?:string;completedWrite?:CompletedWriteReceipt;hookClaimed?:boolean;hookDiagnostic?:WriteHookDiagnostic;sendMode?:SendModeV1};
+type Outbox = WorkbenchQueuedInput & {messageId?:string;completedWrite?:CompletedWriteReceipt;hookClaimed?:boolean;hookDiagnostic?:WriteHookDiagnostic;sendMode?:SendModeV1;attachmentIds?:string[]};
 type Lease = { id: string; threadId: string; clientId: string; fields: string[]; expiresAt: number };
 type FinishRecord = { inputIds: string[]; invalidated?: boolean; [key: string]: unknown };
 const text = (p: Record<string, unknown>, key: string, max = 128 * 1024): string => {
@@ -841,7 +841,7 @@ export class Service {
     const rootIdentity=root?physical(root.path,root.identity):null,workspaceIdentity=workspace?physical(workspace.path,workspace.identity):null;
     const resources=(this.store.db.prepare("SELECT body FROM entities WHERE kind='resource' AND thread_id=? ORDER BY id LIMIT 257").all(thread.id) as {body:string}[]).map(row=>JSON.parse(row.body) as ResourceGrant);
     if(resources.length>256)throw new HarnessError('INVALID_REQUEST_CONTEXT','The host source cut exceeds its supported bounds.');
-    const grantDigest=digest(resources.map(resource=>{if(resource.threadId!==thread.id)throw new HarnessError('STALE_REQUEST_CONTEXT','A resource grant changed owner.');return{resource,physical:physical(resource.path,resource.identity)};}));
+    const grantDigest=digest(resources.map(resource=>{if(resource.threadId!==thread.id)throw new HarnessError('STALE_REQUEST_CONTEXT','A resource grant changed owner.');const {draftAttachmentConsumedBy:_sent,...grant}=resource;return{resource:grant,physical:physical(resource.path,resource.identity)};}));
     const workspaceId=thread.workspaceId??(thread.projectId?'project:'+thread.projectId:'thread:'+thread.id);
     const instructionDigest=digest([PLAN_RUNTIME_GUIDANCE,LEARN_REQUEST,thread.mode??'build',Boolean(this.source),Boolean(thread.sideParentId)]);
     return{profileId,threadId:thread.id,projectId:thread.projectId??null,workspaceId,modelId,accountId,thinkingLevel:thinkingLevel??null,
@@ -1342,7 +1342,7 @@ export class Service {
     if (command.type === "resource.remove-composer-attachment") return this.store.command(command, () => {
       const id = text(p, "resourceId", 200);
       const grant = this.store.get<ResourceGrant>("resource", id);
-      if (!grant || grant.threadId !== thread.id || grant.kind !== "attachment" || !grant.composerAttachment) {
+      if (!grant || grant.threadId !== thread.id || grant.kind !== "attachment" || !grant.composerAttachment || grant.draftAttachmentConsumedBy) {
         throw new HarnessError("CAPABILITY_DENIED", "The generated attachment does not belong to this composer");
       }
       if (!grant.composerAttachment.hidden) this.store.put("resource", id, thread.id, {
@@ -1627,6 +1627,18 @@ export class Service {
     const sourceOwner = sourceRefs.length ? this.sourceWorkbench.owner(thread.id) : null;
     this.assertNoOtherRun(thread.id);
     if (["stopped", "interrupted"].includes(thread.status)) throw new HarnessError("RESUME_REQUIRED", "Resume this thread before sending more work");
+    const rawAttachments = command.payload.attachmentIds;
+    let attachmentIds: string[] | undefined;
+    if (rawAttachments !== undefined) {
+      if (!Array.isArray(rawAttachments) || rawAttachments.length > 64 || new Set(rawAttachments).size !== rawAttachments.length
+        || rawAttachments.some(id => typeof id !== "string" || !id.length || id.length > 200)) {
+        throw new HarnessError("INVALID_INPUT", "Choose up to 64 distinct composer attachments", {sendAccepted:false});
+      }
+      if (rawAttachments.length && (thread.sideParentId || thread.kind === "side" || thread.kind === "delegate")) {
+        throw new HarnessError("CAPABILITY_DENIED", "This conversation does not admit attachments", {sendAccepted:false});
+      }
+      attachmentIds = rawAttachments;
+    }
     const content = text(command.payload, "content", 64 * 1024), modelId = text(command.payload, "modelId", 300);
     const providerId=modelProvider(modelId),binding=this.binding(thread,providerId);
     if(this.reviewing){await this.cancelReview();this.assertBinding(this.thread(thread.id),providerId,binding);}
@@ -1662,8 +1674,18 @@ export class Service {
       const before=requestContextId?this.requestBasis(this.thread(thread.id),modelId,thinkingLevel):null;
       if(requestContextId)rollbackClaim=this.requestCustody.claim(requestContextId,command.id,content,before!);
       const sourceFields = {...(sourceRefs.length ? {sourceRefs} : {}), ...(sendMode === 'AFTER_CURRENT' ? {sendMode} : {})};
-      const message: Message = { id: randomUUID(), threadId: thread.id, role: "user", content, createdAt: now(), runId: current.runId, ...sourceFields };
-      const input: Outbox = { id: command.id, threadId: thread.id, content, status: "persisted", runId: null,messageId:message.id,...(requestContextId?{requestContextId}:{}), ...sourceFields };
+      const grants = (attachmentIds ?? []).map(id => {
+        const grant = this.store.get<ResourceGrant>("resource", id);
+        if (!grant || grant.threadId !== thread.id || grant.kind !== "attachment" || grant.composerAttachment?.hidden || grant.draftAttachmentConsumedBy) {
+          throw new HarnessError("CAPABILITY_DENIED", "An attachment is no longer available in this composer", {sendAccepted:false});
+        }
+        return grant;
+      });
+      const message: Message = { id: randomUUID(), threadId: thread.id, role: "user", content, createdAt: now(), runId: current.runId, ...sourceFields,
+        ...(grants.length ? { attachments: grants.map(({id,label,writable}) => ({id,label,writable})) } : {}),
+      };
+      for (const grant of grants) this.store.put("resource", grant.id, thread.id, { ...grant, draftAttachmentConsumedBy: message.id });
+      const input: Outbox = { id: command.id, threadId: thread.id, content, status: "persisted", runId: null,messageId:message.id,...(attachmentIds ? {attachmentIds} : {}),...(requestContextId?{requestContextId}:{}), ...sourceFields };
       this.store.put("message", message.id, thread.id, message); this.enqueueInput(input);
       this.store.put("thread", thread.id, thread.id, { ...current, accountId:binding.accountId,modelId, thinkingLevel, error: null, ...(["completed", "failed"].includes(current.status) ? { status: "ready" } : {}), updatedAt: now(), ...(current.title === "New thread" ? { title: content.slice(0, 65) } : {}) });
       bindCapturedAccount?.();
@@ -1812,7 +1834,12 @@ export class Service {
     const userPrompt=inputs.map((input,index) => "Input " + input.id + ":\n" + contents[index]).join("\n\n");
     const sourceContext = sourceContexts.map(context => context.text).join(''), deliveredRefs = sourceContexts.flatMap(context => context.refs);
     const authorityGrants = thread.sideParentId ? [] : this.store.all<ResourceGrant>("resource", threadId);
-    let input: StartRun = { ...ctx,accountId:binding.accountId, memory: taskMemoryContext(this.store, threadId), modelId, thinkingLevel:thread.thinkingLevel, sessionPath: thread.sessionPath, inputId: inputs[0].id, inputIds: inputs.map(i => i.id), resources: authorityGrants.filter(grant => !grant.composerAttachment?.hidden), ...(completedWrites.length?{completedWrites}:{}), ...(deliveredRefs.length ? {sourceRefs: deliveredRefs} : {}), prompt: guidance+userPrompt+sourceContext };
+    const acceptedAttachments = new Set(inputs.flatMap(input => input.attachmentIds ?? []));
+    const legacyAttachments = inputs.some(input => input.attachmentIds === undefined);
+    const resources = authorityGrants.filter(grant =>
+      grant.kind !== "attachment" || (!grant.composerAttachment?.hidden && (acceptedAttachments.has(grant.id) || legacyAttachments && !grant.draftAttachmentConsumedBy)),
+    );
+    let input: StartRun = { ...ctx,accountId:binding.accountId, memory: taskMemoryContext(this.store, threadId), modelId, thinkingLevel:thread.thinkingLevel, sessionPath: thread.sessionPath, inputId: inputs[0].id, inputIds: inputs.map(i => i.id), resources, ...(completedWrites.length?{completedWrites}:{}), ...(deliveredRefs.length ? {sourceRefs: deliveredRefs} : {}), prompt: guidance+userPrompt+sourceContext };
     // A live controller may already serve a queued or in-flight approved
     // effect; replacing it would orphan that work from Stop.
     const retainedControl=this.aborts.get(threadId);

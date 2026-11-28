@@ -14,7 +14,7 @@ export interface AgentSend {agent: AgentSummary; content: string; commandId: str
 /** A real conversation owner can share drafts without joining the agent inventory. */
 export interface ConversationComposerTarget {kind: 'conversation'; projectId?:string; workspaceId?:string; threadId: string; modelId: string | null; working: boolean}
 export type ComposerTarget = AgentSummary | ConversationComposerTarget;
-export interface ParentSend {threadId: string; modelId: string | null; thinkingLevel?: string | null; content: string; commandId: string; skills?: SkillReference[]; sourceRefs?: SourceRefV1[]; sendMode?: 'NOW' | 'AFTER_CURRENT'; requestContextId?: string; signal?: AbortSignal}
+export interface ParentSend {threadId: string; modelId: string | null; thinkingLevel?: string | null; content: string; commandId: string; skills?: SkillReference[]; sourceRefs?: SourceRefV1[]; sendMode?: 'NOW' | 'AFTER_CURRENT'; requestContextId?: string; attachmentIds?: readonly string[]; signal?: AbortSignal}
 const inventoryAgent = (target: ComposerTarget): target is AgentSummary => !('kind' in target);
 const identity = (target: ComposerTarget) => target.threadId ?? (inventoryAgent(target) ? target.agentId : '');
 /** Parent supplies canonical run/epoch validation and durable receipts. No child message.send fallback. */
@@ -27,7 +27,7 @@ export interface ChildFollowUpController {
  dispose?(): void;
 }
 export interface ComposerState {draft: string; ready: boolean; busy: boolean; stopping: boolean; error: string; retry: boolean; resumeRequired?: boolean; thinkingLevel?: string | null; skills?: readonly SkillBinding[]; excerpts?:readonly TerminalExcerpt[]; ticket?: ChildInputTicket}
-export interface ComposerSubmission {content: string; generation: string | undefined; skills: readonly SkillBinding[]; excerpts?:readonly TerminalExcerpt[]; excerptGeneration?:string}
+export interface ComposerSubmission {content: string; generation: string | undefined; skills: readonly SkillBinding[]; excerpts?:readonly TerminalExcerpt[]; excerptGeneration?:string; attachmentIds?:readonly string[]}
 /** Share this exact instance with every conversation view, including the host composer. */
 export interface SharedAgentComposers {
  getSnapshot(agent: ComposerTarget): ComposerState;
@@ -47,7 +47,7 @@ export interface SharedAgentComposers {
  supports(agent: ComposerTarget): boolean;
  dispose(): void;
 }
-interface PendingSend {commandId: string; content: string; generation: string | undefined; modelId?: string | null; thinkingLevel?: string | null; skills?: SkillBinding[]; excerpts?:TerminalExcerpt[]; excerptGeneration?:string; sourceRefs?:SourceRefV1[]; sourceOwner?:LogicalOwnerV1; sourceGeneration?:string; sendMode?:'NOW'|'AFTER_CURRENT'; requestContextId?: string}
+interface PendingSend {commandId: string; content: string; generation: string | undefined; modelId?: string | null; thinkingLevel?: string | null; skills?: SkillBinding[]; excerpts?:TerminalExcerpt[]; excerptGeneration?:string; sourceRefs?:SourceRefV1[]; sourceOwner?:LogicalOwnerV1; sourceGeneration?:string; sendMode?:'NOW'|'AFTER_CURRENT'; requestContextId?: string; attachmentIds?:readonly string[]}
 interface Entry {agent: ComposerTarget; inventory?: AgentSummary; stopEpoch: number; state: ComposerState; pending?: PendingSend; prepared?: Promise<void>; sendAbort?: AbortController; listeners: Set<() => void>; unsubscribe?: () => void}
 export function createSharedAgentComposers(actions: {sendParent(input: ParentSend): Promise<void>; stopParent(agent: ComposerTarget): Promise<void>; followUp?: ChildFollowUpController; ownership?: (agent: ComposerTarget) => unknown}): SharedAgentComposers {
  const entries = new Map<string, Entry>();
@@ -184,7 +184,7 @@ export function createSharedAgentComposers(actions: {sendParent(input: ParentSen
      if (source.sourceRefs.length || source.sendMode !== 'NOW') sourceFields = {sourceRefs:source.sourceRefs,sourceOwner,sourceGeneration:source.generation,sendMode:source.sendMode};
     }
    } catch(cause) {emit(value,{busy:false,error:cause instanceof Error?cause.message:'Source context could not be recovered.',retry:Boolean(value.pending)});return;}
-   const pending = value.pending ?? {commandId: crypto.randomUUID(), content, ...sourceFields, ...(options?.requestContextId ? {requestContextId: options.requestContextId} : {}), ...(excerpts.length?{excerpts,excerptGeneration:submittedExcerptGeneration}:{}), generation: submittedGeneration, modelId: agent.modelId, ...(thinkingLevel !== undefined ? {thinkingLevel} : {}), ...((skills?.length ?? 0) > 0 ? {skills: skillBindingsSchema.parse(skills)} : {})};
+   const pending = value.pending ?? {commandId: crypto.randomUUID(), content, ...sourceFields, ...(submission?.attachmentIds ? {attachmentIds:[...submission.attachmentIds]} : {}), ...(options?.requestContextId ? {requestContextId: options.requestContextId} : {}), ...(excerpts.length?{excerpts,excerptGeneration:submittedExcerptGeneration}:{}), generation: submittedGeneration, modelId: agent.modelId, ...(thinkingLevel !== undefined ? {thinkingLevel} : {}), ...((skills?.length ?? 0) > 0 ? {skills: skillBindingsSchema.parse(skills)} : {})};
    value.pending = pending; emit(value, {busy: true, error: '', retry: false});
    const sendAbort = new AbortController(); value.sendAbort = sendAbort;
    let sendTimedOut = false;
@@ -204,7 +204,7 @@ export function createSharedAgentComposers(actions: {sendParent(input: ParentSen
     } else {
      // The abort signal is ephemeral transport plumbing: attach it non-enumerably so
      // snapshot comparisons and journals of the send input never see it.
-     const input: ParentSend = {threadId: identity(agent), modelId: pending.modelId === undefined ? agent.modelId : pending.modelId, ...(pending.thinkingLevel !== undefined ? {thinkingLevel: pending.thinkingLevel} : {}), content: pending.content, commandId: pending.commandId, ...(pending.requestContextId ? {requestContextId: pending.requestContextId} : {}), ...(pending.skills?.length ? {skills: pending.skills.map(binding => binding.ref)} : {}), ...(pending.sourceRefs?{sourceRefs:pending.sourceRefs}:{}), ...(pending.sendMode?{sendMode:pending.sendMode}:{})};
+     const input: ParentSend = {threadId: identity(agent), modelId: pending.modelId === undefined ? agent.modelId : pending.modelId, ...(pending.thinkingLevel !== undefined ? {thinkingLevel: pending.thinkingLevel} : {}), content: pending.content, commandId: pending.commandId, ...(pending.attachmentIds ? {attachmentIds:pending.attachmentIds} : {}), ...(pending.requestContextId ? {requestContextId: pending.requestContextId} : {}), ...(pending.skills?.length ? {skills: pending.skills.map(binding => binding.ref)} : {}), ...(pending.sourceRefs?{sourceRefs:pending.sourceRefs}:{}), ...(pending.sendMode?{sendMode:pending.sendMode}:{})};
      Object.defineProperty(input, 'signal', {value: sendAbort.signal});
      await Promise.race([actions.sendParent(input), sendAborted]);
     }
@@ -248,9 +248,9 @@ export function createSharedAgentComposers(actions: {sendParent(input: ParentSen
 /** The outer host adopts this owner for both its ordinary composer and agent columns. */
 export function createPersonalAgentComposers(followUp?: ChildFollowUpController, ownership?: (agent: ComposerTarget) => unknown): SharedAgentComposers {
  return createSharedAgentComposers({
-  sendParent: async ({threadId, modelId, thinkingLevel, content, commandId, skills, sourceRefs, sendMode, requestContextId, signal}) => {
+  sendParent: async ({threadId, modelId, thinkingLevel, content, commandId, skills, sourceRefs, sendMode, requestContextId, attachmentIds, signal}) => {
    const target: ConversationComposerTarget = {kind: 'conversation', threadId, modelId, working: false}, owner = ownership?.(target);
-   await command('message.send', {content, modelId, ...(thinkingLevel !== undefined ? {thinkingLevel} : {}), ...(skills?.length ? {skills} : {}), ...(sourceRefs?{sourceRefs}:{}), ...(sendMode?{sendMode}:{}), ...(requestContextId ? {requestContextId} : {})}, threadId, commandId, () => !ownership || owner !== undefined && ownership(target) === owner, signal);
+   await command('message.send', {content, modelId, ...(thinkingLevel !== undefined ? {thinkingLevel} : {}), ...(skills?.length ? {skills} : {}), ...(sourceRefs?{sourceRefs}:{}), ...(sendMode?{sendMode}:{}), ...(requestContextId ? {requestContextId} : {}), ...(attachmentIds ? {attachmentIds} : {})}, threadId, commandId, () => !ownership || owner !== undefined && ownership(target) === owner, signal);
   },
   stopParent: async agent => {
    const owner = ownership?.(agent);

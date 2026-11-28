@@ -1,6 +1,6 @@
 import {File,Lock,X} from 'lucide-react';
 import {useEffect, useId, useLayoutEffect, useRef, useState} from 'react';
-import type {ResourceGrant} from '../../../packages/contracts';
+import type {MessageAttachment,ResourceGrant} from '../../../packages/contracts';
 import './composer-entry.css';
 import {TerminalExcerpt} from './TerminalExcerpt';
 import type {TimeFormat} from './time-format';
@@ -53,14 +53,14 @@ export function useComposerAttachmentFeedback(resources:readonly ResourceGrant[]
   const generated=resources.filter(resource=>resource.composerAttachment);
   seen.current=new Set(generated.map(resource=>resource.id));
   if(!prior)return;
-  const fresh=generated.filter(resource=>!resource.composerAttachment?.hidden&&!prior.has(resource.id));
+  const fresh=generated.filter(resource=>!resource.composerAttachment?.hidden&&!resource.draftAttachmentConsumedBy&&!prior.has(resource.id));
   const latest=fresh.toSorted((a,b)=>a.createdAt.localeCompare(b.createdAt)).at(-1);
   if(latest){
    setNoticeId(latest.id);
    setAnnouncement(fresh.map(resource=>`${resource.label} added to attachments`).join('. '));
   }
  },[resources]);
- const notice=resources.find(resource=>resource.id===noticeId&&!resource.composerAttachment?.hidden);
+ const notice=resources.find(resource=>resource.id===noticeId&&!resource.composerAttachment?.hidden&&!resource.draftAttachmentConsumedBy);
  const remove=(resource:ResourceGrant)=>{
   if(!onRemoveResource||removeBlocked||removingRef.current)return;
   removingRef.current=true;
@@ -76,7 +76,7 @@ export function useComposerAttachmentFeedback(resources:readonly ResourceGrant[]
 }
 
 export function ComposerAttachments({resources,excerpts=[],disabled=false,onEditExcerpt,onRemoveExcerpt,onRemoveResource,removeBlocked,timeFormat,removing=false}:{removing?:boolean;resources:readonly ResourceGrant[];excerpts?:readonly Excerpt[];disabled?:boolean;onEditExcerpt?:(id:string,text:string)=>Promise<void>;onRemoveExcerpt?:(id:string)=>Promise<void>;onRemoveResource?:(resource:ResourceGrant)=>void;removeBlocked?:'read-only'|'archived';timeFormat?:TimeFormat}) {
- const attachments=resources.filter(resource=>resource.kind!=='project'&&!resource.composerAttachment?.hidden);
+ const attachments=resources.filter(resource=>resource.kind!=='project'&&!resource.composerAttachment?.hidden&&!resource.draftAttachmentConsumedBy);
  const descriptionId=useId();
  // Keep recently removed chips mounted long enough for their exit animation.
  const cache=useRef(new Map<string,ResourceGrant>()),[leaving,setLeaving]=useState<ReadonlySet<string>>(new Set());
@@ -111,4 +111,16 @@ export function ComposerAttachments({resources,excerpts=[],disabled=false,onEdit
   {[...leaving].map(id=>{const resource=cache.current.get(id);return resource?<span key={id} className="resource-chip" data-leaving aria-hidden="true" onAnimationEnd={()=>{cache.current.delete(id);setLeaving(previous=>{const next=new Set(previous);next.delete(id);return next;});}}><File size={12}/>{resource.label}</span>:null;})}
   {excerpts.map(excerpt=><TerminalExcerpt key={excerpt.id} excerpt={excerpt} disabled={disabled||!onEditExcerpt||!onRemoveExcerpt} onEdit={text=>onEditExcerpt!(excerpt.id,text)} onRemove={()=>onRemoveExcerpt!(excerpt.id)} timeFormat={timeFormat}/>)}
  </div></div></div>;
+}
+
+
+export function MessageAttachments({attachments}: {attachments?:readonly MessageAttachment[]}) {
+ if(!attachments?.length)return null;
+ return <ul className="message-attachments" aria-label={`${attachments.length} ${attachments.length===1?'attachment':'attachments'}`}>
+  {attachments.map(attachment=><li key={attachment.id}><a
+   href={'/api/resources/'+encodeURIComponent(attachment.id)+'/content'} download={attachment.label} title={attachment.label}
+   aria-label={attachment.writable?attachment.label:`${attachment.label}, read only`}>
+   <File size={12} aria-hidden="true"/><span>{attachment.label}</span>{!attachment.writable&&<Lock size={10} aria-hidden="true"/>}
+  </a></li>)}
+ </ul>;
 }
