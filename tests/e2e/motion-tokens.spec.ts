@@ -58,7 +58,7 @@ for (const width of [1024, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.route('**/api/**', route => route.fulfill({ status: 404 }));
     await page.route('**/api/bootstrap', route => route.fulfill({ json: { csrfToken: 'motion-fixture' } }));
-    await page.route('**/api/projects/*/files?*', route => route.fulfill({ json: { entries: [{ name: 'motion.txt', path: 'motion.txt', kind: 'file', bytes: 10 }] } }));
+    await page.route('**/api/projects/*/files?*', route => route.fulfill({ json: { bindingId: 'binding-fixture', entries: [{ name: 'motion.txt', path: 'motion.txt', kind: 'file', bytes: 10 }] } }));
     await standalone(page, 'files-reading');
     await hoverTiming(page.getByRole('button', { name: 'motion.txt', exact: true }));
   });

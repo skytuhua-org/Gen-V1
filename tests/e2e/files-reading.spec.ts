@@ -9,6 +9,7 @@ const entry = (name: string, kind = "file") => ({
 	bytes: 10,
 });
 const text = (value = "Current file") => ({
+	bindingId: "binding-fixture",
 	text: value,
 	binary: false,
 	sha256: "a".repeat(64),
@@ -54,6 +55,7 @@ async function project(
 	await page.route("**/api/projects/*/files?*", (route) =>
 		route.fulfill({
 			json: {
+				bindingId: "binding-fixture",
 				entries: new URL(route.request().url()).searchParams.has("path")
 					? []
 					: names,
@@ -106,7 +108,7 @@ test("RED source: held project directory and file requests expose separate pendi
 	await expect(page.getByRole("status")).toContainText(
 		/Loading…/,
 	);
-	await tree!.fulfill({ json: { entries: [entry("held.txt")] } });
+	await tree!.fulfill({ json: { bindingId: "binding-fixture", entries: [entry("held.txt")] } });
 	await page.route("**/api/projects/*/file?*", (route) => {
 		file = route;
 	});
@@ -246,7 +248,7 @@ test("refresh retains the selected project content and retry recovers directory 
 	});
 	await expect(page.locator(".files-error[role=status]")).toContainText("Folder read failed");
 	await page.route("**/api/projects/*/files?*", (route) =>
-		route.fulfill({ json: { entries: [entry("ok.txt")] } }),
+		route.fulfill({ json: { bindingId: "binding-fixture", entries: [entry("ok.txt")] } }),
 	);
 	await page.getByRole("button", { name: "Retry" }).click();
 	await expect(page.locator(".files-error[role=status]")).toHaveCount(0);
@@ -418,6 +420,7 @@ for (const source of ["project", "granted"])
 				}
 				return route.fulfill({
 					json: {
+						bindingId: "binding-fixture",
 						path: "",
 						entries: [entry("ok.txt"), entry("next", "directory")],
 						truncated: false,
@@ -434,7 +437,7 @@ for (const source of ["project", "granted"])
 			if (late === "error") await deny(held!);
 			else
 				await held!.fulfill({
-					json: { path: "next", entries: [entry("stale.txt")], truncated: false },
+					json: { bindingId: "binding-fixture", path: "next", entries: [entry("stale.txt")], truncated: false },
 				});
 			await settled(page, held!);
 			await expect(
@@ -798,7 +801,7 @@ test("project empty text, binary and too-large errors remain distinct", async ({
 			? route.fulfill({ json: text("") })
 			: path === "binary.dat"
 				? route.fulfill({
-						json: { text: null, binary: true, sha256: "b".repeat(64) },
+						json: { bindingId: "binding-fixture", text: null, binary: true, sha256: "b".repeat(64) },
 					})
 				: route.fulfill({
 						status: 413,
