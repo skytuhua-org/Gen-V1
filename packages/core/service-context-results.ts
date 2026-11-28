@@ -1,7 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { Store, digest } from "../storage/store.ts";
 import { capabilityEnabled } from "./capability-flags.ts";
 import { type Thread } from "../contracts/index.ts";
+import type { ContextResultOwnerV1, ToolResultHandleV1 } from "../contracts/request-context.ts";
+import { BACKGROUND_SCHEDULER_LIMITS, type BackgroundOutputPublicationV1 } from "../contracts/background-work.ts";
 import { createContextResults, encodeContextResult, CONTEXT_PREVIEW_CAP_BYTES, MAX_TRACKED_RESULTS, type ContextResultStorage } from './context-results.ts';
 import { createContextResultLineage } from './context-result-lineage.ts';
 import { openContextResultCustody } from './context-result-custody.ts';
@@ -90,6 +92,42 @@ export class ServiceContextResults {
 				pruneExpired: async now => (await open()).pruneExpired?.(now) ?? 0,
 			},
 		});
+	}
+	/** M10→M04 seam (#2014 T02): publish the bounded retained output window
+	 * into canonical custody and mint a ToolResultHandleV1. The handle is
+	 * model-readable only through the normal context_result_read path while
+	 * the mint-time authority proof stays valid in a live run; the drawer
+	 * keeps its own revalidated read. Returns null when publication is
+	 * unavailable — callers then leave outputRef unset rather than widening
+	 * legacy access. */
+	async publishOutput(input: BackgroundOutputPublicationV1): Promise<ToolResultHandleV1 | null> {
+		if (this.host.isClosed() || !this.enabled()) return null;
+		const thread = this.host.store.get<Thread>("thread", input.owner.threadId);
+		if (!thread || this.host.store.get("archivedThread", input.owner.threadId)) return null;
+		const owner: ContextResultOwnerV1 = { threadId: input.owner.threadId, workspaceId: JSON.stringify([input.owner.workspaceId ?? null, input.owner.projectId ?? null]), accountId: input.owner.accountBinding };
+		const now = Date.now(), expiresAtMs = now + BACKGROUND_SCHEDULER_LIMITS.outputHandleTtlMs;
+		for (const [id, proof] of this.authorities) if (proof.expiresAtMs <= now) this.authorities.delete(id);
+		if (this.authorities.size >= MAX_TRACKED_RESULTS) return null;
+		const invocationId = this.invocation(thread) + ":" + randomUUID();
+		const record: ToolResultHandleV1 = { handle: randomUUID(), owner, sourceInvocationId: invocationId,
+			digest: createHash("sha256").update(input.bytes).digest("hex"), bytes: input.bytes.length,
+			mediaType: "text/plain", expiresAtMs, operation: "read-result-range" };
+		this.authorities.set(invocationId, { expiresAtMs, authorized: async () => {
+			const current = this.host.store.get<Thread>("thread", input.owner.threadId);
+			if (!current || this.host.isClosed() || this.host.store.get("archivedThread", input.owner.threadId)) return false;
+			const binding = this.owner(current);
+			return binding.workspaceId === owner.workspaceId && binding.accountId === owner.accountId;
+		} });
+		try {
+			const custody = this.contextStorage ??= openContextResultCustody(this.host.store.dataDir).catch(cause => { this.contextStorage = undefined; throw cause; });
+			// Same disk hygiene as context-results spill: prune expired files and
+			// refuse when the persisted set is already at the tracked cap, so
+			// background publication cannot grow custody unboundedly.
+			const persisted = await (await custody).pruneExpired?.(now);
+			if (persisted !== undefined && persisted >= MAX_TRACKED_RESULTS) { this.authorities.delete(invocationId); return null; }
+			await (await custody).put(record.handle, input.bytes, record);
+		} catch { this.authorities.delete(invocationId); return null; }
+		return record;
 	}
 	async deliver(value: unknown, publicCatalog: boolean, thread: Thread, assertCurrent: () => void, lineage?: ReturnType<typeof createContextResultLineage>) {
 		const encoded = encodeContextResult(value);

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Store } from "../packages/storage/store.ts";
 import { Service } from "../packages/core/service.ts";
 import { BackgroundWorkCoordinator, captureCreationToken, verifyProcessIdentity, type BackgroundWorkRecord } from "../packages/core/background-work.ts";
@@ -10,11 +10,14 @@ import { DurableWakeupScheduler } from "../packages/core/durable-wakeups.ts";
 import { ModelCapacity } from "../packages/runtime/model-capacity.ts";
 import { __setCapabilityFlagForTests, registeredCapabilityFlags } from "../packages/core/capability-flags.ts";
 import type { RuntimeAdapter, Thread } from "../packages/contracts/index.ts";
-import { BACKGROUND_HOLD_REASONS, BACKGROUND_SCHEDULER_LIMITS, backgroundWorkV1Schema, humanStepV1Schema, intakeV1Schema, occurrenceKeyForEvent, occurrenceKeyForTime, wakeupV1Schema, type BackgroundOccurrenceV1 } from "../packages/contracts/background-work.ts";
+import { BACKGROUND_HOLD_REASONS, BACKGROUND_SCHEDULER_LIMITS, backgroundWorkV1Schema, humanStepV1Schema, intakeV1Schema, occurrenceKeyForEvent, occurrenceKeyForTime, wakeupV1Schema, type BackgroundOccurrenceV1, type BackgroundOutputPublicationV1 } from "../packages/contracts/background-work.ts";
+import type { ToolResultHandleV1 } from "../packages/contracts/request-context.ts";
+import { contextResultReadArgs } from "../packages/core/context-result-tool.ts";
+import { openContextResultCustody } from "../packages/core/context-result-custody.ts";
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
-  for (const key of ["jobs.backgroundV1", "jobs.serviceLifetimeV1", "jobs.idleReviewV1", "integrations.intakeV1"] as const) __setCapabilityFlagForTests(key, undefined);
+  for (const key of ["jobs.backgroundV1", "jobs.serviceLifetimeV1", "jobs.idleReviewV1", "integrations.intakeV1", "context.compilerV1", "tools.deferredV1"] as const) __setCapabilityFlagForTests(key, undefined);
   vi.restoreAllMocks();
   while (cleanups.length) await cleanups.pop()!();
 });
@@ -22,13 +25,25 @@ afterEach(async () => {
 const M10_FLAGS = ["jobs.backgroundV1", "jobs.serviceLifetimeV1", "jobs.idleReviewV1", "integrations.intakeV1"] as const;
 function enable(...keys: (typeof M10_FLAGS)[number][]) { for (const key of keys) __setCapabilityFlagForTests(key, true); }
 
-function fixture(options: { idleExecutor?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["idleExecutor"]; gate?: ModelCapacity; executionGate?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["executionGate"]; enqueueFollowUp?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["enqueueFollowUp"]; forkApi?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["forkApi"] } = {}) {
+const CANONICAL_HANDLE = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+
+function fixture(options: { idleExecutor?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["idleExecutor"]; gate?: ModelCapacity; executionGate?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["executionGate"]; enqueueFollowUp?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["enqueueFollowUp"]; forkApi?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["forkApi"]; publishOutput?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["publishOutput"] } = {}) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-background-"));
   const store = new Store(join(root, "state"));
   let clock = 1_700_000_000_000;
   const now = () => clock;
   const advance = (ms: number) => { clock += ms; };
-  const coordinator = new BackgroundWorkCoordinator({ store, now, gate: options.gate, idleExecutor: options.idleExecutor, executionGate: options.executionGate, enqueueFollowUp: options.enqueueFollowUp, forkApi: options.forkApi });
+  // Mirrors the host publication seam (ServiceContextResults.publishOutput): mints a canonical UUID record in
+  // the same private custody the service uses (store.dataDir).
+  const publishOutput = options.publishOutput ?? (async (input: BackgroundOutputPublicationV1) => {
+    const custody = await openContextResultCustody(store.dataDir);
+    const record: ToolResultHandleV1 = { handle: randomUUID(), owner: { threadId: input.owner.threadId, workspaceId: JSON.stringify([input.owner.workspaceId ?? null, input.owner.projectId ?? null]), accountId: input.owner.accountBinding },
+      sourceInvocationId: input.effectId ?? input.workId, digest: createHash("sha256").update(input.bytes).digest("hex"), bytes: input.bytes.length,
+      mediaType: "text/plain", expiresAtMs: now() + BACKGROUND_SCHEDULER_LIMITS.outputHandleTtlMs, operation: "read-result-range" };
+    await custody.put(record.handle, input.bytes, record);
+    return record;
+  });
+  const coordinator = new BackgroundWorkCoordinator({ store, now, gate: options.gate, idleExecutor: options.idleExecutor, executionGate: options.executionGate, enqueueFollowUp: options.enqueueFollowUp, forkApi: options.forkApi, publishOutput });
   const thread: Thread = { id: "thread-1", title: "Owner", projectName: null, createdAt: new Date(clock).toISOString(), updatedAt: new Date(clock).toISOString(), status: "ready", epoch: 0, runId: null, modelId: null, sessionPath: null };
   store.internal("fixture.thread", thread.id, () => store.put("thread", thread.id, thread.id, thread));
   cleanups.push(() => { coordinator.dispose(); store.close(); rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); });
@@ -313,6 +328,9 @@ describe("M10-S02/S03/T02 owned RUN-lifetime commands", () => {
     expect(started.processIdentity?.pid).toBeGreaterThan(0);
     if (process.platform === "linux") expect(started.processIdentity?.creationToken).toBeTruthy();
     await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    // Publication into canonical custody is asynchronous after stream close
+    // (contract §5); wait for outputRef rather than racing it against settle.
+    await waitFor(() => !!f.coordinator.work(work.workId).outputRef);
     const settled = f.coordinator.work(work.workId);
     expect(settled.outcome).toBe("SUCCEEDED");
     const output = f.coordinator.readOutput(work.workId, "thread-1", 0);
@@ -320,7 +338,7 @@ describe("M10-S02/S03/T02 owned RUN-lifetime commands", () => {
     expect(output.cursor).toBeGreaterThan(0);
     expect(f.coordinator.readOutput(work.workId, "thread-1", output.cursor).output).toBe("");
     expect(f.coordinator.exitReceipt(work.workId)?.exitCode).toBe(0);
-    expect(settled.outputRef).toMatch(/^bw-result:/);
+    expect(settled.outputRef).toMatch(CANONICAL_HANDLE);
     expect(() => f.coordinator.readOutput(work.workId, "other-thread")).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED" }));
   });
   it("failed exit codes settle FAILED, never SUCCEEDED", async () => {
@@ -980,5 +998,303 @@ describe("M10 v6 completeness regressions", () => {
       expect(deliver).toHaveBeenCalledTimes(1);
       expect(scheduler.occurrences(wakeup.wakeupId)[0]).toEqual(newer);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("M10-T01 canonical output custody reproduction (#2014)", () => {
+  // T01 evidence: every assertion below states the canonical contract the
+  // command-output path must satisfy. On the baseline each fails for the
+  // specific audited mismatch — not for import or toolchain errors — and
+  // T02/T03 implementations make them pass. Controls that already hold on
+  // the baseline are marked (control).
+  const HANDLE = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+  const spec = (f: ReturnType<typeof fixture>, argv: string[]) => ({ executable: process.execPath, argv, cwd: f.root, profileId: "p" });
+
+  it("issues a canonical M04 handle that context_result_read accepts and custody resolves", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "custody", command: spec(f, ["-e", "console.log('custody bytes')"]) });
+    await f.coordinator.startCommand(work.workId);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    await waitFor(() => !!f.coordinator.work(work.workId).outputRef);
+    const handle = f.coordinator.work(work.workId).outputRef;
+    // Canonical contract: outputRef is a UUID that context_result_read's
+    // z.uuid() schema accepts and private custody at the service's location
+    // (store.dataDir) resolves.
+    expect(handle).toMatch(HANDLE);
+    expect(contextResultReadArgs.safeParse({ handle, offset: 0, length: 1 }).success).toBe(true);
+    const custody = await openContextResultCustody(f.store.dataDir);
+    await expect(custody.getRecord!(handle!)).resolves.toMatchObject({ handle });
+  });
+
+  it("preserves multi-byte scalars split across chunk boundaries with interleaved stderr", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    const text = "héllo wörld —€× tail";
+    // One byte per write on stdout plus a whole-UTF-8 stderr write: every
+    // scalar boundary is split, and per-chunk toString('utf8') yields U+FFFD.
+    const script = `const b=Buffer.from(${JSON.stringify(text)},"utf8"),fs=require("fs");let i=0;const t=setInterval(()=>{if(i>=b.length){clearInterval(t);return;}fs.writeSync(1,b.subarray(i,i+1));if(i===4)fs.writeSync(2,"mark\\n");i++},12);`;
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "split", command: spec(f, ["-e", script]) });
+    await f.coordinator.startCommand(work.workId);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    const output = f.coordinator.readOutput(work.workId, "thread-1", 0).output;
+    // Streams multiplex in arrival order, so the stderr write may land
+    // mid-word; removing it must restore the exact stdout text with every
+    // scalar intact.
+    expect(output).not.toContain("�");
+    expect(output).toContain("mark\n");
+    expect(output.replace("mark\n", "")).toContain(text);
+  });
+
+  it("round-trips complete multi-byte scalars delivered in aligned chunks (control)", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    const text = "€é—".repeat(100);
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "aligned", command: spec(f, ["-e", `require("fs").writeSync(1,${JSON.stringify(text)})`]) });
+    await f.coordinator.startCommand(work.workId);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    expect(f.coordinator.readOutput(work.workId, "thread-1", 0).output).toBe(text);
+  });
+
+  it("bounds the retained window in bytes, not UTF-16 units", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    // 200_000 '€' is 600_000 bytes but only 200_000 UTF-16 code units, so the
+    // code-unit comparison against outputWindowBytes never trims on baseline.
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "window", command: spec(f, ["-e", `require("fs").writeSync(1,"€".repeat(200000))`]) });
+    await f.coordinator.startCommand(work.workId);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    const read = f.coordinator.readOutput(work.workId, "thread-1", 0);
+    expect(Buffer.byteLength(read.output, "utf8")).toBeLessThanOrEqual(BACKGROUND_SCHEDULER_LIMITS.outputWindowBytes);
+    expect(read.truncated).toBe(true);
+  });
+
+  it("bounds the retained ASCII window at the byte limit (control)", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "ascii-window", command: spec(f, ["-e", `require("fs").writeSync(1,"a".repeat(600000))`]) });
+    await f.coordinator.startCommand(work.workId);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED");
+    const read = f.coordinator.readOutput(work.workId, "thread-1", 0);
+    expect(Buffer.byteLength(read.output, "utf8")).toBe(BACKGROUND_SCHEDULER_LIMITS.outputWindowBytes);
+    expect(read.truncated).toBe(true);
+  });
+
+  it("mints the published digest over the final close-tail bytes", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    // The child hands its stdout to a grandchild that writes the tail only
+    // after the owned process exits: 'exit' publishes the handle, then
+    // 'close' persists the tail — so the minted digest predates final bytes.
+    const script = `const g=require("child_process").spawn(process.execPath,["-e","setTimeout(()=>process.stdout.write('tail-after-exit'),150)"],{stdio:["ignore","inherit","inherit"],detached:true});g.unref();process.stdout.write("head\\n");`;
+    const work = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "COMMAND", title: "tail", command: spec(f, ["-e", script]) });
+    await f.coordinator.startCommand(work.workId);
+    // Publication happens at close — after the grandchild's tail lands — so
+    // the minted digest covers the final retained window.
+    await waitFor(() => !!f.coordinator.work(work.workId).outputRef);
+    await waitFor(() => f.coordinator.readOutput(work.workId, "thread-1", 0).output === "head\ntail-after-exit");
+    const handle = f.coordinator.work(work.workId).outputRef!;
+    expect(handle).toMatch(HANDLE);
+    const custody = await openContextResultCustody(f.store.dataDir);
+    const record = await custody.getRecord!(handle);
+    expect(record?.digest).toBe(createHash("sha256").update("head\ntail-after-exit").digest("hex"));
+  });
+
+  it("denies output reads once the owner binding drifts (run, epoch, account)", async () => {
+    const f = fixture({ executionGate: async () => ({ allowed: true }) });
+    enable("jobs.backgroundV1");
+    const owner = { ...f.owner, runId: "run-1", epoch: 1, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-1" };
+    f.store.internal("fixture.owner", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-1", epoch: 1, projectId: "proj-1", workspaceId: "ws-1", accountId: "acct-1" } as Thread));
+    const work = f.coordinator.admit(command("background.work.admit"), { owner, kind: "COMMAND", title: "drift", command: spec(f, ["-e", "console.log('x');setTimeout(()=>{},30000)"]) });
+    const started = await f.coordinator.startCommand(work.workId);
+    // Positive control: the authorized same-owner read succeeds while the
+    // binding still matches.
+    await waitFor(() => f.coordinator.readOutput(work.workId, f.thread.id, 0).output.includes("x"));
+    // Owner revision drift: a new run/epoch under a different account makes
+    // the prior binding stale; canonical custody must deny the read.
+    f.store.internal("fixture.drift", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-2", epoch: 2, projectId: "proj-1", workspaceId: "ws-1", accountId: "acct-2" } as Thread));
+    expect(() => f.coordinator.readOutput(work.workId, f.thread.id)).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED" }));
+    killOwnedProcess(started.processIdentity!.pid);
+    await waitFor(() => f.coordinator.work(work.workId).state === "SETTLED" || f.coordinator.work(work.workId).state === "UNKNOWN");
+  });
+
+  it("mints a canonical custody record through the host publication seam (T02)", async () => {
+    const f = fixture();
+    const runtime = { configure: () => {}, models: async () => [], start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {}, history: async () => [], dispose: async () => {} } as unknown as RuntimeAdapter;
+    const service = new Service(f.store, runtime, {});
+    cleanups.push(async () => service.dispose());
+    await service.recover();
+    __setCapabilityFlagForTests("context.compilerV1", true); __setCapabilityFlagForTests("tools.deferredV1", true);
+    f.store.internal("fixture.live-owner", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-1", epoch: 3, status: "working", accountId: "acct-1", workspaceId: "ws-1", projectId: "proj-1" } as Thread));
+    const bytes = new TextEncoder().encode("retained window");
+    const publishHost = (service as unknown as { contextResultsHost: { publishOutput: (i: unknown) => Promise<{ handle: string; digest: string; owner: { workspaceId: string; accountId: string | null } } | null> } }).contextResultsHost;
+    const publish = publishHost.publishOutput.bind(publishHost) as (i: unknown) => Promise<{ handle: string; digest: string; owner: { workspaceId: string; accountId: string | null } } | null>;
+    const record = await publish( { workId: "work-1", owner: { threadId: f.thread.id, runId: "run-1", epoch: 3, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-1" }, effectId: "eff-1", bytes, startByte: 0, omittedBytes: 0 });
+    // Canonical M04 shape: UUID handle accepted by context_result_read and
+    // resolvable through the private custody vault, digest over retained bytes.
+    expect(record?.handle).toMatch(HANDLE);
+    expect(record?.digest).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(record?.owner).toMatchObject({ workspaceId: JSON.stringify(["ws-1", "proj-1"]), accountId: "acct-1" });
+    expect(contextResultReadArgs.safeParse({ handle: record!.handle, offset: 0, length: 1 }).success).toBe(true);
+    const custody = await openContextResultCustody(f.store.dataDir);
+    await expect(custody.getRecord!(record!.handle)).resolves.toMatchObject({ handle: record!.handle });
+    // A live-run read through the canonical vault returns the exact bytes…
+    const vault = (service as unknown as { contextResultVault: () => { read: (i: unknown) => Promise<{ status: string }> } }).contextResultVault();
+    const owner = { threadId: f.thread.id, workspaceId: JSON.stringify(["ws-1", "proj-1"]), accountId: "acct-1" };
+    await expect(vault.read({ owner, handle: record!.handle, offset: 0, length: bytes.length })).resolves.toMatchObject({ status: "OK" });
+    // …and drifts in the owner binding make it unavailable without touching
+    // retained evidence.
+    f.store.internal("fixture.drift-owner", f.thread.id, () => f.store.put("thread", f.thread.id, f.thread.id, { ...f.thread, runId: "run-1", epoch: 3, status: "working", accountId: "acct-2", workspaceId: "ws-1", projectId: "proj-1" } as Thread));
+    await expect(vault.read({ owner: { ...owner, accountId: "acct-2" }, handle: record!.handle, offset: 0, length: 1 })).resolves.toMatchObject({ status: "UNAVAILABLE" });
+    __setCapabilityFlagForTests("tools.deferredV1", undefined);
+    expect(await publish( { workId: "work-1", owner: { threadId: f.thread.id, runId: "run-1", epoch: 3, projectId: "proj-1", workspaceId: "ws-1", accountBinding: "acct-2" }, effectId: null, bytes, startByte: 0, omittedBytes: 0 })).toBeNull();
+  });
+});
+
+describe("M10-T04 composed verification (#2014)", () => {
+  const HANDLE = CANONICAL_HANDLE;
+  const runtimeStub: RuntimeAdapter = {
+    configure: () => {}, models: async () => [{ id: "test/model", provider: "test", name: "Test" }],
+    start: async () => {}, followUp: async () => {}, cancel: async () => {}, compact: async () => {},
+    history: async () => [], dispose: async () => {},
+  };
+  function serviceFixture() {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-t04-"));
+    const store = new Store(join(root, "state"));
+    const service = new Service(store, runtimeStub, { background: { executionGate: async () => ({ allowed: true }) } });
+    cleanups.push(async () => { await service.dispose().catch(() => {}); store.close(); rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); });
+    return { store, service, root };
+  }
+  const spec = (root: string, argv: string[]) => ({ executable: process.execPath, argv, cwd: root, profileId: "p" });
+  const liveThread = async (service: Service, store: Store, title: string) => {
+    const thread = (await service.command(command("thread.create", { title }))).result as Thread;
+    store.internal("t04.live-owner", thread.id, () => store.put("thread", thread.id, thread.id, { ...thread, runId: "run-1", epoch: 2, status: "working", accountId: "acct-1", workspaceId: "ws-1", projectId: "p1" } as Thread));
+    return store.get<Thread>("thread", thread.id)!;
+  };
+  const vaultOf = (service: Service) => (service as unknown as { contextResultVault: () => { read: (i: { owner: { threadId: string; workspaceId: string; accountId: string | null }; handle: string; offset: number; length: number }) => Promise<{ status: string; bytes?: Uint8Array }> } }).contextResultVault();
+
+  it("denies live output after workspace-only drift through the production Service", async () => {
+    enable("jobs.backgroundV1");
+    const { store, service, root } = serviceFixture();
+    await service.recover();
+    const thread = await liveThread(service, store, "M10 workspace continuity");
+    const work = (await service.command(command("background.work.admit", { kind: "COMMAND", title: "workspace", command: spec(root, ["-e", "console.log('live bytes');setTimeout(()=>{},30000)"]) }, thread.id))).result as BackgroundWorkRecord;
+    const started = await service.backgroundWork.startCommand(work.workId);
+    try {
+      await waitFor(() => service.backgroundWork.readOutput(work.workId, thread.id).output.includes("live bytes"));
+      store.internal("t04.workspace-drift", thread.id, () => store.put("thread", thread.id, thread.id, { ...thread, workspaceId: "ws-2" }));
+      expect(() => service.backgroundWork.readOutput(work.workId, thread.id)).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED", message: expect.stringContaining("SCOPE_CHANGED") }));
+      store.internal("t04.workspace-restored", thread.id, () => store.put("thread", thread.id, thread.id, thread));
+      expect(service.backgroundWork.readOutput(work.workId, thread.id).output).toContain("live bytes");
+    } finally {
+      killOwnedProcess(started.processIdentity!.pid);
+      await waitFor(() => service.backgroundWork.work(work.workId).state === "SETTLED" || service.backgroundWork.work(work.workId).state === "UNKNOWN");
+    }
+  });
+
+  it("approved process → bounded byte drawer window → canonical handle → context_result_read range", async () => {
+    enable("jobs.backgroundV1");
+    __setCapabilityFlagForTests("context.compilerV1", true); __setCapabilityFlagForTests("tools.deferredV1", true);
+    const { store, service, root } = serviceFixture();
+    await service.recover();
+    const thread = await liveThread(service, store, "M10 owner");
+    // 200_000 '€' = 600_000 bytes > 512 KiB window; real multibyte stream.
+    const work = (await service.command(command("background.work.admit", { kind: "COMMAND", title: "window", command: spec(root, ["-e", `require("fs").writeSync(1,"€".repeat(200000)+"DONE")`]) }, thread.id))).result as BackgroundWorkRecord;
+    await service.backgroundWork.startCommand(work.workId);
+    await waitFor(() => service.backgroundWork.work(work.workId).state === "SETTLED");
+    // Historical UI read: byte-bounded window, scalar-intact tail, byte cursor.
+    const first = service.backgroundWork.readOutput(work.workId, thread.id, 0);
+    expect(Buffer.byteLength(first.output, "utf8")).toBeLessThanOrEqual(BACKGROUND_SCHEDULER_LIMITS.outputWindowBytes);
+    expect(first.truncated).toBe(true);
+    expect(first.output.endsWith("DONE")).toBe(true);
+    expect(service.backgroundWork.readOutput(work.workId, thread.id, first.cursor).output).toBe("");
+    // Canonical handle minted by the real Service seam, not a test fake —
+    // published once at stream close, after the SETTLED transition.
+    await waitFor(() => !!service.backgroundWork.work(work.workId).outputRef);
+    const handle = service.backgroundWork.work(work.workId).outputRef;
+    expect(handle).toMatch(HANDLE);
+    const custody = await openContextResultCustody(store.dataDir);
+    await expect(custody.getRecord!(handle!)).resolves.toMatchObject({ handle });
+    // Model read through the same canonical reader context_result_read uses.
+    const owner = { threadId: thread.id, workspaceId: JSON.stringify(["ws-1", "p1"]), accountId: "acct-1" };
+    const vault = vaultOf(service);
+    // Ranges are byte-accurate: 15 bytes = five complete '€' scalars.
+    const slice = await vault.read({ owner, handle: handle!, offset: 0, length: 15 });
+    expect(slice).toMatchObject({ status: "OK" });
+    expect(Buffer.from(slice.bytes!)).toEqual(Buffer.from("€".repeat(5), "utf8"));
+    await expect(vault.read({ owner, handle: handle!, offset: 0, length: 2 * 1024 * 1024 })).resolves.toMatchObject({ status: "INVALID_RANGE" });
+  });
+
+  it("delays first publication until close inside a later authorized parent turn", async () => {
+    enable("jobs.backgroundV1");
+    __setCapabilityFlagForTests("context.compilerV1", true); __setCapabilityFlagForTests("tools.deferredV1", true);
+    const { store, service, root } = serviceFixture();
+    await service.recover();
+    const thread = await liveThread(service, store, "M10 delayed close");
+    const release = join(root, "release-close");
+    // The owned child exits immediately, but its grandchild inherits stdout and
+    // holds the pipe open until the test releases it. This makes the ordering
+    // deterministic: exit and SETTLED happen before close, and close happens
+    // only after a later parent turn has started.
+    const grandchild = `setInterval(()=>{if(require("fs").existsSync(${JSON.stringify(release)})){process.stdout.write("tail-after-later-turn");process.exit(0)}},10)`;
+    const script = `const g=require("child_process").spawn(process.execPath,["-e",${JSON.stringify(grandchild)}],{stdio:["ignore","inherit","inherit"],detached:true});g.unref();process.stdout.write("head-before-exit\\n");`;
+    const work = (await service.command(command("background.work.admit", { kind: "COMMAND", title: "delayed-close", command: spec(root, ["-e", script]) }, thread.id))).result as BackgroundWorkRecord;
+    await service.backgroundWork.startCommand(work.workId);
+    await waitFor(() => service.backgroundWork.work(work.workId).state === "SETTLED");
+    await waitFor(() => service.backgroundWork.readOutput(work.workId, thread.id, 0).output.includes("head-before-exit"));
+    // Exit alone is not finalization: no handle exists while close is pending,
+    // even after the original parent turn has ended.
+    expect(service.backgroundWork.work(work.workId).outputRef).toBeNull();
+    store.internal("t04.original-turn-ended", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, status: "ready" } as Thread));
+    expect(service.backgroundWork.work(work.workId).outputRef).toBeNull();
+    // A later turn under the same account/workspace/project is the authority
+    // context visible when close finally occurs. Publication intentionally has
+    // no unconditional origin-run restriction: this is the fresh-reference case.
+    store.internal("t04.later-turn", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, status: "working", runId: "run-2", epoch: 3 } as Thread));
+    writeFileSync(release, "release");
+    await waitFor(() => !!service.backgroundWork.work(work.workId).outputRef);
+    const handle = service.backgroundWork.work(work.workId).outputRef!;
+    expect(handle).toMatch(HANDLE);
+    const owner = { threadId: thread.id, workspaceId: JSON.stringify(["ws-1", "p1"]), accountId: "acct-1" };
+    const vault = vaultOf(service);
+    const expected = "head-before-exit\ntail-after-later-turn";
+    const read = await vault.read({ owner, handle, offset: 0, length: Buffer.byteLength(expected, "utf8") });
+    expect(read).toMatchObject({ status: "OK" });
+    expect(new TextDecoder().decode(read.bytes!)).toBe(expected);
+    // The fresh reference remains temporal: when that later turn ends the
+    // canonical model read closes, while owner-continuous drawer history stays.
+    store.internal("t04.later-turn-ended", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, status: "ready" } as Thread));
+    await expect(vault.read({ owner, handle, offset: 0, length: 4 })).resolves.toMatchObject({ status: "UNAVAILABLE" });
+    expect(service.backgroundWork.readOutput(work.workId, thread.id, 0).output).toBe("head-before-exit\ntail-after-later-turn");
+  });
+
+  it("run drift keeps the authorized historical drawer read but revokes the model handle; account drift denies both", async () => {
+    enable("jobs.backgroundV1");
+    __setCapabilityFlagForTests("context.compilerV1", true); __setCapabilityFlagForTests("tools.deferredV1", true);
+    const { store, service, root } = serviceFixture();
+    await service.recover();
+    const thread = await liveThread(service, store, "M10 drift");
+    const work = (await service.command(command("background.work.admit", { kind: "COMMAND", title: "drift", command: spec(root, ["-e", "console.log('settled bytes')"]) }, thread.id))).result as BackgroundWorkRecord;
+    await service.backgroundWork.startCommand(work.workId);
+    await waitFor(() => service.backgroundWork.work(work.workId).state === "SETTLED");
+    await waitFor(() => !!service.backgroundWork.work(work.workId).outputRef);
+    const handle = service.backgroundWork.work(work.workId).outputRef!;
+    const owner = { threadId: thread.id, workspaceId: JSON.stringify(["ws-1", "p1"]), accountId: "acct-1" };
+    const vault = vaultOf(service);
+    await expect(vault.read({ owner, handle, offset: 0, length: 4 })).resolves.toMatchObject({ status: "OK" });
+    // A new run under the same account/scope: the model handle is bound to
+    // the mint-time invocation, but the owner's drawer still reads history.
+    store.internal("t04.new-run", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, runId: "run-2", epoch: 3 } as Thread));
+    await expect(vault.read({ owner, handle, offset: 0, length: 4 })).resolves.toMatchObject({ status: "UNAVAILABLE" });
+    expect(service.backgroundWork.readOutput(work.workId, thread.id, 0).output).toContain("settled bytes");
+    // Workspace drift alone also revokes the settled drawer read; restoring
+    // the original scope keeps the authorized historical window inspectable.
+    store.internal("t04.new-workspace", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, workspaceId: "ws-2" }));
+    expect(() => service.backgroundWork.readOutput(work.workId, thread.id, 0)).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED" }));
+    store.internal("t04.restore-workspace", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, workspaceId: "ws-1" }));
+    expect(service.backgroundWork.readOutput(work.workId, thread.id, 0).output).toContain("settled bytes");
+    // Account drift: both readers deny.
+    store.internal("t04.new-account", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, accountId: "acct-2" } as Thread));
+    expect(() => service.backgroundWork.readOutput(work.workId, thread.id, 0)).toThrowError(expect.objectContaining({ code: "CAPABILITY_DENIED" }));
   });
 });

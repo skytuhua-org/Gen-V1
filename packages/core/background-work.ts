@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { HarnessError, type HostCommand, type Thread } from "../contracts/index.ts";
 import type { ToolOwner } from "../contracts/tool-effects.ts";
@@ -10,7 +10,7 @@ import { capabilityEnabled } from "./capability-flags.ts";
 import { DurableWakeupScheduler, waitForBackgroundDrain, type DeliveryOutcome, type WakeupDelivery, type WakeupRecord } from "./durable-wakeups.ts";
 import {
   BACKGROUND_HOLD_REASONS, BACKGROUND_SCHEDULER_LIMITS, backgroundWorkV1Schema, humanStepV1Schema,
-  type BackgroundOutcome, type BackgroundWorkKind, type BackgroundWorkV1, type HumanStepV1,
+  type BackgroundOutcome, type BackgroundOutputPublisherV1, type BackgroundWorkKind, type BackgroundWorkV1, type HumanStepV1,
   type M10FlagKey, type ProcessIdentityV1, type ReviewForkApi, type ReviewForkHandleV1,
 } from "../contracts/background-work.ts";
 
@@ -58,6 +58,10 @@ export interface BackgroundWorkOptions {
   forkApi?: ReviewForkApi | null;
   /** S04: host-owned account/grant/budget revalidation before any delivery. */
   revalidateAuthority?: (work: BackgroundWorkRecord) => { ok: true } | { ok: false; blockedReason: string };
+  /** M10→M04 seam (#2014 T02): publishes the bounded retained output window
+   * into canonical custody once, after stream close. Absent or returning
+   * null leaves outputRef unset — never widens legacy access. */
+  publishOutput?: BackgroundOutputPublisherV1;
   onPaused?: () => void;
 }
 
@@ -87,11 +91,15 @@ interface CommandSession {
   child: ChildProcess;
   identity: ProcessIdentityV1;
   output: string;
+  /** Byte offset of the first retained byte in the original stream. */
   start: number;
   persistedBytes: number;
   lastPersistAt: number;
   exited: boolean;
   exitReceipt: ExitReceipt | null;
+  /** One decoder per captured stream so multi-byte scalars split across
+   * chunks are never replaced with U+FFFD. */
+  decoders: TextDecoder[];
   done: Promise<void>;
 }
 
@@ -108,6 +116,8 @@ export class BackgroundWorkCoordinator {
   private readonly forkApi?: ReviewForkApi | null;
   private readonly onPaused?: () => void;
   private readonly revalidateAuthority?: BackgroundWorkOptions["revalidateAuthority"];
+  private readonly publishOutput?: BackgroundWorkOptions["publishOutput"];
+  private readonly outputPublished = new Set<string>();
   private readonly sessions = new Map<string, CommandSession>();
   private readonly permits = new Map<string, { release: () => void; teardownConfirmed: boolean }>();
   private readonly idleControls = new Map<string, AbortController>();
@@ -127,6 +137,7 @@ export class BackgroundWorkCoordinator {
     this.forkApi = options.forkApi ?? null;
     this.onPaused = options.onPaused;
     this.revalidateAuthority = options.revalidateAuthority;
+    this.publishOutput = options.publishOutput;
     this.scheduler = new DurableWakeupScheduler({
       store: this.store,
       now: this.now,
@@ -255,14 +266,15 @@ export class BackgroundWorkCoordinator {
   }
 
   settle(workId: string, outcome: BackgroundOutcome, note?: string, teardownConfirmed = true): BackgroundWorkRecord {
-    return this.store.internal("background.work.settled", null, () => {
+    const next = this.store.internal("background.work.settled", null, () => {
       const work = this.requireWork(workId);
       if (work.state === "SETTLED") return work;
-      const next = this.transition(work, "SETTLED", { outcome, settledAtMs: this.now(), ...(note ? { error: note } : {}) }, note);
+      const settled = this.transition(work, "SETTLED", { outcome, settledAtMs: this.now(), ...(note ? { error: note } : {}) }, note);
       this.releasePermitIfConfirmed(workId, teardownConfirmed);
-      this.issueOutputHandle(next);
-      return next;
+      return settled;
     }) as BackgroundWorkRecord;
+    void this.publishFinalOutput(workId);
+    return next;
   }
 
   markUnknown(workId: string, reason: string): BackgroundWorkRecord {
@@ -374,6 +386,7 @@ export class BackgroundWorkCoordinator {
     const identity: ProcessIdentityV1 = { pid: child.pid, creationToken: captureCreationToken(child.pid), platform: process.platform, capturedAt: iso(this.now()) };
     const session: CommandSession = {
       workId, child, identity, output: "", start: 0, persistedBytes: 0, lastPersistAt: 0, exited: false, exitReceipt: null,
+      decoders: [new TextDecoder("utf-8", { ignoreBOM: true }), new TextDecoder("utf-8", { ignoreBOM: true })],
       done: new Promise<void>(resolve => {
         const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
           if (session.exited) return;
@@ -391,7 +404,9 @@ export class BackgroundWorkCoordinator {
             if (current.processIdentity && current.processIdentity.pid === identity.pid && current.processIdentity.creationToken === identity.creationToken) {
               const outcome: BackgroundOutcome = exitCode === 0 ? "SUCCEEDED" : "FAILED";
               this.transition(current, "SETTLED", { outcome, settledAtMs: this.now(), error: exitCode === 0 ? null : `Exited with code ${exitCode ?? "null"}${signal ? ` (${signal})` : ""}` });
-              this.issueOutputHandle(this.requireWork(workId));
+              // Output publication waits for 'close' below: stdio can still
+              // deliver a tail after exit, and the minted digest must cover
+              // the final retained window.
             } else {
               this.transition(current, "UNKNOWN", { error: "Exit receipt identity does not match the admitted process." });
             }
@@ -404,8 +419,14 @@ export class BackgroundWorkCoordinator {
         };
         child.once("exit", finish);
         // stdio closes after exit and can still deliver chunks inside the
-        // append throttle window; flush the tail once the streams are done.
-        child.once("close", () => { if (session.output) this.persistOutput(session, true); });
+        // append throttle window; flush each decoder's tail, persist, then
+        // publish the finalized window into canonical custody exactly once.
+        child.once("close", () => {
+          for (const decoder of session.decoders) session.output += decoder.decode();
+          this.trimOutputWindow(session);
+          if (session.output) this.persistOutput(session, true);
+          void this.publishFinalOutput(workId);
+        });
         child.once("error", error => {
           if (session.exited) return;
           // Spawn failure before identity: FAILED. Later transport error with
@@ -424,23 +445,33 @@ export class BackgroundWorkCoordinator {
       }),
     };
     this.sessions.set(workId, session);
-    const append = (chunk: Buffer) => {
-      session.output += chunk.toString("utf8");
-      if (session.output.length > BACKGROUND_SCHEDULER_LIMITS.outputWindowBytes) {
-        const excess = session.output.length - BACKGROUND_SCHEDULER_LIMITS.outputWindowBytes;
-        session.output = session.output.slice(excess);
-        session.start += excess;
-      }
+    const append = (stream: 0 | 1) => (chunk: Buffer) => {
+      session.output += session.decoders[stream].decode(chunk, { stream: true });
+      this.trimOutputWindow(session);
       const stamp = this.now();
       if (stamp - session.lastPersistAt >= 1_000 || Buffer.byteLength(session.output, "utf8") - session.persistedBytes >= 64 * 1024) this.persistOutput(session, false);
     };
-    child.stdout?.on("data", append);
-    child.stderr?.on("data", append);
+    child.stdout?.on("data", append(0));
+    child.stderr?.on("data", append(1));
     return this.store.internal("background.command.started", null, () => {
       const current = this.requireWork(workId);
       this.store.put("backgroundOutput", workId, null, { workId, output: "", start: 0, updatedAt: iso(this.now()) });
       return this.transition(current, "RUNNING", { processIdentity: identity, startedAtMs: this.now(), leaseGeneration: current.leaseGeneration + 1, leaseExpiresAtMs: this.now() + BACKGROUND_SCHEDULER_LIMITS.leaseMs });
     }) as BackgroundWorkRecord;
+  }
+
+  /** Bounds the retained window by BYTES on a scalar boundary; `start`
+   * advances by the dropped byte count so cursors stay byte offsets. */
+  private trimOutputWindow(session: CommandSession): void {
+    const excess = Buffer.byteLength(session.output, "utf8") - BACKGROUND_SCHEDULER_LIMITS.outputWindowBytes;
+    if (excess <= 0) return;
+    let chars = 0, dropped = 0;
+    for (const ch of session.output) {
+      dropped += Buffer.byteLength(ch, "utf8"); chars += ch.length;
+      if (dropped >= excess) break;
+    }
+    session.output = session.output.slice(chars);
+    session.start += dropped;
   }
 
   private persistOutput(session: CommandSession, force: boolean): void {
@@ -453,18 +484,31 @@ export class BackgroundWorkCoordinator {
     });
   }
 
+  /** Historical output read for the owning UI. `cursor` is a byte offset in
+   * the original stream; `start` is the byte offset of the retained window. */
   readOutput(workId: string, threadId: string, cursor = 0): { workId: string; output: string; start: number; cursor: number; exited: boolean; exitCode: number | null; truncated: boolean } {
     const work = this.requireWork(workId);
     if (work.owner.threadId !== threadId) throw new HarnessError("CAPABILITY_DENIED", "Output belongs to another task.");
     const thread = this.currentThread(threadId);
     if (!thread || this.store.get("archivedThread", threadId)) throw new HarnessError("NOT_FOUND", "The owning task is unavailable.");
     const session = this.sessions.get(workId);
+    // Live work revalidates the full admission binding (run, epoch, scope,
+    // account, authority). A settled read is historical evidence and only
+    // requires owner-identity continuity: the same thread still exists under
+    // the same scope and account even if a newer run or epoch has started.
+    if (session || work.state !== "SETTLED") {
+      const verdict = this.revalidateOwner(work);
+      if (!verdict.ok) throw new HarnessError("CAPABILITY_DENIED", `Output is unavailable: ${verdict.blockedReason}`);
+    } else if ((thread.projectId ?? null) !== work.owner.projectId || (thread.workspaceId ?? null) !== work.owner.workspaceId || (thread.accountId ?? null) !== work.owner.accountBinding) {
+      throw new HarnessError("CAPABILITY_DENIED", "Output is unavailable: owner scope or account drifted.");
+    }
     const stored = this.store.get<{ output: string; start: number }>("backgroundOutput", workId) ?? { output: "", start: 0 };
     const output = session ? session.output : stored.output, start = session ? session.start : stored.start;
     const receipt = this.store.get<ExitReceipt>("backgroundExitReceipt", workId);
-    const offset = Math.max(0, cursor - start);
+    const bytes = Buffer.from(output, "utf8");
+    const offset = Math.max(0, Math.min(cursor - start, bytes.length));
     return {
-      workId, output: output.slice(offset), start, cursor: start + output.length,
+      workId, output: bytes.subarray(offset).toString("utf8"), start, cursor: start + bytes.length,
       exited: session ? session.exited : work.state === "SETTLED" || receipt !== null,
       exitCode: receipt?.exitCode ?? null, truncated: cursor < start,
     };
@@ -505,7 +549,7 @@ export class BackgroundWorkCoordinator {
   /** S03: after host loss a RUN-lifetime command is UNKNOWN until an exact
    * owned-process exit/teardown receipt resolves it. No survival promise. */
   resolveProcessExit(workId: string, receipt: ExitReceipt): BackgroundWorkRecord {
-    return this.store.internal("background.command.reconciled", null, () => {
+    const next = this.store.internal("background.command.reconciled", null, () => {
       const work = this.requireWork(workId);
       if (work.state !== "UNKNOWN") throw new HarnessError("INVALID_INPUT", "Only uncertain work can be reconciled.");
       const identity = work.processIdentity;
@@ -513,26 +557,33 @@ export class BackgroundWorkCoordinator {
         throw new HarnessError("RECONCILIATION_REQUIRED", "The exit receipt does not prove the exact owned process.");
       this.store.put("backgroundExitReceipt", workId, null, receipt);
       const outcome: BackgroundOutcome = receipt.exitCode === 0 ? "SUCCEEDED" : "FAILED";
-      const next = this.transition(work, "SETTLED", { outcome, settledAtMs: this.now() });
-      this.issueOutputHandle(next);
-      return next;
+      return this.transition(work, "SETTLED", { outcome, settledAtMs: this.now() });
     }) as BackgroundWorkRecord;
+    // No canonical handle here: the exit receipt proves termination, not
+    // stream close — the retained snapshot may predate the final tail, so a
+    // minted digest could not cover it. The drawer still reads the retained
+    // evidence via readOutput's owner-continuity path.
+    return next;
   }
 
-  private issueOutputHandle(work: BackgroundWorkRecord): void {
-    const stored = this.store.get<{ output: string; start: number }>("backgroundOutput", work.workId);
-    if (!stored || (!stored.output && !stored.start)) return;
-    // M04 handle shape: a private reference, never a new disk protocol.
-    // Range delivery still requires current authorization (readOutput).
-    const handle = `bw-result:${work.workId}`;
-    this.store.put("backgroundResultHandle", handle, work.owner.threadId, {
-      handle, owner: { threadId: work.owner.threadId, workspaceId: work.owner.workspaceId ?? "", accountId: work.owner.accountBinding },
-      sourceInvocationId: work.effectId ?? work.workId,
-      digest: createHash("sha256").update(stored.output).digest("hex"),
-      bytes: Buffer.byteLength(stored.output, "utf8"), mediaType: "text/plain",
-      expiresAtMs: this.now() + 24 * 60 * 60 * 1000, operation: "read-result-range",
-    });
-    this.store.put("backgroundWork", work.workId, work.owner.threadId, { ...work, outputRef: handle });
+  /** T03 (#2014): publishes the finalized retained window into canonical M04
+   * custody exactly once, after stream close. The minted handle lands on the
+   * work record's outputRef; legacy bw-result:
+   * rows are no longer minted and never become canonical records. */
+  private async publishFinalOutput(workId: string): Promise<void> {
+    if (!this.publishOutput || this.outputPublished.has(workId)) return;
+    this.outputPublished.add(workId);
+    try {
+      const work = this.store.get<BackgroundWorkRecord>("backgroundWork", workId);
+      const stored = this.store.get<{ output: string; start: number }>("backgroundOutput", workId);
+      const bytes = stored ? Buffer.from(stored.output, "utf8") : Buffer.alloc(0);
+      if (!work || work.state !== "SETTLED" || !bytes.length) { this.outputPublished.delete(workId); return; }
+      const handle = await this.publishOutput({ workId, owner: work.owner, effectId: work.effectId ?? null, bytes, startByte: stored?.start ?? 0, omittedBytes: stored?.start ?? 0 });
+      if (handle) this.store.internal("background.output.published", null, () => {
+        const current = this.requireWork(workId);
+        this.store.put("backgroundWork", workId, current.owner.threadId, { ...current, outputRef: handle.handle });
+      });
+    } catch { this.outputPublished.delete(workId); }
   }
 
   // ---- wakeup delivery (S04) ----
@@ -543,7 +594,7 @@ export class BackgroundWorkCoordinator {
     const thread = this.currentThread(work.owner.threadId);
     if (!thread || this.store.get("archivedThread", work.owner.threadId)) return { ok: false, blockedReason: "OWNER_REVOKED" };
     if (work.owner.runId !== null && (thread.runId !== work.owner.runId || thread.epoch !== work.owner.epoch)) return { ok: false, blockedReason: "OWNER_REVOKED" };
-    if (work.owner.projectId !== (thread.projectId ?? null)) return { ok: false, blockedReason: "SCOPE_CHANGED" };
+    if (work.owner.projectId !== (thread.projectId ?? null) || work.owner.workspaceId !== (thread.workspaceId ?? null)) return { ok: false, blockedReason: "SCOPE_CHANGED" };
     if (work.owner.accountBinding !== (thread.accountId ?? null)) return { ok: false, blockedReason: "ACCOUNT_MISMATCH" };
     const authority = this.revalidateAuthority?.(work);
     if (authority && !authority.ok) return { ok: false, blockedReason: authority.blockedReason };
