@@ -91,6 +91,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('t3-centered'),
   suite('tabs-identity'),
   suite('table-controls'),
+  suite('database-visual'),
   suite('task-design'),
   suite('task-interface'),
   suite('ui-shell-controls'),

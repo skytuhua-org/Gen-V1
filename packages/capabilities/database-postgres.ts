@@ -1,6 +1,6 @@
 // PostgreSQL adapter (T03) over the `pg` driver. Read-only enforcement is
 // precheckReadOnlySql + a READ ONLY transaction per query.
-import pg from 'pg';
+import { Client } from 'pg';
 import type { DatabaseSchemaV1, DatabaseTls } from '../contracts/database.ts';
 import type { AdapterQuery, DatabaseAdapter, RawQueryResult } from './database-gateway.ts';
 
@@ -11,11 +11,11 @@ function ssl(tls: DatabaseTls) {
   return { rejectUnauthorized: true };
 }
 export class PostgresAdapter implements DatabaseAdapter {
-  private client: pg.Client | null = null;
+  private client: Client | null = null;
   constructor(private readonly network: Network, private readonly password: string) {}
-  private async connect(timeoutMs = 15_000): Promise<pg.Client> {
+  private async connect(timeoutMs = 15_000): Promise<Client> {
     if (this.client) return this.client;
-    const client = new pg.Client({ ...this.network, password: this.password, ssl: ssl(this.network.tls), connectionTimeoutMillis: timeoutMs, statement_timeout: timeoutMs, query_timeout: timeoutMs });
+    const client = new Client({ ...this.network, password: this.password, ssl: ssl(this.network.tls), connectionTimeoutMillis: timeoutMs, statement_timeout: timeoutMs, query_timeout: timeoutMs });
     await client.connect();
     this.client = client;
     return client;
