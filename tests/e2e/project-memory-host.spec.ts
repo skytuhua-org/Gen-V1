@@ -270,10 +270,15 @@ test.describe('compaction request costs through the real App and host', () => {
       await inspector(page).getByRole('tab', {name: 'Compaction', exact: true}).click();
       const candidate = inspector(page).locator(`[data-compaction-candidate="${candidateId}"]`);
       const path = `/api/threads/${encodeURIComponent(thread.id)}/compaction/${encodeURIComponent(candidateId)}/model-requests`;
-      const response = page.waitForResponse(value => new URL(value.url()).pathname === path && value.request().method() === 'GET');
+      const observedBefore = memoryHost.compactionCostResponses.length;
+      const response = page.waitForResponse(value => value.url() === new URL(path, MEMORY_HOST_URL).href && value.request().method() === 'GET');
       await candidate.getByRole('button', {name: 'Load model request costs', exact: true}).click();
       const received = await response; expect(received.status()).toBe(200);
-      const observations = modelRequestObservationV1Schema.array().parse(await received.json());
+      expect(memoryHost.compactionCostResponseCaptureError).toBeNull();
+      const captures = memoryHost.compactionCostResponses.slice(observedBefore).filter(value => value.url === path);
+      expect(captures).toHaveLength(1);
+      expect(captures[0]).toMatchObject({ status: received.status(), captureError: null });
+      const observations = modelRequestObservationV1Schema.array().parse(captures[0]!.response);
       expect(observations).toEqual(recorded.filter(row => row.candidateId === candidateId).map(row => row.value).reverse());
       httpReceipts.push({candidateId, observations});
       await expect(candidate).toContainText('Retained request observations may omit unreported or interrupted requests. Complete spend is unavailable.');

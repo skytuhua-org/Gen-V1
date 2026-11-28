@@ -152,6 +152,17 @@ class ExtractionRuntime implements RuntimeAdapter {
   async dispose() { this.disposed = true; }
 }
 
+type HttpJsonCapture = { response: unknown; captureError: string | null };
+
+function captureHttpJson(payload: unknown, label: string): HttpJsonCapture {
+  const text = typeof payload === 'string' ? payload : Buffer.isBuffer(payload) ? payload.toString('utf8') : null;
+  if (text === null || Buffer.byteLength(text, 'utf8') > 64 * 1024) {
+    return {response: null, captureError: `${label} was not buffered JSON within 64 KiB.`};
+  }
+  try { return {response: JSON.parse(text), captureError: null}; }
+  catch { return {response: null, captureError: `${label} was not valid JSON.`}; }
+}
+
 export class MemoryHostFixture {
   store!: Store;
   service!: Service;
@@ -163,6 +174,8 @@ export class MemoryHostFixture {
   readonly requests: { method: string; url: string; status: number; csrf: boolean; body: unknown }[] = [];
   readonly preparedResponses: { httpRequestId: string; url: string; threadId: string | null; prompt: string | null; status: number; response: unknown; captureError: string | null }[] = [];
   preparedResponseCaptureError: string | null = null;
+  readonly compactionCostResponses: ({httpRequestId: string; url: string; status: number} & HttpJsonCapture)[] = [];
+  compactionCostResponseCaptureError: string | null = null;
   holdCompaction: Promise<void> | null = null;
   readonly projectPath: string;
   constructor(readonly folder: string, readonly protectedCompaction = false, readonly compilerObservation = false,
@@ -190,14 +203,14 @@ export class MemoryHostFixture {
             if (this.preparedResponses.length >= 32) this.preparedResponseCaptureError = 'Prepared-response observation count exceeded 32.';
             else {
               const body = request.body as { threadId?: unknown; prompt?: unknown } | null;
-              const text = typeof payload === 'string' ? payload : Buffer.isBuffer(payload) ? payload.toString('utf8') : null;
-              let response: unknown = null, captureError: string | null = null;
-              if (text === null || Buffer.byteLength(text, 'utf8') > 64 * 1024) captureError = 'Prepared response was not buffered JSON within 64 KiB.';
-              else try { response = JSON.parse(text); } catch { captureError = 'Prepared response was not valid JSON.'; }
               this.preparedResponses.push({ httpRequestId: request.id, url: request.url, status: reply.statusCode,
                 threadId: typeof body?.threadId === 'string' ? body.threadId : null, prompt: typeof body?.prompt === 'string' ? body.prompt : null,
-                response, captureError });
+                ...captureHttpJson(payload, 'Prepared response') });
             }
+          } else if (request.method === 'GET' && /^\/api\/threads\/[^/]+\/compaction\/[^/]+\/model-requests$/.test(request.url)) {
+            if (this.compactionCostResponses.length >= 32) this.compactionCostResponseCaptureError = 'Compaction cost observation count exceeded 32.';
+            else this.compactionCostResponses.push({ httpRequestId: request.id, url: request.url, status: reply.statusCode,
+              ...captureHttpJson(payload, 'Compaction cost response') });
           }
           return payload;
         });
@@ -236,7 +249,9 @@ export const test = base.extend<{ memoryHost: MemoryHostFixture; memoryCompactio
           protectedCompaction: host.protectedCompaction, compilerObservation: host.compilerObservation, compactionModelCosts: host.compactionModelCosts,
           compactionScope: 'When explicitly enabled, the scripted adapter invokes the real memory checkpoint and native commit callbacks, then returns injected native-contract receipts. No original native compressor or Windows apply proof.',
           ports: [5549, 5550], requests: host.requests, preparedResponses: host.preparedResponses,
-          preparedResponseCaptureError: host.preparedResponseCaptureError, deliveries: host.generations.map(runtime => runtime.deliveries),
+          preparedResponseCaptureError: host.preparedResponseCaptureError,
+          compactionCostResponses: host.compactionCostResponses, compactionCostResponseCaptureError: host.compactionCostResponseCaptureError,
+          deliveries: host.generations.map(runtime => runtime.deliveries),
           compactions: host.generations.flatMap(runtime => runtime.compactions),
           compactionApplyStarts: host.generations.flatMap(runtime => runtime.compactionApplyStarts),
           compactionModelRequests: host.generations.flatMap(runtime => runtime.compactionModelRequests),
