@@ -22,7 +22,8 @@ describe('workbench dock tab semantics',()=>{
   expect(workbench).toContain('role="tabpanel" id={`wb-panel-${tab}`} aria-labelledby={`wb-tab-${tab}`} tabIndex={0}');
  });
  it('focuses the selected tab on mount and persists source/evidence views on activation',()=>{
-  expect(workbench).toContain('autoFocus={tab===id}');
+  expect(workbench).toContain('initialFocusRef={selectedTab}');
+  expect(workbench).toContain('ref={tab===id?selectedTab:undefined}');
   expect(workbench).toContain("persistView('SOURCES')");
   expect(workbench).toContain("persistView('EVIDENCE')");
  });

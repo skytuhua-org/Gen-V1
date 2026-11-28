@@ -175,6 +175,25 @@ test('formatted assistant text opens its exact canonical source even outside the
 });
 
 
+test('Workbench starts on the selected tab and Escape returns focus to its opener',async({page})=>{
+ await fixture(page);
+ const opener=page.getByRole('button',{name:'Sources and evidence',exact:true});
+ await opener.focus();await page.keyboard.press('Enter');
+ const dialog=page.getByRole('dialog',{name:'Sources and evidence',exact:true});
+ const views=dialog.getByRole('tablist',{name:'Workbench views',exact:true});
+ const focusedTab=async(name:string)=>{
+  const tab=views.getByRole('tab',{name,exact:true,selected:true});
+  await expect(tab).toBeFocused();
+  await expect(tab).toHaveAttribute('tabindex','0');
+  await expect(views.locator('[tabindex="0"]')).toHaveCount(1);
+ };
+ await focusedTab('Sources');
+ await page.keyboard.press('ArrowRight');await focusedTab('Evidence');
+ await page.keyboard.press('Home');await focusedTab('Last request');
+ await page.keyboard.press('End');await focusedTab('Evidence');
+ await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(opener).toBeFocused();
+});
+
 test('deferred source view failure retains the mounted composer and restores focus',async({page})=>{
  const h=await fixture(page);await editor(page).fill('Retain this prompt when source views cannot load');
  const original=await editor(page).elementHandle();expect(original).not.toBeNull();
@@ -182,7 +201,7 @@ test('deferred source view failure retains the mounted composer and restores foc
  await page.getByRole('button',{name:'Sources and evidence',exact:true}).click();
  const panel=page.getByRole('dialog',{name:'Sources and evidence'});
  await expect(panel.getByRole('alert')).toContainText('The source views could not be loaded.');
- await expect(panel.getByRole('button',{name:'Close dialog',exact:true})).toBeFocused();
+ await expect(panel.getByRole('tab',{name:'Sources',exact:true,selected:true})).toBeFocused();
  await page.keyboard.press('Escape');await expect(panel).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Sources and evidence',exact:true})).toBeFocused();
  expect(await original!.evaluate(element=>element.isConnected)).toBe(true);
