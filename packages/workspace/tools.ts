@@ -189,11 +189,12 @@ export class ProjectTools{
   const remote=origin?{name:'origin' as const,repo:origin}:null;
   let upstream:GitSyncResult['upstream']=null;
   if(current.branch){
-   const remoteName=(await git(['config','--get','branch.'+current.branch+'.remote']).catch(()=>'')).trim(),merge=(await git(['config','--get','branch.'+current.branch+'.merge']).catch(()=>'')).trim();
+   const pairs=(await git(['config','--get-regexp','^branch\\.'+current.branch.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\.(remote|merge)$']).catch(()=>'')).trim().split('\n').filter(Boolean),config=Object.fromEntries(pairs.map(line=>{const[key,...rest]=line.split(/\s+/);return[key,rest.join(' ')];}));
    const candidates:string[]=[];
-   if(remoteName==='origin'&&merge.startsWith('refs/heads/'))candidates.push('refs/remotes/origin/'+merge.slice('refs/heads/'.length));
+   if(config['branch.'+current.branch+'.remote']==='origin'&&config['branch.'+current.branch+'.merge']?.startsWith('refs/heads/'))candidates.push('refs/remotes/origin/'+config['branch.'+current.branch+'.merge'].slice('refs/heads/'.length));
    candidates.push('refs/remotes/origin/'+current.branch);
-   for(const ref of candidates){const oid=(await git(['rev-parse','--verify','--quiet',ref]).catch(()=>'')).trim();if(/^[a-f0-9]{40}$/.test(oid)){upstream={ref,short:ref.slice('refs/remotes/'.length),oid};break;}}
+   const remoteRefs=(await git(['for-each-ref','--format=%(refname) %(objectname)','refs/remotes/origin']).catch(()=>'')).split('\n').filter(Boolean),oids=Object.fromEntries(remoteRefs.map(line=>{const[ref,oid]=line.split(' ');return[ref,oid];}));
+   for(const ref of candidates){const oid=oids[ref];if(oid&&/^[a-f0-9]{40}$/.test(oid)){upstream={ref,short:ref.slice('refs/remotes/'.length),oid};break;}}
   }
   let ahead:number|null=null,behind:number|null=null;
   if(upstream){const[left,right]=(await git(['rev-list','--left-right','--count',upstream.oid+'...'+current.head])).trim().split(/\s+/);behind=Number(left);ahead=Number(right);}
@@ -211,7 +212,17 @@ export class ProjectTools{
    const changed=(await git(['-c','diff.renames=false','diff','--name-only','-z',current.head,upstream.oid])).split('\0').filter(Boolean),fold=(p:string)=>process.platform==='win32'?p.toLowerCase():p,remoteChanged=new Set(changed.map(fold)),dirty=new Set(current.files.flatMap(file=>[file.path,...(file.oldPath?[file.oldPath]:[])].map(fold)));
    // Ignored untracked files are absent from status files but a fast-forward still overwrites them.
    for(const ignored of (await git(['ls-files','-z','--others','--ignored','--exclude-standard','--',...changed]).catch(()=>'')).split('\0').filter(Boolean))dirty.add(fold(ignored));
-   if([...dirty].some(dirtyPath=>remoteChanged.has(dirtyPath)))blockers.push('DIRTY_OVERLAP');
+   // Prefix match in both directions: upstream file vs local directory (and the reverse) still collides.
+   // Sorted prefix lookup keeps the overlap scan O((m+n) log n) instead of O(m*n), which would block the server event loop on large upstream diffs.
+   const dirtySorted=[...dirty].sort(),overlaps=(remotePath:string)=>{
+    if(dirty.has(remotePath))return true;
+    // Upstream path below a dirty file: any proper ancestor of remotePath that is itself dirty blocks the fast-forward.
+    for(let i=remotePath.indexOf('/');i>0;i=remotePath.indexOf('/',i+1))if(dirty.has(remotePath.slice(0,i)))return true;
+    // Dirty path below the upstream path: binary-search the first dirty entry at or after remotePath+'/'; siblings like 'a-b' sort before it and must not mask a hit.
+    const bound=remotePath+'/';let lo=0,hi=dirtySorted.length;while(lo<hi){const mid=(lo+hi)>>1;if(dirtySorted[mid]<bound)lo=mid+1;else hi=mid;}
+    const next=dirtySorted[lo];return next!==undefined&&next.startsWith(bound);
+   };
+   if([...remoteChanged].some(overlaps))blockers.push('DIRTY_OVERLAP');
   }
   return{branch:current.branch||null,head:current.head,revision:current.revision,remote,upstream,ahead,behind,state,lastFetchedAt:this.lastFetched.get(bound.workspace?.id??projectId)??null,blockers};
  }

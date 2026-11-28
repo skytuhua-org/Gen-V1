@@ -234,7 +234,8 @@ export class WorkspaceActionOutcomes {
         const payload = workspaceActionPayloadSchemas[input.type].parse(input.payload);
         if (input.type !== 'review-pr') {
           const current = await this.projects.gitStatus(projectId, input.threadId);
-          if ((input.type === 'create-pr' ? input.payload.head : input.payload.expectedHead) !== current.head || payload.revision !== current.revision)
+          // Fetch reviews the sync state only; its payload head is advisory and the preflight skips it.
+          if ((input.type === 'create-pr' ? input.payload.head : input.type === 'fetch' ? current.head : input.payload.expectedHead) !== current.head || payload.revision !== current.revision)
             throw new HarnessError('REVISION_CHANGED', 'The reviewed changes are out of date.');
         }
         const beginWrite = () => {
@@ -248,10 +249,12 @@ export class WorkspaceActionOutcomes {
           started = true;
           if (!this.current(fence)) throw denied(); // Store subscribers run before internal() returns.
         };
-        if (input.type !== 'create-pr') beginWrite();
+        if (input.type !== 'create-pr' && input.type !== 'fetch' && input.type !== 'pull') beginWrite();
         let result: unknown;
         if (input.type === 'review-pr') result = await this.github.review(projectId, input.threadId, input.payload);
         else if (input.type === 'create-pr') result = await this.github.create(projectId, input.threadId, input.payload, beginWrite);
+        else if (input.type === 'fetch') result = await this.github.fetch(projectId, input.threadId, beginWrite);
+        else if (input.type === 'pull') result = await this.github.pull(projectId, input.threadId, input.payload as {revision:string;expectedHead:string}, beginWrite);
         else result = await this.projects.gitAction(projectId, input.threadId, { type: input.type, ...payload });
         let fresh: Fence | undefined;
         try {
@@ -275,20 +278,23 @@ export class WorkspaceActionOutcomes {
         ? await withPathGuard([{ ...fence.credential, leaf: true, readOnly: true }], new AbortController().signal, write)
         : await write();
       return this.current(fence) ? result : { state: 'revoked' };
-    } catch {
-      if (started) return { state: 'uncertain' };
+    } catch (error) {
+      // Provably pre-write refusals (auth negotiation fails before any ref update) may roll a 'started' marker back to not-applied and surface the real error code.
+      const refused = error instanceof HarnessError && error.code === 'GITHUB_AUTH_REQUIRED';
+      if (started && !refused) return { state: 'uncertain' };
       // This invocation owns the reservation and has never entered a write tool.
       try {
         this.store.internal('project.action.not-applied', input.threadId ?? null, () => {
           const current = this.read(command);
-          if (!current || current.status !== 'prepared' || current.ownerFence !== fence.hash) throw denied();
+          if (!current || current.ownerFence !== fence.hash || (refused ? current.status !== 'prepared' && current.status !== 'started' : current.status !== 'prepared')) throw denied();
           this.store.put(kind, input.id, input.threadId ?? null, { ...current, status: 'not-applied' });
           return this.summary(command, this.current(fence) ? 'not-applied' : 'revoked');
         });
-        return this.current(fence) ? { state: 'not-applied' } : { state: 'revoked' };
       } catch {
         return { state: 'uncertain' };
       }
+      if (refused) throw error;
+      return this.current(fence) ? { state: 'not-applied' } : { state: 'revoked' };
     }
   }
   /** Read only: no commands, retries, current diff inspection, or remote review searches. */
@@ -311,7 +317,7 @@ export class WorkspaceActionOutcomes {
       action = operation.action;
     if (
       p.revision !== action.revision ||
-      (input.type === 'review-pr' || input.type === 'create-pr' ? p.head : p.expectedHead) !== action.head ||
+      (input.type === 'review-pr' || input.type === 'create-pr' ? p.head : input.type === 'fetch' ? action.head : p.expectedHead) !== action.head ||
       comparison.headOid !== action.head
     )
       return { state: 'uncertain' };
