@@ -128,6 +128,41 @@ it('accumulates rapid keyboard divider presses into one debounced commit',async(
   expect(await divider.getAttribute('aria-valuenow')).toBe('60');
  }finally{await tab.close();}
 });
+it('announces measured divider bounds and keeps the current value inside them',async()=>{
+ const tab=await page();try{
+  const divider=tab.getByRole('separator',{name:'Resize columns'});
+  await expect.poll(async()=>divider.getAttribute('aria-valuemin')).not.toBeNull();
+  let minimum=Number(await divider.getAttribute('aria-valuemin')),maximum=Number(await divider.getAttribute('aria-valuemax'));
+  expect(minimum).toBeGreaterThan(5);expect(maximum).toBeLessThan(95);
+  await issue(tab,'pane.resize',{splitId:'columns',ratio:.3,span:1434});
+  await tab.waitForFunction(()=>Math.abs((window as unknown as {currentLayout:{root:{ratio:number}}}).currentLayout.root.ratio-.3)<.001);
+  await tab.setViewportSize({width:700,height:900});
+  await expect.poll(async()=>Number(await divider.getAttribute('aria-valuemin'))).toBeCloseTo(320/694*100,3);
+  minimum=Number(await divider.getAttribute('aria-valuemin'));maximum=Number(await divider.getAttribute('aria-valuemax'));
+  expect(Number(await divider.getAttribute('aria-valuenow'))).toBeCloseTo(minimum,5);
+  await divider.focus();await divider.press('End');
+  await tab.waitForFunction(()=>Math.abs((window as unknown as {currentLayout:{root:{ratio:number}}}).currentLayout.root.ratio-(54/100))<.01);
+  expect(Number(await divider.getAttribute('aria-valuenow'))).toBeCloseTo(maximum,5);
+  await issue(tab,'pane.join',{paneId:'right'});
+  await issue(tab,'pane.split',{paneId:'pane-main',newPaneId:'bottom',splitId:'rows',axis:'vertical',view:{id:'three',kind:'thread',binding:{authority:{kind:'local'},threadId:'three'}}});
+  const rows=tab.getByRole('separator',{name:'Resize rows'});
+  await expect.poll(async()=>rows.getAttribute('aria-valuemin')).not.toBeNull();
+  await tab.setViewportSize({width:1440,height:450});
+  await expect.poll(async()=>Number(await rows.getAttribute('aria-valuemax'))).toBeCloseTo((1-220/444)*100,3);
+  const low=Number(await rows.getAttribute('aria-valuemin')),high=Number(await rows.getAttribute('aria-valuemax'));
+  expect(low).toBeCloseTo(220/444*100,3);expect(high).toBeCloseTo((1-220/444)*100,3);expect(low).not.toBe(high);
+  await rows.focus();await rows.press('Home');
+  await tab.waitForFunction(()=>Math.abs((window as unknown as {currentLayout:{root:{ratio:number}}}).currentLayout.root.ratio-220/444)<.001);
+  const homeValue=Number(await rows.getAttribute('aria-valuenow'));expect(homeValue).toBeCloseTo(low,5);
+  await rows.press('End');
+  await tab.waitForFunction(()=>Math.abs((window as unknown as {currentLayout:{root:{ratio:number}}}).currentLayout.root.ratio-(1-220/444))<.001);
+  expect(Number(await rows.getAttribute('aria-valuenow'))).toBeCloseTo(high,5);expect(Number(await rows.getAttribute('aria-valuenow'))).not.toBe(homeValue);
+  await tab.setViewportSize({width:1440,height:430});
+  await expect.poll(async()=>rows.getAttribute('tabindex')).toBe('-1');
+  expect(await rows.getAttribute('aria-valuemin')).toBeNull();expect(await rows.getAttribute('aria-valuemax')).toBeNull();expect(await rows.getAttribute('aria-valuenow')).toBeNull();
+  await rows.evaluate(node=>node.blur());await rows.click({force:true});expect(await rows.evaluate(node=>node===document.activeElement)).toBe(false);
+ }finally{await tab.close();}
+});
 it('cancels a pending keyboard resize preview on Escape without a command',async()=>{
  const tab=await page();try{
   const divider=tab.getByRole('separator',{name:'Resize columns'});await divider.focus();

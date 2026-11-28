@@ -34,7 +34,7 @@ test('expanded protected tools stay compact and clear the original conversation 
 test('only the sidebar owns collapse while the header preserves reopen and mobile access',async({page})=>{
  await fixture(page);const sidebar=page.getByRole('complementary',{name:'Thread navigation',exact:true}),draft=page.getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep this original draft');
  await expect(sidebar.getByRole('button',{name:'Collapse sidebar',exact:true})).toBeVisible();await expect(page.locator('.workspace-header .desktop-sidebar-toggle')).toHaveCount(0);
- await sidebar.getByRole('button',{name:'Collapse sidebar',exact:true}).click();await page.getByRole('button',{name:'Open sidebar',exact:true}).click();await expect(sidebar.getByRole('button',{name:'Collapse sidebar',exact:true})).toBeVisible();
+ await sidebar.getByRole('button',{name:'Collapse sidebar',exact:true}).click();await page.getByRole('button',{name:'Expand sidebar',exact:true}).click();await expect(sidebar.getByRole('button',{name:'Collapse sidebar',exact:true})).toBeVisible();
  await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'Open navigation',exact:true}).click();await expect(sidebar).toBeVisible();await sidebar.getByRole('button',{name:'Close navigation',exact:true}).click();await expect(page.getByRole('button',{name:'Open navigation',exact:true})).toBeVisible();
  await expect(draft).toHaveValue('Keep this original draft');
 });

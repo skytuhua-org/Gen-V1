@@ -107,3 +107,20 @@ it.skipIf(process.platform !== 'win32')('retains actual read-only selected-file 
     await expect(writeFile(f.path, 'Edit after native operation released custody.')).resolves.toBeUndefined();
   } finally {await service.dispose();}
 }, 60_000);
+
+it('keeps full project authority pinned while admitting only the selected resources', async () => {
+  const f = fixture();
+  const preview: ResourceGrant = {...f.grant,id:'preview',kind:'attachment',composerAttachment:{artifactId:'draft',title:'Draft',hidden:true}};
+  f.store.internal('fixture.preview','thread',()=>f.store.put('resource',preview.id,preview.threadId,preview));
+  const authority = [f.grant,preview];
+  let entered=false;
+  await expect(withApprovedProjectContext(f.store,f.input,new AbortController().signal,async (context,assertCurrent)=>{
+    entered=true;
+    expect(context?.grantDigest).toBeDefined();
+    assertCurrent();
+    f.store.internal('fixture.revoke','thread',()=>f.store.remove('resource',preview.id));
+    assertCurrent();
+  },authority)).rejects.toMatchObject({code:'STALE_REQUEST_CONTEXT'});
+  expect(entered).toBe(true);
+  await expect(withApprovedProjectContext(f.store,f.input,new AbortController().signal,async ()=>{},[preview])).rejects.toMatchObject({code:'STALE_REQUEST_CONTEXT'});
+});

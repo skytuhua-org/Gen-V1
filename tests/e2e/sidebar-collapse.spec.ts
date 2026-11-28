@@ -7,8 +7,8 @@ const shell = (page: Page) => page.locator('.app-shell').first();
 const sidebar = (page: Page) => shell(page).locator(':scope > .sidebar');
 const overlay = (page: Page) => page.locator('.sidebar-collapse-overlay');
 const collapse = (page: Page) => sidebar(page).getByRole('button', {name: 'Collapse sidebar', exact: true});
-const open = (page: Page) => shell(page).getByRole('button', {name: 'Open sidebar', exact: true});
-async function fixture(page: Page, preferences: Record<string, unknown> = {}, monitor = false) {
+const open = (page: Page) => shell(page).getByRole('button', {name: 'Expand sidebar', exact: true});
+async function fixture(page: Page, preferences: Record<string, unknown> = {}, monitor = false, workingAt?: string) {
   await page.emulateMedia({reducedMotion: 'no-preference'});
   await page.addInitScript(() => {
     localStorage.setItem('harness:shell-layout:v1', JSON.stringify({sidebarCollapsed: false, sidebarWidth: 248}));
@@ -26,6 +26,7 @@ async function fixture(page: Page, preferences: Record<string, unknown> = {}, mo
   });
   const snapshot = taskFixture({root: 'text', elements: {text: {type: 'Text', props: {text: 'Sidebar geometry fixture'}}}});
   snapshot.settings = {theme: 'dark', modelId: 'test/model', preferences: {showUsageFooter: false, ...preferences}};
+  if (workingAt) Object.assign(snapshot.threads[0], {status: 'working', updatedAt: workingAt});
   await serveTaskFixture(page, snapshot);
   await page.route('**/api/shell/navigation?*', route => route.fulfill({json: {
     sequence: 1, total: 1, items: snapshot.threads, nextCursor: null, order: 'created-desc',
@@ -44,7 +45,7 @@ async function fixture(page: Page, preferences: Record<string, unknown> = {}, mo
   }
   await page.goto('/');
   await expect(collapse(page)).toBeVisible();
-  await expect(sidebar(page).getByRole('button', {name: 'Source-bound task fixture Ready', exact: true})).toBeVisible();
+  await expect(sidebar(page).getByRole('button', {name: workingAt ? 'Source-bound task fixture Working' : 'Source-bound task fixture Ready', exact: true})).toBeVisible();
 }
 async function motions(page: Page) {
   return page.evaluate(() => (window as unknown as MotionWindow).sidebarAnimations.map(animation => ({
@@ -287,3 +288,42 @@ for (const policy of ['os', 'reduced', 'off', 'panels', 'resize'] as const) {
     expect((await motions(page)).at(-1)!.state).toBe('idle'); await noLayoutTween(page);
   });
 }
+
+
+test('working age updates while visible and resumes as soon as the document returns', async ({page}) => {
+  const time = new Date('2026-11-25T12:00:00Z');
+  await page.clock.install({time});
+  await fixture(page, {}, false, time.toISOString());
+  const age = sidebar(page).locator('time');
+  const badge = sidebar(page).locator('.thread-run-badge');
+  await expect(age).toHaveText('now');
+  await expect(badge).toHaveCSS('animation-name', 'spin');
+  await page.emulateMedia({reducedMotion: 'reduce'});
+  await expect(badge).toBeVisible();
+  await expect(badge).toHaveCSS('animation-name', 'none');
+  await page.clock.fastForward(60_000);
+  await expect(age).toHaveText('1m');
+  const setHidden = (hidden: boolean) => page.evaluate(value => {
+    Object.defineProperty(document, 'hidden', {configurable: true, value});
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
+  await setHidden(true);
+  await page.clock.fastForward(180_000);
+  await expect(age).toHaveText('1m');
+  await setHidden(false);
+  await expect(age).toHaveText('4m');
+});
+
+test('sidebar recovery describes its state and configured shortcut', async ({page}) => {
+  await fixture(page, {keybindings: {toggleSidebar: 'Ctrl+E'}});
+  await expect(collapse(page)).toHaveAttribute('title', 'Collapse sidebar (Ctrl+E)');
+  await expect(collapse(page)).toHaveAttribute('aria-expanded', 'true');
+  await collapse(page).focus();
+  await page.keyboard.press('Control+e');
+  const recovery = shell(page).getByRole('button', {name: 'Expand sidebar', exact: true});
+  await expect(recovery).toBeFocused();
+  await expect(recovery).toHaveAttribute('title', 'Expand sidebar (Ctrl+E)');
+  await expect(recovery).toHaveAttribute('aria-expanded', 'false');
+  await recovery.click();
+  await expect(collapse(page)).toBeVisible();
+});
