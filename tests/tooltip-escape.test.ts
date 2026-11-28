@@ -14,7 +14,10 @@ class Anchor {
   isConnected = true;
   textContent = 'Save';
   private attributes = new Map([['title', 'Save the current draft']]);
-  closest() { return this; }
+  closest(selector:string) { return selector==='[title],[data-tooltip]'?this:null; }
+  getClientRects() { return [{}]; }
+  parentElement=null;
+  get ownerDocument() { return document; }
   hasAttribute(key: string) { return this.attributes.has(key); }
   getAttribute(key: string) { return this.attributes.get(key) ?? null; }
   setAttribute(key: string, value: string) { this.attributes.set(key, value); }
