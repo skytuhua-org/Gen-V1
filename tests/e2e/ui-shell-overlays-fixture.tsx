@@ -45,6 +45,8 @@ function Fixture() {
     ]} modelId={model} onChange={setModel} /></div>
   </>;
   if(new URLSearchParams(location.search).has('warm-tooltip'))return <>
+    <section ref={element=>{if(aria)dialog.current=element;}} role={aria?'dialog':undefined}
+      aria-modal={aria||undefined} aria-label={aria?'Tooltip modal':undefined}>
     <div data-tooltip-group="one" data-testid="tooltip-group-one" style={{display:'flex',alignItems:'center',position:'fixed',left:100,top:150}}>
       <button type="button" title="Help for Alpha">Alpha <span aria-hidden="true">◇</span></button>
       <span data-testid="tooltip-gap" style={{width:45,height:28}} />
@@ -55,6 +57,7 @@ function Fixture() {
       <button type="button" title="Help for Delta">Delta</button>
     </div>
     <button type="button" style={{position:'fixed',left:100,top:320}}>Outside</button>
+    </section>
     <TooltipLayer />
   </>;
   if (new URLSearchParams(location.search).has('tooltip')) return <>

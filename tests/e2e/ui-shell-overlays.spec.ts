@@ -336,3 +336,14 @@ test('keyboard tooltip has a 100 ms dwell and does not leave peers warm',async({
   await expect(bubble).toHaveText('Help for Beta');
   await expect(bubble).toHaveAttribute('data-opening','pointer-cold');
 });
+
+test('grouped help portals inside an ARIA modal and stays exposed',async({page})=>{
+  await page.goto('/ui-shell-overlays?warm-tooltip&aria');
+  const dialog=page.getByRole('dialog',{name:'Tooltip modal'});
+  await dialog.getByRole('button',{name:'Alpha'}).hover();
+  const tooltip=dialog.getByRole('tooltip');
+  await expect(tooltip).toHaveText('Help for Alpha');
+  await dialog.getByRole('button',{name:'Beta'}).hover();
+  await expect(tooltip).toHaveText('Help for Beta');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-warm');
+});

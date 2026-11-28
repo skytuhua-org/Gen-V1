@@ -282,8 +282,9 @@ export function TooltipLayer() {
   }, [shown]);
 
   if (!shown) return null;
-  // The top layer of an open modal dialog would cover a body-level tooltip.
-  const root = shown.target.closest('dialog[open]') ?? document.body;
+  // Native dialogs cover body portals, and ARIA modals make their siblings
+  // inert. Keep the tooltip inside its current modal in either case.
+  const root = shown.target.closest('dialog[open],[role="dialog"][aria-modal="true"]') ?? document.body;
   return createPortal(<div ref={bubble} className="ui-tooltip" role="tooltip" data-state={shown.leaving ? 'closed' : 'open'} data-side={position?.side}
     data-opening={shown.opening} aria-hidden={shown.leaving||undefined}
     style={{ left: position?.left ?? 0, top: position?.top ?? 0, visibility: position ? 'visible' : 'hidden' }}>{shown.text}</div>, root);
