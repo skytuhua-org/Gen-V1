@@ -8,12 +8,11 @@ import {mkdtemp,mkdir,rm,writeFile} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {createServer} from 'node:net';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {join,resolve} from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {chromium} from '@playwright/test';
 import {nodeSidecarArguments} from '../apps/desktop/backend-policy.ts';
 import {Store} from '../packages/storage/store.ts';
-import {openReviewHost} from './review-host.ts';
 
 const root=fileURLToPath(new URL('..',import.meta.url));
 const SEED_THREADS=200,SEED_MESSAGES=50,BOOT_TIMEOUT=180_000;
@@ -35,6 +34,20 @@ const summarize=(name:string,samples:number[],extra:Partial<RunResult>={}):RunRe
  const sorted=[...samples].sort((a,b)=>a-b),pick=(q:number)=>sorted.length?sorted[Math.min(sorted.length-1,Math.ceil(sorted.length*q)-1)]!:0;
  return{name,samples_ms:samples.map(v=>Math.round(v*100)/100),p50:Math.round(pick(.5)*100)/100,p95:Math.round(pick(.95)*100)/100,mean:Math.round(samples.reduce((a,b)=>a+b,0)/Math.max(1,samples.length)*100)/100,...extra};
 };
+/** A requested budget only passes when its workload was actually measured. */
+export function startupBudgetFailures(results:readonly Pick<RunResult,'name'|'samples_ms'|'p50'|'p95'>[],skipBrowser:boolean):string[]{
+ const failures:string[]=[];
+ for(const [name,budget] of Object.entries(BUDGETS)){
+  if(skipBrowser&&(name==='first_render_ms'||name==='split_interaction_ms'))continue;
+  const run=results.find(result=>result.name===name);
+  if(!run?.samples_ms.length){failures.push(`BUDGET ${name} has no samples.`);continue;}
+  for(const percentile of ['p50','p95'] as const){
+   const ceiling=budget[percentile];
+   if(ceiling!==undefined&&run[percentile]>ceiling)failures.push(`BUDGET ${name} ${percentile} ${run[percentile]}ms > ${ceiling}ms`);
+  }
+ }
+ return failures;
+}
 const freePort=()=>new Promise<number>((accept,reject)=>{const server=createServer();server.once('error',reject);server.listen(0,'127.0.0.1',()=>{const address=server.address(),port=typeof address==='object'&&address?address.port:0;server.close(()=>port?accept(port):reject(Error('No free loopback port.')));});});
 const waitFor=<T>(promise:Promise<T>,ms:number,label:string)=>Promise.race([promise,new Promise<never>((_,reject)=>setTimeout(()=>reject(Error(`${label} timed out after ${ms}ms`)),ms))]);
 function seedStore(store:Store){
@@ -145,6 +158,7 @@ async function browserMetrics(origin:string,runs:number,selectedThread:string){
  return{first,split,fcp};
 }
 async function main(){
+ const {openReviewHost}=await import('./review-host.ts');
  const args=process.argv.slice(2),flag=(name:string)=>args.includes(name),value=(name:string,fallback:number)=>{const index=args.indexOf(name);return index>=0?Number(args[index+1])||fallback:fallback;};
  const runs=value('--runs',5),check=flag('--check'),bundle=flag('--bundle'),skipBrowser=flag('--skip-browser');
  const sha=execFileSync('git',['rev-parse','--short=12','HEAD'],{cwd:root,encoding:'utf8'}).trim();
@@ -182,11 +196,13 @@ async function main(){
  const file=join(outDir,`${sha}-${new Date().toISOString().replaceAll(/[:.]/g,'-')}.json`);await writeFile(file,JSON.stringify(output,null,2));
  for(const run of results)console.log(`${run.name.padEnd(24)} p50=${String(run.p50).padStart(9)}ms p95=${String(run.p95).padStart(9)}ms mean=${String(run.mean).padStart(9)}ms n=${run.samples_ms.length}${run.note?'  ('+run.note+')':''}`);
  console.log('wrote '+file);
- let failed=false;
- if(check)for(const run of results){const budget=BUDGETS[run.name];if(!budget)continue;if(budget.p50!==undefined&&run.p50>budget.p50){console.error(`BUDGET ${run.name} p50 ${run.p50}ms > ${budget.p50}ms`);failed=true;}if(budget.p95!==undefined&&run.p95>budget.p95){console.error(`BUDGET ${run.name} p95 ${run.p95}ms > ${budget.p95}ms`);failed=true;}}
- if(failed)process.exitCode=1;
+ if(check){
+  const failures=startupBudgetFailures(results,skipBrowser);
+  for(const failure of failures)console.error(failure);
+  if(failures.length)process.exitCode=1;
+ }
 }
-main().catch(error=>{console.error(error instanceof Error?error.message:error);process.exitCode=1;})
+if(process.argv[1]&&pathToFileURL(resolve(process.argv[1])).href===import.meta.url)main().catch(error=>{console.error(error instanceof Error?error.message:error);process.exitCode=1;})
  .finally(()=>{
   // Unref'd backstop: pooled fetch keep-alives/fixture internals can hold the loop
   // past the summary; exits once stdout has flushed or sooner if the loop drains.
