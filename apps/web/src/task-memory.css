@@ -17,3 +17,12 @@
 .memory-recovery { margin: 8px 0 0; font-size: 12px; line-height: 1.5; }
 .memory-recovery p { margin: 0 0 8px; }
 .memory-resume { margin-top: 8px; }
+
+@keyframes memory-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+@keyframes memory-fade { from { opacity:0; } to { opacity:1; } }
+.task-memory :is(.memory-note,.memory-resume) { animation:memory-in var(--ui-motion-insert) var(--ui-ease-enter) both; }
+.task-memory :is(.memory-note>.error-text,.memory-recovery,.memory-note>details) { animation:memory-fade var(--ui-motion-status) var(--ui-ease-enter) both; }
+:root:is([data-motion=reduced],[data-motion=off]) .task-memory :is(.memory-note,.memory-resume,.memory-note>.error-text,.memory-recovery,.memory-note>details) { animation:none; }
+@media (prefers-reduced-motion:reduce) {
+  .task-memory :is(.memory-note,.memory-resume,.memory-note>.error-text,.memory-recovery,.memory-note>details) { animation:none; }
+}
