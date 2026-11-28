@@ -101,8 +101,10 @@ it('retains the fixed first and last 8 KiB windows, not marker-derived bounds', 
 it('bounds oversized output while preserving the actual final failure diagnostic', () => {
   const value = 'BEGIN\n' + 'x'.repeat(RESULT_CAP_BYTES) + '\nLAST_FAILURE: café 😀', encoded = encodeContextResult(value);
   expect(encoded.bytes).toBeNull(); expect(encoded.totalBytes).toBe(Buffer.byteLength(value));
-  expect(encoded.preview).toMatch(/^BEGIN\n/); expect(encoded.preview).toMatch(/LAST_FAILURE: café 😀$/);
-  expect(Buffer.byteLength(encoded.preview)).toBeLessThanOrEqual(CONTEXT_PREVIEW_CAP_BYTES);
+  const suffix = '\nLAST_FAILURE: café 😀', expectedTail = 'x'.repeat(8192 - Buffer.byteLength(suffix)) + suffix;
+  const expectedPreview = 'BEGIN\n' + 'x'.repeat(8192 - Buffer.byteLength('BEGIN\n')) + expectedTail;
+  expect(encoded.preview).toBe(expectedPreview);
+  expect(Buffer.byteLength(encoded.preview)).toBe(CONTEXT_PREVIEW_CAP_BYTES);
   expect(encoded.omittedBytes).toBe(Buffer.byteLength(value) - Buffer.byteLength(encoded.preview));
 });
 
