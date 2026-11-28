@@ -79,7 +79,7 @@ describe('slash-command palette combobox semantics', () => {
     const page = await open();
     await page.evaluate(() => (window as unknown as HarnessWindow).type('/mod'));
     await page.locator('.composer-command-option').first().waitFor({state: 'visible'});
-    expect(await page.locator('.composer-command-hint').innerText()).toBe('↑ ↓ Navigate · Enter/Tab Select · Esc Close');
+    expect(await page.locator('.composer-command-hint').innerText()).toBe('↑↓ PgUp PgDn Navigate · Enter Tab Select · Esc Close');
     await page.close();
   });
 });

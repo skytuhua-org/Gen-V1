@@ -57,17 +57,18 @@ describe('slash-command palette list navigation keys', () => {
     await page.waitForFunction(expected => document.querySelector('textarea')?.getAttribute('aria-activedescendant')?.endsWith(expected) ?? false, suffix);
   }
 
-  it('Home selects the first selectable option and End the last, fetching the next page at the bottom', async () => {
+  it('End loads the next page before moving selection, and Home selects the first option', async () => {
     const page = await open();
     const box = page.locator('textarea[aria-label="Message"]');
+    await active(page, '-model');
+    await box.press('End');
+    await page.getByRole('option', {name: /Procedure 14/}).waitFor({state: 'attached'});
     await active(page, '-model');
     await box.press('End');
     await active(page, '-default');
     await box.press('Home');
     await active(page, '-model');
-    await box.press('End');
-    await active(page, '-default');
-    await page.waitForFunction(() => (window as unknown as HarnessWindow).calls.some(url => url.includes('cursor=more')));
+    expect(await page.evaluate(() => (window as unknown as HarnessWindow).calls.filter(url => url.includes('cursor=more')).length)).toBe(1);
     await page.close();
   });
   it('PageDown and PageUp move by the rendered page size without wrapping', async () => {

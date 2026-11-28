@@ -26,7 +26,7 @@ const reason = (item: SkillCatalogEntry) => item.availability.status === 'unavai
 export function ComposerCommands({ref, input, draft, threadId, projectId, disabled = false, mode, onDraft, onModel, onMode}: Props) {
   const id = useId(), content = useRef<HTMLDivElement>(null), request = useRef(0), loadingMore = useRef(false);
   const [position, setPosition] = useState({caret: 0, end: 0, focused: false, composing: false});
-  const [dismissed, setDismissed] = useState(''), [closedAt, setClosedAt] = useState(''), [captured, setCaptured] = useState<{key: string; page: SkillCatalogPage} | null>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [active, setActive] = useState('model'), [reload, setReload] = useState(0);
+  const [dismissed, setDismissed] = useState(''), [closedAt, setClosedAt] = useState(''), [captured, setCaptured] = useState<{owner: string; query: string; page: SkillCatalogPage} | null>(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [active, setActive] = useState('model'), [reload, setReload] = useState(0);
   const token = position.focused && !position.composing && !disabled ? commandToken(draft, position.caret, position.end) : null;
   // Sticky dismissal (Escape, choosing an option) keys on the token's identity:
   // editing inside the same token keeps it closed; a new token start reopens it.
@@ -41,7 +41,10 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   // text must not re-close it.
   useEffect(() => {setClosedAt(previous => previous && previous !== editKey ? '' : previous);}, [editKey]);
 
-  const catalogKey = JSON.stringify([threadId, projectId, query]), page = captured?.key === catalogKey ? captured.page : null;
+  const catalogOwner = JSON.stringify([threadId, projectId]);
+  const page = open && captured?.owner === catalogOwner ? captured.page : null;
+  const stale = Boolean(page && captured?.query !== query);
+  const canLoadMore = Boolean(page?.nextCursor && !stale && !loading);
   const unavailableSources = page?.sources.filter(source => source.availability.status === 'unavailable') ?? [];
   const options: Option[] = [...(token?.query.toLowerCase().startsWith('skill:') ? [] : builtinOptions(query, mode).map(builtin => ({id: builtin.id, builtin}))), ...(page?.skills ?? []).map(skill => ({id: skill.id, skill}))];
   const selected = options.find(option => option.id === active && available(option)) ?? options.find(available);
@@ -94,20 +97,20 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   }, [input, threadId, projectId]);
   useLayoutEffect(() => {const element = input.current; if (element) setPosition(previous => ({...previous, caret: element.selectionStart, end: element.selectionEnd, focused: element.ownerDocument.activeElement === element}));}, [draft, input]);
   useEffect(() => {
-    const generation = ++request.current, controller = new AbortController(); loadingMore.current = false; setCaptured(null); setError('');
-    if (!open) {setLoading(false); return () => controller.abort();}
+    const generation = ++request.current, controller = new AbortController(); loadingMore.current = false; setError('');
+    if (!open) {setCaptured(null); setLoading(false); return () => controller.abort();}
     setLoading(true);
     const timer = window.setTimeout(() => {void getSkillCatalog({query, limit: 50, ...(threadId ? {threadId} : {}), ...(projectId ? {projectId} : {})}, controller.signal).then(value => {
-      if (generation === request.current && !controller.signal.aborted) {setCaptured({key: catalogKey, page: value}); setLoading(false);}
+      if (generation === request.current && !controller.signal.aborted) {setCaptured({owner: catalogOwner, query, page: value}); setLoading(false);}
     }).catch(cause => {if (generation === request.current && !controller.signal.aborted) {setError(cause instanceof Error ? cause.message : 'Skills unavailable.'); setLoading(false);}});}, 150);
     return () => {controller.abort(); window.clearTimeout(timer); request.current++;};
   }, [open, query, threadId, projectId, reload]);
   const loadMore = async () => {
-    if (!page?.nextCursor || loadingMore.current) return;
+    if (!page?.nextCursor || !canLoadMore || loadingMore.current) return;
     loadingMore.current = true; setLoading(true); setError(''); const generation = request.current;
     try {
       const next = await getSkillCatalog({query, limit: 50, cursor: page.nextCursor, ...(threadId ? {threadId} : {}), ...(projectId ? {projectId} : {})});
-      if (generation === request.current) setCaptured({key: catalogKey, page: mergeSkillCatalogPages(page, next)});
+      if (generation === request.current) setCaptured({owner: catalogOwner, query, page: mergeSkillCatalogPages(page, next)});
     } catch (cause) {if (generation === request.current) setError(cause instanceof Error ? cause.message : 'More skills unavailable.');}
     finally {if (generation === request.current) {loadingMore.current = false; setLoading(false);}}
   };
@@ -134,11 +137,12 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
     }
     if (['Home', 'End', 'PageUp', 'PageDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
       if (event.shiftKey) return false;
+      if (event.key === 'End' && canLoadMore) {event.preventDefault(); void loadMore(); return true;}
       const selectable = options.filter(available); if (!selectable.length) return false;
       event.preventDefault();
       const index = selectable.findIndex(option => option.id === selected?.id);
       if (event.key === 'Home') setActive(selectable[0]!.id);
-      else if (event.key === 'End') {setActive(selectable[selectable.length - 1]!.id); if (page?.nextCursor) void loadMore();}
+      else if (event.key === 'End') setActive(selectable[selectable.length - 1]!.id);
       else {
         const rows = Math.max(1, Math.floor((content.current?.querySelector('.composer-command-list')?.clientHeight ?? 168) / 42));
         const next = event.key === 'PageDown' ? Math.min(selectable.length - 1, index + rows) : Math.max(0, index - rows);
@@ -148,6 +152,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       return true;
     }
     if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (event.key === 'Enter' && error) {event.preventDefault(); setReload(value => value + 1); return true;}
       if (selected) {event.preventDefault(); void choose(selected); return true;}
       if (event.key === 'Enter') {event.preventDefault(); close(); return true;}
     }
@@ -164,7 +169,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   }, [open, selected?.id, id, input]);
   return <>
     <Popover anchor={input} contentRef={content} open={open} getBoundary={()=>workareaBoundary(input.current)} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={() => setClosedAt(editKey)} className="composer-command-popover">
-      <div id={id} role="listbox" aria-label="Commands and skills" className="composer-command-list" onScroll={event => {const list = event.currentTarget; if (list.scrollHeight - list.scrollTop - list.clientHeight < 80) void loadMore();}}>
+      <div id={id} role="listbox" aria-label="Commands and skills" className="composer-command-list" aria-busy={loading || undefined} data-stale={stale && loading || undefined} onScroll={event => {const list = event.currentTarget; if (list.scrollHeight - list.scrollTop - list.clientHeight < 80) void loadMore();}}>
         {options.map(option => <div key={option.id} id={id + '-' + option.id} role="option" aria-selected={selected?.id === option.id} aria-disabled={!available(option)} className="composer-command-option" onPointerMove={() => {if (available(option)) setActive(option.id);}} onPointerDown={event => event.preventDefault()} onClick={() => void choose(option)}>
           {'builtin' in option ? <><span className="composer-command-name">/{option.builtin.id}</span><span className="composer-command-description">{option.builtin.description}</span></> : <><span className="composer-command-name">/skill:{option.skill.name}</span><span className="composer-command-description" title={option.skill.description}>{reason(option.skill) || option.skill.description}</span><span className="composer-command-source">{page?.sources.find(source => source.id === option.skill.sourceId)?.label}</span></>}
         </div>)}
@@ -173,8 +178,10 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       {loading && <div role="status" className="composer-command-status"><LoaderCircle size={13} className="spinning"/>Loading skills…</div>}
       {error ? <ErrorState className="composer-command-status" message={error} retryLabel="Reload" onRetry={() => {setReload(value => value + 1);}}/> : !loading && !options.length && <div role="status" className="composer-command-status"><Search size={14}/>No commands or skills found</div>}
       {Boolean(unavailableSources.length) && <div role="status" aria-label="Unavailable skill sources" className="composer-command-unavailable">{unavailableSources.map(source => <div key={source.id}><span>{source.label}</span><span>{source.availability.status === 'unavailable' ? availabilityLabel[source.availability.reason] : ''}</span></div>)}</div>}
-      {!loading && page?.nextCursor && <button type="button" className="composer-command-more" onPointerDown={event => event.preventDefault()} onClick={() => void loadMore()}>Load more skills</button>}
-      <div className="composer-command-hint" aria-hidden="true">↑ ↓ Navigate · <span>Enter/Tab Select · Esc Close</span></div>
+      {page?.nextCursor && <button type="button" className="composer-command-more" disabled={!canLoadMore} onPointerDown={event => event.preventDefault()} onClick={() => void loadMore()}>Load more skills</button>}
+      <div className="composer-command-hint" aria-hidden="true">
+        {error ? <span>Enter Retry · Esc Close</span> : selected ? <span>↑↓ PgUp PgDn Navigate · Enter Tab Select · {canLoadMore && 'End Load more · '}Esc Close</span> : <>{canLoadMore && 'End Load more · '}<span>Enter or Esc Dismiss</span></>}
+      </div>
     </Popover>
     {!open && error && <div role="status" className="composer-command-error">{error}<button type="button" aria-label="Dismiss command error" onClick={() => setError('')}><X size={13}/></button></div>}
   </>;
