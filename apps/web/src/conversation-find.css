@@ -32,8 +32,12 @@
 @starting-style {
  .conversation-find-presence[data-open=true] {grid-template-rows:0fr;opacity:0;}
 }
+@media (prefers-reduced-motion: reduce) {
+ .conversation-find-presence {
+  transition:opacity min(80ms,var(--find-duration)) var(--ui-ease-enter);
+ }
+}
 :root[data-motion=reduced] .conversation-find-presence {
- --find-reduced-duration:min(80ms,var(--find-duration));
- transition:opacity var(--find-reduced-duration) var(--ui-ease-enter);
+ transition:opacity min(80ms,var(--find-duration)) var(--ui-ease-enter);
 }
 .app-shell[data-panel-animations=false] .conversation-find-presence {transition:none;}
