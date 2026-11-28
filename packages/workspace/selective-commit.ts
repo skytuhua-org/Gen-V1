@@ -394,7 +394,7 @@ export class SelectiveCommitService {
           const observedHead = publication.branch === "updated" ? commitOid :
             signal.aborted ? "" : (await git(["rev-parse", `refs/heads/${branch}`]).catch(() => "")).trim();
           this.storeRecord(binding, commitOid, { ...record, uncertain: true, observedHead, publication });
-          throw new HarnessError("REVISION_CHANGED", `The selective commit ${commitOid} may have been partly published. Inspect the branch and index before retrying.`, { observedCommit: commitOid, publication });
+          throw new HarnessError("REVISION_CHANGED", `The selective commit ${commitOid} was created, but publication may be incomplete. Inspect the branch and index before retrying.`, { observedCommit: commitOid, publication });
         }
         throw error;
       } finally {
