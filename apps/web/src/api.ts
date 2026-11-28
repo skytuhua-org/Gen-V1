@@ -124,6 +124,23 @@ export async function command(type: string, payload: Record<string, unknown> = {
   return readSchema(commandReceiptSchema)(response) as Promise<CommandReceipt>;
 }
 
+/** Binds one command id to an unchanged in-flight command so a retry after an
+    ambiguous transport failure resolves to the host-recorded receipt instead
+    of executing a second write. A changed command always issues a fresh id —
+    the host rejects a reused id under a different body. settle() releases the
+    identity once the outcome is known. */
+export function commandIdentity() {
+  let pending: { body: string; id: string } | undefined;
+  return {
+    issue(command: { type: string; threadId?: string; payload: Record<string, unknown> }) {
+      const body = JSON.stringify(command);
+      if (pending?.body !== body) pending = { body, id: crypto.randomUUID() };
+      return pending.id;
+    },
+    settle() { pending = undefined; },
+  };
+}
+
 export const getSnapshot = () => authenticated(() => fetch('/api/snapshot', { credentials: 'same-origin', cache: 'no-store' })).then(async response => parseResponse(snapshotSchema, await read<unknown>(response)) as unknown as Snapshot);
 export const getShellSettings = () => authenticated(() => fetch('/api/shell-settings', { credentials: 'same-origin', cache: 'no-store' })).then(readSchema(shellSettingsSchema)) as Promise<Pick<Snapshot['settings'],'theme'|'preferences'>>;
 export interface ComposerPrediction { suggestion: string | null; replyId: string; modelId: string }
