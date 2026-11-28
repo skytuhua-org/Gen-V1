@@ -1,5 +1,5 @@
 import {settingsOperation} from './settings-operations';
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useId,useRef,useState} from 'react';
 import type {CommandReceipt,Snapshot} from '../../../packages/contracts';
 import type {SkillDetail,SkillOperation,SkillProposal,SkillProposalSummary,SkillSummary} from '../../../packages/contracts/skills';
 import type {UiPreferences} from '../../../packages/contracts/preferences';
@@ -47,6 +47,59 @@ function Proposal({proposal,act,locked}:{proposal:SkillProposalSummary;act:Act;l
  return <section className="skill-proposal"><div className="skill-proposal-heading"><h3>Proposed changes</h3><span>{proposal.targets.join(', ')}</span></div>{!detail&&<button className="secondary" disabled={locked||busy} aria-label={`Review proposed changes to ${proposal.targets.join(', ')}`} onClick={()=>void review()}>{busy?'Opening…':'Review changes'}</button>}{detail&&<><p>Review the requested changes before applying this batch.</p>{detail.operations.map((operation,index)=><ProposedChange key={index} operation={operation} {...previews[index]}/>)}<div className="skill-actions"><button className="secondary" disabled={locked||busy} onClick={()=>void act('skill.decide',{proposalId:proposal.id,approve:true}).catch(cause=>setError(message(cause)))}>Approve changes</button><button className="quiet" disabled={locked||busy} onClick={()=>void act('skill.decide',{proposalId:proposal.id,approve:false}).catch(cause=>setError(message(cause)))}>Reject changes</button></div></>}{error&&<p role="status" className="error-text">{error}</p>}</section>;
 }
 
+const intervalError='Enter a whole number from 0 to 100.';
+const reviewInterval=(text:string|null)=>{
+ if(text===null||!/^\d+$/.test(text))return null;
+ const value=Number(text);
+ return value<=100?value:null;
+};
+
+function ReviewIntervalField({value,locked,update}:{value:number;locked:boolean;update:(patch:Partial<UiPreferences>)=>Promise<void>}){
+ const input=useRef<HTMLInputElement>(null),hint=useId(),submitted=useRef<string|null>(null);
+ const [draft,setDraft]=useState<string|null>(null);
+ const currentUpdate=useRef(update);currentUpdate.current=update;
+ const parsed=reviewInterval(draft),invalid=draft!==null&&parsed===null;
+ useEffect(()=>{
+  const field=input.current;
+  if(!field)return;
+  if(draft===null)field.value=String(value);
+  else if(parsed===value&&field.ownerDocument.activeElement!==field)setDraft(null);
+ },[draft,parsed,value]);
+ useEffect(()=>{
+  if(locked||parsed===null||parsed===value||submitted.current===draft)return;
+  // Treat a rapid sequence of digits as one edit so 999 cannot save its prefix.
+  const timer=setTimeout(()=>{
+   submitted.current=draft;
+   void currentUpdate.current({learningInterval:parsed});
+  },350);
+  return()=>clearTimeout(timer);
+ },[draft,locked,parsed,value]);
+ return <section className="settings-row">
+  <div className="settings-row-copy"><h2>Review after model iterations</h2><p>Each model response counts once; 0 disables automatic reviews.</p></div>
+  <div className="skill-review-interval">
+   <input ref={input} type="number" aria-label="Review after model iterations" min={0} max={100} defaultValue={value} disabled={locked}
+    aria-invalid={invalid||undefined} aria-describedby={invalid?hint:undefined} onInput={event=>{
+     submitted.current=null;
+     setDraft(event.currentTarget.value);
+    }} onBlur={event=>{
+     const text=event.currentTarget.value,next=reviewInterval(text);
+     if(!locked&&next!==null&&next!==value&&submitted.current!==text){
+      submitted.current=text;
+      void update({learningInterval:next});
+     }
+     if(next===value)setDraft(null);
+    }} onKeyDown={event=>{
+     if(event.key!=='Escape'||event.nativeEvent.isComposing)return;
+     event.preventDefault();event.stopPropagation();
+     event.currentTarget.value=String(value);
+     submitted.current=null;
+     setDraft(null);
+    }}/>
+   <div className="skill-review-interval-hint"><p aria-hidden="true">{intervalError}</p>{invalid&&<p id={hint} role="alert">{intervalError}</p>}</div>
+  </div>
+ </section>;
+}
+
 export function SkillLibrary({snapshot,preferences,update,refresh,busy}:{snapshot:Pick<Snapshot,'skills'|'skillProposals'|'learning'>;preferences:UiPreferences;update:(patch:Partial<UiPreferences>)=>Promise<void>;refresh:()=>Promise<void>;busy:boolean}){
  const [open,setOpen]=useState<string>(),[pending,setPending]=useState(false),[error,setError]=useState('');const owner=useRef(false);
  const skills=snapshot.skills??[],proposals=snapshot.skillProposals??[],locked=busy||pending;
@@ -56,7 +109,7 @@ export function SkillLibrary({snapshot,preferences,update,refresh,busy}:{snapsho
  const review=snapshot.learning?.lastReview;
  return <section className="skill-library" aria-label="Skill library">
   {toggle('Automatic learning reviews','learningEnabled','Uses the task’s selected model and subscription quota.')}
-  <section className="settings-row"><div className="settings-row-copy"><h2>Review after model iterations</h2><p>Each model response counts once; 0 disables automatic reviews.</p></div><input type="number" aria-label="Review after model iterations" min={0} max={100} value={preferences.learningInterval} disabled={locked} onChange={event=>{const value=event.target.valueAsNumber;if(Number.isInteger(value)&&value>=0&&value<=100)void update({learningInterval:value});}}/></section>
+  <ReviewIntervalField value={preferences.learningInterval} locked={locked} update={update}/>
   {toggle('Require approval for agent writes','learningApproval','Review proposed skill changes before they become available.')}
   {toggle('Idle curation','skillCurator','Archives unused managed skills after 30 days. Protected and user-maintained skills stay unchanged.')}
   <div className="skill-learning-status" role="status">{snapshot.learning?.status==='reviewing'||snapshot.learning?.status==='blocked'?<><span>{snapshot.learning.status==='blocked'?'Learning review is blocked.':'Reviewing the recent task for useful lessons…'}</span><button className="quiet" disabled={locked} onClick={()=>run('learning.cancel',{})}>Stop learning review</button></>:review?<span>Last review: {review.status}. {review.engine==='hermes-source'?(review.summary??'Saved changes appear in the skill library.'):`${review.appliedChanges} ${review.appliedChanges===1?'change':'changes'} applied.`}</span>:<span>No learning review has run yet.</span>}</div>

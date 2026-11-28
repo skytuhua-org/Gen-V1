@@ -95,7 +95,9 @@ test('sort cycles numerically with one aria-sort and filter is literal, clearabl
   await filter.dispatchEvent('compositionstart'); await filter.fill('no match'); await expect(page.locator('.task-table tbody tr')).toHaveCount(4);
   await filter.dispatchEvent('compositionend'); await expect(page.getByText('No matching rows.', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: 'Clear filter', exact: true }).click(); await expect(filter).toBeFocused(); await expect(page.locator('.task-table tbody tr')).toHaveCount(8);
-  await filter.fill('.*'); await expect(page.locator('.task-table tbody tr')).toHaveCount(0); await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  await filter.fill('.*'); await expect(page.locator('.task-table tbody tr')).toHaveCount(0);
+  await expect.poll(()=>page.locator('.task-table').textContent()).toContain('Alt+Left/Right to move 0 of 8 rows shown.');
+  await page.getByRole('button', { name: 'Clear', exact: true }).click();
   await expect(page.locator('.task-table [data-row-id=a] input')).toBeChecked();
 });
 
