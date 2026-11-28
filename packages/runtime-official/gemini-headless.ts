@@ -67,7 +67,14 @@ export async function openGeminiHeadless(context: DriverContext, spawnProcess: t
     let content = ''; let usage: { input_tokens?: number; output_tokens?: number } | undefined; let failure: Error | undefined;
     let writes: Promise<unknown> = Promise.resolve();
     const text = wire.text.replace(/@/g, '\\u0040');
-    const receipt = () => { if (!consumed) { consumed = true; writes = writes.then(() => context.observed(wire.uuid)); } };
+    const receipt = () => {
+      if (consumed) return;
+      consumed = true;
+      writes = writes.then(() => context.observed(wire.uuid));
+      // Persistence can fail before the child closes. Observe it now without
+      // converting the original promise into a success at the settlement gate.
+      void writes.catch(() => {});
+    };
     const accept = (frame: GeminiStreamFrame) => {
       assert();
       if (terminal) throw new HarnessError('OFFICIAL_PROTOCOL_INVALID', 'Official Gemini emitted content after its terminal result.');
