@@ -56,7 +56,7 @@ export function streamEvents(response: ServerResponse, store: Pick<Store, 'event
   try { floor = store.retentionFloor(); } catch { return abandonStartup(); }
   let cursor = after, pumping = false, closed = false, comment = ': connected\n\n', gap: string | null = null;
   const gapFrame = (floor: number) => `event: retention-gap\ndata: ${JSON.stringify({ floor })}\n\n`;
-  if (cursor < floor) { gap = gapFrame(floor); cursor = floor - 1; }
+  if (floor > cursor + 1) { gap = gapFrame(floor); cursor = floor - 1; }
   // subscribe() already delivers each parsed commit once, in order, to every
   // listener. Buffer live pushes and reuse them once the backlog is drained so
   // a caught-up reader costs no store read or re-parse per event. The ledger
