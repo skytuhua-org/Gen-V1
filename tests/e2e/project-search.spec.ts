@@ -19,6 +19,7 @@ async function fixture(page: Page, query = "") {
 	await page.route("**/api/projects/*/files?*", (route) =>
 		route.fulfill({
 			json: {
+				bindingId: "b".repeat(64),
 				entries: new URL(route.request().url()).searchParams.has("path")
 					? []
 					: [
@@ -46,6 +47,7 @@ async function fixture(page: Page, query = "") {
 				).join("\n"),
 				binary: false,
 				sha256: (query.includes("state=stale") ? "b" : "a").repeat(64),
+				bindingId: "b".repeat(64),
 			},
 		});
 	});
@@ -494,7 +496,12 @@ test("a denied preview retries and a late file read cannot replace another resul
 			return;
 		}
 		return route.fulfill({
-			json: { text: "Accepted README", binary: false, sha256: "a".repeat(64) },
+			json: {
+				text: "Accepted README",
+				binary: false,
+				sha256: "a".repeat(64),
+				bindingId: "b".repeat(64),
+			},
 		});
 	});
 	await hits(page).first().click();
@@ -505,7 +512,12 @@ test("a denied preview retries and a late file read cannot replace another resul
 	await hits(page).nth(1).click();
 	await expect(preview(page)).toContainText("Accepted README");
 	await held!.fulfill({
-		json: { text: "Stale file", binary: false, sha256: "a".repeat(64) },
+		json: {
+			text: "Stale file",
+			binary: false,
+			sha256: "a".repeat(64),
+			bindingId: "b".repeat(64),
+		},
 	});
 	await settled(page);
 	await expect(preview(page)).toContainText("Accepted README");
@@ -846,7 +858,12 @@ test("QA r2 valid control paths stay visible and retain the exact read target", 
 	await page.route("**/api/projects/*/file?*", (route) => {
 		readTarget = new URL(route.request().url()).searchParams.get("path");
 		return route.fulfill({
-			json: { text: "needle", binary: false, sha256: "a".repeat(64) },
+			json: {
+				text: "needle",
+				binary: false,
+				sha256: "a".repeat(64),
+				bindingId: "b".repeat(64),
+			},
 		});
 	});
 	await hits(page).first().click();
@@ -907,7 +924,14 @@ for (const { name, text, line } of [
 			{ line },
 		);
 		await page.route("**/api/projects/*/file?*", (route) =>
-			route.fulfill({ json: { text, binary: false, sha256: "a".repeat(64) } }),
+			route.fulfill({
+				json: {
+					text,
+					binary: false,
+					sha256: "a".repeat(64),
+					bindingId: "b".repeat(64),
+				},
+			}),
 		);
 		await hits(page).first().click();
 		await expect(page.locator(".files-matching-line")).toHaveText("needle");
@@ -1105,6 +1129,7 @@ test("reselecting a hit in the same file updates the line when the read settles"
 			).join("\n"),
 			binary: false,
 			sha256: "a".repeat(64),
+			bindingId: "b".repeat(64),
 		},
 	});
 	await copy.click();
@@ -1128,6 +1153,7 @@ test("a line from a carriage-return file copies the verified line", async ({
 				text: "first\rneedle",
 				binary: false,
 				sha256: "a".repeat(64),
+				bindingId: "b".repeat(64),
 			},
 		}),
 	);
