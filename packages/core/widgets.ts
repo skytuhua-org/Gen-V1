@@ -42,5 +42,9 @@ export function widgetDefinition(args: Record<string, unknown>): WidgetDefinitio
     if (!args[name] || typeof args[name] !== "object" || Array.isArray(args[name])) throw new HarnessError("INVALID_SCHEMA", "Declare inputSchema, eventSchema and stateSchema");
     admitSchema(args[name] as Record<string, unknown>);
   }
-  return { html: args.html, hash: createHash("sha256").update(args.html).digest("hex"), inputSchema: args.inputSchema as Record<string, unknown>, eventSchema: args.eventSchema as Record<string, unknown>, stateSchema: args.stateSchema as Record<string, unknown>, stateSchemaVersion: Number(args.stateSchemaVersion ?? 1) };
+  const { stateSchemaVersion = 1 } = args;
+  if (typeof stateSchemaVersion !== "number" || !Number.isSafeInteger(stateSchemaVersion) || stateSchemaVersion < 1) {
+    throw new HarnessError("INVALID_INPUT", "Widget stateSchemaVersion must be a positive safe integer");
+  }
+  return { html: args.html, hash: createHash("sha256").update(args.html).digest("hex"), inputSchema: args.inputSchema as Record<string, unknown>, eventSchema: args.eventSchema as Record<string, unknown>, stateSchema: args.stateSchema as Record<string, unknown>, stateSchemaVersion };
 }
