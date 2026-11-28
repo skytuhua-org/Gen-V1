@@ -71,10 +71,8 @@ it('flags DIRTY_OVERLAP only when an uncommitted path changes in the pull range'
 },60000);
 it('blocks Pull while the thread has an active run and reports detached/no-remote states',async()=>{
  const f=await fixture(),head=f.git(f.path,'rev-parse','HEAD');f.pushRemote(f.branch,head);
- store_update: {
-  const thread=f.store.get<{runId?:string}>('thread',f.threadId)!;
-  f.store.internal('fixture',null,()=>f.store.put('thread',f.threadId,f.threadId,{...thread,runId:'run-1'}));
- }
+ const thread=f.store.get<{runId?:string}>('thread',f.threadId)!;
+ f.store.internal('fixture',null,()=>f.store.put('thread',f.threadId,f.threadId,{...thread,runId:'run-1'}));
  const busy=await f.tools.gitSync(f.projectId,f.threadId);
  expect(busy.blockers).toContain('RUN_ACTIVE');
  f.git(f.worktree,'checkout','--detach','-q');
