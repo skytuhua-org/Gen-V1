@@ -9,6 +9,40 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/ui-shell-overlays');
 });
 
+test('notification error stays until dismissed and success keeps the ordinary timeout',async({page})=>{
+  await page.goto('/ui-shell-overlays?toast');
+  await page.clock.install();
+  const notices=page.getByRole('region',{name:'Notifications',exact:true});
+  await page.getByRole('button',{name:'Show error',exact:true}).click();
+  await page.getByRole('button',{name:'Show success',exact:true}).click();
+  await expect(notices.getByRole('status')).toContainText('Saved locally');
+  await page.clock.runFor(10_000);
+  await expect(notices.getByRole('status')).toHaveCount(0);
+  const error=notices.getByRole('alert');
+  await expect(error).toContainText('Upload failed');
+  await error.getByRole('button',{name:'Dismiss notification'}).click();
+  await expect(error).toHaveCount(0);
+});
+
+test('keyboard focus pauses a custom notification for its remaining time',async({page})=>{
+  await page.goto('/ui-shell-overlays?toast');
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now()+100));
+  const trigger=page.getByRole('button',{name:'Show short notice',exact:true});
+  await trigger.click();
+  const notice=page.getByRole('region',{name:'Notifications',exact:true}).getByRole('status');
+  const dismiss=notice.getByRole('button',{name:'Dismiss notification'});
+  await page.keyboard.press('Tab');
+  await expect(dismiss).toBeFocused();
+  await page.clock.runFor(10_000);
+  await expect(notice).toContainText('Short notice');
+  await trigger.focus();
+  await page.clock.runFor(299);
+  await expect(notice).toHaveAttribute('data-state','open');
+  await page.clock.runFor(2);
+  await expect(notice).toHaveCount(0);
+});
+
 test('a model popup belongs to its native modal and keeps selection, draft and Escape usable', async ({ page }) => {
   await page.getByRole('combobox', { name: 'Model', exact: true }).click();
   const popup = page.locator('.model-picker-popover');

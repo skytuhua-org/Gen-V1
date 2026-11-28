@@ -4,7 +4,7 @@ import './tokens.css';
 import './feedback.css';
 
 type ToastTone = 'info' | 'success' | 'error';
-export interface ToastOptions { tone?: ToastTone; action?: { label: string; onClick: () => void }; durationMs?: number }
+export interface ToastOptions { tone?: ToastTone; dedupeKey?: string; action?: { label: string; onClick: () => void }; durationMs?: number }
 interface ToastEntry extends ToastOptions { id: number; message: string; leaving: boolean }
 
 const VISIBLE_MS = 6000, MAX_VISIBLE = 3;
@@ -13,12 +13,15 @@ const listeners = new Set<() => void>();
 const publish = (next: ToastEntry[]) => { entries = next; for (const listener of listeners) listener(); };
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 
-/** Shows a transient notification; repeating the newest message restarts it instead of stacking. */
+/** Shows a transient notification; repeating a message or explicit key restarts it instead of stacking. */
 export function toast(message: string, options: ToastOptions = {}) {
   const text = message.trim();
   if (!text) return 0;
   const id = nextId++;
-  const next = [...entries.filter(entry => entry.message !== text), { ...options, id, message: text, leaving: false }];
+  const distinct = entries.filter(entry => options.dedupeKey === undefined
+    ? entry.dedupeKey !== undefined || entry.message !== text
+    : entry.dedupeKey !== options.dedupeKey);
+  const next = [...distinct, { ...options, id, message: text, leaving: false }];
   let visible = next.filter(entry => !entry.leaving).length;
   publish(next.map(entry => (visible > MAX_VISIBLE && !entry.leaving ? (visible--, { ...entry, leaving: true }) : entry)));
   return id;
@@ -29,11 +32,11 @@ const remove = (id: number) => publish(entries.filter(entry => entry.id !== id))
 const icons = { info: Info, success: CheckCircle2, error: AlertCircle };
 
 function ToastItem({ entry, paused }: { entry: ToastEntry; paused: boolean }) {
-  const element = useRef<HTMLDivElement>(null), remaining = useRef(entry.durationMs ?? VISIBLE_MS);
+  const element = useRef<HTMLDivElement>(null), remaining = useRef(entry.durationMs ?? (entry.tone === 'error' ? Infinity : VISIBLE_MS));
   useEffect(() => {
-    if (paused || entry.leaving) return;
+    if (paused || entry.leaving || remaining.current === Infinity) return;
     const started = Date.now(), timer = setTimeout(() => dismissToast(entry.id), remaining.current);
-    return () => { clearTimeout(timer); remaining.current = Math.max(1000, remaining.current - (Date.now() - started)); };
+    return () => { clearTimeout(timer); remaining.current = Math.max(0, remaining.current - (Date.now() - started)); };
   }, [paused, entry.leaving, entry.id]);
   useEffect(() => {
     if (!entry.leaving) return;
