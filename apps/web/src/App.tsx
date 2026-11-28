@@ -431,6 +431,8 @@ export function App(props:AppProps={}) {
   if(props.embeddedThreadId||desktop?.context.surface.kind==='thread'||desktop?.context.surface.kind==='navigation')return <ConversationWorkspace {...props}/>;
   return <WorkspaceHost conversation={host=><ConversationWorkspace {...props} host={host}/>}/>;
 }
+const LIVE_USAGE_OPEN_KEY = 'harness:task-tool-open:usage:v1';
+
 function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,embeddedThreadId,embeddedActive=true,onRequestThread,liveUsage,modelPickerRequest:externalModelPicker,hostWorkspaceContext,onRequestWorkspaceTool,onDirtyWidgetChange,host}:AppProps&{host?:ConversationHost}={}) {
   const ownPluginCatalog=usePluginCatalog(!host&&!embeddedThreadId),pluginCatalog=host?.pluginCatalog??ownPluginCatalog,plugins=pluginCatalog.plugins,[selectedPluginId,setSelectedPluginId]=useState<string|null>(null),[openedPlugins,setOpenedPlugins]=useState<string[]>([]);
   useEffect(()=>{if(pluginCatalog.error)toast(pluginCatalog.error,{tone:'error'});},[pluginCatalog.error]);
@@ -469,7 +471,22 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   useModalRegion(sidebar, mobile && sidebarOpen, () => setSidebarOpen(false), 'input', sidebarScrim);
   useLayoutEffect(() => { if (searchFocusRequest) focusSidebarSearch(searchRef.current); }, [searchFocusRequest]);
   const [focusedResource,setFocusedResource]=useState<string|undefined>(undefined);
-  const [liveUsageOpen,setLiveUsageOpen]=useState(false);
+  // The workspace owns the shared summary. Embedded, detached and navigation
+  // renders must not overwrite that owner's stored preference.
+  const persistLiveUsage = !pinnedThreadId && !navigationOnly;
+  const [liveUsageOpen, setLiveUsageOpen] = useState(() => {
+    if (!persistLiveUsage) return false;
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(LIVE_USAGE_OPEN_KEY) ?? 'null');
+      return typeof saved === 'object' && saved !== null && 'open' in saved && saved.open === true;
+    }
+    catch { return false; }
+  });
+  useEffect(() => {
+    if (!persistLiveUsage) return;
+    try { localStorage.setItem(LIVE_USAGE_OPEN_KEY, JSON.stringify({ open: liveUsageOpen })); }
+    catch { /* The mounted workspace can still toggle Live Usage. */ }
+  }, [liveUsageOpen, persistLiveUsage]);
   const [liveUsageViews,setLiveUsageViews]=useState<{workspaceId:string;viewIds:string[]}>({workspaceId:'',viewIds:[]});
   const updateLiveUsageViews=useCallback((workspaceId:string,viewIds:string[])=>setLiveUsageViews(current=>current.workspaceId===workspaceId&&current.viewIds.length===viewIds.length&&current.viewIds.every((id,index)=>id===viewIds[index])?current:{workspaceId,viewIds}),[]);
   const [usageOpen,setUsageOpen]=useState(false),[usageThreadId,setUsageThreadId]=useState<string|null>(null);
