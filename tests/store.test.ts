@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,22 @@ const cleanups: (() => void)[] = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
 function setup() { const dir = mkdtempSync(join(tmpdir(), "harness-store-")); const store = new Store(dir); cleanups.push(() => { store.close(); rmSync(dir, { recursive: true, force: true }); }); return store; }
 describe("durable command storage", () => {
+  it('closes the newly opened database when schema initialization fails', () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-store-init-"));
+    const incomplete = new DatabaseSync(join(dir, "harness.sqlite"));
+    incomplete.exec("CREATE TABLE entities (kind TEXT)");
+    incomplete.close();
+    const close = vi.spyOn(DatabaseSync.prototype, "close"), exec = vi.spyOn(DatabaseSync.prototype, "exec");
+    try {
+      expect(() => new Store(dir)).toThrow(/thread_id/);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      const connection = exec.mock.contexts[0] as DatabaseSync | undefined;
+      if (connection?.isOpen) connection.close();
+      exec.mockRestore(); close.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it('omits archived thread bodies from global snapshots while retaining them for restore',()=>{
     const store=setup(),large='x'.repeat(1024*1024);
     store.internal('fixture.archived',null,()=>{
