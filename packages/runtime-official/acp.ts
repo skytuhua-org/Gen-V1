@@ -15,6 +15,7 @@ export class AcpConnection {
   private next = 1;
   private buffer = '';
   private closed = false;
+  private exited = false;
   private readonly pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   constructor(private readonly process: ChildProcess, private readonly update: (method: string, params: unknown) => void,private readonly maxFrameBytes=4*1024*1024) {
     const failed = () => this.close(new HarnessError('OFFICIAL_PROCESS_IO_FAILED', 'The native Gemini connection closed unexpectedly. Reconnect the provider and refresh models.'));
@@ -41,10 +42,12 @@ export class AcpConnection {
       if (Buffer.byteLength(tail) > this.maxFrameBytes) { tooLarge(); return; }
       this.buffer = tail;
     });
-    process.once('exit', () => this.close(new HarnessError('OFFICIAL_PROCESS_EXITED', 'Official Gemini CLI exited. Persisted history will determine input delivery.')));
+    // Node can report process exit before the stdout pipe delivers its final frames.
+    process.once('exit', () => { this.exited = true; });
+    process.once('close', () => this.close(new HarnessError('OFFICIAL_PROCESS_EXITED', 'Official Gemini CLI exited. Persisted history will determine input delivery.')));
   }
   private send(value: unknown): void {
-    if (this.closed || !this.process.stdin?.writable) throw new HarnessError('OFFICIAL_PROCESS_EXITED', 'Official ACP input is closed.');
+    if (this.closed || this.exited || !this.process.stdin?.writable) throw new HarnessError('OFFICIAL_PROCESS_EXITED', 'Official ACP input is closed.');
     // A successful write is transport only. It is never a durable input receipt.
     const frame=JSON.stringify(value)+'\n';if(Buffer.byteLength(frame)>this.maxFrameBytes)throw new HarnessError('OFFICIAL_PROTOCOL_INVALID','Official ACP frame exceeded the bounded transport limit.');
     this.process.stdin.write(frame);
@@ -54,6 +57,7 @@ export class AcpConnection {
     if (!isAcpMessage(message) || message.jsonrpc !== '2.0') throw new Error('Invalid ACP message.');
     if (typeof message.method === 'string') {
       if (message.id !== undefined) {
+        if (this.exited) return; // There is no peer left to receive a response.
         if (message.method === 'session/request_permission') this.send({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'cancelled' } } });
         else this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Only host MCP tools are available. Client filesystem and terminal requests are unsupported.' } });
       } else this.update(message.method, message.params);
