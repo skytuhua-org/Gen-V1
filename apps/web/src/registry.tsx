@@ -1,3 +1,4 @@
+import {ArtifactImage} from './ArtifactImage';
 import {SentenceReveal} from './SentenceReveal';
 import {WindowDocument} from './DocumentWindow';
 import { Children, createContext, lazy, Suspense, useContext, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
@@ -269,7 +270,7 @@ function Form({ element: { props }, children }: ComponentRenderProps) {
 function BoundMarkdown({ element: { props } }: ComponentRenderProps) { const data = useData(props); return <Markdown text={string(props.text, string(data))} animate />; }
 function Metric({ element: { props } }: ComponentRenderProps) { const data = useData(props), value = data ?? props.value; return <div className="surface-metric"><span className="muted">{string(props.label)}</span><strong>{typeof value === 'number' ? value.toLocaleString(undefined, { maximumSignificantDigits: 21 }) : display(value)}{props.unit ? ` ${string(props.unit)}` : ''}</strong></div>; }
 function EvidenceList({ element: { props } }: ComponentRenderProps) { const rows = list(useData(props)); return <section>{props.title ? <h3>{string(props.title)}</h3> : null}<ul className="evidence-list">{rows.map((row, i) => { const item = obj(row); return <li key={i}><Check size={13} /><div>{typeof row === 'string' ? row : string(item.label, string(item.title, string(item.text, display(row))))}{item.source ? <small>{display(item.source)}</small> : null}</div></li>; })}</ul></section>; }
-function Image({ element: { props } }: ComponentRenderProps) { const src = typeof props.resourceId === 'string' ? `/api/resources/${encodeURIComponent(props.resourceId)}/content` : /^https?:\/\//.test(string(props.src)) ? string(props.src) : undefined; return src ? <img className="surface-image" src={src} alt={string(props.alt)} loading="lazy" referrerPolicy="no-referrer" /> : <p className="muted">No granted image is available.</p>; }
+function Image({ element: { props } }: ComponentRenderProps) { if (typeof props.resourceId === 'string') return <ArtifactImage key={props.resourceId} resourceId={props.resourceId} alt={string(props.alt)} />; const src = /^https?:\/\//.test(string(props.src)) ? string(props.src) : undefined; return src ? <img className="surface-image" src={src} alt={string(props.alt)} loading="lazy" referrerPolicy="no-referrer" /> : <p className="muted">No granted image is available.</p>; }
 function Link({ element: { props } }: ComponentRenderProps) { return /^https?:\/\//.test(string(props.href)) ? <a href={string(props.href)} target="_blank" rel="noreferrer">{string(props.label, string(props.href))}<ExternalLink size={12} /></a> : <span>{string(props.label)}</span>; }
 
 export const registry: ComponentRegistry = {
