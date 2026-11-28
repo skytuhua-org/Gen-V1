@@ -103,6 +103,19 @@ it("announces a retention gap before the complete first retained page", async ()
     expect(chunks.flatMap(chunk => /^id: (\d+)/.exec(chunk)?.slice(1).map(Number) ?? [])).toEqual([4, 5, 6]);
   } finally { shutdown(); }
 });
+it("does not announce a retention gap when replay begins at the oldest event", async () => {
+  const f = fixture([f0(4), f0(5)], 4), chunks: string[] = [];
+  const response = Object.assign(new EventEmitter(), {
+    write(chunk: string) { chunks.push(chunk); return true; },
+    destroy() {},
+  });
+  const shutdown = streamEvents(response as unknown as ServerResponse, f.store, 3, () => {});
+  try {
+    await expect.poll(() => chunks.filter(chunk => chunk.startsWith("id: ")).length).toBe(2);
+    expect(chunks.some(chunk => chunk.startsWith("event: retention-gap"))).toBe(false);
+    expect(chunks.flatMap(chunk => /^id: (\d+)/.exec(chunk)?.slice(1).map(Number) ?? [])).toEqual([4, 5]);
+  } finally { shutdown(); }
+});
 it("announces retention that advances while a replay page is backpressured", async () => {
   const f = fixture(Array.from({ length: 100 }, (_, i) => f0(i + 1)));
   const frames: (number | string)[] = [];

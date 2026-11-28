@@ -21,6 +21,7 @@ vi.mock('../apps/desktop/attention-popups.ts', () => ({
 }));
 
 class FixtureWindow extends EventEmitter {
+  private static nextId = 0;
   private destroyed = false;
   readonly initialBounds: { x: number; y: number; width: number; height: number };
   private bounds: FixtureWindow['initialBounds'];
@@ -31,12 +32,12 @@ class FixtureWindow extends EventEmitter {
   }
   readonly contentView = { addChildView() {}, removeChildView() {} };
   readonly closeRequest = deferred<string>();
-  readonly sent: { channel: string; value: unknown }[] = [];
+  readonly messages: Array<{ channel: string; value: unknown }> = [];
   readonly webContents = Object.assign(new EventEmitter(), {
-    id: 1, mainFrame: { url: '' }, getURL: () => this.webContents.mainFrame.url,
+    id: ++FixtureWindow.nextId, mainFrame: { url: '' }, getURL: () => this.webContents.mainFrame.url,
     send: (channel: string, value: unknown) => {
-      this.sent.push({ channel, value });
-      if (channel === channels.closeRequest) this.closeRequest.resolve(value as string);
+      this.messages.push({ channel, value });
+      if (channel === channels.closeRequest && typeof value === 'string') this.closeRequest.resolve(value);
     },
     setWindowOpenHandler() {},
     session: Object.assign(new EventEmitter(), { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} }),
@@ -51,6 +52,7 @@ class FixtureWindow extends EventEmitter {
   isFullScreen() { return false; }
   isAlwaysOnTop() { return false; }
   getNormalBounds() { return { ...this.bounds }; }
+  getBounds() { return this.getNormalBounds(); }
   moveTo(bounds: FixtureWindow['initialBounds']) {
     if (process.platform === 'win32' || process.platform === 'darwin') this.emit('will-move', {}, bounds);
     this.bounds = { ...bounds };
@@ -133,13 +135,21 @@ afterEach(async () => {
   directory = undefined;
 });
 
+async function flushMicrotasks(turns = 10) {
+  for (let index = 0; index < turns; index++) await Promise.resolve();
+}
+
+function closeRequests(window: FixtureWindow) {
+  return window.messages.filter(message => message.channel === channels.closeRequest).map(message => String(message.value));
+}
+
 async function launch(nativeLayout?: unknown, reuseDirectory?: string) {
   directory = reuseDirectory ?? await mkdtemp(join(tmpdir(), 'gen-restart-quit-'));
   vi.stubEnv('HARNESS_DESKTOP_TEST_DATA_DIR', directory);
   vi.stubEnv('HARNESS_DESKTOP_NODE_PATH', process.execPath);
   vi.stubEnv('HARNESS_DESKTOP_PORT', '4357');
   vi.stubEnv('HARNESS_DESKTOP_WIDGET_PORT', '4358');
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   const loaded = deferred<FixtureWindow>();
   const exited = deferred<number>();
   const relayClosing = deferred();
@@ -147,7 +157,11 @@ async function launch(nativeLayout?: unknown, reuseDirectory?: string) {
   const proxyClosing = deferred();
   const proxyClosed = deferred();
   const sidecars: Sidecar[] = [];
-  desktop.loaded.mockImplementation(loaded.resolve);
+  const windows: FixtureWindow[] = [];
+  desktop.loaded.mockImplementation((window: FixtureWindow) => {
+    windows.push(window);
+    loaded.resolve(window);
+  });
   desktop.appExit.mockImplementation(exited.resolve);
   desktop.events.mockImplementation(() => ({ close: async () => {} }));
   desktop.events.mockImplementationOnce(() => ({ close: () => {
@@ -166,22 +180,38 @@ async function launch(nativeLayout?: unknown, reuseDirectory?: string) {
   });
   await import('../apps/desktop/main.ts');
   const window = await loaded.promise;
-  function invoke(channel: string, value?: unknown) {
+  function invoke(channel: string, value?: unknown, target = window) {
     const handler = desktop.handle.mock.calls.find(([name]) => name === channel)?.[1];
     if (!handler) throw Error('Desktop IPC handler was not registered');
-    const sender = window.webContents;
+    const sender = target.webContents;
     return handler({ sender, senderFrame: sender.mainFrame }, value) as Promise<unknown>;
   }
   await invoke(channels.ready);
-  async function beginQuit() {
+  function startQuit() {
     const handler = desktop.appOn.mock.calls.find(([event]) => event === 'before-quit')?.[1];
     if (!handler) throw Error('Desktop quit handler was not registered');
     handler({ preventDefault() {} });
+  }
+  async function beginQuit() {
+    startQuit();
     const requestId = await window.closeRequest.promise;
     await invoke(channels.closeAnswer, { requestId, allow: true });
   }
+  async function openUsageWindow(threadId: string) {
+    const before = windows.length;
+    const opening = invoke(channels.detach, { kind: 'usage', threadId });
+    await flushMicrotasks();
+    const created = windows[before];
+    if (!created) {
+      const error = await opening.then(() => undefined, (cause: unknown) => cause);
+      throw Error('Detached test window was not created' + (error ? ': ' + String(error instanceof Error ? error.message : error) : ''));
+    }
+    await invoke(channels.ready, undefined, created);
+    await opening;
+    return created;
+  }
   return {
-    sidecars, beginQuit, exited: exited.promise, window, invoke,
+    sidecars, window, windows, invoke, startQuit, beginQuit, openUsageWindow, flushMicrotasks, exited: exited.promise,
     relayClosing: relayClosing.promise, closeRelay: () => relayClosed.resolve(),
     openBrowser: () => invoke(channels.browser, { type: 'open' }),
     proxyClosing: proxyClosing.promise, closeProxy: () => proxyClosed.resolve(),
@@ -200,7 +230,7 @@ it('resumes host layout persistence after a transient save failure', async () =>
   const fixture = await launch();
   vi.useRealTimers();
   const sidecar = fixture.sidecars[0]!;
-  const lastState = () => fixture.window.sent.filter(({ channel }) => channel === channels.state).at(-1)?.value as { layoutError?: string };
+  const lastState = () => fixture.window.messages.filter(({ channel }) => channel === channels.state).at(-1)?.value as { layoutError?: string };
   fixture.window.moveTo({ x: 10, y: 10, width: 800, height: 600 });
   await eventually(() => expect(sidecar.layoutSaves.length).toBeGreaterThan(0));
   const initialSaves = sidecar.layoutSaves.length;
@@ -272,7 +302,7 @@ it('does not overwrite invalid saved host layout silently', async () => {
 
   await persistenceWindow();
   expect(sidecar.layoutSaves).toHaveLength(0);
-  const errored = fixture.window.sent.map(({ channel, value }) => channel === channels.state ? value : undefined).find(value => value && typeof value === 'object' && 'layoutError' in value) as { layoutError?: string };
+  const errored = fixture.window.messages.map(({ channel, value }) => channel === channels.state ? value : undefined).find(value => value && typeof value === 'object' && 'layoutError' in value) as { layoutError?: string };
   expect(errored.layoutError).toContain('saved host workspace layout is invalid');
 });
 
@@ -324,4 +354,96 @@ it('activates a replacement outside shutdown and later stops it on quit', async 
   replacement.finishShutdown();
   await expect(fixture.exited).resolves.toBe(0);
   expect(replacement.exitCode).toBe(0);
+});
+
+async function answerClose(fixture: Awaited<ReturnType<typeof launch>>, window: FixtureWindow, allow: boolean, requestId = closeRequests(window).at(-1)) {
+  if (!requestId) throw Error('The test window has no close request');
+  await fixture.invoke(channels.closeAnswer, { requestId, allow }, window);
+}
+
+async function finishQuit(fixture: Awaited<ReturnType<typeof launch>>) {
+  await fixture.flushMicrotasks();
+  await fixture.sidecars[0]!.shutdown.promise;
+  fixture.sidecars[0]!.finishShutdown();
+  await expect(fixture.exited).resolves.toBe(0);
+}
+
+function closeCancelled(window: FixtureWindow) {
+  return window.messages.some(message => message.channel === channels.state && typeof message.value === 'object' && message.value !== null && (message.value as { closeCancelled?: boolean }).closeCancelled === true);
+}
+
+it('prepares independent close guards together so slow affirmative answers finish in one bounded interval', async () => {
+  const fixture = await launch();
+  const first = await fixture.openUsageWindow('thread-close-first');
+  const second = await fixture.openUsageWindow('thread-close-second');
+  const all = [fixture.windows[0]!, first, second];
+
+  fixture.closeRelay();
+  const started = Date.now();
+  fixture.startQuit();
+  await fixture.flushMicrotasks();
+  await vi.advanceTimersByTimeAsync(0);
+  await fixture.flushMicrotasks();
+  for (const window of all) expect(closeRequests(window)).toHaveLength(1);
+
+  await vi.advanceTimersByTimeAsync(5_000);
+  for (const window of all) await answerClose(fixture, window, true);
+  await finishQuit(fixture);
+  expect(Date.now() - started).toBe(5_000);
+  expect(all.every(window => window.isDestroyed())).toBe(true);
+});
+
+it('bounds an unresponsive multi-window close attempt without forcing windows closed', async () => {
+  const fixture = await launch();
+  const first = await fixture.openUsageWindow('thread-unresponsive-first');
+  const second = await fixture.openUsageWindow('thread-unresponsive-second');
+  const all = [fixture.windows[0]!, first, second];
+
+  fixture.closeRelay();
+  fixture.startQuit();
+  await fixture.flushMicrotasks();
+  for (const window of all) expect(closeRequests(window)).toHaveLength(1);
+
+  await vi.advanceTimersByTimeAsync(14_999);
+  expect(desktop.appExit).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  await fixture.flushMicrotasks();
+  expect(desktop.appExit).not.toHaveBeenCalled();
+  for (const window of all) {
+    expect(window.isDestroyed()).toBe(false);
+    expect(closeCancelled(window)).toBe(true);
+  }
+});
+
+it('keeps windows open after a veto and rejects stale approvals on a later retry', async () => {
+  const fixture = await launch();
+  const first = await fixture.openUsageWindow('thread-veto-first');
+  const second = await fixture.openUsageWindow('thread-veto-second');
+  const all = [fixture.windows[0]!, first, second];
+
+  fixture.closeRelay();
+  fixture.startQuit();
+  await fixture.flushMicrotasks();
+  const stale = new Map(all.map(window => [window, closeRequests(window)[0]!]));
+  await answerClose(fixture, fixture.windows[0]!, true, stale.get(fixture.windows[0]!));
+  await answerClose(fixture, first, false, stale.get(first));
+  await answerClose(fixture, second, true, stale.get(second));
+  await fixture.flushMicrotasks();
+
+  expect(desktop.appExit).not.toHaveBeenCalled();
+  for (const window of all) {
+    expect(window.isDestroyed()).toBe(false);
+    expect(closeCancelled(window)).toBe(true);
+  }
+
+  fixture.startQuit();
+  await fixture.flushMicrotasks();
+  for (const window of all) {
+    const requests = closeRequests(window);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).not.toBe(stale.get(window));
+    await expect(fixture.invoke(channels.closeAnswer, { requestId: stale.get(window), allow: true }, window)).rejects.toThrow('Stale close acknowledgment');
+    await answerClose(fixture, window, true, requests[1]);
+  }
+  await finishQuit(fixture);
 });
