@@ -13,6 +13,7 @@ const contributionId=z.string().min(1).max(100).regex(/^[A-Za-z0-9][A-Za-z0-9_.:
 /** One workspace a plug-in contributes: a unique id, a title, an optional icon
  * and the registered entry view the host opens for it. */
 export const pluginWorkspaceContributionSchema=z.strictObject({id:contributionId,title:z.string().trim().min(1).max(100),icon:contributionId.optional(),entryView:contributionId,defaultLayout:contributionId.optional()});
+/** Workspace contribution metadata accepted by `pluginWorkspaceContributionSchema`. */
 export type PluginWorkspaceContribution=z.infer<typeof pluginWorkspaceContributionSchema>;
 /** Optional manifest workspace list: at most 16 contributions with unique ids. */
 export const pluginWorkspacesSchema=z.array(pluginWorkspaceContributionSchema).max(16).refine(values=>new Set(values.map(value=>value.id)).size===values.length,'Workspace IDs must be unique.');
@@ -31,21 +32,26 @@ export const pluginManifestSchema=z.strictObject({
  workspaces:pluginWorkspacesSchema.optional(),
  skills:pluginSkillsMetadataSchema.optional(),
 });
+/** Strict package manifest accepted by `pluginManifestSchema`. */
 export type PluginManifest=z.infer<typeof pluginManifestSchema>;
 /** Public native-window reference handed to a plug-in: kind is always
  * `plugin`; pluginId/scopeId/surfaceId name the owning view and resourceId is
  * an optional sub-resource. It carries no service-specific identity. */
 export const pluginSurfaceSchema=z.strictObject({kind:z.literal('plugin'),pluginId:pluginIdSchema,scopeId:identity,surfaceId:identity,resourceId:identity.optional()});
+/** Public native-window reference accepted by `pluginSurfaceSchema`. */
 export type PluginSurface=z.infer<typeof pluginSurfaceSchema>;
 /** An adapter capability: either available, or unavailable with the real
  * human-readable reason that must stay visible. */
 export type Capability={available:true}|{available:false;reason:string};
 /** Scoped conversation identity: the plug-in, its scope and the conversation. */
 export interface ConversationRef {pluginId:string;scopeId:string;conversationId:string}
+/** One source conversation message exposed to the plug-in adapter. */
 export interface ConversationMessage {id:string;role:'user'|'assistant'|'system';content:string}
 /** A loaded conversation plus which adapter operations are currently usable. */
 export interface ConversationView {ref:ConversationRef;title:string;messages:ConversationMessage[];capabilities:{send:Capability;submitArtifactAction:Capability;cancel:Capability}}
+/** User message content plus the caller-owned request identity used for outcome tracking. */
 export interface MessageInput {content:string;requestId:string}
+/** Artifact action invocation: target ids, expected revision, opaque payload and caller-owned request identity. */
 export interface ArtifactActionInput {artifactId:string;actionId:string;revision:number;payload:unknown;requestId:string}
 /** Conversation operations a plug-in implements itself. The host only passes
  * scoped references; each method honors the supplied AbortSignal. */
