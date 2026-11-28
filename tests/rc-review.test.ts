@@ -64,6 +64,13 @@ it('keeps an early child stdin closure in the RC subprocess result',async()=>{
 it('refuses outdated manifest versions before comparison or restore writes',async()=>{const {root,profile,host}=await fixture(),before=await snapshot(profile,host),old=structuredClone(before);Reflect.set(old,'version',1);expect(()=>compare(old,before)).toThrow('re-snapshot needed');expect(()=>compare(before,old)).toThrow('re-snapshot needed');const seed=join(root,'seed.json'),manifest=join(root,'old.json'),archive=join(root,'archive');await writeFile(seed,'{}');await writeFile(manifest,JSON.stringify(old));await archiveProfile(profile,host,seed,manifest,archive);await expect(restoreProfile(archive,profile,host,join(root,'refused'))).rejects.toThrow('re-snapshot needed');expect(await readdir(profile)).toEqual([]);expect(await readdir(host)).toEqual([]);});
 async function fixture(){const root=await mkdtemp(join(tmpdir(),'rc-manifest-'));roots.push(root);const profile=join(root,'GenerativeHarnessDesktop'),host=join(root,'GenerativeHarness');await mkdir(profile);await mkdir(host);return {root,profile,host};}
 afterEach(async()=>{await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})))});
+it.each([0,3])('preserves split UTF-8 in captured RC subprocess output (exit %i)',async exitCode=>{
+ const probe='process.stdout.write(Buffer.from([0xe8]));setTimeout(()=>{process.stdout.write(Buffer.from([0xb3,0x87]),()=>{process.exitCode='+exitCode+';});},200);';
+ const result=run(process.execPath,['-e',probe],{capture:true});
+ if(exitCode===0)await expect(result).resolves.toBe('資');
+ else await expect(result).rejects.toMatchObject({stdout:'資',exitCode});
+});
+
 const emptySnapshot=(entities:Record<string,{id:string;sha256:string;count?:number}[]>,databases?:Parameters<typeof compare>[0]['databases'])=>({version:2,identifiers:{appId:null,profile:'p',host:'h',accounts:[]},files:[],entities,databases,counts:{}}) as Parameters<typeof compare>[0];
 it('does not rescan every current row for each prior entity or table row',()=>{const size=64;let accesses=0;const counted=(id:string)=>({sha256:'s-'+id,get id(){accesses++;return id;}});
  const entities=[...Array(size)].map((_,index)=>counted('row-'+index));accesses=0;expect(compare(emptySnapshot({thread:entities}),emptySnapshot({thread:entities})).passed).toBe(true);expect(accesses).toBeLessThanOrEqual(size*4);
