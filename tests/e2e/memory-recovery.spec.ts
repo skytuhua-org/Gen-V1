@@ -260,6 +260,21 @@ for (const view of [
   if (view.failed) { const retry = page.getByRole('button', { name: 'Retry', exact: true }); await retry.scrollIntoViewIfNeeded(); await retry.focus(); await retry.press('Enter'); await expect(editor(page)).toHaveValue(draft.content); }
 });
 
+test('a successful Add note collapses the form and reopens blank', async ({ page }) => {
+  const commands = await mount(page);
+  const add = page.getByRole('button', { name: 'Add memory note' });
+  await add.click();
+  const key = page.getByRole('textbox', { name: 'Note key', exact: true }), content = page.getByRole('textbox', { name: 'New thread note', exact: true });
+  await key.fill('created'); await content.fill('Submitted create.');
+  await page.getByRole('button', { name: 'Add note', exact: true }).click(); await expect.poll(() => commands.length).toBe(1);
+  await expect(add).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Add note', exact: true })).toHaveCount(0);
+  await expect(add).toBeFocused();
+  expect(await page.evaluate(key => window.memoryFixture.read(key), createKey)).toBeNull();
+  await add.click();
+  await expect(key).toHaveValue(''); await expect(content).toHaveValue('');
+});
+
 test('busy copy names the in-flight action for save, delete and add', async ({ page }) => {
   const pending: Route[] = [];
   const commands = await mount(page, {}, async route => { pending.push(route); });
