@@ -53,12 +53,7 @@ async function boundedFileSize(path:string,limit:number):Promise<number>{
 }
 async function boundedFile(path:string,limit:number):Promise<Buffer>{const size=await boundedFileSize(path,limit);const bytes=await readFile(path);if(bytes.length!==size||bytes.length>limit)throw denied();return bytes;}
 
-/** Verify an installed package against its trusted inventory digest: the raw
- * `plugin-files.json` must hash to `expectedDigest`; every package file except
- * it must be declared, hashed and size-bounded; links, undeclared files,
- * duplicate/case-folding paths and oversized payloads are rejected; and the
- * manifest must parse with entry files present. Throws on any mismatch.
- * Returns the verified manifest, digest, directory and file bytes. */
+/** Verify one declared payload file's type, exact size, hash and EOF stability. */
 async function verifyPayloadFile(path:string,file:{bytes:number;sha256:string},buffer:Buffer):Promise<void>{
  if(await boundedFileSize(path,MAX_FILE_BYTES)!==file.bytes)throw denied();
  const handle=await open(path,'r');
@@ -107,6 +102,12 @@ async function verifyPackage(directory:string,expectedDigest:string,files?:Map<s
  files?.set('plugin-files.json',raw);return manifest;
 }
 
+/** Verify an installed package against its trusted inventory digest: the raw
+ * `plugin-files.json` must hash to `expectedDigest`; every package file except
+ * it must be declared, hashed and size-bounded; links, undeclared files,
+ * duplicate/case-folding paths and oversized payloads are rejected; and the
+ * manifest must parse with entry files present. Throws on any mismatch.
+ * Returns the verified manifest, digest, directory and file bytes. */
 export async function verifyPluginPackage(directory:string,expectedDigest:string):Promise<VerifiedPackage>{
  const files=new Map<string,Buffer>(),manifest=await verifyPackage(directory,expectedDigest,files);
  return {manifest,digest:expectedDigest,directory:resolve(directory),files};

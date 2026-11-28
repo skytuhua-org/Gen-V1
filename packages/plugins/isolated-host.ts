@@ -148,6 +148,7 @@ class PipeWorkerTransport implements WorkerTransport{
  }
 }
 
+/** Process-launch configuration for the development/test isolated-worker launcher. */
 export interface SpawnWorkerOptions{
  /** Absolute path of packages/plugins/worker-entry.ts (or its built output). */
  entryPath:string;
