@@ -13,6 +13,7 @@ import {DEFAULT_PREFERENCES} from '../../packages/contracts/preferences';
 import {taskFixture} from './task-interface-fixture';
 import '../../apps/web/src/styles.css';
 import '../../apps/web/src/workspace-tools.css';
+import '../../apps/web/src/appearance.css';
 
 const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Fixture'}}}});
 snapshot.artifacts=[];
