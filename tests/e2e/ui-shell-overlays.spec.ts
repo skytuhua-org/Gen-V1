@@ -9,6 +9,90 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/ui-shell-overlays');
 });
 
+test('the top native modal owns the shared toaster and Escape dismisses only its focused toast',async({page})=>{
+ await page.goto('/ui-shell-overlays?modal-toast');
+ const open=page.getByRole('button',{name:'Open notification dialog',exact:true});
+ await open.click();
+ const outer=page.getByRole('dialog',{name:'Notification dialog',exact:true});
+ const notifications=(owner:typeof outer)=>owner.getByRole('region',{name:'Notifications',exact:true});
+ const notify=outer.getByRole('button',{name:'Notify from dialog',exact:true});
+ await notify.click();
+ await expect(notifications(outer).getByRole('alert')).toContainText('Notification from dialog');
+ await page.keyboard.press('Tab');
+ await expect(notifications(outer).getByRole('button',{name:'Notification action',exact:true})).toBeFocused();
+ await page.keyboard.press('Tab');
+ const outerDismiss=notifications(outer).getByRole('button',{name:'Dismiss notification',exact:true});
+ await expect(outerDismiss).toBeFocused();
+ await page.keyboard.press('Tab');
+ await expect(outer.getByRole('button',{name:'Close dialog',exact:true})).toBeFocused();
+ await page.keyboard.press('Shift+Tab');
+ await expect(outerDismiss).toBeFocused();
+ await outer.getByRole('button',{name:'Open nested notification dialog',exact:true}).click();
+ const inner=page.getByRole('dialog',{name:'Nested notification dialog',exact:true});
+ await expect(notifications(inner).getByRole('alert')).toContainText('Notification from dialog');
+ const notifyInner=inner.getByRole('button',{name:'Notify from nested dialog',exact:true});
+ await notifyInner.click();
+ const alert=notifications(inner).getByRole('alert').filter({hasText:'Notification from nested dialog'});
+ await expect(alert).toBeInViewport();
+ await alert.getByRole('button',{name:'Dismiss notification',exact:true}).focus();
+ await page.keyboard.press('Escape');
+ await expect(alert).toHaveCount(0);await expect(inner).toBeVisible();
+ await notifyInner.focus();
+ await page.keyboard.press('Escape');
+ await expect(notifications(inner).getByRole('alert')).toHaveCount(0);
+ await expect(notifications(outer).getByRole('alert')).toHaveCount(1);
+ await outer.getByRole('button',{name:'Close dialog',exact:true}).click();
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ await expect(page.getByRole('region',{name:'Notifications',exact:true}).getByRole('alert')).toContainText('Notification from dialog');
+});
+
+test('a timed notification keeps its remaining lifetime when a modal opens',async({page})=>{
+ await page.goto('/ui-shell-overlays?modal-toast');
+ await page.clock.install();
+ await page.getByRole('button',{name:'Show timed notification',exact:true}).click();
+ const notice=page.getByRole('status').filter({hasText:'Timed notification'});
+ await expect(notice).toBeVisible();
+ await page.clock.runFor(700);
+ await page.getByRole('button',{name:'Open notification dialog',exact:true}).click();
+ await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Timed notification');
+ await page.clock.runFor(600);
+ await expect(notice).toHaveCount(0);
+});
+
+test('notification error stays until dismissed and success keeps the ordinary timeout',async({page})=>{
+  await page.goto('/ui-shell-overlays?toast');
+  await page.clock.install();
+  const notices=page.getByRole('region',{name:'Notifications',exact:true});
+  await page.getByRole('button',{name:'Show error',exact:true}).click();
+  await page.getByRole('button',{name:'Show success',exact:true}).click();
+  await expect(notices.getByRole('status')).toContainText('Saved locally');
+  await page.clock.runFor(10_000);
+  await expect(notices.getByRole('status')).toHaveCount(0);
+  const error=notices.getByRole('alert');
+  await expect(error).toContainText('Upload failed');
+  await error.getByRole('button',{name:'Dismiss notification'}).click();
+  await expect(error).toHaveCount(0);
+});
+
+test('keyboard focus pauses a custom notification for its remaining time',async({page})=>{
+  await page.goto('/ui-shell-overlays?toast');
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now()+100));
+  const trigger=page.getByRole('button',{name:'Show short notice',exact:true});
+  await trigger.click();
+  const notice=page.getByRole('region',{name:'Notifications',exact:true}).getByRole('status');
+  const dismiss=notice.getByRole('button',{name:'Dismiss notification'});
+  await page.keyboard.press('Tab');
+  await expect(dismiss).toBeFocused();
+  await page.clock.runFor(10_000);
+  await expect(notice).toContainText('Short notice');
+  await trigger.focus();
+  await page.clock.runFor(299);
+  await expect(notice).toHaveAttribute('data-state','open');
+  await page.clock.runFor(2);
+  await expect(notice).toHaveCount(0);
+});
+
 test('a model popup belongs to its native modal and keeps selection, draft and Escape usable', async ({ page }) => {
   await page.getByRole('combobox', { name: 'Model', exact: true }).click();
   const popup = page.locator('.model-picker-popover');

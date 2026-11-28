@@ -91,3 +91,54 @@ test('renewed image identities cannot reuse old pins and retain feedback for the
 test('invalid replacement data reports unavailable instead of inventing slots or crashing',async({page})=>{
  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));const {host}=await explorationFixture(page,'SchedulePicker',suppliedSlots);await page.goto('/');await page.getByRole('option',{name:'Design review',exact:true}).click();host.setInput('data',{...suppliedSlots,timeZone:'Invented/Nowhere'});await host.publish();await expect(page.getByText('Time slots are unavailable from the connected source.',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Propose this time',exact:true})).toHaveCount(0);expect(errors).toEqual([]);
 });
+
+for (const width of [1440, 360]) test(`artifact image failure supports a keyboard retry at ${width}px`, async ({page}) => {
+ await page.setViewportSize({width,height:844});
+ await page.emulateMedia({reducedMotion:'reduce'});
+ const snapshot=taskFixture({root:'view',elements:{view:{type:'Image',props:{resourceId:'image-one',alt:'Granted preview'}}}} as TaskSpec);
+ snapshot.resources.push({id:'image-one',threadId:'task-thread',kind:'attachment',path:'C:/fixture/screen.svg',label:'Granted preview',writable:false,createdAt:'2026-11-03T15:00:00Z'});
+ await serveTaskFixture(page,snapshot);
+ const failedAttempts=width===1440?3:1;
+ let reads=0;
+ await page.route('**/api/resources/image-one/content*',route=>++reads<=failedAttempts
+  ? route.fulfill({status:401,headers:{'Cache-Control':'max-age=60'}})
+  : route.fulfill({contentType:'image/svg+xml',body:image}));
+ await page.goto('/');
+ const failure=page.getByRole('alert').filter({hasText:'The image is unavailable. Check its grant and retry.'});
+ await expect(failure).toBeVisible();
+ await expect(failure).toHaveCSS('animation-name','none');
+ await expect(page.getByRole('img',{name:'Granted preview'})).toHaveCount(0);
+ await test.info().attach(`Unavailable artifact image at ${width}px`,{body:await page.screenshot(),contentType:'image/png'});
+ const retry=failure.getByRole('button',{name:'Retry image',exact:true});
+ for (let attempt=1;attempt<=failedAttempts;attempt++) {
+  await expect.poll(()=>reads).toBe(attempt);
+  await retry.focus();
+  await retry.press('Enter');
+ }
+ const preview=page.getByRole('img',{name:'Granted preview',exact:true});
+ await expect.poll(()=>preview.evaluate(element=>(element as HTMLImageElement).naturalWidth)).toBe(720);
+ await expect(failure).toHaveCount(0);
+ expect(reads).toBe(failedAttempts+1);
+});
+
+test('a visible granted image offers retry when the resource stalls', async ({page}) => {
+ const snapshot=taskFixture({root:'view',elements:{view:{type:'Image',props:{resourceId:'slow-image',alt:'Slow preview'}}}} as TaskSpec);
+ snapshot.resources.push({id:'slow-image',threadId:'task-thread',kind:'attachment',path:'C:/fixture/screen.svg',label:'Slow preview',writable:false,createdAt:'2026-11-03T15:00:00Z'});
+ await serveTaskFixture(page,snapshot);
+ await page.clock.install();
+ let release:()=>void=()=>{};
+ const stalled=new Promise<void>(resolve=>{release=resolve;});
+ await page.route('**/api/resources/slow-image/content',async route=>{
+  await stalled;
+  await route.fulfill({contentType:'image/svg+xml',body:image});
+ });
+ try {
+  await page.goto('/',{waitUntil:'domcontentloaded'});
+  await expect(page.getByRole('img',{name:'Slow preview',exact:true})).toBeAttached();
+  await page.clock.runFor(15_500);
+  const failure=page.getByRole('alert').filter({hasText:'The image is taking too long to load. Check access and retry.'});
+  await expect(failure.getByRole('button',{name:'Retry image',exact:true})).toBeVisible();
+ } finally {
+  release();
+ }
+});
