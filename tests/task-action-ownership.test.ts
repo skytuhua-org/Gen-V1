@@ -14,6 +14,7 @@ declare global {
     setOwner: (owner:string|null)=>void;
     unmount: ()=>void;
     changeCallbackIdentity: ()=>void;
+    editPresentation: ()=>void;
   }
 }
 
@@ -39,11 +40,14 @@ window.settle = (index, kind = 'success', value = '') => {
 window.result = async key => await window.results[key];
 
 function Probe({owner}) {
+  const [editRevision, setEditRevision] = useState(0);
+  window.editPresentation = () => setEditRevision(value => value + 1);
   const action = useTaskAction(owner);
   const key = owner ?? 'null';
   window.runs[key] = action.run;
   return <>
     <span id="owner">{key}</span>
+    <span id="edit-revision">{editRevision}</span>
     <span id="busy">{String(action.busy)}</span>
     <span id="error">{action.error}</span>
   </>;
@@ -52,7 +56,7 @@ function Probe({owner}) {
 function LegacyProbe() {
   const action = useTaskAction();
   window.runs.legacy = action.run;
-  return null;
+  return <span id="legacy-error">{action.error}</span>;
 }
 
 function Fixture() {
@@ -98,7 +102,7 @@ describe('task action ownership', () => {
     await page.evaluate(([i, k, v]) => window.settle(i as number, k as string, v as string), [index, kind, value]);
   }
 
-  it('preserves legacy no-argument duplicate and success behavior', async () => {
+  it('preserves legacy no-argument duplicates, success and rejection messages', async () => {
     const page = await open();
     await start(page, 'legacy-current', 'legacy', 'legacy-current');
     expect(await calls(page)).toBe(1);
@@ -107,6 +111,11 @@ describe('task action ownership', () => {
     expect(await calls(page)).toBe(1);
     await settle(page, 0);
     expect(await page.evaluate(async () => await window.result('legacy-current'))).toBe(true);
+    await start(page, 'legacy-rejection', 'legacy');
+    expect(await calls(page)).toBe(2);
+    await settle(page, 0, 'error', 'legacy request failed');
+    expect(await page.evaluate(async () => await window.result('legacy-rejection'))).toBe(false);
+    expect(await page.locator('#legacy-error').innerText()).toBe('legacy request failed');
     await page.close();
   });
 
@@ -150,7 +159,7 @@ describe('task action ownership', () => {
     await page.close();
   });
 
-  it('returns false without dispatch while null and suppresses duplicates across callback identity changes', async () => {
+  it('returns false without dispatch while null and suppresses duplicates across callback and presentation changes', async () => {
     const page = await open();
     await page.evaluate(() => window.setOwner(null));
     await expect.poll(() => page.locator('#owner').innerText()).toBe('null');
@@ -165,6 +174,11 @@ describe('task action ownership', () => {
     await page.waitForTimeout(0);
     await start(page, 'duplicate', 'A', 'duplicate');
     expect(await page.evaluate(async () => await window.result('duplicate'))).toBe(false);
+    expect(await calls(page)).toBe(1);
+    await page.evaluate(() => window.editPresentation());
+    await expect.poll(() => page.locator('#edit-revision').innerText()).toBe('1');
+    await start(page, 'edit-duplicate', 'A');
+    expect(await page.evaluate(async () => await window.result('edit-duplicate'))).toBe(false);
     expect(await calls(page)).toBe(1);
     await settle(page, 0);
     expect(await page.evaluate(async () => await window.result('current'))).toBe(true);
