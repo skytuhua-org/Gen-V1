@@ -162,3 +162,20 @@ it('retains newly exited scrollback by exit order, not by when the terminal open
  await expect(host.read('short-2',projectId)).resolves.toMatchObject({output:'short 2',exited:true});
 });
 
+
+it.each(['environment resolution','final binding'] as const)('does not spawn a terminal when shutdown finishes during %s',async(stage)=>{
+ const {host,projects}=fixture();
+ let resume!:()=>void,reached!:()=>void;
+ const blocked=new Promise<void>(resolve=>{reached=resolve;});
+ if(stage==='environment resolution')mocks.resolve.mockImplementationOnce(()=>new Promise(resolve=>{resume=()=>resolve({EXAMPLE_API_KEY:'fixture'});reached();}));
+ else projects.binding.mockResolvedValueOnce({path:'C:/fixture'}).mockImplementationOnce(()=>new Promise(resolve=>{resume=()=>resolve({path:'C:/fixture'});reached();}));
+ const input={projectId:'project-a',threadId:'thread-a',terminalId:'shutdown-open'};
+ const opening=host.open(input);void opening.catch(()=>{});
+ await blocked;
+ await host.dispose();
+ resume();
+ await expect(opening).rejects.toMatchObject({code:'HOST_CLOSING'});
+ await expect(host.open({...input,terminalId:'after-close'})).rejects.toMatchObject({code:'HOST_CLOSING'});
+ expect(mocks.spawn).not.toHaveBeenCalled();
+ expect(projects.store.get('terminalSession',input.terminalId)).toBeUndefined();
+});

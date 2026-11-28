@@ -11,20 +11,27 @@ const identifier=z.string().regex(/^[a-zA-Z0-9:_.-]{1,200}$/),dimension=z.number
 /** Host owns processes; renderer visibility and native reparenting do not own their lifetime. */
 export class TerminalHost{
  private readonly sessions=new Map<string,Session>();
+ private closing=false;
  constructor(private readonly projects:ProjectTools){
   const store=projects.store,unfinished=store.all<{id:string;exited:boolean}>('terminalSession').filter(item=>!item.exited);
   if(unfinished.length)store.internal('terminal.recovered',null,()=>{for(const item of unfinished)store.put('terminalSession',item.id,null,{...item,exited:true,exitCode:null,reason:'Host restarted; the previous terminal is no longer attached.'});});
  }
+ private assertOpen(){if(this.closing)throw new HarnessError('HOST_CLOSING','Gen is closing. No new terminal can start.');}
  async open(input:{projectId:string;threadId?:string;terminalId?:string;cols?:number;rows?:number;command?:string;program?:string;args?:string[];environment?:Record<string,string|undefined>}){
+  this.assertOpen();
   const projectId=identifier.parse(input.projectId),threadId=input.threadId===undefined?undefined:identifier.parse(input.threadId),terminalId=input.terminalId?identifier.parse(input.terminalId):randomUUID();
   const command=input.command?z.string().min(1).max(8000).parse(input.command):undefined;
-  const binding=await this.projects.binding(projectId,threadId),existing=this.reopen(this.sessions.get(terminalId),projectId,threadId,binding.path);
+  const binding=await this.projects.binding(projectId,threadId);
+  this.assertOpen();
+  const existing=this.reopen(this.sessions.get(terminalId),projectId,threadId,binding.path);
   if(existing)return existing;
   if(this.projects.store.get('terminalSession',terminalId))throw new HarnessError('TERMINAL_ENDED','This terminal ended. Open a new terminal.');
   if([...this.sessions.values()].filter(item=>!item.exited).length>=12)throw new HarnessError('TERMINAL_CAPACITY','Twelve terminals are already running. Stop one before opening another.');
   const shell=process.platform==='win32'?(process.env.COMSPEC??'C:/Windows/System32/cmd.exe'):(process.env.SHELL??'/bin/sh'),args=process.platform==='win32'?['/D','/Q']:[];
   const configured=!input.program&&!input.environment?await environmentSettingsFor(this.projects.store.dataDir).resolve(projectId):{};
+  this.assertOpen();
   const currentBinding=await this.projects.binding(projectId,threadId);
+  this.assertOpen();
   if(currentBinding.path!==binding.path)throw new HarnessError('CAPABILITY_DENIED','The project binding changed before the terminal could start.');
   // Secret resolution yields. Recheck ownership/capacity synchronously after
   // the final await so concurrent opens cannot orphan an extra process.
@@ -131,5 +138,8 @@ export class TerminalHost{
   }
   return this.result(session,0);
  }
- async dispose(){const outcomes=await Promise.allSettled([...this.sessions.values()].filter(item=>!item.exited||item.startupFailed).map(item=>this.command(item.id,item.projectId,item.threadId,{type:'stop'})));const errors=outcomes.flatMap(item=>item.status==='rejected'?[item.reason]:[]);if(errors.length)throw new AggregateError(errors,'Terminal shutdown could not be confirmed.');}
+ async dispose(){
+  // Disposal can run before in-flight HTTP handlers finish resolving their bindings.
+  this.closing=true;
+  const outcomes=await Promise.allSettled([...this.sessions.values()].filter(item=>!item.exited||item.startupFailed).map(item=>this.command(item.id,item.projectId,item.threadId,{type:'stop'})));const errors=outcomes.flatMap(item=>item.status==='rejected'?[item.reason]:[]);if(errors.length)throw new AggregateError(errors,'Terminal shutdown could not be confirmed.');}
 }
