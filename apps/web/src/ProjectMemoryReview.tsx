@@ -1,4 +1,5 @@
 import {useCallback, useEffect, useId, useLayoutEffect, useRef, useState} from 'react';
+import {displayThreadTitle} from './thread-title';
 import {Modal} from '../../../packages/ui-shell/Modal';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
@@ -106,7 +107,7 @@ function ReviewSession({owner, close, readOnly = false}: ProjectMemoryReviewProp
           {view.disabledReason && <p>{view.disabledReason}</p>}
           <details open={!view.enabled}><summary>Source conversations ({view.sourceThreadIds.length})</summary>
             <p>Only the conversations selected here may supply memory. Sharing with other projects and user-wide preferences is unavailable.</p>
-            <fieldset disabled={mutationBlocked || !view.available}><legend>Choose source conversations</legend>{view.eligibleThreads.map(thread => <label key={thread.id}><input type="checkbox" checked={sourceThreads.includes(thread.id)} onChange={event => {configDirty.current = true; setSourceThreads(previous => event.target.checked ? [...previous, thread.id] : previous.filter(value => value !== thread.id));}}/>{thread.title}</label>)}</fieldset>
+            <fieldset disabled={mutationBlocked || !view.available}><legend>Choose source conversations</legend>{view.eligibleThreads.map(thread => <label key={thread.id}><input type="checkbox" checked={sourceThreads.includes(thread.id)} onChange={event => {configDirty.current = true; setSourceThreads(previous => event.target.checked ? [...previous, thread.id] : previous.filter(value => value !== thread.id));}}/>{displayThreadTitle(thread)}</label>)}</fieldset>
             {!view.eligibleThreads.length && <p>No authorized source conversations are available.</p>}
             <button type="button" disabled={mutationBlocked || !view.available || !sourceThreads.length} onClick={() => void act({action: 'configure', baseRevision: view.configRevision, enabled: true, sourceThreadIds: sourceThreads})}>{view.enabled ? 'Save source scope' : 'Enable for this project'}</button>
           </details>

@@ -4,7 +4,7 @@ import type { ResourceGrant } from '../../../packages/contracts';
 import { MAX_SIGNATURE_PNG_BYTES, validateSignaturePng } from '../../../packages/ui-catalog/signature-data';
 import { bootstrap, command, getResourceContent } from './api';
 
-type Pending = { id: string; stateKey: string; base64: string; resourceId?: string; error?: string };
+type Pending = { id: string; stateKey: string; base64: string; attachmentArtifactId?: string; composerHidden?: true; resourceId?: string; error?: string };
 const prefix = 'harness:signature-assets:v1:';
 const listeners = new Set<() => void>();
 const inFlight = new Set<string>();
@@ -63,12 +63,12 @@ export async function fetchSignaturePng(resourceId: string, signal?: AbortSignal
   } finally { clearTimeout(timer); }
 }
 
-type Assets = { beginPreparation():()=>void; preview(stateKey: string): string | undefined; error(stateKey: string): string | undefined; save(stateKey: string, bytes: Uint8Array): void; clear(stateKey: string): void; retry(): void; get(resourceId: string, signal?: AbortSignal): Promise<Uint8Array> };
+type Assets = { beginPreparation():()=>void; preview(stateKey: string): string | undefined; error(stateKey: string): string | undefined; save(stateKey: string, bytes: Uint8Array, includeInComposer?: boolean): void; clear(stateKey: string): void; retry(): void; get(resourceId: string, signal?: AbortSignal): Promise<Uint8Array> };
 const Context = createContext<Assets | null>(null);
 export const useDocumentAssets = () => useContext(Context);
 
 /** Write-ahead PNG journal survives refresh; replay uses the same host command ID. */
-export function DocumentAssetProvider({ threadId, stateId = '', active = true, children }: { threadId: string; stateId?: string; active?: boolean; children: ReactNode }) {
+export function DocumentAssetProvider({ threadId, artifactId, stateId = '', active = true, children }: { threadId: string; artifactId: string; stateId?: string; active?: boolean; children: ReactNode }) {
   const store = useStateStore(), key = keyFor(threadId, stateId);
   const revision = useSyncExternalStore(subscribe, () => version);
   useEffect(() => {
@@ -78,7 +78,7 @@ export function DocumentAssetProvider({ threadId, stateId = '', active = true, c
       if (record.resourceId) { store.set(pathFor(record.stateKey), { kind: 'image', resourceId: record.resourceId }); write(key, read(key).filter(item => item.id !== record.id)); continue; }
       if (record.error || inFlight.has(record.id)) continue;
       inFlight.add(record.id);
-      void Promise.resolve().then(() => { validateSignaturePng(base64Bytes(record.base64)); return command('resource.upload', { name: 'signature.png', mimeType: 'image/png', base64: record.base64 }, threadId, record.id); }).then(receipt => {
+      void Promise.resolve().then(() => { validateSignaturePng(base64Bytes(record.base64)); return command('resource.upload', { name: 'signature.png', mimeType: 'image/png', base64: record.base64, ...(record.attachmentArtifactId ? { attachmentArtifactId: record.attachmentArtifactId, ...(record.composerHidden ? { composerHidden: true } : {}) } : {}) }, threadId, record.id); }).then(receipt => {
         const grant = receipt.result as ResourceGrant;
         if (!grant || grant.threadId !== threadId || grant.kind !== 'attachment' || typeof grant.id !== 'string') throw new Error('The host did not return a signature resource for this thread.');
         const current = read(key); if (!current.some(item => item.id === record.id)) return;
@@ -94,10 +94,10 @@ export function DocumentAssetProvider({ threadId, stateId = '', active = true, c
     beginPreparation:()=>{preparationCounts.set(key,(preparationCounts.get(key)??0)+1);emit();let completed=false;return()=>{if(completed)return;completed=true;const remaining=(preparationCounts.get(key)??1)-1;if(remaining>0)preparationCounts.set(key,remaining);else preparationCounts.delete(key);emit();};},
     preview: stateKey => { const record = readSafe(key)?.find(item => item.stateKey === stateKey); return record ? `data:image/png;base64,${record.base64}` : undefined; },
     error: stateKey => readSafe(key)?.find(item => item.stateKey === stateKey)?.error,
-    save: (stateKey, bytes) => { validateSignaturePng(bytes); const record = { id: crypto.randomUUID(), stateKey, base64: pngDataUrl(bytes).split(',')[1] }; write(key, [...recover(key).filter(item => item.stateKey !== stateKey), record]); },
+    save: (stateKey, bytes, includeInComposer = true) => { validateSignaturePng(bytes); const record = { id: crypto.randomUUID(), stateKey, attachmentArtifactId: artifactId, ...(includeInComposer ? {} : { composerHidden: true as const }), base64: pngDataUrl(bytes).split(',')[1] }; write(key, [...recover(key).filter(item => item.stateKey !== stateKey), record]); },
     clear: stateKey => write(key, recover(key).filter(item => item.stateKey !== stateKey)),
     retry: () => write(key, recover(key).map(({ error: _error, ...record }) => record)),
     get: async (resourceId, signal) => { const identity = `${threadId}:${resourceId}`; const saved = cache.get(identity); if (saved) return saved.slice(); const bytes = await fetchSignaturePng(resourceId, signal); if (cache.size >= 64) cache.delete(cache.keys().next().value!); cache.set(identity, bytes); return bytes.slice(); },
-  }), [key, threadId, revision]);
+  }), [key, threadId, artifactId, revision]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

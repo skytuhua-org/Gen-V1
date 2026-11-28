@@ -34,21 +34,26 @@ export const projectContextGrantDigest = (resources: readonly ResourceGrant[]) =
  * remain held until action finishes, including native request admission. No
  * directory crawl, include expansion, hook execution or ambient root lookup. */
 export async function withApprovedProjectContext<T>(store: Store, input: StartRun, signal: AbortSignal,
-  action: (context: ApprovedProjectContextV1 | undefined, assertCurrent: () => void) => Promise<T>): Promise<T> {
-  if (input.resources.length > LIMITS.grants) throw new HarnessError('INVALID_REQUEST_CONTEXT', 'Too many approved context resources.');
+  action: (context: ApprovedProjectContextV1 | undefined, assertCurrent: () => void) => Promise<T>, authorityGrants: readonly ResourceGrant[] = input.resources): Promise<T> {
+  if (input.resources.length > LIMITS.grants || authorityGrants.length > LIMITS.grants) throw new HarnessError('INVALID_REQUEST_CONTEXT', 'Too many approved context resources.');
   const resources = ordered(structuredClone(input.resources));
   if (resources.some(resource => resource.threadId !== input.threadId) || new Set(resources.map(resource => resource.id)).size !== resources.length)
     throw new HarnessError('STALE_REQUEST_CONTEXT', 'Project context resources do not belong to this thread.');
   const candidates = resources.filter(resource => resource.kind === 'project' || ['file', 'attachment'].includes(resource.kind) && recognizedName(resource.path));
   if (!candidates.length) return action(undefined, () => {});
   const grantDigest = projectContextGrantDigest(resources);
+  const fullGrantDigest = projectContextGrantDigest(authorityGrants);
+  const admittedIds = new Set(resources.map(resource => resource.id));
+  if (projectContextGrantDigest(authorityGrants.filter(resource => admittedIds.has(resource.id))) !== grantDigest) {
+    throw new HarnessError('STALE_REQUEST_CONTEXT', 'The admitted resources do not match the project instruction grants.');
+  }
   const currentBinding = () => {
     if (signal.aborted) throw new HarnessError('CANCELLED_RUN', 'Project context preparation was cancelled.');
     const thread = store.get<Thread>('thread', input.threadId);
     if (!thread || store.get('archivedThread', input.threadId) || thread.sideParentId || thread.kind === 'delegate' || thread.runId !== input.runId || thread.epoch !== input.epoch || thread.modelId !== input.modelId || (thread.accountId ?? null) !== (input.accountId ?? null) || ['stopped', 'interrupted', 'failed'].includes(thread.status))
       throw new HarnessError('STALE_REQUEST_CONTEXT', 'The project instruction owner changed.');
     const rows = store.db.prepare("SELECT body FROM entities WHERE kind='resource' AND thread_id=? ORDER BY id LIMIT 257").all(input.threadId) as { body: string }[];
-    if (rows.length > LIMITS.grants || projectContextGrantDigest(rows.map(row => JSON.parse(row.body) as ResourceGrant)) !== grantDigest)
+    if (rows.length > LIMITS.grants || projectContextGrantDigest(rows.map(row => JSON.parse(row.body) as ResourceGrant)) !== fullGrantDigest)
       throw new HarnessError('STALE_REQUEST_CONTEXT', 'The project instruction grants changed.');
     return digest([thread.projectId ?? null, thread.workspaceId ?? null, thread.thinkingLevel ?? null, thread.mode ?? null, thread.sideParentId ?? null, thread.kind ?? null,
       thread.projectId ? store.get('workspaceProjectRoot', thread.projectId) : null, thread.workspaceId ? store.get('workspaceBinding', thread.workspaceId) : null]);

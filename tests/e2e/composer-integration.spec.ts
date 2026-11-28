@@ -88,3 +88,64 @@ test('an open dialog at mount suppresses composer autofocus',async({page})=>{
  await expect(textarea).toBeEnabled();
  expect(await page.evaluate(()=>document.activeElement?.tagName)).not.toBe('TEXTAREA');
 });
+
+test('successful send consumes only the accepted files and presents them in the sent message after reload',async({page})=>{
+ await page.setViewportSize({width:450,height:900});
+ await page.emulateMedia({reducedMotion:'reduce'});
+ const snapshot=taskFixture(spec);
+ const host=await serveTaskFixture(page,snapshot);
+ const attemptIds:string[][]=[];
+ let nextId=0,reject=true;
+ await page.route('**/api/commands',async route=>{
+  const cmd=route.request().postDataJSON();
+  if(cmd.type==='resource.upload'){
+   const grant={id:'attachment-'+ ++nextId,threadId:'task-thread',kind:'attachment' as const,path:'/synthetic/'+cmd.payload.name,label:cmd.payload.name,writable:false,createdAt:new Date().toISOString()};
+   snapshot.resources.push(grant);
+   await host.publish();
+   return route.fulfill({json:{commandId:cmd.id,seq:snapshot.seq,result:grant}});
+  }
+  if(cmd.type!=='message.send')return route.fallback();
+  attemptIds.push(cmd.payload.attachmentIds);
+  if(reject){
+   reject=false;
+   return route.fulfill({status:409,json:{error:{code:'FIXTURE_REJECTED',message:'Fixture declined the send',details:{sendAccepted:false}}}});
+  }
+  const messageId='accepted-attachment-message';
+  const attachments=snapshot.resources.filter(grant=>cmd.payload.attachmentIds.includes(grant.id));
+  for(const grant of attachments)grant.draftAttachmentConsumedBy=messageId;
+  snapshot.messages.push({id:messageId,threadId:'task-thread',role:'user',content:cmd.payload.content,runId:null,createdAt:new Date().toISOString(),attachments:attachments.map(({id,label,writable})=>({id,label,writable}))});
+  await host.publish();
+  return route.fulfill({json:{commandId:cmd.id,seq:snapshot.seq,result:{messageId,inputId:cmd.id}}});
+ });
+ await page.goto('/');
+ const composer=page.locator('.composer:visible');
+ const names=['review-notes-with-a-long-file-name.txt','fixture-guide-with-a-long-file-name.txt'];
+ const [fileChooser]=await Promise.all([
+  page.waitForEvent('filechooser'),
+  composer.getByRole('button',{name:'Attach files',exact:true}).click(),
+ ]);
+ await fileChooser.setFiles(names.map((name,index)=>({name,mimeType:'text/plain',buffer:Buffer.from(String(index))})));
+ const tray=composer.getByRole('group',{name:'Attachments',exact:true});
+ for(const name of names)await expect(tray.getByText(name,{exact:true})).toBeVisible();
+ const draft=composer.getByRole('textbox',{name:'Message',exact:true});
+ const send=composer.getByRole('button',{name:'Send message',exact:true});
+ await draft.fill('Review these two files');
+ await send.click();
+ await expect(page.locator('.composer-error')).toContainText('Fixture declined the send');
+ await expect(tray.getByRole('button')).toHaveCount(2);
+ await expect(page.getByRole('list',{name:'2 attachments',exact:true})).toHaveCount(0);
+ await send.click();
+ await expect(draft).toHaveValue('');
+ const history=page.locator('.message-user').filter({hasText:'Review these two files'});
+ const sent=history.getByRole('list',{name:'2 attachments',exact:true});
+ for(const name of names)await expect(sent.getByRole('link',{name:name+', read only',exact:true})).toBeVisible();
+ await expect(tray).toHaveCount(0);
+ await expect(sent.getByRole('button')).toHaveCount(0);
+ expect(attemptIds).toEqual([['attachment-1','attachment-2'],['attachment-1','attachment-2']]);
+ await sent.getByRole('link').first().focus();
+ await page.keyboard.press('Tab');
+ await expect(sent.getByRole('link').last()).toBeFocused();
+ await page.reload();
+ await expect(sent.getByRole('link')).toHaveCount(2);
+ await expect(tray).toHaveCount(0);
+});
