@@ -103,6 +103,24 @@ it('enforces the process deadline even when the backend wait never returns', asy
   await f.session.close(); expect(f.raw.terminate).toHaveBeenCalledOnce();
 });
 
+it('waits for owned teardown when process exit races a cancellation', async () => {
+  const f = await fixture();
+  let reportExit!: (result: {exitCode: number; termination: 'NONE'}) => void;
+  let failCleanup!: (error: Error) => void;
+  vi.mocked(f.raw.wait).mockReturnValueOnce(new Promise(resolve => { reportExit = resolve; }));
+  vi.mocked(f.raw.terminate).mockReturnValueOnce(new Promise((_resolve, reject) => { failCleanup = reject; }));
+  const child = await f.session.launcher.launch(f.request);
+  const completion = child.wait().then(result => ({ result }), error => ({ error }));
+  f.controller.abort();
+  reportExit({ exitCode: 0, termination: 'NONE' });
+  try {
+    expect(await Promise.race([completion, new Promise(resolve => setImmediate(() => resolve('pending')))])).toBe('pending');
+  } finally { failCleanup(Error('native cleanup failed')); }
+  expect(await completion).toMatchObject({ error: { message: 'The approved verification backend operation failed.' } });
+  await expect(f.session.close()).rejects.toThrow('Verification cleanup failed.');
+  expect(f.raw.terminate).toHaveBeenCalledOnce();
+});
+
 it('bounds native launch startup and cleans a handle that arrives after the deadline', async () => {
   const f = await fixture(); let finish!: (process: LaunchedProcess) => void;
   vi.mocked(f.backend.launchObserved).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));

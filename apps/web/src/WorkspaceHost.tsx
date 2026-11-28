@@ -20,6 +20,7 @@ import {SettingsSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
 import {ShellSidebar} from './ShellSidebar';
 import {getShellNavigationItem} from './shell-read-api';
 import {focusSidebarSearch, matchesShortcut, readShellLayout, useShellLayout} from './shell-layout';
+import {chordFor} from './keyboard-bindings';
 import {useSidebarCollapse} from './sidebar-collapse';
 import {useShellNavigation} from './shell-navigation';
 import {useAppearance} from './useAppearance';
@@ -214,6 +215,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   const mutationPending = useRef(false), [mutationBusy, setMutationBusy] = useState(false);
   const renameInput = useRef<HTMLInputElement>(null), renameSelected = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTarget, setSettingsTarget] = useState<string>();
   const sidebar = useRef<HTMLElement>(null), scrim = useRef<HTMLButtonElement>(null), searchRef = useRef<HTMLInputElement>(null);
   const prepareSidebarToggle = useSidebarCollapse(sidebar, layout.sidebarCollapsed, preferences.panelAnimations && preferences.motionDuration > 0, mobile);
   const latestAttention = useRef(openConversation); latestAttention.current = openConversation;
@@ -229,28 +231,58 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
   useLayoutEffect(() => {if (searchFocusRequest) focusSidebarSearch(searchRef.current);}, [searchFocusRequest]);
   const action = (kind: ConversationIntent) => fail(() => openConversation(undefined, kind));
   const settingsInvoker = useRef<HTMLElement | null>(null);
-  const openSettings = () => fail(async () => {settingsInvoker.current = document.activeElement as HTMLElement | null; await prepare(); setSettingsOpen(true);});
+  const openSettings = (target?: string) => fail(async () => {settingsInvoker.current = document.activeElement as HTMLElement | null; setSettingsTarget(target); await prepare(); setSettingsOpen(true);});
+  const toggleShortcuts = () => {if (settingsOpen) {void closeSettings(); return;} if (!document.querySelector('dialog[open]')) void openSettings('keybindings');};
+
   const stopFocused = () => {const card=(document.activeElement as HTMLElement|null)?.closest<HTMLElement>('[data-agent-id]');const agent=card?controller.getSnapshot().agents.find(item=>item.agentId===card.dataset.agentId):undefined;if(agent&&agent.status==='working')void composers.stop(agent);};
-  const shortcuts = useRef({action, openSettings, stopFocused}); shortcuts.current = {action, openSettings, stopFocused};
+  const shortcuts = useRef({action, openSettings, stopFocused, toggleShortcuts, settingsOpen}); shortcuts.current = {action, openSettings, stopFocused, toggleShortcuts, settingsOpen};
   const keybindings = JSON.stringify(preferences.keybindings);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || document.querySelector('dialog[open]')) return;
+      if (event.defaultPrevented) return;
+      const editableTarget = (event.target as HTMLElement | null)?.closest?.('input,textarea,select,[contenteditable="true"]');
+      if (!editableTarget && matchesShortcut(event, chordFor('show-shortcuts')) && shortcuts.current.settingsOpen) {
+        event.preventDefault(); shortcuts.current.toggleShortcuts(); return;
+      }
+      if (document.querySelector('dialog[open]')) return;
       if (matchesShortcut(event, preferences.keybindings.openSettings)) {event.preventDefault(); shortcuts.current.openSettings();}
       else if (matchesShortcut(event, preferences.keybindings.newThread)) {event.preventDefault(); shortcuts.current.action('new-thread');}
       else if (matchesShortcut(event, preferences.keybindings.search)) {event.preventDefault(); setOpen(true); setLayout(value => ({...value, sidebarCollapsed: false})); setSearchFocusRequest(value => value + 1);}
       else if (matchesShortcut(event, preferences.keybindings.toggleSidebar)) {event.preventDefault(); if (mobile) setOpen(value => !value); else setLayout(value => ({...value, sidebarCollapsed: !value.sidebarCollapsed}));}
       else if (matchesShortcut(event, preferences.keybindings.stop)) {event.preventDefault(); shortcuts.current.stopFocused();}
+      else if (!editableTarget && matchesShortcut(event, chordFor('show-shortcuts'))) {event.preventDefault(); shortcuts.current.openSettings('keybindings');}
     };
     window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key);
   }, [keybindings, mobile]);
   const restoreSettingsFocus = () => {
     const invoker = settingsInvoker.current;
     settingsInvoker.current = null;
-    if (invoker && invoker !== document.body && invoker !== document.documentElement && invoker.isConnected && invoker.getClientRects().length) { invoker.focus({preventScroll: true}); return; }
-    (sidebar.current?.querySelector<HTMLElement>('button[aria-label="Settings"]') ?? searchRef.current)?.focus({preventScroll: true});
+    // A candidate must be a real visible control: a disconnected, hidden,
+    // inert or aria-hidden target swallows focus without receiving it.
+    const usable = (element: HTMLElement | null | undefined): element is HTMLElement =>
+      !!element && element !== document.body && element !== document.documentElement &&
+      element.isConnected && element.getClientRects().length > 0 &&
+      !element.matches(':disabled') && !element.closest('[inert], [hidden], [aria-hidden="true"]');
+    if (usable(invoker)) { invoker.focus({preventScroll: true}); return; }
+    for (const candidate of [sidebar.current?.querySelector<HTMLElement>('button[aria-label="Settings"]'), searchRef.current]) {
+      if (usable(candidate)) { candidate.focus({preventScroll: true}); return; }
+    }
   };
-  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]); requestAnimationFrame(restoreSettingsFocus);});
+  // Focus restoration is synchronous with the close commit: chaining it behind
+  // the async settings/navigation refresh lets a slow refresh steal focus back.
+  // Covers every close path, not only closeSettings.
+  useLayoutEffect(() => {
+    if (settingsOpen || !settingsInvoker.current) return;
+    restoreSettingsFocus();
+  }, [settingsOpen]);
+  const closeSettings = () => fail(async () => {await prepare(); setSettingsOpen(false); await Promise.all([refreshSettings(), navigation.refresh()]);
+    // The close-commit restoration can land on a control the refreshed
+    // preferences then remove (e.g. the user disabled the section holding the
+    // invoker). Once the refresh settles, custody of the focused control is
+    // re-verified and lost focus falls back to a surviving control.
+    const active = document.activeElement as HTMLElement | null;
+    if (!active || active === document.body || !active.isConnected || !active.getClientRects().length || active.closest('[inert], [hidden], [aria-hidden="true"]')) restoreSettingsFocus();
+  });
   const openBrowser = desktop?.context.surface.kind === 'main' ? async (url: string) => {
     const owner = desktop.context.windowId;
     await prepare();
@@ -304,7 +336,7 @@ function MonitorShell({workspace, settings, controller, composers, choosePreset,
         onOpenConversation={(id,kind) => fail(() => openConversation(id,kind))}/></div>
     </div>
     <Modal open={settingsOpen} title="Settings" className="settings-dialog" onClose={closeSettings}>
-      {settingsOpen && <CompactSettingsContent scopeKey="personal-main" close={closeSettings} addResource={() => action('resources')} openBrowser={openBrowser}/>}
+      {settingsOpen && <CompactSettingsContent scopeKey="personal-main" initialSection={settingsTarget} close={closeSettings} addResource={() => action('resources')} openBrowser={openBrowser}/>}
     </Modal>
     <Modal open={Boolean(rename)} title="Rename thread" initialFocusRef={renameInput} onClose={() => {if (!mutationPending.current) setRename(undefined);}}><form onSubmit={event => {event.preventDefault(); if (rename && title.trim()) mutate(async () => {await command('thread.rename', {title: title.trim()}, rename.id); await navigation.refresh(); setRename(undefined);});}}>
       <label>Thread name<input ref={el => { renameInput.current = el; if (el && !renameSelected.current) { renameSelected.current = true; el.select(); } }} autoFocus disabled={mutationBusy} value={title} maxLength={180} onChange={event => setTitle(event.target.value)}/></label><button disabled={mutationBusy || !title.trim()}>Save name</button>

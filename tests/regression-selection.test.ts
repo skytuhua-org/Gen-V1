@@ -145,6 +145,20 @@ describe('regression test selection', () => {
     expect(result.issues.filter(i => i.code === 'UNSAFE_NAME')).toHaveLength(2);
   });
 
+  it('selects regressions for a consumed evidence receipt edited under docs', () => {
+    const result = selectRegressionTests(
+      [{ path: 'docs/implementation/v3/M02-verification.json', status: 'M' }],
+      [...existing, 'tests/m01-m02-compatibility.test.ts'], map);
+    expect(result).toMatchObject({ coverage: 'FULL', needsReview: true });
+    expect(result.tests).toContain('tests/m01-m02-compatibility.test.ts');
+  });
+
+  it('still selects regressions when an evidence source lock is renamed to prose', () => {
+    const result = select([{ path: 'docs/research/notes.md', previousPath: 'docs/implementation/v3/M02-source-lock.json', status: 'R' }]);
+    expect(result).toMatchObject({ coverage: 'FULL', needsReview: true });
+    expect(result.tests).toEqual([...existing].sort());
+  });
+
   it('records an explicit empty result rather than silently selecting zero tests', () => {
     const docs = select([{ path: 'docs/architecture.md', status: 'M' }, { path: 'README.md', status: 'M' }]);
     expect(docs.tests).toEqual([]);
