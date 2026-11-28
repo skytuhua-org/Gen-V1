@@ -472,6 +472,43 @@ test.describe('ACT04 artifact submission feedback', () => {
     return snapshot;
   };
 
+  test('limits action indicator motion under OS reduction and disables transitions with app preferences', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const snapshot = submissionFixture(deliveryForm());
+    snapshot.settings.preferences = { motion: 'system', motionSpeed: 0.75, panelAnimations: true };
+    const fixture = await serveTaskFixture(page, snapshot);
+    await openApp(page);
+    const submit = page.getByRole('button', { name: 'Save choice', exact: true });
+    const layer = submit.locator('.ui-action-indicator-idle');
+    const spinner = submit.locator('.ui-spinner');
+    const durationMs = () => layer.evaluate(node => parseFloat(getComputedStyle(node).transitionDuration) * 1000);
+    const root = page.locator('html');
+    await expect(root).toHaveAttribute('data-motion', 'system');
+    await expect.poll(() => root.evaluate(node => parseFloat(getComputedStyle(node).getPropertyValue('--ui-motion-press')))).toBeCloseTo(106.667);
+    await expect(layer).toHaveCSS('transition-property', 'opacity');
+    expect(await durationMs()).toBeLessThanOrEqual(80);
+    await expect(spinner).toHaveCSS('animation-name', 'none');
+
+    snapshot.settings.preferences = { ...snapshot.settings.preferences, panelAnimations: false };
+    await fixture.publish();
+    await expect(layer).toHaveCSS('transition-property', 'none');
+    await expect(spinner).toHaveCSS('animation-name', 'none');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await expect(layer).toHaveCSS('transition-duration', '0s');
+
+    snapshot.settings.preferences = { ...snapshot.settings.preferences, panelAnimations: true, motion: 'off' };
+    await fixture.publish();
+    await expect(root).toHaveAttribute('data-motion', 'off');
+    await expect(layer).toHaveCSS('transition-property', 'none');
+    await expect(layer).toHaveCSS('transition-duration', '0s');
+    await expect(spinner).toHaveCSS('animation-name', 'none');
+
+    snapshot.settings.preferences = { ...snapshot.settings.preferences, motion: 'system' };
+    await fixture.publish();
+    await expect(root).toHaveAttribute('data-motion', 'system');
+    await expect.poll(durationMs).toBeCloseTo(160 / 0.75, 2);
+  });
+
   test('keeps the original Form name and editable input while an approval request is pending', async ({ page }) => {
     let release = () => {};
     const gate = new Promise<void>(resolve => { release = resolve; });
