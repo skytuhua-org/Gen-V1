@@ -15,8 +15,26 @@ it('finds slash commands at the caret after text without interpreting URLs or pa
 });
 it('replaces only the exact command token and preserves surrounding text and caret', () => {
   const text = 'Before /mod after', token = commandToken(text, 11)!;
-  expect(replaceCommandToken(text, token)).toEqual({text: 'Before  after', caret: 7});
+  expect(replaceCommandToken(text, token)).toEqual({text: 'Before after', caret: 7});
   expect(() => replaceCommandToken('changed', token)).toThrow();
+});
+it('collapses exactly one doubled literal space when a mid-sentence token is replaced (#2306)', () => {
+  const mid = commandToken('hi /mo there', 6)!;
+  expect(replaceCommandToken('hi /mo there', mid)).toEqual({text: 'hi there', caret: 3});
+  const atStart = commandToken('/mo there', 3)!;
+  expect(replaceCommandToken('/mo there', atStart)).toEqual({text: 'there', caret: 0});
+  const atEnd = commandToken('hi /mo', 6)!;
+  expect(replaceCommandToken('hi /mo', atEnd)).toEqual({text: 'hi ', caret: 3});
+  const whole = commandToken('/mo', 3)!;
+  expect(replaceCommandToken('/mo', whole)).toEqual({text: '', caret: 0});
+});
+it('never collapses tab or newline neighbors and never deletes more than one space (#2306)', () => {
+  const tabTail = {start: 3, end: 6, query: 'mo'};
+  expect(replaceCommandToken('hi /mo\tthere', tabTail)).toEqual({text: 'hi \tthere', caret: 3});
+  const newlineHead = {start: 3, end: 6, query: 'mo'};
+  expect(replaceCommandToken('hi\n/mo there', newlineHead)).toEqual({text: 'hi\n there', caret: 3});
+  const twoSpaces = {start: 4, end: 7, query: 'mo'};
+  expect(replaceCommandToken('hi  /mo  there', twoSpaces)).toEqual({text: 'hi   there', caret: 4});
 });
 it('hides the active mode command while keeping /model and query filtering', () => {
   expect(builtinOptions('', 'build').map(item => item.id)).toEqual(['model', 'plan']);
