@@ -250,7 +250,7 @@ function IntakeSection({ intake, models, defaultModelId, props }: { intake: Back
 
 export function BackgroundWorkView(props: BackgroundWorkViewProps) {
   const { data, loading, error } = props;
-  const announce = loading && !data ? '' : data ? `Background work updated: ${data.works.length} work item(s), ${data.schedules.length} schedule(s), ${data.intake.records.length} intake record(s).` : '';
+  const announce = loading || error || !data ? '' : `Background work updated: ${data.works.length} work item(s), ${data.schedules.length} schedule(s), ${data.intake.records.length} intake record(s).`;
   return <div className="background-work">
     <header className="background-toolbar">
       <h2>Background work</h2>
