@@ -1,8 +1,118 @@
-import { test, expect } from '@playwright/test';
+import { chromium, test, expect } from '@playwright/test';
 import { branchGraphData, branchGraphSpec, growingQaSpec, linkedMapData, linkedMapSpec, migrationTableSpec, serveTaskFixture, taskFixture, type TaskSpec } from './task-interface-fixture';
 import { validateSurface } from '../../packages/ui-catalog';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { openApp } from './app-ready';
+import { release } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { recordWindow } from '../../scripts/review-capture';
+
+test.describe('ACT05 action feedback capture', () => {
+  test.skip(process.env.HARNESS_CAPTURE_ACTION_FEEDBACK !== '1', 'Opt-in paired action-feedback recordings.');
+
+  for (const theme of ['light', 'dark'] as const) for (const policy of ['full', 'reduced', 'off'] as const) {
+    test(`${theme} ${policy}`, async ({ baseURL, channel, headless, launchOptions }, info) => {
+      test.setTimeout(90_000);
+      const { HARNESS_ACTION_BASELINE_SHA: baselineSha, HARNESS_ACTION_CANDIDATE_SHA: candidateSha, HARNESS_ACTION_CAPTURE_SIDE: side } = process.env;
+      if (!baselineSha?.match(/^[a-f0-9]{40}$/) || !candidateSha?.match(/^[a-f0-9]{40}$/) || (side !== 'baseline' && side !== 'candidate')) {
+        throw Error('Specify full baseline and candidate SHAs and set HARNESS_ACTION_CAPTURE_SIDE to baseline or candidate.');
+      }
+      const checkoutSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      const directory = info.outputPath('act05');
+      await mkdir(directory, { recursive: true });
+      const viewport = { width: 1920, height: 1080 };
+      const server = await chromium.launchServer({ ...launchOptions, channel, headless });
+      try {
+        const browser = await chromium.connect(server.wsEndpoint());
+        try {
+          const context = await browser.newContext({ baseURL, viewport, deviceScaleFactor: 1, colorScheme: theme, reducedMotion: 'no-preference' });
+          try {
+            const page = await context.newPage();
+            const snapshot = taskFixture({ root: 'form', elements: {
+              form: { type: 'Form', props: { actionId: 'inspect', submitLabel: 'Save choice', payloadFromState: { delivery: 'delivery', note: 'note' }, clearOnSuccess: ['delivery', 'note'] }, children: ['choice', 'note'] },
+              choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Delivery', options: [{ value: 'pickup', label: 'Pick up locally' }, { value: 'review', label: 'Review first' }] } },
+              note: { type: 'Input', props: { stateKey: 'note', label: 'Delivery note' } },
+            } });
+            snapshot.artifacts[0].actions.inspect = { kind: 'agent' };
+            snapshot.settings.theme = theme;
+            snapshot.settings.preferences = { interfaceFont: 'Inter', motion: policy === 'full' ? 'system' : policy, motionSpeed: 1, panelAnimations: true };
+            let releaseRequest = () => {};
+            const requestHeld = new Promise<void>(resolve => { releaseRequest = resolve; });
+            await serveTaskFixture(page, snapshot, async () => { await requestHeld; return { approvalRequired: true, operation: { id: 'delivery-approval' } }; });
+            const commands: unknown[] = [];
+            await page.route('**/api/commands', async route => {
+              const command = route.request().postDataJSON();
+              if (command.type !== 'action.submit') return route.fallback();
+              commands.push(command.payload.payload);
+              if (commands.length === 1) return route.fallback();
+              await route.fulfill({ status: 500, json: { error: { code: 'ACTION_FAILED', message: 'Synthetic request failed. Try again.' } } });
+            });
+            await openApp(page);
+            const artifact = page.locator('[data-artifact-id="task-surface"]');
+            const button = artifact.locator('button[type="submit"]');
+            await expect(button).toHaveAccessibleName('Save choice');
+            await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+            const display = await page.evaluate(async () => {
+              const faces = await document.fonts.load('14px "Inter Variable"');
+              return { interLoaded: faces.some(face => face.status === 'loaded'), width: innerWidth, height: innerHeight, devicePixelRatio, visualViewportScale: visualViewport?.scale ?? null, osReduced: matchMedia('(prefers-reduced-motion: reduce)').matches };
+            });
+            expect(display.interLoaded, 'Paired recordings must load Inter instead of measuring a fallback font').toBe(true);
+            expect([display.width, display.height, display.devicePixelRatio]).toEqual([1920, 1080, 1]);
+            const sample = async (name: string) => {
+              const phase = { name, bounds: await button.boundingBox(), label: await button.innerText(), status: await artifact.getByRole('status').allTextContents(), alerts: await artifact.getByRole('alert').allTextContents(), actionCount: commands.length };
+              // Hold each observed phase in the recording long enough to read it.
+              await page.waitForTimeout(750);
+              return phase;
+            };
+            const phases: Awaited<ReturnType<typeof sample>>[] = [];
+            const videoName = 'action-feedback.mp4';
+            const videoPath = `${directory}/${videoName}`;
+            const stop = await recordWindow(server, page, videoPath, { cursor: 'none' });
+            let video;
+            try {
+              phases.push(await sample('idle'));
+              await artifact.getByRole('radio', { name: 'Pick up locally' }).click();
+              await artifact.getByRole('textbox', { name: 'Delivery note' }).fill('First draft');
+              await button.click();
+              await expect.poll(() => commands.length).toBe(1);
+              await expect(button).toBeDisabled();
+              phases.push(await sample('pending'));
+              releaseRequest();
+              await expect(button).toBeEnabled();
+              if (side === 'candidate') await expect(artifact.getByText('Request submitted', { exact: true })).toBeVisible();
+              phases.push(await sample('result'));
+              await artifact.getByRole('radio', { name: 'Review first' }).click();
+              const note = artifact.getByRole('textbox', { name: 'Delivery note' });
+              await note.fill('Second draft');
+              await note.press('Enter');
+              await expect(artifact.getByRole('alert').filter({ hasText: 'Synthetic request failed. Try again.' })).toBeVisible();
+              phases.push(await sample('error'));
+              expect(commands).toEqual([{ delivery: 'pickup', note: 'First draft' }, { delivery: 'review', note: 'Second draft' }]);
+            } finally {
+              releaseRequest();
+              video = await stop();
+            }
+            expect(video.streams).toContainEqual(expect.objectContaining({ codec_name: 'h264', width: 1920, height: 1080, r_frame_rate: '30/1' }));
+            await writeFile(`${directory}/manifest.json`, JSON.stringify({
+              provenance: 'Synthetic real-App fixture with intercepted host responses. No native app, OS cursor, or provider acceptance.',
+              baselineSha, candidateSha, checkoutSha, side, sourceRef: side === 'baseline' ? baselineSha : candidateSha,
+              theme, policy, viewport, zoom: { method: 'Unmodified fresh browser context', ...display },
+              environment: { platform: process.platform, arch: process.arch, release: release(), node: process.version, browser: browser.version(), channel, executablePath: launchOptions.executablePath },
+              phases, commands, video: { filename: videoName, sha256: createHash('sha256').update(await readFile(videoPath)).digest('hex'), ...video },
+            }, null, 2) + '\n');
+          } finally {
+            await context.close();
+          }
+        } finally {
+          await browser.close();
+        }
+      } finally {
+        await server.close();
+      }
+    });
+  }
+});
 
 test('a hidden artifact status announces directly in its header and clears only on reveal or expiry',async({page})=>{
  const spec:TaskSpec={root:'views',elements:{
