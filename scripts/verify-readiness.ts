@@ -62,7 +62,7 @@ function redactedLogSink(stream:ReturnType<typeof createWriteStream>){
       for(const line of lines)stream.write(redactSecrets(line)+'\n');
     },
     // Flushes only: the caller owns the stream so independent per-stream sinks can share it.
-    end(){if(carry)stream.write(redactSecrets(carry));},
+    end(){if(carry)stream.write(redactSecrets(carry)+'\n');},
   };
 }
 
