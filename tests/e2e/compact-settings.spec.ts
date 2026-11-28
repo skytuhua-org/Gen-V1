@@ -4,10 +4,10 @@ import type {ShellSettingsReadModel, ThreadNavigationRow} from '../../packages/c
 import type {HostCommand} from '../../packages/contracts';
 
 const thread = (id: string): ThreadNavigationRow => ({id, title: 'Archived ' + id, status: 'ready', projectName: 'Synthetic project', runId: null, createdAt: '2026-11-06', updatedAt: '2026-11-06'});
-async function setup(page: Page) {
+async function setup(page: Page, { archiveTotal=125, archiveListed=archiveTotal }: { archiveTotal?:number; archiveListed?:number } = {}) {
   const grants = Array.from({length: 125}, (_, i) => ({id: 'r' + i, threadId: 'authorized-thread', kind: 'file' as const, label: 'Exact grant ' + i, path: 'C:/authorized/' + i, writable: false}));
-  const archives = Array.from({length: 125}, (_, i) => thread('a' + i));
-  const model: ShellSettingsReadModel = {sequence: 7, settings: {theme: 'dark', modelId: 'model-one', selectedAccounts: {openai: 'account-one'}}, accounts: [{id: 'account-one', providerId: 'openai', label: 'First account', enabled: true, createdAt: '2026-11-06', updatedAt: '2026-11-06'}, {id: 'account-two', providerId: 'openai', label: 'Second account', enabled: true, createdAt: '2026-11-06', updatedAt: '2026-11-06'}], skills: [{name: 'saved-skill', description: 'Synthetic saved skill', category: 'general', revision: 2, state: 'active', enabled: true, protected: false, origin: 'user', managed: true, author: 'user', createdAt: '', updatedAt: '', lastUsedAt: null, useCount: 4, patchCount: 1}], skillProposals: [], learning: {supported: true, status: 'idle', lastReview: null}, projects: [{id: 'project', name: 'Synthetic project'}], resources: grants.slice(0, 100), resourcePage: {total: 125, nextCursor: 'resource-100'}, counts: {threads: 205, archivedThreads: 125, artifacts: 37, resources: 125, uncertainOperations: 4}};
+  const archives = Array.from({length: archiveListed}, (_, i) => thread('a' + i));
+  const model: ShellSettingsReadModel = {sequence: 7, settings: {theme: 'dark', modelId: 'model-one', selectedAccounts: {openai: 'account-one'}}, accounts: [{id: 'account-one', providerId: 'openai', label: 'First account', enabled: true, createdAt: '2026-11-06', updatedAt: '2026-11-06'}, {id: 'account-two', providerId: 'openai', label: 'Second account', enabled: true, createdAt: '2026-11-06', updatedAt: '2026-11-06'}], skills: [{name: 'saved-skill', description: 'Synthetic saved skill', category: 'general', revision: 2, state: 'active', enabled: true, protected: false, origin: 'user', managed: true, author: 'user', createdAt: '', updatedAt: '', lastUsedAt: null, useCount: 4, patchCount: 1}], skillProposals: [], learning: {supported: true, status: 'idle', lastReview: null}, projects: [{id: 'project', name: 'Synthetic project'}], resources: grants.slice(0, 100), resourcePage: {total: 125, nextCursor: 'resource-100'}, counts: {threads: 205, archivedThreads: archiveTotal, artifacts: 37, resources: 125, uncertainOperations: 4}};
   const commands: HostCommand[] = [], reads: string[] = [];
   page.on('request', request => reads.push(new URL(request.url()).pathname + new URL(request.url()).search));
   await page.route('**/api/**', async route => {
@@ -31,12 +31,63 @@ async function setup(page: Page) {
     return route.fulfill({status: 500, json: {error: {message: 'Unexpected fixture read: ' + path}}});
   });
   const fixture = '/@fs/' + resolve('tests/e2e/compact-settings-fixture.tsx').replaceAll('\\', '/');
-  await page.route('**/compact-settings-fixture', route => route.fulfill({contentType: 'text/html', body: `<html data-theme="dark"><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${encodeURI(fixture)}');</script></body></html>`}));
-  const open = () => page.goto('/compact-settings-fixture');
+  await page.route(url=>url.pathname==='/compact-settings-fixture', route => route.fulfill({contentType: 'text/html', body: `<html data-theme="dark"><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${encodeURI(fixture)}');</script></body></html>`}));
+  const open = () => page.goto('/compact-settings-fixture'+(archiveTotal>0&&archiveListed===0?'?unlisted='+archiveTotal:''));
   const dialog = page.getByRole('dialog', {name: 'Settings', exact: true});
   const nav = dialog.getByRole('tablist', {name: 'Settings sections'});
   return {model, commands, reads, open, dialog, nav};
 }
+for(const total of [0,5])test(`archive records stay with the row when ${total} threads are archived and none are listed`,async({page})=>{
+  const host=await setup(page,{archiveTotal:total,archiveListed:0});
+  await host.open();
+  await host.nav.getByRole('tab',{name:'Data & Recovery',exact:true}).click();
+  const archive=host.dialog.locator('[data-setting-id="archive"]');
+  await expect(archive.getByRole('heading',{name:'Archived threads',exact:true})).toBeVisible();
+  const records=host.dialog.locator('[data-setting-id="archive"] + .settings-records');
+  const message=total?'No archived conversations are available in navigation.':'No archived threads.';
+  await expect(records.getByText(message,{exact:true})).toBeVisible();
+  await expect(host.dialog.getByText(message,{exact:true})).toHaveCount(1);
+  await expect(archive.getByText(`${total} archived`,{exact:true})).toHaveCount(total?1:0);
+  const order=await records.evaluate(node=>{
+    const devices=document.querySelector('[data-setting-id="harness-paired-devices"]')!;
+    return Boolean(node.compareDocumentPosition(devices)&Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(order).toBe(true);
+});
+test('populated archive keeps the complete list next to its row and can restore the final entry',async({page})=>{
+  const host=await setup(page);await host.open();
+  await host.nav.getByRole('tab',{name:'Data & Recovery',exact:true}).click();
+  const records=host.dialog.locator('[data-setting-id="archive"] + .settings-records');
+  await expect(records.getByRole('button',{name:'Restore thread'})).toHaveCount(125);
+  await records.locator('.settings-row').filter({has:page.getByRole('heading',{name:'Archived a124',exact:true})}).getByRole('button',{name:'Restore thread'}).click();
+  await expect(records.getByRole('button',{name:'Restore thread'})).toHaveCount(124);
+  await expect(host.dialog.getByText('124 archived',{exact:true})).toBeVisible();
+});
+test('desktop Settings rail keeps one tab stop and selects the section moved to with the keyboard', async ({page}) => {
+  const host = await setup(page);
+  await host.open();
+  await expect(host.nav).toHaveAttribute('aria-orientation', 'vertical');
+  const general = host.nav.getByRole('tab', {name: 'General', exact: true});
+  const appearance = host.nav.getByRole('tab', {name: 'Appearance', exact: true});
+  await general.focus();
+  await expect(general).toHaveAttribute('aria-selected', 'true');
+  await expect(host.nav.locator('[tabindex="0"]')).toHaveCount(1);
+  await general.press('ArrowDown');
+  await expect(appearance).toBeFocused();
+  await expect(appearance).toHaveAttribute('aria-selected', 'true');
+  await expect(appearance).toHaveAttribute('tabindex', '0');
+  await expect(general).toHaveAttribute('tabindex', '-1');
+  await expect(host.dialog.getByRole('tabpanel', {name: 'Appearance', exact: true})).toBeVisible();
+  await appearance.press('End');
+  const last = host.nav.getByRole('tab').last();
+  await expect(last).toBeFocused();
+  await expect(last).toHaveAttribute('aria-selected', 'true');
+  await last.press('ArrowDown');
+  await expect(general).toBeFocused();
+  await expect(general).toHaveAttribute('aria-selected', 'true');
+  await expect(host.dialog.getByRole('tabpanel', {name: 'General', exact: true})).toBeVisible();
+});
+
 test('actual compact Settings uses every real section, complete grants/archive and zero forbidden reads', async ({page}) => {
   const host = await setup(page); await host.open();
   const labels = ['General', 'Appearance', 'Chat & Composer', 'Models & Accounts', 'Projects & Working Copies', 'Source Control & Reviews', 'Skills & Integrations', 'Notifications & Usage', 'Browser', 'Keyboard Shortcuts', 'Data & Recovery', 'About & Licenses'];
@@ -151,7 +202,7 @@ test('the Saved chip clears on section switch, search, external refresh and afte
   await save(); await expect(chip).toContainText('Saved');
   await host.dialog.getByRole('searchbox').fill('theme'); await expect(chip).toBeEmpty();
   await host.dialog.getByRole('searchbox').fill(''); await save(); await expect(chip).toContainText('Saved');
-  await host.dialog.getByRole('tab', {name: 'Data & Recovery', exact: true}).click();
+  await host.dialog.getByRole('button', {name: 'Data & Recovery', exact: true}).click();
   await host.dialog.getByRole('button', {name: 'Refresh settings', exact: true}).click(); await expect(chip).toBeEmpty();
   await save(); await expect(chip).toContainText('Saved'); await expect(chip).toBeEmpty({timeout: 8000});
 });

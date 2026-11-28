@@ -26,7 +26,7 @@ async function openSettings(page: Page, theme: 'dark' | 'light' = 'dark') {
   else await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   await expect(dialog).toBeVisible();
-  return { ...host, dialog, composer, nav: dialog.getByRole('navigation', { name: 'Settings sections' }), search: dialog.getByRole('searchbox', { name: 'Search all settings' }) };
+  return { ...host, dialog, composer, nav: dialog.getByRole('tablist', { name: 'Settings sections' }), search: dialog.getByRole('searchbox', { name: 'Search all settings' }) };
 }
 
 async function scalarText(content: Locator) {
