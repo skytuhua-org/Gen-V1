@@ -617,6 +617,39 @@ test.describe('ACT04 artifact submission feedback', () => {
     expect(payloads).toEqual([{ delivery: 'Original arrangement', note: 'Original note' }, { delivery: 'Current arrangement', note: 'Current note' }]);
   });
 
+  for (const followUp of ['refresh', 'draft journal'] as const) {
+    test(`acknowledges an accepted request when the ${followUp} fails`, async ({ page }) => {
+      let accepted = false;
+      const fixture = await serveTaskFixture(page, submissionFixture(deliveryForm()), async () => {
+        if (followUp === 'draft journal') {
+          await page.evaluate(() => {
+            const get = IDBObjectStore.prototype.get;
+            IDBObjectStore.prototype.get = function (key) {
+              if (key === 'state:task-state') throw new Error('Synthetic draft journal failure');
+              return get.call(this, key);
+            };
+          });
+        }
+        accepted = true;
+        return { approvalRequired: true, operation: { id: 'delivery-approval' } };
+      });
+      await page.route('**/api/snapshot', route => accepted && followUp === 'refresh'
+        ? route.fulfill({ status: 500, json: { error: { code: 'REFRESH_FAILED', message: 'Synthetic refresh failure' } } })
+        : route.fallback());
+      await openApp(page);
+      const artifact = page.locator('[data-artifact-id="task-surface"]');
+      await artifact.getByRole('button', { name: 'Save choice', exact: true }).click();
+      await expect(artifact.getByText('Request submitted', { exact: true })).toBeVisible();
+      await expect(artifact.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+      if (followUp === 'refresh') {
+        await expect(artifact.getByRole('alert')).toContainText('Synthetic refresh failure');
+      } else {
+        await expect(artifact.locator('.save-state')).toContainText('Synthetic draft journal failure');
+      }
+      expect(fixture.commands.filter(command => command.type === 'action.submit')).toHaveLength(1);
+    });
+  }
+
   for (const intent of ['none', 'keyboard', 'focus'] as const) {
     test(`restores only the initiating compact Form button after ${intent} intent`, async ({ page }) => {
       let release = () => {};
