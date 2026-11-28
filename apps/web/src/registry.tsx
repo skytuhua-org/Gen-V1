@@ -180,7 +180,7 @@ function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) 
       const label = labels[i];
       return active === label || visited.has(label) ? <div role="tabpanel" className="task-tab-panel" key={i} hidden={active !== label}>{child}</div> : null;
     })}
-    {source?.footer && <footer className="task-tabs-operation-footer"><span>{source.footer.label}</span><div>{(selected?.code ?? source.footer.code) && <code>{selected?.code ?? source.footer.code}</code>}{(selected?.detail ?? source.footer.detail) && <small>{selected?.detail ?? source.footer.detail}</small>}</div></footer>}
+    {source?.footer && <footer className="task-tabs-operation-footer"><span>{source.footer.label}</span>{' '}<div>{(selected?.code ?? source.footer.code) && <code>{selected?.code ?? source.footer.code}</code>}{(selected?.detail ?? source.footer.detail) && <small>{' '}{selected?.detail ?? source.footer.detail}</small>}</div></footer>}
     {typeof props.statusBinding === 'string' && !parsed.success && <small className="muted">Operation details unavailable.</small>}
   </div>;
 }

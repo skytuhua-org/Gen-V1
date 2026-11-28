@@ -88,7 +88,7 @@ export function catalogSpec(pdfId: string, pngId: string, annotationId=pngId): S
     ...explorationElements(annotationId),
     controls: node('Grid', { columns: 2, gap: 'lg' }, ['controlPanel', 'stepPanel']),
     controlPanel: node('Panel', { title: 'Delivery' }, ['choice', 'input', 'select', 'toggle', 'form']),
-    choice: node('ChoiceList', { stateKey: 'delivery', label: 'Delivery', options: [{ value: 'download', label: 'Download', detail: 'Local' }, { value: 'review', label: 'Review', detail: 'In conversation' }] }),
+    choice: node('ChoiceList', { stateKey: 'delivery', label: 'Delivery options', options: [{ value: 'download', label: 'Download', detail: 'Local' }, { value: 'review', label: 'Review', detail: 'In conversation' }] }),
     input: node('Input', { stateKey: 'note', label: 'Review note', placeholder: 'Add a note' }),
     select: node('Select', { stateKey: 'density', label: 'Density', options: [{ value: 'comfortable', label: 'Comfortable' }, { value: 'compact', label: 'Compact' }] }),
     toggle: node('Toggle', { stateKey: 'enabled', label: 'Keep selection on reload' }),
