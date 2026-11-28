@@ -38,6 +38,7 @@ export {GrantedFiles} from './files/GrantedFiles';
 function record(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 export function snapshotDiffs(snapshot: Snapshot, threadId?: string) {
   const diffs: { id: string; title: string; before?: string; after?: string; unified?: string; provenance: string }[] = [];
+  if (!threadId) return diffs;
   for (const data of snapshot.data.filter(item => item.threadId === threadId)) {
     const value = record(data.value);
     if (typeof value.before === 'string' && typeof value.after === 'string') diffs.push({ id: data.id, title: typeof value.title === 'string' ? value.title : data.id, before: value.before, after: value.after, provenance: data.provenance });
@@ -49,15 +50,21 @@ export function snapshotDiffs(snapshot: Snapshot, threadId?: string) {
   return diffs;
 }
 export function RecordedDiffPanel({ snapshot, threadId, preferences }: { snapshot: Snapshot; threadId?: string; preferences: UiPreferences }) {
-  return <RecordedDiffs diffs={snapshotDiffs(snapshot,threadId)} preferences={preferences}/>;
+  const thread = threadId ? snapshot.threads.find(item => item.id === threadId) : undefined;
+  const owner = thread ? `Changes recorded for “${thread.title}”.` : threadId ? 'Changes recorded for an unavailable conversation.' : undefined;
+  const emptyCaption = thread ? `Nothing recorded for “${thread.title}” yet.` : threadId ? undefined : 'Recorded diffs appear here when a conversation is open.';
+  return <>
+    {owner && <p className="panel-note recorded-diff-owner">{owner}</p>}
+    <RecordedDiffs diffs={thread ? snapshotDiffs(snapshot,thread.id) : []} preferences={preferences} emptyCaption={emptyCaption}/>
+  </>;
 }
-export function RecordedDiffs({diffs,preferences}:{diffs:ReturnType<typeof snapshotDiffs>;preferences:UiPreferences}) {
+export function RecordedDiffs({diffs,preferences,emptyCaption}:{diffs:ReturnType<typeof snapshotDiffs>;preferences:UiPreferences;emptyCaption?:string}) {
   const pair = (before: string, after: string) => {
     if (!preferences.hideWhitespace) return { before, after };
     const left = before.split('\n'), right = after.split('\n'); const changed = Math.max(left.length, right.length);
     return { before: Array.from({ length: changed }, (_, index) => (left[index] ?? '').replace(/\s/g, '') === (right[index] ?? '').replace(/\s/g, '') ? null : left[index] ?? '').filter(line => line !== null).join('\n'), after: Array.from({ length: changed }, (_, index) => (left[index] ?? '').replace(/\s/g, '') === (right[index] ?? '').replace(/\s/g, '') ? null : right[index] ?? '').filter(line => line !== null).join('\n') };
   };
-  return <div className={`workspace-diffs diff-colors-${preferences.diffColors}`}>{diffs.length ? <>{diffs.map(diff => { const value = pair(diff.before ?? '', diff.after ?? ''); return <details className="workspace-diff" key={diff.id} open={preferences.diffDefaultExpanded}><summary>{diff.title}</summary><p className="panel-note">{diff.provenance}</p>{diff.unified !== undefined ? <pre className="unified-diff">{diff.unified || 'No changes reported.'}</pre> : <div className={`workspace-diff-pair diff-${preferences.diffLayout}`}><section><h3>Before</h3><pre>{value.before || '(empty)'}</pre></section><section><h3>After</h3><pre>{value.after || '(empty)'}</pre></section></div>}</details>; })}</> : <div className="panel-empty"><strong>No recorded diffs</strong></div>}</div>;
+  return <div className={`workspace-diffs diff-colors-${preferences.diffColors}`}>{diffs.length ? <>{diffs.map(diff => { const value = pair(diff.before ?? '', diff.after ?? ''); return <details className="workspace-diff" key={diff.id} open={preferences.diffDefaultExpanded}><summary>{diff.title}</summary><p className="panel-note">{diff.provenance}</p>{diff.unified !== undefined ? <pre className="unified-diff">{diff.unified || 'No changes reported.'}</pre> : <div className={`workspace-diff-pair diff-${preferences.diffLayout}`}><section><h3>Before</h3><pre tabIndex={0}>{value.before || '(empty)'}</pre></section><section><h3>After</h3><pre tabIndex={0}>{value.after || '(empty)'}</pre></section></div>}</details>; })}</> : <div className="panel-empty"><strong>No recorded diffs</strong>{emptyCaption && <p className="panel-note recorded-diff-empty-caption">{emptyCaption}</p>}</div>}</div>;
 }
 export function OutputPanel({ snapshot, threadId, preferences }: { snapshot: Snapshot; threadId?: string; preferences: UiPreferences }) {
   const operations = snapshot.operations.filter(item => item.threadId === threadId), data = snapshot.data.filter(item => item.threadId === threadId && !operations.some(operation => operation.id === item.id) && (typeof record(item.value).stdout === 'string' || typeof record(item.value).stderr === 'string'));

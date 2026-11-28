@@ -4,30 +4,36 @@ import type {UiPreferences} from '../../../packages/contracts/preferences';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import {displayFilePath} from './files/FilesView';
 import {checkpointOwnerKey,checkpointReviewPaths,disabledCheckpointAdapter,readCheckpointDetail,readCheckpointList,readCheckpointReview,readRestorePlan,readRestoreResult,type CheckpointOwner,type CheckpointRestorePlan,type CheckpointReview,type FileCheckpoint,type FileCheckpointAdapter} from './file-checkpoint-api';
+import {splitDiffLines} from './diff-line-kind';
 import './file-checkpoints.css';
 import {ErrorState} from '../../../packages/ui-shell/Feedback';
 
 const sources=['Current','Recorded','History','Git history'] as const;
 type Source=typeof sources[number];
+const sourceId=(source:Source)=>source.toLowerCase().replaceAll(' ','-');
 export interface FileCheckpointsProps {
   owner?:CheckpointOwner;preferences:UiPreferences;current:ReactNode;recorded:ReactNode;
   adapter?:FileCheckpointAdapter;initialSource?:Source;history?:ReactNode;
 }
 export function FileCheckpoints({owner,preferences,current,recorded,adapter=disabledCheckpointAdapter,initialSource='Current',history}:FileCheckpointsProps){
   const [source,setSource]=useState<Source>(initialSource),id=useId();
+  const panels:Record<Source,ReactNode>={
+    Current:current,
+    Recorded:recorded,
+    History:source==='History'&&(owner?<CheckpointHistory key={checkpointOwnerKey(owner)} owner={owner} adapter={adapter} preferences={preferences}/>:<p className="file-checkpoints-note">Checkpoint history unavailable.</p>),
+    'Git history':source==='Git history'&&(history??<p className="file-checkpoints-note">Git history unavailable.</p>),
+  };
   return <div className="file-checkpoints">
     <div className="file-checkpoints-toolbar"><strong>Changes</strong>
-      <div role="tablist" aria-label="Changes source">{sources.map((name,index)=><button key={name} type="button" role="tab" id={`${id}-${name}`} aria-controls={`${id}-body`} aria-selected={source===name} tabIndex={source===name?0:-1} onClick={()=>setSource(name)} onKeyDown={event=>{
+      <div role="tablist" aria-label="Changes source">{sources.map((name,index)=><button key={name} type="button" role="tab" id={`${id}-tab-${sourceId(name)}`} aria-controls={`${id}-panel-${sourceId(name)}`} aria-selected={source===name} tabIndex={source===name?0:-1} onClick={()=>setSource(name)} onKeyDown={event=>{
         if(isComposing(event))return;
         const next=event.key==='ArrowRight'?(index+1)%sources.length:event.key==='ArrowLeft'?(index+sources.length-1)%sources.length:event.key==='Home'?0:event.key==='End'?sources.length-1:null;
         if(next===null)return;event.preventDefault();setSource(sources[next]);event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
       }}>{name}</button>)}</div>
     </div>
-    <div role="tabpanel" id={`${id}-body`} aria-labelledby={`${id}-${source}`} tabIndex={0}>
-      <div hidden={source!=='Current'}>{current}</div><div hidden={source!=='Recorded'}>{recorded}</div>
-      {source==='History'&&(owner?<CheckpointHistory key={checkpointOwnerKey(owner)} owner={owner} adapter={adapter} preferences={preferences}/>:<p className="file-checkpoints-note">Checkpoint history unavailable.</p>)}
-      {source==='Git history'&&(history??<p className="file-checkpoints-note">Git history unavailable.</p>)}
-    </div>
+    {sources.map(name=><div key={name} className="file-checkpoints-panel" role="tabpanel" id={`${id}-panel-${sourceId(name)}`} aria-labelledby={`${id}-tab-${sourceId(name)}`} hidden={source!==name} tabIndex={source===name?0:-1}>
+      {panels[name]}
+    </div>)}
   </div>;
 }
 export const errorMessage=(cause:unknown)=>cause instanceof Error?cause.message:'Checkpoints could not load. Try again.';
@@ -35,13 +41,12 @@ export const plural=(count:number,word:string)=>`${count} ${word}${count===1?'':
 export const formatTime=(value:string,preferences:UiPreferences)=>new Date(value).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short',hour12:preferences.timeFormat==='system'?undefined:preferences.timeFormat==='12h'});
 const provenance=(checkpoint:FileCheckpoint)=>checkpoint.provenance.kind==='restore_backup'?'Saved before a restore':'Saved before an edit';
 const statusNote=(status:string)=>status==='missing'?'Not in your files now':status==='binary'?'Binary file, no preview':status==='too_large'?'Too large to preview':status==='unreadable'?'Could not be read':'No preview available';
-const diffLineKind=(line:string)=>line.startsWith('@@')?'hunk':line.startsWith('+')?'add':line.startsWith('-')?'remove':'context';
 export function CheckpointDiff({diff}:{diff:string}){
-  const all=diff.split('\n'),firstHunk=all.findIndex(line=>line.startsWith('@@'));
+  const all=splitDiffLines(diff),firstHunk=all.findIndex(line=>line.text.startsWith('@@'));
   const headerEnd=firstHunk===-1?Math.min(2,all.length):firstHunk;
-  const lines=all.filter((line,index)=>index>=headerEnd||!(line.startsWith('--- ')||line.startsWith('+++ ')));
-  if(!lines.some(line=>line.trim()))return <pre className="unified-diff"><span data-kind="context">No differences.</span></pre>;
-  return <pre className="unified-diff">{lines.map((line,index)=><span key={index} data-kind={diffLineKind(line)}>{line||' '}{'\n'}</span>)}</pre>;
+  const lines=all.filter(({text},index)=>index>=headerEnd||!(text.startsWith('--- ')||text.startsWith('+++ ')));
+  if(!lines.some(line=>line.text.trim()))return <pre className="unified-diff"><span data-kind="context">No differences.</span></pre>;
+  return <pre className="unified-diff">{lines.map((line,index)=><span key={index} data-kind={line.kind}>{line.text||' '}{'\n'}</span>)}</pre>;
 }
 function CheckpointHistory({owner,adapter,preferences}:{owner:CheckpointOwner;preferences:UiPreferences}&{adapter:FileCheckpointAdapter}){
   const [items,setItems]=useState<FileCheckpoint[]>([]),[nextCursor,setNextCursor]=useState<string>(),[error,setError]=useState(''),[loading,setLoading]=useState(true),[attempt,setAttempt]=useState(0),[cursor,setCursor]=useState<string>(),[checkpoint,setCheckpoint]=useState<FileCheckpoint>();
