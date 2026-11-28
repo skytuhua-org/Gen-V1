@@ -21,13 +21,16 @@ import { groupWorkActivity, WorkActivity } from './WorkActivity';
 import { display, schemaDefaults, SchemaFields } from './registry';
 import { useModalRegion } from './focus';
 import { validateSchema } from './schema-validator';
+import { displayThreadTitle } from './thread-title';
 import { matchingThreads, type HistoricalThreadMatches } from './thread-search';
 import { getPreferences, mergePreferences } from '../../../packages/contracts/preferences';
 import { ShellSidebar, threadStatus } from './ShellSidebar';
 import { ProjectPicker } from './ProjectPicker';
-import { projectColorKey } from './project-colors';
+import { projectColor, projectColorKey } from './project-colors';
+import { modelChoiceKey, modelSourceLocks, pickWritesGlobalDefault, projectModelDefaultFor, resolveNewThreadModel, thinkingExplicitKey, type ModelSource } from './project-model-defaults';
 import { useShellLayout, matchesShortcut, focusSidebarSearch } from './shell-layout';
 import { ariaKeyShortcuts, chordFor, shortcutKeys } from './keyboard-bindings';
+
 import {useSidebarCollapse} from './sidebar-collapse';
 import {sameSplitWorkspaceView,createSplitWorkspaceLayout,applySplitWorkspaceCommand} from '../../../packages/core/split-workspace-layout';
 import { ResizeHandle, WorkspacePanel } from './WorkspacePanel';
@@ -45,13 +48,13 @@ import {runtimeUsageReport} from './usage-presentation';
 import {DockedSummary,SummaryDock,SummaryLayout} from '../../../packages/ui-shell/SummaryDock';
 import {workspacePanelBounds} from './panel-geometry';
 import {createPlanVisibility,selectPlanRecord} from './plan-visibility';
-import {ComposerToolbar,ComposerTaskActions} from './ComposerToolbar';
+import {ComposerToolbar,ComposerTaskActions,ComposerModelNotice} from './ComposerToolbar';
 import {ComposerView} from './ComposerView';
 import {LoadingState} from './LoadingState';
 import {RunProgressCard,RunStrip,threadWorking} from './run-progress';
 import {SurfaceBoundary} from './SurfaceBoundary';
 import {ComposerSkeleton, ConversationSkeleton, WorkspaceSkeleton} from './ViewSkeletons';
-import {ComposerAttachments} from './ComposerAttachments';
+import {ComposerAttachments,useComposerAttachmentFeedback} from './ComposerAttachments';
 import {SessionBranchLineage, SessionBranchMenu, useSessionBranchOverview} from './SessionBranchMenu';
 import {toast,Toaster} from '../../../packages/ui-shell/Toast';
 import {Spinner} from '../../../packages/ui-shell/Feedback';
@@ -59,7 +62,7 @@ import {dedupeReplayedFrames} from './thread-messages';
 import {TooltipLayer} from '../../../packages/ui-shell/Tooltip';
 import {reducedMotion} from './task-motion';
 import {Select} from '../../../packages/ui-shell/Select';
-import {PluginFrame,usePluginCatalog} from './PluginFrame';
+import {PluginFrame,usePluginCatalog,usePluginCatalogNotice} from './PluginFrame';
 import {recordedChangeSummary} from './composer-evidence';
 import {useDesktop,useDesktopCloseGuard,useDesktopReady,useDetachedSurface,usePendingSurface,detachedSurface,pendingSurface} from './desktop-context';
 import {DesktopBrowserDock} from './DesktopBrowser';
@@ -74,11 +77,12 @@ import {WorkspaceCanvas} from './WorkspaceCanvas';
 import {DelegatedAgentTranscript} from './DelegatedAgentTranscript';
 import {WorkspaceControls,panelLabels} from './WorkspaceControls';
 import {WorkspaceHost,type ConversationHost} from './WorkspaceHost';
+import {notifyThreadArchived} from './archive-notification';
 import type {SharedAgentComposers, ComposerState, ConversationComposerTarget} from './agents-workspace/composer';
 import {ComposerCommands,ComposerSkillBindings,type ComposerCommandsHandle} from './ComposerCommands';
 import type {ModelPickerHandle} from './ModelPicker';
 import {useComposerSkills,skillDraftKey,readSkillBindings,clearAcceptedSkills} from './composer-skill-drafts';
-import {useWorkspaceState} from './workspace-api';
+import {getWorkspace,useWorkspaceState} from './workspace-api';
 import {liveThreadPanels,delegatedThread,threadParent,threadProject,findCanvasPanelBounds} from './workspace-canvas-layout';
 import {panelDesktopSurface,panelsForDesktopSurface,panelNativeWindow} from './workspace-native';
 import type {PanelBinding,PanelPlacement,WorkspacePanelKind,SurfaceRef} from '../../../packages/contracts/workspace.ts';
@@ -183,9 +187,16 @@ function ResourcePicker({ threadId, close, refresh, opener }: { threadId: string
 }
 
 type PrepareThread = (id: string) => Promise<unknown>;
+type ProjectSelection = {threadId?:string;opener:HTMLElement|null;prepare?:PrepareThread;initialActiveProjectId?:string};
 type ComposerChangesAvailability=(threadId:string,available:boolean)=>void;
+/** Model resolution context handed to composers for provenance and notices (issue #1481). */
+interface ComposerModelResolution {
+ source?: ModelSource; reasoningDropped?: boolean; thinkingLevel?: string; droppedLevel?: string;
+ projectId?: string | null; projectName?: string; projectColor?: string;
+ projectDefault?: { modelId: string; thinkingLevel: string | null } | null;
+}
 const emptyComposerState: ComposerState = {draft: '', ready: false, busy: false, stopping: false, error: '', retry: false};
-function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, onComposerChangesAvailability, thread, models, modelId, setModelId, snapshot, ensureThread, busy: externalBusy, runAction, refresh, setup, openResource, inspectChanges, reportError,onSide, predictionBlocked, selectProject, usageOpen=false, onShowUsage, onNewTask }: { usageOpen?:boolean; onShowUsage?:()=>void; modelPickerRequest?:number; onModelPickerOpened?:(request:number)=>void; sharedComposers?: SharedAgentComposers; onComposerChangesAvailability?:ComposerChangesAvailability; selectProject?:(id:string|undefined,opener?:HTMLElement|null,prepare?:PrepareThread)=>void; predictionBlocked: boolean; thread: Thread | undefined; models: ModelInfo[]; modelId: string; setModelId: (id: string) => void; snapshot: Snapshot; ensureThread: (prepare: PrepareThread) => Promise<string>; busy: boolean; runAction: (action: () => Promise<void>) => Promise<void>; refresh: () => Promise<void>; setup: () => void; openResource: (id: string, opener?: HTMLElement | null) => void; browseProject:(id:string)=>void;inspectChanges:()=>void; reportError: (error: string) => void;onSide:(content:string)=>Promise<void>; onNewTask?:(modelId:string)=>void }) {
+function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, onComposerChangesAvailability, thread, models, modelId, setModelId, snapshot, ensureThread, busy: externalBusy, runAction, refresh, setup, openResource, inspectChanges, reportError,onSide, predictionBlocked, selectProject, usageOpen=false, onShowUsage, onNewTask, modelResolution, onEditProjectDefaults, registerDock }: { registerDock?:(node:HTMLDivElement|null)=>void; usageOpen?:boolean; onShowUsage?:()=>void; modelResolution?:ComposerModelResolution; onEditProjectDefaults?:()=>void; modelPickerRequest?:number; onModelPickerOpened?:(request:number)=>void; sharedComposers?: SharedAgentComposers; onComposerChangesAvailability?:ComposerChangesAvailability; selectProject?:(id:string|undefined,opener?:HTMLElement|null,prepare?:PrepareThread)=>void; predictionBlocked: boolean; thread: Thread | undefined; models: ModelInfo[]; modelId: string; setModelId: (id: string) => void; snapshot: Snapshot; ensureThread: (prepare: PrepareThread) => Promise<string>; busy: boolean; runAction: (action: () => Promise<void>) => Promise<void>; refresh: () => Promise<void>; setup: () => void; openResource: (id: string, opener?: HTMLElement | null) => void; browseProject:(id:string)=>void;inspectChanges:()=>void; reportError: (error: string) => void;onSide:(content:string)=>Promise<void>; onNewTask?:(modelId:string)=>void }) {
   const key = thread?.id ?? 'new';
   const workbench = useSourceWorkbench();
   const draftProject=useProjectContext(thread?.projectId,thread?.id,thread?.workspaceId);
@@ -202,8 +213,8 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
   useEffect(() => {if (sharedComposers && sharedTarget) void sharedComposers.prepare(sharedTarget);}, [sharedComposers, sharedTarget]);
   const draftLatest=useRef(draft);draftLatest.current=draft;
   const [thinkingLevel,setThinkingLevel]=useState(thread?.thinkingLevel??'');const thinkingEdited=useRef(false),thinkingLatest=useRef(thinkingLevel);thinkingLatest.current=thinkingLevel;
-  useEffect(()=>{let active=true;void journalRead<string>('thinking:'+key).then(value=>{if(active&&!thinkingEdited.current)setThinkingLevel(value??thread?.thinkingLevel??'');}).catch(()=>{});return()=>{active=false;};},[key]);
-  const chooseThinking=(value:string)=>{thinkingEdited.current=true;setThinkingLevel(value);void journalWrite('thinking:'+draftTarget.current,value).catch(()=>{});};
+  useEffect(()=>{let active=true;void Promise.all([journalRead<string>('thinking:'+key),journalRead<string>(thinkingExplicitKey(key))]).then(([value,flag])=>{if(!active||thinkingEdited.current)return;if(flag!==undefined){thinkingEdited.current=true;setThinkingLevel(value??thread?.thinkingLevel??'');}else setThinkingLevel(modelResolution?.source==='project'?modelResolution.thinkingLevel??value??thread?.thinkingLevel??'':value??thread?.thinkingLevel??'');}).catch(()=>{});return()=>{active=false;};},[key,modelResolution?.source,modelResolution?.thinkingLevel]);
+  const chooseThinking=(value:string)=>{thinkingEdited.current=true;setThinkingLevel(value);void journalWrite('thinking:'+draftTarget.current,value).catch(()=>{});void journalWrite(thinkingExplicitKey(draftTarget.current),'1').catch(()=>{});};
   const [localReady, setReady] = useState(false);
   const ready = shared ? sharedState.ready : localReady;
   useLayoutEffect(()=>{
@@ -229,6 +240,8 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null), commands = useRef<ComposerCommandsHandle>(null), modelPicker = useRef<ModelPickerHandle>(null), openedModelRequest = useRef<number | undefined>(undefined);
   const [skillOwner,setSkillOwner]=useState(key);
+  const dismissedModelNotice=useRef<Set<string>>(new Set());const[,setModelNoticeTick]=useState(0);
+  useEffect(()=>{dismissedModelNotice.current=new Set();},[key]);
   const localSkills = useComposerSkills(skillOwner, !shared), skills = shared ? sharedState.skills ?? [] : localSkills.skills;
   const skillsReady = shared || localSkills.ready;
   const retry = shared && sharedState.retry, skillsBlocked = skills.length > 0 && !retry;
@@ -238,6 +251,11 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
   const file = useRef<HTMLInputElement>(null);
   const ghost = useRef<HTMLDivElement>(null);
   const resources = snapshot.resources.filter(item => item.threadId === thread?.id);
+  const removeBlocked=thread&&delegatedThread(thread)?'read-only':undefined;
+  const attachmentFeedback=useComposerAttachmentFeedback(resources,resource=>command(
+    resource.composerAttachment?'resource.remove-composer-attachment':'resource.revoke',
+    {resourceId:resource.id},thread?.id,
+  ).then(()=>refresh()).catch(cause=>{setError(`Could not remove ${resource.label}: ${messageOf(cause)}`);throw cause;}),removeBlocked);
   const unavailable = !models.length || !models.some(model => model.id === modelId);
   const project=resources.find(resource=>resource.kind==='project');const changes=useMemo(()=>recordedChangeSummary(snapshot.data,thread?.id),[snapshot.data,thread?.id]);
   useEffect(()=>{const model=models.find(model=>model.id===modelId);if(model&&thinkingLevel&&!model.thinkingLevels?.includes(thinkingLevel))chooseThinking('');},[models,modelId,thinkingLevel]);
@@ -280,6 +298,10 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
     draftTarget.current = id;setSkillOwner(id);
     if(id!==key){
       await journalWrite('thinking:'+id,thinkingLatest.current);
+      const chosen=await journalReadRecord(modelChoiceKey(key));
+      if(chosen){await journalWrite(modelChoiceKey(id),chosen.value);if(retireSource)await journalCompareAndSwap(modelChoiceKey(key),chosen.generation,'');}
+      const explicit=await journalReadRecord(thinkingExplicitKey(key));
+      if(explicit){await journalWrite(thinkingExplicitKey(id),explicit.value);if(retireSource)await journalCompareAndSwap(thinkingExplicitKey(key),explicit.generation,'');}
       const selected=await journalReadRecord(skillDraftKey(key));
       await journalWrite(skillDraftKey(id),readSkillBindings(selected?.value));
       if(retireSource&&selected)await journalCompareAndSwap(skillDraftKey(key),selected.generation,[]);
@@ -360,14 +382,16 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
     await command('thread.mode',{mode},thread.id);await refresh();
   };
   const preparePR=()=>{const intent='Create a pull request for the current changes.';const current=draftLatest.current;updateDraft(current.startsWith(intent)?current:intent+(current.trim()?'\n\n'+current:''));input.current?.focus();};
-  return <div className="composer-dock">
+  return <div className="composer-dock" ref={registerDock} data-composer-dock={registerDock?true:undefined} data-composer-thread={thread?.id}>
     {thread && !working && ['stopped', 'interrupted', 'failed'].includes(thread.status) && <div className="resume-strip" role="status"><span>{thread.status === 'interrupted' ? 'This session was interrupted.' : thread.status === 'stopped' ? 'Agent stopped. Your work is saved.' : 'The agent could not finish this run.'}</span><button className="secondary" disabled={!modelId || resuming} title={!modelId ? 'Choose an available model before resuming.' : undefined} onClick={resume} aria-busy={resuming || undefined}>{resuming ? <><Spinner size={12} />Resuming…</> : <>Resume<ChevronRight size={13} /></>}</button></div>}
     {localSkills.error&&!shared&&<p role="alert" className="composer-error">{localSkills.error}</p>}
     {error && <div className="composer-error" role="alert"><span>{error}</span><span className="composer-error-actions">{resumeRequired&&thread&&<button className="quiet" disabled={!modelId} onClick={resume}>Resume thread</button>}<button className="icon-button" aria-label="Dismiss composer error" onClick={dismissError}><X size={14} /></button></span></div>}
     {working && draft.trim() && !(workbench?.enabled && workbench.draft?.sendMode === 'AFTER_CURRENT') && !/^\/(?:btw|side)(?:\s|$)/i.test(draft.trim()) && <p className="composer-hint">The agent is working — start the message with /btw to send a side question.</p>}
+    {attachmentFeedback.notice}
     <ComposerView className={dragging ? 'dragging' : ''} onSubmit={event => { event.preventDefault(); void send(); }} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (event.dataTransfer.files.length) void upload(event.dataTransfer.files); }}>
-      <WorkbenchComposer title={thread?.title??'New conversation'} working={working} disabled={busy||!ready||retry}/>
-      <ComposerAttachments resources={resources} excerpts={excerpts} disabled={busy||!ready||retry} onEditExcerpt={(id,text)=>updateExcerpt(id,text)} onRemoveExcerpt={id=>updateExcerpt(id)} onRemoveResource={resource=>command('resource.revoke',{resourceId:resource.id},thread?.id??'').then(()=>refresh()).catch(cause=>{setError(`Could not remove ${resource.label}: ${messageOf(cause)}`);throw cause;})} removeBlocked={thread&&delegatedThread(thread)?'read-only':undefined} timeFormat={getPreferences(snapshot.settings).timeFormat}/>
+      <WorkbenchComposer title={displayThreadTitle(thread)} working={working} disabled={busy||!ready||retry}/>
+      <span role="status" className="sr-only">{attachmentFeedback.announcement}</span>
+      <ComposerAttachments resources={resources} excerpts={excerpts} disabled={busy||!ready||retry} onEditExcerpt={(id,text)=>updateExcerpt(id,text)} onRemoveExcerpt={id=>updateExcerpt(id)} onRemoveResource={attachmentFeedback.remove} removeBlocked={removeBlocked} removing={attachmentFeedback.removing} timeFormat={getPreferences(snapshot.settings).timeFormat}/>
       <ComposerSkillBindings bindings={skills} retry={retry} onRemove={id=>{void (sharedComposers&&sharedTarget?sharedComposers.removeSkill(sharedTarget,id):localSkills.remove(id)).catch(cause=>fail(cause));}}/>
       <ComposerCommands ref={commands} input={input} draft={draft} threadId={thread?.id} projectId={thread?.projectId} disabled={!ready||!skillsReady||busy||predictionBlocked} mode={thread?.mode??draftMode} onDraft={updateDraft} onModel={()=>modelPicker.current?.open()} onMode={chooseMode}/>
       <div className="composer-entry-row">
@@ -386,7 +410,8 @@ function Composer({ modelPickerRequest, onModelPickerOpened, sharedComposers, on
       <ComposerTaskActions changeSummary={changes} onChanges={inspectChanges} onCreatePR={preparePR} disabled={busy||!ready} working={working}/>
       </div>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{prediction.candidate ? `Suggested message: ${prediction.candidate} Tab to accept. Escape to dismiss.` : ''}</span>
-      <ComposerToolbar modelPickerRef={modelPicker} models={models} modelId={modelId} onModelChange={id=>{chooseThinking('');setModelId(id);}} modelScopeHint={thread?'New conversations only.':'Applies to new tasks.'} onModelNewTask={onNewTask} thinkingLevel={thinkingLevel} onThinkingChange={chooseThinking} projectLabel={thread?.projectName??project?.label} changeSummary={changes} onProject={async()=>{if(!selectProject){await addResource();return;}const opener=document.activeElement as HTMLElement|null;selectProject(thread?.id,opener,thread?undefined:id=>migrateDraft(id,draftLatest.current,true));}} onChanges={inspectChanges} onCreatePR={preparePR} onTranscript={text=>{const current=draftLatest.current;updateDraft(current+(current&&!/\s$/.test(current)?' ':'')+text);}} disabled={busy||!ready} working={working} separateActions
+      <ComposerModelNotice source={modelResolution?.source} reasoningDropped={modelResolution?.reasoningDropped} projectName={modelResolution?.projectName} droppedLevel={modelResolution?.droppedLevel} modelName={models.find(model=>model.id===modelId)?.name??modelId} dismissed={dismissedModelNotice.current.has(key)} onChooseModel={()=>modelPicker.current?.open()} onEditProjectDefaults={onEditProjectDefaults} onDismiss={()=>{dismissedModelNotice.current.add(key);setModelNoticeTick(value=>value+1);}}/>
+      <ComposerToolbar modelPickerRef={modelPicker} models={models} modelId={modelId} onModelChange={id=>{chooseThinking('');setModelId(id);}} modelSource={modelResolution?.source} modelProjectColor={modelResolution?.projectColor} modelProjectName={modelResolution?.projectName} modelScopeHint={modelResolution?.source==='project'?'Project default · applies to this thread only when changed.':thread?'New conversations only.':'Applies to new tasks.'} onModelNewTask={onNewTask} thinkingLevel={thinkingLevel} onThinkingChange={chooseThinking} projectLabel={thread?.projectName??project?.label} changeSummary={changes} onProject={async()=>{if(!selectProject){await addResource();return;}const opener=document.activeElement as HTMLElement|null;selectProject(thread?.id,opener,thread?undefined:id=>migrateDraft(id,draftLatest.current,true));}} onChanges={inspectChanges} onCreatePR={preparePR} onTranscript={text=>{const current=draftLatest.current;updateDraft(current+(current&&!/\s$/.test(current)?' ':'')+text);}} disabled={busy||!ready} working={working} separateActions
         leading={<>{savedDraftOwner?<SavedDrafts owner={savedDraftOwner} input={input} disabled={busy||!ready||retry||predictionBlocked}/>:savedDraftSlot==='loading'?<button type="button" className="quiet saved-drafts-trigger" disabled title="Loading saved drafts…">Saved drafts</button>:savedDraftSlot==='retry'?<button type="button" className="quiet saved-drafts-trigger" title="Saved drafts are unavailable — click to retry." onClick={()=>draftProject.refresh()}>Saved drafts</button>:<button type="button" className="quiet saved-drafts-trigger" disabled title="Start a conversation to save named drafts.">Saved drafts</button>}<button type="button" className="icon-button attach-button" aria-label="Attach files" title="Attach files" disabled={busy} onClick={()=>file.current?.click()}><Plus size={18}/></button><input type="file" multiple ref={file} hidden onChange={event=>{if(event.target.files)void upload(event.target.files);event.target.value='';}}/></>}
         runtime={<>{thread?.accountId!=null&&<span className="composer-account" title="Account for this task">{snapshot.accounts?.find(account=>account.id===thread.accountId)?.label??'Account unavailable'}</span>}<span className="pill runtime-pill" title="Local workspace"><Laptop size={14}/>Local</span><button type="button" className="mode-toggle" aria-label="Task mode" aria-pressed={(thread?.mode??draftMode)==='plan'} title={(thread?.mode??draftMode)==='plan'?'Switch to Build':'Switch to Plan'} disabled={working||busy} onClick={()=>{void chooseMode((thread?.mode??draftMode)==='plan'?'build':'plan').catch(cause=>setError(messageOf(cause)));}}>{(thread?.mode??draftMode)==='plan'?<PenLine size={15}/>:<Bot size={15}/>}<span>{(thread?.mode??draftMode)==='plan'?'Plan':'Build'}</span></button>{preferences.showUsageFooter&&onShowUsage&&<button type="button" className="composer-tool composer-usage-launcher" aria-label={usageOpen?'Hide live usage':'Show live usage'} title={usageOpen?'Hide live usage':'Show live usage'} aria-pressed={usageOpen} onClick={onShowUsage}><Activity size={15}/></button>}</>}
         context={preferences.showComposerContext&&<span className="context-anchor"><button ref={contextAnchor} type="button" className="icon-button context-button" aria-label="Inspect context usage" aria-expanded={contextOpen} onClick={()=>setContextOpen(value=>!value)}><SlidersHorizontal size={15}/></button><ContextInspector open={contextOpen} anchor={contextAnchor} usage={thread?snapshot.usage[thread.id]:undefined} usageThreadId={thread?.id} thread={thread} close={()=>setContextOpen(false)} refresh={refresh} memoryRecall={preparedMemory.memoryRecall} memoryPreparation={memoryOwner ? {pending: preparedMemory.pending, error: preparedMemory.error, refresh: preparedMemory.refresh, disabled: busy || working} : undefined}/></span>}
@@ -402,38 +427,51 @@ function SideThreadComposer({thread,modelId,refresh}:{thread:Thread;modelId:stri
  useEffect(()=>{let active=true;void journalRead<string>(key).then(value=>{if(active){setDraft(value??'');setReady(true);}}).catch(()=>{if(active)setError('Draft recovery failed. Keep this panel open.');});return()=>{active=false;};},[key]);
  useEffect(()=>journalSubscribe(key,value=>setDraft(typeof value==='string'?value:'')),[key]);
  const working=Boolean(thread.runId)||thread.status==='working';
- return <form className="canvas-side-composer" onSubmit={event=>{event.preventDefault();if(!ready||busy||working||!modelId||!draft.trim())return;const generation=journalGeneration(key),content=draft.trim();setBusy(true);setError('');void command('message.send',{content,modelId},thread.id).then(()=>journalCompareAndSwap(key,generation,'')).then(refresh).catch(cause=>setError(messageOf(cause))).finally(()=>setBusy(false));}}><label className="sr-only" htmlFor={`side-message-${thread.id}`}>Message to {thread.title}</label><textarea id={`side-message-${thread.id}`} aria-label={`Message to ${thread.title}`} placeholder="Ask a side question…" disabled={!ready} value={draft} onChange={event=>{const value=event.target.value;setDraft(value);void journalWrite(key,value).catch(()=>setError('Draft could not be stored. Keep this panel open.'));}}/><div><small>Side conversation · independent draft</small><button className="secondary" disabled={busy||!ready||working||!modelId||!draft.trim()}>Send</button></div>{error&&<p role="alert" className="error-text">{error}</p>}</form>;
+ return <form className="canvas-side-composer" onSubmit={event=>{event.preventDefault();if(!ready||busy||working||!modelId||!draft.trim())return;const generation=journalGeneration(key),content=draft.trim();setBusy(true);setError('');void command('message.send',{content,modelId},thread.id).then(()=>journalCompareAndSwap(key,generation,'')).then(refresh).catch(cause=>setError(messageOf(cause))).finally(()=>setBusy(false));}}><label className="sr-only" htmlFor={`side-message-${thread.id}`}>Message to {displayThreadTitle(thread)}</label><textarea id={`side-message-${thread.id}`} aria-label={`Message to ${displayThreadTitle(thread)}`} placeholder="Ask a side question…" disabled={!ready} value={draft} onChange={event=>{const value=event.target.value;setDraft(value);void journalWrite(key,value).catch(()=>setError('Draft could not be stored. Keep this panel open.'));}}/><div><small>Side conversation · independent draft</small><button className="secondary" disabled={busy||!ready||working||!modelId||!draft.trim()}>Send</button></div>{error&&<p role="alert" className="error-text">{error}</p>}</form>;
 }
 function CanvasThread({sharedComposers,thread,snapshot,visible,blocked,refresh,setup,openResource,browseProject,inspectChanges,reportError,selectProject,liveMessages}:{sharedComposers?:SharedAgentComposers;thread:Thread;snapshot:Snapshot;visible:boolean;blocked:boolean;refresh:()=>Promise<void>;setup:()=>void;openResource:(id:string,opener?:HTMLElement|null)=>void;browseProject:(id:string)=>void;inspectChanges:()=>void;liveMessages:ReadonlySet<string>;selectProject?:(id:string|undefined,opener?:HTMLElement|null,prepare?:PrepareThread)=>void;reportError:(error:string)=>void}){
  const findScope=useRef<HTMLDivElement>(null),findTranscript=useRef<HTMLDivElement>(null);
  const [models,setModels]=useState<ModelInfo[]>([]),[modelId,setModelId]=useState(thread.modelId??''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[history,setHistory]=useState(60),detached=useDetachedSurface({kind:'thread',threadId:thread.id}),pending=usePendingSurface({kind:'thread',threadId:thread.id});const readOnly=delegatedThread(thread),held=Boolean(detached||pending||blocked),request=useRef(0);
- const owner=`${thread.id}:${thread.accountId??'legacy'}:${thread.modelId??''}`;
+ const [canvasResolution,setCanvasResolution]=useState<ComposerModelResolution>({});
+ const projectContext=useProjectContext(thread.projectId,thread.id,thread.workspaceId);
+ const owner=`${thread.id}:${thread.accountId??'legacy'}:${thread.modelId??''}:${thread.projectId??''}`;
  useEffect(()=>{
   if(readOnly||!visible)return;let controller:AbortController|undefined;
   const load=async(force=false,target?:AccountAuthTarget)=>{const generation=++request.current;controller?.abort();const control=new AbortController();controller=control;if(!force)setModels([]);
-   try{const value=await getModels(force,thread.id,control.signal,target);if(generation!==request.current||control.signal.aborted)return;setModels(current=>mergeAccountModels(current,value.models,target));setModelId(current=>target?current:value.models.some(model=>model.id===current)?current:thread.modelId??value.models[0]?.id??'');setError(value.error??'');}
+   try{const value=await getModels(force,thread.id,control.signal,target);if(generation!==request.current||control.signal.aborted)return;setModels(current=>mergeAccountModels(current,value.models,target));
+    const bound=hasPinnedAccount(thread,snapshot);
+    if(!target&&!bound){
+     const preferences=getPreferences(snapshot.settings),authority=thread.projectId?projectContext.context?.project.authority:undefined;
+     const entry=thread.projectId&&authority?projectModelDefaultFor(preferences,authority,thread.projectId):null;
+     const [choice,thinking,explicitFlag]=await Promise.all([journalRead<string>(modelChoiceKey(thread.id)),journalRead<string>('thinking:'+thread.id),journalRead<string>(thinkingExplicitKey(thread.id))]);
+     if(generation!==request.current||control.signal.aborted)return;
+     const resolved=resolveNewThreadModel({bound:false,explicitModelId:(typeof choice==='string'&&choice)||thread.modelId||null,explicitThinking:explicitFlag!==undefined?thinking??null:null,project:entry,globalModelId:snapshot.settings.modelId,catalog:value.models});
+     setCanvasResolution({source:resolved.source,reasoningDropped:resolved.reasoningDropped,thinkingLevel:resolved.thinkingLevel,droppedLevel:entry?.thinkingLevel??'',projectId:thread.projectId??null,projectName:thread.projectName??projectContext.context?.project.name??'',projectDefault:entry,projectColor:thread.projectId&&authority?projectColor(authority,thread.projectId,preferences.projectColors):undefined});
+     setModelId(current=>resolved.modelId||(resolved.source==='project-unavailable'?'':value.models.some(model=>model.id===current)?current:value.models[0]?.id??''));
+    }else{setCanvasResolution({source:bound?'bound':undefined});setModelId(current=>target?current:value.models.some(model=>model.id===current)?current:thread.modelId??value.models[0]?.id??'');}
+    setError(value.error??'');}
    catch(cause){if(generation===request.current&&!control.signal.aborted){if(target)setModels(current=>mergeAccountModels(current,[],target));setError(messageOf(cause));}}
   };
   void load();const unsubscribe=onAccountCatalogChanged(async target=>{if((thread.accountId??null)===target.accountId&&thread.modelId?.split('/')[0]===target.providerId)await load(true,target);});
   return()=>{unsubscribe();request.current++;controller?.abort();};
- },[owner,readOnly,visible]);
+ },[owner,readOnly,visible,projectContext.context]);
  const messages=snapshot.messages.filter(message=>message.threadId===thread.id),working=Boolean(thread.runId)||thread.status==='working';
  const run=async(action:()=>Promise<void>)=>{setBusy(true);try{await action();}finally{setBusy(false);}};
- return <SourceWorkbenchProvider snapshot={snapshot} active={visible&&!held&&!readOnly&&!threadParent(thread)} owner={{threadId:thread.id,projectId:thread.projectId??null,workspaceId:thread.workspaceId??null}} ownerEpoch={`${thread.epoch}:${thread.accountId??''}:${visible}:${held}`}><div ref={findScope} className={`canvas-thread${readOnly?' canvas-thread-delegate':''}`}><div className="canvas-thread-status">{readOnly?'Delegated agent':threadParent(thread)?'Side conversation':'Main conversation'} · {threadStatus(thread)}{detached&&<button className="quiet" onClick={()=>void window.harnessDesktop?.focus(detached.id)}>Focus native window</button>}</div><ConversationFind ownerKey={thread.id} transcript={findTranscript} scope={findScope} active={visible} onLoadEarlier={messages.length>history?()=>setHistory(value=>value+60):undefined}/>{visible&&<div ref={findTranscript} className="canvas-thread-transcript" role="log" aria-label={`${thread.title} messages`}>{messages.length>history&&<button className="quiet" onClick={()=>setHistory(value=>value+60)}>Load earlier messages</button>}{messages.slice(-history).map(message=><div key={message.id} data-message-id={message.id} data-arrival={liveMessages.has(message.id)?'true':undefined} data-conversation-text className={`message message-${message.role}`}><span className="sr-only">{message.role}</span><CopyButton text={message.content} label="Copy message"/>{message.role==='assistant'?<SourceMessage id={message.id} threadId={message.threadId} text={message.content}><Markdown text={message.content}/></SourceMessage>:<Markdown text={message.content}/>}</div>)}{!messages.length&&<p className="muted">No messages yet.</p>}{error&&<p role="alert" className="error-text">{error}</p>}{thread.error&&<p role="alert" className="error-text">{thread.error}</p>}{!readOnly&&working&&<button className="quiet" disabled={busy} onClick={()=>void run(async()=>{await stopConversation(thread, sharedComposers);await refresh();}).catch(cause=>setError(messageOf(cause)))}>Stop</button>}{!readOnly&&['stopped','interrupted','failed'].includes(thread.status)&&<button className="secondary" disabled={busy||!modelId} onClick={()=>void run(async()=>{await command('run.resume',{modelId},thread.id);await refresh();}).catch(cause=>setError(messageOf(cause)))}>Resume</button>}</div>}{visible&&<VerificationPanel threadId={thread.id}/>}{visible&&<ControlConsentPanel threadId={thread.id}/>}{readOnly?<div className="canvas-thread-readonly">Read-only transcript.</div>:<div inert={held} style={{display:'contents'}}>{threadParent(thread)?<SideThreadComposer thread={thread} modelId={modelId} refresh={refresh}/>:<Composer sharedComposers={sharedComposers} selectProject={selectProject} key={thread.id} thread={thread} snapshot={snapshot} models={models} modelId={modelId} setModelId={setModelId} ensureThread={async prepare=>{await prepare(thread.id);return thread.id;}} busy={busy} runAction={run} refresh={refresh} setup={setup} openResource={openResource} browseProject={browseProject} inspectChanges={inspectChanges} reportError={reportError} predictionBlocked={held||!visible} onSide={async content=>{if(!content.trim())return;const receipt=await command('thread.create',{sideParentId:thread.id,title:content.slice(0,65)}),side=receipt.result as Thread,key=`side-draft:${thread.id}:${side.id}`,generation=await journalWrite(key,content);await refresh();await command('message.send',{content,modelId},side.id);await journalCompareAndSwap(key,generation,'');await refresh();}}/>}</div>}</div></SourceWorkbenchProvider>;
+ return <SourceWorkbenchProvider snapshot={snapshot} active={visible&&!held&&!readOnly&&!threadParent(thread)} owner={{threadId:thread.id,projectId:thread.projectId??null,workspaceId:thread.workspaceId??null}} ownerEpoch={`${thread.epoch}:${thread.accountId??''}:${visible}:${held}`}><div ref={findScope} className={`canvas-thread${readOnly?' canvas-thread-delegate':''}`}><div className="canvas-thread-status">{readOnly?'Delegated agent':threadParent(thread)?'Side conversation':'Main conversation'} · {threadStatus(thread)}{detached&&<button className="quiet" onClick={()=>void window.harnessDesktop?.focus(detached.id)}>Focus native window</button>}</div><ConversationFind ownerKey={thread.id} transcript={findTranscript} scope={findScope} active={visible} empty={!messages.length} onLoadEarlier={messages.length>history?()=>setHistory(value=>value+60):undefined}/>{visible&&<div ref={findTranscript} className="canvas-thread-transcript" role="log" aria-label={`${displayThreadTitle(thread)} messages`}>{messages.length>history&&<button className="quiet" onClick={()=>setHistory(value=>value+60)}>Load earlier messages</button>}{messages.slice(-history).map(message=><div key={message.id} data-message-id={message.id} data-arrival={liveMessages.has(message.id)?'true':undefined} data-conversation-text className={`message message-${message.role}`}><span className="sr-only">{message.role}</span><CopyButton text={message.content} label="Copy message"/>{message.role==='assistant'?<SourceMessage id={message.id} threadId={message.threadId} text={message.content}><Markdown text={message.content}/></SourceMessage>:<Markdown text={message.content}/>}</div>)}{!messages.length&&<p className="muted">No messages yet.</p>}{error&&<p role="alert" className="error-text">{error}</p>}{thread.error&&<p role="alert" className="error-text">{thread.error}</p>}{!readOnly&&working&&<button className="quiet" disabled={busy} onClick={()=>void run(async()=>{await stopConversation(thread, sharedComposers);await refresh();}).catch(cause=>setError(messageOf(cause)))}>Stop</button>}{!readOnly&&['stopped','interrupted','failed'].includes(thread.status)&&<button className="secondary" disabled={busy||!modelId} onClick={()=>void run(async()=>{await command('run.resume',{modelId},thread.id);await refresh();}).catch(cause=>setError(messageOf(cause)))}>Resume</button>}</div>}{visible&&<VerificationPanel threadId={thread.id}/>}{visible&&<ControlConsentPanel threadId={thread.id}/>}{readOnly?<div className="canvas-thread-readonly">Read-only transcript.</div>:<div inert={held} style={{display:'contents'}}>{threadParent(thread)?<SideThreadComposer thread={thread} modelId={modelId} refresh={refresh}/>:<Composer sharedComposers={sharedComposers} selectProject={selectProject} key={thread.id} thread={thread} snapshot={snapshot} models={models} modelId={modelId} setModelId={id=>{setModelId(id);void journalWrite(modelChoiceKey(thread.id),id).catch(()=>setError('The model choice could not be saved.'));}} modelResolution={canvasResolution} ensureThread={async prepare=>{await prepare(thread.id);return thread.id;}} busy={busy} runAction={run} refresh={refresh} setup={setup} openResource={openResource} browseProject={browseProject} inspectChanges={inspectChanges} reportError={reportError} predictionBlocked={held||!visible} onSide={async content=>{if(!content.trim())return;const receipt=await command('thread.create',{sideParentId:thread.id,title:content.slice(0,65)}),side=receipt.result as Thread,key=`side-draft:${thread.id}:${side.id}`,generation=await journalWrite(key,content);await refresh();await command('message.send',{content,modelId},side.id);await journalCompareAndSwap(key,generation,'');await refresh();}}/>}</div>}</div></SourceWorkbenchProvider>;
 
 }
 function stopConversation(thread: Thread, composers?: SharedAgentComposers) {
  return composers ? composers.stop({kind: 'conversation', threadId: thread.id, modelId: thread.modelId ?? null, working: Boolean(thread.runId) || thread.status === 'working'}) : command('run.stop', {}, thread.id);
 }
-export interface AppProps {onDirtyWidgetChange?:(id:string,threadId:string,dirty:boolean,discard?:()=>Promise<void>)=>void;onComposerChangesAvailability?:ComposerChangesAvailability;sharedComposers?:SharedAgentComposers;embeddedThreadId?:string;embeddedActive?:boolean;onRequestThread?:(id:string)=>void;liveUsage?:{open:boolean;toggle:()=>void};modelPickerRequest?:{id:number;threadId?:string};hostWorkspaceContext?:WorkspaceContextValue;onRequestWorkspaceTool?:(kind:WorkspaceContextValue['activeTab'],resourceId?:string,artifactId?:string)=>void}
+export interface AppProps {onDockedComposer?:(node:HTMLDivElement|null)=>void;onDirtyWidgetChange?:(id:string,threadId:string,dirty:boolean,discard?:()=>Promise<void>)=>void;onComposerChangesAvailability?:ComposerChangesAvailability;sharedComposers?:SharedAgentComposers;embeddedThreadId?:string;embeddedActive?:boolean;onRequestThread?:(id:string)=>void;liveUsage?:{open:boolean;toggle:()=>void};modelPickerRequest?:{id:number;threadId?:string};hostWorkspaceContext?:WorkspaceContextValue;onRequestWorkspaceTool?:(kind:WorkspaceContextValue['activeTab'],resourceId?:string,artifactId?:string)=>void}
 export function App(props:AppProps={}) {
   const desktop=useDesktop();
   if(props.embeddedThreadId||desktop?.context.surface.kind==='thread'||desktop?.context.surface.kind==='navigation')return <ConversationWorkspace {...props}/>;
   return <WorkspaceHost conversation={host=><ConversationWorkspace {...props} host={host}/>}/>;
 }
-function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,embeddedThreadId,embeddedActive=true,onRequestThread,liveUsage,modelPickerRequest:externalModelPicker,hostWorkspaceContext,onRequestWorkspaceTool,onDirtyWidgetChange,host}:AppProps&{host?:ConversationHost}={}) {
+function ConversationWorkspace({onDockedComposer,onComposerChangesAvailability,sharedComposers,embeddedThreadId,embeddedActive=true,onRequestThread,liveUsage,modelPickerRequest:externalModelPicker,hostWorkspaceContext,onRequestWorkspaceTool,onDirtyWidgetChange,host}:AppProps&{host?:ConversationHost}={}) {
   const ownPluginCatalog=usePluginCatalog(!host&&!embeddedThreadId),pluginCatalog=host?.pluginCatalog??ownPluginCatalog,plugins=pluginCatalog.plugins,[selectedPluginId,setSelectedPluginId]=useState<string|null>(null),[openedPlugins,setOpenedPlugins]=useState<string[]>([]);
-  useEffect(()=>{if(pluginCatalog.error)toast(pluginCatalog.error,{tone:'error'});},[pluginCatalog.error]);
+  usePluginCatalogNotice(host ? undefined : ownPluginCatalog.error);
   const [selectedPluginWorkspace,setSelectedPluginWorkspace]=useState<string|null>(null),[openedPluginWorkspaces,setOpenedPluginWorkspaces]=useState<{pluginId:string;workspaceId:string}[]>([]);
   const pluginWorkspaces=plugins.flatMap(plugin=>(plugin.workspaces??[]).map(contribution=>({pluginId:plugin.id,contribution})));
   const selectPluginWorkspace=async(pluginId:string,workspaceId:string)=>{await journalFlush();await prepareEditorHandoff();const key=pluginId+':'+workspaceId;setOpenedPluginWorkspaces(items=>items.some(item=>item.pluginId===pluginId&&item.workspaceId===workspaceId)?items:[...items,{pluginId,workspaceId}]);setSelectedPluginWorkspace(key);setSelectedPluginId(pluginId);};
@@ -443,6 +481,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const [snapshot, setSnapshot] = useState<Snapshot>(emptySnapshot);
   const snapshotRef = useRef(snapshot); snapshotRef.current = snapshot;
   const [loaded, setLoaded] = useState(false);
+  const [composerDock,setComposerDock]=useState<HTMLDivElement|null>(null);
   const [online, setOnline] = useState(true);
   const parentNotifications = useContext(WorkspaceNotificationContext);
   const [notifications] = useState(() => parentNotifications ?? createWorkspaceNotifications());
@@ -452,6 +491,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   useEffect(() => () => { if (!parentNotifications) notifications.clear(); }, [notifications, parentNotifications]);
   const [sideOpen,setSideOpen]=useState(false),sideChat=useRef<SideChatHandle>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const modelsRef=useRef<ModelInfo[]>(models);modelsRef.current=models;
   const [modelError, setModelError] = useState('');
   const [modelId, setModelId] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(() => { try { return pinnedThreadId??host?.initialThreadId??localStorage.getItem('harness:selected-thread'); } catch { return null; } });
@@ -496,7 +536,32 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     return () => observer.disconnect();
   }, [panelOwner]);
   const panelBounds = workspacePanelBounds(panelOwnerWidth, layout.rightPanelWidth), panelWidth = panelBounds.width;
-  const closePanel = () => setLayout(value => ({ ...value, rightPanelOpen: false, rightPanelMaximized: false }));
+  const panelToggleRef = useRef<HTMLButtonElement>(null);
+  const panelRegionRef = useRef<HTMLElement>(null);
+  const panelFocusRequest = useRef<Element | null>(null);
+  const focusStandardPanel = workspaceMode === 'chat' && !hostWorkspaceContext && !navigationOnly && !embeddedThreadId;
+  const restorePanelFocus = () => {
+    panelFocusRequest.current = null;
+    if (panelRegionRef.current?.contains(document.activeElement)) panelToggleRef.current?.focus({preventScroll:true});
+  };
+  const closePanel = () => {
+    restorePanelFocus();
+    setLayout(value => ({ ...value, rightPanelOpen: false, rightPanelMaximized: false }));
+  };
+  const toggleRightPanel = (viaShortcut: boolean) => {
+    if (layout.rightPanelOpen) {
+      if (!viaShortcut) { closePanel(); return; }
+      restorePanelFocus();
+    } else if (viaShortcut && focusStandardPanel) {
+      panelFocusRequest.current = document.activeElement;
+    }
+    setLayout(value => ({ ...value, rightPanelOpen: !value.rightPanelOpen }));
+  };
+  useLayoutEffect(() => {
+    const origin = panelFocusRequest.current;
+    panelFocusRequest.current = null;
+    if (layout.rightPanelOpen && origin && document.activeElement === origin) panelRegionRef.current?.focus({preventScroll:true});
+  }, [layout.rightPanelOpen]);
   // Keep the panel mounted through its exit animation after rightPanelOpen flips false.
   const [panelLeaving, setPanelLeaving] = useState(false), panelWasOpen = useRef(layout.rightPanelOpen);
   useEffect(() => {
@@ -520,21 +585,26 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     if(operation)await sendSplitWorkspaceCommand(operation.type,operation.payload);
     window.dispatchEvent(new Event('harness:workspace-changed'));
   };
-  const pickProject=async(project:NonNullable<typeof workspaceEnvelope>['projects'][number]|null)=>{
-    if(projectPicking||!projectPicker)return;
+  const chooseProject=async(selection:ProjectSelection,project:NonNullable<typeof workspaceEnvelope>['projects'][number]|null)=>{
     if(project&&(project.authority.kind!=='local'||!project.rootPath))throw Error('Choose a connected personal project.');
-    const selection=projectPicker;
     const target=selection.threadId?snapshotRef.current.threads.find(value=>value.id===selection.threadId):undefined;
     if(selection.threadId&&!target)throw Error('This conversation is no longer available.');
     setProjectPicking(true);setProjectPickerError('');
     try{
       await prepareEditorHandoff();await journalFlush();
-      if(!target){await createThread(selection.prepare,project?.id);}
-      else if(target.projectId===project?.id){if(project)await reconcileSplitThreadProject(target.id);}
-      else if(!project||target.runId||target.sessionPath||target.workspaceId){await createThread(undefined,project?.id);}
-      else{await workspaceState.send('workspace.project.connect',{name:project.name,path:project.rootPath,threadId:target.id});await reconcileSplitThreadProject(target.id);await refresh();}
-      closeProjectSelection();
+      if(!target)return await createThread(selection.prepare,project?.id);
+      if(target.projectId===project?.id){if(project)await reconcileSplitThreadProject(target.id);return target.id;}
+      if(!project||target.runId||target.sessionPath||target.workspaceId)return await createThread(undefined,project?.id);
+      await workspaceState.send('workspace.project.connect',{name:project.name,path:project.rootPath,threadId:target.id});
+      await reconcileSplitThreadProject(target.id);
+      await refresh();
+      return target.id;
     }finally{setProjectPicking(false);}
+  };
+  const pickProject=async(project:NonNullable<typeof workspaceEnvelope>['projects'][number]|null)=>{
+    if(projectPicking||!projectPicker)return;
+    await chooseProject(projectPicker,project);
+    closeProjectSelection();
   };
   const saveProjectColor=async(project:NonNullable<typeof workspaceEnvelope>['projects'][number],color:string|null)=>{
     if(project.authority.kind!=='local')throw Error('Choose a connected personal project.');
@@ -608,28 +678,67 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const modelBinding = hasPinnedAccount(modelThread, snapshot) ? modelThread?.accountId ?? null : undefined;
   const selectedAccountsKey = JSON.stringify(Object.entries(snapshot.settings.selectedAccounts ?? {}).sort(([left], [right]) => left.localeCompare(right)));
   const modelOwner = `${modelThread?.id ?? 'new'}:${modelThread?.modelId ?? 'unset'}:${modelBinding === undefined ? 'unbound' : modelBinding ?? 'legacy'}`;
-  const modelContext = modelBinding === undefined ? `${modelOwner}:${selectedAccountsKey}` : modelOwner;
+  const modelContext = modelBinding === undefined ? `${modelOwner}:${selectedAccountsKey}:${modelThread?.projectId ?? ''}` : modelOwner;
   const modelContextRef = useRef(modelContext); modelContextRef.current = modelContext;
+  // The project default can only resolve once the workspace envelope has the
+  // project; reloading on this flip keeps a just-loaded composer on it.
+  const projectModelReady = modelThread?.projectId ? Boolean(workspaceEnvelope?.projects.some(item => item.id === modelThread.projectId)) : true;
+  // Saved project defaults live in preferences: re-resolve when they change so an
+  // open, unsent composer follows the latest default (unless an explicit pick).
+  const projectDefaultsStamp = modelThread?.projectId ? JSON.stringify(getPreferences(snapshot.settings).projectModelDefaults) : '';
   const loadedModelOwner = useRef('');
   const modelRequest = useRef(0);
   const modelRead = useRef<AbortController|null>(null);
+  const [modelResolution,setModelResolution]=useState<ComposerModelResolution>({});
+  const modelResolutionRef=useRef<ComposerModelResolution>({});
+  const [modelDefaultsRequest,setModelDefaultsRequest]=useState(0);
+  const workspaceEnvelopeRef=useRef<typeof workspaceEnvelope>(undefined);workspaceEnvelopeRef.current=workspaceEnvelope;
   const loadModels = useCallback(async (refresh = false,target?:AccountAuthTarget) => {
     const owner = modelThreadRef.current, ownerId = owner?.id, context = modelContextRef.current, request = ++modelRequest.current;
     modelRead.current?.abort();const controller=new AbortController();modelRead.current=controller;
     try {
       const result = await getModels(refresh, ownerId, controller.signal,target);
       if (request !== modelRequest.current || modelContextRef.current !== context) return;
+      // Resolve against the merged catalog the picker shows, not only the
+      // provider subset a sign-in refresh returns. A refresh appends the
+      // refreshed provider's models, so the fallback keeps the previously
+      // first-listed model instead of drifting providers.
+      const catalog=mergeAccountModels(modelsRef.current,result.models,target);
+      const first=target?(catalog.find(item=>modelsRef.current.some(old=>old.id===item.id))??catalog[0]):catalog[0];
       setModels(current=>mergeAccountModels(current,result.models,target)); setModelError(result.error ?? '');
+      const bound=hasPinnedAccount(owner,snapshotRef.current);
+      let resolution:ComposerModelResolution={source:bound?'bound':undefined},resolved:ReturnType<typeof resolveNewThreadModel>|undefined;
+      // Also resolve on catalog refreshes (target set): a sign-in can make the
+      // saved project model available, and the unavailable notice must re-resolve.
+      if(!bound){
+        const ownerKey=owner?.id??'new',preferences=getPreferences(snapshotRef.current.settings);
+        // Detached windows never load the workspace envelope; fetch it once for
+        // the project's authority when the live envelope does not carry it.
+        let project=owner?.projectId?workspaceEnvelopeRef.current?.projects.find(item=>item.id===owner.projectId):undefined;
+        if(owner?.projectId&&!project){try{project=(await getWorkspace()).projects.find(item=>item.id===owner.projectId);}catch{}}
+        const projectDefault=project?projectModelDefaultFor(preferences,project.authority,project.id):null;
+        const [choice,thinking,explicitFlag]=await Promise.all([journalRead<string>(modelChoiceKey(ownerKey)),journalRead<string>('thinking:'+ownerKey),journalRead<string>(thinkingExplicitKey(ownerKey))]);
+        if(request!==modelRequest.current||modelContextRef.current!==context)return;
+        resolved=resolveNewThreadModel({bound:false,explicitModelId:(typeof choice==='string'&&choice)||owner?.modelId||null,explicitThinking:explicitFlag!==undefined?thinking??null:null,project:projectDefault,globalModelId:snapshotRef.current.settings.modelId,catalog});
+        resolution={source:resolved.source,reasoningDropped:resolved.reasoningDropped,thinkingLevel:resolved.thinkingLevel,droppedLevel:projectDefault?.thinkingLevel??'',projectId:project?.id??null,projectName:project?.name??'',projectDefault,projectColor:project?projectColor(project.authority,project.id,preferences.projectColors):undefined};
+      }
+      modelResolutionRef.current=resolution;setModelResolution(resolution);
       setModelId(previous => {
+        if(resolved){
+          // A catalog refresh never moves an explicit pick.
+          if(target&&resolved.source==='explicit')return previous;
+          const keep=previous&&catalog.some(item=>item.id===previous)?previous:undefined;
+          return resolved.modelId||(resolved.source==='project-unavailable'?'':keep??first?.id??'');
+        }
         if(target)return previous;
-        if (previous && result.models.some(item => item.id === previous)) return previous;
+        if (previous && catalog.some(item => item.id === previous)) return previous;
         // Bound tasks never silently move to another account or model when its
         // pinned connection is unavailable. Setup and model changes are explicit.
         // A binding whose model has not propagated yet keeps the current
         // selection or the first advertised model instead of an empty one.
-        if (hasPinnedAccount(owner, snapshotRef.current)) return owner?.modelId ?? (previous || result.models[0]?.id || '');
+        if (hasPinnedAccount(owner, snapshotRef.current)) return owner?.modelId ?? (previous || first?.id || '');
         const preferred = owner?.modelId ?? snapshotRef.current.settings.modelId;
-        return result.models.some(item => item.id === preferred) ? preferred! : result.models[0]?.id ?? preferred ?? '';
+        return catalog.some(item => item.id === preferred) ? preferred! : first?.id ?? preferred ?? '';
       });
     } catch (error) { if (!controller.signal.aborted && request === modelRequest.current && modelContextRef.current === context) { setModels(current=>mergeAccountModels(current,[],target)); setModelError(messageOf(error)); } }
     finally { if(modelRead.current===controller)modelRead.current=null; }
@@ -652,7 +761,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   }).catch(()=>{});return()=>{active=false;};},[settingsOpen,desktop?.recoverSignIn,loadModels]);
   useEffect(() => {
     const saved = snapshot.settings.modelId;
-    if (!loaded || hasPinnedAccount(modelThreadRef.current, snapshotRef.current) || acceptedModel.current === saved || saved && !models.some(model => model.id === saved)) return;
+    if (!loaded || hasPinnedAccount(modelThreadRef.current, snapshotRef.current) || modelSourceLocks(modelResolutionRef.current.source) || acceptedModel.current === saved || saved && !models.some(model => model.id === saved)) return;
     acceptedModel.current = saved;
     if (saved) setModelId(saved);
   }, [loaded, models, snapshot.settings.modelId]);
@@ -670,7 +779,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     loadedModelOwner.current = modelOwner;
     void loadModels();
     return () => { modelRequest.current++;modelRead.current?.abort();modelRead.current=null; };
-  }, [loaded, modelOwner, modelContext, loadModels]);
+  }, [loaded, modelOwner, modelContext, projectModelReady, projectDefaultsStamp, loadModels]);
   useEffect(() => {
     if (!loaded) return;
     let active = true;
@@ -678,6 +787,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     const stop = subscribe(snapshotRef.current.seq, event => {if(event.type.startsWith('workspace.')||event.type.startsWith('project.')||event.type.startsWith('split-workspace.'))window.dispatchEvent(new Event('harness:workspace-changed'));const patched=applyRuntimeEvent(snapshotRef.current,event);if(patched)apply(patched);else void refresh().catch(cause => {if(active)notifications.report(messageOf(cause),{key,title:'Couldn’t update workspace',retry:refresh});}); }, setOnline, refresh);
     return () => { active = false; stop(); for(const entry of notifications.getSnapshot())if(entry.key===key)notifications.remove(entry.id); };
   }, [loaded, refresh, apply, notifications, notificationOwner]);
+
   useEffect(() => { const query = matchMedia('(prefers-color-scheme: dark)'); const change = () => setSystemDark(query.matches); query.addEventListener('change', change); return () => query.removeEventListener('change', change); }, []);
   const theme = snapshot.settings.theme === 'system' ? systemDark ? 'dark' : 'light' : snapshot.settings.theme;
   useLayoutEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
@@ -698,13 +808,98 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   },[customDock,convSplitState.layout,thread?.id]);
   const savedLayoutActions=useSplitLayoutProfileActions({prepare:()=>prepareWorkspace(),save:layoutSplitState.saveProfile,send:layoutSplitState.send,refresh:splitProfiles.refresh},splitWorkspaceId);
   const [projectConnectOpen,setProjectConnectOpen]=useState(false),[projectName,setProjectName]=useState(''),[projectPath,setProjectPath]=useState(''),[projectConnectError,setProjectConnectError]=useState(''),[projectConnectFormError,setProjectConnectFormError]=useState('');
-  const [projectPicker,setProjectPicker]=useState<{threadId?:string;opener:HTMLElement|null;prepare?:PrepareThread}|null>(null),[projectPicking,setProjectPicking]=useState(false),[projectPickerError,setProjectPickerError]=useState('');
-  const openProjectSelection=(threadId?:string,opener:HTMLElement|null=document.activeElement as HTMLElement|null,prepare?:PrepareThread)=>{setProjectPickerError('');setProjectPicker({threadId,opener,prepare});};
+  const [projectPicker,setProjectPicker]=useState<ProjectSelection|null>(null),[projectPicking,setProjectPicking]=useState(false),[projectPickerError,setProjectPickerError]=useState('');
+  const openProjectSelection=(threadId?:string,opener:HTMLElement|null=document.activeElement as HTMLElement|null,prepare?:PrepareThread,initialActiveProjectId?:string)=>{
+    setProjectPickerError('');
+    setProjectPicker({threadId,opener,prepare,initialActiveProjectId});
+  };
   const closeProjectSelection=()=>{const opener=projectPicker?.opener;setProjectPicker(null);requestAnimationFrame(()=>{if(opener?.isConnected)opener.focus({preventScroll:true});});};
-  const projectConnectPicker=useRef<typeof projectPicker>(null);
+  const projectConnectPicker=useRef<ProjectSelection|null>(null);
   const projectConnectTarget=useRef<{threadId?:string;projectId?:string;opener:HTMLElement|null}|null>(null);
-  const openProjectConnect=(binding:Pick<PanelBinding,'threadId'|'projectId'>)=>{projectConnectTarget.current={...binding,opener:document.activeElement as HTMLElement|null};setProjectConnectError('');setProjectConnectFormError('');setProjectConnectOpen(true);};
-  const closeProjectConnect=()=>{const opener=projectConnectTarget.current?.opener;projectConnectTarget.current=null;setProjectConnectOpen(false);const resume=projectConnectPicker.current;projectConnectPicker.current=null;if(resume){setProjectPicker(resume);return;}requestAnimationFrame(()=>{if(opener?.isConnected)opener.focus({preventScroll:true});});};
+  const [projectConnecting,setProjectConnecting]=useState(false);
+  const projectConnectPending=useRef(false),projectConnectName=useRef<HTMLInputElement>(null),projectConnectPath=useRef<HTMLInputElement>(null);
+  useLayoutEffect(()=>{
+    if(!projectConnectOpen)return;
+    const name=projectConnectName.current;
+    name?.setSelectionRange(0,name.value.length);
+  },[projectConnectOpen]);
+  const projectConnectScope=useRef<HTMLDivElement>(null),projectFocusFrame=useRef(0);
+  const mainProjectThread=useRef(resolvedMainId);
+  mainProjectThread.current=resolvedMainId;
+  useEffect(()=>()=>cancelAnimationFrame(projectFocusFrame.current),[]);
+  const openProjectConnect=(binding:Pick<PanelBinding,'threadId'|'projectId'>)=>{
+    if(projectConnectPending.current)return;
+    cancelAnimationFrame(projectFocusFrame.current);
+    projectConnectTarget.current={...binding,opener:document.activeElement as HTMLElement|null};
+    setProjectConnectError('');setProjectConnectFormError('');setProjectConnectOpen(true);
+  };
+  const closeProjectConnect=()=>{
+    if(projectConnectPending.current)return;
+    const opener=projectConnectTarget.current?.opener,resume=projectConnectPicker.current;
+    projectConnectTarget.current=null;projectConnectPicker.current=null;setProjectConnectOpen(false);
+    if(resume){setProjectPicker(resume);return;}
+    requestAnimationFrame(()=>{if(opener?.isConnected)opener.focus({preventScroll:true});});
+  };
+  const focusConnectedComposer=(threadId:string)=>{
+    const deadline=performance.now()+2000;
+    let previous:Element|null=null;
+    const focus=()=>{
+      const root=projectConnectScope.current;
+      if(!root)return;
+      const current=document.activeElement;
+      if(previous&&current!==document.body&&current!==previous&&current instanceof HTMLElement&&current.getClientRects().length)return;
+      previous=current;
+      const composers=root.querySelectorAll<HTMLElement>(`[data-composer-thread="${CSS.escape(threadId)}"]`);
+      for(const composer of composers){
+        const field=composer.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]:enabled');
+        if(!field?.getClientRects().length||field.closest('[inert],[hidden],[aria-hidden="true"]'))continue;
+        field.focus({preventScroll:true});
+        if(document.activeElement!==field)continue;
+        field.setSelectionRange(field.value.length,field.value.length);
+        return;
+      }
+      if(!navigationOnly&&performance.now()<deadline){projectFocusFrame.current=requestAnimationFrame(focus);return;}
+      const fallback=[...composers].flatMap(composer=>Array.from(composer.querySelectorAll<HTMLElement>('button[aria-label="Select project"]:enabled')))
+        .find(button=>button.getClientRects().length&&!button.closest('[inert],[hidden],[aria-hidden="true"]'));
+      (fallback??root.querySelector<HTMLElement>('button[aria-label$="Project overview"]'))?.focus({preventScroll:true});
+    };
+    projectFocusFrame.current=requestAnimationFrame(focus);
+  };
+  const connectProject=async()=>{
+    const target=projectConnectTarget.current;
+    if(!target||projectConnectPending.current)return;
+    const picker=projectConnectPicker.current;
+    const name=projectName,path=projectPath;
+    projectConnectPending.current=true;setProjectConnecting(true);
+    setProjectConnectError('');setProjectConnectFormError('');
+    let connected=false;
+    try{
+      await prepareWorkspace();
+      if(target.threadId&&!snapshotRef.current.threads.some(item=>item.id===target.threadId&&(item.projectId??undefined)===(target.projectId??undefined)))
+        throw new ApiError('NOT_FOUND','The owning project changed. Close this dialog and reopen it from that conversation.');
+      const result=await workspaceState.send('workspace.project.connect',{name,path,...(target.threadId?{threadId:target.threadId}:{})});
+      connected=true;
+      const project=result.projects.find(item=>item.id===result.connectedProjectId&&item.authority.kind==='local'&&item.rootPath);
+      if(!project)throw Error('The host did not return the connected project. Refresh and retry.');
+      await refresh();
+      let threadId:string|undefined;
+      if(picker)threadId=await chooseProject(picker,project);
+      else if(target.threadId){await reconcileSplitThreadProject(target.threadId);await refresh();threadId=target.threadId;}
+      else if(!mainProjectThread.current&&!navigationOnly)threadId=await createThread(undefined,project.id);
+      projectConnectTarget.current=null;projectConnectPicker.current=null;setProjectConnectOpen(false);
+      if(threadId){focusConnectedComposer(threadId);return;}
+      const toastId=toast('Project connected',{action:{label:'Select project',onClick:()=>openProjectSelection(undefined,target.opener,undefined,project.id)}});
+      requestAnimationFrame(()=>document.querySelector<HTMLElement>(`[data-toast-id="${toastId}"] .ui-toast-action`)?.focus({preventScroll:true}));
+    }catch(cause){
+      if(projectConnectTarget.current!==target)return;
+      const formLevel=connected||cause instanceof ApiError&&['PROJECT_BUSY','WORKSPACE_CHANGED','PROJECT_NOT_CONNECTED','NOT_FOUND'].includes(cause.code);
+      if(formLevel)setProjectConnectFormError(messageOf(cause));else setProjectConnectError(messageOf(cause));
+      (formLevel?projectConnectName:projectConnectPath).current?.focus({preventScroll:true});
+    }finally{
+      projectConnectPending.current=false;
+      setProjectConnecting(false);
+    }
+  };
   const selectedPlan=useMemo(()=>selectPlanRecord(snapshot,thread?.id),[snapshot.data,thread?.id]);
   const planOwner=useRef<{id?:string;run:string|null|undefined}>({id:undefined,run:undefined});
   useEffect(()=>{const before=planOwner.current;planOwner.current={id:thread?.id,run:thread?.runId};const appeared=planVisibility.observe(thread,selectedPlan);if(before.id!==thread?.id||thread?.runId&&before.run!==thread.runId)setPlanOpen(planVisibility.isOpen(thread?.id));if(appeared){setPlanFocusOnOpen(false);setPlanExpandRequest(value=>value+1);setPlanOpen(true);}},[thread?.id,thread?.runId,selectedPlan]);
@@ -759,12 +954,12 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     if (matchesShortcut(event, preferences.keybindings.search)) { event.preventDefault(); setSidebarOpen(true); setLayout(value => ({ ...value, sidebarCollapsed: false })); setSearchFocusRequest(value => value + 1); }
     else if (matchesShortcut(event, preferences.keybindings.newThread)) { event.preventDefault(); if (!composerPending.current) void newThreadRef.current().catch(error => reportError(messageOf(error))); }
     else if (matchesShortcut(event, preferences.keybindings.toggleSidebar)) { event.preventDefault(); if (mobile) setSidebarOpen(value => !value); else setLayout(value => ({ ...value, sidebarCollapsed: !value.sidebarCollapsed })); }
-    else if (matchesShortcut(event, preferences.keybindings.toggleRightPanel)) { event.preventDefault(); setLayout(value => ({ ...value, rightPanelOpen: !value.rightPanelOpen })); }
+    else if (matchesShortcut(event, preferences.keybindings.toggleRightPanel)) { event.preventDefault(); toggleRightPanel(true); }
     else if (matchesShortcut(event, preferences.keybindings.openSettings)) { event.preventDefault(); setSettingsSection('general'); setSettingsOpen(true); }
     else if (matchesShortcut(event, preferences.keybindings.stop)) { const focused = snapshotRef.current.threads.find(item => item.id === placedThread.current); const owner = focused?.runId ? focused : modelThreadRef.current; if (owner?.runId) { event.preventDefault(); void stopConversation(owner, host?.composers ?? sharedComposers).then(() => refresh()).catch(error => reportError(messageOf(error))); } }
     else if (!editableTarget && matchesShortcut(event, chordFor('show-shortcuts'))) { event.preventDefault(); setSettingsSection('keybindings'); setSettingsOpen(true); }
     if (matchesShortcut(event, 'Escape') && !event.defaultPrevented) { setSidebarOpen(false);  }
-  }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [preferences.keybindings.search, preferences.keybindings.newThread, preferences.keybindings.toggleSidebar, preferences.keybindings.toggleRightPanel, preferences.keybindings.openSettings, preferences.keybindings.stop, selectedId, mobile, refresh, host?.composers, settingsOpen]);
+  }; window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key); }, [preferences.keybindings.search, preferences.keybindings.newThread, preferences.keybindings.toggleSidebar, preferences.keybindings.toggleRightPanel, preferences.keybindings.openSettings, preferences.keybindings.stop, selectedId, mobile, refresh, host?.composers, settingsOpen, layout.rightPanelOpen, focusStandardPanel]);
 
   const conversationMotion=useRef<ReturnType<typeof createConversationScroll>|null>(null),conversationElement=useRef<HTMLElement|null>(null);
   useEffect(()=>()=>conversationMotion.current?.dispose(),[]);
@@ -811,7 +1006,8 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const archive = async (id: string, discard = false, confirmed = false) => {
     if (!discard && Object.values(dirtyWidgets).includes(id)) { setArchiveThread(id);  return; }
     if (!discard && !confirmed && preferences.archiveConfirmation) { setConfirmArchive(id);  return; }
-    try { if(discard)for(const artifactId of Object.keys(dirtyWidgets).filter(key=>dirtyWidgets[key]===id)){const release=widgetDiscards.current.get(artifactId);if(!release)throw Error('Reopen the owning conversation before discarding its widget edits.');await release();} await command('thread.archive', {}, id); setDirtyWidgets(previous => Object.fromEntries(Object.entries(previous).filter(([, threadId]) => threadId !== id))); setArchiveThread(null); if (id === thread?.id) select(null); await refresh(); } catch (error) { reportError(messageOf(error)); }
+    const title = snapshotRef.current.threads.find(item => item.id === id)?.title ?? 'thread';
+    try { if(discard)for(const artifactId of Object.keys(dirtyWidgets).filter(key=>dirtyWidgets[key]===id)){const release=widgetDiscards.current.get(artifactId);if(!release)throw Error('Reopen the owning conversation before discarding its widget edits.');await release();} await command('thread.archive', {}, id); setDirtyWidgets(previous => Object.fromEntries(Object.entries(previous).filter(([, threadId]) => threadId !== id))); setArchiveThread(null); if (id === thread?.id) select(null); notifyThreadArchived(id,title,refresh); await refresh(); } catch (error) { reportError(messageOf(error)); }
   };
   // Windowed threads' older messages are not in the snapshot; ask the server
   // which of them still match the query.
@@ -830,7 +1026,17 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const matching = useMemo(() =>
     matchingThreads(snapshot.threads, snapshot.messages, search, preferences.projectOrder, deepMatches),
   [snapshot.threads, snapshot.messages, search, preferences.projectOrder, deepMatches]);
-  const updateModel = (id: string) => { setModelId(id); void command('settings.update', { modelId: id }).then(() => refresh()).catch(error => reportError(messageOf(error))); };
+  const updateModel = (id: string) => {
+    setModelId(id);
+    const ownerKey=thread?.id??'new';
+    void journalWrite(modelChoiceKey(ownerKey),id).catch(()=>reportError('The model choice could not be saved.'));
+    const resolution=modelResolutionRef.current;
+    // R05: a composer pick under a project default never rewrites the global default.
+    if(!pickWritesGlobalDefault(resolution)){const next={...resolution,source:'explicit' as ModelSource,reasoningDropped:false};modelResolutionRef.current=next;setModelResolution(next);return;}
+    if(resolution.source&&resolution.source!=='bound'){const next={...resolution,source:'explicit' as ModelSource};modelResolutionRef.current=next;setModelResolution(next);}
+    void command('settings.update', { modelId: id }).then(() => refresh()).catch(error => reportError(messageOf(error)));
+  };
+
   const detachedPlan=useDetachedSurface(thread?{kind:'plan',threadId:thread.id}:null),detachedNavigation=useDetachedSurface({kind:'navigation'});
   const pendingThread=usePendingSurface(candidateThread?{kind:'thread',threadId:candidateThread.id}:null);
   const threadHeld=Boolean((detachedThread&&!mainDetached)||pendingThread||desktop?.closing);
@@ -847,7 +1053,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   };
   const prepareWorkspace=async()=>{await prepareSourceJournal();await prepareEditorHandoff();};
   const updateCanvasPanel=async(panel:PanelPlacement,patch:Partial<PanelPlacement>)=>{if(!activeCanvas)throw Error('Choose a canvas first.');if(patch.visible===false||patch.placement==='native')await prepareWorkspace();if(!activeCanvas.panels.some(value=>value.id===panel.id))await workspaceState.send('workspace.panel.add',{canvasId:activeCanvas.id,panel:{id:panel.id,kind:panel.kind,binding:panel.binding},bounds:panel.bounds});await workspaceState.send('workspace.panel.update',{panelId:panel.id,patch});};
-  const panelTitle=(panel:PanelPlacement)=>panel.kind==='thread'?snapshot.threads.find(item=>item.id===panel.binding.threadId)?.title??'Unavailable conversation':panel.kind==='artifact'?snapshot.artifacts.find(item=>item.id===panel.binding.artifactId)?.title??'Artifact':panelLabels[panel.kind];
+  const panelTitle=(panel:PanelPlacement)=>panel.kind==='thread'?displayThreadTitle(snapshot.threads.find(item=>item.id===panel.binding.threadId),'Unavailable conversation'):panel.kind==='artifact'?snapshot.artifacts.find(item=>item.id===panel.binding.artifactId)?.title??'Artifact':panelLabels[panel.kind];
   const excerptComposerFor=(binding:PanelBinding):TerminalExcerptComposer|undefined=>{
     const owner=snapshot.threads.find(item=>item.id===binding.threadId),composers=host?.composers??sharedComposers;
     const mounted=canvasActive?canvasPanels.some(panel=>panel.kind==='thread'&&panel.binding.threadId===owner?.id&&panel.visible&&!panel.collapsed):owner?.id===thread?.id;
@@ -888,7 +1094,8 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     await workspaceState.send('workspace.panel.add',{canvasId:activeCanvas.id,panel:{id,kind,binding},bounds});onOpened?.(id);
   };
   const resolvePanelBinding=(panel:PanelPlacement):PanelBinding=>{const binding=panel.binding;if(binding.authority.kind!=='local')return binding;if(binding.liveProject&&binding.projectId){const current=thread&&threadProject(thread)===binding.projectId?thread:snapshot.threads.filter(item=>threadProject(item)===binding.projectId&&!threadParent(item)).toSorted((a,b)=>b.updatedAt.localeCompare(a.updatedAt))[0];return {...binding,threadId:current?.id};}return binding.threadId?binding:{...binding,...(thread?{threadId:thread.id}:{}),...(thread&&threadProject(thread)!=='unassigned'&&!binding.projectId?{projectId:threadProject(thread)}:{})};};
-  const canvasBody=(panel:PanelPlacement,visible:boolean)=>{const binding=resolvePanelBinding(panel),owner=snapshot.threads.find(item=>item.id===binding.threadId),native=desktop&&panelNativeWindow({...panel,binding},desktop.windows.filter(value=>value.id!==desktop.context.windowId));if(native)return <div className="panel-note"><p>This view is open in another window.</p><button className="quiet" onClick={()=>void desktop?.bridge.focus(native.id).catch(cause=>reportError(messageOf(cause)))}>Focus window</button></div>;if(binding.authority.kind==='plugin'){const authority=binding.authority,plugin=plugins.find(value=>value.id===authority.pluginId),surface=panelDesktopSurface({...panel,binding});return plugin&&surface.kind==='plugin'?<PluginFrame key={panel.id} plugin={plugin} theme={theme} surface={surface} active={visible}/>:<p className="panel-note" role="alert">The owning plug-in is unavailable. Saved panel data is retained.</p>;}if(panel.kind==='thread')return owner?<CanvasThread sharedComposers={host?.composers??sharedComposers} liveMessages={liveMessages.current} key={owner.id} thread={owner} snapshot={snapshot} visible={visible} blocked={Boolean(desktop?.closing)||settingsOpen||usageOpen||Boolean(resourcePicker)||rename} refresh={refresh} setup={()=>{setSettingsSection('providers');setSettingsOpen(true);}} openResource={(_id,opener)=>openResourcePicker(owner.id,opener)} browseProject={id=>{void addCanvasPanel('files',{...binding,resourceId:id,liveProject:false}).catch(cause=>reportError(messageOf(cause)));}} inspectChanges={()=>{void addCanvasPanel('diff',{...binding,liveProject:false}).catch(cause=>reportError(messageOf(cause)));}} reportError={reportError} selectProject={openProjectSelection}/>:<p role="alert" className="panel-note">The owning conversation is unavailable.</p>;if(panel.kind==='agent')return binding.threadId&&binding.agentId?<DelegatedAgentTranscript key={binding.threadId+':'+binding.agentId} threadId={binding.threadId} agentId={binding.agentId} snapshot={snapshot}/>:<p role='alert'>The owning subagent is unavailable.</p>;if(panel.kind==='plan')return <PlanStatus snapshot={snapshot} threadId={binding.threadId}/>;if(panel.kind==='context')return <ProjectContextSurface key={owner?.id??panel.id} thread={owner} snapshot={snapshot} onSelectThread={select} onShowChanges={()=>{void addCanvasPanel('diff',{...binding,liveProject:false}).catch(cause=>reportError(messageOf(cause)));}} onConnect={()=>openProjectConnect(binding)}/>;if(panel.kind==='browser'){const docked=desktop?.state.dockedBrowser;return docked&&docked.browserId===binding.browserId?<div style={{display:'flex',flexDirection:'column',height:'100%'}}><DesktopBrowserToolbar state={docked.state}/><DesktopBrowserSlot/></div>:<div className="panel-note"><p>No browser is currently docked in this workspace.</p></div>;}return <WorkspaceSurfaceBody reviewRequest={reviewRequest} onReviewHandled={handleReviewRequest} excerptComposer={excerptComposerFor(binding)} panelId={panel.id} kind={panel.kind} binding={binding} snapshot={snapshot} refresh={refresh} active={visible} preferences={preferences} onSelectThread={async id=>{await prepareWorkspace();select(id);}} onOpenTool={kind=>addCanvasPanel(kind,{...binding,liveProject:false})}/>;};
+  const canvasBody=(panel:PanelPlacement,visible:boolean)=>{const binding=resolvePanelBinding(panel),owner=snapshot.threads.find(item=>item.id===binding.threadId),native=desktop&&panelNativeWindow({...panel,binding},desktop.windows.filter(value=>value.id!==desktop.context.windowId));if(native)return <div className="panel-note"><p>This view is open in another window.</p><button className="quiet" onClick={()=>void desktop?.bridge.focus(native.id).catch(cause=>reportError(messageOf(cause)))}>Focus window</button></div>;if(binding.authority.kind==='plugin'){const authority=binding.authority,plugin=plugins.find(value=>value.id===authority.pluginId),surface=panelDesktopSurface({...panel,binding});return plugin&&surface.kind==='plugin'?<PluginFrame key={panel.id} plugin={plugin} theme={theme} surface={surface} active={visible}/>:<p className="panel-note" role="alert">The owning plug-in is unavailable. Saved panel data is retained.</p>;}if(panel.kind==='thread')return owner?<CanvasThread sharedComposers={host?.composers??sharedComposers} liveMessages={liveMessages.current} key={owner.id} thread={owner} snapshot={snapshot} visible={visible} blocked={Boolean(desktop?.closing)||settingsOpen||usageOpen||Boolean(resourcePicker)||rename} refresh={refresh} setup={()=>{setSettingsSection('providers');setSettingsOpen(true);}} openResource={(_id,opener)=>openResourcePicker(owner.id,opener)} browseProject={id=>{void addCanvasPanel('files',{...binding,resourceId:id,liveProject:false}).catch(cause=>reportError(messageOf(cause)));}} inspectChanges={()=>{void addCanvasPanel('diff',{...binding,liveProject:false}).catch(cause=>reportError(messageOf(cause)));}} reportError={reportError} selectProject={openProjectSelection}/>:<p role="alert" className="panel-note">The owning conversation is unavailable.</p>;if(panel.kind==='agent')return binding.threadId&&binding.agentId?<DelegatedAgentTranscript key={binding.threadId+':'+binding.agentId} threadId={binding.threadId} agentId={binding.agentId} snapshot={snapshot}/>:<p role='alert'>The owning subagent is unavailable.</p>;if(panel.kind==='plan')return <PlanStatus snapshot={snapshot} threadId={binding.threadId}/>;if(panel.kind==='context')return <ProjectContextSurface key={owner?.id??panel.id} thread={owner} snapshot={snapshot} workspaceProjects={workspaceEnvelope?.projects} refresh={refresh} onSelectThread={select} onShowChanges={()=>{void addCanvasPanel('diff',{...binding,liveProject:false}).catch(cause=>reportError(messageOf(cause)));}} onConnect={()=>openProjectConnect(binding)}/>;if(panel.kind==='browser'){const docked=desktop?.state.dockedBrowser;return docked&&docked.browserId===binding.browserId?<div style={{display:'flex',flexDirection:'column',height:'100%'}}><DesktopBrowserToolbar state={docked.state}/><DesktopBrowserSlot/></div>:<div className="panel-note"><p>No browser is currently docked in this workspace.</p></div>;}return <WorkspaceSurfaceBody reviewRequest={reviewRequest} onReviewHandled={handleReviewRequest} excerptComposer={excerptComposerFor(binding)} panelId={panel.id} kind={panel.kind} binding={binding} snapshot={snapshot} refresh={refresh} active={visible} preferences={preferences} onSelectThread={async id=>{await prepareWorkspace();select(id);}} onOpenTool={kind=>addCanvasPanel(kind,{...binding,liveProject:false})}/>;};
+
   const canvasBodyGuarded=(panel:PanelPlacement,visible:boolean)=><SurfaceBoundary resetKey={panel.id}>{canvasBody(panel,visible)}</SurfaceBoundary>;
   const renderWorkspaceCanvas=(embedded=false)=>activeCanvas&&workspaceEnvelope?<WorkspaceCanvas embedded={embedded} threads={snapshot.threads} canvas={activeCanvas} panels={embedded?canvasPanels.filter(panel=>!(panel.kind==='thread'&&panel.binding.authority.kind==='local'&&resolvePanelBinding(panel).threadId===thread?.id)):canvasPanels} projects={workspaceEnvelope.projects} disabledKinds={workspaceEnvelope.state.disabledKinds} title={panelTitle} updatePanel={updateCanvasPanel} updateViewport={async viewport=>{await workspaceState.send('workspace.canvas.viewport',{canvasId:activeCanvas.id,...viewport});}} setFilter={async filter=>{await workspaceState.send('workspace.canvas.filter',{canvasId:activeCanvas.id,filter});}} renderBody={canvasBodyGuarded}/>:null;
   const openSidebarTool=(kind:'usage'|'linked-pull-requests',review?:Omit<ReviewRequest,'panelId'>)=>{pendingReviewId.current=review?.id;setReviewRequest(undefined);if(navigationOnly){toast('Open this tool in the main workspace.');return;}if(kind==='usage'){openUsage();return;}setSelectedPluginId(null);const binding:PanelBinding|undefined=review?{authority:{kind:'local'},threadId:review.threadId,projectId:review.projectId}:undefined;const opened=(panelId:string)=>{if(review&&pendingReviewId.current===review.id)setReviewRequest({...review,panelId});};if(canvasActive)void addCanvasPanel(kind,binding,opened).catch(cause=>reportError(messageOf(cause)));else if(splitEnabled&&splitState.layout)void openSplitTool(kind,undefined,true,review?.threadId??thread?.id,false,binding,opened).catch(cause=>reportError(messageOf(cause)));else {setLayout(value=>({...value,rightPanelOpen:true,activeTab:kind,openTabs:value.openTabs.includes(kind)?value.openTabs:[...value.openTabs,kind]}));opened('sidebar');}};
@@ -1076,11 +1283,14 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     if(view.kind==='plan')return <PlanStatus snapshot={snapshot} threadId={view.binding.threadId}/>;
     const panel:PanelPlacement={...view,canvasId:activeCanvas?.id??'workspace-default',placement:'canvas',visible:true,collapsed:false,bounds:{x:0,y:0,width:480,height:380},order:0,alwaysOnTop:false};return canvasBodyGuarded(panel,active);
   };
+  // A single ordinary thread uses the same dock even when the workspace
+  // layout supplies its pane. Custom and multiple areas have no window dock.
+  const ordinaryDockOwner=!customDock&&!selectedPluginId&&convSplitState.layout?.root.kind==='pane';
   const renderConversationView=(view:SurfaceRef,active:boolean)=>view.kind==='thread'
-    ?<div className="split-thread-owner" onFocusCapture={()=>focusSplitOwner(view)}>{view.binding.threadId?<App onDirtyWidgetChange={onDirtyWidget} onComposerChangesAvailability={reportComposerChanges} sharedComposers={host?.composers??sharedComposers} embeddedThreadId={view.binding.threadId} embeddedActive={active} modelPickerRequest={modelPickerRequest} hostWorkspaceContext={workspaceContext} onRequestWorkspaceTool={(kind,resourceId,artifactId)=>revealWorkspaceTool(kind,resourceId,artifactId,view.binding)} onRequestThread={select} liveUsage={{open:liveUsageOpen,toggle:()=>{focusSplitOwner(view);setLiveUsageOpen(value=>!value);}}}/>:<p>The owning conversation is unavailable.</p>}</div>
+    ?<div className="split-thread-owner" onFocusCapture={()=>focusSplitOwner(view)}>{view.binding.threadId?<App onDockedComposer={ordinaryDockOwner&&active?setComposerDock:undefined} onDirtyWidgetChange={onDirtyWidget} onComposerChangesAvailability={reportComposerChanges} sharedComposers={host?.composers??sharedComposers} embeddedThreadId={view.binding.threadId} embeddedActive={active} modelPickerRequest={modelPickerRequest} hostWorkspaceContext={workspaceContext} onRequestWorkspaceTool={(kind,resourceId,artifactId)=>revealWorkspaceTool(kind,resourceId,artifactId,view.binding)} onRequestThread={select} liveUsage={{open:liveUsageOpen,toggle:()=>{focusSplitOwner(view);setLiveUsageOpen(value=>!value);}}}/>:<p>The owning conversation is unavailable.</p>}</div>
     :<SurfaceBoundary resetKey={view.id}>{renderSplitView(view,active)}</SurfaceBoundary>;
   const splitRoot=splitEnabled&&Boolean(thread||convSplitState.layout&&Object.keys(convSplitState.layout.views).length);
-  const panelToggle=!embeddedThreadId?<button type="button" className={`icon-button workspace-panel-toggle ${layout.rightPanelOpen ? 'selected' : ''}`} aria-label={layout.rightPanelOpen ? 'Hide workspace panel' : 'Open workspace panel'} aria-pressed={layout.rightPanelOpen} title={`${layout.rightPanelOpen ? 'Close right panel' : 'Open right panel'} (${shortcutKeys(preferences.keybindings.toggleRightPanel)})`} aria-keyshortcuts={ariaKeyShortcuts(['toggle-workspace-panel'], preferences.keybindings)} onClick={() => setLayout(value => value.rightPanelOpen ? { ...value, rightPanelOpen: false, rightPanelMaximized: false } : { ...value, rightPanelOpen: true })}><PanelRight size={17} /></button>:null;
+  const panelToggle=!embeddedThreadId?<button type="button" className={`icon-button workspace-panel-toggle ${layout.rightPanelOpen ? 'selected' : ''}`} aria-label={layout.rightPanelOpen ? 'Hide workspace panel' : 'Open workspace panel'} aria-pressed={layout.rightPanelOpen} title={`${layout.rightPanelOpen ? 'Close right panel' : 'Open right panel'} (${shortcutKeys(preferences.keybindings.toggleRightPanel)})`} aria-keyshortcuts={ariaKeyShortcuts(['toggle-workspace-panel'], preferences.keybindings)} ref={panelToggleRef} onClick={()=>toggleRightPanel(false)}><PanelRight size={17} /></button>:null;
   const rightWindowOpen=layout.rightPanelOpen||sideOpen||Boolean(documentWindow&&documentWindow.placement==='docked')||Boolean(desktop?.state.dockedBrowser);
   // Live Usage follows an eligible visible conversation focus; main placement remains its own navigation owner.
   const usagePlaneLayout=customDock?customConversationLayout:convSplitState.layout;
@@ -1094,14 +1304,17 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const sharedUsageOwner=usageCandidates.find(owner=>owner.id===selectedId)??usageCandidates.find(owner=>owner.id===thread?.id);
   const fullPlanVisible=Boolean(thread&&convSplitState.layout&&planVisible(convSplitState.layout,thread.id));
   const contextSummaries=<SummaryDock><DockedSummary id="plan" title="Project overview" className="summary-overview" open={!detachedPlan&&!rightWindowOpen}
-    defaultCollapsed focusOnOpen={false} expandRequest={planExpandRequest||undefined}><SurfaceBoundary resetKey={candidateThread?.id??'new'}><ProjectContextSurface composerChangesAvailable={composerChangesAvailable} key={candidateThread?.id??'new'} thread={candidateThread} snapshot={snapshot} fullPlanVisible={fullPlanVisible||Boolean(detachedPlan)} onOpenDetailedPlan={()=>void openSplitTool('plan',undefined,true,candidateThread?.id).catch(cause=>reportError(messageOf(cause)))} onSelectThread={select} onShowChanges={()=>void openSplitTool('diff',undefined,true,candidateThread?.id).catch(cause=>reportError(messageOf(cause)))} onConnect={()=>openProjectConnect({threadId:candidateThread?.id,projectId:candidateThread?.projectId})}/></SurfaceBoundary></DockedSummary><UsageFooter open={liveUsageOpen} threadId={sharedUsageOwner?.id} usage={sharedUsageOwner?snapshot.usage[sharedUsageOwner.id]:undefined} visible={Boolean(sharedUsageOwner)&&preferences.showUsageFooter&&!rightWindowOpen} onOpenUsage={openUsage}/></SummaryDock>;
+    defaultCollapsed focusOnOpen={false} expandRequest={(planExpandRequest||0)+modelDefaultsRequest||undefined}><SurfaceBoundary resetKey={candidateThread?.id??'new'}><ProjectContextSurface composerChangesAvailable={composerChangesAvailable} modelDefaultsRequest={modelDefaultsRequest} workspaceProjects={workspaceEnvelope?.projects} refresh={refresh} key={candidateThread?.id??'new'} thread={candidateThread} snapshot={snapshot} fullPlanVisible={fullPlanVisible||Boolean(detachedPlan)} onOpenDetailedPlan={()=>void openSplitTool('plan',undefined,true,candidateThread?.id).catch(cause=>reportError(messageOf(cause)))} onSelectThread={select} onShowChanges={()=>void openSplitTool('diff',undefined,true,candidateThread?.id).catch(cause=>reportError(messageOf(cause)))} onConnect={()=>openProjectConnect({threadId:candidateThread?.id,projectId:candidateThread?.projectId})}/></SurfaceBoundary></DockedSummary><UsageFooter open={liveUsageOpen} threadId={sharedUsageOwner?.id} usage={sharedUsageOwner?snapshot.usage[sharedUsageOwner.id]:undefined} visible={Boolean(sharedUsageOwner)&&preferences.showUsageFooter&&!rightWindowOpen} onOpenUsage={openUsage}/></SummaryDock>;
+
   const [retryingMainLayout,setRetryingMainLayout]=useState(false);
   const retryMainLayout=()=>{
     if(retryingMainLayout)return;
     setRetryingMainLayout(true);
     void convSplitState.refresh().catch(()=>{}).finally(()=>setRetryingMainLayout(false));
   };
-  const renderSplitRoot=()=>{const planeLayout=customDock?customConversationLayout:convSplitState.layout;return planeLayout?<div className="split-root-workarea"><SummaryLayout active={!rightWindowOpen&&(!detachedPlan||(preferences.showUsageFooter&&liveUsageOpen))} summaries={contextSummaries}><WorkspaceSplitLayout layout={planeLayout} onCommand={convSendSplitCommand} prepare={prepareWorkspace} renderView={renderConversationView} onActiveViewsChange={updateLiveUsageViews} floating={mainPlacement?Object.fromEntries(Object.entries(mainPlacement.floating).map(([id,entry])=>[id,entry.rect])):undefined} onReturnFloat={returnConversation} onDetachView={detachConversation} onMoveFloat={moveFloat} onDockFloat={dockFloat} emptyMainPaneId={!customDock&&mainPlacement?.mainSelection.kind==='empty'?resolveMainPaneId(planeLayout):undefined} title={view=>view.kind==='thread'?snapshot.threads.find(item=>item.id===view.binding.threadId)?.title??'Unavailable conversation':view.kind==='workspace'&&view.binding.resourceId==='agent-inbox'?'Agent inbox':view.kind==='workspace'&&view.binding.resourceId==='background-work'?'Background work':panelLabels[view.kind]} onDropThread={async(id,paneId,edge,outer)=>{setSelectedPluginId(null);setSelectedPluginWorkspace(null);await placeSplitThread(id,paneId,edge,outer).catch(cause=>reportError(messageOf(cause)));}} editorOptions={['thread','browser','files','diff','notes','plan','terminal','linked-pull-requests','context','usage','inbox','background-work'].map(id=>({id,title:id==='inbox'?'Agent inbox':id==='background-work'?'Background work':panelLabels[id as WorkspacePanelKind]}))} onSelectEditor={(kind,paneId)=>kind==='inbox'?openInbox(paneId):kind==='background-work'?openBackgroundWork(paneId):openSplitTool(kind as WorkspacePanelKind,paneId)}/></SummaryLayout>{convSplitState.error&&!layoutChooserOpen&&<p className="split-layout-error" role="alert">{convSplitState.error}</p>}</div>:convSplitState.error?<div className="workspace-error"><span role="alert">{convSplitState.error}</span><button type="button" className="quiet" disabled={retryingMainLayout} onClick={retryMainLayout}>Retry workspace layout</button></div>:<LoadingState pending hasContent={false} label="Opening workspace layout..." skeleton={<WorkspaceSkeleton sidebar={false}/>} className="view-loading-state"/>;};
+  const renderSplitRoot=()=>{const planeLayout=customDock?customConversationLayout:convSplitState.layout;return planeLayout?<div className="split-root-workarea"><SummaryLayout active={!rightWindowOpen&&(!detachedPlan||(preferences.showUsageFooter&&liveUsageOpen))} summaries={contextSummaries}><WorkspaceSplitLayout layout={planeLayout} onCommand={convSendSplitCommand} prepare={prepareWorkspace} renderView={renderConversationView} onActiveViewsChange={updateLiveUsageViews} floating={mainPlacement?Object.fromEntries(Object.entries(mainPlacement.floating).map(([id,entry])=>[id,entry.rect])):undefined} onReturnFloat={returnConversation} onDetachView={detachConversation} onMoveFloat={moveFloat} onDockFloat={dockFloat} emptyMainPaneId={!customDock&&mainPlacement?.mainSelection.kind==='empty'?resolveMainPaneId(planeLayout):undefined} title={view=>view.kind==='thread'?displayThreadTitle(snapshot.threads.find(item=>item.id===view.binding.threadId),'Unavailable conversation'):view.kind==='workspace'&&view.binding.resourceId==='agent-inbox'?'Agent inbox':view.kind==='workspace'&&view.binding.resourceId==='background-work'?'Background work':panelLabels[view.kind]} onDropThread={async(id,paneId,edge,outer)=>{setSelectedPluginId(null);setSelectedPluginWorkspace(null);await placeSplitThread(id,paneId,edge,outer).catch(cause=>reportError(messageOf(cause)));}} editorOptions={['thread','browser','files','diff','notes','plan','terminal','linked-pull-requests','context','usage','inbox','background-work'].map(id=>({id,title:id==='inbox'?'Agent inbox':id==='background-work'?'Background work':panelLabels[id as WorkspacePanelKind]}))} onSelectEditor={(kind,paneId)=>kind==='inbox'?openInbox(paneId):kind==='background-work'?openBackgroundWork(paneId):openSplitTool(kind as WorkspacePanelKind,paneId)}/></SummaryLayout>{convSplitState.error&&!layoutChooserOpen&&<p className="split-layout-error" role="alert">{convSplitState.error}</p>}</div>:convSplitState.error?<div className="workspace-error"><span role="alert">{convSplitState.error}</span><button type="button" className="quiet" disabled={retryingMainLayout} onClick={retryMainLayout}>Retry workspace layout</button></div>:<LoadingState pending hasContent={false} label="Opening workspace layout..." skeleton={<WorkspaceSkeleton sidebar={false}/>} className="view-loading-state"/>;};
+  const conversationTitle=displayThreadTitle(thread);
+  const conversationHeaderLabel=thread?.projectName?thread.projectName+' / '+conversationTitle:conversationTitle;
   const interfaceFont = preferences.interfaceFont === 'system' ? '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif' : preferences.interfaceFont === 'Inter' ? '"Inter Variable", sans-serif' : preferences.interfaceFont;
   const handledHostIntent=useRef<number|undefined>(undefined),[modelPickerRequest,setModelPickerRequest]=useState<{id:number;threadId?:string}>();
   const pickerRequest=externalModelPicker??modelPickerRequest;
@@ -1112,7 +1325,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     else if(host.intent.kind==='model')setModelPickerRequest({id:host.intent.id,threadId:host.initialThreadId??thread?.id});
     else if(host.intent.kind==='usage'){setUsageThreadId(thread?.id??null);setUsageOpen(true);}
     else if(host.intent.kind==='new-thread')void newThreadRef.current().catch(cause=>reportError(messageOf(cause)));
-    else if(host.intent.kind==='connect-project')setProjectConnectOpen(true);
+    else if(host.intent.kind==='connect-project')openProjectConnect({});
     else if(host.intent.kind==='resources')void ensureThread(async()=>{}).then(id=>openResourcePicker(id)).catch(cause=>reportError(messageOf(cause)));
     else if(host.intent.kind==='plugin-workspace'){if(host.intent.pluginId&&host.intent.workspaceId)void selectPluginWorkspace(host.intent.pluginId,host.intent.workspaceId).catch(cause=>reportError(messageOf(cause)));}
     else {const review=host.intent.review?{id:host.intent.id,...host.intent.review}:undefined;openSidebarTool('linked-pull-requests',review);}
@@ -1120,16 +1333,17 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   },[loaded,host?.intent?.id]);
   const promptFont = preferences.promptFont === 'system' ? 'inherit' : preferences.promptFont;
   const metadataModel = thread ? models.find(item => item.id === (thread.modelId ?? modelId)) : undefined;
+  const hasActiveArtifacts = Boolean(thread && snapshot.artifacts.some(artifact => artifact.threadId === thread.id && artifact.lifecycle === 'active'));
   const shellStyle = { '--sidebar-width': layout.sidebarWidth + 'px', '--right-panel-width': panelWidth + 'px', '--panel-motion': (preferences.panelAnimations ? preferences.motionDuration : 0) + 'ms', '--prompt-font': promptFont, '--code-font': preferences.codeFont, '--interface-font': interfaceFont, '--interface-font-size': preferences.fontSize + 'px' } as CSSProperties;
   if(loaded&&pinnedThreadId&&!thread)return <main className="desktop-surface"><p role="status">The owning conversation is no longer available. Dock this window to choose another task.</p></main>;
-  return <WorkspaceNotificationContext.Provider value={notifications}><WorkspaceProvider value={hostWorkspaceContext ?? workspaceContext}><div className={`app-shell ${embeddedThreadId?'embedded-thread-app':''} ${navigationOnly?'desktop-navigation-only':''} ${pinnedThreadId?'desktop-thread-only':''} ${!hostWorkspaceContext&&layout.rightPanelOpen ? 'has-right-panel' : ''} `} inert={desktop?.closing||Boolean(embeddedThreadId&&!embeddedActive)} style={shellStyle} data-document-docked={documentWindow?.placement==='docked'} data-sidebar-collapsed={layout.sidebarCollapsed} data-chat-width={preferences.chatWidth} data-contrast={preferences.contrast} data-word-wrap={preferences.wordWrap} data-panel-animations={preferences.panelAnimations} data-live-usage={preferences.showUsageFooter}>
+  return <WorkspaceNotificationContext.Provider value={notifications}><WorkspaceProvider value={hostWorkspaceContext ?? workspaceContext}><div ref={projectConnectScope} className={`app-shell ${embeddedThreadId?'embedded-thread-app':''} ${navigationOnly?'desktop-navigation-only':''} ${pinnedThreadId?'desktop-thread-only':''} ${!hostWorkspaceContext&&layout.rightPanelOpen ? 'has-right-panel' : ''} `} inert={desktop?.closing||Boolean(embeddedThreadId&&!embeddedActive)} style={shellStyle} data-document-docked={documentWindow?.placement==='docked'} data-sidebar-collapsed={layout.sidebarCollapsed} data-chat-width={preferences.chatWidth} data-contrast={preferences.contrast} data-word-wrap={preferences.wordWrap} data-panel-animations={preferences.panelAnimations} data-live-usage={preferences.showUsageFooter}>
     {sidebarOpen && <button ref={sidebarScrim} className="sidebar-scrim" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
-    {!pinnedThreadId&&!detachedNavigation&&<ShellSidebar onPlaceThread={splitEnabled&&!customDock?item=>{setSelectedPluginId(null);setSelectedPluginWorkspace(null);void placeSplitThread(item.id).catch(cause=>reportError(messageOf(cause)));}:undefined} detachThread={desktop&&desktopSurface?.kind==='main'?item=>{void desktop.detachSurface({kind:'thread',threadId:item.id}).catch(cause=>reportError(messageOf(cause)));}:undefined} navigation={plugins.length>0&&<nav className="plugin-navigation" aria-label="Installed plug-ins">{plugins.map(plugin=><button key={plugin.id} aria-current={selectedPluginId===plugin.id?'page':undefined} onClick={()=>{void selectPlugin(plugin.id).then(()=>setSidebarOpen(false)).catch(cause=>reportError(messageOf(cause)));}}>{plugin.name}</button>)}</nav>} elementRef={sidebar} searchRef={searchRef} mobile={mobile} open={sidebarOpen} layout={layout} preferences={preferences} matching={matching} hoverBlocked={Boolean(settingsOpen||usageOpen||projectPicker||projectConnectOpen||resourcePicker||rename)} onOpenThreadPR={host?.openReview?(target,scope)=>{void host.openReview!(target,scope).catch(cause=>reportError(messageOf(cause)));}:undefined} selectedId={thread?.id} loaded={loaded} creating={composerBusy || threadCreating} search={search} setSearch={setSearch} close={() => setSidebarOpen(false)} toggleCollapsed={event => {if (navigationOnly) void desktop?.bridge.reattach(); else {prepareSidebarToggle(event); setLayout(value => ({ ...value, sidebarCollapsed: !value.sidebarCollapsed }));}}} setFolded={(key, folded) => setLayout(value => ({ ...value, folded: { ...value.folded, [key]: folded } }))} select={select} create={() => void newThreadRef.current().catch(error => reportError(messageOf(error)))} settings={() => { setSettingsSection('general'); setSettingsOpen(true); }} onConnectProject={()=>openProjectConnect({})} onOpenPullRequests={()=>openSidebarTool('linked-pull-requests')} onOpenUsage={()=>openSidebarTool('usage')} rename={item => { void prepareSourceJournal().then(()=>{renameSelected.current=false;selectNow(item.id);setTitle(item.title);setRename(true);}).catch(cause=>reportError(messageOf(cause))); }} archive={id => void archive(id)} presentation={async (item, patch) => { if (patch.pinned === false && preferences.unpinConfirmation && !window.confirm('Unpin this thread?')) return false; try { await command('thread.presentation', patch, item.id); void refresh().catch(error => reportError(messageOf(error))); return true; } catch (error) { reportError(messageOf(error)); return false; } }} ensureManualOrder={async () => { try { await command('settings.update', { preferences: { projectOrder: 'manual' } }); await refresh(); return true; } catch (error) { reportError(messageOf(error)); return false; } }} />}
+    {!pinnedThreadId&&!detachedNavigation&&<ShellSidebar onPlaceThread={splitEnabled&&!customDock?item=>{setSelectedPluginId(null);setSelectedPluginWorkspace(null);void placeSplitThread(item.id).catch(cause=>reportError(messageOf(cause)));}:undefined} detachThread={desktop&&desktopSurface?.kind==='main'?async item=>{try{await desktop.detachSurface({kind:'thread',threadId:item.id});return true;}catch(cause){reportError(messageOf(cause));return false;}}:undefined} navigation={plugins.length>0&&<nav className="plugin-navigation" aria-label="Installed plug-ins">{plugins.map(plugin=><button key={plugin.id} aria-current={selectedPluginId===plugin.id?'page':undefined} onClick={()=>{void selectPlugin(plugin.id).then(()=>setSidebarOpen(false)).catch(cause=>reportError(messageOf(cause)));}}>{plugin.name}</button>)}</nav>} elementRef={sidebar} searchRef={searchRef} mobile={mobile} open={sidebarOpen} layout={layout} preferences={preferences} matching={matching} hoverBlocked={Boolean(settingsOpen||usageOpen||projectPicker||projectConnectOpen||resourcePicker||rename)} onOpenThreadPR={host?.openReview?(target,scope)=>{void host.openReview!(target,scope).catch(cause=>reportError(messageOf(cause)));}:undefined} selectedId={thread?.id} loaded={loaded} creating={composerBusy || threadCreating} search={search} setSearch={setSearch} close={() => setSidebarOpen(false)} toggleCollapsed={event => {if (navigationOnly) void desktop?.bridge.reattach(); else {prepareSidebarToggle(event); setLayout(value => ({ ...value, sidebarCollapsed: !value.sidebarCollapsed }));}}} setFolded={(key, folded) => setLayout(value => ({ ...value, folded: { ...value.folded, [key]: folded } }))} select={select} create={() => void newThreadRef.current().catch(error => reportError(messageOf(error)))} settings={() => { setSettingsSection('general'); setSettingsOpen(true); }} onConnectProject={()=>openProjectConnect({})} onOpenPullRequests={()=>openSidebarTool('linked-pull-requests')} onOpenUsage={()=>openSidebarTool('usage')} rename={item => { void prepareSourceJournal().then(()=>{renameSelected.current=false;selectNow(item.id);setTitle(displayThreadTitle(item));setRename(true);}).catch(cause=>reportError(messageOf(cause))); }} archive={id => void archive(id)} presentation={async (item, patch) => { if (patch.pinned === false && preferences.unpinConfirmation && !window.confirm('Unpin this thread?')) return false; try { await command('thread.presentation', patch, item.id); void refresh().catch(error => reportError(messageOf(error))); return true; } catch (error) { reportError(messageOf(error)); return false; } }} ensureManualOrder={async () => { try { await command('settings.update', { preferences: { projectOrder: 'manual' } }); await refresh(); return true; } catch (error) { reportError(messageOf(error)); return false; } }} />}
     {!navigationOnly&&!pinnedThreadId&&!detachedNavigation&&!mobile && !layout.sidebarCollapsed && <ResizeHandle label="Resize sidebar" value={layout.sidebarWidth} minimum={232} maximum={380} side="left" change={sidebarWidth => setLayout(value => ({ ...value, sidebarWidth }))} />}
     {!navigationOnly&&<div className="workspace-layout-workarea">{!pinnedThreadId&&!detachedNavigation&&(layout.sidebarCollapsed||mobile)&&<button type="button" className="icon-button sidebar-recovery" aria-label={mobile?"Open navigation":"Open sidebar"} aria-expanded={mobile?sidebarOpen:false} onClick={event=>{prepareSidebarToggle(event);setLayout(value=>({...value,sidebarCollapsed:false}));if(mobile)setSidebarOpen(true);requestAnimationFrame(()=>searchRef.current?.focus());}}>{mobile?<Menu size={18}/>:<PanelLeftOpen size={17}/>}</button>}{!pinnedThreadId&&<WorkspaceControls onChoosePreset={host?.choosePreset} pluginWorkspaces={pluginWorkspaces} selectedPluginWorkspace={selectedPluginWorkspace} onSelectPluginWorkspace={(pluginId,id)=>void selectPluginWorkspace(pluginId,id).catch(cause=>reportError(messageOf(cause)))} pluginCatalogError={pluginCatalog.error||(pluginCatalog.failed?'Plug-ins could not be loaded.':'')} onRetryPluginCatalog={pluginCatalog.retry} extensions={pluginCatalog.extensions??[]} onSelectBuiltin={()=>{setSelectedPluginId(null);setSelectedPluginWorkspace(null);setWorkspaceMode('chat');}} panelToggle={panelToggle} workspaceMode={workspaceMode} onWorkspaceMode={setWorkspaceMode} retainedWorkspace={retainedWorkspace} retainedAvailable={activeCanvas?.preset==='workspace'&&activeCanvas.panels.length>0} onLayoutOpenChange={setLayoutChooserOpen} splitProfiles={splitProfiles.profiles} splitLayout={layoutSplitState.layout} splitProfilesLoading={splitProfiles.loading} splitProfilesError={splitProfiles.error} refreshSplitProfiles={splitProfiles.refresh} saveSplitProfile={savedLayoutActions.save} applySplitProfile={savedLayoutActions.apply} renameSplitProfile={savedLayoutActions.rename} removeSplitProfile={savedLayoutActions.remove} splitWorkspace={splitEnabled} activeBinding={thread?{authority:{kind:'local'},threadId:thread.id,...(thread.projectId?{projectId:thread.projectId}:{})}:undefined} envelope={workspaceEnvelope} error={workspaceState.error} onActionError={reportError} send={workspaceState.send} prepare={prepareWorkspace} panels={canvasPanels} title={panelTitle} addPanel={customDock?kind=>openSplitTool(kind):addCanvasPanel} updatePanel={updateCanvasPanel}/>} {!parentNotifications&&<WorkspaceNotifications store={notifications}/>} <div className="personal-workarea" hidden={Boolean(selectedPluginId)}> {Object.values(dirtyWidgets).some(id => id !== thread?.id) && <div className="workspace-error retained-widget-notice"><span>Widget edits remain open in another conversation.</span><button className="quiet" onClick={() => void discardHiddenWidgets()}>Discard hidden widget edits</button></div>}{widgetDiscardError && <div className="workspace-error" role="status">{widgetDiscardError}<button className="icon-button" aria-label="Dismiss error" onClick={() => setWidgetDiscardError('')}><X size={15} /></button></div>}{canvasActive?renderWorkspaceCanvas():<div className="shell-workarea" ref={setPanelOwner} data-tool-layout={panelBounds.stacked?'stacked':'side'}>{splitRoot?renderSplitRoot():
     <SummaryLayout active={!embeddedThreadId&&!rightWindowOpen&&(!detachedPlan||(preferences.showUsageFooter&&liveUsageOpen))} summaries={!embeddedThreadId&&<SummaryDock><DockedSummary id="plan" title="Project overview" className="summary-overview" open={!detachedPlan&&!rightWindowOpen}
-      defaultCollapsed focusOnOpen={planFocusOnOpen} expandRequest={planExpandRequest||undefined}><SurfaceBoundary resetKey={candidateThread?.id??'new'}><ProjectContextSurface composerChangesAvailable={composerChangesAvailable} key={candidateThread?.id??'new'} thread={candidateThread} snapshot={snapshot} planOpen={planOpen} fullPlanVisible={Boolean(detachedPlan)} onOpenDetailedPlan={()=>revealWorkspaceTool('plan')} onTogglePlan={()=>{if(planOpen)dismissPlan();else{planVisibility.show(candidateThread);setPlanFocusOnOpen(false);setPlanExpandRequest(value=>value+1);setPlanOpen(true);}}} onSelectThread={select} onShowChanges={()=>revealWorkspaceTool('diff')} onConnect={()=>openProjectConnect({threadId:candidateThread?.id,projectId:candidateThread?.projectId})}/></SurfaceBoundary></DockedSummary><UsageFooter open={liveUsageOpen} threadId={thread?.id} usage={thread?snapshot.usage[thread.id]:undefined} visible={preferences.showUsageFooter&&!rightWindowOpen} onOpenUsage={openUsage}/></SummaryDock>}>
-    <SourceWorkbenchProvider snapshot={snapshot} active={!threadHeld&&embeddedActive} owner={thread?{threadId:thread.id,projectId:thread.projectId??null,workspaceId:thread.workspaceId??null}:undefined} ownerEpoch={`${thread?.epoch??0}:${thread?.accountId??''}:${embeddedActive}:${threadHeld}`}><div ref={findScope} style={{display:'contents'}}><ChatView enabled={!embeddedThreadId} header={<><div className="breadcrumb">{thread?.projectName && <><Folder size={13} /><span>{thread.projectName}</span><span className="breadcrumb-slash">/</span></>}<strong>{thread?.title ?? 'New conversation'}</strong></div>{preferences.showThreadDetails && thread && <p className="conversation-metadata">{[metadataModel?.name ?? thread.modelId, metadataModel?.provider, thread.projectName, threadStatus(thread)].filter(Boolean).join(' · ')}</p>}{thread&&<SessionBranchLineage thread={thread} overview={sessionBranchOverview} onOpenThread={select}/>}</>} actions={<><ConversationFind ownerKey={thread?.id??'new'} transcript={conversation} scope={findScope} active={loaded&&embeddedActive&&!threadHeld} onNavigate={()=>setLatestAvailable(false)} onLoadEarlier={canLoadActiveHistory?()=>activeHistoryControl.current?.click():undefined}/>{thread&&<SessionBranchMenu thread={thread} messages={snapshot.messages.filter(item=>item.threadId===thread.id)} overview={sessionBranchOverview} reloadOverview={reloadSessionBranch} onOpenThread={select} onChanged={()=>void refresh()}/>}{!online&&<span className="connection-state" title="Reconnecting"><WifiOff size={13}/>Reconnecting</span>}{pinnedThreadId&&!embeddedThreadId&&<button type="button" className={`icon-button workspace-panel-toggle ${layout.rightPanelOpen ? 'selected' : ''}`} aria-label={layout.rightPanelOpen ? 'Hide workspace panel' : 'Open workspace panel'} aria-pressed={layout.rightPanelOpen} title={`${layout.rightPanelOpen ? 'Close right panel' : 'Open right panel'} (${shortcutKeys(preferences.keybindings.toggleRightPanel)})`} aria-keyshortcuts={ariaKeyShortcuts(['toggle-workspace-panel'], preferences.keybindings)} onClick={() => setLayout(value => value.rightPanelOpen ? { ...value, rightPanelOpen: false, rightPanelMaximized: false } : { ...value, rightPanelOpen: true })}><PanelRight size={17} /></button>}</>}>
+      defaultCollapsed focusOnOpen={planFocusOnOpen} expandRequest={(planExpandRequest||0)+modelDefaultsRequest||undefined}><SurfaceBoundary resetKey={candidateThread?.id??'new'}><ProjectContextSurface composerChangesAvailable={composerChangesAvailable} modelDefaultsRequest={modelDefaultsRequest} workspaceProjects={workspaceEnvelope?.projects} refresh={refresh} key={candidateThread?.id??'new'} thread={candidateThread} snapshot={snapshot} planOpen={planOpen} fullPlanVisible={Boolean(detachedPlan)} onOpenDetailedPlan={()=>revealWorkspaceTool('plan')} onTogglePlan={()=>{if(planOpen)dismissPlan();else{planVisibility.show(candidateThread);setPlanFocusOnOpen(false);setPlanExpandRequest(value=>value+1);setPlanOpen(true);}}} onSelectThread={select} onShowChanges={()=>revealWorkspaceTool('diff')} onConnect={()=>openProjectConnect({threadId:candidateThread?.id,projectId:candidateThread?.projectId})}/></SurfaceBoundary></DockedSummary><UsageFooter open={liveUsageOpen} threadId={thread?.id} usage={thread?snapshot.usage[thread.id]:undefined} visible={preferences.showUsageFooter&&!rightWindowOpen} onOpenUsage={openUsage}/></SummaryDock>}>
+    <SourceWorkbenchProvider snapshot={snapshot} active={!threadHeld&&embeddedActive} owner={thread?{threadId:thread.id,projectId:thread.projectId??null,workspaceId:thread.workspaceId??null}:undefined} ownerEpoch={`${thread?.epoch??0}:${thread?.accountId??''}:${embeddedActive}:${threadHeld}`}><div ref={findScope} style={{display:'contents'}}><ChatView enabled={!embeddedThreadId} headerLabel={conversationHeaderLabel} header={<><div className="breadcrumb">{thread?.projectName&&<span className="breadcrumb-project" title={thread.projectName}><Folder size={13} aria-hidden="true"/><span>{thread.projectName}</span><span className="breadcrumb-slash" aria-hidden="true">/</span></span>}<strong title={conversationTitle}>{conversationTitle}</strong></div>{preferences.showThreadDetails && thread && <p className="conversation-metadata">{[metadataModel?.name ?? thread.modelId, metadataModel?.provider, thread.projectName, threadStatus(thread)].filter(Boolean).join(' · ')}</p>}{thread&&<SessionBranchLineage thread={thread} overview={sessionBranchOverview} onOpenThread={select}/>}</>} actions={<><ConversationFind ownerKey={thread?.id??'new'} transcript={conversation} scope={findScope} active={loaded&&embeddedActive&&!threadHeld} empty={!messages.length&&!activeOlder.length&&!hasActiveArtifacts} onNavigate={()=>setLatestAvailable(false)} onLoadEarlier={canLoadActiveHistory?()=>activeHistoryControl.current?.click():undefined}/>{thread&&<SessionBranchMenu thread={thread} messages={snapshot.messages.filter(item=>item.threadId===thread.id)} overview={sessionBranchOverview} reloadOverview={reloadSessionBranch} onOpenThread={select} onChanged={()=>void refresh()}/>}{!online&&<span className="connection-state" title="Reconnecting"><WifiOff size={13}/>Reconnecting</span>}{pinnedThreadId&&!embeddedThreadId&&<button type="button" className={`icon-button workspace-panel-toggle ${layout.rightPanelOpen ? 'selected' : ''}`} aria-label={layout.rightPanelOpen ? 'Hide workspace panel' : 'Open workspace panel'} aria-pressed={layout.rightPanelOpen} title={`${layout.rightPanelOpen ? 'Close right panel' : 'Open right panel'} (${shortcutKeys(preferences.keybindings.toggleRightPanel)})`} aria-keyshortcuts={ariaKeyShortcuts(['toggle-workspace-panel'], preferences.keybindings)} ref={panelToggleRef} onClick={()=>toggleRightPanel(false)}><PanelRight size={17} /></button>}</>}>
       
       {detachedThread&&<div className="notice">Conversation open in another window.<button className="quiet" onClick={()=>void desktop?.bridge.focus(detachedThread.id)}>Focus chat</button></div>}<div className="conversation-frame"><ChatScrollIndicator scrollRef={conversation} controllerRef={conversationMotion} contentKey={thread?.id}/><div inert={threadHeld} ref={conversation} className="conversation-scroll" onScroll={rememberPosition} aria-label="Conversation" tabIndex={0}>{[thread, ...snapshot.threads.filter(item => item.id !== thread?.id && Object.values(dirtyWidgets).includes(item.id))].toSorted((a, b) => (a?.createdAt ?? '').localeCompare(b?.createdAt ?? '') || (a?.id ?? '').localeCompare(b?.id ?? '')).map(panelThread => {
         const thread = panelThread;
@@ -1160,26 +1374,42 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
       {latestAvailable && <button className="jump-latest secondary" onClick={() => { const position=conversationMotion.current?.jump();if(position)readingPositions.current.set(thread?.id??'new',position);setLatestAvailable(false);setAnnouncement(''); }}>Jump to latest<ArrowUp size={13} /></button>}
       {loaded && thread && threadWorking(thread) && (snapshot.messages.some(message => message.threadId === thread.id) || snapshot.artifacts.some(artifact => artifact.threadId === thread.id && artifact.lifecycle === 'active')) && <RunStrip thread={thread} snapshot={snapshot} onStop={() => void stopConversation(thread, host?.composers ?? sharedComposers).then(() => refresh()).catch(error => reportError(messageOf(error)))} />}
-      <div style={{display:'contents'}} inert={threadHeld}>{thread&&delegatedThread(thread)?<div className="canvas-thread-readonly">Read-only. Continue in the parent conversation.</div>:loaded&&thread&&threadParent(thread)?<SideThreadComposer key={thread.id} thread={thread} modelId={modelId} refresh={refresh}/>:loaded ? <Composer usageOpen={liveUsage?.open??liveUsageOpen} onShowUsage={liveUsage?.toggle??(()=>setLiveUsageOpen(value=>!value))} onComposerChangesAvailability={reportComposerChanges} modelPickerRequest={pickerRequest?.threadId===thread?.id?pickerRequest?.id:undefined} onModelPickerOpened={id=>setModelPickerRequest(current=>current?.id===id?undefined:current)} sharedComposers={host?.composers??sharedComposers} selectProject={openProjectSelection} predictionBlocked={Boolean(embeddedThreadId&&!embeddedActive) || threadHeld || Boolean(projectPicker) || projectConnectOpen || settingsOpen || usageOpen || Boolean(resourcePicker) || rename || (mobile && sidebarOpen)} key={thread?.id ?? 'new'} thread={thread} models={models} modelId={modelId} setModelId={updateModel} snapshot={snapshot} ensureThread={ensureThread} onNewTask={id=>{void updateModel(id);void newThreadRef.current().catch(error=>reportError(messageOf(error)));}} busy={composerBusy || threadCreating} runAction={runComposerAction} refresh={refresh} setup={() => { setSettingsSection('providers'); setSettingsOpen(true); }} openResource={openResourcePicker} browseProject={id=>revealWorkspaceTool('files',id)} inspectChanges={()=>revealWorkspaceTool('diff')} reportError={reportError} onSide={async content=>{setSideOpen(true);if(!sideChat.current)throw new Error("The side conversation is still opening.");await sideChat.current.ask(content);}} /> : <div className="composer-dock"><LoadingState pending={!error} hasContent={false} label="Opening conversation…" skeleton={<ComposerSkeleton/>}/></div>}</div>
+      <div style={{display:'contents'}} inert={threadHeld}>{thread&&delegatedThread(thread)?<div className="canvas-thread-readonly">Read-only. Continue in the parent conversation.</div>:loaded&&thread&&threadParent(thread)?<SideThreadComposer key={thread.id} thread={thread} modelId={modelId} refresh={refresh}/>:loaded ? <Composer registerDock={embeddedActive&&!threadHeld&&!selectedPluginId&&!customDock?(onDockedComposer??(!pinnedThreadId?setComposerDock:undefined)):undefined} usageOpen={liveUsage?.open??liveUsageOpen} onShowUsage={liveUsage?.toggle??(()=>setLiveUsageOpen(value=>!value))} onComposerChangesAvailability={reportComposerChanges} modelPickerRequest={pickerRequest?.threadId===thread?.id?pickerRequest?.id:undefined} onModelPickerOpened={id=>setModelPickerRequest(current=>current?.id===id?undefined:current)} sharedComposers={host?.composers??sharedComposers} selectProject={openProjectSelection} predictionBlocked={Boolean(embeddedThreadId&&!embeddedActive) || threadHeld || Boolean(projectPicker) || projectConnectOpen || settingsOpen || usageOpen || Boolean(resourcePicker) || rename || (mobile && sidebarOpen)} key={thread?.id ?? 'new'} thread={thread} models={models} modelId={modelId} setModelId={updateModel} modelResolution={modelResolution} onEditProjectDefaults={modelResolution?.projectId&&workspaceEnvelope?.projects.some(item=>item.id===modelResolution.projectId)?()=>setModelDefaultsRequest(value=>value+1):undefined} snapshot={snapshot} ensureThread={ensureThread} onNewTask={id=>{void updateModel(id);void newThreadRef.current().catch(error=>reportError(messageOf(error)));}} busy={composerBusy || threadCreating} runAction={runComposerAction} refresh={refresh} setup={() => { setSettingsSection('providers'); setSettingsOpen(true); }} openResource={openResourcePicker} browseProject={id=>revealWorkspaceTool('files',id)} inspectChanges={()=>revealWorkspaceTool('diff')} reportError={reportError} onSide={async content=>{setSideOpen(true);if(!sideChat.current)throw new Error("The side conversation is still opening.");await sideChat.current.ask(content);}} /> : <div className="composer-dock"><LoadingState pending={!error} hasContent={false} label="Opening conversation…" skeleton={<ComposerSkeleton/>}/></div>}</div>
+
     </ChatView></div></SourceWorkbenchProvider>
     </SummaryLayout>}
 
     {!hostWorkspaceContext&&(layout.rightPanelOpen||panelLeaving||!embeddedThreadId&&Boolean(desktop?.state.dockedBrowser))&&<div className="workspace-tools">
-    {(layout.rightPanelOpen||panelLeaving) && <WorkspacePanel reviewRequest={reviewRequest} onReviewHandled={handleReviewRequest} excerptComposer={excerptComposerFor({authority:{kind:'local'},threadId:thread?.id})} refresh={refresh} snapshot={snapshot} preferredResourceId={focusedResource} threadId={thread?.id} preferences={preferences} layout={layout} leaving={panelLeaving&&!layout.rightPanelOpen} onLeave={()=>setPanelLeaving(false)} setWidth={rightPanelWidth => setLayout(value => ({ ...value, rightPanelWidth }))} resizeBounds={panelBounds} />}
+    {(layout.rightPanelOpen||panelLeaving) && <WorkspacePanel regionRef={focusStandardPanel?panelRegionRef:undefined} reviewRequest={reviewRequest} onReviewHandled={handleReviewRequest} excerptComposer={excerptComposerFor({authority:{kind:'local'},threadId:thread?.id})} refresh={refresh} snapshot={snapshot} preferredResourceId={focusedResource} threadId={thread?.id} preferences={preferences} layout={layout} leaving={panelLeaving&&!layout.rightPanelOpen} onLeave={()=>setPanelLeaving(false)} setWidth={rightPanelWidth => setLayout(value => ({ ...value, rightPanelWidth }))} resizeBounds={panelBounds} />}
     {!embeddedThreadId&&<DesktopBrowserDock/>}
     </div>}
     {thread&&!thread.sideParentId&&<SideChat key={thread.id} ref={sideChat} parent={thread} snapshot={snapshot} modelId={modelId} open={sideOpen} onClose={()=>setSideOpen(false)} refresh={refresh}/>}
     </div>}</div>{openedPlugins.map(id=>{const plugin=plugins.find(value=>value.id===id);return plugin?<PluginFrame key={id} plugin={plugin} projectColors={preferences.projectColors} theme={theme} active={selectedPluginId===id&&!selectedPluginWorkspace}/>:null;})}{openedPluginWorkspaces.map(item=>{const plugin=plugins.find(value=>value.id===item.pluginId),contribution=plugin?.workspaces?.find(value=>value.id===item.workspaceId);return plugin&&contribution?<PluginFrame key={item.pluginId+':'+item.workspaceId} plugin={plugin} projectColors={preferences.projectColors} workspace={contribution} theme={theme} active={selectedPluginWorkspace===item.pluginId+':'+item.workspaceId}/>:null;})}</div>}
-    {!embeddedThreadId&&<><Toaster/><TooltipLayer/></>}
+    {!embeddedThreadId&&<><Toaster composerDock={composerDock}/><TooltipLayer/></>}
     {confirmArchive && <Dialog title="Archive thread?" close={() => setConfirmArchive(null)}><p>The saved conversation will move to Archive in Settings. Restore it there whenever you need it.</p><footer className="dialog-actions"><button className="quiet" onClick={() => setConfirmArchive(null)}>Cancel</button><button className="primary" onClick={() => { const id = confirmArchive; setConfirmArchive(null); void archive(id, false, true); }}>Archive thread</button></footer></Dialog>}
     {archiveThread && <Dialog title="Uncheckpointed widget edits" close={() => setArchiveThread(null)}><p>Checkpoint your widget edits before archiving this thread, or explicitly discard them.</p>{error&&<p role="status" className="error-text">{error}</p>}<footer className="dialog-actions"><button className="secondary" onClick={() => { select(archiveThread); setArchiveThread(null); }}>Return to checkpoint</button><button className="quiet" onClick={() => void archive(archiveThread, true)}>Discard edits and archive</button></footer></Dialog>}
     {resourcePicker && <ResourcePicker key={resourcePicker.session} threadId={resourcePicker.threadId} opener={resourcePicker.opener}
       close={() => setResourcePicker(current => current === resourcePicker ? null : current)} refresh={refresh} />}
-    {projectPicker&&<ProjectPicker open authority={{kind:'local'}} projects={workspaceEnvelope?.projects??[]} selectedProjectId={snapshot.threads.find(value=>value.id===projectPicker.threadId)?.projectId}
+    {projectPicker&&<ProjectPicker open authority={{kind:'local'}} projects={workspaceEnvelope?.projects??[]} selectedProjectId={snapshot.threads.find(value=>value.id===projectPicker.threadId)?.projectId} initialActiveProjectId={projectPicker.initialActiveProjectId}
       recentProjectIds={[...new Set([...snapshot.threads].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).flatMap(value=>value.projectId?[value.projectId]:[]))]}
       colors={preferences.projectColors} busy={projectPicking} error={projectPickerError} onClose={closeProjectSelection} onSelect={pickProject} onColorChange={saveProjectColor}
       onAddProject={()=>{projectConnectPicker.current=projectPicker;setProjectPicker(null);openProjectConnect({});}}/>}
-    {projectConnectOpen&&<Dialog title="Connect project" close={closeProjectConnect}><form onSubmit={event=>{event.preventDefault();const target=projectConnectTarget.current;setProjectConnectError('');setProjectConnectFormError('');void prepareWorkspace().then(()=>{if(target?.projectId&&snapshotRef.current.threads.find(item=>item.id===target.threadId)?.projectId!==target.projectId)throw Error('The owning project changed. Close this dialog and reopen it from that conversation.');return workspaceState.send('workspace.project.connect',{name:projectName,path:projectPath,...(target?.threadId?{threadId:target.threadId}:{})}).then(async()=>{if(target?.threadId)await reconcileSplitThreadProject(target.threadId);});}).then(async()=>{await refresh();if(projectConnectTarget.current===target)closeProjectConnect();}).catch(cause=>{if(projectConnectTarget.current!==target)return;const formLevel=cause instanceof ApiError&&['PROJECT_BUSY','WORKSPACE_CHANGED','PROJECT_NOT_CONNECTED','NOT_FOUND'].includes(cause.code);if(formLevel)setProjectConnectFormError(messageOf(cause));else setProjectConnectError(messageOf(cause));});}}><label className="field">Project name<input required maxLength={100} value={projectName} aria-describedby="connect-project-name-hint" onChange={event=>setProjectName(event.target.value)}/></label><small id="connect-project-name-hint" className="field-hint">Shown in the project picker · up to 100 characters</small><label className="field">Local folder<input required value={projectPath} placeholder={projectPathPlaceholder} aria-invalid={Boolean(projectConnectError)} aria-describedby={projectConnectError?'connect-project-path-error':undefined} onChange={event=>{setProjectPath(event.target.value);setProjectConnectError('');}}/></label>{projectConnectFormError&&<p role="alert" className="error-text">{projectConnectFormError}</p>}{projectConnectError&&<p role="alert" id="connect-project-path-error" className="error-text">{`Couldn't connect that folder: ${projectConnectError}`}</p>}<footer className="dialog-actions"><button type="button" className="quiet" onClick={closeProjectConnect}>Cancel</button><button className="primary" disabled={!projectName.trim()||!projectPath.trim()}>Connect project</button></footer></form></Dialog>}
+    {projectConnectOpen&&<Dialog title="Connect project" close={closeProjectConnect} closeDisabled={projectConnecting} initialFocusRef={projectConnectName}>
+      <form aria-busy={projectConnecting} onSubmit={event=>{event.preventDefault();void connectProject();}}>
+        <label className="field">Project name<input ref={projectConnectName} required maxLength={100} placeholder="My project" readOnly={projectConnecting}
+          value={projectName} aria-describedby="connect-project-name-hint" onChange={event=>setProjectName(event.target.value)}/></label>
+        <small id="connect-project-name-hint" className="field-hint">Shown in the project picker · up to 100 characters</small>
+        <label className="field">Local folder<input ref={projectConnectPath} required maxLength={4096} readOnly={projectConnecting}
+          value={projectPath} placeholder={projectPathPlaceholder} aria-invalid={Boolean(projectConnectError)}
+          aria-describedby={projectConnectError?'connect-project-path-error':undefined} onChange={event=>{setProjectPath(event.target.value);setProjectConnectError('');}}/></label>
+        {projectConnectFormError&&<p role="alert" className="error-text">{projectConnectFormError}</p>}
+        {projectConnectError&&<p role="alert" id="connect-project-path-error" className="error-text">{`Couldn't connect that folder: ${projectConnectError}`}</p>}
+        <footer className="dialog-actions">
+          <button type="button" className="quiet" disabled={projectConnecting} onClick={closeProjectConnect}>Cancel</button>
+          <button className="primary" disabled={projectConnecting||!projectName.trim()||!projectPath.trim()}>{projectConnecting?'Connecting…':'Connect project'}</button>
+        </footer>
+      </form>
+    </Dialog>}
     <UsageDialog open={usageOpen} onClose={()=>setUsageOpen(false)} reports={usageReport?[usageReport]:[]} requests={usageThreadId?(snapshot.modelRequests?.[usageThreadId]??[]):[]} onRefresh={refresh}/>
     {settingsOpen && <SettingsWindow openBrowser={desktop?.context.surface.kind==='main'?openManualBrowser:undefined} environmentSettings={<EnvironmentSettings/>} initialSection={settingsSection} snapshot={snapshot} modelError={modelError} refresh={refresh} loadModels={loadModels} close={() => setSettingsOpen(false)} addResource={() => { setSettingsOpen(false); void ensureThread(async id => { if (thread) return; const pending = await journalReadRecord<string>('draft:new'); if (pending?.value) { await journalWrite(`draft:${id}`, pending.value); await journalCompareAndSwap('draft:new', pending.generation, ''); } }).then(id=>openResourcePicker(id)).catch(error => reportError(messageOf(error))); }} />}
     {rename && thread && <Dialog title="Rename thread" initialFocusRef={renameInput} close={() => setRename(false)}><form onSubmit={event => { event.preventDefault(); void command('thread.rename', { title: title.trim() }, thread.id).then(async () => { await refresh(); setRename(false); }).catch(error => reportError(messageOf(error))); }}><label className="field">Thread name<input ref={el => { renameInput.current = el; if (el && !renameSelected.current) { renameSelected.current = true; el.select(); } }} autoFocus required value={title} maxLength={180} onChange={event => setTitle(event.target.value)} /></label><footer className="dialog-actions"><button type="button" className="quiet" onClick={() => setRename(false)}>Cancel</button><button className="primary" disabled={!title.trim()}>Save name</button></footer></form></Dialog>}

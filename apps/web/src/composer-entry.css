@@ -5,3 +5,34 @@
 .composer-attachment-clip { min-height:0; }
 .composer-attachment-clip>.resource-strip { margin:0; padding:0 0 var(--ui-space-2); max-height:128px; overflow:auto; scrollbar-width:thin; flex-wrap:wrap; }
 .resource-chip-readonly { opacity:.6; flex:0 0 auto; }
+.composer-attachment-notice {
+  width:fit-content;
+  margin-inline-start:auto;
+  margin-block-end:8px;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  max-width:100%;
+  padding:8px 12px;
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:var(--surface);
+  color:var(--text);
+  box-shadow:var(--elevation);
+  font-size:13px;
+  animation:composer-attachment-enter var(--ui-motion-toast-enter) var(--ui-ease-enter) both;
+}
+.composer-attachment-notice > span { min-width:0; overflow-wrap:anywhere; }
+.composer-attachment-notice > button { flex:none; color:var(--accent-fg); font-size:13px; font-weight:500; }
+.composer-attachment-notice[data-leaving] { animation:composer-attachment-exit var(--ui-motion-toast-exit) var(--ui-ease-move) both; pointer-events:none; }
+.resource-chip[data-artifact-attachment] .resource-chip-remove { width:32px; height:32px; }
+@keyframes composer-attachment-enter { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+@keyframes composer-attachment-exit { to { opacity:0; } }
+@media (prefers-reduced-motion:reduce) {
+  .composer-attachment-notice { animation-name:composer-attachment-exit; animation-direction:reverse; }
+}
+:root[data-motion=off] .composer-attachment-notice { animation:none; }
+:root[data-motion=reduced] .composer-attachment-notice {
+  animation-name:composer-attachment-exit;
+  animation-direction:reverse;
+}

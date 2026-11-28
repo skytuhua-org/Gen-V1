@@ -8,7 +8,7 @@ test.beforeEach(async({page})=>{
 });
 test('compact rows show project monogram chip, readable title and metadata, and preserve detail access',async({page})=>{
  const searchBox=await page.getByRole('textbox',{name:'Search threads',exact:true}).boundingBox();
- const filterBox=await page.getByRole('button',{name:'Filter threads',exact:true}).boundingBox();
+ const filterBox=await page.getByRole('button',{name:'Thread filter: all',exact:true}).boundingBox();
  const newThreadBox=await page.getByRole('button',{name:'New thread',exact:true}).boundingBox();
  expect(Math.abs(searchBox!.y-filterBox!.y)).toBeLessThanOrEqual(4);
  expect(Math.abs(searchBox!.y-newThreadBox!.y)).toBeLessThanOrEqual(4);
@@ -34,7 +34,7 @@ test('compact rows show project monogram chip, readable title and metadata, and 
  expect(await page.evaluate(()=>(window as unknown as {sidebarCompactCalls:string[]}).sidebarCompactCalls)).toContain('presentation:{"pinned":true}');
 });
 test('active filter shows a visible chip that clears back to all',async({page})=>{
- await page.getByRole('button',{name:'Filter threads',exact:true}).click();
+ await page.getByRole('button',{name:'Thread filter: all',exact:true}).click();
  const chip=page.locator('.sidebar-filter-chip');
  await expect(chip).toContainText('Showing working threads');
  await chip.getByRole('button',{name:'Clear thread filter'}).click();
@@ -45,7 +45,7 @@ test('footer invokes supplied actions and the single updater while plug-in navig
  await page.getByRole('button',{name:'Settings',exact:true}).click();
  await page.getByRole('button',{name:'Pull requests',exact:true}).click();
  await page.getByRole('button',{name:'Usage',exact:true}).click();
- await page.getByRole('button',{name:'Update',exact:true}).click();
+ await page.getByRole('button',{name:'Update Up to date',exact:true}).click();
  await page.getByRole('navigation',{name:'Installed plug-ins'}).getByRole('button').click();
  expect(await page.evaluate(()=>(window as unknown as {sidebarCompactCalls:string[]}).sidebarCompactCalls)).toEqual(['settings','pull-requests','usage','update:check','plugin']);
 });
