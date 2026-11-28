@@ -584,6 +584,22 @@ describe("isolated process adapter", () => {
     }
   });
 
+  it("reports Pi settlement after confirmed cancel even when usage observation throws", async () => {
+    const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
+    const events: RuntimeEvent[] = [];
+    runtime.configure({ onTool: async () => null, onEvent: event => {
+      events.push(event);
+      if (event.type === "usage") throw new Error("synthetic usage observer failure");
+    } });
+    try {
+      await runtime.start(input);
+      await expect(runtime.cancel(ctx)).resolves.toBeUndefined();
+      expect(workers.terminate).toHaveBeenCalledOnce();
+      expect(events).toContainEqual({ ...ctx, type: "settled", aborted: true });
+      await expect(runtime.start({ ...input, runId: "successor" })).resolves.toBeUndefined();
+    } finally { await runtime.dispose(); }
+  });
+
   it("retains worker custody after a transport error without confirmed native exit", async () => {
     const workers = mockWorkers(), runtime = createPiRuntime({ dataDir: await temp() });
     const onEvent = vi.fn();
@@ -799,6 +815,32 @@ describe("isolated process adapter", () => {
 });
 
 describe("subscription login storage", () => {
+  it("removes its temporary device ID after a synthetic partial write", async () => {
+    const root = await temp(), agent = join(root, "pi");
+    const native = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const failure = Object.assign(new Error("synthetic full disk"), { code: "ENOSPC" });
+    const scratch = (path: unknown) => typeof path === "string" && path.includes(".device-id-") && path.endsWith(".tmp");
+    const write = vi.spyOn(fileSystem, "writeFile").mockImplementation(async (path, data, options) => {
+      if (!scratch(path)) return native.writeFile(path, data, options);
+      await native.writeFile(path, "partial", options); throw failure;
+    });
+    const open = vi.spyOn(fileSystem, "open").mockImplementation(async (path, flags, mode) => {
+      const handle = await native.open(path, flags, mode);
+      if (scratch(path)) {
+        const real = handle.writeFile.bind(handle);
+        handle.writeFile = async () => { await real("partial"); throw failure; };
+      }
+      return handle;
+    });
+    try {
+      await expect(getOrCreateDeviceId(root)).rejects.toBe(failure);
+      expect(await native.readdir(agent)).toEqual([]);
+    } finally { open.mockRestore(); write.mockRestore(); }
+    const id = await getOrCreateDeviceId(root);
+    expect(await native.readFile(join(agent, "device-id"), "utf8")).toBe(id);
+    expect(await native.readdir(agent)).toEqual(["device-id"]);
+  });
+
   it("uses one stable app installation ID across logins, including concurrent first use", async () => {
     const dir = await temp();
     const ids = await Promise.all([getOrCreateDeviceId(dir), getOrCreateDeviceId(dir), getOrCreateDeviceId(dir)]);
@@ -859,4 +901,36 @@ it("rejects a malformed UTF-8 Pi header instead of substituting characters", asy
     ]));
     await expect(validateSessionPath(root, path, "thread")).rejects.toMatchObject({ code: "PI_SESSION_INVALID" });
   } finally { await fileSystem.rm(root, { recursive: true, force: true }); }
+});
+
+it("distinguishes missing, torn and oversized Pi history on resume reads", async () => {
+  const fileSystem = await import("node:fs/promises");
+  const root = await fileSystem.mkdtemp(join(tmpdir(), "pi-history-recovery-"));
+  const runtime = createPiRuntime({ dataDir: root });
+  try {
+    const { sessionsDir } = taskPaths(root, "thread");
+    await fileSystem.mkdir(sessionsDir, { recursive: true });
+    const path = join(sessionsDir, "session.jsonl");
+    const header = JSON.stringify({ type: "session", id: "s1", version: 3 });
+    const envelope = encodeInput({ ...input, prompt: "delivered work", inputId: "input-1" });
+    const delivered = JSON.stringify({ type: "message", message: { role: "user", content: envelope } });
+    // A torn final append still yields every durable delivered input.
+    await fileSystem.writeFile(path, header + "\n" + delivered + "\n" + delivered.slice(0, 20));
+    expect(await runtime.history(path)).toEqual(["input-1"]);
+    // A missing transcript is a typed recovery state, not a raw ENOENT.
+    await fileSystem.rm(path);
+    await expect(runtime.history(path)).rejects.toMatchObject({ code: "PI_SESSION_MISSING" });
+    await expect(validateSessionPath(root, path, "thread")).rejects.toMatchObject({ code: "PI_SESSION_MISSING" });
+    // Many valid entries inside the byte bound still resume and dedupe.
+    await fileSystem.writeFile(path, header + "\n" + Array.from({ length: 2000 }, () => delivered).join("\n"));
+    expect(await runtime.history(path)).toEqual(["input-1"]);
+    // The total transcript read is bounded too; many individually small entries
+    // cannot force resume to scan unbounded history.
+    const oneMegabyteEntry = "x".repeat(1024 * 1024);
+    await fileSystem.writeFile(path, header + "\n" + Array.from({ length: 33 }, () => oneMegabyteEntry).join("\n"));
+    await expect(runtime.history(path)).rejects.toMatchObject({ code: "PI_HISTORY_LIMIT" });
+    // A single oversized entry also fails closed.
+    await fileSystem.writeFile(path, header + "\n" + "x".repeat(33 * 1024 * 1024));
+    await expect(runtime.history(path)).rejects.toMatchObject({ code: "PI_HISTORY_LIMIT" });
+  } finally { await runtime.dispose(); await fileSystem.rm(root, { recursive: true, force: true }); }
 });

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { expect, it } from 'vitest';
 import fixture from './fixtures/m04-context-v3.json';
-import { createContextResults, encodeContextResult, RESULT_CAP_BYTES } from '../packages/core/context-results';
+import { createContextResults, clipContextResult, encodeContextResult, RESULT_CAP_BYTES } from '../packages/core/context-results';
 
 type Owner = { threadId: string; workspaceId: string; accountId: string };
 type Vault = {
@@ -43,7 +43,10 @@ async function setup(failWrite = false) {
 it('keeps a bounded head and tail preview and returns exact authorized bytes', async () => {
   const x = await setup(), result = await x.spill(), full = bytes(), offset = full.length - 21;
   expect(result.status).toBe('AVAILABLE'); expect(result.handle).not.toBeNull();
-  expect(Buffer.byteLength(result.preview)).toBeLessThanOrEqual(fixture.results.previewCapBytes);
+  const windows = result.preview.split('\n[… result clipped …]\n');
+  expect(windows).toHaveLength(2);
+  expect(Buffer.byteLength(windows[0]!)).toBeLessThanOrEqual(fixture.results.previewCapBytes / 2);
+  expect(Buffer.byteLength(windows[1]!)).toBeLessThanOrEqual(fixture.results.previewCapBytes / 2);
   expect(result.preview).toContain('BEGIN'); expect(result.preview).toContain('END');
   expect(result.omittedBytes).toBeGreaterThan(0);
   expect(x.writes()).toBe(1);
@@ -68,7 +71,10 @@ it('does not reveal stored output after grant revocation, deletion, expiry or a 
 it('returns a bounded usable preview but no handle when full storage fails', async () => {
   const x = await setup(true), result = await x.spill();
   expect(result).toMatchObject({ status: 'FULL_RESULT_UNAVAILABLE', handle: null });
-  expect(Buffer.byteLength(result.preview)).toBeLessThanOrEqual(fixture.results.previewCapBytes);
+  const clipped = result.preview.split('\n[… result clipped …]\n');
+  expect(clipped).toHaveLength(2);
+  expect(Buffer.byteLength(clipped[0]!)).toBeLessThanOrEqual(fixture.results.previewCapBytes / 2);
+  expect(Buffer.byteLength(clipped[1]!)).toBeLessThanOrEqual(fixture.results.previewCapBytes / 2);
   expect(result.preview).toContain('BEGIN'); expect(result.preview).toContain('END');
 });
 
@@ -84,12 +90,30 @@ it('serializes ordinary JSON exactly across string chunk and Unicode boundaries'
   expect(encodeContextResult('raw café 😀')).toMatchObject({ mediaType: 'text/plain', preview: 'raw café 😀', totalBytes: 14 });
 });
 
+it('retains the fixed first and last 8 KiB windows, not marker-derived bounds', () => {
+  // Sentinels at head bytes 8,180-8,192 and at the start of the final 8,192
+  // bytes sit inside the fixed D04 windows but outside marker-derived ones.
+  const headSentinel = 'H'.repeat(13), tailSentinel = 'TAIL_SENTINEL';
+  const head = 'a'.repeat(8179) + headSentinel;
+  const tail = tailSentinel + 'c'.repeat(8192 - tailSentinel.length);
+  const bytes = Buffer.from(head + 'b'.repeat(20000 - 16384) + tail);
+  expect(bytes.length).toBe(20000);
+  const { preview, omittedBytes } = clipContextResult(bytes);
+  const [h, t] = preview.split('\n[… result clipped …]\n') as [string, string];
+  expect(h).toContain(headSentinel);
+  expect(t).toContain(tailSentinel);
+  expect(Buffer.byteLength(h)).toBe(8192);
+  expect(Buffer.byteLength(t)).toBe(8192);
+  expect(omittedBytes).toBe(20000 - 16384);
+});
+
 it('bounds oversized output while preserving the actual final failure diagnostic', () => {
   const value = 'BEGIN\n' + 'x'.repeat(RESULT_CAP_BYTES) + '\nLAST_FAILURE: café 😀', encoded = encodeContextResult(value);
   expect(encoded.bytes).toBeNull(); expect(encoded.totalBytes).toBe(Buffer.byteLength(value));
-  expect(Buffer.byteLength(encoded.preview)).toBeLessThanOrEqual(16384);
   expect(encoded.preview).toMatch(/^BEGIN\n/); expect(encoded.preview).toMatch(/LAST_FAILURE: café 😀$/);
   const [head, tail] = encoded.preview.split('\n[… result clipped …]\n') as [string, string];
+  expect(Buffer.byteLength(head)).toBe(8192);
+  expect(Buffer.byteLength(tail)).toBe(8192);
   expect(encoded.omittedBytes).toBe(Buffer.byteLength(value) - Buffer.byteLength(head) - Buffer.byteLength(tail));
 });
 

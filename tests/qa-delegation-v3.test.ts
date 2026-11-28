@@ -122,3 +122,15 @@ it('security findings dedupe by source plus identity and keep evidence fields',(
  expect(ledger.all('t1')).toHaveLength(2);
  expect(other.source.blobSha).toBe('a'.repeat(40));
 });
+
+it('isolates identical findings recorded by different owners',()=>{
+ const store=stateStore();
+ const ledger=new SecurityFindingLedger(store);
+ const base={version:1 as const,findingId:'f-1',source:{path:'src/app.ts',blobSha:'a'.repeat(40),line:12},authorizedScope:'workspace',observation:'x',impact:'y',status:'OPEN' as const,reproduction:null,createdAt:new Date().toISOString()};
+ ledger.record(base,'t1');
+ ledger.record({...base,observation:'different observation'},'t2');
+ expect(ledger.all('t1')).toHaveLength(1);
+ expect(ledger.all('t2')).toHaveLength(1);
+ expect(ledger.all('t1')[0].observation).toBe('x'); // t2 must not overwrite t1's row
+ expect(ledger.all('t2')[0].observation).toBe('different observation');
+});

@@ -10,7 +10,7 @@ export function readShellLayout(): ShellLayout {
     const saved = readJson<unknown>(storageKeys.shellLayoutV1, null);
     if (!saved || typeof saved !== 'object') return defaults;
     const value = saved as Partial<ShellLayout>;
-    return { ...defaults, sidebarCollapsed: value.sidebarCollapsed === true, sidebarWidth: typeof value.sidebarWidth === 'number' && Number.isFinite(value.sidebarWidth) ? Math.max(200, Math.min(380, value.sidebarWidth)) : defaults.sidebarWidth,
+    return { ...defaults, sidebarCollapsed: value.sidebarCollapsed === true, sidebarWidth: typeof value.sidebarWidth === 'number' && Number.isFinite(value.sidebarWidth) ? Math.max(232, Math.min(380, value.sidebarWidth)) : defaults.sidebarWidth,
       rightPanelOpen: value.rightPanelOpen === true, rightPanelWidth: typeof value.rightPanelWidth === 'number' && Number.isFinite(value.rightPanelWidth) ? Math.max(280, Math.min(720, value.rightPanelWidth)) : defaults.rightPanelWidth,
       rightPanelMaximized: value.rightPanelMaximized === true, activeTab: WORKSPACE_TABS.includes(value.activeTab ?? ('' as WorkspaceTab)) ? value.activeTab! : 'artifact', openTabs: (() => { const tabs = Array.isArray(value.openTabs) ? value.openTabs.filter((tab): tab is WorkspaceTab => WORKSPACE_TABS.includes(tab)) : []; const active = WORKSPACE_TABS.includes(value.activeTab ?? ('' as WorkspaceTab)) ? value.activeTab! : 'artifact'; return tabs.includes(active) ? tabs : [...tabs, active]; })(), activeArtifactId: typeof value.activeArtifactId === 'string' ? value.activeArtifactId : null,
       folded: value.folded && typeof value.folded === 'object' ? Object.fromEntries(Object.entries(value.folded).filter(([key, state]) => key.length < 220 && typeof state === 'boolean')) : {} };
@@ -34,4 +34,20 @@ export function matchesShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | '
     : either ? event.ctrlKey !== event.metaKey : meta ? event.metaKey && !event.ctrlKey : !event.ctrlKey && !event.metaKey;
   return event.key.toLowerCase() === key && matchesPlatform
     && event.shiftKey === modifiers.includes('shift') && event.altKey === modifiers.includes('alt');
+}
+
+const sidebarSearchSelector = '.search-field input, input.search-field, input[placeholder="Search"]';
+
+function visibleSidebarSearch(input: HTMLInputElement) {
+  if (!input.isConnected || input.disabled || input.closest('[inert], [hidden], [aria-hidden="true"]')) return false;
+  const box = input.getBoundingClientRect(), style = getComputedStyle(input);
+  return box.width > 0 && box.height > 0 && style.visibility === 'visible' && style.display !== 'none';
+}
+
+/** Focus the rendered sidebar search field, ignoring inert collapse snapshots. */
+export function focusSidebarSearch(fallback: HTMLInputElement | null = null) {
+  const target = (fallback && visibleSidebarSearch(fallback) ? fallback : null)
+    ?? Array.from(document.querySelectorAll<HTMLInputElement>(sidebarSearchSelector)).find(visibleSidebarSearch);
+  target?.focus({ preventScroll: true });
+  return target;
 }

@@ -8,7 +8,50 @@ Use GitHub Issues to coordinate work on `skytuhua-org/Gen-V1`. Apply these rules
 2. **Reuse or create one issue per task.** If authorized work will change the repository, run a requested review or verification, or require a handoff, use the matching issue. If none exists, create one with a descriptive title, the requested outcome, scope, and observable completion criteria. Keep simple questions and private investigations in their original context. Respect any explicit instruction to keep the work local. When there is no assignment or accepted handoff, leave the backlog alone.
 3. **Identify the session.** Use the tool and execution location, plus an existing non-sensitive account alias where known. Append a short, locally generated random suffix when starting a new session, for example `devin-a-cloud-9f31a2` or `codex-local-b47280`. On resume, reuse your own recorded name if the session history identifies it. If identity was lost, introduce a fresh name and reference the existing branch and issue. If the account alias is unknown, omit it. Never derive a public name from credentials, emails, private session URLs, or machine paths.
 4. **Claim a scope before editing.** Post one issue comment containing your worker name, role, exact scope, and branch or PR when available. Refresh the thread after posting. Honor the maintainer's assignment first. For overlapping, equally authorized claims, the earliest GitHub claim owns that scope until release or reassignment. Other workers can review or claim distinct work within their assignment. When two sessions create duplicate issues concurrently, link both, continue in the earlier matching issue, and release the duplicate claim. Avoid treating an old or silent session as having released work.
+
+   **Simultaneous claims.** When two workers post overlapping claims in the same refresh window — neither saw the other's comment before posting — the claims are simultaneous, not first-come by local judgment. Every simultaneous claimant refreshes the thread, then resolves ownership deterministically: the earliest claim-comment timestamp owns the scope; on a tie or ambiguous ordering, the lower GitHub comment ID wins. The losing worker posts a one-line withdrawal (`CLAIM_WITHDRAWN`, OWNER=NONE), makes no edits inside the lost scope, and either claims a distinct non-overlapping scope or waits for the owner's RELEASE. No worker edits overlapping files while ownership is undecided. An explicit maintainer assignment overrides the tie-break.
+
+   **Check for an existing implementation.** Before claiming an implementation and again before opening its PR, search open and recently merged PRs for the issue number and task ID. Read the latest issue checkpoint and compare the changed files and acceptance criteria. A worker's release makes the scope available for review or follow-up. Its existing PR still carries the work. Continue that PR when authorized. Open a separate PR for a distinct task or an explicit replacement, and link its dependency or the PR it supersedes.
+
 5. **Use the available GitHub connection.** Prefer the configured integration or authenticated GitHub CLI. Useful commands are `gh issue list --repo skytuhua-org/Gen-V1 --state open --search "<keywords>"`, `gh issue view <issue-url> --comments`, and `gh issue comment <issue-url> --body-file <message-file>`. Confirm GitHub accepted a claim or update before reporting it as posted. On a write timeout, reread the thread before retrying. If access fails, state the failed operation in the current session, retain the pending update, and continue independent work where ownership is clear.
+6. **Label every issue you create or touch.** Apply one label from each axis below when creating an issue, and add any missing axes on issues you adopt. The `issue-labeler` workflow applies a heuristic set on newly opened issues; always review and correct its guesses — the workflow's labels are a starting point, not a decision.
+
+## Issue labels
+
+Every issue should carry labels from four axes: **type** (what kind of work), **area** (where it lives), **level** (difficulty) and **priority** (order in the backlog). Apply at least a type and a level on every new issue, plus area and priority when known.
+
+### Type — what kind of work
+- `bug` — something is broken or behaves incorrectly.
+- `enhancement` — new feature or improvement to existing behavior.
+- `documentation` — docs content changes.
+- `type:refactor` — cleanup with no behavior change (cast removal, dedupe, dead code, file moves).
+- `type:test` — add or fix tests, verification, qualification and acceptance work.
+- `type:security` — security fixes, hardening, vulnerable dependencies.
+- `type:tracking` — umbrella issue that groups and tracks sub-tasks (sweeps, worker assignments, audits). Stays open until its children land.
+
+### Area — where it lives
+- `area:frontend` — web and desktop UI (`apps/web`, `apps/desktop`, `packages/ui-shell`, `packages/widgets`).
+- `area:runtime` — server, core and runtime packages (`apps/server`, `packages/core`, `packages/runtime*`, storage, contracts).
+- `area:ci` — CI workflows, test infrastructure and `scripts/`.
+- `area:docs` — documentation files.
+
+### Level — difficulty / who should take it
+- `level:low` — mechanical work; safe for free sessions or smaller models.
+- `level:medium` — focused change with some design or risk.
+- `level:high` — design-heavy or multi-surface work; reserve for stronger models.
+
+### Priority — backlog order
+- `priority:high` — blocks the release or other work in flight; do first.
+- `priority:medium` — normal backlog order.
+- `priority:low` — nice to have; pick up when nothing higher is free.
+
+### Standing labels (unchanged)
+`accessibility` (barrier affecting people with disabilities), `ci-test` (flaky/skipped/missing verification), `deferred` (out of current scope), `good first issue`, `help wanted`, `duplicate`, `invalid`, `question`, `wontfix`.
+
+### Conventions
+- `type:tracking` issues group sub-tasks and do not need an area unless the tracking itself is scoped; they may skip `priority` when their children's priorities drive the order.
+- Human-authored issues get a first-pass label set from the `issue-labeler` workflow; agents must confirm or fix it on first touch.
+- Do not invent ad-hoc labels; extend this list via a reviewed change when a new axis value is genuinely needed.
 
 ## Complete Markdown plan publication: normative contract
 
@@ -68,12 +111,14 @@ COMPACT COMMENT WIRE FORMAT (extend as required for losslessness):
 
 A checkpoint is NOT complete until GitHub accepts it and the worker rereads the posted text; on timeout reread before retry. Failed writes -> retain pending journal and report publish failure in current session. Do not mark task DONE without actual acceptance evidence. Keep entire task matrix in latest substantive checkpoint, with references to durable history where needed; a brief heartbeat is not a substitute for the required PAUSE/HANDOFF/STOP snapshot.
 
-PARALLELISM: Every worker writes to the **same canonical parent issue**, using stable task IDs and uniquely named worker ID; optional sub-issues only for isolated tasks and must link back. The coordinating worker consolidates current task ownership and latest checkpoint links after material handoffs, but must not invent other agents' progress. Refresh issue before altering shared files. Earliest authorized overlapping claim owns the scope until explicit reassignment.
+PARALLELISM: Every worker writes to the **same canonical parent issue**, using stable task IDs and uniquely named worker ID; optional sub-issues only for isolated tasks and must link back. The coordinating worker consolidates current task ownership and latest checkpoint links after material handoffs, but must not invent other agents' progress. Refresh issue before altering shared files. Earliest authorized overlapping claim owns the scope until explicit reassignment. Simultaneous claims resolve per the tie-break in rule 4 (earliest comment timestamp, then lowest comment ID); the loser posts CLAIM_WITHDRAWN.
 
 HANDOFF SEND: Publish full current-state checkpoint + exact plan revision + retrievable source/evidence + remaining task IDs/acceptance + first executable next step and recipient. Never call an unpushed branch, unsaved diff, expired artifact, inaccessible attachment or missing instructions a complete handoff. HANDOFF_PENDING until receiver posts ACK.
 HANDOFF RECEIVE: Read canonical plan + whole journal, verify SHA/files/CI states, confirm task ownership, explicitly ACK with picked-up task IDs and starting SHA, then execute. If not reproducible, comment HANDOFF_BLOCKED with exact missing data and recover before work. Status updates and acceptance go on the same issue; keep PR line-level comments in the PR and summarize on issue.
 PR/FINISH: report focus, commit SHA, exact tests and skipped checks, CI/reviews and remaining gates. Never equate ready-for-review, merged and verified. Close issue only when acceptance is met and closure authorized.
 RELEASE (mandatory, no exceptions): whenever a worker stops working a scope for any reason — DONE, REVIEW, PAUSED, BLOCKED, handoff, error, or session end — its final act on that issue is a RELEASE checkpoint setting `OWNER=NONE`, plus clearing its assignee and in-progress labels. Until a RELEASE posts, the issue reads as actively claimed and no other worker may take it, even if the owner is silent. A worker unable to post must say so in its own session output so a coordinator can release on its behalf; never leave a stale claim behind.
+
+STALE-CLAIM AUDIT: the scheduled `stale-claim-release` workflow (every 15 minutes) reports outstanding per-worker, per-scope records older than 60 minutes and ambiguous journal entries for manual review. It has read-only issue permissions and never posts releases or changes comments, assignees or labels, including manual runs with the legacy `dry_run=false` input. Another worker's release does not clear a claim; scoped checkpoints and releases apply only to the matching worker's scopes. Inactivity does not authorize takeover. The explicit RELEASE rule above and maintainer assignments remain authoritative.
 
 ## Implementation, review, and completion
 

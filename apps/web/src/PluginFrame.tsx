@@ -34,6 +34,10 @@ function PluginFrameBody({plugin,theme,active=true,surface,workspace,projectColo
   useLayoutEffect(()=>{if(!surface&&focusSurface?.kind==='plugin'&&focusSurface.pluginId===plugin.id){if(focused.current?.target!==focusSurface)focused.current={target:focusSurface,id:crypto.randomUUID()};}else focused.current=null;},[surface,focusSurface,plugin.id]);
   const sendFocusedSurface=()=>{const focus=focused.current;if(focus)bridge.current?.postMessage({type:'gen.plugin.focus-surface',session,id:focus.id,surface:focus.target});};
   const flush=async()=>{
+    // A frame that never bootstrapped its port could never accept edits or
+    // saves, so nothing remains to confirm; a connected document that lost its
+    // bridge may still hold unsaved work and keeps the guard.
+    if(!bootstrapped.current)return;
     if(!bridge.current||revoked.current)throw Error('The plug-in could not confirm saved state.');
     await new Promise<void>((resolve,reject)=>{const id=crypto.randomUUID(),timer=setTimeout(()=>{flushes.current.delete(id);reject(Error('The plug-in could not confirm saved state. Keep this window open.'));},20000);flushes.current.set(id,{resolve,reject:()=>reject(Error('The plug-in has unsaved work.')),timer});bridge.current!.postMessage({type:'gen.plugin.flush',session,id});});
     if(pendingData.current.size)throw Error('Wait for the plug-in request to finish before closing.');
