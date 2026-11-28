@@ -50,13 +50,25 @@ async function createMemoryProject(page: Page, memoryHost: MemoryHostFixture) {
   await page.getByRole('button', { name: 'New thread', exact: true }).click();
   await page.getByRole('button', { name: 'Add project', exact: true }).click();
   const connection = page.getByRole('dialog', { name: 'Connect project', exact: true });
-  await connection.getByRole('textbox', { name: 'Project name', exact: true }).fill('Memory lifecycle project');
+  const projectName = 'Memory lifecycle project';
+  await connection.getByRole('textbox', { name: 'Project name', exact: true }).fill(projectName);
   await connection.getByRole('textbox', { name: 'Local folder', exact: true }).fill(memoryHost.projectPath);
   await connection.getByRole('button', { name: 'Connect project', exact: true }).click();
-  await page.getByRole('option', { name: 'Memory lifecycle project', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Select project', exact: true })).toHaveCount(0);
+  await expect(connection).toHaveCount(0);
+  const picker = page.getByRole('dialog', { name: 'Select project', exact: true });
+  const option = picker.getByRole('option', { name: projectName, exact: true });
+  const selectedProject = page.locator('.composer').getByRole('button', { name: 'Select project', exact: true })
+    .getByText(projectName, { exact: true });
+  await expect(option.or(selectedProject).first()).toBeVisible();
+  if (await option.isVisible()) await option.click();
+  await expect(picker).toHaveCount(0);
+  await expect(selectedProject).toBeVisible();
   await expect.poll(() => memoryHost.store.snapshot().threads.length).toBe(1);
   const thread = memoryHost.store.snapshot().threads[0]!;
+  expect(thread).toMatchObject({ projectId: expect.any(String), projectName });
+  expect(memoryHost.store.get('workspaceProject', thread.projectId!)).toMatchObject({
+    id: thread.projectId, name: projectName, authority: { kind: 'local' },
+  });
 
   await openReview(page);
   await expect(review(page)).toContainText('Not enabled for this project');
