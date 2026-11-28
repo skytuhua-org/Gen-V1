@@ -45,12 +45,14 @@ function DiffBody({base,query,active,fallback}:{base:string;query:URLSearchParam
  return <div className="live-review"><div className="panel-toolbar"><strong>Changes</strong><span>{value?.branch}</span><button onClick={()=>void load()}>Refresh</button><label><input type="checkbox" checked={staged} onChange={event=>setStaged(event.target.checked)}/>Staged</label></div>{error&&<p role="status" className="error-text">{error}</p>}{legacy&&<p className="panel-note">Original working copy · tracked changes only. Git actions are available in an agent’s isolated working copy.</p>}{value&&<><small className="review-revision" title={value.revision}>Reviewing {value.head.slice(0,10)} · {value.files.length} changed files</small><ul className="live-change-list">{value.files.map(file=><li key={file.path}><span>{file.oldPath?file.oldPath+' → ':''}{file.path}</span><small>{file.binary?'Binary':file.untracked?'Untracked':`${file.index}${file.worktree} +${file.added??'?'} −${file.removed??'?'}`}</small><button disabled={pending||value.gitWrite!==true} onClick={()=>void apply(file.staged?'unstage':'stage',file.path)}>{file.staged?'Unstage':'Stage'}</button></li>)}</ul><pre className="live-diff" aria-label={staged?'Staged diff':'Unstaged diff'}>{(staged?value.stagedDiff:value.diff)||'No tracked changes in this view.'}</pre></>}</div>;
 }
 function ChangesBody({base,query,active,recorded,preferences}:{base:string;query:URLSearchParams;active:boolean;recorded:ReactNode;preferences:UiPreferences}){
- // Enable History only with a host adapter and the context's exact workingCopy.id.
  const threadId=query.get('threadId')??undefined;
- const{value}=useProjectRequest<{available:boolean;restore:boolean;owner?:CheckpointOwner}>(base+'/checkpoints/capability?'+query,active);
- const adapter=useMemo(()=>value?.available?createHttpCheckpointAdapter(base,threadId,value.restore===true):disabledCheckpointAdapter,[value?.available,value?.restore,base,threadId]);
+ const{value,error}=useProjectRequest<{available:boolean;restore:boolean;owner?:CheckpointOwner}>(base+'/checkpoints/capability?'+query,active);
+ const owner=value?.available?value.owner:undefined;
+ const checkpointSupport=owner?'available':value||error?'unavailable':'loading';
+ const restoreEnabled=value?.restore===true;
+ const adapter=useMemo(()=>checkpointSupport==='available'?createHttpCheckpointAdapter(base,threadId,restoreEnabled):disabledCheckpointAdapter,[checkpointSupport,base,threadId,restoreEnabled]);
  const history=<GitHistory key={base+'?'+query} base={base} query={query} preferences={preferences}/>;
- return <FileCheckpoints preferences={preferences} owner={value?.available?value.owner:undefined} adapter={adapter} current={<DiffBody base={base} query={query} active={active} fallback={recorded}/>} recorded={recorded} history={history}/>;
+ return <FileCheckpoints preferences={preferences} owner={owner} adapter={adapter} checkpointSupport={checkpointSupport} current={<DiffBody base={base} query={query} active={active} fallback={recorded}/>} recorded={recorded} history={history}/>;
 }
 export type ReviewRequest = {id:number;repo:string;number:number;threadId:string;projectId:string;panelId:string};
 export function WorkspaceSurfaceBody({kind,binding,snapshot,refresh,active=true,preferences,onSelectThread,onOpenTool,panelId,excerptComposer,reviewRequest,onReviewHandled}:{reviewRequest?:ReviewRequest;onReviewHandled?:(id:number)=>void;excerptComposer?:TerminalExcerptComposer;kind:WorkspacePanelKind;binding:PanelBinding;snapshot:Snapshot;refresh:()=>Promise<void>;active?:boolean;preferences?:UiPreferences;panelId?:string;onSelectThread?:(id:string)=>void|Promise<void>;onOpenTool?:(kind:WorkspacePanelKind)=>void|Promise<void>}){
