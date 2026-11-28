@@ -4,7 +4,7 @@ import type {ShellSettingsReadModel, ThreadNavigationRow} from '../../packages/c
 import type {HostCommand} from '../../packages/contracts';
 
 const thread = (id: string): ThreadNavigationRow => ({id, title: 'Archived ' + id, status: 'ready', projectName: 'Synthetic project', runId: null, createdAt: '2026-11-06', updatedAt: '2026-11-06'});
-async function setup(page: Page, { archiveTotal=125, archiveListed=archiveTotal }: { archiveTotal?:number; archiveListed?:number } = {}) {
+async function setup(page: Page, { archiveTotal=125, archiveListed=archiveTotal, desktop=false }: { archiveTotal?:number; archiveListed?:number; desktop?:boolean } = {}) {
   const grants = Array.from({length: 125}, (_, i) => ({id: 'r' + i, threadId: 'authorized-thread', kind: 'file' as const, label: 'Exact grant ' + i, path: 'C:/authorized/' + i, writable: false}));
   const archives = Array.from({length: archiveListed}, (_, i) => thread('a' + i));
   const model: ShellSettingsReadModel = {sequence: 7, settings: {theme: 'dark', modelId: 'model-one', selectedAccounts: {openai: 'account-one'}}, accounts: [{id: 'account-one', providerId: 'openai', label: 'First account', enabled: true, createdAt: '2026-11-06', updatedAt: '2026-11-06'}, {id: 'account-two', providerId: 'openai', label: 'Second account', enabled: true, createdAt: '2026-11-06', updatedAt: '2026-11-06'}], skills: [{name: 'saved-skill', description: 'Synthetic saved skill', category: 'general', revision: 2, state: 'active', enabled: true, protected: false, origin: 'user', managed: true, author: 'user', createdAt: '', updatedAt: '', lastUsedAt: null, useCount: 4, patchCount: 1}], skillProposals: [], learning: {supported: true, status: 'idle', lastReview: null}, projects: [{id: 'project', name: 'Synthetic project'}], resources: grants.slice(0, 100), resourcePage: {total: 125, nextCursor: 'resource-100'}, counts: {threads: 205, archivedThreads: archiveTotal, artifacts: 37, resources: 125, uncertainOperations: 4}};
@@ -32,7 +32,10 @@ async function setup(page: Page, { archiveTotal=125, archiveListed=archiveTotal 
   });
   const fixture = '/@fs/' + resolve('tests/e2e/compact-settings-fixture.tsx').replaceAll('\\', '/');
   await page.route(url=>url.pathname==='/compact-settings-fixture', route => route.fulfill({contentType: 'text/html', body: `<html data-theme="dark"><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${encodeURI(fixture)}');</script></body></html>`}));
-  const open = () => page.goto('/compact-settings-fixture'+(archiveTotal>0&&archiveListed===0?'?unlisted='+archiveTotal:''));
+  const params = new URLSearchParams();
+  if (archiveTotal > 0 && archiveListed === 0) params.set('unlisted', String(archiveTotal));
+  if (desktop) params.set('desktop', 'true');
+  const open = () => page.goto('/compact-settings-fixture?' + params);
   const dialog = page.getByRole('dialog', {name: 'Settings', exact: true});
   const nav = dialog.getByRole('tablist', {name: 'Settings sections'});
   return {model, commands, reads, open, dialog, nav};
@@ -89,7 +92,7 @@ test('desktop Settings rail keeps one tab stop and selects the section moved to 
 });
 
 test('actual compact Settings uses every real section, complete grants/archive and zero forbidden reads', async ({page}) => {
-  const host = await setup(page); await host.open();
+  const host = await setup(page, {desktop: true}); await host.open();
   const labels = ['General', 'Appearance', 'Chat & Composer', 'Models & Accounts', 'Projects & Working Copies', 'Source Control & Reviews', 'Skills & Integrations', 'Notifications & Usage', 'Browser', 'Keyboard Shortcuts', 'Data & Recovery', 'About & Licenses'];
   for (const label of labels) {await host.nav.getByRole('tab', {name: label, exact: true}).click(); await expect(host.dialog.getByRole('heading', {level: 1, name: label, exact: true})).toBeVisible();}
   await host.nav.getByRole('tab', {name: 'Projects & Working Copies', exact: true}).click(); await expect(host.dialog.getByText('Exact grant 124', {exact: true})).toBeVisible();
@@ -156,14 +159,14 @@ test('actual compact draft export preserves the signature guard and sends only e
     localStorage.setItem('harness:signature-assets:v1:signature-only:state', JSON.stringify([{id: 'mark', stateKey: 'signature', base64: 'mark'}]));
   });
   await host.dialog.getByRole('button', {name: 'Export local drafts', exact: true}).click();
-  await expect(host.dialog.getByRole('status').filter({hasText:'pending signature'})).toContainText('pending signature'); expect(requested).toEqual([{keys: ['draft:new']}]);
+  await expect(host.dialog.getByRole('alert').filter({hasText:'pending signature'})).toContainText('pending signature'); expect(requested).toEqual([{keys: ['draft:new']}]);
   await page.evaluate(() => localStorage.removeItem('harness:signature-assets:v1:signature-only:state'));
   const download = page.waitForEvent('download'); await host.dialog.getByRole('button', {name: 'Export local drafts', exact: true}).click();
   expect((await download).suggestedFilename()).toBe('harness-drafts.json');
   expect(JSON.stringify(requested)).not.toContain('Private local browser draft'); expect(host.reads).not.toContain('/api/snapshot');
 });
 test('the injected browser callback receives the accepted start page and closes Settings', async ({page}) => {
-  const host = await setup(page); host.model.settings.preferences = {browserStartUrl: 'https://example.com/accepted'};
+  const host = await setup(page, {desktop: true}); host.model.settings.preferences = {browserStartUrl: 'https://example.com/accepted'};
   await host.open(); await host.nav.getByRole('tab', {name: 'Browser', exact: true}).click();
   await host.dialog.getByRole('textbox', {name: 'Browser start page', exact: true}).fill('https://example.com/unsaved');
   await host.dialog.getByRole('button', {name: 'Open browser', exact: true}).click();
@@ -198,11 +201,11 @@ test('the Saved chip clears on section switch, search, external refresh and afte
   const chip = host.dialog.locator('.settings-save-state');
   const save = async () => { await host.nav.getByRole('tab', {name: 'General', exact: true}).click(); await host.dialog.getByRole('switch', {name: 'Archive confirmation', exact: true}).click(); };
   await save(); await expect(chip).toContainText('Saved');
-  await host.nav.getByRole('tab', {name: 'Browser', exact: true}).click(); await expect(chip).toBeEmpty();
+  await host.nav.getByRole('tab', {name: 'Appearance', exact: true}).click(); await expect(chip).toBeEmpty();
   await save(); await expect(chip).toContainText('Saved');
   await host.dialog.getByRole('searchbox').fill('theme'); await expect(chip).toBeEmpty();
   await host.dialog.getByRole('searchbox').fill(''); await save(); await expect(chip).toContainText('Saved');
-  await host.dialog.getByRole('button', {name: 'Data & Recovery', exact: true}).click();
+  await host.nav.getByRole('tab', {name: 'Data & Recovery', exact: true}).click();
   await host.dialog.getByRole('button', {name: 'Refresh settings', exact: true}).click(); await expect(chip).toBeEmpty();
   await save(); await expect(chip).toContainText('Saved'); await expect(chip).toBeEmpty({timeout: 8000});
 });

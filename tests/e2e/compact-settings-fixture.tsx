@@ -2,6 +2,8 @@ import {useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {CompactSettings} from '../../apps/web/src/CompactSettings';
 import {SettingsView} from '../../apps/web/src/Settings';
+import {DesktopProvider} from '../../apps/web/src/desktop-context';
+import type {DesktopBridge, DesktopContext} from '../../packages/desktop-contract';
 import type {SettingsData} from '../../apps/web/src/settings-data';
 import {Modal} from '../../packages/ui-shell/Modal';
 import '../../apps/web/src/styles.css';
@@ -22,4 +24,7 @@ function Fixture() {
   }
   return <div className="app-shell"><p>Synthetic compact Settings consumer fixture</p><button onClick={() => setScope('personal-two')}>Change scope</button><Modal open={open} title="Settings" className="settings-dialog" onClose={() => setOpen(false)}><CompactSettings scopeKey={scope} close={() => setOpen(false)} addResource={() => {}} openBrowser={async url => {Object.assign(window, {openedUrl: url});}}/></Modal></div>;
 }
-createRoot(document.getElementById('root')!).render(<Fixture/>);
+const desktop = new URLSearchParams(location.search).has('desktop');
+const context: DesktopContext = {windowId: 'settings-fixture', surface: {kind: 'main'}, windows: [], update: {state: 'idle', message: 'Up to date'}};
+const bridge = {onState: () => () => {}, onCloseRequested: () => () => {}} as unknown as DesktopBridge;
+createRoot(document.getElementById('root')!).render(desktop ? <DesktopProvider bridge={bridge} context={context}><Fixture/></DesktopProvider> : <Fixture/>);
