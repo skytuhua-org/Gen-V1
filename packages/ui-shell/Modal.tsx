@@ -1,12 +1,12 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { X } from 'lucide-react';
 import { isComposing } from './list-navigation';
 import { retainFocus } from './focus-retention';
 import './controls.css';
 
-export interface ModalProps { open: boolean; title: string; onClose: () => void; children: ReactNode; className?: string }
+export interface ModalProps { open: boolean; title: string; onClose: () => void; children: ReactNode; className?: string; initialFocusRef?: RefObject<HTMLElement | null> }
 
-export function Modal({ open, title, onClose, children, className = '' }: ModalProps) {
+export function Modal({ open, title, onClose, children, className = '', initialFocusRef }: ModalProps) {
   const dialog = useRef<HTMLDialogElement>(null), close = useRef(onClose), pressedBackdrop = useRef(false), armedEscape = useRef<Element | null>(null);
   const titleId = useId(); close.current = onClose;
   // The closed dialog stays mounted, showing its last open content, until the CSS exit finishes.
@@ -20,6 +20,10 @@ export function Modal({ open, title, onClose, children, className = '' }: ModalP
     if (!open || !element) return;
     const previous = element.ownerDocument.activeElement as HTMLElement | null;
     element.showModal();
+    // showModal() focuses the first focusable control (the header Close).
+    // A dialog naming an initial-focus target claims it instead.
+    const initial = initialFocusRef?.current;
+    if (initial && element.contains(initial)) initial.focus({ preventScroll: true });
     const closed = () => close.current();
     element.addEventListener('close', closed);
     // A focused control that disables drops focus to <body>, escaping the native

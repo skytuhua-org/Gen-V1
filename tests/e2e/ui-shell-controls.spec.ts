@@ -302,3 +302,27 @@ test('Panels fits a short window with a visible scrollbar and reachable last act
     return row.top >= list.top && row.bottom <= list.bottom;
   })).toBe(true);
 });
+
+test('Select option labels never wrap mid-word; long labels ellipsize on one line', async ({ page }) => {
+  await page.goto('/ui-shell-controls?labels=1');
+  await page.getByRole('combobox', { name: 'Wrap check' }).click();
+  for (const label of ['All', 'Needs you', 'Unread', 'Completed']) {
+    const option = page.getByRole('option', { name: label, exact: true });
+    await expect(option).toBeVisible();
+    const box = await option.evaluate(node => {
+      const span = node.querySelector('span')!;
+      return { scroll: span.scrollWidth, client: span.clientWidth, height: node.getBoundingClientRect().height };
+    });
+    expect(box.scroll).toBeLessThanOrEqual(box.client);
+    expect(box.height).toBeLessThanOrEqual(40);
+  }
+  const metrics = await page.getByRole('option', { name: /forty character/ }).evaluate(node => {
+    const span = node.querySelector('span')!;
+    const style = getComputedStyle(span);
+    return { scroll: span.scrollWidth, client: span.clientWidth, height: node.getBoundingClientRect().height, whiteSpace: style.whiteSpace, textOverflow: style.textOverflow };
+  });
+  expect(metrics.height).toBeLessThanOrEqual(40);
+  expect(metrics.scroll).toBeGreaterThan(metrics.client);
+  expect(metrics.whiteSpace).toBe('nowrap');
+  expect(metrics.textOverflow).toBe('ellipsis');
+});

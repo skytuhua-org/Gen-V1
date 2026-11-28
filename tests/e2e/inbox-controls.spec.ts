@@ -46,19 +46,23 @@ test('filter keyboard owns its listbox without selecting or reading Inbox rows',
   expect(await calls(page)).toEqual([]); expect(requests).toEqual([]); expect(errors).toEqual([]);
 });
 
-test('exclusive filters preserve selected reader, search and source action state', async ({page}) => {
+test('exclusive filters keep the reader honest to the visible list', async ({page}) => {
   await fixture(page);
   await rows(page).filter({hasText: 'Review'}).click();
   const reader = page.getByRole('region', {name: 'Review', exact: true});
   await expect(reader).toBeVisible();
-  for (const [label, titles] of [
-    ['Needs you', ['Question', 'Review', 'Failed task']],
-    ['Unread', ['Question', 'Failed task', 'Completed task']],
-    ['Completed', ['Completed task', 'Resolved question']],
-    ['All', ['Question', 'Review', 'Failed task', 'Completed task', 'Resolved question']],
+  for (const [label, titles, readerShown] of [
+    ['Needs you', ['Question', 'Review', 'Failed task'], true],
+    ['Unread', ['Question', 'Failed task', 'Completed task'], false],
+    ['Completed', ['Completed task', 'Resolved question'], false],
+    ['All', ['Question', 'Review', 'Failed task', 'Completed task', 'Resolved question'], true],
   ] as const) {
     await choose(page, label); await expect(page.locator('.ui-list-row-title')).toHaveText(titles.map(title => title === 'Question' || title === 'Failed task' || title === 'Completed task' ? 'Unread. ' + title : title));
-    await expect(reader).toBeVisible(); await expect(reader.getByRole('button', {name: 'Open conversation'})).toBeVisible();
+    if (readerShown) {
+      await expect(reader).toBeVisible(); await expect(reader.getByRole('button', {name: 'Open conversation'})).toBeVisible();
+    } else {
+      await expect(reader).toHaveCount(0); await expect(page.getByRole('heading', {name: 'Select an item', exact: true})).toBeVisible();
+    }
     await filter(page).click(); await expect(page.getByRole('option', {selected: true})).toHaveText(label); await page.keyboard.press('Escape');
   }
   await page.getByRole('searchbox', {name: 'Search Inbox'}).fill('Failed');
@@ -236,4 +240,27 @@ test('reselecting an item observes its held read failure without another write',
   await page.evaluate(()=>window.dispatchEvent(new Event('release-read')));
   await expect(page.locator('.agent-inbox-error')).toHaveText('Read state could not save.');
   expect(await calls(page)).toEqual([{type:'read',id:'question'}]);
+});
+
+// #1712 T02: the reader must never show an item that left the filtered list.
+test('filtering out the open item clears the reader until it re-enters the list', async ({page}) => {
+  await fixture(page);
+  await rows(page).filter({hasText: 'Review'}).click();
+  await expect(page.getByRole('region', {name: 'Review', exact: true})).toBeVisible();
+  await choose(page, 'Completed');
+  await expect(page.getByRole('region', {name: 'Review', exact: true})).toHaveCount(0);
+  await expect(page.getByRole('heading', {name: 'Select an item', exact: true})).toBeVisible();
+  await choose(page, 'Needs you');
+  await expect(page.getByRole('region', {name: 'Review', exact: true})).toBeVisible();
+});
+
+test('single-column: a filtered-out open item does not linger when the pane narrows', async ({page}) => {
+  await fixture(page);
+  await rows(page).filter({hasText: 'Review'}).click();
+  await expect(page.getByRole('region', {name: 'Review', exact: true})).toBeVisible();
+  await choose(page, 'Completed');
+  await expect(page.getByRole('region', {name: 'Review', exact: true})).toHaveCount(0);
+  await page.setViewportSize({width: 400, height: 800});
+  await expect(page.getByRole('region', {name: 'Review', exact: true})).toHaveCount(0);
+  await expect(rows(page)).toHaveCount(2);
 });

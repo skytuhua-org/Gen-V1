@@ -1,0 +1,624 @@
+{
+  "schema_version": 1,
+  "worker": "codex-cloud-pr-6e93b1",
+  "cutoff_utc": "2026-11-24T12:06:11Z",
+  "main": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+  "counts": {
+    "original_ids": 489,
+    "arrivals": 6,
+    "reviewed": 495,
+    "open": 494,
+    "retained_closed": 1,
+    "stack_edges": 76,
+    "actual_target_conflicts": 8,
+    "full_or_code_patch_duplicates": 0,
+    "reopened_by_worker": 4,
+    "closed_by_worker": 0,
+    "retargeted_by_worker": 0
+  },
+  "state_actions": [
+    {
+      "pr": 1989,
+      "action": "reopened",
+      "head": "48cbe14ec9a370b93bb6f11d799ba7932e195d2f",
+      "receipt": "https://github.com/skytuhua-org/Gen-V1/pull/1989#issuecomment-7129986912"
+    },
+    {
+      "pr": 1996,
+      "action": "reopened",
+      "head": "3a21aaae4fe9b9176528199d7332dd378d283d1a",
+      "receipt": "https://github.com/skytuhua-org/Gen-V1/pull/1996#issuecomment-7129988930"
+    },
+    {
+      "pr": 2047,
+      "action": "reopened",
+      "head": "1cfc63b50696a1c6c73c95bb1b2340ef7c22263d",
+      "receipt": "https://github.com/skytuhua-org/Gen-V1/pull/2047#issuecomment-7129990831"
+    },
+    {
+      "pr": 2036,
+      "action": "reopened",
+      "head": "1236e41fe9755600178a98bb7295abea780c9b31",
+      "receipt": "https://github.com/skytuhua-org/Gen-V1/pull/2036#issuecomment-7130041989"
+    }
+  ],
+  "current_conflicts": [
+    {
+      "number": 896,
+      "head": {
+        "ref": "repair/ui-acceptance-20261118",
+        "sha": "ac25284de39ec060a5143e29006ff01511e774ad",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "conflict_cause": "App still edits the retired global error/setError presenter and compact-conversation wiring while main uses WorkspaceNotifications/reportError; fixture event publication and Vitest affected-test selection also diverge.",
+      "next_action": "Compose current notification/fixture ownership with the retained acceptance changes; preserve main force-rerun triggers while reviewing the worker cap; rerun the issue 1098 scoped acceptance matrix and publish accessible evidence.",
+      "owner": "Issue 1098 UI acceptance owner"
+    },
+    {
+      "number": 1196,
+      "head": {
+        "ref": "devin/1795199864-thread-list-motion",
+        "sha": "92272173f4abd6bf3df7bd3413682da5afe8a889",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "conflict_cause": "The branch replaces orderedRemaining/project-header rendering with cached flatRows for leaving ghosts; main now inserts compact project headers.",
+      "next_action": "Compose project headers with inert/aria-hidden ghost rows and stable keys; verify archive, regroup, collapsed groups, interrupted animation and reduced motion under issue 1187.",
+      "owner": "Issue 1187 sidebar motion owner"
+    },
+    {
+      "number": 1203,
+      "head": {
+        "ref": "devin/1795200791-composer-motion",
+        "sha": "c7428df080bef4d520c067a59aca28847d0dbb97",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "conflict_cause": "DeferredUnmount and FLIP are written for the retired one-error/setError surface; main owns notifications through WorkspaceNotifications/reportError and newer React context/id imports.",
+      "next_action": "Port banner motion onto current notification ownership, retain current imports and retry recovery, and rerun B1/D5/D6/D10 plus shell-error ownership checks.",
+      "owner": "Issue 1188 composer motion owner"
+    },
+    {
+      "number": 1463,
+      "head": {
+        "ref": "devin/9243ea-589-zoom-text-scale",
+        "sha": "9204b3fe388d188a92ba05dfbe2fe5b441ae3186",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "conflict_cause": "Tooltip/rem changes were based on per-row project headers removed by compact-sidebar main; sidebar-context CSS likewise preserves old layout rules.",
+      "next_action": "Carry truncation titles and rem sizing onto current compact rows and filter chip without restoring superseded hierarchy; rerun 110-200% zoom and 200% text-scale matrix, hit areas, wrap and reduced motion.",
+      "owner": "Issue 589 accessibility owner"
+    },
+    {
+      "number": 1576,
+      "head": {
+        "ref": "devin/9e525d-db-t10-writes",
+        "sha": "580949cf5eef68a1750b61d466f3efa8e2817983",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "base": {
+        "ref": "devin/9e525d-db-t09-visual",
+        "sha": "76c16faccd5c6a0ca51fe52865662b87703d11b7",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "conflict_cause": "Actual target 1575 removed write-specific createHash/HarnessError imports while T10 requires them; child write/digest implementation is still unique.",
+      "next_action": "Resolve against current 1575 preserving write imports and transaction/digest/rollback semantics; execute approved SQLite write tests in a functioning path-guard environment and live PG/MySQL qualification before T11/T12 integration. Prior 17 Linux guard failures are not passing evidence.",
+      "owner": "Issue 1350 DB T10 owner; children1577/1578 retained"
+    },
+    {
+      "number": 1579,
+      "head": {
+        "ref": "devin/e984e8-1139-sidebar-thread-rows",
+        "sha": "6948d32d0c8d081d9d3c56eee0d79b28536d8a31",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "conflict_cause": "Branch full/grouped row variants and renderRows compete with current compact project-header grouping and delete current sidebar-compact assertions.",
+      "next_action": "Resolve canonical issue 1139 design versus subsequent compact grouping; preserve filter-status/accessibility improvements and current project-header checks; verify supported modes before integration.",
+      "owner": "Issue 1139 sidebar design/review owner"
+    },
+    {
+      "number": 1693,
+      "head": {
+        "ref": "devin/9e525d-1604-copy-patch",
+        "sha": "518bc388167640fd02675be8239946824e20c677",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "conflict_cause": "Only actual-target textual conflict is source manifest: both workspace-notifications.test.ts and workspace-patch-export.test.ts registrations are required.",
+      "next_action": "Union both registrations in the relevant manifest arrays, then qualify the original patch-export suite with the path guard available; prior 10/19 guard failures do not establish acceptance.",
+      "owner": "Issue 1604 patch-export owner"
+    },
+    {
+      "number": 1793,
+      "head": {
+        "ref": "devin/f3dbb0-1657-terminal-in-folder",
+        "sha": "0487f654a6bd78a356058cbac3e0d382fd7cd825",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "conflict_cause": "New directory register/start path conflicts with main startupFailed state, exit-observer registration, persist-failure rollback, exact session reopening and unconfirmed-teardown custody; App also uses retired setError.",
+      "next_action": "Compose directory proof and capacity reservations with current native startup/exit ownership for both root and directory launches, adapt reportError, and run directory race plus terminal rollback/native exit regression suites.",
+      "owner": "Issue 1657 terminal owner"
+    }
+  ],
+  "updated_dispositions": [
+    {
+      "number": 1370,
+      "head": "1eeb4bd0eb851118fdfed067e466d971f4a9a576",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1322,
+      "disposition": "published_bounded_maintenance",
+      "rationale": "Published exact current-main integration with generation/disposal fences, current child/quit release custody, enabled-cause holding reasons, and truthful accessible task-row status. Original feature/native requirements remain open.",
+      "conflict_cause": null,
+      "owner": "Bounded cleanup maintenance RELEASED; original 1322 feature/native and independent acceptance owners unchanged.",
+      "next_action": "Qualify the published source in the required browser/installed Windows/native matrix and complete independent acceptance; retain historical original-head Windows evidence only for its original source.",
+      "verification": {
+        "head": "1eeb4bd0eb851118fdfed067e466d971f4a9a576",
+        "tree": "c79db47a6a6cb0fe0081d8a497eb235839dd8782",
+        "focused_tests_passed": 116,
+        "keeper_red_before_fix": "8 failed /8 passed",
+        "keeper_green": 16,
+        "typecheck_files": 1516,
+        "lint": "PASS",
+        "ui_guard": "635 sources /0 violations",
+        "web_desktop_build": "PASS before final copy-only precision change",
+        "browser": "BLOCKED before page creation by Chromium OS socket denial",
+        "windows_native": "NOT_RUN on current head"
+      },
+      "application_tests_rerun": true,
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/pull/1370#issuecomment-7130759997",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1322#issuecomment-7130776524",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7130776966",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1322#issuecomment-7130960038"
+      ]
+    },
+    {
+      "number": 1448,
+      "head": "f99990cefac1f81b5c42b35ac6fa9a4ab598b900",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1323,
+      "disposition": "published_bounded_maintenance",
+      "rationale": "Published current-main lifecycle integration with stale taskbar refresh fencing and renderer launch-request custody. Source/fixture maintenance is complete; native taskbar/jump-list acceptance is not established.",
+      "conflict_cause": null,
+      "owner": "Early cleanup worker RELEASED maintenance; original 1323 T07/native/frontend owners unchanged.",
+      "next_action": "Complete current-source installed Windows T07/A1-A16 and frontend acceptance; preserve the two Linux native-guard failures reproduced on main and the browser launch blocker.",
+      "verification": {
+        "head": "f99990cefac1f81b5c42b35ac6fa9a4ab598b900",
+        "tree": "43b721d4b92f09f3b6fd098803068dcec82f76e4",
+        "focused_tests_passed": 142,
+        "qualification": "Worker tests/root independent review; browser/native gates pending"
+      },
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/pull/1448#issuecomment-7130722592",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1323#issuecomment-7130723172",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7130723948"
+      ]
+    },
+    {
+      "number": 1823,
+      "head": "d1f8cff83456d1f17e95c5058a8ed9fdd5c68789",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1643,
+      "disposition": "published_bounded_maintenance_acceptance_gap",
+      "rationale": "Published current-main bookmarks lifecycle integration and roving-focus accessibility correction. Original persistence-failure recovery is still missing: writeBookmarks queues a promise while mutations broadcast and update revision before persistence succeeds.",
+      "conflict_cause": null,
+      "owner": "Coordinator bounded maintenance published; original 1643 feature/acceptance ownership unchanged.",
+      "next_action": "Repair persistence rejection/rollback against the original recovery contract; then complete current-source A1-A14, browser/native and frontend gates. Historical packaged screenshots remain tied to original source.",
+      "verification": {
+        "head": "d1f8cff83456d1f17e95c5058a8ed9fdd5c68789",
+        "tree": "a49359753c49d22de2785b89e92dd0883cba3aef",
+        "focused_tests_passed": 83,
+        "typecheck_files": 1515,
+        "ui_guard": "636 sources /0 violations",
+        "browser": "one launch failure;32 not run; no app assertion pass"
+      },
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/pull/1823#issuecomment-7130647142"
+      ]
+    },
+    {
+      "number": 1994,
+      "head": "78253df0c9e3b60a321377e315935104a8608adb",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1803,
+      "disposition": "retain_canonical_plan_consolidation",
+      "rationale": "Existing canonical 117-original-plan consolidation with immutable source preservation and complete issue-body revisions. Cutoff source is first 60-file continuation commit78253df0; final report/additional plan publication is intentionally separate to avoid self-reference.",
+      "owner": "Cleanup coordinator publication owner.",
+      "next_action": "Publish/read back final report and remaining complete revisions through this existing PR, preserve original plan and newer1666rev5 bytes, and retain ordinary docs/CI/merge gates.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/commit/78253df0c9e3b60a321377e315935104a8608adb"
+      ]
+    },
+    {
+      "number": 2000,
+      "head": "b8379a96404d58961c0905e3db71a25b1f35488c",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1803,
+      "disposition": "published_bounded_ci_fix",
+      "rationale": "Published exact reviewed CI guard continuation. Proof collection precedes final run/PR reads; final cancellation reason is synchronous/cache-only and preserves an uncached final PR head. Only proven obsolete same-PR commits are eligible.",
+      "owner": "Coordinator CI branch owner; this worker's independent review RELEASED.",
+      "next_action": "Keep hosted exact-head CI and protected merge gates. Preserve current/manual/foreign runs and fail closed on incomplete pagination/proof/races.",
+      "verification": {
+        "head": "b8379a96404d58961c0905e3db71a25b1f35488c",
+        "tree": "9c93f5feba217a78e5f527c43ee92ecbc4993692",
+        "independent_red": "1 failed /54 passed",
+        "independent_guard_passed": 55,
+        "coordinator_focused_passed": 136,
+        "typecheck_files": 1512,
+        "lint_yaml": "PASS"
+      },
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/commit/b8379a96404d58961c0905e3db71a25b1f35488c",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7130776966"
+      ]
+    },
+    {
+      "number": 2004,
+      "head": "cff7689d9f1edd90a8f71187c10e3de5f7b04f80",
+      "base": {
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "ref": "main",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1963,
+      "disposition": "externally_closed_withdrawn_policy_alternative",
+      "rationale": "Concurrent cleanup closed the PR; the author's subsequent DUPLICATE-RELEASE acknowledges the earlier 2002 claim and retains this branch. This supports withdrawal, not equivalence: #2004 uses 15-second continuation-only snapshots and live first-page/reference reads; #2002 uses 2-second shared inventory and capped revision retention. No accepted TTL policy choice was found.",
+      "owner": "Existing1963/2002 authorized owner; withdrawn alternative sourcecff7689d retained.",
+      "next_action": "Compare the preserved freshness/invalidation policies against stable-cursor, provenance and recovery requirements. Do not mark this alternative integrated or the feature complete.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/1963#issuecomment-7129868004",
+        "https://github.com/skytuhua-org/Gen-V1/pull/2004#issuecomment-7130190870",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1963#issuecomment-7130590416"
+      ]
+    },
+    {
+      "number": 2030,
+      "head": "d159c3b3b1dc7c7bd5aab92d23676a0a5eef8a08",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1960,
+      "rationale": "Unique SSE live-push/serialization and backlog paging work retained. New cutoff delta buffers each 64-row replay page instead of fetching 64 and consuming one; it does not contain 2047's prepared SQL cache.",
+      "next_action": "Complete exact-head SSE ordering/backpressure/soak and independent acceptance; preserve/combine 2047's distinct SQL-cache work under existing issue ownership.",
+      "reported_verification": "Producer 12/12 and typecheck at d159c3b3, not rerun by audit.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/1960#issuecomment-7130798617",
+        "https://github.com/skytuhua-org/Gen-V1/pull/2047#issuecomment-7129990831"
+      ]
+    },
+    {
+      "number": 2040,
+      "head": "501eca1924b0136ac4e5e3e9c747f86269622137",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1969,
+      "rationale": "Unique shared PDF worker work retained. New cutoff delta ignores late well-formed responses for aborted/timed-out request IDs instead of rejecting live siblings; test separates late and malformed replies.",
+      "next_action": "Complete exact-head renderer/browser profiling and independent acceptance. Other 1969 surfaces remain separate scopes.",
+      "reported_verification": "Producer 5/5 and typecheck at 501eca19, not rerun by audit.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/1969#issuecomment-7130798971"
+      ]
+    },
+    {
+      "number": 2053,
+      "head": "bcb3c97ff6ede601a26b3328d846529909e0c081",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 2022,
+      "rationale": "Unique rename durability/recovery work retained. New cutoff delta rechecks every live journal path against granted roots after acquiring the mutation lock. Prior guarded-write/custody qualification remains incomplete.",
+      "next_action": "Complete native guarded-write/crash/race and recovery acceptance on current source; retain unresolved custody requirements and do not convert partial producer fixtures into T03 completion.",
+      "reported_verification": "New producer guard-free persistence test and typecheck; previous 7 CAPABILITY_DENIED guarded cases are not current-head passing evidence.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/2022#issuecomment-7130758023"
+      ]
+    },
+    {
+      "number": 2063,
+      "head": "884cc86366e30f70a3560cc18cebcf436b2055b6",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 2023,
+      "rationale": "Unique debug authority/inspection/bounds/teardown changes retained. New cutoff branch removes inherited 2053 rename work and restores test line endings; code-intelligence.ts equals main. The earlier 2053-to2063 postimage containment is obsolete.",
+      "next_action": "Complete original current native DAP/effect/custody gates and explicit owner decisions about epoch-bound ownership and proof fingerprints; preserve 2053 separately.",
+      "reported_verification": "Producer 10/10 and typecheck at 884cc863; no independent rerun.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/2023#issuecomment-7130785965"
+      ]
+    },
+    {
+      "number": 2071,
+      "head": "40866741878eccb3a6892ab73c812591a9f4c5b9",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 2027,
+      "disposition": "retain_unique_acceptance_blocked",
+      "rationale": "Independent accepted-plan review retains selected-file index preservation and preview custody blockers: git reset on selectedPaths clears unrelated staged hunks in the selected file; preview lacks caller-index identity.",
+      "next_action": "Fix selected-hunk/index custody through accepted host preview/apply and M02 approval API, then complete T04; producer 3/3 is not acceptance.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/2027#issuecomment-7128528959"
+      ]
+    },
+    {
+      "number": 2073,
+      "head": "acddcd59bd59ac0207caf0a24da5b1746b17c7e7",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 2054,
+      "disposition": "retain_unique_acceptance_blocked",
+      "rationale": "Independent review retains HOLD_PRODUCER_CONTRACT: candidate is partial producer work, lacking the full custody/source/action-receipt/history/authenticated-status contract.",
+      "next_action": "Complete the agreed producer contract and host/approval coupling before accepting T01/T02; preserve current source as partial work.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/2054#issuecomment-7128572134"
+      ]
+    },
+    {
+      "number": 2081,
+      "head": "53ff935276f0d0c9db82f00b17d5d91dd5e264e3",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 2043,
+      "disposition": "retain_unique_acceptance_blocked",
+      "rationale": "Independent review finds the default verifier accepts scoped harness:verification records with value:{} because missing outcome and empty binding pass. The typed current-proof contract remains held.",
+      "next_action": "Resolve and implement the authoritative proof/outcome/binding contract, then verify malformed/empty/stale records fail closed.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/2043#issuecomment-7128530405"
+      ]
+    },
+    {
+      "number": 2083,
+      "head": "21451f444e071517d1f9f472406b7ad4884cb2db",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 2038,
+      "disposition": "retain_unique_acceptance_blocked",
+      "rationale": "Independent review finds child work uses the parent's worktree, contrary to distinct child worktrees; current approved native executable/profile proof is absent.",
+      "next_action": "Provide distinct worktree/cwd/grant custody and current executable/profile proof; verify two-child and sibling-denial cases before acceptance.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/2038#issuecomment-7128529761"
+      ]
+    },
+    {
+      "number": 2098,
+      "head": "2b1c2acb3b342e09539d9ca734402a442fbf6934",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 2044,
+      "rationale": "Unique atomic child admission/resume budget work retained. New cutoff delta rechecks token and wall-time reservations within both transactions and adds an interleaved token reservation regression.",
+      "next_action": "Complete exact-head CI/independent review; preserve HOLD_BUDGET_USAGE_CONTRACT and native/adapter usage-accounting gates.",
+      "reported_verification": "Producer 32/32 and typecheck at 2b1c2acb; no independent rerun.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/2044#issuecomment-7130781979",
+        "https://github.com/skytuhua-org/Gen-V1/issues/2044#issuecomment-7130811261"
+      ]
+    },
+    {
+      "number": 2100,
+      "head": "bc028e9dd1ee17752c3865d28d2d376fe56a9ee3",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 2055,
+      "disposition": "retain_unique_acceptance_blocked",
+      "rationale": "Independent review calculates 16,410 preview bytes (8192+26+8192), exceeding the retained 16,384-byte total cap; removal of the cap assertion does not relax acceptance.",
+      "next_action": "Move labels outside bounded content and restore total-byte verification while preserving fixed first/last windows.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/2055#issuecomment-7128528335"
+      ]
+    },
+    {
+      "number": 2113,
+      "head": "67a0abc001a11b1ec8d84428a170086b9440db2a",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1666,
+      "disposition": "retain_active_ci_prerequisite_fix",
+      "rationale": "Unique hook fix invokes pnpm test so widget/credential-lease prerequisites build. Current cutoff also corrects CONTRIBUTING Linux/macOS language; no unsupported per-file or macOS result is asserted.",
+      "owner": "devin-cloud-37c167 active T09a/queue scope recorded on1666.",
+      "next_action": "Existing owner verifies exact-head checks and authorized queue result; Windows hook variant remains unverified. Audit does not interact with the queue watcher.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/1666#issuecomment-7130859562",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1666#issuecomment-7131101901"
+      ]
+    },
+    {
+      "number": 2114,
+      "head": "1d739e99e34c7a148c9462dc6f27ae0880568444",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1666,
+      "disposition": "retain_active_plan_publication",
+      "rationale": "Revision 5 at 1d739e99 supersedes earlier audit source 71c80cef. Active owner records queueing authority and a guarded watcher. Keep open; prior possible consolidation closure is withdrawn, preserving both revisions and canonical accepted requirements.",
+      "owner": "devin-cloud-37c167 active plan/queue scope; coordinator mirrors source only.",
+      "next_action": "Preserve exact rev5 plus historical rev4 in existing 1994 and retain the active PR under its owner's queue/review process; do not overwrite canonical 1666 with older mirror content.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/1666#issuecomment-7130846858",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1666#issuecomment-7130859562",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1666#issuecomment-7131101901"
+      ]
+    },
+    {
+      "number": 2115,
+      "head": "2e4691eb7f1fd149ebe3d65565e6ea0efb088e07",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1654,
+      "disposition": "retain_unique_changes_required",
+      "rationale": "Unique full Files line-attribution pipeline retained. Declared 8-second aggregate budget/1 MiB porcelain cap are unused; route omits lifecycle/deadline signal. UI fence lacks accepted-read/proof/owner identity and invalidates retained outcomes in passive effect.",
+      "owner": "Producer implementation RELEASED; original 1654 implementation/native/frontend acceptance ownership remains.",
+      "next_action": "Wire aggregate cancellation/output bounds and complete commit/render preview custody, then verify real Files composition, current Windows native guard matrix and frontend handoff acknowledgement. Producer 26 tests do not establish those gates.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/1654#issuecomment-7130926186",
+        "https://github.com/skytuhua-org/Gen-V1/pull/2115#issuecomment-7130929690"
+      ]
+    },
+    {
+      "number": 2116,
+      "head": "d6fbdd560561838dd6d366bbc6fa67bfc77e9d86",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 2101,
+      "disposition": "retain_unique_changes_required",
+      "rationale": "Unique keyboard split preview/debounce retained. Re-armed commit still captures stale layout.revision; Home/End is dropped while pending; divider blur/unmount and pointer transfer do not cancel the timer. Both new split PRs overlap but have distinct source.",
+      "owner": "Producer RELEASED; original 2101 implementation/acceptance owner remains. Delegated read-only review RELEASED.",
+      "next_action": "Reconcile 2118 dispatcher semantics with this direct run/onCommand path; fix complete revision/gesture/cancellation custody and test pending Home/End, blur/unmount, pointer overlap, both axes, Shift and rollback before acceptance.",
+      "reported_verification": "Producer 13 renderer cases and typecheck, not independently executed by audit.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131148702",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131162805"
+      ]
+    },
+    {
+      "number": 2117,
+      "head": "ba099b1ca828a600d95c6a94b84c578421058f05",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 1666,
+      "disposition": "retain_unique_ci_measurement_gate",
+      "rationale": "Unique 14-line Windows Node-header cache uses exact OS/arch/Node key and existing pinned action. Locked install/native compile and all workflow checks/timeouts remain. No bounded source blocker found; actual saving is unmeasured.",
+      "owner": "devin-cloud-37c167 active T10 scope; separate2117 queue approval remains.",
+      "next_action": "Record real Windows cache-hit and install-time measurements at this head, complete CI/merge gates and explicit queue approval; do not treat estimated 40 seconds as demonstrated improvement.",
+      "reported_verification": "Producer 91 policy/lock tests and actionlint/YAML; Windows hit/saving NOT_RUN; audit ran no tests.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/1666#issuecomment-7130859562",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1666#issuecomment-7131101901"
+      ]
+    },
+    {
+      "number": 2118,
+      "head": "f4df850ed17c925d4633f349d571a72a4f92312e",
+      "base": {
+        "ref": "main",
+        "sha": "9ddd536cc84c0f327ddf6133d485f8ab8baf294b",
+        "repo": "skytuhua-org/Gen-V1"
+      },
+      "primary_issue_inferred": 2102,
+      "disposition": "retain_unique_changes_required",
+      "rationale": "Unique lazy dispatch/retry/error work retained. Unchanged App/API still expose raw duplicate undismissible errors. Modified detach/return/dock tests expect fresh revisions despite unchanged captured placement intent, outside accepted scope. One-slot queue conflicts with twenty-all-applied criterion and resolves queued calls early; title filtering remains render-only.",
+      "owner": "Producer RELEASED; original 2102 owner must resolve accepted queue policy. Delegated review RELEASED.",
+      "next_action": "Resolve the explicit queue/coalescing policy contradiction, tie completion to executed actions, unify error custody and preserve placement authority, then verify data-layer titles and complete mixed-command view-retention plus 2116 integration.",
+      "reported_verification": "Producer 16 reducer/13 renderer cases and typecheck; edited App browser suite NOT_RUN; audit execution none.",
+      "linked_receipts": [
+        "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131148702",
+        "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131162805"
+      ]
+    }
+  ],
+  "issue_1322_publication": {
+    "number": 1322,
+    "issue_number": 1322,
+    "local_path": "/workspace/scratch/0def824efa92/audit/pr/issue-1322-r2.md",
+    "repo_path": "docs/agent-plans/review-2026-11-24/issue-1322.md",
+    "new_body_sha256": "3bbd591102d67ff5ee76079a059b9bff3be070719e151de42cac23c853625160",
+    "expected_old_body_sha256": "6d658ee35114f1d75a1046fd45b848841b9d8090db22fecb71d3b10d5bf2ff99",
+    "revision": "2026-11-24-audit-r2",
+    "change": "Complete current-state maintenance receipt plus accepted truthful power-action copy, task-row status and disabled-control explanation; unchanged requirements, execution tasks and acceptance matrix.",
+    "immutable_commit": "78253df0c9e3b60a321377e315935104a8608adb",
+    "immutable_source": "https://github.com/skytuhua-org/Gen-V1/blob/78253df0c9e3b60a321377e315935104a8608adb/docs/agent-plans/review-2026-11-24/issue-1322.md",
+    "bytes": 38495,
+    "old_body_guard": "PASS",
+    "source_and_issue_readback": "EXACT",
+    "state_labels_assignees": "UNCHANGED",
+    "release_receipt": "https://github.com/skytuhua-org/Gen-V1/issues/1322#issuecomment-7130960038"
+  },
+  "power_maintenance_release": "https://github.com/skytuhua-org/Gen-V1/issues/1322#issuecomment-7130776524",
+  "ci_review_release": "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7130776966",
+  "final_arrival_claim": "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131017628",
+  "delegated_arrival_review": "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131148702",
+  "delegated_arrival_release": "https://github.com/skytuhua-org/Gen-V1/issues/1803#issuecomment-7131162805",
+  "acceptance_limits": "No feature issue closure or native/live/installed acceptance is inferred. Producer test reports remain tied to their stated source. No test/build execution occurred for arrival/source metadata review. Published maintenance verification is recorded separately."
+}

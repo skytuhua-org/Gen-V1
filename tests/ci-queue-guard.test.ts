@@ -12,7 +12,7 @@ const makePull=()=>({number:42,state:'open',draft:true as boolean|undefined,base
 type Run=ReturnType<typeof makeRun>;
 type Pull=ReturnType<typeof makePull>;
 type Options={run?:Run;pull?:Pull;pulls?:Pull[];source?:Partial<Run>|null;readRun?:(index:number,run:Run)=>Run;readPull?:(index:number,pull:Pull)=>Pull;cancelStatus?:number;eventName?:string;action?:string;ref?:string;queued?:Run[];running?:Run[]};
-function makeContext(options:Options={}){return {repo:{owner:'owner',repo:'repo'},runId:900,eventName:options.eventName??'workflow_run',ref:options.ref??'refs/heads/main',payload:{action:options.action??'requested',repository:{id:71,default_branch:'main'},workflow_run:options.source===null?undefined:{...makeRun(),...options.source}}};}
+function makeContext(options:Options={}){return {repo:{owner:'owner',repo:'repo'},runId:900,eventName:options.eventName??'schedule',ref:options.ref??'refs/heads/main',payload:{action:options.action??'requested',repository:{id:71,default_branch:'main'},workflow_run:options.source===null?undefined:{...makeRun(),...options.source}}};}
 function admitted(options:Options={}){
   const context=makeContext(options),github={event_name:context.eventName,run_id:String(context.runId),ref:context.ref,event:{...context.payload,workflow_run:context.payload.workflow_run??{}}};
   // Boolean/string/numeric comparisons agree with Actions for these fixtures.
@@ -55,27 +55,32 @@ it.each(['draft','closed','superseded'])('cancels a proven %s PR run from a stac
   const result=await execute({pull});expect(result.cancelled).toEqual([501]);expect(result.result.cancellationRequested).toBe(1);
   expect(result.requests.map(request=>request.method)).toEqual(['list','list','run','pull','run','pull','cancel']);
 });
-it('coalesces all guard events into one constant group without interrupting the active sweep',()=>{
-  expect(workflow).not.toMatch(/^concurrency:/m);
-  expect(workflow.split('\n    concurrency:\n')[1]?.split('\n    runs-on:')[0].trim()).toBe('group: ci-queue-guard\n      cancel-in-progress: false');
+it('uses periodic sweeps without a pending-replacing concurrency group',()=>{
+  expect(workflow).toContain("    - cron: '7,27,47 * * * *'");
+  expect(workflow).toMatch(/^  workflow_dispatch:$/m);
+  expect(workflow).toMatch(/^    paths: \[\.github\/workflows\/ci-queue-guard\.yml\]$/m);
+  expect(workflow).not.toMatch(/^  workflow_run:$/m);
+  expect(workflow).not.toMatch(/^(?:concurrency:|    concurrency:)/m);
 });
-it('rejects non-PR and wrong-path notifications before shared job group admission',()=>{
-  for(const source of [{event:'push'},{event:'workflow_dispatch'},{path:'.github/workflows/other.yml'},{name:'CI queue guard'},{repository:{id:99}},{id:0},{id:900},null])expect(admitted({source})).toBe(false);
-  for(const options of [{action:'completed'},{eventName:'workflow_dispatch'},{eventName:'push',ref:'refs/heads/feature'}])expect(admitted(options)).toBe(false);
+it('rejects legacy notifications, unsupported events and nondefault branch sweeps at admission',()=>{
+  for(const eventName of ['workflow_run','pull_request','push','schedule','workflow_dispatch']){
+    expect(admitted({eventName,ref:'refs/heads/feature'})).toBe(false);
+  }
+  for(const action of ['requested','in_progress','completed'])expect(admitted({eventName:'workflow_run',action})).toBe(false);
 });
-it('admits requested, in-progress, completed-source notifications and the main bootstrap',()=>{
-  for(const options of [{},{action:'in_progress'},{source:{status:'completed'}},{eventName:'push'}])expect(admitted(options)).toBe(true);
+it('admits scheduled, manual and workflow-file main pushes without trusting legacy payloads',()=>{
+  for(const options of [{eventName:'schedule',source:null},{eventName:'workflow_dispatch',source:{event:'push'}},{eventName:'push',action:'completed'}])expect(admitted(options)).toBe(true);
 });
-it('handles in-progress reruns without trusting the event run metadata',async()=>{
+it('handles in-progress runs from live metadata, not event payload',async()=>{
   const run=makeRun();run.status='in_progress';expect((await execute({run,action:'in_progress',source:{head_sha:newSha,pull_requests:[]}})).cancelled).toEqual([501]);
 });
-it.each(['requested','in_progress'])('uses a ready source %s event to clean another queued draft while preserving ready work',async action=>{
+it.each(['schedule','workflow_dispatch'])('uses a %s sweep to clean queued drafts while preserving ready work',async eventName=>{
   const draft=makeRun(),ready=makeRun();ready.id=502;ready.pull_requests[0].number=43;
   const readyPull=makePull();readyPull.number=43;readyPull.draft=false;
-  const result=await execute({action,source:ready,queued:[ready,draft],pulls:[readyPull,makePull()]});
+  const result=await execute({eventName,source:ready,queued:[ready,draft],pulls:[readyPull,makePull()]});
   expect(result.cancelled).toEqual([501]);expect(result.result.checked).toBe(2);expect(result.result.preserved).toBe(1);
 });
-it('sweeps queued work even when the valid source event has already completed',async()=>{
+it('sweeps queued work independently of stale notification payload',async()=>{
   const source=makeRun();source.id=502;source.status='completed';source.pull_requests=[];
   const result=await execute({source,queued:[makeRun()]});expect(result.cancelled).toEqual([501]);
   expect(result.requests.filter(request=>request.method==='run').map(request=>request.id)).toEqual([501,501]);
@@ -125,10 +130,10 @@ it('preserves a run whose association disappears or changes during the fresh che
 it('exposes a permission failure instead of claiming the queue was cleared',async()=>{
   await expect(execute({cancelStatus:403})).rejects.toMatchObject({status:403});
 });
-it.each(['push','requested','in_progress'])('bounds the %s sweep to two discovery pages and 100 distinct candidates',async event=>{
+it.each(['push','schedule','workflow_dispatch'])('bounds the %s sweep to two discovery pages and 100 distinct candidates',async eventName=>{
   const queued=Array.from({length:101},(_,index)=>({...makeRun(),id:501+index}));
   const running=[queued[0],{...makeRun(),id:1000}];
-  const result=await execute({...(event==='push'?{eventName:event}:{action:event}),queued,running});
+  const result=await execute({eventName,queued,running});
   expect(result.requests.slice(0,2)).toEqual([{method:'list',status:'queued',page:1,per_page:100},{method:'list',status:'in_progress',page:1,per_page:100}]);
   expect(result.requests.filter(request=>request.method==='list')).toHaveLength(2);
   expect(result.cancelled).toHaveLength(100);expect(new Set(result.cancelled).size).toBe(100);expect(result.result.checked).toBe(100);expect(result.result.limited).toBe(true);
@@ -140,9 +145,12 @@ it('keeps in-progress runs in the sweep when the queued page is full',async()=>{
   expect(result.requests).toContainEqual({method:'run',id:9000});
   expect(result.cancelled).toContain(9000);
 });
-it('does not sweep on pushes outside the default branch or unsupported events',async()=>{
-  for(const options of [{eventName:'push',ref:'refs/heads/feature'},{eventName:'workflow_dispatch'},{action:'completed'}])expect((await execute(options)).requests).toEqual([]);
+it('does not sweep on feature branches or unsupported events',async()=>{
+  for(const eventName of ['push','schedule','workflow_dispatch']){
+    expect((await execute({eventName,ref:'refs/heads/feature'})).requests).toEqual([]);
+  }
+  for(const eventName of ['workflow_run','pull_request'])expect((await execute({eventName})).requests).toEqual([]);
 });
-it.each([null,{id:0},{id:1.5},{id:900},{event:'push'},{event:'workflow_dispatch'},{name:'CI queue guard'},{path:'.github/workflows/other.yml'},{repository:{id:99}}])('rejects an invalid source event before scanning: %j',async source=>{
-  expect((await execute({source})).requests).toEqual([]);
+it.each([null,{id:0},{id:1.5},{id:900},{event:'push'},{event:'workflow_dispatch'},{name:'CI queue guard'},{path:'.github/workflows/other.yml'},{repository:{id:99}}])('ignores unsupported workflow_run notifications before scanning: %j',async source=>{
+  expect((await execute({eventName:'workflow_run',source})).requests).toEqual([]);
 });

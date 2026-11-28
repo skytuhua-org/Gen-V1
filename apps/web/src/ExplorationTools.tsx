@@ -2,6 +2,7 @@ import {useContext,useEffect,useId,useLayoutEffect,useMemo,useRef,useState,type 
 import {useStateStore,type ComponentRegistry,type ComponentRenderProps} from '@json-render/react';
 import {ArrowDown,CalendarDays,Check,ChevronRight,Filter,MapPin,Plus,Search,Trash2} from 'lucide-react';
 import {EXPLORATION_SCHEMAS,EXPLORATION_DATA_SCHEMAS,boundedExplorationData,readAnnotationState,type AnnotationState,type ScheduleData} from '../../../packages/ui-catalog/exploration';
+import {artifactSourceContent,openArtifactSourceLink} from './artifact-source';
 import {ArtifactInline,ArtifactTitle,inputPath,statePath,useTaskAction} from './task-context';
 import {useDocumentEvidence} from './document-evidence';
 import {animateTask} from './task-motion';
@@ -10,7 +11,7 @@ import './exploration-tools.css';
 
 const object=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
 const clamp=(value:number)=>Math.max(0,Math.min(1,value));
-function Source({text}:{text?:string}){return text?<details className="exploration-source"><summary>Source</summary><p>{text}</p></details>:null;}
+function Source({text}:{text?:string}){const source=artifactSourceContent(text);return source?<details className="exploration-source"><summary>Source</summary>{source.kind==='link'?<a href={source.text} target="_blank" rel="noopener" onClick={event=>openArtifactSourceLink(event,source.text)}>{source.text}</a>:<p>{source.text}</p>}</details>:null;}
 function Heading({title,detail}:{title?:string;detail?:string}){const outer=useContext(ArtifactTitle);return title&&title!==outer||detail?<header className="exploration-heading">{title&&title!==outer?<h3>{title}</h3>:<span/>}{detail&&<span>{detail}</span>}</header>:null;}
 function useSelectionMotion(identity:string|null|undefined){const ref=useRef<HTMLDivElement>(null),previous=useRef(identity);useEffect(()=>{const changed=previous.current!==identity;previous.current=identity;if(!changed)return;const motion=animateTask(ref.current,[{opacity:.65,transform:'translateY(4px)'},{opacity:1,transform:'translateY(0)'}],190);return()=>motion?.cancel();},[identity]);return ref;}
 
