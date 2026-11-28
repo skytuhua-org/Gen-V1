@@ -57,3 +57,25 @@ Checkpoint each milestone or 20 minutes with key/SHA/tests/blockers/next owner. 
 - Verified baseline/rules: https://github.com/skytuhua-org/Gen-V1/tree/defe9884530145e9c109b8ed98f80efac8beeb17
 - Original canonical action plan and exact amendments: https://github.com/skytuhua-org/Gen-V1/issues/2141
 - Adjacent W3 acceptance remains unmet: https://github.com/skytuhua-org/Gen-V1/issues/1811#issuecomment-7122916244
+
+## Supplemental acceptance evidence on 2026-11-28
+
+The tested implementation is PR [#2649](https://github.com/skytuhua-org/Gen-V1/pull/2649) at `e2ad8aee249fcfdc19d451f4bc326b3eedb01789`. Its exact ACT02 baseline is PR [#2374](https://github.com/skytuhua-org/Gen-V1/pull/2374) at `58aa28ecf785757e0337f932f9dd3d85fb1e92ec`. The independent browser acceptance and optional recorder are in PR [#2650](https://github.com/skytuhua-org/Gen-V1/pull/2650) at `b351dfe46d4d9b83f494aaf14ead966633c7f028`.
+
+| Criterion | Verified browser and local evidence | Outstanding evidence |
+| --- | --- | --- |
+| A1 | Compact and regular submit controls retain their names and dimensions through the observed states. At 560 CSS px and actual Edge page zoom of 100% and 200%, the compact control is 29×29 CSS px and stays 30 CSS px from the form top. | Installed app zoom at 100%, 125% and 150%. |
+| A2 | Exact synthetic payloads, pointer input, Enter and Space, IME suppression and held duplicate suppression. The held indicator stays absent at 149 ms and appears at 150 ms, and fast settlement clears pending feedback. | Installed keyboard and pointer coverage. |
+| A3 | The current request acknowledgment uses approved, captured choice labels. Programmatic clears preserve it, and a later user edit or the four-second timer clears it. The original optional catalog opens the prepared approval, with zero approve commands. | Native approval focus and announcements. |
+| A4 | Source errors and empty messages offer Retry with current validated values. Disabled and unbound controls dispatch nothing. An accepted request remains acknowledged through snapshot or draft-journal failure. | Equivalent installed Windows verification. |
+| A5 | Required, inactive, optional, disabled and custom choice cases pass. An ordinary required Input blocks submission when the associated required choice is hidden. | Native input and accessibility coverage. |
+| A6 | An older in-flight revision leaves newer selection, draft, focus and feedback intact, and a separate artifact retains its draft. The owner hook passes A→B→A and unmount cases. | The full installed lifecycle matrix. |
+| A7 | Exact keyboard tests preserve field focus and cover event guards. The pending region and error alert each appear once. Recovery restores the initiating control only when its focus was lost and there was no newer keyboard or focus intent. | Windows screen-reader announcement checks. |
+| A8 | Linux Edge 158 paired footage covers both themes, System, Reduced, Off, OS reduction and a live transition to Off while held. The real 200% browser setting doubles the pixel ratio and preserves CSS and pinch scale at 1. At 560×534 and 560×384, the feedback fits after scrolling into view, and input focus stays put. | Native Windows, installed app zoom and physical DPI evidence where applicable, plus immutable remote media links. |
+| A9 | ACT04 passed 16 exact Linux Edge cases, 85 affected Vitest checks and typecheck. ACT05 passed three normal browser cases, 31 UI guard checks and typecheck. Its six opt-in cases passed for each source revision using one shared harness digest. | Required hosted gates, actual protected merge and verification on main. |
+
+The shared harness is opt-in through `HARNESS_CAPTURE_ACTION_FEEDBACK=1`. Supply the full refs in `HARNESS_ACTION_BASELINE_SHA` and `HARNESS_ACTION_CANDIDATE_SHA`, and select the recorded ref with `HARNESS_ACTION_CAPTURE_SIDE=baseline` or `candidate`. For baseline capture, apply only the test harness in a clean checkout of the pinned baseline. The test validates application source against the declared ref and records the harness digest beside each video.
+
+The local evidence package `gen-v1-act05-2248-linux-edge-evidence.zip` has SHA-256 `e8240880f11e733f142e97177a484a501e252580ed65183b4088397070c7c58e`. The 16-clip packet manifest SHA-256 is `d4ed76d40b587993c7e64f3803097d8e8c6630253ee241a6c3267521ebad4716` and the browser-zoom manifest SHA-256 is `43356971b708a7501db2165323f9a76d6f7cfd3f0d72aa6e358a15f8a453c8bf`. Each clip uses the same authored data and Inter font, with H.264 at 1920×1080 and 30 fps. Synthetic approval remains prepared and unapproved. The package includes the recorded fixture limits.
+
+The original acceptance rows apply with the stable-name and truthful request-submitted amendments documented above. The Linux Edge rows establish supplemental browser behavior. Keep this issue open for the installed Windows and native assistive-technology outcomes, the final protected and on-main checks, and immutable remote media publication.
