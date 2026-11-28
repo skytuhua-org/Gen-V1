@@ -82,6 +82,10 @@ export class Store {
       CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS entities (kind TEXT NOT NULL, id TEXT NOT NULL, thread_id TEXT, body TEXT NOT NULL, PRIMARY KEY(kind,id));
       CREATE INDEX IF NOT EXISTS entities_thread ON entities(kind,thread_id);
+      CREATE INDEX IF NOT EXISTS wakeup_expired_claims ON entities(json_extract(body,'$.leaseExpiresAtMs'))
+        WHERE kind='backgroundOccurrence' AND json_extract(body,'$.state')='CLAIMED';
+      CREATE INDEX IF NOT EXISTS wakeup_backfill_turn ON entities(json_extract(body,'$.turn'))
+        WHERE kind='backgroundOccurrenceBackfill';
       CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, type TEXT NOT NULL, thread_id TEXT, payload TEXT NOT NULL, occurred_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, hash TEXT NOT NULL, body TEXT NOT NULL);
       INSERT OR IGNORE INTO migrations(version) VALUES (1);
