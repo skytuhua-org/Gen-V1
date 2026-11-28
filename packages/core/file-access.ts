@@ -12,6 +12,15 @@ export interface GuardEntry { readonly path: string; readonly directory: boolean
 interface GuardSession { rpc(request: Record<string, unknown>, startupAcquisition?: boolean): Promise<readonly GuardEntry[]>; exited: boolean; loss:Set<()=>void> }
 const sessions = new AsyncLocalStorage<GuardSession>();
 const denied = () => new HarnessError("CAPABILITY_DENIED", "File access check failed — the folder could not be opened safely for this action");
+const nativeGuardFailure = (diagnostics: string) => {
+  const nativeMessage = /GUARD_NATIVE_MESSAGE:([^\r\n]*)/.exec(diagnostics)?.[1];
+  const precondition = nativeMessage !== undefined && /Replacement destination (?:bytes|identity) changed/.test(nativeMessage);
+  return new HarnessError(precondition ? "PRECONDITION_FAILED" : /limit exceeded/i.test(diagnostics)?"RESOURCE_LIMIT":"CAPABILITY_DENIED", "File access check failed — the folder could not be opened safely for this action", { nativeCode: /GUARD_NATIVE_ERROR:([-0-9]+)/.exec(diagnostics)?.[1] ?? "unavailable",nativeMessage });
+};
+const guardRpcFailures = new WeakSet<HarnessError>();
+// Process exit can precede stderr flush, but a never-closing child must still
+// fail its pending RPC promptly enough for bounded teardown to run.
+const exitDiagnosticsGraceMs = 250;
 // A cold, app-owned Hermes guard may need PowerShell startup and C# initialization.
 // Extend only its first acquire, not unrelated reads, writes, or lease releases.
 export function pathGuardRpcDeadline(command: unknown, metadataImport: boolean, startupAcquisition: boolean): number {
@@ -66,7 +75,15 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
       let output = "";
       const metadataImport = Array.isArray(request.paths) && (request.paths as GuardPath[]).some(path => path.gitMetadataImport);
       const timer = setTimeout(() => finish(denied()), pathGuardRpcDeadline(request.command,metadataImport,startupAcquisition));
-      const failed = () => finish(new HarnessError(/limit exceeded/i.test(diagnostics)?"RESOURCE_LIMIT":"CAPABILITY_DENIED", "File access check failed — the folder could not be opened safely for this action", { nativeCode: /GUARD_NATIVE_ERROR:([-0-9]+)/.exec(diagnostics)?.[1] ?? "unavailable",nativeMessage:/GUARD_NATIVE_MESSAGE:([^\r\n]*)/.exec(diagnostics)?.[1] }));
+      let exitFailureTimer: NodeJS.Timeout | undefined;
+      const failed = () => {
+        if (exitFailureTimer) clearTimeout(exitFailureTimer);
+        exitFailureTimer = undefined;
+        const error = nativeGuardFailure(diagnostics);
+        guardRpcFailures.add(error);
+        finish(error);
+      };
+      const exited = () => { exitFailureTimer ??= setTimeout(failed, exitDiagnosticsGraceMs); };
       const data = (bytes: string) => {
         output += bytes;
         if (output.length > (metadataImport ? 64 : 16) * 1024 * 1024) return finish(denied());
@@ -84,20 +101,23 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
       };
       const finish = (error?: Error, manifest: readonly GuardEntry[] = []) => {
         clearTimeout(timer);
+        if (exitFailureTimer) clearTimeout(exitFailureTimer);
         cancelPendingRpc = undefined;
         child.stdout.removeListener("data", data);
         child.removeListener("error", failed);
-        child.removeListener("exit", failed);
+        child.removeListener("close", failed);
+        child.removeListener("exit", exited);
         error ? reject(error) : accept(manifest);
       };
       cancelPendingRpc = () => finish(denied());
-      child.once("error", failed); child.once("exit", failed); child.stdout.on("data", data);
+      child.once("error", failed); child.once("close", failed); child.once("exit", exited); child.stdout.on("data", data);
       child.stdin.write(JSON.stringify(request) + "\n");
     }));
     queue = pending.then(() => {}, () => {}); return pending;
   };
   const onError = () => {}; child.stdin.on("error", onError);
   let fulfilled = false;
+  let rpcFailure: HarnessError | undefined;
   try {
     child.stderr.resume();
     const manifest = await current.rpc({ command: "acquire", id: randomUUID(), paths },options?.startupAcquisition===true);
@@ -106,6 +126,9 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
     if (current.exited) throw denied();
     fulfilled = true;
     return value;
+  } catch (error) {
+    if (error instanceof HarnessError && guardRpcFailures.has(error)) rpcFailure = error;
+    throw error;
   } finally {
     releasing=true;current.loss.clear();
     // Shutdown can still deliver pipe or process errors after a timeout.
@@ -119,6 +142,11 @@ export async function withPathGuard<T>(paths: GuardPath[], signal: AbortSignal, 
       const bound = setTimeout(() => finish(false), 4000);
       closed.then(() => { clearTimeout(kill); clearTimeout(bound); finish(true); });
     });
+    if (rpcFailure) {
+      const final = nativeGuardFailure(diagnostics);
+      rpcFailure.code = final.code;
+      rpcFailure.details = final.details;
+    }
     if (!confirmed) {
       // Invalidate the session and remove only our listeners. Node's stream
       // close handlers still account for the child process's stdio teardown.
@@ -147,7 +175,7 @@ export async function removeOwnedFile(path: string, identity: { dev: bigint | nu
     await sessions.getStore()!.rpc({ command: "removeOwned", id: randomUUID(), path, dev: String(identity.dev), ino: String(identity.ino), empty, directory });
   });
 }
-export async function replaceOwnedFile(source: string, destination: string, identity: { dev: bigint; ino: bigint }, sha256: string, signal: AbortSignal, expectedDestinationHash?: string): Promise<void> {
+export async function replaceOwnedFile(source: string, destination: string, identity: { dev: bigint; ino: bigint }, sha256: string, signal: AbortSignal, expectedDestinationHash?: string, beforeNativeReplace?: (destination: string) => void | Promise<void>): Promise<void> {
   const target=expectedDestinationHash===undefined?undefined:await lstat(destination,{bigint:true});
   const paths:GuardPath[]=[{path:dirname(source),leaf:false},{path:dirname(destination),leaf:false}];
   await withPathGuard(paths, signal, async () => {
@@ -156,6 +184,9 @@ export async function replaceOwnedFile(source: string, destination: string, iden
     // on one opened handle and denies in-place writes until the rename ends.
     // An external atomic save can still replace the destination pathname.
     if(target&&createHash('sha256').update(await readBoundFile(destination,32*1024*1024)).digest('hex')!==expectedDestinationHash)throw new HarnessError('PRECONDITION_FAILED','File changed before guarded replacement');
+    active(signal);
+    // Race regression coverage injects inside custody, immediately before native commit.
+    await beforeNativeReplace?.(destination);
     active(signal);
     await sessions.getStore()!.rpc({ command: "replaceOwned", id: randomUUID(), source, destination, dev: String(identity.dev), ino: String(identity.ino), sha256, targetDev:target&&String(target.dev), targetIno:target&&String(target.ino), targetSha256:expectedDestinationHash });
   });

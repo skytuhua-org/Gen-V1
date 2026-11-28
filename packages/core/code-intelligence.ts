@@ -723,11 +723,22 @@ export class CodeIntelligence {
     if (plan.exactApprovalId !== input.approvalId)
       throw new HarnessError("CAPABILITY_DENIED", "The rename approval does not match this plan.");
     return this.underLock(plan.workspaceIdentity, async () => {
-      // Grants are re-validated at apply: a revoked root between plan and
-      // apply must produce no write.
-      for (const target of plan.textEdits)
+      // Grants are re-validated at apply: a revoked root or redirected parent
+      // between plan and apply must produce no write.
+      const canonicalRoots = await Promise.all(input.grantedRoots.map(root => canonical(root)));
+      for (const target of plan.textEdits) {
         if (!input.grantedRoots.some(root => inside(root, target.path)))
           throw new HarnessError("CAPABILITY_DENIED", "A rename target is outside the granted roots.");
+        let resolvedTarget: string;
+        try { resolvedTarget = await canonical(target.path); }
+        catch (error) {
+          if (error instanceof HarnessError && error.code === "INVALID_RESOURCE")
+            throw new HarnessError("PRECONDITION_FAILED", "A rename target is missing.");
+          throw error;
+        }
+        if (!canonicalRoots.some(root => inside(root, resolvedTarget)))
+          throw new HarnessError("CAPABILITY_DENIED", "A rename target resolves outside the granted roots.");
+      }
       // Validate every target's preimage before the first change.
       const preimages = new Map<string, Buffer>();
       for (const expected of plan.expectedBeforeDigests) {
@@ -769,7 +780,7 @@ export class CodeIntelligence {
           try {
             await replaceVerifiedFile(target.path, Buffer.from(postimage, "utf8"), record.preimage, input.signal);
           } catch (error) {
-            if (error instanceof HarnessError && error.code === "CANCELLED") throw error;
+            if (!(error instanceof HarnessError && error.code === "PRECONDITION_FAILED")) throw error;
             record.disposition = "Conflict";
             entries.push({ path: target.path, disposition: "Conflict", detail: "The file changed while its rename edits were being written." });
             await flush();
@@ -841,12 +852,31 @@ export class CodeIntelligence {
           state: live.entries.some(record => record.disposition === "Conflict") ? "PARTIAL_RECOVERY_REQUIRED" : "APPLIED",
           entries: live.entries.map(record => ({ path: record.path, disposition: record.disposition })),
         });
+      // Canonical write authority is required only once an unresolved journal
+      // can actually restore bytes; resolved journals remain readable receipts.
+      const canonicalRoots = await Promise.all(input.grantedRoots.map(root => canonical(root)));
       const entries: RenameRecoveryEntry[] = [];
       let conflict = false;
+      let incomplete = false;
       for (const [index, record] of live.entries.entries()) {
+        if (record.disposition === "Restored") {
+          entries.push({ path: record.path, disposition: "Restored" });
+          continue;
+        }
         const current = await readBoundFile(record.path, 32 * 1024 * 1024).catch(() => null);
         const currentDigest = current ? sha(current) : null;
         if (record.postimage !== null && currentDigest === record.postimage) {
+          let resolvedTarget: string | undefined;
+          try { resolvedTarget = await canonical(record.path); }
+          catch (error) {
+            if (!(error instanceof HarnessError && error.code === "INVALID_RESOURCE")) throw error;
+          }
+          if (!resolvedTarget || !canonicalRoots.some(root => inside(root, resolvedTarget))) {
+            conflict = true;
+            live.entries[index]!.disposition = "Conflict";
+            entries.push({ path: record.path, disposition: "Conflict", detail: "The file resolves outside the granted roots; manual recovery is required." });
+            continue;
+          }
           // Restore only when current bytes still match the written postimage.
           const backup = await readBoundFile(record.backup, 32 * 1024 * 1024).catch(() => null);
           if (!backup || sha(backup) !== record.preimage) {
@@ -859,9 +889,14 @@ export class CodeIntelligence {
             await replaceVerifiedFile(record.path, backup, record.postimage!, input.signal);
           } catch (error) {
             if (error instanceof HarnessError && error.code === "CANCELLED") throw error;
-            conflict = true;
-            live.entries[index]!.disposition = "Conflict";
-            entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed while its recovery was being written." });
+            if (error instanceof HarnessError && error.code === "PRECONDITION_FAILED") {
+              conflict = true;
+              live.entries[index]!.disposition = "Conflict";
+              entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed while its recovery was being written." });
+              continue;
+            }
+            incomplete = true;
+            entries.push({ path: record.path, disposition: live.entries[index]!.disposition, detail: "The recovery write did not finish; retry recovery." });
             continue;
           }
           // A writer that raced the postimage check is caught before the
@@ -889,13 +924,13 @@ export class CodeIntelligence {
           entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed outside the rename; manual recovery is required." });
         }
       }
-      // Recovery dispositions are durable: a second recovery pass reconciles
-      // the recorded outcome instead of re-processing the same entries.
-      live.resolved = true;
+      // Persist reached dispositions before the result; operational faults stay
+      // unresolved so retry reconciles current bytes instead of sealing them as drift.
+      live.resolved = !incomplete;
       await writeDurable(join(journalDir, "journal.json"), JSON.stringify(live));
       return renameRecoveryResultSchema.parse({
         planId: live.planId,
-        state: conflict ? "PARTIAL_RECOVERY_REQUIRED" : entries.some(e => e.disposition === "Restored") ? "RECOVERED" : "APPLIED",
+        state: conflict || incomplete ? "PARTIAL_RECOVERY_REQUIRED" : entries.some(e => e.disposition === "Restored") ? "RECOVERED" : "APPLIED",
         entries,
       });
     });

@@ -86,7 +86,7 @@ function connect(){return broker??=(async()=>{
     if(error)reject(mutation?uncertain():error);
     else if(!result||result.id!==value.id)reject(mutation?uncertain():denied());
     else if(result.error==='CREDENTIAL_BARRIER_UNCERTAIN'){faulted=true;reject(uncertain());}
-    else if(result.error){faulted=true;const message=typeof result.message==='string'&&result.message.length&&result.message.length<512&&!result.message.includes('/')&&!result.message.includes('\0')?result.message:undefined;reject(new HarnessError(result.error==='RESOURCE_LIMIT'?'RESOURCE_LIMIT':'CAPABILITY_DENIED',message??'File access check failed — the folder could not be opened safely for this action'));}
+    else if(result.error){faulted=true;const message=typeof result.message==='string'&&result.message.length&&result.message.length<512&&!result.message.includes('/')&&!result.message.includes('\0')?result.message:undefined;const precondition=message!==undefined&&/Replacement destination (?:bytes|identity) changed/.test(message);reject(new HarnessError(result.error==='RESOURCE_LIMIT'?'RESOURCE_LIMIT':precondition?'PRECONDITION_FAILED':'CAPABILITY_DENIED',message??'File access check failed — the folder could not be opened safely for this action'));}
     else{reply=result;accept();}
    }
    pending=finish;pendingLimit=metadataImport?64*1024*1024:value.command==='acquire'&&Array.isArray(value.paths)&&(value.paths as DirectoryPath[]).some(path=>path.tree)?16*1024*1024:65536;
