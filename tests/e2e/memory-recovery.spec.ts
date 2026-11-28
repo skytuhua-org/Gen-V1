@@ -203,7 +203,7 @@ test('failed recovery stays blocked and keyboard Retry restores the exact key, c
   const commands = await mount(page, { notes: [], drafts: { [createKey]: recovered }, reads: { [createKey]: 'fail' } });
   // Opening the empty editor must also be safe while recovery has failed.
   await page.getByRole('button', { name: 'Add memory note' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Note recovery is unavailable.' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Draft recovery is unavailable.' })).toBeVisible();
   await page.screenshot({ path: info.outputPath('02-failed-recovery.png') });
   await expect(page.getByRole('textbox', { name: 'Note key', exact: true })).toBeDisabled();
   await expect(page.getByRole('textbox', { name: 'New thread note', exact: true })).toBeDisabled();
@@ -246,7 +246,7 @@ test('capacity is quiet below ten notes and visible near the twelve-note limit',
 
 test('saved-note recovery failure blocks Delete until Retry and keeps stale revision disclosure', async ({ page }) => {
   const commands = await mount(page, { drafts: { [savedKey]: draft }, reads: { [savedKey]: 'fail' } });
-  await expect(page.getByRole('status').filter({ hasText: 'Note recovery is unavailable.' })).toBeVisible(); await expect(editor(page)).toBeDisabled();
+  await expect(page.getByRole('status').filter({ hasText: 'Draft recovery is unavailable.' })).toBeVisible(); await expect(editor(page)).toBeDisabled();
   const forget = page.getByRole('button', { name: 'Forget decision' }); await expect(forget).toBeDisabled();
   await forget.dispatchEvent('click'); await page.locator('form').dispatchEvent('submit'); expect(commands).toEqual([]);
   await page.getByRole('button', { name: 'Retry', exact: true }).click(); await expect(editor(page)).toHaveValue(draft.content);
@@ -306,7 +306,7 @@ for (const view of [
   await mount(page, { drafts: { [savedKey]: draft }, reads: view.failed ? { [savedKey]: 'fail' } : {} });
   await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, view.theme);
   await page.evaluate(() => document.fonts.ready);
-  if (view.failed) { await expect(page.getByRole('status').filter({ hasText: 'Note recovery is unavailable.' })).toBeVisible(); await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible(); }
+  if (view.failed) { await expect(page.getByRole('status').filter({ hasText: 'Draft recovery is unavailable.' })).toBeVisible(); await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible(); }
   else { await expect(editor(page)).toHaveValue(draft.content); await expect(editor(page)).toBeEnabled(); }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath(`${view.number}-${view.name}.png`), fullPage: true });
@@ -391,4 +391,25 @@ test('a successful edit clears the preceding note draft journal error', async ({
   await editor(page).fill('Persisted edit.');
   await expect(error).toHaveCount(0);
   await page.evaluate(() => window.memoryFixture.flush());
+});
+
+test('only the expanded create form shows recovery and its footer stays in place',async({page})=>{
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await mount(page,{reads:{[savedKey]:'hold',[createKey]:'hold'}});
+ await held(page);await held(page,createKey);
+ const saved=page.locator('.memory-note').filter({has:editor(page)});
+ await expect(editor(page)).toBeDisabled();
+ await expect(saved.getByRole('status')).toHaveCount(0);
+ await expect(page.getByText(/Checking for/)).toHaveCount(0);
+ await page.getByRole('button',{name:'Add memory note',exact:true}).click();
+ const create=page.locator('.memory-note').filter({has:page.getByRole('textbox',{name:'New thread note',exact:true})});
+ await expect(create.getByRole('status')).toHaveText('Checking for a recovered draft…');
+ const prior=await create.locator('footer').boundingBox();
+ await release(page,createKey);
+ await expect(create.getByRole('textbox',{name:'New thread note',exact:true})).toBeEnabled();
+ await expect(create.getByText('Checking for a recovered draft…',{exact:true})).toHaveCount(0);
+ expect((await create.locator('footer').boundingBox())!.y).toBeCloseTo(prior!.y,0);
+ await release(page);
+ await expect(editor(page)).toBeEnabled();
+ await expect(saved.getByRole('status')).toHaveCount(0);
 });
