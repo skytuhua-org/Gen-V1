@@ -47,6 +47,12 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
  app.post('/api/workspace/commands',{bodyLimit:1024*1024},async request=>{const input=envelope.parse(request.body);return input.type==='workspace.project.connect'?projects.connect(input):projects.workspace.command(input);});
  app.get('/api/projects/:projectId/context',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);return projects.context(projectId,threadId);});
  app.get('/api/projects/:projectId/git',async request=>{const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);return projects.gitStatus(projectId,threadId);});
+ // Local-only remote sync read (plan #1626 R1/R7): never fetches; always recompute.
+ app.get('/api/projects/:projectId/git/sync',async(request,reply)=>{
+  reply.header('Cache-Control','no-store');
+  const{projectId}=z.object({projectId:identifier}).parse(request.params),{threadId}=querySchema.parse(request.query);
+  return projects.gitSync(projectId,threadId);
+ });
  // Read-only comparison dependencies; retain existing action/review routes verbatim.
  app.get('/api/projects/:projectId/git/comparison',async(request,reply)=>{
   reply.header('Cache-Control','no-store');
