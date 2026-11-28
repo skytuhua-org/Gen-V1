@@ -4,7 +4,7 @@ import {mkdirSync,writeFileSync,renameSync} from 'node:fs';
 
 import {join} from 'node:path';
 import {
- evaluateExecution,selectBackend,classifyShellCommand,digestFileSha256,
+ evaluateExecution,selectBackend,classifyShellCommand,digestFileSha256,advisoryRiskAssessment,
  type ExecutionBackend,type PlatformProof,type LaunchRequest,type EvaluateExecutionInput,
 } from '../packages/core/execution-policy';
 import {createProjectTrust} from '../packages/core/project-trust';
@@ -183,4 +183,25 @@ it('advisory risk output is labeled advisory and can never convert deny to allow
   expect(typeof decision.advisory.version).toBe('string');
   expect(['low','medium','high']).toContain(decision.advisory.uncertainty);
  }
+});
+
+
+it('advisory cannot infer executable identity from identical argv before verification or on digest mismatch',async()=>{
+ const root=fixture();const trust=await trusted(root);const p=await profile(root);const b=backend();
+ const unverified={label:'Advisory',uncertainty:'medium',rationale:'The executable or argument vector is not an approved exact match.',cannotAuthorize:true};
+ expect(advisoryRiskAssessment(execRequest(root),p)).toMatchObject(unverified);
+ const base={profile:p,trustRootPath:root,approvedBackendId:'backend-a',backends:[b]};
+ expect(await evaluateExecution(input({...base,request:execRequest(root),trust:null}))).toMatchObject({status:'REQUIRE_APPROVAL',advisory:unverified});
+ writeFileSync(join(root,'other.exe'),'different-bytes');
+ expect(await evaluateExecution(input({...base,request:execRequest(root,{executable:join(root,'other.exe')}),trust}))).toMatchObject({status:'REQUIRE_APPROVAL',advisory:unverified});
+ expect(await evaluateExecution(input({...base,request:execRequest(root,{executable:join(root,'missing.exe')}),trust}))).toMatchObject({status:'DENY',advisory:unverified});
+ expect(await evaluateExecution(input({...base,request:execRequest(root,{cwd:tempDir('advice-outside-')}),trust}))).toMatchObject({status:'DENY',advisory:unverified});
+ expect(b.launch).not.toHaveBeenCalled();
+});
+
+it('advisory can report a verified executable match without overriding a later backend denial',async()=>{
+ const root=fixture();const trust=await trusted(root);const p=await profile(root);const other=backend({backendId:'backend-b'});
+ const decision=await evaluateExecution(input({profile:p,request:execRequest(root),trust,trustRootPath:root,approvedBackendId:'backend-b',backends:[other]}));
+ expect(decision).toMatchObject({status:'DENY',advisory:{label:'Advisory',uncertainty:'low',rationale:'The launch matches the approved executable allowlist.',cannotAuthorize:true}});
+ expect(other.launch).not.toHaveBeenCalled();
 });

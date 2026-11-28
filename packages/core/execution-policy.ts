@@ -107,11 +107,17 @@ export interface AdvisoryRisk {
 
 /** Deterministic advisory classifier. It runs after the authority decision,
  * explains why approval is required, and can never convert DENY to ALLOW. */
-export function advisoryRiskAssessment(request: LaunchRequest, profile: Pick<ExecutionProfileV1, 'executableAllowlist'>): AdvisoryRisk {
+export function advisoryRiskAssessment(request: LaunchRequest, _profile: Pick<ExecutionProfileV1, 'executableAllowlist'>): AdvisoryRisk {
+  // Preparation has no verified executable digest. Matching argv alone is
+  // never evidence of an approved executable identity.
+  return advisoryForVerifiedMatch(request, false);
+}
+
+function advisoryForVerifiedMatch(request: LaunchRequest, exactMatch: boolean): AdvisoryRisk {
   let uncertainty: AdvisoryRisk['uncertainty'] = 'low';
   let rationale = 'The launch matches the approved executable allowlist.';
   if (request.kind === 'shell') { uncertainty = 'high'; rationale = 'Arbitrary shell syntax is effectful and cannot be classified as read-only.'; }
-  else if (!profile.executableAllowlist.some(entry => entry.argv.length === request.argv.length && entry.argv.every((arg, i) => arg === request.argv[i]))) {
+  else if (!exactMatch) {
     uncertainty = 'medium'; rationale = 'The executable or argument vector is not an approved exact match.';
   }
   return { label: 'Advisory', classifier: 'execution-policy-advisory', model: 'deterministic-v1', version: '1.0.0', uncertainty, rationale, cannotAuthorize: true };
@@ -163,7 +169,8 @@ export async function evaluateExecution(input: EvaluateExecutionInput): Promise<
   }
 
   const request = input.request;
-  const advisory = () => advisoryRiskAssessment(request, profile);
+  let exactExecutableMatch = false;
+  const advisory = () => advisoryForVerifiedMatch(request, exactExecutableMatch);
   const deny = (reasons: string[]): ExecutionDecision => ({ status: 'DENY', reasons, advisory: advisory() });
   const requireApproval = (effect: 'process' | 'shell', reasons: string[]): ExecutionDecision => ({ status: 'REQUIRE_APPROVAL', effect, effectful: true, reasons, advisory: advisory() });
 
@@ -206,6 +213,7 @@ export async function evaluateExecution(input: EvaluateExecutionInput): Promise<
     entry.executableSha256 === executableSha256 &&
     entry.argv.length === request.argv.length && entry.argv.every((arg, index) => arg === request.argv[index]));
   if (!approvedEntry) return requireApproval('process', ['The executable digest or argument vector is not an approved exact match.']);
+  exactExecutableMatch = true;
 
   const selection = selectBackend(input.approvedBackendId, input.backends ?? []);
   if (selection.status === 'UNSUPPORTED_BACKEND') return blocked('UNSUPPORTED_BACKEND', [selection.reason]);
