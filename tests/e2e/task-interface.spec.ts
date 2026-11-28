@@ -262,7 +262,9 @@ test('a pending question cannot duplicate or erase a newer draft and source erro
   await expect(page.getByText('Use a separate destination for each package.')).toBeVisible();
   const question = page.getByRole('textbox', { name: 'Ask another question' });
   await question.fill('Can I change the date?'); await question.press('Enter');
-  await expect(page.getByRole('button', { name: 'Submitting…', exact: true })).toBeDisabled();
+  const submit = page.getByRole('button', { name: 'Ask question', exact: true });
+  await expect(submit).toBeDisabled();
+  await expect(submit).toHaveAttribute('aria-busy', 'true');
   // Busy feedback precedes draft flush and HTTP delivery. Exercise duplicate
   // input only after the first request actually reaches the held host fixture.
   await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit' && command.payload.actionId === 'ask').length).toBe(1);
@@ -453,6 +455,154 @@ test('a disabled required choice does not block submission', async ({ page }) =>
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await expect.poll(() => fixture.commands.filter(command => command.type === 'action.submit').length).toBe(1);
   await expect(page.getByText('Pick an option first.', { exact: true })).toHaveCount(0);
+});
+
+test.describe('ACT04 artifact submission feedback', () => {
+  function deliveryForm(required = false) {
+    return { root: 'form', elements: {
+      form: { type: 'Form', props: { actionId: 'inspect', submitLabel: 'Save choice', payloadFromState: { delivery: 'delivery', note: 'note' }, clearOnSuccess: ['delivery', 'note'] }, children: ['choice', 'note'] },
+      choice: { type: 'ChoiceList', props: { stateKey: 'delivery', label: 'Delivery', required, options: [{ value: 'pickup', label: 'Pick up locally' }, { value: 'review', label: 'Review first' }], custom: { label: 'Another arrangement', placeholder: 'Describe it' } } },
+      note: { type: 'Input', props: { stateKey: 'note', label: 'Delivery note' } },
+    } };
+  }
+
+  const submissionFixture = (spec: Parameters<typeof taskFixture>[0]) => {
+    const snapshot = taskFixture(spec);
+    snapshot.artifacts[0].actions.inspect = { kind: 'agent' };
+    return snapshot;
+  };
+
+  test('keeps the original Form name and editable input while an approval request is pending', async ({ page }) => {
+    let release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const fixture = await serveTaskFixture(page, submissionFixture(deliveryForm()), async () => {
+      await gate;
+      return { approvalRequired: true, operation: { id: 'delivery-approval' } };
+    });
+    await openApp(page);
+    const note = page.getByRole('textbox', { name: 'Delivery note' });
+    const submit = page.getByRole('button', { name: 'Save choice', exact: true });
+    const payloads = () => fixture.commands.filter(command => command.type === 'action.submit').map(command => command.payload.payload);
+    await note.fill('Initial draft');
+    await note.dispatchEvent('compositionstart');
+    await note.press('Enter');
+    expect(payloads()).toEqual([]);
+    await note.dispatchEvent('compositionend');
+    await note.press('Enter');
+    try {
+      await expect.poll(payloads).toEqual([{ note: 'Initial draft' }]);
+      await expect(submit, 'the pending Form keeps its original accessible name').toBeDisabled({ timeout: 2500 });
+      await expect(submit).toHaveAttribute('aria-busy', 'true');
+      await expect(page.getByRole('status').filter({ hasText: /^Submitting request$/ })).toBeVisible();
+      await expect(note).toBeFocused();
+      await expect(note).toBeEditable();
+      await note.press('Enter');
+      await note.fill('Newer draft');
+      expect(payloads()).toEqual([{ note: 'Initial draft' }]);
+    } finally {
+      release();
+    }
+    await expect(submit).toBeEnabled();
+    await expect(note).toBeFocused();
+    await expect(note).toHaveValue('Newer draft');
+    await expect(page.getByRole('status').filter({ hasText: /^Request submitted$/ })).toHaveCount(1);
+    await expect(page.getByText(/^(Saved|Done|Request completed)$/)).toHaveCount(0);
+    await expect(page.getByText(/^Submitted choice:/)).toHaveCount(0);
+  });
+
+  test('keeps the captured choice label after clearing and removes it on a user edit or after four seconds', async ({ page }) => {
+    const fixture = await serveTaskFixture(page, submissionFixture(deliveryForm()));
+    await openApp(page);
+    const submit = page.getByRole('button', { name: 'Save choice', exact: true });
+    const pickup = page.getByRole('radio', { name: 'Pick up locally' });
+    const review = page.getByRole('radio', { name: 'Review first' });
+    const summary = page.getByText('Submitted choice: Pick up locally', { exact: true });
+    await pickup.check();
+    await submit.click();
+    await expect(summary, 'acknowledgment retains the submitted display label').toBeVisible({ timeout: 2500 });
+    await expect(pickup).not.toBeChecked();
+    await expect(submit).toBeEnabled();
+    await expect(page.getByText('Submitted choice: pickup', { exact: true })).toHaveCount(0);
+    await review.check();
+    await expect(summary).toHaveCount(0);
+    await expect(review).toBeChecked();
+
+    await page.clock.install();
+    await pickup.check();
+    await submit.click();
+    await expect(summary).toBeVisible();
+    await page.clock.fastForward(3500);
+    await expect(summary).toBeVisible();
+    await page.clock.fastForward(500);
+    await expect(summary).toHaveCount(0);
+    expect(fixture.commands.filter(command => command.type === 'action.submit')).toHaveLength(2);
+  });
+
+  test('shows the source failure once and Retry validates and sends the current payload once', async ({ page }) => {
+    let firstRequest = true;
+    const payloads: unknown[] = [];
+    await serveTaskFixture(page, submissionFixture(deliveryForm(true)));
+    await page.route('**/api/commands', async route => {
+      const command = route.request().postDataJSON();
+      if (command.type !== 'action.submit') return route.fallback();
+      payloads.push(command.payload.payload);
+      if (!firstRequest) return route.fallback();
+      firstRequest = false;
+      await route.fulfill({ status: 500, json: { error: { code: 'ACTION_FAILED', message: 'Synthetic request failed. Try again.' } } });
+    });
+    await openApp(page);
+    const submit = page.getByRole('button', { name: 'Save choice', exact: true });
+    const note = page.getByRole('textbox', { name: 'Delivery note' });
+    await submit.click();
+    await expect(page.getByText('Pick an option first.', { exact: true })).toBeVisible();
+    expect(payloads).toEqual([]);
+    await page.getByRole('radio', { name: 'Another arrangement' }).check();
+    const custom = page.getByRole('textbox', { name: 'Another arrangement' });
+    await custom.fill('Original arrangement');
+    await note.fill('Original note');
+    await note.press('Enter');
+    const error = page.getByRole('alert').filter({ hasText: 'Synthetic request failed. Try again.' });
+    await expect(error).toHaveCount(1);
+    await expect(note).toBeFocused();
+    await expect(page.getByText('Request submitted', { exact: true })).toHaveCount(0);
+    const retry = page.locator('[data-artifact-id="task-surface"]').getByRole('button', { name: 'Retry', exact: true });
+    await expect(retry, 'a failed submission offers a quiet Retry').toBeVisible({ timeout: 2500 });
+    await custom.fill('');
+    await retry.click();
+    await expect(page.getByText('Pick an option first.', { exact: true })).toBeVisible();
+    expect(payloads).toEqual([{ delivery: 'Original arrangement', note: 'Original note' }]);
+    await custom.fill('Current arrangement');
+    await note.fill('Current note');
+    await retry.click();
+    await expect(page.getByText('Request submitted', { exact: true })).toBeVisible();
+    await expect(page.getByText('Submitted choice: Another arrangement', { exact: true })).toBeVisible();
+    await expect(error).toHaveCount(0);
+    expect(payloads).toEqual([{ delivery: 'Original arrangement', note: 'Original note' }, { delivery: 'Current arrangement', note: 'Current note' }]);
+  });
+
+  test('standalone Button preserves its name and acknowledges one Space activation', async ({ page }) => {
+    let release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const spec = { root: 'action', elements: {
+      action: { type: 'Button', props: { label: 'Inspect delivery', actionId: 'inspect', payload: { scope: 'delivery' } } },
+    } };
+    const fixture = await serveTaskFixture(page, submissionFixture(spec), async () => { await gate; });
+    await openApp(page);
+    const submit = page.getByRole('button', { name: 'Inspect delivery', exact: true });
+    const payloads = () => fixture.commands.filter(command => command.type === 'action.submit').map(command => command.payload.payload);
+    await submit.press('Space');
+    try {
+      await expect.poll(payloads).toEqual([{ scope: 'delivery' }]);
+      await expect(submit, 'the pending Button keeps its original accessible name').toBeDisabled({ timeout: 2500 });
+      await expect(submit).toHaveAttribute('aria-busy', 'true');
+      await expect(page.getByRole('status').filter({ hasText: /^Submitting request$/ })).toBeVisible();
+    } finally {
+      release();
+    }
+    await expect(submit).toBeEnabled();
+    await expect(page.getByRole('status').filter({ hasText: /^Request submitted$/ })).toHaveCount(1);
+    expect(payloads()).toEqual([{ scope: 'delivery' }]);
+  });
 });
 
 test('a standalone button validates only its keyed associated choice', async ({ page }) => {
