@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type RefObject, type ReactNode, type MouseEvent } from 'react';
+import { Fragment, useEffect, useId, useRef, useState, type RefObject, type ReactNode, type MouseEvent } from 'react';
 import {
   Archive,
   BarChart3,
@@ -37,7 +37,7 @@ import { projectColor, threadDragPayload } from './project-colors';
 import { ActionMenu } from '../../../packages/ui-shell/ActionMenu';
 import { toast } from '../../../packages/ui-shell/Toast';
 import { useThreadMove } from './sidebar-thread-move';
-import { useThreadReorder, type SidebarSection } from './sidebar-reorder';
+import { REORDER_PAUSED, useThreadReorder, type SidebarSection } from './sidebar-reorder';
 import './sidebar-thread-move.css';
 
 const threadAge = (value: string, now: number) => {
@@ -148,7 +148,7 @@ export function ShellSidebar({
   onPlaceThread?: (thread: Thread) => void;
   onConnectProject?: () => void;
   detachNavigation?: () => void;
-  detachThread?: (thread: Thread) => void;
+  detachThread?: (thread: Thread) => boolean | Promise<boolean>;
   details?: Record<string, { branch?: string; provider?: string }>;
   hoverBlocked?: boolean;
   onOpenThreadPR?: (target:ThreadHoverPRTarget,scope:ThreadHoverScope)=>void;
@@ -169,6 +169,18 @@ export function ShellSidebar({
   const [hoverCache]=useState(createThreadHoverCache<ThreadHoverPRTarget>);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'working' | 'waiting'>('all');
+  const [reorderNotice, setReorderNotice] = useState<string | undefined>();
+  const reorderNoticeFrame = useRef<number>(0);
+  const announce = (message: string) => {
+    if (!elementRef.current) return;
+    cancelAnimationFrame(reorderNoticeFrame.current);
+    setReorderNotice('');
+    reorderNoticeFrame.current = requestAnimationFrame(() => setReorderNotice(message));
+  };
+  useEffect(() => {
+    setReorderNotice(undefined);
+    return () => cancelAnimationFrame(reorderNoticeFrame.current);
+  }, [search, filter]);
   const [showAllSettled, setShowAllSettled] = useState(false);
   const [now, setNow] = useState(Date.now);
   const navRef = useRef<HTMLElement | null>(null);
@@ -217,6 +229,11 @@ export function ShellSidebar({
   const settledFolded = layout.folded['settled'] ?? false;
   const visibleSettled = showAllSettled ? settled : settled.slice(0, 6);
   const locked = search.trim().length > 0 || filter !== 'all';
+  const reorderPauseId = useId();
+  const rowShortcuts = ariaKeyShortcuts([
+    ...(onPlaceThread ? ['thread-place' as const] : []),
+    ...(locked ? [] : ['thread-reorder-up', 'thread-reorder-down'] as const),
+  ]);
   const reorder = useThreadReorder(navRef, {
     // Ordering needs every settled row; only rendering stops at six.
     lists: () => ({ pinned, working, flat: orderedRemaining, settled }),
@@ -228,22 +245,66 @@ export function ShellSidebar({
     ensureManualOrder: preferences.projectOrder === 'manual' ? undefined : ensureManualOrder,
     prepareMove: (id, order, viaPointer) => threadMove.prepare(id, order, viaPointer),
     toast,
+    onReorderOutcome: outcome => {
+      let message: string;
+      switch (outcome.kind) {
+        case 'moved':
+          message = `Moved ${outcome.item.title} ${outcome.direction < 0 ? 'up' : 'down'} to position ${outcome.position} of ${outcome.total}`;
+          break;
+        case 'boundary':
+          message = outcome.direction < 0 ? 'Already at the top' : 'Already at the bottom';
+          break;
+        case 'grouping':
+          message = `Cannot move ${outcome.item.title} outside its section`;
+          break;
+        case 'failed':
+          message = `Could not move ${outcome.item.title}`;
+          break;
+        case 'cancelled':
+          message = 'Reorder cancelled';
+          break;
+        case 'locked':
+          message = REORDER_PAUSED;
+          break;
+      }
+      announce(message);
+    },
   });
 
+  const announceThreadAction = (item: Thread, action: string) => {
+    const label = displayThreadTitle(item);
+    const title = Array.from(label);
+    announce((title.length > 60 ? title.slice(0, 57).join('') + '…' : label) + ' ' + action);
+  };
+  const presentAndAnnounce = async (item: Thread, patch: NonNullable<Thread['presentation']>, action: string) => {
+    try {
+      if (!await presentation(item, patch)) return false;
+      announceThreadAction(item, action);
+      return true;
+    } catch (cause) {
+      toast(cause instanceof Error ? cause.message : 'Thread presentation could not save.', {tone: 'error'});
+      return false;
+    }
+  };
   const renderMenu = (item: Thread) => (
     <span className="sidebar-thread-menu-button" {...threadMove.menuEvents}>
       <ActionMenu label={`Options for ${displayThreadTitle(item)}`} icon={<MoreHorizontal size={14} aria-hidden="true" />} iconOnly
         open={menuId === item.id} onOpenChange={open => setMenuId(open ? item.id : null)}
         items={[
           ...(onPlaceThread ? [{id: 'place', label: 'Place in workspace', shortcut: 'Alt Enter', onSelect: () => onPlaceThread(item)}] : []),
-          ...(detachThread ? [{id: 'detach', label: 'Detach thread', icon: <ExternalLink size={13} />, onSelect: () => detachThread(item)}] : []),
+          ...(detachThread ? [{id: 'detach', label: 'Detach thread', icon: <ExternalLink size={13} />, onSelect: async () => { if (await detachThread(item)) announceThreadAction(item, 'detached'); }}] : []),
           {id: 'rename', label: 'Rename thread', onSelect: () => rename(item)},
           {id: 'pin', label: item.presentation?.pinned ? 'Unpin thread' : 'Pin thread', icon: <Pin size={13} />,
-            onSelect: () => presentation(item, {pinned: !item.presentation?.pinned})},
+            onSelect: () => void presentAndAnnounce(item, {pinned: !item.presentation?.pinned}, item.presentation?.pinned ? 'unpinned' : 'pinned')},
           {id: 'unread', label: item.presentation?.unread ? 'Mark as read' : 'Mark as unread', icon: <Circle size={12} />,
-            onSelect: () => presentation(item, {unread: !item.presentation?.unread})},
+            onSelect: () => void presentAndAnnounce(item, {unread: !item.presentation?.unread}, item.presentation?.unread ? 'marked read' : 'marked unread')},
           {id: 'settle', label: item.presentation?.settled ? 'Return to inbox' : 'Settle thread', icon: <Check size={13} />,
-            onSelect: async () => { const next = !item.presentation?.settled; try { if (await presentation(item, {settled: next})) toast(next ? `"${displayThreadTitle(item)}" settled — find it under Settled` : `"${displayThreadTitle(item)}" returned to your threads`); } catch (cause) { toast(cause instanceof Error ? cause.message : 'Thread presentation could not save.', {tone: 'error'}); } }},
+            onSelect: async () => {
+              const next = !item.presentation?.settled;
+              if (await presentAndAnnounce(item, {settled: next}, next ? 'settled' : 'restored to working')) {
+                toast(next ? `"${displayThreadTitle(item)}" settled — find it under Settled` : `"${displayThreadTitle(item)}" returned to your threads`, {announce:false});
+              }
+            }},
           {id: 'archive', label: 'Archive thread', icon: <Archive size={13} />, disabled: Boolean(item.runId),
             title: item.runId ? 'Stop the task before archiving.' : undefined, onSelect: () => archive(item.id)},
         ]}/>
@@ -262,6 +323,8 @@ export function ShellSidebar({
       <div
         key={item.id}
         data-thread-id={item.id}
+        data-reorder-locked={locked || undefined}
+        title={locked ? REORDER_PAUSED : undefined}
         className={`sidebar-thread-row ${compactSettled ? 'sidebar-settled-row' : ''} ${item.id === selectedId ? 'active' : ''} ${item.kind === 'delegate' ? 'sidebar-delegate' : ''} ${reorder.dragging?.id === item.id ? 'sidebar-drag-source' : ''}`}
       >
         <ThreadHoverCard facts={{scope,title:displayThreadTitle(item),project:item.projectName?{name:item.projectName,monogram:projectMonogram(item.projectName)}:undefined,model:item.modelId??undefined,reasoning:item.thinkingLevel??undefined,activity:threadStatus(item),lastActivity:{label:threadAge(item.updatedAt, now),at:item.updatedAt},parent:item.parentThreadId?{threadId:item.parentThreadId,title:displayThreadTitle(matching.find(parent=>parent.id===item.parentThreadId), '')||undefined}:undefined}}
@@ -271,12 +334,14 @@ export function ShellSidebar({
           className="thread-item"
           draggable={!locked}
           onDragStart={event => {
+            if (locked) { event.preventDefault(); return; }
             event.dataTransfer.effectAllowed = 'copyMove';
             event.dataTransfer.setData('application/x-gen-thread', threadDragPayload(item));
             reorder.begin(item);
           }}
           onDragEnd={reorder.end}
-          aria-keyshortcuts={ariaKeyShortcuts(onPlaceThread ? ['thread-place', 'thread-reorder-up', 'thread-reorder-down'] : ['thread-reorder-up', 'thread-reorder-down'])}
+          aria-keyshortcuts={rowShortcuts}
+          aria-describedby={locked ? reorderPauseId : undefined}
           onKeyDown={event => {
             if (onPlaceThread && event.altKey && event.key === 'Enter') {
               event.preventDefault();
@@ -457,12 +522,15 @@ export function ShellSidebar({
           <SquarePen size={15} />
         </button>
       </div>
+      {locked && <span id={reorderPauseId} className="sr-only">{REORDER_PAUSED}</span>}
       {/* Persistent live region: announcements must update an existing
           element — mounting a status region is missed by some screen readers. */}
       <div className="sr-only" role="status" aria-atomic="true">
+        {reorderNotice ?? <>
         {loaded && !visibleMatching.length
           ? (search ? (filter === 'all' ? 'No matching threads.' : `No matching ${filter} threads.`) : filter === 'working' ? 'No working threads right now.' : filter === 'waiting' ? 'No threads waiting for your input.' : 'Your threads will appear here.')
           : filter === 'all' ? 'Showing all threads' : `Showing ${filter} threads`}
+        </>}
       </div>
       {filter !== 'all' && (
         <div className="sidebar-filter-chip">

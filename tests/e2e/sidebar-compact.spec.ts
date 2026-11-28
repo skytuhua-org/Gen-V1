@@ -8,7 +8,7 @@ test.beforeEach(async({page})=>{
 });
 test('compact rows show project monogram chip, readable title and metadata, and preserve detail access',async({page})=>{
  const searchBox=await page.getByRole('textbox',{name:'Search threads',exact:true}).boundingBox();
- const filterBox=await page.getByRole('button',{name:/^Thread filter:/}).boundingBox();
+ const filterBox=await page.getByRole('button',{name:'Thread filter: all',exact:true}).boundingBox();
  const newThreadBox=await page.getByRole('button',{name:'New thread',exact:true}).boundingBox();
  expect(Math.abs(searchBox!.y-filterBox!.y)).toBeLessThanOrEqual(4);
  expect(Math.abs(searchBox!.y-newThreadBox!.y)).toBeLessThanOrEqual(4);
@@ -34,7 +34,7 @@ test('compact rows show project monogram chip, readable title and metadata, and 
  expect(await page.evaluate(()=>(window as unknown as {sidebarCompactCalls:string[]}).sidebarCompactCalls)).toContain('presentation:{"pinned":true}');
 });
 test('active filter shows a visible chip that clears back to all',async({page})=>{
- await page.getByRole('button',{name:/^Thread filter:/}).click();
+ await page.getByRole('button',{name:'Thread filter: all',exact:true}).click();
  const chip=page.locator('.sidebar-filter-chip');
  await expect(chip).toContainText('Showing working threads');
  await chip.getByRole('button',{name:'Clear thread filter'}).click();
