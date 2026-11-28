@@ -32,7 +32,7 @@
 .agent-inbox .ui-list-row-lead{display:flex;min-width:0;align-items:center;gap:6px;grid-row:1}
 .agent-inbox .ui-list-row-lead-icon{display:inline-flex;flex:none;color:var(--muted)}
 .agent-inbox .ui-list-row-lead-label{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.agent-inbox .ui-list-row-end{grid-column:end-start/end-end;grid-row:1;margin-inline-start:6px;display:flex;align-items:center;justify-self:end;gap:6px;min-width:0}
+.agent-inbox .ui-list-row-end{grid-column:end-start/end-end;grid-row:1;margin-inline-start:6px;display:flex;align-items:center;justify-self:end;gap:6px;min-width:0;position:relative;z-index:1}
 .agent-inbox .ui-list-row-title{grid-row:2;text-overflow:ellipsis}
 .agent-inbox .ui-list-row-description{grid-row:3;text-overflow:ellipsis}
 .agent-inbox .inbox-row-line{display:inline;white-space:nowrap}
@@ -64,3 +64,11 @@
 @media(hover:hover){.agent-inbox .ui-list-row:has(>button.ui-list-row-main):hover:not([data-current=true]){background:var(--hover)}}
 @media(prefers-reduced-motion:reduce){.agent-inbox .ui-list-row{transition:none}}
 @container(max-width:420px){.agent-inbox .ui-toolbar{padding:8px 12px}.agent-inbox .inbox-search{padding-inline:12px}.agent-inbox .inbox-tasks-body{padding-inline:8px}.agent-inbox .inbox-board{padding:20px 16px}.agent-inbox .inbox-subject-title{font-size:20px}.agent-inbox .inbox-item-crumb{max-width:140px}}
+
+/* #2336: row-level read/unread toggle — hover/focus-visible, always on touch. */
+.agent-inbox .inbox-row-read-toggle{opacity:0;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;background:none;color:var(--muted);border-radius:5px;cursor:pointer;transition:opacity var(--ui-motion-hover,120ms) var(--ui-ease-enter)}
+.agent-inbox .ui-list-row:hover .inbox-row-read-toggle,.agent-inbox .ui-list-row:focus-within .inbox-row-read-toggle{opacity:1}
+.agent-inbox .inbox-row-read-toggle:hover{color:var(--text);background:var(--hover)}
+.agent-inbox .inbox-row-read-toggle:focus-visible{opacity:1;outline:2px solid var(--ui-focus-ring);outline-offset:-2px}
+@media(hover:none){.agent-inbox .inbox-row-read-toggle{opacity:1}}
+@media(prefers-reduced-motion:reduce){.agent-inbox .inbox-row-read-toggle{transition:none}}
