@@ -164,12 +164,16 @@ export function registerWorkspaceRoutes(app:FastifyInstance,service:Service){
    const message=outcome.state==='revoked'?'Project access changed. Refresh before acting.':outcome.state==='not-applied'?'The reviewed changes are out of date. Refresh before acting.':'The outcome is uncertain. Inspect the original action before retrying.';
    return{...outcome,error:{code,message,details:{state:outcome.state,operationId:input.id}}};
   }
+  if(input.type==='run-script'){
+   reply.header('Cache-Control','no-store');
+   const {scriptId}=z.strictObject({scriptId:identifier}).parse(input.payload);
+   return terminals.runScript(projectId,input.threadId,scriptId,input.id);
+  }
   const existing=service.store.receipt({...input,type:'project.'+input.type,payload:{...input.payload,projectId}});if(existing)return existing;
   const command={...input,type:'project.'+input.type,payload:{...input.payload,projectId}},p=input.payload,binding=await projects.binding(projectId,input.threadId);
   if(input.type==='refresh'){const context=await projects.context(projectId,input.threadId);return service.store.command(command,()=>context);}
   if(input.type==='link-pr'){const pullNumber=z.number().int().positive().parse(p.number),details=await github.details(projectId,input.threadId,pullNumber),key=JSON.stringify([projectId,input.threadId??null,details.repo,pullNumber]);return service.store.command(command,()=>{service.store.put('linkedPullRequest',key,input.threadId??null,{projectId,threadId:input.threadId,...details,linkedAt:new Date().toISOString()});return details;});}
   if(input.type==='add-script'){const script={id:randomUUID(),projectId,name:z.string().trim().min(1).max(100).parse(p.name),command:z.string().trim().min(1).max(8000).parse(p.command)};return service.store.command(command,()=>{service.store.put('projectScript',script.id,null,script);return script;});}
-  if(input.type==='run-script'){const script=service.store.get<{projectId:string;command:string}>('projectScript',identifier.parse(p.scriptId));if(!script||script.projectId!==projectId)throw new HarnessError('NOT_FOUND','Project script is unavailable.');return terminals.open({projectId,threadId:input.threadId,command:script.command});}
   if(input.type==='branch'){
    const intent=service.store.get('workspaceAction',input.id);if(intent)throw new HarnessError('ACTION_UNCERTAIN','This action already started. Refresh Git status before trying a new action.');
    service.store.internal('project.action.started',input.threadId??null,()=>service.store.put('workspaceAction',input.id,input.threadId??null,{command,status:'started'}));
