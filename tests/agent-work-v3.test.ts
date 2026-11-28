@@ -1,4 +1,5 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import Ajv from 'ajv';
 import {mkdtempSync, realpathSync, lstatSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve, sep} from 'node:path';
@@ -6,7 +7,7 @@ import {randomUUID} from 'node:crypto';
 import {Store} from '../packages/storage/store.ts';
 import type {ResourceGrant, RunContext, Thread} from '../packages/contracts/index.ts';
 import {AgentWorkCoordinator, type AgentWorkChild} from '../packages/core/agent-work.ts';
-import {CodeWorktreeResultV1Schema} from '../packages/contracts/agent-work.ts';
+import {agentResultJsonSchemaFor, CodeWorktreeResultV1Schema} from '../packages/contracts/agent-work.ts';
 import {capabilityEnabled, __setCapabilityFlagForTests} from '../packages/core/capability-flags.ts';
 import type {AgentWorkV1} from '../packages/contracts/agent-work.ts';
 
@@ -180,6 +181,24 @@ describe('AgentWorkV1 admission and role gates', () => {
 });
 
 describe('output schema, repair and verification', () => {
+  it('compiles canonical role schemas with the coordinator Ajv and keeps their strict result fields', () => {
+    const ajv = new Ajv({allErrors: true, strict: false, validateFormats: false});
+    const result = {outcome: 'COMPLETED', summary: 'Fixture result', evidenceRefs: [], requirementIds: []};
+    const roleFields = {
+      PLAN_READ: {},
+      RESEARCH_READ: {citationRefs: []},
+      CODE_WORKTREE: {worktreeId: 'fixture-worktree', commits: []},
+      QA: {observations: [{checkId: 'fixture-check', outcome: 'PASS', evidenceRef: null}]},
+    } as const;
+    for (const role of ['PLAN_READ', 'RESEARCH_READ', 'CODE_WORKTREE', 'QA'] as const) {
+      const validate = ajv.compile(agentResultJsonSchemaFor(role));
+      const output = {...result, ...roleFields[role]};
+      expect(validate(output), role).toBe(true);
+      expect(validate({...output, outcome: 'UNKNOWN'}), role).toBe(false);
+      expect(validate({...output, extra: true}), role).toBe(false);
+    }
+  });
+
   it('settles the work even when child teardown rejects', async () => {
     const rejecting: AgentWorkChild = {supportsLiveSteer: false, send: async () => {}, cancel: async () => { throw new Error('unconfirmed broker close'); }, dispose: async () => { throw new Error('unconfirmed broker close'); }};
     const f = fixture({runtimeFactory: () => rejecting});
