@@ -1,4 +1,4 @@
-**Full current issue mirror:** [issue-1179.md](https://github.com/skytuhua-org/Gen-V1/blob/agent/cleanup-plan-mirrors-r2/docs/agent-plans/review-2026-11-23/issue-1179.md). The publication checkpoint pins the exact commit.
+**Full current issue mirror:** [issue-1179.md](https://github.com/skytuhua-org/Gen-V1/blob/ae54c94b4efa6defb01171f2302acad73d143829/docs/agent-plans/review-2026-11-23/issue-1179.md). The publication checkpoint pins the exact commit.
 
 Publication supplement under #1803, cleanup-2026-11-23-r2: preserve the concurrent #1992 plan below. #1181 remains the canonical open diagnostic-stream candidate and #1824 is a closed duplicate. The actual candidate tests are tests/readiness-manifest.test.ts. This mirror publication does not certify the pending redaction/streaming acceptance or release another worker's ownership.
 

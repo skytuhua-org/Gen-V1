@@ -1,4 +1,4 @@
-**Full current issue mirror:** [issue-1481.md](https://github.com/skytuhua-org/Gen-V1/blob/agent/cleanup-plan-mirrors-r2/docs/agent-plans/review-2026-11-24/issue-1481.md). The publication checkpoint pins the exact commit. Historical r1 remains at [69ffb55d](https://github.com/skytuhua-org/Gen-V1/blob/69ffb55d46d5d2a8a0d2aa93ea0fd3e00638d72b/docs/agent-plans/project-model-defaults.md). The complete plan follows; the issue body is canonical.
+**Full current issue mirror:** [issue-1481.md](https://github.com/skytuhua-org/Gen-V1/blob/ae54c94b4efa6defb01171f2302acad73d143829/docs/agent-plans/review-2026-11-24/issue-1481.md). The publication checkpoint pins the exact commit. Historical r1 remains at [69ffb55d](https://github.com/skytuhua-org/Gen-V1/blob/69ffb55d46d5d2a8a0d2aa93ea0fd3e00638d72b/docs/agent-plans/project-model-defaults.md). The complete plan follows; the issue body is canonical.
 
 # Plan: Project model and reasoning defaults
 
