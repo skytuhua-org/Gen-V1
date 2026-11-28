@@ -14,6 +14,21 @@ async function setup(page:Page,query=''){
 }
 async function select(page:Page){await page.locator('.xterm-helper-textarea').focus();await page.keyboard.press('Control+Shift+a');await expect(page.getByRole('button',{name:'Add selection to prompt'})).toBeEnabled();}
 async function add(page:Page){await select(page);await page.getByRole('button',{name:'Add selection to prompt'}).click();await expect(page.getByRole('button',{name:'Terminal selection · capture-terminal',exact:true})).toBeVisible();}
+for(const cancel of ['button','Escape'] as const)test(`scoped ${cancel} cancel aborts a stalled transport and retains the draft for retry`,async({page})=>{
+ const f=await setup(page,'?scoped=1'),input=page.getByRole('textbox',{name:'Message',exact:true}),failures:string[]=[];
+ page.on('requestfailed',request=>{if(request.url().endsWith('/api/commands'))failures.push(request.failure()?.errorText??'');});
+ await input.fill('Keep this cancelled message');f.hold();
+ try{
+  await page.getByRole('button',{name:'Send message',exact:true}).click();await expect.poll(()=>f.sends.length).toBe(1);
+  await expect(page.getByRole('button',{name:'Cancel send',exact:true})).toBeEnabled();
+  if(cancel==='button')await page.getByRole('button',{name:'Cancel send',exact:true}).click();else await input.press('Escape');
+  await expect(page.getByRole('alert')).toContainText('Send canceled. Your draft was kept.');
+  await expect(input).toHaveValue('Keep this cancelled message');await expect(page.getByRole('button',{name:'Retry send',exact:true})).toBeEnabled();expect(f.sends).toHaveLength(1);
+  await expect.poll(()=>failures.some(error=>/abort/i.test(error))).toBe(true);
+ }finally{f.release();}
+ await page.getByRole('button',{name:'Retry send',exact:true}).click();await expect.poll(()=>f.sends.length).toBe(2);
+ expect(f.sends[1]).toEqual(f.sends[0]);await expect(input).toHaveValue('');await expect(page.getByRole('button',{name:'Cancel send',exact:true})).toBeHidden();
+});
 test('real xterm selection is copied before focus/scroll, edited and persisted without terminal input or Send',async({page})=>{
  const f=await setup(page);await add(page);expect(f.sends).toEqual([]);expect(f.terminalCommands).toEqual([]);
  await page.getByRole('button',{name:'Terminal selection · capture-terminal',exact:true}).click();await expect(page.getByLabel('Excerpt text')).toContainText('Expected: 3 panels');await page.getByLabel('Excerpt text').fill('Reviewed failure output');await page.getByRole('button',{name:'Save excerpt'}).click();await expect(page.getByRole('dialog')).toBeHidden();await page.reload();await expect(page.getByRole('button',{name:'Terminal selection · capture-terminal',exact:true})).toBeVisible();await page.getByRole('button',{name:'Send',exact:true}).click();await expect.poll(()=>f.sends.length).toBe(1);expect(f.sends[0].content).toContain('Reviewed failure output');expect(f.sends[0].content).not.toContain('Expected:');await expect(page.getByRole('button',{name:'Terminal selection · capture-terminal',exact:true})).toBeHidden();

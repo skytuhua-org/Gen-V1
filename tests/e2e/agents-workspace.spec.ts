@@ -117,7 +117,7 @@ test('a slower evidence request cannot replace the latest selected child', async
  await page.route('**/api/agent-work/output?*', async route => {
   const workId = new URL(route.request().url()).searchParams.get('workId');
   if (workId === 'first') await delayed;
-  await route.fulfill({json: {workId, output: workId === 'first' ? 'Older selection' : 'Latest selection', lateArtifacts: 0}});
+  await route.fulfill({json: {workId, output: workId === 'first' ? 'Older selection' : 'Latest selection', reportedOutcome: 'COMPLETED', verification: 'VERIFIED', outputStatus: 'current', evidence: [], lateArtifacts: 0}});
  });
  try {
   fixtureHost.release();
@@ -220,6 +220,43 @@ test('child follow-up uses the published parent/run target and current ticket th
  expect(Object.keys(h.commands[0].payload).sort()).toEqual(['childRun', 'content', 'jobId', 'parentRun']);
  h.ticket('handled'); await expect(child.getByRole('status')).toHaveText('handled'); expect(h.commands).toHaveLength(1);
 });
+test('agent evidence separates reported outcome from verification and explains unavailable or stale refs', async ({page}) => {
+ const fixtureHost = await setup(page, false, false, true);
+ const work = {
+  workId: 'evidence-work', role: 'QA', state: 'COMPLETED_REPORTED', reportedOutcome: 'BLOCKED', verification: 'REPORTED_BLOCKED', outputStatus: 'current',
+  owner: {threadId: 'child-active'}, budget: {tokens: null}, evidence: {refs: 2, stale: 1}, blockedReason: null,
+ };
+ await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
+  enabled: true, roles: {}, budget: {reservedTokens: 0}, works: [work],
+ }}));
+ await page.route(/\/api\/agent-work\/(plan|messages)\?/, route => route.fulfill({json: {extension: false, messages: []}}));
+ await page.route('**/api/agent-work/output?*', route => route.fulfill({json: {
+  workId: 'evidence-work', output: {outcome: 'BLOCKED', summary: 'Missing current proof'}, reportedOutcome: 'BLOCKED', verification: 'REPORTED_BLOCKED', outputStatus: 'current', lateArtifacts: 0,
+  evidence: [
+   {id: 'ev-current', revision: 1, currentRevision: 1, status: 'current', provenance: 'harness:verification', outcome: 'PASS', requirementIds: ['r1'], reason: null},
+   {id: 'ev-stale', revision: 1, currentRevision: 2, status: 'stale', provenance: 'harness:verification', outcome: 'PASS', requirementIds: ['r1'], reason: 'durable revision is 2, not claimed revision 1'},
+   {id: 'ev-missing', revision: 1, currentRevision: null, status: 'missing', provenance: null, outcome: null, requirementIds: [], reason: 'no durable evidence record exists at the claimed reference'},
+  ],
+ }}));
+ try {
+  fixtureHost.release();
+  await page.getByRole('button', {name: 'Agent work · 1', exact: true}).click();
+  const panel = page.getByRole('region', {name: 'Agent work', exact: true});
+  await expect(panel).toContainText('reported blocked — not verified');
+  await expect(panel).toContainText('1/2 refs stale');
+  const request = page.waitForRequest(value => value.url().includes('/api/agent-work/output?') && value.url().includes('workId=evidence-work'));
+  await panel.getByRole('button', {name: 'Open evidence for evidence-work', exact: true}).click();
+  await request;
+  const evidence = page.getByRole('region', {name: 'Work output evidence', exact: true});
+  await expect(evidence).toContainText('Reported blocked — not verified.');
+  await expect(evidence.getByRole('list', {name: 'Evidence references', exact: true})).toContainText('ev-current');
+  await expect(evidence).toContainText('durable revision is 2, not claimed revision 1');
+  await expect(evidence).toContainText('no durable evidence record exists at the claimed reference');
+  await expect(evidence).toContainText('Verification remains a separate host decision.');
+  await expect(evidence).not.toContainText('100% accepted');
+ } finally {fixtureHost.release();}
+});
+
 test('agent task progress exposes its name and unknown share to assistive technology', async ({page}) => {
  const fixtureHost = await setup(page, false, false, true);
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {

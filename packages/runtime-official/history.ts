@@ -33,6 +33,9 @@ export async function claudeHistory(dataDir: string, manifest: ManifestState, sp
   });
   try {
     await bounded(finished, 15_000, 'Official history reader timed out.');
-    return JSON.parse(Buffer.concat(output, bytes).toString('utf8')) as HistoryReceipt[];
+    let text: string;
+    try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(output, bytes)); }
+    catch { throw new HarnessError('OFFICIAL_HISTORY_ENCODING', 'Official Claude history is not valid UTF-8. Input delivery remains unresolved.'); }
+    return JSON.parse(text) as HistoryReceipt[];
   } finally { await terminateProcessTree(child); }
 }

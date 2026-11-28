@@ -1,0 +1,369 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { Store } from '../packages/storage/store.ts';
+import { BrowserConsentHost, ControlDriverRegistry } from '../packages/core/browser-consent.ts';
+import { ControlRuntime } from '../packages/core/control-runtime.ts';
+import { createControlSidecarChannel, createSidecarControlDriver } from '../packages/core/control-sidecar-driver.ts';
+import { __setCapabilityFlagForTests } from '../packages/core/capability-flags.ts';
+import { HarnessError } from '../packages/contracts/index.ts';
+import type { ControlDriverOperations } from '../packages/core/desktop-control.ts';
+import type { ControlDriverRegistrationV1, ControlTargetIdentityV1 } from '../packages/contracts/interactive-control.ts';
+import type { ToolOwner } from '../packages/contracts/tool-effects.ts';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...fs, mkdir: vi.fn(fs.mkdir) };
+});
+
+afterEach(() => vi.restoreAllMocks());
+
+const owner: ToolOwner = { threadId: 'thread-1', runId: null, epoch: 1, projectId: 'p1', workspaceId: null, accountBinding: null };
+const device = { deviceId: 'device-test', sessionId: 'session-test' };
+const target: ControlTargetIdentityV1 = { kind: 'BROWSER_TAB', creationIdentity: 'tab:b@1', sessionIdentity: 'nav|0|geo|0|0|400|300|dpi|1', origin: 'https://public.example' };
+const registration: ControlDriverRegistrationV1 = {
+  driverId: 'gen-v1-windows-control-bridge:browser-tab', packageDigest: 'c'.repeat(64), apiProtocol: 'browser-tab',
+  backendProofRef: 'electron/test', targetIdentityFormat: 'gen-v1.control-target.v1',
+  captureBounds: { maxWidth: 8192, maxHeight: 8192, maxBytes: 33554432 },
+  supportsInputCancellation: true, stopRoute: 'HOST_CANCEL',
+};
+
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function driver(over: Partial<ControlDriverOperations> = {}): ControlDriverOperations {
+  return {
+    candidates: async () => [{ target, title: 'Example' }],
+    pickTarget: async () => null,
+    observe: async () => ({ observationId: 'obs-1', target, geometry: { x: 0, y: 0, width: 400, height: 300, dpiScale: 1 }, observedAtMs: Date.now() }),
+    capture: async () => ({ data: PNG, width: 400, height: 300, mimeType: 'image/png' }),
+    dispatch: async () => ({ receipt: 'r1' }),
+    cancelInput: async () => {},
+    ...over,
+  };
+}
+
+function harness(currentOwner?: (threadId: string) => ToolOwner) {
+  const dir = mkdtempSync(join(tmpdir(), 'm16-runtime-'));
+  const store = new Store(dir);
+  const registry = new ControlDriverRegistry();
+  const consent = new BrowserConsentHost(store, { registry });
+  const runtime = new ControlRuntime(store, consent, { registry, device, artifactRoot: dir, currentOwner });
+  // The pending request has to be recorded while the capability is enabled;
+  // the tests themselves drive the flag from here on.
+  __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+  const request = consent.requestConsent(owner, { mode: 'CONSENTED_EXISTING_TAB', observe: true, operations: ['CLICK'], allowedOrigins: ['https://public.example'] });
+  __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+  return { dir, store, registry, consent, runtime, request };
+}
+
+async function offerTargets(runtime: ControlRuntime, consentId: string) {
+  const offer = await runtime.targets('CONSENTED_EXISTING_TAB', owner.threadId, consentId);
+  runtime.recordTargetOffer(owner.threadId, offer);
+}
+
+describe('M16 ControlRuntime host ownership', () => {
+  it('D01/D02 unattached driver still resolves DRIVER_UNAVAILABLE for targets', async () => {
+    const { dir, store, registry, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      await expect(runtime.targets('CONSENTED_EXISTING_TAB', owner.threadId, request.consentId)).rejects.toMatchObject({ code: 'DRIVER_UNAVAILABLE' });
+      expect(() => registry.resolve('CONSENTED_EXISTING_TAB')).toThrow(HarnessError);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('targets require the capability flag even with a driver attached', async () => {
+    const { dir, store, registry, runtime, request } = harness();
+    try {
+      registry.register(registration);
+      runtime.attachDriver(driver());
+      await expect(runtime.targets('CONSENTED_EXISTING_TAB', owner.threadId, request.consentId)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      const targets = await runtime.targets('CONSENTED_EXISTING_TAB', owner.threadId, request.consentId);
+      expect(targets.candidates[0]!.target).toEqual(target);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('grant → capture stores a digested PNG under the host artifact root only', async () => {
+    const { dir, store, registry, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      runtime.attachDriver(driver());
+      await offerTargets(runtime, request.consentId);
+      const grant = runtime.grant(request.consentId, owner, target);
+      const { capture, artifactRef } = await runtime.capture(owner.threadId);
+      const absolute = join(dir, artifactRef);
+      expect(existsSync(absolute)).toBe(true);
+      expect(createHash('sha256').update(readFileSync(absolute)).digest('hex')).toBe(capture.sha256);
+      expect(store.get('controlCapture', capture.artifactId)).toMatchObject({ artifactRef, sha256: capture.sha256 });
+      expect(grant.target).toEqual(target);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('capture without consent for observation is denied (D03)', async () => {
+    const { dir, store, registry, consent, runtime } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      const observeOff = consent.requestConsent(owner, { mode: 'CONSENTED_EXISTING_TAB', observe: false, operations: ['CLICK'], allowedOrigins: ['https://public.example'] });
+      registry.register(registration);
+      runtime.attachDriver(driver());
+      await offerTargets(runtime, observeOff.consentId);
+      runtime.grant(observeOff.consentId, owner, target);
+      await expect(runtime.capture(owner.threadId)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+      expect(store.all('controlCapture', owner.threadId)).toHaveLength(0);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('action enqueues through the dispatcher and persists the settled record', async () => {
+    const { dir, store, registry, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      runtime.attachDriver(driver());
+      await offerTargets(runtime, request.consentId);
+      const issued = runtime.grant(request.consentId, owner, target);
+      const observation = { observationId: 'obs-fresh', target, geometry: { x: 0, y: 0, width: 400, height: 300, dpiScale: 1 }, observedAtMs: Date.now() };
+      const result = await runtime.action(owner.threadId, owner, { grantId: issued.grantId, action: 'CLICK', parameters: { x: 5, y: 5 }, observation });
+      expect(result.outcome).toBe('DISPATCHED');
+      const records = store.all<unknown>('controlAction', owner.threadId);
+      expect(records).toHaveLength(1);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { name: 'missing receipt', reply: {}, expectedReceipt: null },
+    { name: 'null receipt', reply: { receipt: null }, expectedReceipt: null },
+    { name: 'numeric receipt', reply: { receipt: 42 }, expectedReceipt: null },
+    { name: 'empty receipt', reply: { receipt: '' }, expectedReceipt: null },
+    { name: 'blank receipt', reply: { receipt: '   ' }, expectedReceipt: null },
+    { name: 'valid receipt', reply: { receipt: 'observed-driver-receipt' }, expectedReceipt: 'observed-driver-receipt' },
+  ])('persists the correct outcome for a sidecar dispatch with $name', async ({ reply, expectedReceipt }) => {
+    const { dir, store, registry, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      const operations: unknown[] = [];
+      const channel = createControlSidecarChannel({
+        token: 'test-token',
+        send(value): void {
+          operations.push(value.op);
+          channel.handleReply({ type: 'harness.control.result', requestId: value.requestId, result: reply });
+        },
+      });
+      const sidecar = createSidecarControlDriver(channel);
+      runtime.attachDriver(driver({ dispatch: sidecar.dispatch }));
+      await offerTargets(runtime, request.consentId);
+      const issued = runtime.grant(request.consentId, owner, target);
+      const observation = { observationId: 'obs-fresh', target, geometry: { x: 0, y: 0, width: 400, height: 300, dpiScale: 1 }, observedAtMs: Date.now() };
+      const result = await runtime.action(owner.threadId, owner, { grantId: issued.grantId, action: 'CLICK', parameters: { x: 5, y: 5 }, observation });
+      const outcome = expectedReceipt === null ? 'UNCERTAIN' : 'DISPATCHED';
+      expect(result.outcome).toBe(outcome);
+      expect(result.action.effectReceipt).toBe(expectedReceipt);
+      if (expectedReceipt === null) expect(result.reason).toBe('DRIVER_ERROR');
+      expect(operations).toEqual(['dispatch']);
+      expect(store.all('controlAction', owner.threadId)).toHaveLength(1);
+      expect(store.get('controlAction', result.action.actionId)).toMatchObject({ outcome, effectReceipt: expectedReceipt });
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('discards a capture that settles after Stop revokes its grant', async () => {
+    const { dir, store, registry, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      type Frame = Awaited<ReturnType<ControlDriverOperations['capture']>>;
+      let finishCapture!: (frame: Frame) => void;
+      const frame = new Promise<Frame>(resolve => { finishCapture = resolve; });
+      runtime.attachDriver(driver({ capture: () => frame }));
+      await offerTargets(runtime, request.consentId);
+      runtime.grant(request.consentId, owner, target);
+
+      const capturing = runtime.capture(owner.threadId);
+      await runtime.stop(owner.threadId);
+      finishCapture({ data: PNG, width: 400, height: 300, mimeType: 'image/png' });
+
+      await expect(capturing).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+      expect(store.all('controlCapture', owner.threadId)).toHaveLength(0);
+      expect(existsSync(join(dir, 'control-captures'))).toBe(false);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps capture bytes off disk when Stop lands during directory preparation', async () => {
+    const { dir, store, registry, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      runtime.attachDriver(driver());
+      await offerTargets(runtime, request.consentId);
+      runtime.grant(request.consentId, owner, target);
+      let finishPreparing!: () => void;
+      const preparation = new Promise<void>(resolve => { finishPreparing = resolve; });
+      let notifyPreparing!: () => void;
+      const preparing = new Promise<void>(resolve => { notifyPreparing = resolve; });
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      const captureDir = join(dir, 'control-captures', owner.threadId);
+      vi.mocked(mkdir).mockImplementationOnce(async () => {
+        notifyPreparing();
+        await preparation;
+        await fs.mkdir(captureDir, { recursive: true });
+        return undefined;
+      });
+
+      const capturing = runtime.capture(owner.threadId);
+      await preparing;
+      await runtime.stop(owner.threadId);
+      finishPreparing();
+
+      await expect(capturing).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+      expect(store.all('controlCapture', owner.threadId)).toHaveLength(0);
+      expect(readdirSync(captureDir)).toEqual([]);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { scenario: 'an observe-only grant', dispatchFirst: false },
+    { scenario: 'a settled input action', dispatchFirst: true },
+  ])('Stop cancels the exact target with $scenario', async ({ dispatchFirst }) => {
+    const { dir, store, registry, consent, runtime, request } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      const cancelInput = vi.fn<ControlDriverOperations['cancelInput']>().mockResolvedValue(undefined);
+      const controlDriver = driver({ cancelInput });
+      runtime.attachDriver(controlDriver);
+      const consentRequest = dispatchFirst ? request : consent.requestConsent(owner, {
+        mode: 'CONSENTED_EXISTING_TAB', observe: true, operations: [], allowedOrigins: ['https://public.example'],
+      });
+      await offerTargets(runtime, consentRequest.consentId);
+      const issued = runtime.grant(consentRequest.consentId, owner, target);
+
+      if (dispatchFirst) {
+        const observation = await controlDriver.observe(target);
+        const result = await runtime.action(owner.threadId, owner, { grantId: issued.grantId, action: 'CLICK', observation });
+        expect(result.outcome).toBe('DISPATCHED');
+      }
+
+      await runtime.stop(owner.threadId);
+      await runtime.stop(owner.threadId);
+      expect(cancelInput).toHaveBeenCalledExactlyOnceWith(target);
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('cancels queued input when the live owner changes during observation', async () => {
+    let currentOwner = owner;
+    const { dir, store, registry, runtime, request } = harness(() => currentOwner);
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      const observed = await driver().observe(target);
+      let finishObservation!: (result: typeof observed) => void;
+      const observing = new Promise<typeof observed>(resolve => { finishObservation = resolve; });
+      const dispatch = vi.fn<ControlDriverOperations['dispatch']>().mockResolvedValue({ receipt: 'sent' });
+      runtime.attachDriver(driver({ observe: () => observing, dispatch }));
+      await offerTargets(runtime, request.consentId);
+      const issued = runtime.grant(request.consentId, owner, target);
+
+      const action = runtime.action(owner.threadId, owner, { grantId: issued.grantId, action: 'CLICK', observation: observed });
+      currentOwner = { ...owner, epoch: owner.epoch + 1 };
+      finishObservation(observed);
+
+      await expect(action).resolves.toMatchObject({ outcome: 'CANCELLED' });
+      expect(dispatch).not.toHaveBeenCalled();
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('revokes an issued grant when its driver is detached and reattached', async () => {
+    const { dir, store, registry, runtime, request, consent } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      const attached = driver();
+      runtime.attachDriver(attached);
+      await offerTargets(runtime, request.consentId);
+      runtime.grant(request.consentId, owner, target);
+
+      runtime.detachDriver();
+      runtime.attachDriver(attached);
+
+      expect(consent.activeGrant(owner.threadId)).toBeNull();
+      await expect(runtime.capture(owner.threadId)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stop revokes the grant and drops the thread dispatcher', async () => {
+    const { dir, store, registry, runtime, request, consent } = harness();
+    try {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', true);
+      registry.register(registration);
+      runtime.attachDriver(driver());
+      await offerTargets(runtime, request.consentId);
+      runtime.grant(request.consentId, owner, target);
+      const surface = await runtime.stop(owner.threadId);
+      expect(surface.state).toBe('unavailable');
+      await expect(runtime.capture(owner.threadId)).rejects.toMatchObject({ code: 'CAPABILITY_DENIED' });
+      expect(consent.activeGrant(owner.threadId)).toBeNull();
+    } finally {
+      __setCapabilityFlagForTests('control.consentedBrowserV1', false);
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+it('clears the sidecar acknowledgement timer if the transport throws synchronously', async () => {
+  vi.useFakeTimers();
+  try {
+    const failure = new Error('local IPC send failed');
+    const channel = createControlSidecarChannel({ token: 'test-token', send: () => { throw failure; } });
+    await expect(channel.request('candidates', {})).rejects.toBe(failure);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});

@@ -17,9 +17,12 @@ import { hostFlagEnabled, type RegisteredHostFlag } from '../../packages/core/ho
 import { ProjectVerificationService } from '../../packages/core/project-verification.ts';
 import type { CheckObservationV1 } from '../../packages/contracts/verification.ts';
 import { approvalSchema, type ApprovalV1, type ToolOwner } from '../../packages/contracts/tool-effects.ts';
-import type { Operation, Thread } from '../../packages/contracts/index.ts';
+import type { Operation, ResourceGrant, Thread } from '../../packages/contracts/index.ts';
 import { actionCommitment } from '../../packages/core/tool-effects.ts';
-import { renamePlanV1Schema } from '../../packages/contracts/code-intelligence.ts';
+import { CODE_INTELLIGENCE_LIMITS, renamePlanIdSchema, renamePlanV1Schema } from '../../packages/contracts/code-intelligence.ts';
+import { readBoundFile } from '../../packages/core/file-access.ts';
+import { realpath } from 'node:fs/promises';
+import { resolve, sep } from 'node:path';
 import { digest } from '../../packages/storage/store.ts';
 import { randomUUID } from 'node:crypto';
 
@@ -82,6 +85,16 @@ export function registerCodeIntelligenceRoutes(app: FastifyInstance, service: Se
   const intelligence = new CodeIntelligence(
     options.adapterFactory ?? ((descriptor, root) => { requireProvenBackend(); return new StdioLspAdapter(descriptor, root); }));
   const previews = new EditPreviewRegistry();
+  // A cancelled or failed run discards every preview its thread opened; the
+  // buffers never outlive the run that streamed them. Partial-service hosts
+  // (test composition seams without the run lifecycle) never stream previews,
+  // so they have nothing to discard.
+  if (typeof service.onRunEnd === 'function') {
+    service.onRunEnd(threadId => {
+      const thread = service.store.get<Thread>('thread', threadId);
+      if (thread?.projectId) previews.discardOwner(sha(`${thread.projectId}:${threadId}`));
+    });
+  }
   const debug = options.debugAdapterFor
     ? new DebugRegistry(options.backends ?? [], options.approvedBackendId ?? '', options.debugAdapterFor)
     : null;
@@ -151,12 +164,13 @@ export function registerCodeIntelligenceRoutes(app: FastifyInstance, service: Se
     threadId: identifier.optional(), previewId: z.string().max(128).optional(),
     schemaDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(), chunk: z.string().max(1024 * 1024).optional(),
     finalArgumentsDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(), outcome: z.enum(['APPLIED', 'CONFLICT']).optional(),
+    operationIds: z.array(identifier).max(64).optional(),
     command: z.enum(['begin', 'append', 'seal', 'validate', 'settle', 'discard']),
   });
   const renameSchema = z.strictObject({
     threadId: identifier.optional(), language: z.string().min(1).max(64), path: z.string().min(1).max(4096),
     text: z.string().max(4 * 1024 * 1024), position: z.strictObject({ line: z.number().int().nonnegative(), character: z.number().int().nonnegative() }),
-    newName: z.string().min(1).max(512), approvalId: z.string().min(1).max(256), plan: z.unknown().optional(), planId: z.string().max(128).optional(),
+    newName: z.string().min(1).max(512), approvalId: z.string().min(1).max(256), plan: z.unknown().optional(), planId: renamePlanIdSchema.optional(),
     command: z.enum(['plan', 'apply', 'recover']),
   });
   const debugSchema = z.strictObject({
@@ -210,7 +224,24 @@ export function registerCodeIntelligenceRoutes(app: FastifyInstance, service: Se
       gate('coding.intelligenceV1');
       const { projectId } = z.strictObject({ projectId: identifier }).parse(request.params);
       const input = previewSchema.parse(request.body);
-      const owner = sha(projectId);
+      // Ownership is scoped to the streaming thread inside the project; a
+      // sibling thread is a different owner and can never address the preview.
+      const bound = await binding(projectId, input.threadId);
+      const owner = sha(`${projectId}:${input.threadId ?? ''}`);
+      // Bound read of a preview target's current preimage under the admitted
+      // project root; a missing or unreadable target keeps its baseline
+      // unknown rather than guessing it. Containment is proven on canonical
+      // paths so a link inside the project cannot fingerprint an outside file.
+      const boundRoot = await realpath(bound.root);
+      const boundDigest = async (path: string): Promise<string | null> => {
+        const resolved = resolve(boundRoot, path);
+        if (resolved !== boundRoot && !resolved.startsWith(boundRoot + sep)) return null;
+        try {
+          const canonical = await realpath(resolved);
+          if (canonical !== boundRoot && !canonical.startsWith(boundRoot + sep)) return null;
+          return sha(await readBoundFile(canonical, CODE_INTELLIGENCE_LIMITS.previewBufferBytes));
+        } catch { return null; }
+      };
       switch (input.command) {
         case 'begin': {
           if (!input.schemaDigest) throw new HarnessError('INVALID_INPUT', 'A preview requires the tool schema digest.');
@@ -222,15 +253,57 @@ export function registerCodeIntelligenceRoutes(app: FastifyInstance, service: Se
         }
         case 'seal': {
           if (!input.previewId) throw new HarnessError('INVALID_INPUT', 'Seal requires a previewId.');
-          return previews.seal(input.previewId, owner, () => null);
+          return previews.seal(input.previewId, owner, boundDigest);
         }
         case 'validate': {
           if (!input.previewId || !input.finalArgumentsDigest) throw new HarnessError('INVALID_INPUT', 'Validate requires a previewId and the final arguments digest.');
           return previews.validateFinal(input.previewId, owner, input.finalArgumentsDigest);
         }
         case 'settle': {
-          if (!input.previewId || !input.outcome) throw new HarnessError('INVALID_INPUT', 'Settle requires a previewId and an outcome.');
-          return previews.settle(input.previewId, owner, input.outcome);
+          if (!input.previewId) throw new HarnessError('INVALID_INPUT', 'Settle requires a previewId.');
+          const preview = previews.get(input.previewId, owner);
+          if (!preview) throw new HarnessError('NOT_FOUND', 'Unknown edit preview.');
+          // The outcome is host-derived, never client-declared: APPLIED is
+          // reachable only through committed approved writes covering every
+          // sealed target — the receipt must have landed on this workspace's
+          // file and the file must still hold exactly the proposed bytes.
+          // Anything else is drift and settles CONFLICT.
+          if (input.outcome === 'CONFLICT') return previews.settle(input.previewId, owner, 'CONFLICT');
+          const receipts = input.operationIds ?? [];
+          const covered = async (target: { path: string; beforeDigest: string | null; proposedDigest: string }): Promise<boolean> => {
+            const sealedAt = await realpath(resolve(boundRoot, target.path)).catch(() => null);
+            for (const id of receipts) {
+              const operation = service.store.get<Operation>('operation', id);
+              const args = operation?.args as { resourceId?: unknown; path?: unknown; expectedSha256?: unknown; content?: unknown } | undefined;
+              if (!operation || operation.kind !== 'file.replace' || operation.status !== 'succeeded' || !operation.approved
+                || operation.threadId !== input.threadId || args?.path !== target.path
+                || args.expectedSha256 !== target.beforeDigest
+                || typeof args.content !== 'string' || sha(args.content) !== target.proposedDigest
+                || typeof args.resourceId !== 'string') continue;
+              const grant = service.store.get<ResourceGrant>('resource', args.resourceId);
+              if (!grant || grant.threadId !== input.threadId) continue;
+              // `executeDomainOperation` resolves args.path against the
+              // operation's grant, not the preview's workspace: the receipt
+              // only covers this target when both resolve to the same file.
+              const wrote = await realpath(resolve(grant.path, args.path as string)).catch(() => null);
+              if (wrote !== null && wrote === sealedAt) return true;
+            }
+            return false;
+          };
+          let uncovered = false;
+          for (const target of preview.targetFiles) {
+            const current = await boundDigest(target.path);
+            if (await covered(target)) {
+              // The approved write changed the file legitimately; only a
+              // post-write mutation counts as conflict.
+              if (current !== target.proposedDigest) return previews.settle(input.previewId, owner, 'CONFLICT');
+            } else if (current !== target.beforeDigest) {
+              return previews.settle(input.previewId, owner, 'CONFLICT');
+            } else uncovered = true;
+          }
+          if (uncovered)
+            throw new HarnessError('APPROVAL_REQUIRED', 'An edit preview settles APPLIED only through committed approved writes covering every sealed target.');
+          return previews.settle(input.previewId, owner, 'APPLIED');
         }
         case 'discard': {
           if (!input.previewId) throw new HarnessError('INVALID_INPUT', 'Discard requires a previewId.');

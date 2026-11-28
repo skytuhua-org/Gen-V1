@@ -1,5 +1,5 @@
 import {chromium,expect,type Page} from '@playwright/test';
-import {spawn} from 'node:child_process';
+import {spawn,type ChildProcess} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {resolve} from 'node:path';
 import {createServer} from 'node:net';
@@ -20,11 +20,26 @@ export async function installedSession(executable:string,action:(page:Page,pid:n
  const server=createServer();await new Promise<void>((accept,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',accept);});const address=server.address();if(!address||typeof address==='string')throw Error('No CDP port.');const port=address.port;await new Promise<void>(accept=>server.close(()=>accept()));
  const nonce=randomUUID(),env={...process.env};delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
  const child=spawn(resolve(executable),['--remote-debugging-port='+port,'--remote-debugging-address=127.0.0.1','--enable-automation','--harness-verification='+nonce],{env,stdio:'ignore'});let spawnError:Error|undefined;child.once('error',error=>{spawnError=error;});let browser:Awaited<ReturnType<typeof chromium.connectOverCDP>>|undefined,owned=false;
- try{
+ await withInstalledSessionCleanup(async()=>{
   await expect.poll(async()=>{if(spawnError)throw spawnError;if(child.exitCode!==null)throw Error('Installed app exited before CDP.');try{return (await fetch('http://127.0.0.1:'+port+'/json/version',{signal:AbortSignal.timeout(1000)})).ok;}catch{return false;}},{timeout:60000}).toBe(true);
   browser=await chromium.connectOverCDP('http://127.0.0.1:'+port);const session=await browser.newBrowserCDPSession();const {arguments:argv}=await session.send('Browser.getBrowserCommandLine');await session.detach();if(!argv.includes('--harness-verification='+nonce)||resolve(argv[0]).toLowerCase()!==resolve(executable).toLowerCase())throw Error('CDP process ownership mismatch.');owned=true;
   await expect.poll(()=>browser!.contexts().flatMap(context=>context.pages()).some(page=>/^http:\/\/127\.0\.0\.1:4317\//.test(page.url())),{timeout:90000}).toBe(true);
   const page=browser.contexts().flatMap(context=>context.pages()).find(page=>/^http:\/\/127\.0\.0\.1:4317\//.test(page.url()))!;await expect(page.getByRole('textbox',{name:'Message',exact:true})).toBeEnabled({timeout:60000});await action(page,child.pid!);
   await page.evaluate(()=>window.close()).catch(error=>{if(!page.isClosed())throw error;});await expect.poll(()=>child.exitCode,{timeout:30000}).toBe(0);
- }finally{if(owned)await browser?.close();if(child.exitCode===null&&child.signalCode===null)await terminateProcessTree(child);}
+ },()=>closeInstalledSession(owned,browser,child));
+}
+export async function withInstalledSessionCleanup(action:()=>Promise<void>,cleanup:()=>Promise<void>):Promise<void>{
+ try{await action();}catch(actionError){
+  try{await cleanup();}catch(cleanupError){throw new AggregateError([actionError,cleanupError],'Installed RC action failed: '+String(actionError)+'; teardown also failed: '+String(cleanupError),{cause:actionError});}
+  throw actionError;
+ }
+ await cleanup();
+}
+
+export async function closeInstalledSession(owned:boolean,browser:{close():Promise<unknown>}|undefined,child:ChildProcess,terminate:(child:ChildProcess)=>Promise<unknown>=terminateProcessTree){
+ const errors:unknown[]=[];
+ if(owned)await browser?.close().catch(error=>errors.push(error));
+ if(child.exitCode===null&&child.signalCode===null)await terminate(child).catch(error=>errors.push(error));
+ if(errors.length===1)throw errors[0];
+ if(errors.length>1)throw new AggregateError(errors,'Installed session teardown failed.');
 }

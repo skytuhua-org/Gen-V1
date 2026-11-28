@@ -1,8 +1,8 @@
 import {afterEach,expect,it} from 'vitest';
-import {link,mkdir,mkdtemp,readFile,rm,symlink,writeFile} from 'node:fs/promises';
+import {link,mkdir,mkdtemp,readFile,readdir,rm,symlink,utimes,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
-import {IntegrationManager} from '../packages/integrations/index.ts';
+import {IntegrationManager,type IntegrationManagerOptions} from '../packages/integrations/index.ts';
 import type {IntegrationPreferences,IntegrationScope} from '../packages/contracts/integrations.ts';
 import {DOMAIN_TOOLS,handleDomainTool,executeDomainOperation,type DomainContext} from '../packages/capabilities/index.ts';
 import type {Operation} from '../packages/contracts/index.ts';
@@ -11,9 +11,9 @@ import {randomUUID} from 'node:crypto';
 const cleanups:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const cleanup of cleanups.splice(0))await cleanup();});
 const scope:IntegrationScope={authority:{kind:'local'},projectId:'fixture',accountId:'selected-account',modelId:'selected-model'};
-async function setup(){
+async function setup(hostComplete?:IntegrationManagerOptions['hostComplete']){
  const dataRoot=await mkdtemp(join(tmpdir(),'harness-real-mcp-'));let preferences:IntegrationPreferences={};const completions:{scope:IntegrationScope;prompt:string}[]=[];
- const manager=new IntegrationManager({root:resolve('.'),dataRoot,nodeExecutable:process.execPath,getPreferences:()=>preferences,setPreference:async(id,value)=>{preferences={...preferences,[id]:value};},authorize:async input=>{if(input.authority.kind!=='local')throw Error('Company authority denied');return {profileId:'real-mcp-test',projectRoot:dataRoot};},hostComplete:async(selected,prompt)=>{completions.push({scope:selected,prompt});return {output:prompt};},onDisable:async()=>{}});
+ const manager=new IntegrationManager({root:resolve('.'),dataRoot,nodeExecutable:process.execPath,getPreferences:()=>preferences,setPreference:async(id,value)=>{preferences={...preferences,[id]:value};},authorize:async input=>{if(input.authority.kind!=='local')throw Error('Company authority denied');return {profileId:'real-mcp-test',projectRoot:dataRoot};},hostComplete:hostComplete??(async(selected,prompt)=>{completions.push({scope:selected,prompt});return {output:prompt};}),onDisable:async()=>{}});
  cleanups.push(async()=>{await manager.dispose();await rm(dataRoot,{recursive:true,force:true});});return {manager,completions,dataRoot};
 }
 it('initializes the genuine Context7 stdio service and revokes its owned process on disable',async()=>{
@@ -29,10 +29,63 @@ it('runs the genuine Promptfoo CLI MCP evaluation through only the scoped host c
  expect(tools.map(tool=>tool.name)).not.toContain('test_provider');expect(completions).toEqual([]);
  const result=await manager.callTool('promptfoo','run_evaluation',{config:{prompts:['fixture native callback transport'],tests:[{assert:[{type:'equals',value:'fixture native callback transport'}]}]}},scope);
  expect(result.isError).not.toBe(true);expect(completions).toEqual([{scope,prompt:'fixture native callback transport'}]);
+ const text=(response:unknown)=>(response as {content:{text:string}[]}).content[0].text;
+ const receipt=JSON.parse(text(result)) as {data:{eval:{id:string}}},listed=JSON.parse(text(await manager.callTool('promptfoo','list_evaluations',{},scope))) as {data:{evaluations:{evalId:string}[]}};
+ expect(listed.data.evaluations.map(item=>item.evalId)).toContain(receipt.data.eval.id);
+ const details=JSON.parse(text(await manager.callTool('promptfoo','get_evaluation_details',{id:receipt.data.eval.id},scope))) as {data:{summary:{totalTests:number;passedTests:number}}};
+ expect(details.data.summary).toMatchObject({totalTests:1,passedTests:1});
  await expect(manager.callTool('promptfoo','run_evaluation',{config:{prompts:['x'],tests:[{assert:[{type:'javascript',value:'return true'}]}]}},scope)).rejects.toThrow(/assertion/);
  const session=[...(manager as unknown as {sessions:Map<string,{bridge:{listening:boolean}}>}).sessions.values()][0];
  expect(session.bridge.listening).toBe(true);await manager.releaseOwner(scope);expect(session.bridge.listening).toBe(false);
  await manager.disable('promptfoo',scope);expect((await manager.status('promptfoo',scope)).state).toBe('disabled');
+},90000);
+it('cleans staged evaluation configuration after owner release interrupts an in-flight read',async()=>{
+ let started=false;const {manager,dataRoot}=await setup(async(_selected,prompt,signal)=>{
+  started=true;if(!signal)throw Error('missing cancellation signal');
+  await new Promise<void>((_resolve,reject)=>{if(signal.aborted)reject(Error('interrupted before admission'));signal.addEventListener('abort',()=>reject(Error('interrupted')),{once:true});});
+  return {output:prompt};
+ });await manager.listTools('promptfoo',scope);
+ const session=[...(manager as unknown as {sessions:Map<string,{key:string}>}).sessions.values()][0],staged=join(dataRoot,'integrations','evaluations',session.key);
+ const names=async()=>await readdir(staged).catch(error=>{if((error as NodeJS.ErrnoException).code==='ENOENT')return[];throw error;});
+ const inFlight=manager.callTool('promptfoo','run_evaluation',{config:{prompts:['fixture interrupted read'],tests:[{assert:[{type:'equals',value:'fixture interrupted read'}]}]}},scope);
+ await expect.poll(()=>started,{timeout:10000}).toBe(true);expect((await names()).length).toBe(1);
+ await Promise.all([inFlight.catch(()=>{}),manager.releaseOwner(scope)]);expect(await names()).toEqual([]);
+},90000);
+it('bounds staged evaluation configuration lifetime across success failure and restart',async()=>{
+ const {manager,dataRoot}=await setup();await manager.listTools('promptfoo',scope);
+ type SessionClient={callTool:(request:{name:string;arguments?:Record<string,unknown>},...rest:unknown[])=>Promise<unknown>};
+ const session=[...(manager as unknown as {sessions:Map<string,{key:string;client:SessionClient}>}).sessions.values()][0];
+ const original=session.client.callTool.bind(session.client),staged=join(dataRoot,'integrations','evaluations',session.key),seen:string[]=[];
+ const names=async()=>await readdir(staged).catch(error=>{if((error as NodeJS.ErrnoException).code==='ENOENT')return[];throw error;});
+ let release=()=>{},failNext=false,holdFirst=true;const hold=new Promise<void>(resolve=>{release=resolve;});
+ session.client.callTool=async(request,...rest)=>{
+  if(request.name!=='run_evaluation')return original(request,...rest);
+  const path=String(request.arguments?.configPath);seen.push(path);
+  expect((await readFile(path,'utf8'))).toContain('harness-native-selected-account');
+  if(failNext)throw Error('synthetic evaluator failure');
+  if(holdFirst){holdFirst=false;await hold;}
+  return {content:[],isError:false};
+ };
+ const config={prompts:['fixture lifetime'],tests:[{assert:[{type:'equals',value:'fixture lifetime'}]}]};
+ const first=manager.callTool('promptfoo','run_evaluation',{config},scope);
+ await expect.poll(()=>seen.length,{timeout:10000}).toBe(1);
+ expect(await names()).toEqual([seen[0].split(/[\\/]/).pop()]);
+ release();await first;expect(await names()).toEqual([]);
+ await manager.callTool('promptfoo','run_evaluation',{config},scope);await manager.callTool('promptfoo','run_evaluation',{config},scope);expect(await names()).toEqual([]);
+ failNext=true;await expect(manager.callTool('promptfoo','run_evaluation',{config},scope)).rejects.toThrow(/synthetic evaluator failure/);expect(await names()).toEqual([]);
+ const unowned=join(dataRoot,'integrations','evaluations','unowned');await mkdir(unowned,{recursive:true});await writeFile(join(unowned,'keep.json'),'keep',{flag:'wx'});
+ await manager.releaseOwner(scope);await mkdir(staged,{recursive:true});await writeFile(join(staged,'abandoned.json'),'{}',{flag:'wx'});
+ await manager.listTools('promptfoo',scope);expect(await names()).toEqual([]);expect(await readFile(join(unowned,'keep.json'),'utf8')).toBe('keep');
+},90000);
+it('sweeps only expired key-shaped abandoned evaluation staging',async()=>{
+ const {manager,dataRoot}=await setup(),root=join(dataRoot,'integrations','evaluations');
+ const expired=join(root,'a'.repeat(24)),empty=join(root,'b'.repeat(24)),fresh=join(root,'c'.repeat(24)),foreign=join(root,'d'.repeat(24)),unowned=join(root,'unowned');
+ for(const directory of [expired,empty,fresh,join(foreign,'nested'),unowned])await mkdir(directory,{recursive:true});
+ await writeFile(join(expired,'e'.repeat(24)+'.json'),'{}');await writeFile(join(fresh,'f'.repeat(24)+'.json'),'{}');await writeFile(join(unowned,'keep.json'),'{}');
+ const oldTime=new Date(Date.now()-16*60*1000);await utimes(join(expired,'e'.repeat(24)+'.json'),oldTime,oldTime);await utimes(join(unowned,'keep.json'),oldTime,oldTime);
+ const exists=async(path:string)=>await readdir(path).then(()=>true,(error:NodeJS.ErrnoException)=>{if(error.code==='ENOENT')return false;throw error;});
+ await manager.listTools('promptfoo',scope);
+ expect(await exists(expired)).toBe(false);expect(await exists(empty)).toBe(false);expect(await exists(fresh)).toBe(true);expect(await exists(foreign)).toBe(true);expect(await readFile(join(unowned,'keep.json'),'utf8')).toBe('{}');
 },90000);
 it('builds a real Graphify code graph, queries its stdio server and exports GraphML without a model',async()=>{
  const {manager,completions,dataRoot}=await setup();await writeFile(join(dataRoot,'sample.py'),'def add(first, second):\n    return first + second\n\ndef run():\n    return add(1, 2)\n');
