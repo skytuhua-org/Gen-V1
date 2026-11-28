@@ -51,7 +51,7 @@
 .file-checkpoints .unified-diff>span { display:block; padding:0 12px; }
 .file-checkpoints .unified-diff>[data-kind="add"] { background:var(--success-bg); color:var(--success-fg); }
 .file-checkpoints .unified-diff>[data-kind="remove"] { background:var(--danger-bg); color:var(--danger-fg); }
-.file-checkpoints .unified-diff>[data-kind="hunk"] { color:var(--muted); }
+.file-checkpoints .unified-diff>:is([data-kind="hunk"],[data-kind="header"]) { color:var(--muted); }
 .file-checkpoints-footer { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:16px; }
 .file-checkpoints-confirm-paths { display:flex; flex-wrap:wrap; gap:4px 6px; margin:0; padding:0; list-style:none; }
 .file-checkpoints-confirm-paths code { padding:1px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:12px; }
