@@ -66,7 +66,7 @@ export function registerPluginRoutes(app:FastifyInstance,registry:PluginRegistry
     try{const asset=await registry.readAsset(request.params.id,'frontend/'+path);return reply.header('Cache-Control','no-store').type(asset.contentType).send(Buffer.from(asset.bytes));}
     catch{return reply.code(404).send(unavailable);}
   });
-  app.get<{Params:{'*':string}}>('/plugin-runtime/*',async(request,reply)=>{
+  app.get<{Params:{'*':string}}>('/plugin-runtime/*',{config:{desktopRequestBudget:'plugin-runtime'}},async(request,reply)=>{
     const relative=request.params['*'];if(!/^(?:runtime\.(?:js|css)|assets\/[A-Za-z0-9_.-]+\.(?:woff2?|png))$/.test(relative))return reply.code(404).send(unavailable);
     const root=resolve(assets,'dist/plugin-runtime'),path=resolve(root,relative);if(!path.startsWith(root+sep))return reply.code(404).send(unavailable);
     try{return reply.header('Cache-Control','no-cache').type(({'.js':'text/javascript','.css':'text/css','.woff':'font/woff','.woff2':'font/woff2','.png':'image/png'} as Record<string,string>)[extname(path)]).send(await readFile(path));}

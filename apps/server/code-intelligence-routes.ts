@@ -220,7 +220,7 @@ export function registerCodeIntelligenceRoutes(app: FastifyInstance, service: Se
       });
     });
 
-    scope.post('/api/projects/:projectId/previews', { bodyLimit: 2 * 1024 * 1024 }, async request => {
+    scope.post('/api/projects/:projectId/previews', { bodyLimit: 2 * 1024 * 1024, config: { desktopRequestBudget: 'preview' } }, async request => {
       gate('coding.intelligenceV1');
       const { projectId } = z.strictObject({ projectId: identifier }).parse(request.params);
       const input = previewSchema.parse(request.body);
