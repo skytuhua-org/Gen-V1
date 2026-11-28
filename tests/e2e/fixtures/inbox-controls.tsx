@@ -17,7 +17,7 @@ const initial: AttentionItem[] = [
 ].map(item => ({...item, createdAt: '2026-11-06T12:00:00Z', updatedAt: '2026-11-06T12:00:00Z', popupDismissed: false, notificationKey: item.id + ':' + item.state, destination: {threadId: item.threadId}} as AttentionItem));
 
 function Fixture() {
-  const [items, setItems] = useState(initial), [error, setError] = useState('');
+  const [items, setItems] = useState(() => new URLSearchParams(location.search).has('empty') ? [] : initial), [error, setError] = useState('');
   window.inboxControls.items = items;
   const result = (mode: Mode, message: string, succeed: () => void) => {
     if (mode === 'throw') throw Error(message);
@@ -35,10 +35,11 @@ function Fixture() {
       refresh: () => {
         window.inboxControls.calls.push({type: 'refresh'});
         const mode=window.inboxControls.refreshMode;const apply=()=>result(mode, 'Refresh failed.', () => {
-          if (mode === 'source-error') {setError('Inbox could not load.'); return;}
-          setError(''); setItems(current => current.map(item => ({...item, summary: item.summary + ' Refreshed.'})));
+          if (mode === 'source-error') {setError('Inbox could not load.');}
+          else {setError(''); setItems(current => current.map(item => ({...item, summary: item.summary + ' Refreshed.'})));}
         });
-        return window.inboxControls.holdRefresh?window.inboxControls.holdRefresh.then(apply):apply();
+        const request=window.inboxControls.holdRefresh?window.inboxControls.holdRefresh.then(apply):apply();
+        return request.then(()=>{if(mode==='source-error')throw Error('Inbox could not load.');});
       }, markRead: id => change(id, true), markUnread: id => change(id, false)}}
     onOpenThread={id => {window.inboxControls.calls.push({type: 'open', id}); const mode=window.inboxControls.openMode,apply=()=>result(mode, 'Navigation failed.', () => {});return window.inboxControls.holdOpen?window.inboxControls.holdOpen.then(apply):apply();}}/>
   </div></main>;
