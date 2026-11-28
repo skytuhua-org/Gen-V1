@@ -33,7 +33,7 @@ export function conversationRanges(root:HTMLElement,query:string):ConversationMa
    while(nodeEnd<offset.end)advance();
    range.setEnd(nodes[nodeIndex]!,offset.end-nodeStart);
    if(!blockKeys.has(block))blockKeys.set(block,String(++blockSequence));
-   const id=block.closest<HTMLElement>('[data-message-id]')?.dataset.messageId??blockKeys.get(block)!;
+   const id=block.dataset.conversationText||block.closest<HTMLElement>('[data-message-id]')?.dataset.messageId||blockKeys.get(block)!;
    result.push({key:`${id}:${offset.start}`,range});
   }
  });

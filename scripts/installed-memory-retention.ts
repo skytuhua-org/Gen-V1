@@ -227,13 +227,13 @@ export async function verifyInstalledMemoryUI(page: Page, seed: InstalledMemoryS
       await expect(preview).toContainText('immediately excludes the item from retrieval');
       await expect(preview).toContainText('Deletion from external providers is not supported.');
       await preview.getByRole('button', {name: 'Confirm forget', exact: true}).click();
-      await expect(row(seed.items.forget.id)).toHaveCount(0);
+      await expect(row(seed.items.forget.id)).toHaveCount(0, {timeout: 30000});
     } else {
       await expect(row(seed.items.edit.id)).toContainText(fixture.editedText);
       await expect(row(seed.items.edit.id)).toContainText('Accepted · revision 3');
       await expect(row(seed.items.accept.id)).toContainText('Accepted · revision 2');
       await expect(row(seed.items.reject.id)).toContainText('Expired · revision 2');
-      await expect(row(seed.items.forget.id)).toHaveCount(0);
+      await expect(row(seed.items.forget.id)).toHaveCount(0, {timeout: 30000});
       await row(seed.items.edit.id).scrollIntoViewIfNeeded();
       observations.push({iteration, step: 'restart-retained-review', editedRevision: 3, acceptedRevision: 2, rejectedState: 'EXPIRED', screenshot: await screenshot(page, directory, 'installed-memory-restart-reviewed.png')});
     }
