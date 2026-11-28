@@ -187,7 +187,7 @@ function ResourcePicker({ threadId, close, refresh, opener }: { threadId: string
 }
 
 type PrepareThread = (id: string) => Promise<unknown>;
-type ProjectSelection = {threadId?:string;opener:HTMLElement|null;prepare?:PrepareThread;initialActiveProjectId?:string};
+type ProjectSelection = {threadId?:string;opener:HTMLElement|null;prepare?:PrepareThread;initialActiveProjectId?:string;modelId?:string};
 type ComposerChangesAvailability=(threadId:string,available:boolean)=>void;
 /** Model resolution context handed to composers for provenance and notices (issue #1481). */
 interface ComposerModelResolution {
@@ -584,9 +584,13 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     setProjectPicking(true);setProjectPickerError('');
     try{
       await prepareEditorHandoff();await journalFlush();
-      if(!target)return await createThread(selection.prepare,project?.id);
+      const prepareCreatedThread=async(id:string)=>{
+        await selection.prepare?.(id);
+        if(selection.modelId)await journalWrite(modelChoiceKey(id),selection.modelId);
+      };
+      if(!target)return await createThread(prepareCreatedThread,project?.id);
       if(target.projectId===project?.id){if(project)await reconcileSplitThreadProject(target.id);return target.id;}
-      if(!project||target.runId||target.sessionPath||target.workspaceId)return await createThread(undefined,project?.id);
+      if(!project||target.runId||target.sessionPath||target.workspaceId)return await createThread(prepareCreatedThread,project?.id);
       await workspaceState.send('workspace.project.connect',{name:project.name,path:project.rootPath,threadId:target.id});
       await reconcileSplitThreadProject(target.id);
       await refresh();
@@ -801,9 +805,9 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
   const savedLayoutActions=useSplitLayoutProfileActions({prepare:()=>prepareWorkspace(),save:layoutSplitState.saveProfile,send:layoutSplitState.send,refresh:splitProfiles.refresh},splitWorkspaceId);
   const [projectConnectOpen,setProjectConnectOpen]=useState(false),[projectName,setProjectName]=useState(''),[projectPath,setProjectPath]=useState(''),[projectConnectError,setProjectConnectError]=useState(''),[projectConnectFormError,setProjectConnectFormError]=useState('');
   const [projectPicker,setProjectPicker]=useState<ProjectSelection|null>(null),[projectPicking,setProjectPicking]=useState(false),[projectPickerError,setProjectPickerError]=useState('');
-  const openProjectSelection=(threadId?:string,opener:HTMLElement|null=document.activeElement as HTMLElement|null,prepare?:PrepareThread,initialActiveProjectId?:string)=>{
+  const openProjectSelection=(threadId?:string,opener:HTMLElement|null=document.activeElement as HTMLElement|null,prepare?:PrepareThread,initialActiveProjectId?:string,modelId?:string)=>{
     setProjectPickerError('');
-    setProjectPicker({threadId,opener,prepare,initialActiveProjectId});
+    setProjectPicker({threadId,opener,prepare,initialActiveProjectId,modelId});
   };
   const closeProjectSelection=()=>{const opener=projectPicker?.opener;setProjectPicker(null);requestAnimationFrame(()=>{if(opener?.isConnected)opener.focus({preventScroll:true});});};
   const projectConnectPicker=useRef<ProjectSelection|null>(null);
@@ -935,7 +939,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
     if (!thread) return createThread(prepare);
     await prepare(thread.id); return thread.id;
   };
-  const newThreadRef = useRef<() => Promise<void>>(async()=>{}); newThreadRef.current = async()=>{if(composerPending.current||creationPending.current)return;await prepareWorkspace();openProjectSelection();};
+  const newThreadRef = useRef<(modelId?:string) => Promise<void>>(async()=>{}); newThreadRef.current = async(modelId?:string)=>{if(composerPending.current||creationPending.current)return;await prepareWorkspace();openProjectSelection(undefined,document.activeElement as HTMLElement|null,undefined,undefined,modelId)};
   useEffect(() => { if(embeddedThreadId)return;const key = (event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
     const editableTarget = (event.target as HTMLElement | null)?.closest?.('input,textarea,select,[contenteditable="true"]');
@@ -1363,7 +1367,7 @@ function ConversationWorkspace({onComposerChangesAvailability,sharedComposers,em
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
       {latestAvailable && <button className="jump-latest secondary" onClick={() => { const position=conversationMotion.current?.jump();if(position)readingPositions.current.set(thread?.id??'new',position);setLatestAvailable(false);setAnnouncement(''); }}>Jump to latest<ArrowUp size={13} /></button>}
       {loaded && thread && threadWorking(thread) && (snapshot.messages.some(message => message.threadId === thread.id) || snapshot.artifacts.some(artifact => artifact.threadId === thread.id && artifact.lifecycle === 'active')) && <RunStrip thread={thread} snapshot={snapshot} onStop={() => void stopConversation(thread, host?.composers ?? sharedComposers).then(() => refresh()).catch(error => reportError(messageOf(error)))} />}
-      <div style={{display:'contents'}} inert={threadHeld}>{thread&&delegatedThread(thread)?<div className="canvas-thread-readonly">Read-only. Continue in the parent conversation.</div>:loaded&&thread&&threadParent(thread)?<SideThreadComposer key={thread.id} thread={thread} modelId={modelId} refresh={refresh}/>:loaded ? <Composer usageOpen={liveUsage?.open??liveUsageOpen} onShowUsage={liveUsage?.toggle??(()=>setLiveUsageOpen(value=>!value))} onComposerChangesAvailability={reportComposerChanges} modelPickerRequest={pickerRequest?.threadId===thread?.id?pickerRequest?.id:undefined} onModelPickerOpened={id=>setModelPickerRequest(current=>current?.id===id?undefined:current)} sharedComposers={host?.composers??sharedComposers} selectProject={openProjectSelection} predictionBlocked={Boolean(embeddedThreadId&&!embeddedActive) || threadHeld || Boolean(projectPicker) || projectConnectOpen || settingsOpen || usageOpen || Boolean(resourcePicker) || rename || (mobile && sidebarOpen)} key={thread?.id ?? 'new'} thread={thread} models={models} modelId={modelId} setModelId={updateModel} modelResolution={modelResolution} onEditProjectDefaults={modelResolution?.projectId&&workspaceEnvelope?.projects.some(item=>item.id===modelResolution.projectId)?()=>setModelDefaultsRequest(value=>value+1):undefined} snapshot={snapshot} ensureThread={ensureThread} onNewTask={id=>{void updateModel(id);void newThreadRef.current().catch(error=>reportError(messageOf(error)));}} busy={composerBusy || threadCreating} runAction={runComposerAction} refresh={refresh} setup={() => { setSettingsSection('providers'); setSettingsOpen(true); }} openResource={openResourcePicker} browseProject={id=>revealWorkspaceTool('files',id)} inspectChanges={()=>revealWorkspaceTool('diff')} reportError={reportError} onSide={async content=>{setSideOpen(true);if(!sideChat.current)throw new Error("The side conversation is still opening.");await sideChat.current.ask(content);}} /> : <div className="composer-dock"><LoadingState pending={!error} hasContent={false} label="Opening conversation…" skeleton={<ComposerSkeleton/>}/></div>}</div>
+      <div style={{display:'contents'}} inert={threadHeld}>{thread&&delegatedThread(thread)?<div className="canvas-thread-readonly">Read-only. Continue in the parent conversation.</div>:loaded&&thread&&threadParent(thread)?<SideThreadComposer key={thread.id} thread={thread} modelId={modelId} refresh={refresh}/>:loaded ? <Composer usageOpen={liveUsage?.open??liveUsageOpen} onShowUsage={liveUsage?.toggle??(()=>setLiveUsageOpen(value=>!value))} onComposerChangesAvailability={reportComposerChanges} modelPickerRequest={pickerRequest?.threadId===thread?.id?pickerRequest?.id:undefined} onModelPickerOpened={id=>setModelPickerRequest(current=>current?.id===id?undefined:current)} sharedComposers={host?.composers??sharedComposers} selectProject={openProjectSelection} predictionBlocked={Boolean(embeddedThreadId&&!embeddedActive) || threadHeld || Boolean(projectPicker) || projectConnectOpen || settingsOpen || usageOpen || Boolean(resourcePicker) || rename || (mobile && sidebarOpen)} key={thread?.id ?? 'new'} thread={thread} models={models} modelId={modelId} setModelId={updateModel} modelResolution={modelResolution} onEditProjectDefaults={modelResolution?.projectId&&workspaceEnvelope?.projects.some(item=>item.id===modelResolution.projectId)?()=>setModelDefaultsRequest(value=>value+1):undefined} snapshot={snapshot} ensureThread={ensureThread} onNewTask={id=>{void newThreadRef.current(id).catch(error=>reportError(messageOf(error)));}} busy={composerBusy || threadCreating} runAction={runComposerAction} refresh={refresh} setup={() => { setSettingsSection('providers'); setSettingsOpen(true); }} openResource={openResourcePicker} browseProject={id=>revealWorkspaceTool('files',id)} inspectChanges={()=>revealWorkspaceTool('diff')} reportError={reportError} onSide={async content=>{setSideOpen(true);if(!sideChat.current)throw new Error("The side conversation is still opening.");await sideChat.current.ask(content);}} /> : <div className="composer-dock"><LoadingState pending={!error} hasContent={false} label="Opening conversation…" skeleton={<ComposerSkeleton/>}/></div>}</div>
 
     </ChatView></div></SourceWorkbenchProvider>
     </SummaryLayout>}
