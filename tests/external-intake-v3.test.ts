@@ -538,6 +538,63 @@ describe("M10 durable approval identity across crash and rejection races", () =>
     const altered = { id: claim.threadCommandId, type: "thread.create", payload: { title: "altered" } };
     await expect(f.service.command(altered)).rejects.toMatchObject({ code: "DUPLICATE_COMMAND" });
   });
+  it.each([
+    { scenario: "after retention", legacyExpired: false },
+    { scenario: "with a legacy expired message receipt", legacyExpired: true },
+  ])("reconciles a durable intake input once $scenario", async ({ legacyExpired }) => {
+    const f = realServiceFixture();
+    await f.service.intake.pollOnce();
+    const record = f.service.intake.records()[0]!;
+    const input = { intakeId: record.intakeId, modelId: "test/model" };
+    const original = f.service.command.bind(f.service);
+    const interrupt = vi.spyOn(f.service, "command").mockImplementation(async cmd => {
+      const receipt = await original(cmd);
+      if (cmd.type === "message.send") throw new Error("simulated host loss after durable input admission");
+      return receipt;
+    });
+    await expect(f.service.intake.approve(command("intake.approve"), input)).rejects.toThrow("simulated host loss");
+    interrupt.mockRestore();
+    expect(f.service.intake.records()[0]?.disposition).toBe("PROPOSED");
+    const claimKey = `approve:${record.intakeId}`;
+    const claim = f.store.get<{ threadCommandId: string; messageCommandId: string }>("intakeApprovalClaim", claimKey)!;
+    const threadReceipt = receiptBody(f.store, claim.threadCommandId)!;
+    const messageReceipt = receiptBody(f.store, claim.messageCommandId)!;
+    const threadId = (threadReceipt.result as Thread).id;
+    const admitted = f.store.all<Message>("message").filter(message => message.role === "user");
+    expect(admitted).toEqual([expect.objectContaining({ threadId, content: expect.stringContaining(record.proposedTask.sourceUrl) })]);
+
+    for (let i = 0; i < 8; i++) f.store.internal("fixture.event", null, () => i);
+    f.store.retentionSweep({ keepEvents: 1, batchSize: 100 });
+    expect(receiptBody(f.store, claim.threadCommandId)).toEqual(threadReceipt);
+    expect(receiptBody(f.store, claim.messageCommandId)).toEqual(messageReceipt);
+    if (legacyExpired) {
+      // Recreate the legacy tombstone while preserving the original command hash.
+      f.store.db.prepare("UPDATE receipts SET body=? WHERE id=?").run(JSON.stringify({
+        commandId: claim.messageCommandId, eventSeq: messageReceipt.eventSeq, result: null, expired: true,
+      }), claim.messageCommandId);
+    }
+
+    await f.reopen();
+    const replay = vi.spyOn(f.service, "command");
+    const deliver = vi.spyOn(f.service, "deliverOutbox");
+    const approval = command("intake.approve");
+    const approved = await f.service.intake.approve(approval, input);
+    expect(await f.service.intake.approve(approval, input)).toEqual(approved);
+    expect(replay.mock.calls.map(([cmd]) => [cmd.type, cmd.id])).toEqual([
+      ["thread.create", claim.threadCommandId],
+      ["message.send", claim.messageCommandId],
+    ]);
+    expect(f.store.all("thread")).toHaveLength(1);
+    expect(f.store.all<Message>("message").filter(message => message.role === "user")).toEqual(admitted);
+    expect(deliver).not.toHaveBeenCalled();
+    expect(approved).toMatchObject({ disposition: "APPROVED", decision: { threadId } });
+    expect(f.store.get("intakeApprovalClaim", claimKey)).toBeNull();
+    for (let i = 0; i < 8; i++) f.store.internal("fixture.after-settlement", null, () => i);
+    f.store.retentionSweep({ keepEvents: 1, batchSize: 100 });
+    expect(receiptBody(f.store, claim.threadCommandId)?.expired).toBe(true);
+    expect(receiptBody(f.store, claim.messageCommandId)?.expired).toBe(true);
+  });
+
   it("recovery re-delivers a persisted input that a crash left on an approved task", async () => {
     const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-intake-recover-"));
     const store = new Store(join(root, "state"));
