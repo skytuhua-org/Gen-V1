@@ -53,7 +53,8 @@ async function createMemoryProject(page: Page, memoryHost: MemoryHostFixture) {
   await connection.getByRole('textbox', { name: 'Project name', exact: true }).fill('Memory lifecycle project');
   await connection.getByRole('textbox', { name: 'Local folder', exact: true }).fill(memoryHost.projectPath);
   await connection.getByRole('button', { name: 'Connect project', exact: true }).click();
-  await page.getByRole('option', { name: 'Memory lifecycle project', exact: true }).click();
+  await expect(connection).toHaveCount(0);
+  await expect(page.locator('.composer').getByRole('button', { name: 'Select project', exact: true })).toHaveText('Memory lifecycle project');
   await expect(page.getByRole('dialog', { name: 'Select project', exact: true })).toHaveCount(0);
   await expect.poll(() => memoryHost.store.snapshot().threads.length).toBe(1);
   const thread = memoryHost.store.snapshot().threads[0]!;
