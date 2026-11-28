@@ -281,3 +281,186 @@ test('map source disclosure renders URL source as a link', async ({ page }) => {
   await expect(link).toHaveAttribute('href', 'https://example.com/places');
   await expect(link).toHaveAttribute('target', '_blank');
 });
+
+test('Artifact secondary tools transfer help without dispatching commands',async({page})=>{
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Synthetic tooltip pilot'}}}});
+  const artifact=snapshot.artifacts[0];
+  const host=await serveTaskFixture(page,snapshot);
+  await page.route('**/api/commands',route=>{
+    const command=route.request().postDataJSON();
+    if(command.type==='artifact.pin'&&command.threadId===artifact.threadId&&command.payload.artifactId===artifact.id){
+      artifact.pinned=command.payload.pinned;
+    }
+    return route.fallback();
+  });
+  await openApp(page);
+  await expect(page.getByText('Synthetic tooltip pilot',{exact:true})).toBeVisible();
+  const toolbar=page.locator('.artifact-secondary-tools:visible');
+  const source=toolbar.getByRole('button',{name:'View artifact source'}),pin=toolbar.getByRole('button',{name:'Pin artifact'});
+  const archive=toolbar.getByRole('button',{name:'Archive artifact'}),tooltip=page.getByRole('tooltip');
+  await expect(source).toBeVisible();
+  await expect(toolbar).not.toHaveAttribute('inert','');
+  await page.mouse.move(20,20);
+  await expect(toolbar).toHaveCSS('opacity','0');
+  const commandCount=host.commands.length;
+  await source.hover();
+  await expect(tooltip).toHaveText('View source');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-cold');
+  await pin.hover();
+  await expect(tooltip).toHaveText('Pin artifact');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-warm');
+  await archive.hover();
+  await expect(tooltip).toHaveText('Archive artifact');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-warm');
+  expect(await tooltip.evaluate(node=>node.getAnimations().length)).toBe(0);
+  expect(host.commands).toHaveLength(commandCount);
+  await source.click();
+  await expect(source).toHaveAttribute('aria-expanded','true');
+  await expect(page.locator('.artifact-source')).toContainText('Immutable source · revision 1');
+  expect(host.commands).toHaveLength(commandCount);
+  await page.keyboard.press('Tab');
+  await expect(pin).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(toolbar.getByRole('button',{name:'Unpin artifact'})).toHaveAttribute('aria-pressed','true');
+  expect(host.commands.slice(commandCount)).toEqual([expect.objectContaining({
+    type:'artifact.pin',threadId:artifact.threadId,payload:{artifactId:artifact.id,pinned:true},
+  })]);
+});
+
+test('Artifact tooltip group stays with the rendered revision until a held draft saves',async({page})=>{
+  const spec={root:'draft',elements:{draft:{type:'Input',props:{label:'Pilot draft',stateKey:'draft'}}}};
+  const snapshot=taskFixture(spec,{}, {draft:''});
+  const host=await serveTaskFixture(page,snapshot);
+  let release!:()=>void,started!:()=>void;
+  const held=new Promise<void>(resolve=>{release=resolve;});
+  const saving=new Promise<void>(resolve=>{started=resolve;});
+  await page.route('**/api/commands',async route=>{
+    if(route.request().postDataJSON().type==='state.save'){started();await held;}
+    return route.fallback();
+  });
+  try{
+    await openApp(page);
+    const toolbar=page.locator('.artifact-secondary-tools:visible');
+    await expect(toolbar).toHaveAttribute('data-tooltip-group',JSON.stringify(['task-thread','task-surface',1]));
+    await page.getByRole('textbox',{name:'Pilot draft'}).fill('Hold the rendered owner');
+    await saving;
+    snapshot.artifacts[0]={...snapshot.artifacts[0],revision:2,title:'Updated tooltip owner'};
+    await host.publish();
+    await expect(page.getByText('An updated interface is ready. Save your edits to load it; this version remains open.')).toBeVisible();
+    await expect(toolbar).toHaveAttribute('data-tooltip-group',JSON.stringify(['task-thread','task-surface',1]));
+    const pin=toolbar.getByRole('button',{name:'Pin artifact'});
+    await pin.hover();
+    const tooltip=page.getByRole('tooltip');
+    await expect(tooltip).toHaveText('Pin artifact');
+    release();
+    await expect(toolbar).toHaveAttribute('data-tooltip-group',JSON.stringify(['task-thread','task-surface',2]));
+    await expect(tooltip).toHaveCount(0);
+    await expect(page.getByText('Updated tooltip owner',{exact:true})).toBeVisible();
+  }finally{
+    release();
+  }
+});
+
+test('Artifact toolbar keeps its owner across expanded and workspace placements',async({page})=>{
+  await page.setViewportSize({width:1440,height:900});
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Placement fixture'}}}});
+  const artifact=snapshot.artifacts[0],host=await serveTaskFixture(page,snapshot);
+  await page.route('**/api/commands',route=>{
+    const command=route.request().postDataJSON();
+    if(command.type==='artifact.expand'&&command.threadId===artifact.threadId&&command.payload.artifactId===artifact.id){
+      artifact.placement=command.payload.expanded?'expanded':'inline';
+    }
+    return route.fallback();
+  });
+  await openApp(page);
+  const inline=page.locator('.artifact:visible');
+  const marker=JSON.stringify([artifact.threadId,artifact.id,artifact.revision]);
+  const tools=inline.locator('.artifact-secondary-tools');
+  await expect(tools).toHaveAttribute('data-tooltip-group',marker);
+  await inline.getByRole('button',{name:'Expand artifact',exact:true}).click();
+  const expanded=page.locator('.artifact-expanded[aria-modal="true"]');
+  await expect(expanded).toBeVisible();
+  const modalTools=expanded.locator('.artifact-secondary-tools');
+  await expect(modalTools).toHaveAttribute('data-tooltip-group',marker);
+  const afterExpand=host.commands.length;
+  const tooltip=page.getByRole('tooltip');
+  const hoverSettled=async(target:ReturnType<typeof modalTools.getByRole>)=>{
+    await target.scrollIntoViewIfNeeded();
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    const box=await target.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box!.x+box!.width/2,box!.y+box!.height/2);
+  };
+  await hoverSettled(modalTools.getByRole('button',{name:'View artifact source'}));
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-cold');
+  await hoverSettled(modalTools.getByRole('button',{name:'Pin artifact'}));
+  await expect(tooltip).toHaveText('Pin artifact');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-warm');
+  expect(host.commands).toHaveLength(afterExpand);
+  await expanded.getByRole('button',{name:'Collapse artifact',exact:true}).click();
+  await expect(expanded).toHaveCount(0);
+  await inline.getByRole('button',{name:'Open artifact in workspace',exact:true}).click();
+  const panel=page.locator('.artifact-in-workspace:visible .artifact-secondary-tools');
+  await expect(panel).toHaveAttribute('data-tooltip-group',marker);
+  await hoverSettled(panel.getByRole('button',{name:'Archive artifact'}));
+  await expect(tooltip).toHaveText('Archive artifact');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-cold');
+  expect(host.commands.filter(command=>command.type==='artifact.archive')).toHaveLength(0);
+});
+
+test('a second Artifact owns an independent tooltip group',async({page})=>{
+  await page.setViewportSize({width:1440,height:960});
+  const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Two artifact groups'}}}});
+  const first=snapshot.artifacts[0];
+  snapshot.messages.push({...snapshot.messages[0],id:'second-reply',content:'Second owner message',createdAt:'2026-10-29T23:01:00.000Z'});
+  snapshot.artifacts.push({...first,id:'second-surface',messageId:'second-reply',title:'Second surface',stateId:'second-state'});
+  snapshot.userStates.push({...snapshot.userStates[0],id:'second-state'});
+  const host=await serveTaskFixture(page,snapshot);
+  await openApp(page);
+  const alpha=page.locator('[data-artifact-id="task-surface"] .artifact-secondary-tools');
+  const beta=page.locator('[data-artifact-id="second-surface"] .artifact-secondary-tools');
+  await expect(alpha).toHaveAttribute('data-tooltip-group',JSON.stringify(['task-thread','task-surface',1]));
+  await expect(beta).toHaveAttribute('data-tooltip-group',JSON.stringify(['task-thread','second-surface',1]));
+  const tooltip=page.getByRole('tooltip');
+  const count=host.commands.length;
+  await alpha.getByRole('button',{name:'Pin artifact'}).hover();
+  await expect(tooltip).toHaveText('Pin artifact');
+  await beta.getByRole('button',{name:'View artifact source'}).hover();
+  await expect(tooltip).toHaveText('View source');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-cold');
+  await beta.getByRole('button',{name:'Archive artifact'}).hover();
+  await expect(tooltip).toHaveText('Archive artifact');
+  await expect(tooltip).toHaveAttribute('data-opening','pointer-warm');
+  expect(host.commands).toHaveLength(count);
+});
+
+test('artifact unified diff distinguishes file headers, hunks and prefixed content', async ({page}) => {
+  await page.setViewportSize({width:320,height:840});
+  const lines = [
+    'diff --git a/first.txt b/first.txt',
+    'index abcd123..bcde234 100644',
+    '--- a/first.txt',
+    '+++ b/first.txt',
+    '@@ -1,2 +1,2 @@',
+    '--- literal removed line',
+    '+++ literal added line',
+    ' A shared context line wide enough to scroll on a narrow panel.',
+    '\\ No newline at end of file',
+    '--- /dev/null',
+    '+++ b/second.txt',
+    '@@ -0,0 +1 @@',
+    '+ created',
+  ];
+  const snapshot=taskFixture({root:'compare',elements:{compare:{type:'Diff',props:{dataBinding:'patch'}}}}, {patch:lines.join('\n')});
+  await serveTaskFixture(page,snapshot);
+  await openApp(page);
+  const diff=page.locator('pre.diff');
+  await expect(diff).toBeVisible();
+  await expect(diff.locator(':scope > *')).toHaveText(lines);
+  expect(await diff.locator(':scope > *').evaluateAll(rows=>rows.map(row=>row.className))).toEqual([
+    'diff-header','diff-header','diff-header','diff-header','diff-hunk','removed','added','','diff-hunk','diff-header','diff-header','diff-hunk','added',
+  ]);
+  expect(await diff.evaluate(node=>node.scrollWidth>node.clientWidth)).toBe(true);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await test.info().attach('Unified diff at 320 px with synthetic data',{body:await page.screenshot(),contentType:'image/png'});
+});

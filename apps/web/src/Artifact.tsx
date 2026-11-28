@@ -64,6 +64,7 @@ export function Artifact({ artifact: incoming, snapshot, theme, refresh, onDirty
   const [archiving, setArchiving] = useState(false);
   const widget = useRef<WidgetHandle>(null);
   const section = useRef<HTMLElement>(null);
+  const chromeHeader = useRef<HTMLElement>(null);
   const entranceBody = useRef<HTMLDivElement>(null);
   const restored = artifact.kind === 'widget' || state.loaded;
   const [prepared, setPrepared] = useState(artifact.kind === 'widget');
@@ -82,6 +83,26 @@ export function Artifact({ artifact: incoming, snapshot, theme, refresh, onDirty
   const standaloneEditor=embedded||desktop?.context.surface.kind==='artifact'||desktop?.context.surface.kind==='workspace'&&desktop.context.surface.tab==='artifact';
   const expanded = incoming.placement === 'expanded'&&!editorHeld&&!standaloneEditor;
   const inline = !expanded && !inWorkspace && !standaloneEditor;
+  useLayoutEffect(() => {
+    const artifact = section.current, header = chromeHeader.current;
+    if (!inline || !artifact || !header) return;
+    const tabs = ready ? artifact.querySelector<HTMLElement>('.artifact-content .surface-tabs-scroll:has(> [role="tablist"][aria-label="Views"])') : null;
+    tabs?.setAttribute('data-inline-sticky-views', '');
+    const measure = () => {
+      artifact.style.setProperty('--artifact-header-height', header.offsetHeight + 'px');
+      artifact.style.setProperty('--artifact-views-height', (tabs?.offsetHeight ?? 0) + 'px');
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    if (tabs) observer.observe(tabs);
+    measure();
+    return () => {
+      observer.disconnect();
+      tabs?.removeAttribute('data-inline-sticky-views');
+      artifact.style.removeProperty('--artifact-header-height');
+      artifact.style.removeProperty('--artifact-views-height');
+    };
+  }, [inline, ready, artifact.revision]);
   useLayoutEffect(() => {
     const element = section.current, before = placed.current;
     placed.current = { expanded, inWorkspace };
@@ -146,10 +167,10 @@ export function Artifact({ artifact: incoming, snapshot, theme, refresh, onDirty
   // Mount the inert tree immediately so disclosure reservations precede journal I/O.
   const saveState = state.status === 'Saved' ? 'saved' : state.status.startsWith('Saving') ? 'saving' : state.status === 'Unsaved changes' || state.status.startsWith('Recovered draft') ? 'pending' : 'attention';
   return <ArtifactInline value={inline}><section ref={section} className={`artifact artifact-width-${artifact.presentation?.width ?? 'standard'} artifact-frame-${artifact.presentation?.frame ?? 'card'} ${expanded ? 'artifact-expanded' : ''} ${inWorkspace ? 'artifact-in-workspace' : ''} ${incoming.lifecycle === 'archived' ? 'artifact-archived' : ''}`} aria-label={artifact.title} role={expanded ? 'dialog' : undefined} aria-modal={expanded || undefined} data-artifact-id={artifact.id} data-artifact-inline={inline} data-artifact-measuring={!restored || undefined} data-artifact-pending={!ready || undefined} data-document-handoff={documentHandoff}>
-    <header className="artifact-header"><span className="artifact-title"><strong>{artifact.title}</strong></span><div className="artifact-tools">
+    <header ref={chromeHeader} className="artifact-header"><span className="artifact-title"><strong>{artifact.title}</strong></span><div className="artifact-tools">
       
       {artifact.kind === 'structured' ? <button disabled={editorHeld || !ready} className={`save-state ${state.status === 'Saved' ? 'is-saved' : ''}`} data-save-state={saveState} title={state.status === 'Saved' ? 'Saved state · save now' : state.status} onClick={() => void state.flush().catch(error => setError(error.message))}>{saveState === 'saved' ? <Check size={12} aria-hidden="true"/> : saveState === 'saving' ? <LoaderCircle size={12} aria-hidden="true"/> : saveState === 'pending' ? <CircleDot size={12} aria-hidden="true"/> : <TriangleAlert size={12} aria-hidden="true"/>}<span>{state.status}</span></button> : <span className={`artifact-state ${widgetDirty ? 'is-dirty' : ''}`}>{widgetDirty ? 'Uncheckpointed edits' : 'Checkpointed state'}</span>}
-      <div className="artifact-secondary-tools" inert={editorHeld || !ready}><button className="icon-button" aria-label="View artifact source" aria-expanded={sourceOpen} title="View source" onClick={() => setSourceOpen(value => !value)}><Code2 size={14} /></button><button className={`icon-button ${incoming.pinned ? 'selected' : ''}`} aria-label={incoming.pinned ? 'Unpin artifact' : 'Pin artifact'} aria-pressed={incoming.pinned} title={incoming.pinned ? 'Unpin artifact' : 'Pin artifact'} onClick={() => void act('artifact.pin', { pinned: !incoming.pinned })}><Pin size={13} /></button><button className="icon-button" aria-label="Archive artifact" title="Archive artifact" onClick={() => void act('artifact.archive', {})}><Archive size={13} /></button></div>
+      <div className="artifact-secondary-tools" data-tooltip-group={JSON.stringify([artifact.threadId,artifact.id,artifact.revision])} inert={editorHeld || !ready}><button className="icon-button" aria-label="View artifact source" aria-expanded={sourceOpen} title="View source" onClick={() => setSourceOpen(value => !value)}><Code2 size={14} /></button><button className={`icon-button ${incoming.pinned ? 'selected' : ''}`} aria-label={incoming.pinned ? 'Unpin artifact' : 'Pin artifact'} aria-pressed={incoming.pinned} title={incoming.pinned ? 'Unpin artifact' : 'Pin artifact'} onClick={() => void act('artifact.pin', { pinned: !incoming.pinned })}><Pin size={13} /></button><button className="icon-button" aria-label="Archive artifact" title="Archive artifact" onClick={() => void act('artifact.archive', {})}><Archive size={13} /></button></div>
       {!embedded&&<><button disabled={editorHeld || !ready && !expanded} className="icon-button" aria-label={expanded ? 'Collapse artifact' : 'Expand artifact'} title={expanded ? 'Collapse artifact' : 'Expand artifact'} onClick={() => void act('artifact.expand', { expanded: !expanded })}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
       <button disabled={editorHeld || !ready} className="icon-button" aria-label={inWorkspace ? 'Return artifact to conversation' : 'Open artifact in workspace'} title={inWorkspace ? 'Return to conversation' : 'Open in workspace'} onClick={() => inWorkspace ? workspace.closeArtifact() : workspace.requestOpenArtifact(artifact.id)}>{inWorkspace ? <X size={14} /> : <PanelRightOpen size={14} />}</button></>}
     </div></header>
