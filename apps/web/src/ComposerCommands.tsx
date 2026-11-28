@@ -2,6 +2,7 @@ import {useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState
 import {Bot, LoaderCircle, Search, X} from 'lucide-react';
 import {Popover} from '../../../packages/ui-shell/Popover';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
+import {workareaBoundary} from './popover-boundary';
 import type {SkillCatalogEntry, SkillCatalogPage} from '../../../packages/contracts/skill-catalog';
 import {builtinOptions, commandToken, replaceCommandToken, type BuiltinCommand, type CommandMode, type SkillBinding} from './composer-commands';
 import {getSkillCatalog, mergeSkillCatalogPages} from './skill-catalog-api';
@@ -82,7 +83,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
   };
   useImperativeHandle(ref, () => ({keyDown(event) {
     if (!open || isComposing(event)) return false;
-    if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); close(); return true;}
+    if (event.key === 'Escape' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {event.preventDefault(); event.stopPropagation(); close(); return true;}
     if (['ArrowUp', 'ArrowDown'].includes(event.key) && !event.altKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault(); const selectable = options.filter(available), index = selectable.findIndex(option => option.id === selected?.id);
       if (selectable.length) setActive(selectable[(index + (event.key === 'ArrowDown' ? 1 : -1) + selectable.length) % selectable.length].id);
@@ -104,19 +105,23 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       }
       return true;
     }
-    if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && selected) {event.preventDefault(); void choose(selected); return true;}
-    // No active command: leave Enter to normal typing instead of swallowing it.
+    if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (selected) {event.preventDefault(); void choose(selected); return true;}
+      if (event.key === 'Enter') {event.preventDefault(); close(); return true;}
+    }
     return false;
   }}));
   useEffect(() => {
     if (open && selected) content.current?.ownerDocument.getElementById(id + '-' + selected.id)?.scrollIntoView({block: 'nearest'});
-    const element = input.current; if (!element || !open) return;
+    const element = input.current; if (!element) return;
+    if (!open) return;
+    element.setAttribute('aria-haspopup', 'listbox');
     element.setAttribute('aria-controls', id); element.setAttribute('aria-autocomplete', 'list');
     if (selected) element.setAttribute('aria-activedescendant', id + '-' + selected.id); else element.removeAttribute('aria-activedescendant');
-    return () => {element.removeAttribute('aria-controls'); element.removeAttribute('aria-autocomplete'); element.removeAttribute('aria-activedescendant');};
+    return () => {element.removeAttribute('aria-haspopup'); element.removeAttribute('aria-controls'); element.removeAttribute('aria-autocomplete'); element.removeAttribute('aria-activedescendant');};
   }, [open, selected?.id, id, input]);
   return <>
-    <Popover anchor={input} contentRef={content} open={open} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={close} className="composer-command-popover">
+    <Popover anchor={input} contentRef={content} open={open} getBoundary={()=>workareaBoundary(input.current)} width={600} height={Math.min(352, Math.max(110, options.length * 42 + 44))} preferredSide="above" align="start" onDismiss={close} className="composer-command-popover">
       <div id={id} role="listbox" aria-label="Commands and skills" className="composer-command-list" onScroll={event => {const list = event.currentTarget; if (list.scrollHeight - list.scrollTop - list.clientHeight < 80) void loadMore();}}>
         {options.map(option => <div key={option.id} id={id + '-' + option.id} role="option" aria-selected={selected?.id === option.id} aria-disabled={!available(option)} className="composer-command-option" onPointerMove={() => {if (available(option)) setActive(option.id);}} onPointerDown={event => event.preventDefault()} onClick={() => void choose(option)}>
           {'builtin' in option ? <><span className="composer-command-name">/{option.builtin.id}</span><span className="composer-command-description">{option.builtin.description}</span></> : <><span className="composer-command-name">/skill:{option.skill.name}</span><span className="composer-command-description" title={option.skill.description}>{reason(option.skill) || option.skill.description}</span><span className="composer-command-source">{page?.sources.find(source => source.id === option.skill.sourceId)?.label}</span></>}
@@ -127,7 +132,7 @@ export function ComposerCommands({ref, input, draft, threadId, projectId, disabl
       {error ? <ErrorState className="composer-command-status" message={error} retryLabel="Reload" onRetry={() => {setReload(value => value + 1);}}/> : !loading && !options.length && <div role="status" className="composer-command-status"><Search size={14}/>No commands or skills found</div>}
       {Boolean(unavailableSources.length) && <div role="status" aria-label="Unavailable skill sources" className="composer-command-unavailable">{unavailableSources.map(source => <div key={source.id}><span>{source.label}</span><span>{source.availability.status === 'unavailable' ? availabilityLabel[source.availability.reason] : ''}</span></div>)}</div>}
       {!loading && page?.nextCursor && <button type="button" className="composer-command-more" onPointerDown={event => event.preventDefault()} onClick={() => void loadMore()}>Load more skills</button>}
-      <div className="composer-command-hint" aria-hidden="true">↑ ↓ Navigate <span>Enter Select · Esc Close</span></div>
+      <div className="composer-command-hint" aria-hidden="true">↑ ↓ Navigate · <span>Enter/Tab Select · Esc Close</span></div>
     </Popover>
     {!open && error && <div role="status" className="composer-command-error">{error}<button type="button" aria-label="Dismiss command error" onClick={() => setError('')}><X size={13}/></button></div>}
   </>;

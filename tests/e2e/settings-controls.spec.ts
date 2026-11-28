@@ -343,6 +343,41 @@ test('appearance preview, cancel, failed apply and retry preserve accepted prefe
   expect(await page.locator('html').evaluate(node=>node.style.getPropertyValue('--chat-font-size'))).toBe('19px');
 });
 
+test('a pending post-save refresh does not hold closing or reopening Settings', async ({ page }) => {
+  const { dialog, nav, commands, snapshot } = await openSettings(page);
+  await nav.getByRole('button', { name: 'Appearance', exact: true }).click();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/snapshot', async route => { await gate; await route.fallback(); });
+  await dialog.getByRole('spinbutton', { name: 'Chat size', exact: true }).fill('19');
+  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect.poll(() => commands.filter(command => command.type === 'settings.update').length).toBe(1);
+  await expect.poll(() => getPreferences(snapshot.settings).chatFontSize).toBe(19);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Settings', exact: true })).toBeVisible();
+  release();
+  await nav.getByRole('button', { name: 'Appearance', exact: true }).click();
+  await expect(dialog.getByRole('spinbutton', { name: 'Chat size', exact: true })).toHaveValue('19');
+});
+
+test('a transient post-save refresh failure retries and recovers the accepted settings view', async ({ page }) => {
+  const { dialog, nav } = await openSettings(page);
+  await nav.getByRole('button', { name: 'Appearance', exact: true }).click();
+  let reads = 0;
+  await page.route('**/api/snapshot', async route => {
+    reads++;
+    if (reads === 1) return route.fulfill({ status: 503, json: { error: { message: 'Synthetic refresh failure' } } });
+    await route.fallback();
+  });
+  await dialog.getByRole('spinbutton', { name: 'Chat size', exact: true }).fill('19');
+  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect.poll(() => reads).toBeGreaterThan(1);
+  await expect.poll(() => page.locator('html').evaluate(node => node.style.getPropertyValue('--chat-font-size'))).toBe('19px');
+  await expect(dialog.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
+});
+
 for(const theme of ['dark','light'] as const) test(`${theme} short narrow settings keep nav, controls and keyboard menus within the modal`,async({page},info)=>{
   await page.setViewportSize({width:520,height:520});
   const {dialog}=await openSettings(page,theme),sections=dialog.getByRole('combobox',{name:'Settings section',exact:true});

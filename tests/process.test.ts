@@ -1,5 +1,7 @@
-import { spawnSync } from 'node:child_process';
-import { expect, it } from 'vitest';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { expect, it, vi } from 'vitest';
 import { runProcess } from '../packages/capabilities/process.ts';
 
 it('preserves UTF-8 characters split across stdout and stderr chunks', async () => {
@@ -27,4 +29,31 @@ it('preserves the child result when an optional progress observer fails', () => 
   const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
   expect(child.status, child.stderr).toBe(0);
   expect(JSON.parse(child.stdout)).toMatchObject({ status: 'succeeded', exitCode: 0, stdout: 'child result' });
+});
+
+vi.mock('node:child_process', { spy: true });
+
+it.each([0, 1])('uses the owned direct kill only when Windows tree termination fails (exit %s)', async code => {
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42, stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, signalCode: null,
+    kill: vi.fn(() => true),
+  });
+  const tree = new EventEmitter();
+  vi.mocked(spawn).mockReturnValueOnce(child as unknown as ChildProcess).mockReturnValueOnce(tree as ChildProcess);
+  const stop = new AbortController();
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const running = runProcess(process.execPath, [], process.cwd(), stop.signal, () => {});
+  try {
+    Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' });
+    stop.abort();
+  } finally { Object.defineProperty(process, 'platform', descriptor); }
+  try {
+    tree.emit('close', code, null);
+    expect(child.kill).toHaveBeenCalledTimes(code ? 1 : 0);
+  } finally {
+    child.emit('close', null, 'SIGTERM');
+    await running;
+    vi.restoreAllMocks();
+  }
+  expect(await running).toMatchObject({ status: 'cancelled', cancelled: true, timedOut: false });
 });

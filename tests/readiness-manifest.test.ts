@@ -145,6 +145,7 @@ describe('readiness package-manager launch',()=>{
     writeFileSync(join(installed,'package.json'),JSON.stringify({name:'pnpm',version:'10.30.3'}));
     writeFileSync(join(installed,'bin','pnpm.cjs'),'console.log(JSON.stringify(process.argv.slice(2)))');
     vi.stubEnv('PATH',directory);
+    vi.stubEnv('PNPM_HOME','');
     const run=readinessPackageChecks(directory);
     const result=await run(specFor(directory,{command:'pnpm',args:['test:browser','--suite','root']}));
     expect(result).toMatchObject({status:'PASS',command:process.execPath,

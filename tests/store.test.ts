@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,22 @@ const cleanups: (() => void)[] = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
 function setup() { const dir = mkdtempSync(join(tmpdir(), "harness-store-")); const store = new Store(dir); cleanups.push(() => { store.close(); rmSync(dir, { recursive: true, force: true }); }); return store; }
 describe("durable command storage", () => {
+  it('closes the newly opened database when schema initialization fails', () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-store-init-"));
+    const incomplete = new DatabaseSync(join(dir, "harness.sqlite"));
+    incomplete.exec("CREATE TABLE entities (kind TEXT)");
+    incomplete.close();
+    const close = vi.spyOn(DatabaseSync.prototype, "close"), exec = vi.spyOn(DatabaseSync.prototype, "exec");
+    try {
+      expect(() => new Store(dir)).toThrow(/thread_id/);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      const connection = exec.mock.contexts[0] as DatabaseSync | undefined;
+      if (connection?.isOpen) connection.close();
+      exec.mockRestore(); close.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it('omits archived thread bodies from global snapshots while retaining them for restore',()=>{
     const store=setup(),large='x'.repeat(1024*1024);
     store.internal('fixture.archived',null,()=>{
@@ -225,5 +242,75 @@ describe('bounded transcript paging', () => {
       expect(() => store.messagesFor('a', 'b-0')).toThrow('Unknown message cursor');
       expect(store.messagesFor('missing')).toEqual({ messages: [], truncated: 0 });
     } finally { decode.mockRestore(); }
+  });
+
+  it('reconciles a failed retention batch without masking the original failure', () => {
+    const store = setup();
+    for (let i = 0; i < 8; i++) store.internal('fixture.event', null, () => i);
+    const connection = store.db, exec = connection.exec.bind(connection);
+    const cause = new Error('injected retention batch commit failure');
+    let commits = 0, failRollback = true;
+    const injection = vi.spyOn(connection, 'exec').mockImplementation(sql => {
+      if (sql === 'COMMIT' && ++commits === 2) throw cause;
+      if (sql === 'ROLLBACK' && failRollback) throw new Error('injected rollback failure');
+      return exec(sql);
+    });
+    try {
+      let failure: unknown;
+      try { store.retentionSweep({ keepEvents: 2, batchSize: 2 }); } catch (error) { failure = error; }
+      expect(failure).toBe(cause);
+      expect(connection.isTransaction).toBe(true);
+      expect(() => store.eventsAfter(0)).toThrow(expect.objectContaining({ code: 'STORE_INCONSISTENT' }));
+      failRollback = false;
+      expect(store.eventsAfter(0).map(event => event.seq)).toEqual([3, 4, 5, 6, 7, 8]);
+      expect(connection.isTransaction).toBe(false);
+      expect(store.retentionSweep({ keepEvents: 2, batchSize: 2 }).removedEvents).toBe(4);
+      expect(store.eventsAfter(0).map(event => event.seq)).toEqual([7, 8, 9]);
+    } finally {
+      injection.mockRestore();
+      if (connection.isTransaction) exec('ROLLBACK');
+    }
+  });
+
+  it('sweeps event history above durable watermarks, keeps live receipts, and records an audit event', () => {
+    const store = setup();
+    const commands = Array.from({ length: 20 }, (_, i) => store.command({ id: `sweep-command-${i}`, type: 'fixture.command', payload: { i } }, () => ({ i })));
+    // The durable consumer: a plan extension replays only seq > watermark.
+    store.internal('fixture.watermark', null, () => {
+      store.put('planExtension', 'plan-a', null, { reportWatermark: commands[7].eventSeq });
+      store.put('workspaceAction', commands[2].commandId, null, { command: { id: commands[2].commandId, type: 'fixture.command', payload: {} } });
+    });
+    const result = store.retentionSweep({ keepEvents: 10, batchSize: 7 });
+    const floor = commands[7].eventSeq; // min(head-keep, watermark): the watermark retains more.
+    expect(result.floor).toBe(floor);
+    expect(result.removedEvents).toBe(floor);
+    expect(store.retentionFloor()).toBe(floor + 1);
+    expect(store.eventsAfter(floor).map(event => event.seq)).toEqual([...Array(store.sequence - floor).keys()].map(n => n + floor + 1));
+    // The swept audit event is itself retained history.
+    expect(store.eventsAfter(0).at(-1)).toMatchObject({ type: 'store.retention.swept', payload: { result: { floor, removedEvents: result.removedEvents } } });
+    // Receipts below the floor expire to tombstones except the one a live
+    // workspaceAction still references: 20 rows stay (12 intact incl. the pin),
+    // the 7 expired keep id+hash+eventSeq and drop their result.
+    expect(store.db.prepare("SELECT COUNT(*) AS n FROM receipts").get()).toMatchObject({ n: 20 });
+    expect(store.db.prepare("SELECT COUNT(*) AS n FROM receipts WHERE json_extract(body,'$.expired')=1").get()).toMatchObject({ n: 7 });
+    // A pinned receipt still short-circuits its command; so does a retained one.
+    expect(store.command({ id: commands[2].commandId, type: 'fixture.command', payload: { i: 2 } }, () => { throw new Error('kept receipt must short-circuit'); })).toEqual(commands[2]);
+    expect(store.command({ id: commands[19].commandId, type: 'fixture.command', payload: { i: 19 } }, () => { throw new Error('kept receipt must short-circuit'); })).toEqual(commands[19]);
+    // An expired command replay never re-applies: same content dedupes to the
+    // tombstone, and a reused ID with different content still fails closed.
+    expect(store.command({ id: commands[0].commandId, type: 'fixture.command', payload: { i: 0 } }, () => { throw new Error('expired receipt must short-circuit'); })).toEqual({ commandId: commands[0].commandId, eventSeq: commands[0].eventSeq, result: null, expired: true });
+    expect(() => store.command({ id: commands[0].commandId, type: 'fixture.command', payload: { i: 99 } }, () => { throw new Error('unreachable'); })).toThrow(expect.objectContaining({ code: 'DUPLICATE_COMMAND' }));
+    // A stale sweep is a no-op below the keep window and inside a transaction it is rejected.
+    expect(store.retentionSweep({ keepEvents: store.sequence }).removedEvents).toBe(0);
+    expect(() => store.internal('fixture.nested', null, () => store.retentionSweep())).toThrow(expect.objectContaining({ code: 'TRANSACTION_OPEN' }));
+    // Resumable: bounded batches leave committed progress the next call resumes from.
+    store.internal('fixture.watermark2', null, () => store.put('planExtension', 'plan-a', null, { reportWatermark: store.sequence }));
+    const partial = store.retentionSweep({ keepEvents: 1, batchSize: 3, maxBatches: 2 });
+    expect(partial.batches).toBe(2); expect(partial.removedEvents).toBe(6);
+    store.retentionSweep({ keepEvents: 1, batchSize: 50 });
+    const tail = store.eventsAfter(0).map(event => event.seq);
+    expect(tail.filter(seq => seq <= 22)).toEqual([]); // everything at or below the watermark is gone
+    expect(tail.length).toBe(3); // kept head event + the two sweep audit events
+    expect(store.retentionFloor()).toBe(tail[0]);
   });
 });
