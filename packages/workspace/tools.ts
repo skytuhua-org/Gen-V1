@@ -80,13 +80,13 @@ export class ProjectTools{
   return withPrivateGitFamily(family,signal??new AbortController().signal,(metadata,worktree,active)=>nativeGit(this.gitExecutable(),metadata,worktree,args,active,environment));
  }
  /** Serialized, attested access to a managed working copy for M08 workspace services. */
- async managedWorktree<T>(projectId:string,threadId:string,action:(context:{git:(args:string[],environment?:NodeJS.ProcessEnv)=>Promise<string>,worktree:string,binding:WorkspaceBinding,signal:AbortSignal})=>Promise<T>):Promise<T>{
+ async managedWorktree<T>(projectId:string,threadId:string,action:(context:{git:(args:string[],environment?:NodeJS.ProcessEnv,input?:string)=>Promise<string>,worktree:string,binding:WorkspaceBinding,signal:AbortSignal})=>Promise<T>):Promise<T>{
   const bound=await this.binding(projectId,threadId);
   if(!bound.workspace)throw new HarnessError('CAPABILITY_DENIED','This project is a plain local folder — Git changes need a managed working copy. Choose "Prepare workspace" or reconnect the project as a managed copy.');
   const workspace=bound.workspace;
   return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
    if(!managed)throw new HarnessError('CAPABILITY_DENIED','This project is a plain local folder — Git changes need a managed working copy. Choose "Prepare workspace" or reconnect the project as a managed copy.');
-   return action({git:(args,environment)=>nativeGit(this.gitExecutable(),metadata,path,args,signal,environment??{}),worktree:path,binding:workspace,signal});
+   return action({git:(args,environment,input)=>nativeGit(this.gitExecutable(),metadata,path,args,signal,environment??{},input),worktree:path,binding:workspace,signal});
   }));
  }
  private project(projectId:string){const project=this.store.get<ProjectSummary>('workspaceProject',id.parse(projectId));if(!project)throw new HarnessError('NOT_FOUND','Project is unavailable.');if(project.authority.kind!=='local')throw new HarnessError('CAPABILITY_DENIED','Company authority cannot use personal project tools.');return project;}

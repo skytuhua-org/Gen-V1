@@ -33,9 +33,9 @@ export function statusBranch(header:string):string{
  return header.slice(3).split('...')[0]!.split(' ')[0]!;
 }
 
-export async function nativeGit(executable:string,metadata:string,worktree:string|undefined,args:string[],signal:AbortSignal,environment:NodeJS.ProcessEnv={}){
+export async function nativeGit(executable:string,metadata:string,worktree:string|undefined,args:string[],signal:AbortSignal,environment:NodeJS.ProcessEnv={},input?:string){
  const prefix=['--no-pager','--no-replace-objects','--git-dir='+metadata,...(worktree?['--work-tree='+worktree]:[]),'-c','core.hooksPath='+nullFile,'-c','core.fsmonitor=false','-c','core.untrackedCache=false','-c','submodule.recurse=false','-c','diff.external=','-c','core.attributesFile=','-c','core.excludesFile=','-c','credential.helper=','-c','gc.auto=0','-c','maintenance.auto=false'];
- const result=await runProcess(executable,[...prefix,...args],worktree??metadata,signal,()=>{},120000,environment,4*1024*1024);
+ const result=await runProcess(executable,[...prefix,...args],worktree??metadata,signal,()=>{},120000,environment,4*1024*1024,input);
  if(result.truncated)throw new HarnessError('RESOURCE_LIMIT','Git output exceeds the 4 MiB review limit.');
  if(result.exitCode!==0||result.cancelled||result.timedOut)throw new HarnessError(result.cancelled?'CANCELLED':'GIT_ERROR','Git operation did not complete.',result);
  return result.stdout;
