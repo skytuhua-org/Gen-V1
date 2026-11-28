@@ -22,6 +22,7 @@ export function Dialog({ title, children, close, initialFocusRef }: { title: str
 
 export function SettingsWindow(props: ComponentProps<SettingsComponent>) {
   const desktop = useDesktop();
+  const leaveGuard = useRef<null | {dirty: () => boolean; pending: () => boolean; confirm: (proceed: () => void) => void}>(null);
   const opener = useRef(document.activeElement as HTMLElement | null);
   const [Settings, setSettings] = useState(() => loadedSettings);
   const [error, setError] = useState(''), [reloading, setReloading] = useState(false);
@@ -44,7 +45,7 @@ export function SettingsWindow(props: ComponentProps<SettingsComponent>) {
     } catch (cause) { setError(`Drafts could not be saved. ${messageOf(cause)} Keep this window open and retry.`); }
     finally { setReloading(false); }
   };
-  return <Modal open title="Settings" onClose={props.close} className="settings-dialog">{Settings ? <Settings {...props} /> : <>{error ? <ErrorState message={error} retryLabel="Reload to retry" busy={reloading} onRetry={() => void reload()}/> : <LoadingState pending hasContent={false} label="Opening settings…" skeleton={<SettingsSkeleton/>} className="view-loading-state"/>}</>}</Modal>;
+  return <Modal open title="Settings" onClose={() => { const g = leaveGuard.current; if (g?.dirty()) { if (!g.pending()) g.confirm(props.close); } else props.close(); }} className="settings-dialog">{Settings ? <Settings {...props} leaveGuard={leaveGuard} /> : <>{error ? <ErrorState message={error} retryLabel="Reload to retry" busy={reloading} onRetry={() => void reload()}/> : <LoadingState pending hasContent={false} label="Opening settings…" skeleton={<SettingsSkeleton/>} className="view-loading-state"/>}</>}</Modal>;
 }
 
 export const AssistantProse = memo(function AssistantProse({message,arrivals,active,onJump}:{message:Message;arrivals:Set<string>;active:boolean;onJump?:(top:number)=>void}){
