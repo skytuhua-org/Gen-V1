@@ -8,11 +8,12 @@ type Patch = NonNullable<Thread['presentation']>;
 export type SidebarLists = Record<SidebarSection, Thread[]>;
 export interface DropTarget { list: SidebarSection; index: number }
 export interface OrderWrite { id: string; order: number }
+export const REORDER_PAUSED = 'Reordering is paused while search or a filter is active';
 type ReorderOutcome =
   | { kind: 'moved'; item: Thread; direction: -1 | 1; position: number; total: number }
   | { kind: 'boundary'; direction: -1 | 1 }
   | { kind: 'grouping' | 'failed'; item: Thread }
-  | { kind: 'cancelled' };
+  | { kind: 'cancelled' | 'locked' };
 
 /** The section a row occupies after a presentation patch, mirroring the sidebar filters. */
 export function sectionOf(item: Thread, showWorking: boolean, patch: Patch = {}): SidebarSection {
@@ -327,9 +328,15 @@ export function useThreadReorder(nav: RefObject<HTMLElement | null>, options: {
     end: clear,
     /** Alt+ArrowUp/Down reorder inside the row's own section. Returns true when handled. */
     key(item: Thread, event: ReactKeyboardEvent<HTMLButtonElement>) {
-      if (matchesShortcut(event, chordFor('thread-reorder-up'))) { event.preventDefault(); return move(item, -1); }
-      if (matchesShortcut(event, chordFor('thread-reorder-down'))) { event.preventDefault(); return move(item, 1); }
-      return false;
+      const direction = matchesShortcut(event, chordFor('thread-reorder-up')) ? -1
+        : matchesShortcut(event, chordFor('thread-reorder-down')) ? 1 : null;
+      if (direction===null) return false;
+      event.preventDefault();
+      if (state.current.locked()) {
+        if (!event.repeat) state.current.onReorderOutcome({kind:'locked'});
+        return true;
+      }
+      return move(item, direction);
     },
   };
 }
