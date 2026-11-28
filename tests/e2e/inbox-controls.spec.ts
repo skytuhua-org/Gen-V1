@@ -903,3 +903,74 @@ test('a genuinely empty Inbox offers search clear without a filter reset', async
   await expect(page.getByRole('button', {name: 'Clear search', exact: true})).toBeVisible();
   await expect(page.getByRole('button', {name: 'Clear search and filter'})).toHaveCount(0);
 });
+
+test('owned row removal recovers to the next eligible row without choosing or reading it',async({page})=>{
+  await fixture(page);
+  const review=page.getByRole('button',{name:/^Review, Review change/});
+  await review.focus();
+  await page.evaluate(()=>window.inboxControls.remove?.('review'));
+  await expect(page.getByRole('button',{name:/^Failed task, Needs attention/})).toBeFocused();
+  await expect(page.getByText('Select an item',{exact:true})).toBeVisible();
+  expect(await calls(page)).toEqual([]);
+});
+
+test('losing the final focused row recovers to Inbox search and leaves external focus alone',async({page})=>{
+  await fixture(page);
+  const outside=page.getByRole('textbox',{name:'Outside Inbox'});
+  await page.getByRole('button',{name:/^Resolved question,/}).focus();
+  await outside.focus();
+  await page.evaluate(()=>window.inboxControls.remove?.('resolved','review','failed','completed'));
+  await expect(outside).toBeFocused();
+  await page.getByRole('button',{name:/^Question, Needs your input/}).focus();
+  await page.evaluate(()=>window.inboxControls.remove?.('question'));
+  await expect(page.getByRole('searchbox',{name:'Search Inbox'})).toBeFocused();
+  expect(await calls(page)).toEqual([]);
+});
+
+test('Back uses prior order if its selected row disappears during the return commit',async({page})=>{
+  await page.setViewportSize({width:520,height:740});
+  await fixture(page);
+  await page.getByRole('button',{name:/^Review, Review change/}).click();
+  const back=page.getByRole('button',{name:'Inbox',exact:true});
+  await expect(back).toBeVisible();
+  await back.evaluate((node:HTMLButtonElement)=>{
+    node.focus();
+    node.click();
+    window.inboxControls.remove?.('review');
+  });
+  await expect(page.getByRole('button',{name:/^Failed task, Needs attention/})).toBeFocused();
+  await expect(page.locator('.agent-inbox')).toHaveAttribute('data-columns','list');
+  expect(await calls(page)).toEqual([]);
+});
+
+test('hiding the entire owner cancels recovery without touching external focus',async({page})=>{
+  await fixture(page);
+  const review=page.getByRole('button',{name:/^Review, Review change/});
+  await review.focus();
+  await page.evaluate(()=>{
+    window.inboxControls.hideInbox?.(true);
+    window.inboxControls.remove?.('review');
+  });
+  await expect(page.getByRole('region',{name:'Agent inbox'})).toBeHidden();
+  const outside=page.getByRole('textbox',{name:'Outside Inbox'});
+  await outside.focus();
+  await page.evaluate(()=>window.inboxControls.hideInbox?.(false));
+  await expect(outside).toBeFocused();
+  expect(await calls(page)).toEqual([]);
+});
+
+test('recovering to the previous offscreen row scrolls only the Inbox list',async({page})=>{
+  await page.setViewportSize({width:1100,height:520});
+  await fixture(page,true);
+  const last=page.getByRole('button',{name:/^Extra item 34,/});
+  const previous=page.getByRole('button',{name:/^Extra item 33,/});
+  const list=page.locator('.inbox-tasks-scroll');
+  const initialDocumentTop=await page.evaluate(()=>window.scrollY);
+  await last.evaluate((node:HTMLElement)=>node.focus({preventScroll:true}));
+  expect(await list.evaluate(node=>node.scrollTop)).toBe(0);
+  await page.evaluate(()=>window.inboxControls.remove?.('extra-34'));
+  await expect(previous).toBeFocused();
+  expect(await list.evaluate(node=>node.scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(()=>window.scrollY)).toBe(initialDocumentTop);
+  expect(await calls(page)).toEqual([]);
+});

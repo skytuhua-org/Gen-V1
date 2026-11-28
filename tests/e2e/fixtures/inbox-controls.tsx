@@ -7,7 +7,7 @@ import '../../../apps/web/src/styles.css';
 
 type Mode = 'success' | 'reject' | 'throw' | 'source-error';
 type Call = {type: 'refresh' | 'read' | 'unread' | 'open'; id?: string};
-declare global {interface Window {inboxControls: {calls: Call[]; items: AttentionItem[]; refreshMode: Mode; readMode: Mode; openMode: Mode; unreadMode?: Mode; holdRead?: Promise<void>; rejectReadId?: string; holdUnread?: Promise<void>; holdRefresh?: Promise<void>; holdOpen?: Promise<void>; arrive?(): void}}}
+declare global {interface Window {inboxControls: {calls: Call[]; items: AttentionItem[]; refreshMode: Mode; readMode: Mode; openMode: Mode; unreadMode?: Mode; holdRead?: Promise<void>; rejectReadId?: string; holdUnread?: Promise<void>; holdRefresh?: Promise<void>; holdOpen?: Promise<void>; arrive?(): void; remove?(...ids:string[]): void; hideInbox?(hidden:boolean): void}}}
 window.inboxControls = {calls: [], items: [], refreshMode: 'success', readMode: 'success', openMode: 'success'};
 const initial: AttentionItem[] = [
   {id: 'question', threadId: 'thread-question', kind: 'request', title: 'Question', summary: 'Choose the destination in the canonical conversation.', state: 'needs-input', read: false, actionable: true},
@@ -25,7 +25,10 @@ function Fixture() {
     if(params.get('long')==='1000')return [...initial,...Array.from({length:995},(_,index)=>({...initial[1],id:'seed-'+index,title:'Result '+index,read:index!==994}))];
     return [...initial,...Array.from({length:35},(_,index)=>({...initial[1],id:'extra-'+index,title:'Extra item '+index}))];
   }), [error, setError] = useState('');
+  const [hidden,setHidden]=useState(false);
+  window.inboxControls.hideInbox=setHidden;
   window.inboxControls.items = items;
+  window.inboxControls.remove = (...ids) => setItems(current => current.filter(item => !ids.includes(item.id)));
   window.inboxControls.arrive = () => setItems(current => [
     {...initial[3], id:'new-arrival', title:'New result', notificationKey:'new-arrival:completed'},
     ...current,
@@ -41,7 +44,7 @@ function Fixture() {
     const apply = () => result(mode, read?'Read state could not save.':'Unread state could not save.', () => setItems(current => current.map(item => item.id === id ? {...item, read} : item)));
     const hold=read?window.inboxControls.holdRead:window.inboxControls.holdUnread;return hold?hold.then(apply):apply();
   };
-  return <main><p>Synthetic source fixture · no live host or approval authority</p><div className="fixture-inbox"><InboxView projectColorFor={() => undefined}
+  return <main><input aria-label="Outside Inbox" /><p>Synthetic source fixture · no live host or approval authority</p><div className="fixture-inbox" hidden={hidden}><InboxView projectColorFor={() => undefined}
     attention={{items, unread: items.filter(item => !item.read).length, error,
       refresh: () => {
         window.inboxControls.calls.push({type: 'refresh'});
