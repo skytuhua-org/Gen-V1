@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import type { VerificationPanelModel as Model, VerificationPanelRow as Row } from '../../../packages/core/verification-read-models';
+import type { VerificationFindingRow as FindingRow, VerificationPanelModel as Model, VerificationPanelRow as Row } from '../../../packages/core/verification-read-models';
 import { authenticated, read } from './api';
 import {VerificationArtifact, isRetainedVerificationArtifact} from './VerificationArtifact';
 
@@ -68,6 +68,37 @@ function CheckDetails({row, id, threadId, close}: {row: Row; id: string; threadI
   </section>;
 }
 
+const FINDING_SOURCE_STATE: Record<FindingRow['sourceState'], string> = {
+  CURRENT: 'Current',
+  STALE: 'Stale — source edited since recording',
+  UNAVAILABLE: 'Source unavailable — custody missing',
+  INDETERMINATE: 'Freshness indeterminate — no attested source root',
+};
+
+/** Scoped security evidence, owner-bounded and advisory only. Reproduction is
+ * rendered as a recorded-presence label, never an executable control, and no
+ * numeric severity or confidence is inferred. */
+function Findings({ findings }: { findings: Model['findings'] }) {
+  return <section className="verification-findings" aria-label="Security findings">
+    <h4>Security findings</h4>
+    {findings.omitted > 0 && <p role="status">{findings.omitted} further finding{findings.omitted === 1 ? '' : 's'} omitted — the list is bounded.</p>}
+    {findings.rows.length === 0 ? <p>No security findings recorded for this owner.</p> : <ul>
+      {findings.rows.map((finding) => <li key={`${finding.findingId}:${finding.blobRevision}`}>
+        <dl>
+          <DetailField label="Source"><code>{finding.path}{finding.line !== null ? `:${finding.line}` : ''}</code> at <code>{finding.blobRevision}</code></DetailField>
+          <DetailField label="Freshness">{FINDING_SOURCE_STATE[finding.sourceState]}</DetailField>
+          <DetailField label="Status">{finding.status}</DetailField>
+          <DetailField label="Authorized scope" wide>{finding.authorizedScope}</DetailField>
+          <DetailField label="Observation" wide>{finding.observation}</DetailField>
+          <DetailField label="Impact" wide>{finding.impact}</DetailField>
+          <DetailField label="Reproduction">{finding.reproductionRecorded ? 'Recorded — not executable here' : 'None recorded'}</DetailField>
+          <DetailField label="Evidence quality">Advisory — recorded observation, not an executed check</DetailField>
+        </dl>
+      </li>)}
+    </ul>}
+  </section>;
+}
+
 export function VerificationPanel({ threadId }: { threadId: string }) {
   return <VerificationReadPanel key={threadId} threadId={threadId} />;
 }
@@ -132,7 +163,11 @@ function VerificationReadPanel({ threadId }: { threadId: string }) {
   if (current?.unavailable) return <section className="verification-panel" aria-label="Verification">
     <p role="status">Verification unavailable. The current evidence could not be refreshed.</p>
   </section>;
-  if (!model || (!model.label && !model.rows.length)) return null;
+  // Responses pre-dating the scoped-findings contract can omit the field;
+  // absent findings are unknown evidence, not an empty list, so the section
+  // is skipped rather than rendered as clean.
+  const findings = model?.findings as Model['findings'] | undefined;
+  if (!model || (!model.label && !model.rows.length && !findings?.rows.length)) return null;
   return (
     <section className="verification-panel" aria-label="Verification" tabIndex={0}>
       <header>
@@ -163,6 +198,7 @@ function VerificationReadPanel({ threadId }: { threadId: string }) {
         </tbody>
       </table></div>
       {expandedRow && <CheckDetails key={expanded} id={`${id}-details`} row={expandedRow} threadId={threadId} close={() => {setExpanded(null); opener.current?.focus();}} />}
+      {findings && <Findings findings={findings} />}
     </section>
   );
 }
