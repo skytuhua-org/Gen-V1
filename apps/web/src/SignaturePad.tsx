@@ -51,7 +51,7 @@ export function SignaturePad({ stateKey, label = 'Your signature', initialMode =
   // must see it until generate() hands the mark to the signature journal.
   const cancelQueuedGenerate = () => { clearTimeout(nameTimer.current); nameTimer.current = undefined; namePreparation.current?.(); namePreparation.current = undefined; };
   const queueGenerate = (text: string) => { generatedInitial.current = true; setName(text); clearTimeout(nameTimer.current); namePreparation.current ??= assets?.beginPreparation(); nameTimer.current = setTimeout(() => { nameTimer.current = undefined; try { generate(text); } finally { namePreparation.current?.(); namePreparation.current = undefined; } }, 250); };
-  const generate = (text: string, choice = style) => {
+  const generate = (text: string, choice = style, includeInComposer = true) => {
     generatedInitial.current = true; setError(''); setName(text); setStyle(choice); uploadGeneration.current++; revealRequest.current++;
     if (!text.trim()) { write(null); return; }
     if (!assets) { setError('Signature resources are unavailable in this document.'); return; }
@@ -64,11 +64,11 @@ export function SignaturePad({ stateKey, label = 'Your signature', initialMode =
       let left = target.width, right = 0;
       for (let y = 0; y < target.height; y++) for (let x = 0; x < target.width; x++) if (pixels[(y * target.width + x) * 4 + 3] > 8) { left = Math.min(left, x); right = Math.max(right, x + 1); }
       inkBounds.current = { left: Math.max(0, left - 2) / target.width, right: Math.min(target.width, right + 2) / target.width };
-      assets.save(stateKey, fromDataUrl(target.toDataURL('image/png')));
+      assets.save(stateKey, fromDataUrl(target.toDataURL('image/png')), includeInComposer);
     } catch (cause) { setError((cause as Error).message); }
   };
   useEffect(() => {
-    if (editable && visible && mode === 'generate' && ready && !signature && !pendingUrl && name.trim() && !generatedInitial.current) generate(nameStateKey && !editingName ? sourceName : name);
+    if (editable && visible && mode === 'generate' && ready && !signature && !pendingUrl && name.trim() && !generatedInitial.current) generate(nameStateKey && !editingName ? sourceName : name, style, false);
   }, [visible, mode, ready, serialized, pendingUrl, name, sourceName, nameStateKey, editingName, editable]);
   const upload = async (file: File | undefined) => {
     if (!file) return; const generation = ++uploadGeneration.current; setError('');

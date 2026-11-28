@@ -23,14 +23,16 @@ it('maps non-overlapping matches across inline nodes without rescanning each pre
  const ranges:{setStart:ReturnType<typeof vi.fn>;setEnd:ReturnType<typeof vi.fn>}[]=[];
  const walker={currentNode:null as unknown,nextNode(){this.currentNode=nodes.shift()??null;return this.currentNode;}};
  const originals=[...nodes];
- const block={closest:()=>null};
+ const block={dataset:{conversationText:'artifact:a'},closest:()=>({dataset:{messageId:'message-a'}})};
  const root={querySelectorAll:()=>[block],ownerDocument:{
   createTreeWalker:()=>walker,
   createRange:()=>{const range={setStart:vi.fn(),setEnd:vi.fn()};ranges.push(range);return range;},
  }};
  vi.stubGlobal('NodeFilter',{SHOW_TEXT:4});
  try{
-  expect(conversationRanges(root as unknown as HTMLElement,'pr review')).toHaveLength(100);
+  const matches=conversationRanges(root as unknown as HTMLElement,'pr review');
+  expect(matches).toHaveLength(100);
+  expect(matches[0]?.key).toBe('artifact:a:2');
   expect(ranges[0]?.setStart).toHaveBeenCalledExactlyOnceWith(originals[1],0);
   expect(ranges[0]?.setEnd).toHaveBeenCalledExactlyOnceWith(originals[2],7);
   expect(ranges.at(-1)?.setStart).toHaveBeenCalledExactlyOnceWith(originals[298],0);

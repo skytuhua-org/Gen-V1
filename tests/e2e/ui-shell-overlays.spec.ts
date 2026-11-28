@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { resolve } from 'node:path';
+import {serveTaskFixture,taskFixture} from './task-interface-fixture';
 
 const fixture = '/@fs/' + resolve('tests/e2e/ui-shell-overlays-fixture.tsx').replaceAll('\\', '/');
 test.beforeEach(async ({ page }) => {
@@ -7,6 +8,138 @@ test.beforeEach(async ({ page }) => {
     contentType: 'text/html', body: `<html data-theme="dark" data-native-titlebar="true"><body><div id="root"></div><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;await import('${encodeURI(fixture)}');</script></body></html>`,
   }));
   await page.goto('/ui-shell-overlays');
+});
+
+test('the real docked composer anchors notifications across late startup, resize and layout changes',async({page})=>{
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await page.setViewportSize({width:1440,height:900});
+ const snapshot=taskFixture({root:'text',elements:{text:{type:'Text',props:{text:'Composer geometry fixture'}}}});
+ snapshot.artifacts=[];snapshot.userStates=[];
+ await serveTaskFixture(page,snapshot);
+ let openSnapshot!:()=>void;
+ const gate=new Promise<void>(resolve=>{openSnapshot=resolve;});
+ await page.route('**/api/snapshot',async route=>{await gate;await route.fallback();});
+ try{
+  await page.goto('/ui-shell-overlays?composer-toast');
+  const stack=page.getByRole('region',{name:'Notifications',exact:true});
+  await expect(stack).toBeAttached();
+  await page.evaluate(()=>window.dispatchEvent(new Event('fixture-composer-toast')));
+  await expect(stack).toContainText('Composer geometry notification');
+  await expect(stack).toHaveCSS('bottom','24px');
+ }finally{openSnapshot();}
+ const stack=page.getByRole('region',{name:'Notifications',exact:true});
+ const draft=page.getByRole('textbox',{name:'Message',exact:true});
+ await expect(draft).toBeVisible();
+ const gap=()=>stack.evaluate(node=>{
+  const docks=[...document.querySelectorAll('.composer-dock')];
+  const dock=docks.find(el=>el.querySelector('textarea')&&el.getClientRects().length);
+  return (dock?.getBoundingClientRect().top??0)-node.getBoundingClientRect().bottom;
+ });
+ const assertClearance=async()=>{
+  await expect.poll(async()=>{const actual=await gap();return actual>=11&&actual<=14?'12px clearance':{actual,width:page.viewportSize()?.width,css:await stack.evaluate(el=>el.style.bottom)};}).toBe('12px clearance');
+  expect(await draft.evaluate(node=>{
+   const rect=node.getBoundingClientRect();
+   return document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===node;
+  })).toBe(true);
+ };
+ for(const width of [1440,768,560,360]){
+  await page.setViewportSize({width,height:900});
+  await assertClearance();
+ }
+ const before=(await stack.boundingBox())!.y;
+ await draft.fill(Array.from({length:7},(_,index)=>'Draft line '+(index+1)).join('\n'));
+ await assertClearance();
+ await expect.poll(async()=>(await stack.boundingBox())!.y).toBeLessThan(before);
+ await page.setViewportSize({width:1440,height:900});
+ await page.getByRole('button',{name:'Area actions',exact:true}).click();
+ await page.getByRole('menuitem',{name:'Split left / right',exact:true}).click();
+ await expect(page.locator('[data-split-pane]')).toHaveCount(2);
+ await expect(stack).toHaveCSS('bottom','24px');
+ await expect(stack).toContainText('Composer geometry notification');
+});
+
+test('the top native modal owns the shared toaster and Escape dismisses only its focused toast',async({page})=>{
+ await page.goto('/ui-shell-overlays?modal-toast');
+ const open=page.getByRole('button',{name:'Open notification dialog',exact:true});
+ await open.click();
+ const outer=page.getByRole('dialog',{name:'Notification dialog',exact:true});
+ const notifications=(owner:typeof outer)=>owner.getByRole('region',{name:'Notifications',exact:true});
+ const notify=outer.getByRole('button',{name:'Notify from dialog',exact:true});
+ await notify.click();
+ await expect(notifications(outer).getByRole('alert')).toContainText('Notification from dialog');
+ await page.keyboard.press('Tab');
+ await expect(notifications(outer).getByRole('button',{name:'Notification action',exact:true})).toBeFocused();
+ await page.keyboard.press('Tab');
+ const outerDismiss=notifications(outer).getByRole('button',{name:'Dismiss notification',exact:true});
+ await expect(outerDismiss).toBeFocused();
+ await page.keyboard.press('Tab');
+ await expect(outer.getByRole('button',{name:'Close dialog',exact:true})).toBeFocused();
+ await page.keyboard.press('Shift+Tab');
+ await expect(outerDismiss).toBeFocused();
+ await outer.getByRole('button',{name:'Open nested notification dialog',exact:true}).click();
+ const inner=page.getByRole('dialog',{name:'Nested notification dialog',exact:true});
+ await expect(notifications(inner).getByRole('alert')).toContainText('Notification from dialog');
+ const notifyInner=inner.getByRole('button',{name:'Notify from nested dialog',exact:true});
+ await notifyInner.click();
+ const alert=notifications(inner).getByRole('alert').filter({hasText:'Notification from nested dialog'});
+ await expect(alert).toBeInViewport();
+ await alert.getByRole('button',{name:'Dismiss notification',exact:true}).focus();
+ await page.keyboard.press('Escape');
+ await expect(alert).toHaveCount(0);await expect(inner).toBeVisible();
+ await notifyInner.focus();
+ await page.keyboard.press('Escape');
+ await expect(notifications(inner).getByRole('alert')).toHaveCount(0);
+ await expect(notifications(outer).getByRole('alert')).toHaveCount(1);
+ await outer.getByRole('button',{name:'Close dialog',exact:true}).click();
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ await expect(page.getByRole('region',{name:'Notifications',exact:true}).getByRole('alert')).toContainText('Notification from dialog');
+});
+
+test('a timed notification keeps its remaining lifetime when a modal opens',async({page})=>{
+ await page.goto('/ui-shell-overlays?modal-toast');
+ await page.clock.install();
+ await page.getByRole('button',{name:'Show timed notification',exact:true}).click();
+ const notice=page.getByRole('status').filter({hasText:'Timed notification'});
+ await expect(notice).toBeVisible();
+ await page.clock.runFor(700);
+ await page.getByRole('button',{name:'Open notification dialog',exact:true}).click();
+ await expect(page.getByRole('dialog').getByRole('status')).toHaveText('Timed notification');
+ await page.clock.runFor(600);
+ await expect(notice).toHaveCount(0);
+});
+
+test('notification error stays until dismissed and success keeps the ordinary timeout',async({page})=>{
+  await page.goto('/ui-shell-overlays?toast');
+  await page.clock.install();
+  const notices=page.getByRole('region',{name:'Notifications',exact:true});
+  await page.getByRole('button',{name:'Show error',exact:true}).click();
+  await page.getByRole('button',{name:'Show success',exact:true}).click();
+  await expect(notices.getByRole('status')).toContainText('Saved locally');
+  await page.clock.runFor(10_000);
+  await expect(notices.getByRole('status')).toHaveCount(0);
+  const error=notices.getByRole('alert');
+  await expect(error).toContainText('Upload failed');
+  await error.getByRole('button',{name:'Dismiss notification'}).click();
+  await expect(error).toHaveCount(0);
+});
+
+test('keyboard focus pauses a custom notification for its remaining time',async({page})=>{
+  await page.goto('/ui-shell-overlays?toast');
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now()+100));
+  const trigger=page.getByRole('button',{name:'Show short notice',exact:true});
+  await trigger.click();
+  const notice=page.getByRole('region',{name:'Notifications',exact:true}).getByRole('status');
+  const dismiss=notice.getByRole('button',{name:'Dismiss notification'});
+  await page.keyboard.press('Tab');
+  await expect(dismiss).toBeFocused();
+  await page.clock.runFor(10_000);
+  await expect(notice).toContainText('Short notice');
+  await trigger.focus();
+  await page.clock.runFor(299);
+  await expect(notice).toHaveAttribute('data-state','open');
+  await page.clock.runFor(2);
+  await expect(notice).toHaveCount(0);
 });
 
 test('a model popup belongs to its native modal and keeps selection, draft and Escape usable', async ({ page }) => {

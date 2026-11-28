@@ -82,8 +82,10 @@ test('a delayed PNG decode cannot replace a newer drawn mark',async({page})=>{
  await page.evaluate(async()=>{(window as unknown as {releaseMarkDecode:()=>void}).releaseMarkDecode();await new Promise(requestAnimationFrame);});await expect(signature.getByText('Saving signature…',{exact:true})).toHaveCount(0);expect(host.images.size).toBe(0);expect((host.snapshot.userStates[0].values.signature as {kind:string}).kind).toBe('drawn');
 });
 
-async function signingFixture(page: Page, fit?: 'width' | 'page', values: Record<string, unknown> = {}) {
+async function signingFixture(page: Page, fit?: 'width' | 'page', values: Record<string, unknown> = {}, composer = false) {
   const snapshot = taskFixture(signingSpec(fit), {}, { name: 'Alex Morgan', step: 'notices', ...values });
+  if (composer) snapshot.resources.push({id:'manual', threadId:'task-thread', kind:'attachment', label:'manual.txt', path:'/manual.txt', writable:false, createdAt:new Date().toISOString()});
+  let failUpload = false;
   const fixture = await serveTaskFixture(page, snapshot);
   const pdf = await createSigningPdfFixture({ pages: 1 }), images = new Map<string, Buffer>();
   let downloads = 0;
@@ -94,12 +96,22 @@ async function signingFixture(page: Page, fit?: 'width' | 'page', values: Record
   });
   await page.route('**/api/commands', async route => {
     const command = route.request().postDataJSON();
+    if (composer && command.type === 'resource.remove-composer-attachment') {
+      const grant = snapshot.resources.find(resource => resource.id === command.payload.resourceId)!;
+      grant.composerAttachment = {...grant.composerAttachment!, hidden:true};
+      await fixture.publish();
+      return route.fulfill({json:{commandId:command.id,seq:snapshot.seq,result:{removed:grant.id}}});
+    }
     if (command.type !== 'resource.upload') return route.fallback();
+    if (failUpload) return route.fulfill({status:500,json:{error:'Could not save signature'}});
     const id = `mark-${images.size}`;
     images.set(id, Buffer.from(command.payload.base64, 'base64'));
-    return route.fulfill({ json: { commandId: command.id, seq: snapshot.seq, result: { id, threadId: 'task-thread', kind: 'attachment', label: 'signature.png' } } });
+    const result = {id,threadId:'task-thread',kind:'attachment' as const,label:'signature.png',path:'/signature.png',writable:false,createdAt:new Date().toISOString(),
+      ...(composer && command.payload.attachmentArtifactId === snapshot.artifacts[0].id ? {composerAttachment:{artifactId:snapshot.artifacts[0].id,title:snapshot.artifacts[0].title,...(command.payload.composerHidden ? {hidden:true as const} : {})}} : {})};
+    if (composer) { snapshot.resources.push(result); await fixture.publish(); }
+    return route.fulfill({ json: { commandId: command.id, seq: snapshot.seq, result } });
   });
-  return { ...fixture, images, downloads: () => downloads };
+  return { ...fixture, images, downloads: () => downloads, failNextUpload: () => { failUpload = true; } };
 }
 
 for (const [kind, signature] of Object.entries({ typed: { kind: 'typed', text: 'Alex Morgan' }, drawn: { kind: 'drawn', points: [{ x: .2, y: .4 }, { x: .8, y: .6 }] } })) {
@@ -224,4 +236,47 @@ test('reduced motion switches steps immediately without exposing outgoing contro
   await page.getByRole('button', { name: 'Next step', exact: true }).click();
   await expect(page.locator('.task-step-content>div').first()).toBeHidden();
   expect(await page.locator('.task-step-content>div').evaluateAll(elements => elements.flatMap(element => element.getAnimations()))).toEqual([]);
+});
+
+test('generated attachment notice identifies the artifact and Undo preserves the visual signature', async ({page}) => {
+  await page.emulateMedia({reducedMotion:'reduce'});
+  const host = await signingFixture(page, undefined, {step:'signature'}, true);
+  await page.goto('/');
+  const signature = page.getByRole('region', {name:'Add your signature',exact:true});
+  const image = signature.getByRole('img', {name:'Selected visual signature',exact:true});
+  const notice = page.locator('.composer-attachment-notice');
+  const composer = page.locator('.composer:visible').first();
+  const band = composer.getByRole('group', {name:'Attachments',exact:true});
+  await signature.scrollIntoViewIfNeeded();
+  await expect(image).toBeVisible();
+  await expect(band).toContainText('manual.txt');
+  await expect(band).not.toContainText('signature.png');
+  await expect(notice).toHaveCount(0);
+
+  const style = signature.getByRole('button', {name:'Another style',exact:true});
+  await style.focus();
+  await style.press('Enter');
+  await expect(notice).toContainText('Attached signature.png from Task surface');
+  const noticeBounds = (await notice.boundingBox())!, composerBounds = (await composer.boundingBox())!;
+  expect(composerBounds.y - (noticeBounds.y + noticeBounds.height)).toBeCloseTo(8, 0);
+  await expect(style).toBeFocused();
+  const chip = band.getByRole('button', {name:'Remove resource signature.png',exact:true});
+  await expect(chip).toHaveAccessibleDescription('Added by "Task surface"');
+  await expect(composer.getByRole('status').filter({hasText:'signature.png added to attachments'})).toHaveCount(1);
+  expect(await notice.evaluate(node=>getComputedStyle(node).transform)).toBe('none');
+  const undo = notice.getByRole('button', {name:'Undo',exact:true});
+  await undo.focus();
+  await undo.press('Enter');
+  await expect(chip).toHaveCount(0);
+  await expect(composer.getByRole('status').filter({hasText:'signature.png removed'})).toHaveCount(1);
+  await expect(band).toContainText('manual.txt');
+  await expect(image).toBeVisible();
+  expect(host.snapshot.resources.filter(resource=>resource.composerAttachment?.hidden)).toHaveLength(2);
+
+  host.failNextUpload();
+  await style.focus();
+  await style.press('Enter');
+  await expect(signature.getByRole('button', {name:'Retry signature upload',exact:true})).toBeVisible();
+  await expect(chip).toHaveCount(0);
+  await expect(notice).toHaveCount(0);
 });
