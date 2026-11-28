@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -40,6 +40,35 @@ it('measures the HTML-referenced entry rather than a retained older bundle', asy
     expect(result.bundle.after).toMatchObject({ filename: 'index-z-current.js', bytes: 70 });
   } finally { await cleanup(directory); }
 });
+
+it.each(['open', 'close'])('removes only owned measurement scratch on Store %s failure', async phase => {
+  const directory = await fixture(), output = join(directory, 'failed-output'), scratch = join(directory, 'scratch');
+  try {
+    await mkdir(scratch);
+    await writeFile(join(scratch, 'keep'), 'not owned by the CLI');
+    const store = pathToFileURL(resolve('packages/storage/store.ts')).href;
+    const stub = phase === 'open' ? 'export class Store { constructor() { throw Error("injected Store open failure"); } }'
+      : `import { Store as RealStore } from ${JSON.stringify(store)}; export class Store extends RealStore { close() { super.close(); throw Error("injected Store close failure"); } }`;
+    const source = `
+      import { registerHooks } from 'node:module';
+      const script = ${JSON.stringify(pathToFileURL(script).href)};
+      registerHooks({ resolve(specifier, context, next) {
+        if (context.parentURL === script && specifier === '../packages/storage/store.ts') {
+          return { shortCircuit: true, url: 'data:text/javascript,' + encodeURIComponent(${JSON.stringify(stub)}) };
+        }
+        return next(specifier, context);
+      } });
+      process.argv.splice(1, 0, script);
+      await import(script);
+    `;
+    await expect(execute(process.execPath, ['--import', loader, '--input-type=module', '--eval', source, '--', output], {
+      cwd: directory, encoding: 'utf8', timeout: 15_000, env: { ...process.env, TMPDIR: scratch, TEMP: scratch, TMP: scratch },
+    })).rejects.toMatchObject({ code: 1, stdout: '', stderr: expect.stringContaining('injected Store ' + phase + ' failure') });
+    expect((await readdir(scratch)).filter(name => name.startsWith('harness-context-measure-'))).toEqual([]);
+    expect(await readFile(join(scratch, 'keep'), 'utf8')).toBe('not owned by the CLI');
+    await expect(readFile(join(output, 'efficiency.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally { await cleanup(directory); }
+}, 20_000);
 
 it('writes a new requested receipt without replacing historical or existing output', async () => {
   const directory = await fixture(), output = join(directory, 'fresh-output');
