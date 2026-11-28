@@ -4,6 +4,7 @@ import { ModelPicker } from '../../apps/web/src/ModelPicker';
 import { useModalRegion } from '../../apps/web/src/focus';
 import { Modal } from '../../packages/ui-shell/Modal';
 import { TooltipLayer } from '../../packages/ui-shell/Tooltip';
+import { Toaster, toast } from '../../packages/ui-shell/Toast';
 import { Popover } from '../../packages/ui-shell/Popover';
 import '../../apps/web/src/styles.css';
 
@@ -73,5 +74,30 @@ function Fixture() {
   </>;
 }
 
+function ToastFixture() {
+  return <>
+    <button type="button" onClick={() => toast('Upload failed', {tone:'error'})}>Show error</button>
+    <button type="button" onClick={() => toast('Saved locally', {tone:'success'})}>Show success</button>
+    <button type="button" onClick={() => toast('Short notice', {durationMs:300})}>Show short notice</button>
+    <Toaster/>
+  </>;
+}
+
+function ModalToastFixture() {
+  const [outer, setOuter] = useState(false), [inner, setInner] = useState(false);
+  return <>
+    <button type="button" onClick={() => toast('Timed notification', {durationMs:1000})}>Show timed notification</button>
+    <button type="button" onClick={() => setOuter(true)}>Open notification dialog</button>
+    <Modal open={outer} title="Notification dialog" onClose={() => setOuter(false)}>
+      <button type="button" onClick={() => setInner(true)}>Open nested notification dialog</button>
+      <button type="button" onClick={() => toast('Notification from dialog', {tone:'error', action:{label:'Notification action',onClick:()=>{}}})}>Notify from dialog</button>
+    </Modal>
+    <Modal open={inner} title="Nested notification dialog" onClose={() => setInner(false)}>
+      <button type="button" onClick={() => toast('Notification from nested dialog', {tone:'error'})}>Notify from nested dialog</button>
+    </Modal>
+    <Toaster/>
+  </>;
+}
+
 const retention = new URLSearchParams(location.search).get('retention');
-createRoot(document.getElementById('root')!).render(retention ? <RetentionFixture mode={retention}/> : <Fixture />);
+createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).has('modal-toast') ? <ModalToastFixture/> : new URLSearchParams(location.search).has('toast') ? <ToastFixture/> : retention ? <RetentionFixture mode={retention}/> : <Fixture />);
