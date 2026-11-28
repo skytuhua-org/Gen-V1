@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { ModelPicker } from '../../apps/web/src/ModelPicker';
 import { Modal } from '../../packages/ui-shell/Modal';
 import { useModalRegion } from '../../apps/web/src/focus';
+import { DesktopProvider } from '../../apps/web/src/desktop-context';
+import type { DesktopBridge, DesktopContext } from '../../packages/desktop-contract/index';
 import type { ModelInfo } from '../../packages/contracts';
 import '../../apps/web/src/styles.css';
 
@@ -13,6 +15,15 @@ const catalog: ModelInfo[] = [
   { id: 'openai/beta', provider: 'openai', name: 'Same name', thinkingLevels: ['medium', 'max'] },
   { id: 'claude-code/beta', provider: 'claude-code', name: 'Same name' },
 ];
+const stubBridge = {
+  ready: async () => ({}),
+  onState: () => () => {},
+  onCloseRequested: () => () => {},
+  detach: async () => ({}),
+  reattach: async () => {},
+} as unknown as DesktopBridge;
+const stubContext = { windowId: 'main', surface: { kind: 'plugin', pluginId: 'fixture', scopeId: 'fixture', surfaceId: 'fixture' }, windows: [] } as DesktopContext;
+
 function Fixture() {
   const params = new URLSearchParams(location.search), large = params.has('large');
   const [models, setModels] = useState<ModelInfo[]>(large ? Array.from({ length: 100 }, (_, i) => ({
@@ -37,6 +48,7 @@ function Fixture() {
     <button type="button" style={{ position: 'absolute', left: 8, top: 60 }}>Outside</button>
     {params.has('native') ? <Modal open={open} title="Picker owner" onClose={() => setOpen(false)}>{content}</Modal>
       : params.has('aria') ? open && <section ref={region} role="dialog" aria-modal="true" aria-label="Picker owner" className="dialog">{content}</section>
+      : params.has('desktop') ? <DesktopProvider bridge={stubBridge} context={stubContext}><section>{content}</section></DesktopProvider>
       : <section>{content}</section>}
   </main>;
 }

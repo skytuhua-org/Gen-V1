@@ -5,6 +5,7 @@ import {workareaBoundary} from './popover-boundary';
 import {Bot,Check,ChevronDown,LayoutGrid,Search,Star} from 'lucide-react';
 import type {ModelInfo} from '../../../packages/contracts';
 import {SUBSCRIPTION_CONNECTIONS} from '../../../packages/contracts/connections';
+import {useDesktop} from './desktop-context';
 import './model-picker.css';
 
 export interface ModelPickerHandle {open():void}
@@ -27,6 +28,7 @@ function readFavorites():string[]{
 type ModelFilter={kind:'all'|'favorites'}|{kind:'provider';provider:string};
 
 export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinkingLevel='',onThinkingChange,scopeHint,onNewTask}:ModelPickerProps){
+ const desktop=useDesktop();
  const id=useId(),trigger=useRef<HTMLButtonElement>(null),popover=useRef<HTMLDivElement>(null),search=useRef<HTMLInputElement>(null),efforts=useRef<HTMLDivElement>(null);
  const [open,setOpen]=useState(false),[present,setPresent]=useState(false),[query,setQuery]=useState(''),[activeId,setActiveId]=useState(modelId);
  const [keyboard,setKeyboard]=useState(false),[filter,setFilter]=useState<ModelFilter>({kind:'all'}),[favorites,setFavorites]=useState(readFavorites);
@@ -103,7 +105,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
    id={id+'-picker'} role={combined?'dialog':undefined} aria-label={combined?'Model and reasoning':undefined}
    className="model-picker-popover" onKeyDown={event=>{
     if(event.key==='Escape'&&isComposing(event)){event.preventDefault();return;}
-    if((event.ctrlKey||event.metaKey)&&!event.altKey&&!isComposing(event)&&/^[1-9]$/.test(event.key)){
+    if(desktop&&(event.ctrlKey||event.metaKey)&&!event.altKey&&!isComposing(event)&&/^[1-9]$/.test(event.key)){
      const model=visible[Number(event.key)-1];
      if(model){event.preventDefault();choose(model);}
     }
@@ -121,7 +123,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
      {groups.map(([value,group])=><div role="group" aria-label={providerLabel(value)} className="model-picker-group" key={value}><div className="model-picker-provider" aria-hidden="true">{providerLabel(value)}</div>{group.map(model=>{
       const shortcut=visible.indexOf(model),favorite=favorites.includes(model.id);
       return <div className="model-picker-row" key={model.id}>
-       <div id={optionId(model)} role="option" aria-label={model.name} aria-describedby={optionId(model)+'-identity'} aria-selected={model.id===modelId} data-active={keyboard&&model.id===active?.id} className="model-picker-option" onPointerMove={()=>{setActiveId(model.id);setKeyboard(false);}} onMouseDown={event=>event.preventDefault()} onClick={()=>choose(model)}><Bot size={17} aria-hidden="true"/><span><span>{model.name}</span><small id={optionId(model)+'-identity'}>{model.id}</small></span>{shortcut>=0&&shortcut<9&&<kbd aria-hidden="true">Ctrl {shortcut+1}</kbd>}{model.id===modelId&&<Check className="model-picker-check" size={16} aria-hidden="true"/>}</div>
+       <div id={optionId(model)} role="option" aria-label={model.name} aria-describedby={optionId(model)+'-identity'} aria-selected={model.id===modelId} data-active={keyboard&&model.id===active?.id} className="model-picker-option" onPointerMove={()=>{setActiveId(model.id);setKeyboard(false);}} onMouseDown={event=>event.preventDefault()} onClick={()=>choose(model)}><Bot size={17} aria-hidden="true"/><span><span>{model.name}</span><small id={optionId(model)+'-identity'}>{model.id}</small></span>{desktop&&shortcut>=0&&shortcut<9&&<kbd aria-hidden="true">Ctrl {shortcut+1}</kbd>}{model.id===modelId&&<Check className="model-picker-check" size={16} aria-hidden="true"/>}</div>
        <button type="button" className="model-picker-favorite" aria-pressed={favorite} aria-label={(favorite?'Remove ':'Add ')+model.id+(favorite?' from favorites':' to favorites')} tabIndex={model.id===active?.id?0:-1} onClick={event=>{event.stopPropagation();toggleFavorite(model);}}><Star size={14} aria-hidden="true" fill={favorite?'currentColor':'none'}/></button>
       </div>;
      })}</div>)}

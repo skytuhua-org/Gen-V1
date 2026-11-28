@@ -200,7 +200,14 @@ test('favorite stars persist locally, filter through the rail and never commit t
   await expect(page.getByRole('group', { name: 'Model filters' }).getByRole('button', { name: /^Favorites/ })).toContainText('0');
 });
 
-test('Ctrl+number quick-select commits the matching visible row', async ({ page }) => {
+test('Ctrl+number quick-select stays desktop-only: absent in the browser build, committed under the desktop bridge', async ({ page }) => {
+  await trigger(page).click();
+  await expect(page.getByRole('option', { name: 'Alpha', exact: true }).locator('kbd')).toHaveCount(0);
+  expect(await page.getByRole('option').evaluateAll(nodes => nodes.some(node => node.querySelector('kbd')?.textContent?.includes('Ctrl')))).toBe(false);
+  await search(page).press('Control+2');
+  await expect(page.getByLabel('Committed choice')).toHaveText('openai/alpha|high');
+  await expect(trigger(page)).toHaveAttribute('aria-expanded', 'true');
+  await page.goto('/compact-model-picker?desktop=1');
   await trigger(page).click();
   await expect(page.getByRole('option', { name: 'Alpha', exact: true }).locator('kbd')).toHaveText('Ctrl 1');
   await search(page).press('Control+2');
