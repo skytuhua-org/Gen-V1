@@ -29,6 +29,15 @@ async function fixture(page: Page) {
   const host = await serveTaskFixture(page, snapshot), reads: string[] = [];
   await page.route('**/api/commands', async route => {
     const command = route.request().postDataJSON() as typeof host.commands[number];
+    if (command.type === 'thread.mode') {
+      const thread=snapshot.threads.find(thread=>thread.id===command.threadId);
+      const {mode}=command.payload;
+      if (!thread || (mode !== 'plan' && mode !== 'build')) throw new Error('Unexpected mode command');
+      thread.mode=mode;host.commands.push(command);
+      await host.publish();
+      await route.fulfill({json:{commandId:command.id,seq:snapshot.seq,result:thread}});
+      return;
+    }
     if (command.type !== 'message.send' || command.payload.skills === undefined) return route.fallback();
     host.commands.push(command);
     // Match the current Service boundary: catalog readability never enables skill admission.
@@ -55,10 +64,79 @@ test('slash keeps installed skills browsable but unavailable for selection or se
   await f.input.fill('/skill:00'); await expect(menu.getByRole('option', {name: /Procedure 00/})).toBeVisible(); await f.input.press('Enter');
   await expect(f.input).toHaveValue('/skill:00');
   expect(f.commands.filter(command => command.type === 'message.send')).toHaveLength(0);
-  await f.input.fill('/skill:'); await expect(menu.getByRole('option', {name: /Procedure 49/})).toBeAttached();
+  await f.input.fill(''); await f.input.fill('/skill:'); await expect(menu.getByRole('option', {name: /Procedure 49/})).toBeAttached();
   await page.getByRole('button', {name: 'Load more skills'}).click(); await expect(menu.getByRole('option', {name: /Procedure 76/})).toBeAttached();
   expect(f.reads.some(query => query.includes('cursor=page-two'))).toBe(true);
 });
+test('slash skill results and the pagination footer stay mounted during a narrower query',async({page})=>{
+ const f=await fixture(page);
+ await f.input.fill('/skill:');
+ const menu=page.getByRole('listbox',{name:'Commands and skills'});
+ await expect(menu.getByRole('option',{name:/Procedure 00/})).toBeAttached();
+ const more=page.getByRole('button',{name:'Load more skills'});
+ await expect(more).toBeEnabled();
+ let release!:()=>void;
+ const gate=new Promise<void>(resolve=>{release=resolve;});
+ await page.route('**/api/skill-catalog?*',async route=>{
+  if(new URL(route.request().url()).searchParams.get('query')==='76')await gate;
+  return route.fallback();
+ });
+ await f.input.fill('/skill:76');
+ try{
+  await expect(menu).toHaveAttribute('aria-busy','true');
+  await expect(menu.getByRole('option',{name:/Procedure 00/})).toBeAttached();
+  await expect(more).toBeDisabled();
+ }finally{release();}
+ await expect(menu.getByRole('option',{name:/Procedure 76/})).toBeVisible();
+ await expect(menu.getByRole('option',{name:/Procedure 00/})).toHaveCount(0);
+ await expect(menu).not.toHaveAttribute('aria-busy','true');
+ await expect(more).toHaveCount(0);
+ expect(f.reads.some(url=>url.includes('cursor='))).toBe(false);
+});
+
+test('empty command results explain that Enter dismisses before normal send resumes',async({page})=>{
+ const f=await fixture(page);
+ await f.input.fill('/unmatched');
+ const menu=page.getByRole('listbox',{name:'Commands and skills'});
+ await expect(menu).toBeVisible();
+ await expect(page.getByText('No commands or skills found',{exact:true})).toBeVisible();
+ await expect(page.getByText('Enter or Esc Dismiss',{exact:true})).toBeVisible();
+ await f.input.press('Enter');
+ await expect(menu).toHaveCount(0);
+ await expect(f.input).toHaveValue('/unmatched');
+ expect(f.commands.filter(command=>command.type==='message.send')).toHaveLength(0);
+ await f.input.press('Enter');
+ await expect.poll(()=>f.commands.filter(command=>command.type==='message.send').map(command=>command.payload.content)).toEqual(['/unmatched']);
+ await expect(f.input).toHaveValue('');
+});
+
+test('End loads the next page of unavailable skills and Enter retries a catalog error', async ({page}) => {
+  const f = await fixture(page);
+  await f.input.fill('/skill:');
+  const menu = page.getByRole('listbox', {name: 'Commands and skills'});
+  await expect(menu.getByRole('option', {name: /Procedure 49/})).toBeAttached();
+  await expect(page.getByText('End Load more', {exact: false})).toBeVisible();
+  await f.input.press('End');
+  await expect(menu.getByRole('option', {name: /Procedure 76/})).toBeAttached();
+  await expect(f.input).toBeFocused();
+  expect(f.reads.filter(query => query.includes('cursor=page-two'))).toHaveLength(1);
+  await expect(page.getByText('End Load more', {exact: false})).toHaveCount(0);
+
+  let attempts = 0;
+  await page.route('**/api/skill-catalog?*', route => {
+    attempts++;
+    return attempts === 1
+      ? route.fulfill({status: 503, json: {error: {message: 'Synthetic catalog failure'}}})
+      : route.fallback();
+  });
+  await f.input.fill('/model');
+  await expect(page.getByText('Enter Retry · Esc Close', {exact: true})).toBeVisible();
+  await f.input.press('Enter');
+  await expect.poll(() => attempts).toBe(2);
+  await expect(page.getByRole('button', {name: 'Reload', exact: true})).toHaveCount(0);
+  await expect(f.input).toHaveValue('/model');
+});
+
 test('keyboard model selection opens the existing picker, while hover and Escape never commit commands', async ({page}) => {
   const f = await fixture(page); await f.input.fill('/model'); await expect(page.getByRole('listbox', {name: 'Commands and skills'})).toBeVisible();
   await f.input.press('Enter'); await expect(page.getByRole('searchbox', {name: 'Search models'})).toBeVisible();
@@ -74,13 +152,15 @@ test('URLs, filesystem paths and composing Enter do not accidentally activate co
   expect(f.commands.filter(command => ['thread.mode', 'message.send'].includes(command.type))).toHaveLength(0);
   await f.input.dispatchEvent('compositionend');
 });
-test('plan and default use canonical mode commands, while Escape can reopen after editing', async ({page}) => {
+test('plan and default use canonical commands after Escape and a fresh token', async ({page}) => {
   const f = await fixture(page); await f.input.fill('/plan'); await expect(page.getByRole('listbox', {name: 'Commands and skills'})).toBeVisible();
-  await f.input.press('Escape'); await f.input.press('Backspace'); await expect(page.getByRole('listbox', {name: 'Commands and skills'})).toBeVisible();
-  await f.input.press('n'); await expect(page.getByRole('listbox', {name: 'Commands and skills'})).toBeVisible();
+  await f.input.press('Escape'); await f.input.press('Backspace'); await expect(page.getByRole('listbox', {name: 'Commands and skills'})).toHaveCount(0);
+  await f.input.fill(''); await f.input.fill('/plan'); await expect(page.getByRole('listbox', {name: 'Commands and skills'})).toBeVisible();
   await f.input.press('Enter'); await expect.poll(() => f.commands.filter(command => command.type === 'thread.mode').map(command => command.payload)).toEqual([{mode: 'plan'}]);
-  await f.input.fill('/default'); await expect(page.getByRole('listbox', {name: 'Commands and skills'})).toBeVisible(); await f.input.press('Enter');
+  await f.input.fill('/default'); await expect(page.getByRole('option', {name: /^\/default/})).toBeVisible(); await f.input.press('Enter');
   await expect.poll(() => f.commands.filter(command => command.type === 'thread.mode').map(command => command.payload)).toEqual([{mode: 'plan'}, {mode: 'build'}]);
+  await expect(f.input).toHaveValue('');
+  await expect(page.getByRole('button',{name:'Task mode'})).toContainText('Build');
   expect(f.commands.filter(command => command.type === 'message.send')).toHaveLength(0);
 });
 test('retained unavailable skills survive reload and require explicit removal before a new send', async ({page}) => {
