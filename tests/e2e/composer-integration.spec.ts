@@ -118,9 +118,13 @@ test('successful send consumes only the accepted files and presents them in the 
   return route.fulfill({json:{commandId:cmd.id,seq:snapshot.seq,result:{messageId,inputId:cmd.id}}});
  });
  await page.goto('/');
- const composer=page.locator('.composer:visible'),files=composer.locator('input[type=file]');
+ const composer=page.locator('.composer:visible');
  const names=['review-notes-with-a-long-file-name.txt','fixture-guide-with-a-long-file-name.txt'];
- await files.setInputFiles(names.map((name,index)=>({name,mimeType:'text/plain',buffer:Buffer.from(String(index))})));
+ const [fileChooser]=await Promise.all([
+  page.waitForEvent('filechooser'),
+  composer.getByRole('button',{name:'Attach files',exact:true}).click(),
+ ]);
+ await fileChooser.setFiles(names.map((name,index)=>({name,mimeType:'text/plain',buffer:Buffer.from(String(index))})));
  const tray=composer.getByRole('group',{name:'Attachments',exact:true});
  for(const name of names)await expect(tray.getByText(name,{exact:true})).toBeVisible();
  const draft=composer.getByRole('textbox',{name:'Message',exact:true});
