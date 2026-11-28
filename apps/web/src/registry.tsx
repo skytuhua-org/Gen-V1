@@ -161,6 +161,7 @@ function useArtifactSubmission(actionId: string) {
   const focus = useRef<SubmissionFocus | null>(null);
   const acknowledgmentCleanup = useRef<(() => void) | undefined>(undefined);
   const [acknowledgment, setAcknowledgment] = useState<ChoiceCapture[] | null>(null);
+  const [failed, setFailed] = useState(false);
   const [focusReady, setFocusReady] = useState<SubmissionFocus | null>(null);
   const clearAcknowledgment = () => {
     acknowledgmentCleanup.current?.();
@@ -169,6 +170,7 @@ function useArtifactSubmission(actionId: string) {
   };
   useLayoutEffect(() => {
     setAcknowledgment(null);
+    setFailed(false);
     setFocusReady(null);
     return () => {
       attempt.current = null;
@@ -188,6 +190,7 @@ function useArtifactSubmission(actionId: string) {
   const submit = (payload: unknown, captures: ChoiceCapture[], button: HTMLButtonElement | null, clearAccepted?: () => void) => {
     if (owner === null || attempt.current) return;
     clearAcknowledgment();
+    setFailed(false);
     focus.current?.stop();
     const initiatingFocus = watchSubmissionFocus(button);
     focus.current = initiatingFocus;
@@ -197,7 +200,10 @@ function useArtifactSubmission(actionId: string) {
       if (attempt.current !== token) return;
       attempt.current = null;
       setFocusReady(initiatingFocus);
-      if (!accepted) return;
+      if (!accepted) {
+        setFailed(true);
+        return;
+      }
       clearAccepted?.();
       setAcknowledgment(captures);
       const timeout = setTimeout(clearAcknowledgment, 4_000);
@@ -208,7 +214,8 @@ function useArtifactSubmission(actionId: string) {
     });
   };
   const indicator = action.busy ? 'busy' : acknowledgment ? 'acknowledged' : 'idle';
-  return { busy: action.busy, error: action.error, active: owner !== null, acknowledgment, choices, submit, indicator } as const;
+  const error = failed ? action.error || 'The request failed. Try again.' : '';
+  return { busy: action.busy, error, active: owner !== null, acknowledgment, choices, submit, indicator } as const;
 }
 
 function SubmissionFeedback({ submission, retry }: { submission: ReturnType<typeof useArtifactSubmission>; retry: () => void }) {

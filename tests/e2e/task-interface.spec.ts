@@ -615,6 +615,19 @@ test.describe('ACT04 artifact submission feedback', () => {
     });
   }
 
+  test('a failed submission with an empty source message still offers Retry', async ({ page }) => {
+    await serveTaskFixture(page, submissionFixture(deliveryForm()));
+    await page.route('**/api/commands', async route => {
+      if (route.request().postDataJSON().type !== 'action.submit') return route.fallback();
+      await route.fulfill({ status: 500, json: { error: { code: 'ACTION_FAILED', message: '' } } });
+    });
+    await openApp(page);
+    await page.getByRole('button', { name: 'Save choice', exact: true }).click();
+    const artifact = page.locator('[data-artifact-id="task-surface"]');
+    await expect(artifact.getByRole('alert')).toHaveText('The request failed. Try again.', { timeout: 3000 });
+    await expect(artifact.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+  });
+
   test('standalone Button preserves its name and acknowledges one Space activation', async ({ page }) => {
     let release = () => {};
     const gate = new Promise<void>(resolve => { release = resolve; });
