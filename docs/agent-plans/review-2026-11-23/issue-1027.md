@@ -1,4 +1,4 @@
-**Full current issue mirror:** [issue-1027.md](https://github.com/skytuhua-org/Gen-V1/blob/agent/cleanup-plan-mirrors-r2/docs/agent-plans/review-2026-11-23/issue-1027.md). The publication checkpoint pins the exact commit.
+**Full current issue mirror:** [issue-1027.md](https://github.com/skytuhua-org/Gen-V1/blob/ae54c94b4efa6defb01171f2302acad73d143829/docs/agent-plans/review-2026-11-23/issue-1027.md). The publication checkpoint pins the exact commit.
 
 Publication supplement under #1803, cleanup-2026-11-23-r2: preserve the concurrent #1992 plan below. Integrated #709/#733 heads do not establish installed compaction acceptance. The bounded #993/#1227 shutdown repair has subsequent main Browser passes in runs 45318044111 and 45319348309; this removes that blocker without certifying the remaining M04 gates.
 

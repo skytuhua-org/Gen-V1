@@ -1,4 +1,4 @@
-**Full current issue mirror:** [issue-1030.md](https://github.com/skytuhua-org/Gen-V1/blob/agent/cleanup-plan-mirrors-r2/docs/agent-plans/review-2026-11-23/issue-1030.md). The publication checkpoint pins the exact commit.
+**Full current issue mirror:** [issue-1030.md](https://github.com/skytuhua-org/Gen-V1/blob/ae54c94b4efa6defb01171f2302acad73d143829/docs/agent-plans/review-2026-11-23/issue-1030.md). The publication checkpoint pins the exact commit.
 
 Publication supplement under #1803, cleanup-2026-11-23-r2: preserve the concurrent #1992 plan below. Historical classification and real-host receipts remain evidence for their named source. #1421 remains the retained missing-check classification candidate, while integrated #699 does not restore retired interactive controls. The current plan's production-workflow and release gates remain open.
 

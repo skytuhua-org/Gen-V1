@@ -1,4 +1,4 @@
-**Full current issue mirror:** [issue-993.md](https://github.com/skytuhua-org/Gen-V1/blob/agent/cleanup-plan-mirrors-r2/docs/agent-plans/review-2026-11-23/issue-993.md). The publication checkpoint pins the exact commit.
+**Full current issue mirror:** [issue-993.md](https://github.com/skytuhua-org/Gen-V1/blob/ae54c94b4efa6defb01171f2302acad73d143829/docs/agent-plans/review-2026-11-23/issue-993.md). The publication checkpoint pins the exact commit.
 
 # Browser restart shutdown repair: verified completion
 

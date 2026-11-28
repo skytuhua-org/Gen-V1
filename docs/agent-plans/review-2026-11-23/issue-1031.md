@@ -1,4 +1,4 @@
-**Full current issue mirror:** [issue-1031.md](https://github.com/skytuhua-org/Gen-V1/blob/agent/cleanup-plan-mirrors-r2/docs/agent-plans/review-2026-11-23/issue-1031.md). The publication checkpoint pins the exact commit.
+**Full current issue mirror:** [issue-1031.md](https://github.com/skytuhua-org/Gen-V1/blob/ae54c94b4efa6defb01171f2302acad73d143829/docs/agent-plans/review-2026-11-23/issue-1031.md). The publication checkpoint pins the exact commit.
 
 Publication supplement under #1803, cleanup-2026-11-23-r2: preserve the concurrent #1992 plan below. Main runs [45318044111](https://github.com/skytuhua-org/Gen-V1/actions/runs/45318044111) and [45319348309](https://github.com/skytuhua-org/Gen-V1/actions/runs/45319348309) completed all seven mandatory jobs. Their Browser jobs 138189564451/138193832567 passed host-loop restart in 5.3s/5.7s and durable-effects restart in 7.3s/7.9s. Independent source review supports the bounded #993/#1227 shutdown completion; native lease/MCP/Hermes/plugin effects, cross-process cleanup, #1719 integration and #774 backend acceptance remain separate open gates.
 
