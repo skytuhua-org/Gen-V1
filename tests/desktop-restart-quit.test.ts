@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SpawnOptions } from 'node:child_process';
@@ -23,6 +23,13 @@ vi.mock('../apps/desktop/attention-popups.ts', () => ({
 class FixtureWindow extends EventEmitter {
   private static nextId = 0;
   private destroyed = false;
+  readonly initialBounds: { x: number; y: number; width: number; height: number };
+  private bounds: FixtureWindow['initialBounds'];
+  constructor(options: { x: number; y: number; width: number; height: number }) {
+    super();
+    this.initialBounds = { x: options.x, y: options.y, width: options.width, height: options.height };
+    this.bounds = { ...this.initialBounds };
+  }
   readonly contentView = { addChildView() {}, removeChildView() {} };
   readonly closeRequest = deferred<string>();
   readonly messages: Array<{ channel: string; value: unknown }> = [];
@@ -44,8 +51,13 @@ class FixtureWindow extends EventEmitter {
   isMaximized() { return false; }
   isFullScreen() { return false; }
   isAlwaysOnTop() { return false; }
-  getNormalBounds() { return { x: 0, y: 0, width: 900, height: 700 }; }
+  getNormalBounds() { return { ...this.bounds }; }
   getBounds() { return this.getNormalBounds(); }
+  moveTo(bounds: FixtureWindow['initialBounds']) {
+    if (process.platform === 'win32' || process.platform === 'darwin') this.emit('will-move', {}, bounds);
+    this.bounds = { ...bounds };
+    this.emit('move');
+  }
   getContentSize() { return [900, 700]; }
   show() {}
   destroy() { this.destroyed = true; this.emit('closed'); }
@@ -87,12 +99,27 @@ class Sidecar extends EventEmitter {
   connected = true;
   exitCode: number | null = null;
   signalCode = null;
+  failNextLayoutSave = false;
+  holdNextLayoutSave = false;
+  releaseLayoutSave: (() => void) | undefined;
+  readonly layoutSaves: unknown[] = [];
   readonly shutdown = deferred();
   constructor(readonly pid: number, readonly token: string) { super(); }
-  send(message: { type: string; token: string; requestId?: string }) {
+  send(message: { type: string; token: string; requestId?: string; layout?: unknown }) {
     if (message.type === 'harness.shutdown') { this.shutdown.resolve(); return; }
-    const type = message.type === 'harness.layout.save' ? 'harness.layout.saved' : message.type + '.result';
-    queueMicrotask(() => this.emit('message', { ...message, type, idle: true }));
+    if (message.type === 'harness.layout.save') {
+      this.layoutSaves.push(message.layout);
+      const fail = this.failNextLayoutSave;
+      this.failNextLayoutSave = false;
+      if (this.holdNextLayoutSave) {
+        this.holdNextLayoutSave = false;
+        this.releaseLayoutSave = () => queueMicrotask(() => this.emit('message', { ...message, type: 'harness.layout.saved', idle: true }));
+        return;
+      }
+      queueMicrotask(() => this.emit('message', { ...message, type: 'harness.layout.saved', ...(fail ? { error: 'injected host layout save failure' } : { idle: true }) }));
+      return;
+    }
+    queueMicrotask(() => this.emit('message', { ...message, type: message.type + '.result', idle: true }));
   }
   finishShutdown() {
     this.emit('message', { type: 'harness.stopped', token: this.token });
@@ -116,8 +143,8 @@ function closeRequests(window: FixtureWindow) {
   return window.messages.filter(message => message.channel === channels.closeRequest).map(message => String(message.value));
 }
 
-async function launch() {
-  directory = await mkdtemp(join(tmpdir(), 'gen-restart-quit-'));
+async function launch(nativeLayout?: unknown, reuseDirectory?: string) {
+  directory = reuseDirectory ?? await mkdtemp(join(tmpdir(), 'gen-restart-quit-'));
   vi.stubEnv('HARNESS_DESKTOP_TEST_DATA_DIR', directory);
   vi.stubEnv('HARNESS_DESKTOP_NODE_PATH', process.execPath);
   vi.stubEnv('HARNESS_DESKTOP_PORT', '4357');
@@ -148,7 +175,7 @@ async function launch() {
   desktop.spawn.mockImplementation((_file: string, _args: string[], options: SpawnOptions) => {
     const child = new Sidecar(100 + sidecars.length, options.env!.HARNESS_DESKTOP_LAUNCH_TOKEN!);
     sidecars.push(child);
-    queueMicrotask(() => child.emit('message', { type: 'harness.ready', token: child.token, pid: child.pid, origin: 'http://127.0.0.1:4357' }));
+    queueMicrotask(() => child.emit('message', { type: 'harness.ready', token: child.token, pid: child.pid, origin: 'http://127.0.0.1:4357', ...(nativeLayout === undefined ? {} : { nativeLayout }) }));
     return child;
   });
   await import('../apps/desktop/main.ts');
@@ -184,12 +211,100 @@ async function launch() {
     return created;
   }
   return {
-    sidecars, windows, invoke, startQuit, beginQuit, openUsageWindow, flushMicrotasks, exited: exited.promise,
+    sidecars, window, windows, invoke, startQuit, beginQuit, openUsageWindow, flushMicrotasks, exited: exited.promise,
     relayClosing: relayClosing.promise, closeRelay: () => relayClosed.resolve(),
     openBrowser: () => invoke(channels.browser, { type: 'open' }),
     proxyClosing: proxyClosing.promise, closeProxy: () => proxyClosed.resolve(),
   };
 }
+
+async function eventually(assertion: () => void | Promise<void>) {
+  await vi.waitFor(assertion, { timeout: 1500, interval: 10 });
+}
+
+function persistenceWindow() {
+  return new Promise(resolve => setTimeout(resolve, 250));
+}
+
+it('resumes host layout persistence after a transient save failure', async () => {
+  const fixture = await launch();
+  vi.useRealTimers();
+  const sidecar = fixture.sidecars[0]!;
+  const lastState = () => fixture.window.messages.filter(({ channel }) => channel === channels.state).at(-1)?.value as { layoutError?: string };
+  fixture.window.moveTo({ x: 10, y: 10, width: 800, height: 600 });
+  await eventually(() => expect(sidecar.layoutSaves.length).toBeGreaterThan(0));
+  const initialSaves = sidecar.layoutSaves.length;
+
+  sidecar.failNextLayoutSave = true;
+  fixture.window.moveTo({ x: 24, y: 24, width: 800, height: 600 });
+  await eventually(() => {
+    expect(sidecar.layoutSaves).toHaveLength(initialSaves + 1);
+    expect(lastState().layoutError).toContain('Workspace layout could not be saved');
+  });
+
+  sidecar.failNextLayoutSave = true;
+  fixture.window.moveTo({ x: 40, y: 32, width: 810, height: 610 });
+  await eventually(() => {
+    expect(sidecar.layoutSaves).toHaveLength(initialSaves + 2);
+    expect(lastState().layoutError).toContain('Workspace layout could not be saved');
+  });
+
+  fixture.window.moveTo({ x: 64, y: 48, width: 820, height: 620 });
+  await eventually(() => {
+    expect(sidecar.layoutSaves).toHaveLength(initialSaves + 3);
+    const lastLayout = sidecar.layoutSaves.at(-1) as { windows: { bounds: { x: number } }[] };
+    expect(lastLayout.windows[0]?.bounds.x).toBe(64);
+    expect(lastState().layoutError).toBeUndefined();
+  });
+
+  const reopenedLayout = sidecar.layoutSaves.at(-1);
+  const reusedDirectory = directory!;
+  vi.resetModules();
+  vi.clearAllMocks();
+  const reopened = await launch(reopenedLayout, reusedDirectory);
+  expect(reopened.window.initialBounds.x).toBe(64);
+});
+
+it('keeps newer geometry behind an older in-flight host save', async () => {
+  const fixture = await launch();
+  vi.useRealTimers();
+  const sidecar = fixture.sidecars[0]!;
+  fixture.window.moveTo({ x: 10, y: 10, width: 800, height: 600 });
+  await eventually(() => expect(sidecar.layoutSaves.length).toBeGreaterThan(0));
+  const initialSaves = sidecar.layoutSaves.length;
+
+  sidecar.holdNextLayoutSave = true;
+  fixture.window.moveTo({ x: 24, y: 24, width: 800, height: 600 });
+  await eventually(() => expect(sidecar.layoutSaves).toHaveLength(initialSaves + 1));
+
+  fixture.window.moveTo({ x: 64, y: 48, width: 820, height: 620 });
+  await persistenceWindow();
+  expect(sidecar.layoutSaves).toHaveLength(initialSaves + 1);
+
+  sidecar.releaseLayoutSave!();
+  await eventually(() => {
+    expect(sidecar.layoutSaves).toHaveLength(initialSaves + 2);
+    const lastLayout = sidecar.layoutSaves.at(-1) as { windows: { bounds: { x: number } }[] };
+    expect(lastLayout.windows[0]?.bounds.x).toBe(64);
+  });
+});
+
+it('does not overwrite invalid saved host layout silently', async () => {
+  const fixture = await launch({ version: 1, windows: 'invalid' });
+  vi.useRealTimers();
+  const sidecar = fixture.sidecars[0]!;
+
+  fixture.window.moveTo({ x: 96, y: 72, width: 820, height: 620 });
+  await eventually(async () => {
+    const backup = JSON.parse(await readFile(join(directory!, 'desktop-windows.json'), 'utf8')) as { windows: { bounds: { x: number } }[] };
+    expect(backup.windows[0]?.bounds.x).toBe(96);
+  });
+
+  await persistenceWindow();
+  expect(sidecar.layoutSaves).toHaveLength(0);
+  const errored = fixture.window.messages.map(({ channel, value }) => channel === channels.state ? value : undefined).find(value => value && typeof value === 'object' && 'layoutError' in value) as { layoutError?: string };
+  expect(errored.layoutError).toContain('saved host workspace layout is invalid');
+});
 
 it('does not leave a scheduled replacement running after desktop quit', async () => {
   const fixture = await launch();
