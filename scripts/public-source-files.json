@@ -3814,6 +3814,7 @@
     "tests/e2e/project-memory.playwright.config.ts",
     "tests/e2e/project-memory.spec.ts",
     "tests/e2e/project-memory.vite.config.ts",
+    "tests/e2e/project-model-defaults.spec.ts",
     "tests/e2e/project-picker-fixture.tsx",
     "tests/e2e/project-picker.playwright.config.ts",
     "tests/e2e/project-picker.spec.ts",
