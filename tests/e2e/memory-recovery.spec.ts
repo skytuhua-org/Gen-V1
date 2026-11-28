@@ -36,6 +36,59 @@ const held = (page: Page, key = savedKey) => expect.poll(() => page.evaluate(key
 const release = (page: Page, key = savedKey, fail = false) => page.evaluate(({ key, fail }) => window.memoryFixture.release(key, fail), { key, fail });
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
+for(const mode of ['normal','reduce','off'] as const)test(`Thread memory entry motion follows the ${mode} policy`,async({page})=>{
+  await page.setViewportSize({width:480,height:700});
+  await page.emulateMedia({reducedMotion:mode==='reduce'?'reduce':'no-preference'});
+  let attempts=0;
+  await mount(page,{notes:[]},async(route,command)=>{
+    if(command.type==='memory.save'&&++attempts===1){
+      await route.fulfill({status:503,json:{error:{code:'SYNTHETIC_SAVE',message:'Synthetic note could not be saved.'}}});
+      return;
+    }
+    await route.fulfill({json:{commandId:command.id,seq:2,result:note('created',1)}});
+  });
+  if(mode==='off')await page.evaluate(()=>{document.documentElement.dataset.motion='off';});
+  await page.evaluate(()=>{
+    let entries=0;
+    window.addEventListener('animationstart',event=>{
+      if(event.animationName==='memory-in'&&event.target instanceof Element&&event.target.matches('.memory-note'))document.documentElement.dataset.noteEntries=String(++entries);
+    });
+  });
+  const add=page.getByRole('button',{name:'Add memory note',exact:true});
+  await add.click();
+  const text=page.getByRole('textbox',{name:'New thread note',exact:true});
+  const form=page.locator('.memory-note').filter({has:text});
+  await expect(form).toHaveCSS('animation-name',mode==='normal'?'memory-in':'none');
+  if(mode==='normal'){
+    await expect(form).toHaveCSS('animation-duration','0.18s');
+    await expect(page.locator('html')).toHaveAttribute('data-note-entries','1');
+  }
+  await page.getByRole('textbox',{name:'Note key',exact:true}).fill('created');
+  await text.fill('Draft retained');
+  await page.getByRole('button',{name:'Add note',exact:true}).click();
+  const error=form.getByRole('status').filter({hasText:'Synthetic note could not be saved.'});
+  await expect(error).toHaveCSS('animation-name',mode==='normal'?'memory-fade':'none');
+  if(mode==='normal'){
+    await expect(error).toHaveCSS('animation-duration','0.16s');
+    await expect(error).toHaveCSS('transform','none');
+    await expect(page.locator('html')).toHaveAttribute('data-note-entries','1');
+  }
+  await text.press('Escape');
+  await expect(form).toHaveCount(0);
+  const resume=page.getByRole('button',{name:'Resume unsaved note',exact:true});
+  await expect(resume).toHaveCSS('animation-name',mode==='normal'?'memory-in':'none');
+  await resume.click();
+  await text.fill('Updated note');
+  await page.getByRole('button',{name:'Add note',exact:true}).click();
+  await expect.poll(()=>attempts).toBe(2);
+  await page.evaluate(saved=>window.memoryFixture.publish([saved]),note('created',1));
+  const row=page.locator('.memory-note').filter({has:page.getByRole('textbox',{name:'Note created',exact:true})});
+  await expect(row).toHaveCSS('animation-name',mode==='normal'?'memory-in':'none');
+  await row.getByRole('button',{name:'Forget created',exact:true}).click();
+  await page.evaluate(()=>window.memoryFixture.publish([]));
+  await expect(row).toHaveCount(0);
+});
+
 test('Delete keeps the existing editor lock until its exact-revision acknowledgment', async ({ page }) => {
   const gate = deferred();
   const commands = await mount(page, {}, async (route, command) => { await gate.promise; await route.fulfill({ json: { commandId: command.id, seq: 2, result: {} } }); });
@@ -150,7 +203,7 @@ test('failed recovery stays blocked and keyboard Retry restores the exact key, c
   const commands = await mount(page, { notes: [], drafts: { [createKey]: recovered }, reads: { [createKey]: 'fail' } });
   // Opening the empty editor must also be safe while recovery has failed.
   await page.getByRole('button', { name: 'Add memory note' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Note recovery is unavailable.' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Draft recovery is unavailable.' })).toBeVisible();
   await page.screenshot({ path: info.outputPath('02-failed-recovery.png') });
   await expect(page.getByRole('textbox', { name: 'Note key', exact: true })).toBeDisabled();
   await expect(page.getByRole('textbox', { name: 'New thread note', exact: true })).toBeDisabled();
@@ -193,7 +246,7 @@ test('capacity is quiet below ten notes and visible near the twelve-note limit',
 
 test('saved-note recovery failure blocks Delete until Retry and keeps stale revision disclosure', async ({ page }) => {
   const commands = await mount(page, { drafts: { [savedKey]: draft }, reads: { [savedKey]: 'fail' } });
-  await expect(page.getByRole('status').filter({ hasText: 'Note recovery is unavailable.' })).toBeVisible(); await expect(editor(page)).toBeDisabled();
+  await expect(page.getByRole('status').filter({ hasText: 'Draft recovery is unavailable.' })).toBeVisible(); await expect(editor(page)).toBeDisabled();
   const forget = page.getByRole('button', { name: 'Forget decision' }); await expect(forget).toBeDisabled();
   await forget.dispatchEvent('click'); await page.locator('form').dispatchEvent('submit'); expect(commands).toEqual([]);
   await page.getByRole('button', { name: 'Retry', exact: true }).click(); await expect(editor(page)).toHaveValue(draft.content);
@@ -253,7 +306,7 @@ for (const view of [
   await mount(page, { drafts: { [savedKey]: draft }, reads: view.failed ? { [savedKey]: 'fail' } : {} });
   await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, view.theme);
   await page.evaluate(() => document.fonts.ready);
-  if (view.failed) { await expect(page.getByRole('status').filter({ hasText: 'Note recovery is unavailable.' })).toBeVisible(); await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible(); }
+  if (view.failed) { await expect(page.getByRole('status').filter({ hasText: 'Draft recovery is unavailable.' })).toBeVisible(); await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible(); }
   else { await expect(editor(page)).toHaveValue(draft.content); await expect(editor(page)).toBeEnabled(); }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath(`${view.number}-${view.name}.png`), fullPage: true });
@@ -338,4 +391,25 @@ test('a successful edit clears the preceding note draft journal error', async ({
   await editor(page).fill('Persisted edit.');
   await expect(error).toHaveCount(0);
   await page.evaluate(() => window.memoryFixture.flush());
+});
+
+test('only the expanded create form shows recovery and its footer stays in place',async({page})=>{
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await mount(page,{reads:{[savedKey]:'hold',[createKey]:'hold'}});
+ await held(page);await held(page,createKey);
+ const saved=page.locator('.memory-note').filter({has:editor(page)});
+ await expect(editor(page)).toBeDisabled();
+ await expect(saved.getByRole('status')).toHaveCount(0);
+ await expect(page.getByText(/Checking for/)).toHaveCount(0);
+ await page.getByRole('button',{name:'Add memory note',exact:true}).click();
+ const create=page.locator('.memory-note').filter({has:page.getByRole('textbox',{name:'New thread note',exact:true})});
+ await expect(create.getByRole('status')).toHaveText('Checking for a recovered draft…');
+ const prior=await create.locator('footer').boundingBox();
+ await release(page,createKey);
+ await expect(create.getByRole('textbox',{name:'New thread note',exact:true})).toBeEnabled();
+ await expect(create.getByText('Checking for a recovered draft…',{exact:true})).toHaveCount(0);
+ expect((await create.locator('footer').boundingBox())!.y).toBeCloseTo(prior!.y,0);
+ await release(page);
+ await expect(editor(page)).toBeEnabled();
+ await expect(saved.getByRole('status')).toHaveCount(0);
 });
