@@ -4,6 +4,7 @@ import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import {workareaBoundary} from './popover-boundary';
 import {Bot,Check,ChevronDown,LayoutGrid,Search,Star} from 'lucide-react';
 import type {ModelInfo} from '../../../packages/contracts';
+import type {ModelSource} from './project-model-defaults';
 import {SUBSCRIPTION_CONNECTIONS} from '../../../packages/contracts/connections';
 import './model-picker.css';
 
@@ -14,6 +15,8 @@ export interface ModelPickerProps {
  thinkingLevel?:string;onThinkingChange?:(level:string)=>void;
  /** New-task binding note; selecting a profile never rebinds an existing thread. */
  scopeHint?:string;onNewTask?:(modelId:string)=>void;
+ /** Resolved model provenance (issue #1481): `project` shows the color dot, `project-unavailable` asks for a pick. */
+ source?:ModelSource;projectColor?:string;projectName?:string;
 }
 const providerDisplayName=(provider:string)=>provider.trim().split(/[-_\s]+/).filter(Boolean).map(word=>word.charAt(0).toUpperCase()+word.slice(1)).join(' ');
 const providerLabel=(provider:string)=>SUBSCRIPTION_CONNECTIONS.find(connection=>connection.id===provider)?.label||providerDisplayName(provider);
@@ -26,7 +29,7 @@ function readFavorites():string[]{
 }
 type ModelFilter={kind:'all'|'favorites'}|{kind:'provider';provider:string};
 
-export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinkingLevel='',onThinkingChange,scopeHint,onNewTask}:ModelPickerProps){
+export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinkingLevel='',onThinkingChange,scopeHint,onNewTask,source,projectColor,projectName}:ModelPickerProps){
  const id=useId(),trigger=useRef<HTMLButtonElement>(null),popover=useRef<HTMLDivElement>(null),search=useRef<HTMLInputElement>(null),efforts=useRef<HTMLDivElement>(null);
  const [open,setOpen]=useState(false),[present,setPresent]=useState(false),[query,setQuery]=useState(''),[activeId,setActiveId]=useState(modelId);
  const [keyboard,setKeyboard]=useState(false),[filter,setFilter]=useState<ModelFilter>({kind:'all'}),[favorites,setFavorites]=useState(readFavorites);
@@ -47,7 +50,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
  },[models,query,filter,favorites]);
  const visible=groups.flatMap(([,group])=>group),active=visible.find(model=>model.id===activeId)??visible[0];
  const optionId=(model:ModelInfo)=>id+'-option-'+models.indexOf(model);
- const name=selected?.name??(modelId||'Select model'),caption=combined&&selectedEffort?effortLabel(selectedEffort):'';
+ const name=source==='project-unavailable'?'Choose a model':selected?.name??(modelId||'Select model'),caption=combined&&selectedEffort?effortLabel(selectedEffort):'';
  function close(restoreFocus=false){setOpen(false);if(restoreFocus)trigger.current?.focus();}
  function show(){if(locked)return;setQuery('');setActiveId(modelId);setKeyboard(false);setFilter({kind:'all'});setPresent(true);setOpen(true);}
  useImperativeHandle(ref,()=>({open:show}));
@@ -92,8 +95,9 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
   const frame=requestAnimationFrame(()=>requestAnimationFrame(()=>{popover.current?.ownerDocument.getElementById(optionId(active))?.scrollIntoView({block:opened?'center':'nearest'});}));
   return()=>cancelAnimationFrame(frame);},[open,active?.id]);
  return <>
-  <button ref={trigger} type="button" role="combobox" aria-label="Model" aria-expanded={open&&!locked} aria-haspopup={combined?'dialog':'listbox'} aria-controls={open?(combined?id+'-picker':id+'-list'):undefined} disabled={locked} className="composer-tool model-picker-trigger" title={disabled?'Wait for the active run to finish to change models':!models.length?'No models available — check the provider connection':name+(caption?' · '+caption:'')} onClick={()=>open?close(true):show()} onKeyDown={event=>{if(isComposing(event)||event.altKey||event.ctrlKey||event.metaKey)return;if(['ArrowDown','ArrowUp','Enter',' '].includes(event.key)){event.preventDefault();if(open)search.current?.focus();else show();}}}>
-   <Bot className="model-picker-trigger-icon" size={16} aria-hidden="true"/><span className="model-picker-trigger-name">{name}</span>{caption&&<span className="model-picker-trigger-effort">{caption}</span>}<ChevronDown size={12} data-open={open}/>
+  <button ref={trigger} type="button" role="combobox" aria-label="Model" aria-expanded={open&&!locked} aria-haspopup={combined?'dialog':'listbox'} aria-controls={open?(combined?id+'-picker':id+'-list'):undefined} disabled={locked} className="composer-tool model-picker-trigger" title={disabled?'Wait for the active run to finish to change models':!models.length?'No models available — check the provider connection':source==='project'?'Project default for '+(projectName??'project'):name+(caption?' · '+caption:'')} onClick={()=>open?close(true):show()} onKeyDown={event=>{if(isComposing(event)||event.altKey||event.ctrlKey||event.metaKey)return;if(['ArrowDown','ArrowUp','Enter',' '].includes(event.key)){event.preventDefault();if(open)search.current?.focus();else show();}}}>
+   <Bot className="model-picker-trigger-icon" size={16} aria-hidden="true"/>{source==='project'&&<span className="model-picker-project-dot" style={{background:projectColor}} aria-hidden="true"/>}<span className="model-picker-trigger-name">{name}</span>{caption&&<span className="model-picker-trigger-effort">{caption}</span>}<ChevronDown size={12} data-open={open}/>
+
   </button>
   <Popover anchor={trigger} contentRef={popover} initialFocus={search} open={open&&!locked} present={present}
    getBoundary={()=>workareaBoundary(trigger.current)}

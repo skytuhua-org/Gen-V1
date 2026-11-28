@@ -106,7 +106,7 @@ test('bound New uses openAnother and never recreates the owned terminal in place
 });
 
 test('an unconfirmed create offers no blind Retry or fresh ID',async({page})=>{
- const api=await mount(page,{create:route=>failure(route)});await expect(phase(page)).toHaveText('Start unconfirmed');await expect(page.getByRole('button',{name:'Stop',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:/Retry|New terminal/})).toHaveCount(0);
+ const api=await mount(page,{create:route=>failure(route)});await expect(phase(page)).toHaveText('Awaiting confirmation');await expect(page.getByRole('button',{name:'Stop',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:/Retry|New terminal/})).toHaveCount(0);
  expect(api.creates()).toHaveLength(1);expect(api.reads()).toEqual([]);
 });
 
@@ -143,7 +143,7 @@ for(const theme of ['dark','light'])test(`${theme} narrow keyboard recovery resp
 
 test('unconfirmed unbound creation retains its caller ID across a view remount',async({page})=>{
  let count=0;const api=await mount(page,{unbound:true,create:async(route,body)=>{count++;if(count===1){await failure(route);return;}await json(route,result(String(body.terminalId)));}});
- await expect(phase(page)).toHaveText('Start unconfirmed');const requested=api.creates()[0].body?.terminalId;
+ await expect(phase(page)).toHaveText('Awaiting confirmation');const requested=api.creates()[0].body?.terminalId;
  await page.evaluate(()=>window.terminalFixture.show(false));await expect(page.locator('.xterm')).toHaveCount(0);await page.evaluate(()=>window.terminalFixture.show(true));await expect(phase(page)).toHaveText('Running');
  expect(api.creates().map(item=>item.body?.terminalId)).toEqual([requested,requested]);expect(api.stops()).toEqual([]);
 });
@@ -174,6 +174,6 @@ test('an old creation cannot borrow a replacement guard during an uncommitted ow
 
 test('an unbound start fails closed when its pending caller ID cannot be retained',async({page})=>{
  await page.addInitScript(()=>{const original=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key.endsWith(':pending'))throw new DOMException('Synthetic storage unavailable','QuotaExceededError');return original.call(this,key,value);};});
- const api=await mount(page,{unbound:true});await expect(phase(page)).toHaveText('Start unconfirmed');await expect(errorText(page)).toContainText('retain');await expect(page.getByRole('button',{name:'Stop',exact:true})).toBeDisabled();
- expect(api.creates()).toEqual([]);await page.evaluate(()=>window.terminalFixture.show(false));await expect(page.locator('.xterm')).toHaveCount(0);await page.evaluate(()=>window.terminalFixture.show(true));await expect(phase(page)).toHaveText('Start unconfirmed');expect(api.creates()).toEqual([]);
+ const api=await mount(page,{unbound:true});await expect(phase(page)).toHaveText('Awaiting confirmation');await expect(errorText(page)).toContainText('retain');await expect(page.getByRole('button',{name:'Stop',exact:true})).toBeDisabled();
+ expect(api.creates()).toEqual([]);await page.evaluate(()=>window.terminalFixture.show(false));await expect(page.locator('.xterm')).toHaveCount(0);await page.evaluate(()=>window.terminalFixture.show(true));await expect(phase(page)).toHaveText('Awaiting confirmation');expect(api.creates()).toEqual([]);
 });
