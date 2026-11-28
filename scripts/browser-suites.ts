@@ -60,6 +60,7 @@ export const browserSuites:BrowserSuite[] = [
   suite('conversation-scroll'),
   suite('micro-motion', ['composer-integration.spec.ts', 'composer-motion.spec.ts', 'markdown.spec.ts', 'micro-motion.spec.ts', 'proactive-copy.spec.ts', 'progressive-fidelity.spec.ts', 'shared-motion.spec.ts', 'shared-smoothness.spec.ts']),
   suite('motion-tokens', ['document-pair-layout.spec.ts', 'motion-tokens.spec.ts']),
+  suite('changes-remote-sync'),
   suite('clarity-software', ['clarity-software.spec.ts', 'software-clarity.spec.ts', 'software-development.spec.ts', 'task-software.spec.ts']),
   suite('clarity-review-parameters', ['clarity-review-parameters.spec.ts', 'interaction-tools.spec.ts', 'task-reviewing.spec.ts']),
   suite('clarity-schedule-logs', ['clarity-schedule-logs.spec.ts', 'exploration-ui.spec.ts', 'task-scheduling.spec.ts']),

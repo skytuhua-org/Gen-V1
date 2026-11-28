@@ -1,0 +1,25 @@
+.live-review{container-type:inline-size}
+.review-branch{max-width:18ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.remote-sync{display:inline-flex;align-items:center;gap:6px;flex-wrap:nowrap;min-width:0}
+.remote-sync-chip{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:11px;font-size:12px;font-weight:500;line-height:22px;font-variant-numeric:tabular-nums;background:color-mix(in srgb,var(--text) 6%,transparent);color:var(--muted);white-space:nowrap}
+.remote-sync-chip svg{flex:none}
+.remote-sync-chip[data-state=up-to-date] svg{color:var(--success)}
+.remote-sync-chip[data-state=diverged] svg:last-child{color:var(--danger)}
+.remote-sync-chip[data-state=behind]{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent,var(--text)) 35%,transparent);color:var(--text)}
+.remote-sync-chip[data-state=ahead]{color:var(--text)}
+.remote-sync-chip[data-busy]{opacity:.6}
+.remote-sync-dot{width:6px;height:6px;border-radius:50%;background:var(--muted);flex:none}
+.remote-sync-btn{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:4px 6px;min-height:28px}
+.remote-sync-btn svg{flex:none}
+.remote-sync-error{margin:0;flex-basis:100%;display:flex;align-items:center;gap:8px;flex-wrap:wrap;animation:remote-sync-fade var(--ui-motion-status) var(--ui-ease-enter)}
+.remote-sync-spin{animation:remote-sync-spin var(--ui-motion-panel-enter) linear infinite}
+.remote-sync-nudge{animation:remote-sync-nudge var(--ui-motion-panel-enter) ease-in-out infinite}
+.remote-sync-flash{animation:remote-sync-flash var(--ui-motion-panel-enter) ease-out}
+.remote-sync-flash svg:first-child{animation:remote-sync-pop var(--ui-motion-success) var(--ui-ease-spring,ease-out)}
+@keyframes remote-sync-spin{to{transform:rotate(360deg)}}
+@keyframes remote-sync-nudge{0%,100%{transform:translateY(0)}50%{transform:translateY(2px)}}
+@keyframes remote-sync-fade{from{opacity:0}to{opacity:1}}
+@keyframes remote-sync-flash{0%{background:color-mix(in srgb,var(--success) 14%,transparent)}100%{background:color-mix(in srgb,var(--text) 6%,transparent)}}
+@keyframes remote-sync-pop{from{transform:scale(.6)}to{transform:scale(1)}}
+@container (max-width:360px){.remote-sync-btn .remote-sync-label{display:none}}
+@media (prefers-reduced-motion:reduce){.remote-sync-spin,.remote-sync-nudge,.remote-sync-flash,.remote-sync-flash svg:first-child{animation:none}.remote-sync-error{animation-duration:var(--ui-motion-press)}}
