@@ -45,6 +45,22 @@ function Fixture() {
       { id: 'model-b', provider: 'openai', name: 'Model B' },
     ]} modelId={model} onChange={setModel} /></div>
   </>;
+  if(new URLSearchParams(location.search).has('warm-tooltip'))return <>
+    <section ref={element=>{if(aria)dialog.current=element;}} role={aria?'dialog':undefined}
+      aria-modal={aria||undefined} aria-label={aria?'Tooltip modal':undefined}>
+    <div data-tooltip-group="one" data-testid="tooltip-group-one" style={{display:'flex',alignItems:'center',position:'fixed',left:100,top:150}}>
+      <button type="button" title="Help for Alpha">Alpha <span aria-hidden="true">◇</span></button>
+      <span data-testid="tooltip-gap" style={{width:45,height:28}} />
+      <button type="button" title="Help for Beta">Beta</button>
+      <button type="button" title="Help for Gamma">Gamma</button>
+    </div>
+    <div data-tooltip-group="two" style={{position:'fixed',left:100,top:260}}>
+      <button type="button" title="Help for Delta">Delta</button>
+    </div>
+    <button type="button" style={{position:'fixed',left:100,top:320}}>Outside</button>
+    </section>
+    <TooltipLayer />
+  </>;
   if (new URLSearchParams(location.search).has('tooltip')) return <>
     <button type="button" style={{ position: 'fixed', top: 94, left: 80 }}
       title={'Help text for the selected action and keyboard shortcut. '.repeat(7).trim()}>Tooltip anchor</button>
