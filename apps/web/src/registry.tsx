@@ -1,9 +1,13 @@
+import {ArtifactImage} from './ArtifactImage';
 import {SentenceReveal} from './SentenceReveal';
 import {WindowDocument} from './DocumentWindow';
-import { Children, createContext, lazy, Suspense, useContext, useId, useRef, useState, type ReactNode } from 'react';
+import { Children, createContext, lazy, Suspense, useContext, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useStateStore, type ComponentRegistry, type ComponentRenderProps } from '@json-render/react';
 import { ExternalLink, FileText, Check, AlertTriangle, CornerDownLeft } from 'lucide-react';
 import { Markdown } from './Markdown';
+import { isComposing } from '../../../packages/ui-shell/list-navigation';
+import { readMotionPolicy } from './motion-policy';
+import {splitDiffLines} from './diff-line-kind';
 import { ArtifactTitle, ChoiceList, RelationshipGraph, Status, Steps } from './task-interface';
 export { ArtifactTitle } from './task-interface';
 import type { DocumentPreviewProps, SignaturePadProps } from '../../../packages/ui-catalog/documents';
@@ -154,16 +158,69 @@ function TreeNode({ value, depth = 0 }: { value: unknown; depth?: number }) {
 }
 function Tree({ element: { props } }: ComponentRenderProps) { const data = useData(props) ?? props.items; return <ul className="tree">{list(data).map((node, i) => <TreeNode key={i} value={node} />)}</ul>; }
 function Code({ element: { props } }: ComponentRenderProps) { const data = useData(props); return <figure className="code-block">{props.title ? <figcaption>{string(props.title)}</figcaption> : null}<pre><code>{typeof data === 'string' ? data : string(props.code, string(props.content, data ? display(data) : ''))}</code></pre></figure>; }
-function Diff({ element: { props } }: ComponentRenderProps) { const data = useData(props); const pair = data && typeof data === 'object' ? obj(data) : props; const code = typeof data === 'string' ? data : typeof pair.before === 'string' || typeof pair.after === 'string' ? [...string(pair.before).split('\n').map(line => `- ${line}`), ...string(pair.after).split('\n').map(line => `+ ${line}`)].join('\n') : string(props.diff, string(props.content)); return <pre className="diff">{code.split('\n').map((line, i) => <div key={i} className={line.startsWith('+') ? 'added' : line.startsWith('-') ? 'removed' : ''}>{line || ' '}</div>)}</pre>; }
+const artifactDiffClass = {context:'',add:'added',remove:'removed',header:'diff-header',hunk:'diff-hunk'};
+function Diff({ element: { props } }: ComponentRenderProps) {
+  const data = useData(props);
+  const pair = data && typeof data === 'object' ? obj(data) : props;
+  const code = typeof data === 'string' ? data : typeof pair.before === 'string' || typeof pair.after === 'string'
+    ? [...string(pair.before).split('\n').map(line => `- ${line}`), ...string(pair.after).split('\n').map(line => `+ ${line}`)].join('\n')
+    : string(pair.diff, string(pair.content, string(props.diff, string(props.content))));
+  return <pre className="diff">{splitDiffLines(code).map((line, index) => <span key={index} className={artifactDiffClass[line.kind]}>{line.text || ' '}</span>)}</pre>;
+}
 function Document({ element: { props }, children }: ComponentRenderProps) { const data = useData(props); const text=typeof props.text==='string'?props.text:typeof data==='string'?data:undefined;const path = typeof props.resourcePath === 'string' ? '?' + new URLSearchParams({ path: props.resourcePath }) : '';if(props.presentation==='window')return <WindowDocument props={props} text={text}/>; return <section className={`document${props.download ? ' document-download' : ''}`}><div className="document-heading"><FileText size={16} />{string(props.title, 'Document')}</div>{props.text || props.content || typeof data === 'string' ? <Markdown text={string(props.text, string(props.content, string(data)))} /> : null}{children}{typeof props.resourceId === 'string' && <a href={`/api/resources/${encodeURIComponent(props.resourceId)}/content${path}`} download={props.download === true || undefined} target={props.download ? undefined : '_blank'} rel="noreferrer">{string(props.linkLabel, props.download ? 'Download PDF' : 'Open granted document')}<ExternalLink size={12} /></a>}</section>; }
 function Progress({ element: { props } }: ComponentRenderProps) { const source = useData(props); const value = Number(source ?? props.value); const max = Number(props.max) || 100; return <div className="surface-progress"><div>{string(props.label)}{Number.isFinite(value) && <span>{value} / {max}</span>}</div><progress aria-label={string(props.label, 'Progress')} value={Number.isFinite(value) ? value : undefined} max={max} /></div>; }
 const timelineStatusKind:Record<string,StatusKind>={...operationStatusKind,pending:'pending',working:'running',completed:'success',success:'success',error:'error',stopped:'neutral','needs-input':'pending',awaiting_input:'pending'};
 function Timeline({ element: { props } }: ComponentRenderProps) { const items = list(useData(props) ?? props.items); return <ol className="timeline">{items.map((entry, i) => { const item = obj(entry),status=string(item.status),tone=Object.hasOwn(timelineStatusKind,status)?timelineStatusKind[status]:'neutral'; return <li key={i}><span className={`timeline-dot status-${tone}`} /><div><strong>{string(item.title, string(item.label))}</strong>{item.description ? <p>{string(item.description)}</p> : null}</div><small>{string(item.time, string(item.status))}</small></li>; })}</ol>; }
 function Evidence({ element: { props } }: ComponentRenderProps) { const data = useData(props); const href = string(props.href); return <div className="evidence"><Check size={14} /><div>{string(props.label, string(props.title, 'Evidence'))}{props.source ? <small>{string(props.source)}</small> : null}{data !== undefined && <pre>{display(data)}</pre>}</div>{/^https?:\/\//.test(href) && <a aria-label="Open evidence source" href={href} target="_blank" rel="noreferrer"><ExternalLink size={14} /></a>}</div>; }
 function Notice({ element: { props }, children }: ComponentRenderProps) { return <div className={`notice tone-${string(props.tone)}`}><AlertTriangle size={15} /><div>{props.title ? <strong>{string(props.title)}</strong> : null}{props.text ? <p>{string(props.text)}</p> : null}{children}</div></div>; }
+function revealViewTab(tab: HTMLElement, strip: HTMLElement, behavior: ScrollBehavior = 'instant') {
+  const view = strip.getBoundingClientRect(), item = tab.getBoundingClientRect();
+  if (!view.width) return;
+  const inset = 8;
+  const distance = item.left < view.left + inset ? item.left - view.left - inset
+    : item.right > view.right - inset ? item.right - view.right + inset : 0;
+  if (distance) strip.scrollBy({ left: distance, behavior });
+}
+
 function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) {
   const [value, setValue] = useField(props, bindings), store = useStateStore(), artifactTitle = useContext(ArtifactTitle);
   const labels = list(props.labels), active = labels.includes(value) ? value : labels[0];
+  const strip = useRef<HTMLDivElement>(null), keyboardTab = useRef<HTMLElement|null>(null);
+  const [overflow, setOverflow] = useState({start:false,end:false});
+  const labelsKey = JSON.stringify(labels);
+  useLayoutEffect(() => {
+    const row = strip.current;
+    if (!row) return;
+    const update = () => {
+      const left = Math.abs(row.scrollLeft), remaining = row.scrollWidth - row.clientWidth - left;
+      const start = left > 1, end = remaining > 1;
+      setOverflow(previous => previous.start === start && previous.end === end ? previous : {start,end});
+    };
+    const wheel = (event: WheelEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.deltaX || !event.deltaY || row.scrollWidth <= row.clientWidth) return;
+      const step = event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? row.clientWidth
+        : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? Number.parseFloat(getComputedStyle(row).lineHeight) || 16 : 1;
+      const before = row.scrollLeft, direction = getComputedStyle(row).direction === 'rtl' ? -1 : 1;
+      row.scrollLeft += direction * event.deltaY * step;
+      if (row.scrollLeft !== before && event.cancelable) event.preventDefault();
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(row);
+    for (const tab of row.children) observer.observe(tab);
+    row.addEventListener('scroll', update, {passive:true});
+    row.addEventListener('wheel', wheel, {passive:false});
+    update();
+    return () => {
+      observer.disconnect();
+      row.removeEventListener('scroll',update);
+      row.removeEventListener('wheel',wheel);
+    };
+  }, [labelsKey]);
+  useLayoutEffect(() => {
+    const row = strip.current, tab = row?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (tab && row && tab !== keyboardTab.current) revealViewTab(tab,row);
+    keyboardTab.current = null;
+  }, [active,labelsKey]);
   const [visited, setVisited] = useState<ReadonlySet<unknown>>(() => new Set([active]));
   if (!visited.has(active)) setVisited(new Set(visited).add(active));
   const parsed = tabStateData.safeParse(typeof props.statusBinding === 'string' ? store.get(`/inputs/${props.statusBinding}`) : undefined);
@@ -172,15 +229,30 @@ function Tabs({ element: { props }, children, bindings }: ComponentRenderProps) 
   if (new Set(labels).size !== labels.length) return <p role="alert">This saved tab view is invalid because its labels are not unique.</p>;
   return <div className={source ? 'task-tabs-operation' : undefined}>
     {source && (source.title || source.detail || source.status) && <header className="task-tabs-operation-header"><div>{source.title && source.title !== artifactTitle && <strong>{source.title}</strong>}{source.detail && <span>{source.detail}</span>}</div>{source.status && <StatusIcon status={source.status} />}</header>}
-    <div className="surface-tabs" role="tablist" aria-label={string(props.label, 'Views')}>{labels.map((label, i) => {
+    <div className="surface-tabs-scroll" data-overflow-start={overflow.start} data-overflow-end={overflow.end}>
+      <div className="surface-tabs" ref={strip} role="tablist" aria-label={string(props.label, 'Views')}>{labels.map((label, i) => {
       const status = source?.items.find(item => item.label === label)?.status;
-      return <button type="button" key={i} role="tab" tabIndex={active === label ? 0 : -1} aria-selected={active === label} onKeyDown={event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const index = event.key === 'Home' ? 0 : event.key === 'End' ? labels.length - 1 : (i + (event.key === 'ArrowRight' ? 1 : -1) + labels.length) % labels.length; setValue(labels[index]); (event.currentTarget.parentElement?.children[index] as HTMLElement | undefined)?.focus(); } }} onClick={() => setValue(label)}>{source && <span className={`task-tab-status-slot status-${status??'neutral'}`} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:14,height:14,flex:'0 0 14px'}} aria-hidden="true">{status && status !== 'neutral' && <StatusIcon status={status} />}</span>}<span className="task-tab-label">{display(label)}</span></button>;
-    })}</div>
+      return <button type="button" key={i} role="tab" tabIndex={active === label ? 0 : -1} aria-selected={active === label} onKeyDown={event => {
+        if (isComposing(event) || !['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+        const row = strip.current;
+        if (!row) return;
+        event.preventDefault();
+        const direction = (event.key === 'ArrowRight' ? 1 : -1) * (getComputedStyle(row).direction === 'rtl' ? -1 : 1);
+        const index = event.key === 'Home' ? 0 : event.key === 'End' ? labels.length - 1 : (i + direction + labels.length) % labels.length;
+        const target = row.children[index] as HTMLElement | undefined;
+        if (!target) return;
+        keyboardTab.current = labels[index] === active ? null : target;
+        setValue(labels[index]);
+        target.focus({preventScroll:true});
+        revealViewTab(target,row,readMotionPolicy() === 'full' ? 'smooth' : 'instant');
+      }} onClick={() => setValue(label)}>{source && <span className={`task-tab-status-slot status-${status??'neutral'}`} style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:14,height:14,flex:'0 0 14px'}} aria-hidden="true">{status && status !== 'neutral' && <StatusIcon status={status} />}</span>}<span className="task-tab-label">{display(label)}</span></button>;
+      })}</div>
+    </div>
     {Children.toArray(children).map((child, i) => {
       const label = labels[i];
       return active === label || visited.has(label) ? <div role="tabpanel" className="task-tab-panel" key={i} hidden={active !== label}>{child}</div> : null;
     })}
-    {source?.footer && <footer className="task-tabs-operation-footer"><span>{source.footer.label}</span><div>{(selected?.code ?? source.footer.code) && <code>{selected?.code ?? source.footer.code}</code>}{(selected?.detail ?? source.footer.detail) && <small>{selected?.detail ?? source.footer.detail}</small>}</div></footer>}
+    {source?.footer && <footer className="task-tabs-operation-footer"><span>{source.footer.label}</span>{' '}<div>{(selected?.code ?? source.footer.code) && <code>{selected?.code ?? source.footer.code}</code>}{(selected?.detail ?? source.footer.detail) && <small>{' '}{selected?.detail ?? source.footer.detail}</small>}</div></footer>}
     {typeof props.statusBinding === 'string' && !parsed.success && <small className="muted">Operation details unavailable.</small>}
   </div>;
 }
@@ -198,7 +270,7 @@ function Form({ element: { props }, children }: ComponentRenderProps) {
 function BoundMarkdown({ element: { props } }: ComponentRenderProps) { const data = useData(props); return <Markdown text={string(props.text, string(data))} animate />; }
 function Metric({ element: { props } }: ComponentRenderProps) { const data = useData(props), value = data ?? props.value; return <div className="surface-metric"><span className="muted">{string(props.label)}</span><strong>{typeof value === 'number' ? value.toLocaleString(undefined, { maximumSignificantDigits: 21 }) : display(value)}{props.unit ? ` ${string(props.unit)}` : ''}</strong></div>; }
 function EvidenceList({ element: { props } }: ComponentRenderProps) { const rows = list(useData(props)); return <section>{props.title ? <h3>{string(props.title)}</h3> : null}<ul className="evidence-list">{rows.map((row, i) => { const item = obj(row); return <li key={i}><Check size={13} /><div>{typeof row === 'string' ? row : string(item.label, string(item.title, string(item.text, display(row))))}{item.source ? <small>{display(item.source)}</small> : null}</div></li>; })}</ul></section>; }
-function Image({ element: { props } }: ComponentRenderProps) { const src = typeof props.resourceId === 'string' ? `/api/resources/${encodeURIComponent(props.resourceId)}/content` : /^https?:\/\//.test(string(props.src)) ? string(props.src) : undefined; return src ? <img className="surface-image" src={src} alt={string(props.alt)} loading="lazy" referrerPolicy="no-referrer" /> : <p className="muted">No granted image is available.</p>; }
+function Image({ element: { props } }: ComponentRenderProps) { if (typeof props.resourceId === 'string') return <ArtifactImage key={props.resourceId} resourceId={props.resourceId} alt={string(props.alt)} />; const src = /^https?:\/\//.test(string(props.src)) ? string(props.src) : undefined; return src ? <img className="surface-image" src={src} alt={string(props.alt)} loading="lazy" referrerPolicy="no-referrer" /> : <p className="muted">No granted image is available.</p>; }
 function Link({ element: { props } }: ComponentRenderProps) { return /^https?:\/\//.test(string(props.href)) ? <a href={string(props.href)} target="_blank" rel="noreferrer">{string(props.label, string(props.href))}<ExternalLink size={12} /></a> : <span>{string(props.label)}</span>; }
 
 export const registry: ComponentRegistry = {

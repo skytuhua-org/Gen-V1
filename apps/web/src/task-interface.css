@@ -60,3 +60,11 @@
 .surface-form:has(>.field:only-of-type)>button .form-submit-icon { display:block; }
 .surface-form:has(>.field:only-of-type)>.error-text { grid-column:1 / -1; }
 @media(max-width:700px) { .task-node { padding-left:64px; } .task-node-copy small { font-size:10px; } }
+
+.artifact-flash-live{display:flex;min-inline-size:0}
+.artifact-flash-live:empty{position:absolute}
+.artifact-tools:has(.artifact-flash){flex-shrink:1;min-inline-size:0}
+.artifact-flash{display:inline-flex;align-items:center;gap:5px;min-inline-size:0;max-inline-size:180px;height:23px;padding:0 8px;border-radius:7px;font-size:10px;font-weight:500;white-space:nowrap;overflow:hidden;color:var(--muted);background:var(--hover)}
+.artifact-flash>span{overflow:hidden;text-overflow:ellipsis}
+.artifact-flash.status-success{color:var(--success-fg);background:var(--success-bg)}
+.artifact-flash.status-error{color:var(--danger-fg);background:var(--danger-bg)}
