@@ -341,6 +341,27 @@ productionTest.describe('production math assets', () => {
     expect(observed.external).toEqual([]);
   });
 
+  productionTest('untrusted-formula commands stay literal and issue no external requests', async ({page,host}) => {
+    expect(host.snapshot()).toBeDefined();
+    const observed = await productionRequests(page);
+    const snapshot = taskMathFixture({formulas:false});
+    const message = snapshot.messages.find(item => item.id === 'reply')!;
+    const refused = [
+      String.raw`\(\href{https://example.test/math-only}{text}\)`,
+      String.raw`\(\includegraphics{https://example.test/math-only}\)`,
+      String.raw`\(\htmlClass{math-untrusted}{text}\)`,
+    ];
+    message.content = [...refused, String.raw`\(x+1\)`].join('\n\n');
+    await serveTaskFixture(page,snapshot);
+    await page.goto(HOST_URL);
+    const {reply} = appSurface(page);
+    await expect(reply.locator('annotation')).toHaveText('x+1');
+    for (const text of refused) await expect(reply).toContainText(text);
+    await expect(reply.locator('a,img,iframe,script,.math-untrusted')).toHaveCount(0);
+    expect(observed.external).toEqual([]);
+    expect(observed.policyViolations).toEqual([]);
+  });
+
   productionTest('a blocked production stylesheet preserves literal source and fails closed', async ({page,host}) => {
     expect(host.snapshot()).toBeDefined();
     await productionRequests(page);
