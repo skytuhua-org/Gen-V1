@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -1223,6 +1223,49 @@ describe("M10-T04 composed verification (#2014)", () => {
     expect(slice).toMatchObject({ status: "OK" });
     expect(Buffer.from(slice.bytes!)).toEqual(Buffer.from("€".repeat(5), "utf8"));
     await expect(vault.read({ owner, handle: handle!, offset: 0, length: 2 * 1024 * 1024 })).resolves.toMatchObject({ status: "INVALID_RANGE" });
+  });
+
+  it("delays first publication until close inside a later authorized parent turn", async () => {
+    enable("jobs.backgroundV1");
+    __setCapabilityFlagForTests("context.compilerV1", true); __setCapabilityFlagForTests("tools.deferredV1", true);
+    const { store, service, root } = serviceFixture();
+    await service.recover();
+    const thread = await liveThread(service, store, "M10 delayed close");
+    const release = join(root, "release-close");
+    // The owned child exits immediately, but its grandchild inherits stdout and
+    // holds the pipe open until the test releases it. This makes the ordering
+    // deterministic: exit and SETTLED happen before close, and close happens
+    // only after a later parent turn has started.
+    const grandchild = `setInterval(()=>{if(require("fs").existsSync(${JSON.stringify(release)})){process.stdout.write("tail-after-later-turn");process.exit(0)}},10)`;
+    const script = `const g=require("child_process").spawn(process.execPath,["-e",${JSON.stringify(grandchild)}],{stdio:["ignore","inherit","inherit"],detached:true});g.unref();process.stdout.write("head-before-exit\\n");`;
+    const work = (await service.command(command("background.work.admit", { kind: "COMMAND", title: "delayed-close", command: spec(root, ["-e", script]) }, thread.id))).result as BackgroundWorkRecord;
+    await service.backgroundWork.startCommand(work.workId);
+    await waitFor(() => service.backgroundWork.work(work.workId).state === "SETTLED");
+    await waitFor(() => service.backgroundWork.readOutput(work.workId, thread.id, 0).output.includes("head-before-exit"));
+    // Exit alone is not finalization: no handle exists while close is pending,
+    // even after the original parent turn has ended.
+    expect(service.backgroundWork.work(work.workId).outputRef).toBeNull();
+    store.internal("t04.original-turn-ended", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, status: "ready" } as Thread));
+    expect(service.backgroundWork.work(work.workId).outputRef).toBeNull();
+    // A later turn under the same account/workspace/project is the authority
+    // context visible when close finally occurs. Publication intentionally has
+    // no unconditional origin-run restriction: this is the fresh-reference case.
+    store.internal("t04.later-turn", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, status: "working", runId: "run-2", epoch: 3 } as Thread));
+    writeFileSync(release, "release");
+    await waitFor(() => !!service.backgroundWork.work(work.workId).outputRef);
+    const handle = service.backgroundWork.work(work.workId).outputRef!;
+    expect(handle).toMatch(HANDLE);
+    const owner = { threadId: thread.id, workspaceId: JSON.stringify(["ws-1", "p1"]), accountId: "acct-1" };
+    const vault = vaultOf(service);
+    const expected = "head-before-exit\ntail-after-later-turn";
+    const read = await vault.read({ owner, handle, offset: 0, length: Buffer.byteLength(expected, "utf8") });
+    expect(read).toMatchObject({ status: "OK" });
+    expect(new TextDecoder().decode(read.bytes!)).toBe(expected);
+    // The fresh reference remains temporal: when that later turn ends the
+    // canonical model read closes, while owner-continuous drawer history stays.
+    store.internal("t04.later-turn-ended", thread.id, () => store.put("thread", thread.id, thread.id, { ...store.get<Thread>("thread", thread.id)!, status: "ready" } as Thread));
+    await expect(vault.read({ owner, handle, offset: 0, length: 4 })).resolves.toMatchObject({ status: "UNAVAILABLE" });
+    expect(service.backgroundWork.readOutput(work.workId, thread.id, 0).output).toBe("head-before-exit\ntail-after-later-turn");
   });
 
   it("run drift keeps the authorized historical drawer read but revokes the model handle; account drift denies both", async () => {
