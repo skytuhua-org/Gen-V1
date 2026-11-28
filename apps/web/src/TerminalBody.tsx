@@ -1,4 +1,5 @@
 import {useEffect,useLayoutEffect,useRef,useState} from 'react';
+import { storageKeyFor, readString, writeString, remove } from './local-store';
 import {ApiError,authenticated,csrfToken,read} from './api.ts';
 import './terminal-read.css';
 import {captureTerminalExcerpt,type TerminalExcerpt} from './terminal-excerpts';
@@ -18,7 +19,7 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
  const [selection,setSelection]=useState<TerminalExcerpt|null>(null),[adding,setAdding]=useState(false);
  const element=useRef<HTMLDivElement>(null);
  const [phase,setPhase]=useState<Phase>('starting'),[error,setError]=useState(''),[acknowledged,setAcknowledged]=useState(false),[retrying,setRetrying]=useState(false),[stopping,setStopping]=useState(false),[generation,setGeneration]=useState(0);
- const key=`gen-terminal:${projectId}:${threadId??'project'}:${terminalId??'default'}`;
+ const key=storageKeyFor.terminal(projectId,threadId,terminalId);
  const latest=useRef({projectId,threadId,terminalId,active,generation,isCurrent,excerptComposer});
  // Only a committed render may move ownership: a suspended concurrent render
  // must never lend its isCurrent guard to in-flight terminal work.
@@ -87,15 +88,15 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
    const colors=getComputedStyle(element.current!);
    instance=new Terminal({convertEol:false,fontSize:13,scrollback:2000,theme:{background:'#101010',foreground:'#dedede',selectionBackground:colors.getPropertyValue('--selection-bg').trim()||'#1f1f1f',selectionInactiveBackground:colors.getPropertyValue('--selection-bg').trim()||'#1f1f1f',selectionForeground:colors.getPropertyValue('--text').trim()||'#e6e6e6'}});
    const fit=new FitAddon();instance.loadAddon(fit);instance.open(element.current!);fit.fit();
-   let saved:string|null=null,pending:string|null=null;try{saved=localStorage.getItem(key);pending=localStorage.getItem(key+':pending');}catch{}
+   const saved=readString(key),pending=readString(key+':pending');
    const requestedId=terminalId??saved??pending??(pendingId.current?.key===key?pendingId.current.id:crypto.randomUUID());
    pendingId.current={key,id:requestedId};
    // The host deduplicates caller IDs; retain an unconfirmed attempt on remount.
-   if(!terminalId&&!saved)try{localStorage.setItem(key+':pending',requestedId);}catch{throw new Error('Could not retain the terminal start ID. Open a terminal from the workspace.');}
+   if(!terminalId&&!saved&&!writeString(key+':pending',requestedId))throw new Error('Could not retain the terminal start ID. Open a terminal from the workspace.');
    const first=await post<TerminalRead>('/api/terminals',{projectId,...(threadId?{threadId}:{}),terminalId:requestedId,cols:instance.cols,rows:instance.rows},ownerCurrent);
    if(!ownerCurrent())return;
    matches(first,requestedId);confirmedId=first.id;setAcknowledged(true);
-   try{localStorage.setItem(key,first.id);localStorage.removeItem(key+':pending');}catch{}
+   writeString(key,first.id);remove(key+':pending');
    append(first);sentCols=instance.cols;sentRows=instance.rows;
    // fit runs per ResizeObserver tick; the resize command is latest-wins
    // with a trailing send so a drag cannot issue a request per frame.
@@ -122,7 +123,7 @@ export function TerminalBody({projectId,threadId,terminalId,active,openAnother,i
  const restart=async()=>{
   const owner=actions.current;if(!owner?.current())return;
   if(terminalId){if(openAnother)try{await openAnother();}catch(error){if(owner.current())setError(message(error));}return;}
-  pendingId.current=null;try{localStorage.removeItem(key);localStorage.removeItem(key+':pending');}catch{}
+  pendingId.current=null;remove(key);remove(key+':pending');
   setGeneration(value=>value+1);
  };
  const canAdd=active&&excerptComposer&&!excerptComposer.readOnly&&excerptComposer.projectId===projectId&&excerptComposer.threadId===threadId;
