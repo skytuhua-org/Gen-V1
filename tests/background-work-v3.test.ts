@@ -599,6 +599,26 @@ describe("M10-S12/T06 shutdown and clock movement", () => {
     expect(f.store.all("backgroundAdmission")).toHaveLength(0);
     expect(() => f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "MAINTENANCE", title: "late" })).toThrowError(expect.objectContaining({ code: "HOST_CLOSING" }));
   });
+  it("clears the lease for a drained uncertain occurrence without replaying it after restart", async () => {
+    const f = fixture();
+    let finish!: () => void;
+    const outcome = new Promise<{ status: "UNCERTAIN"; reason: string }>(resolve => { finish = () => resolve({ status: "UNCERTAIN", reason: "Receipt unavailable" }); });
+    const old = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver: () => outcome });
+    const deliver = vi.fn(async () => ({ status: "DELIVERED" as const }));
+    const reopened = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver });
+    cleanups.push(() => { old.stop(); reopened.stop(); });
+    const { wakeupId } = old.register(command("background.wakeup.register"), { taskId: "task", trigger: { kind: "AT_UTC", dueAtMs: f.now() } });
+    try {
+      await old.tick();
+      expect(old.schedules()[0]).toMatchObject({ state: "CLAIMED" });
+      expect((await old.drain(1)).uncertain).toBe(1);
+      reopened.recover();
+      expect(reopened.schedules()[0]).toMatchObject({ state: "PENDING", occurrenceKey: null, leaseExpiresAtMs: null, nextDueAtMs: null });
+      expect(reopened.occurrences(wakeupId)).toMatchObject([{ state: "UNKNOWN", dispatch: "DISPATCHED_UNCONFIRMED", leaseExpiresAtMs: null }]);
+      expect(await reopened.tick()).toEqual([]);
+      expect(deliver).not.toHaveBeenCalled();
+    } finally { finish(); await waitFor(() => !old.busy); }
+  });
   it("wall-clock jumps preserve occurrence identity and timezone stays display metadata", async () => {
     const f = fixture();
     let deliveries = 0;
