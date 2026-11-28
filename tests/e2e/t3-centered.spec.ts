@@ -89,9 +89,9 @@ test('automatic Plan summary reserves task space while telemetry preserves the m
 test('explicit workspace panels claim only their own width and closing restores the full centered surface',async({page})=>{
   await page.setViewportSize({width:1920,height:1080});await serveTaskFixture(page,fixture(false));await page.goto('/');await expect(page.getByRole('textbox',{name:'Review name',exact:true})).toBeVisible();
   const input=await page.getByRole('textbox',{name:'Review name',exact:true}).elementHandle(),before=await page.locator('main.workspace').boundingBox();
-  await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();await expect(page.getByRole('complementary',{name:'Workspace panel',exact:true})).toBeVisible();await centered(page);
-  await expect.poll(()=>page.getByRole('complementary',{name:'Workspace panel',exact:true}).evaluate(node=>node.getAnimations().filter(animation=>animation.playState==='running').length)).toBe(0);
-  const main=await page.locator('main.workspace').boundingBox(),panel=await page.getByRole('complementary',{name:'Workspace panel',exact:true}).boundingBox();
+  await page.getByRole('button',{name:'Open workspace panel',exact:true}).click();await expect(page.getByRole('region',{name:'Workspace panel',exact:true})).toBeVisible();await centered(page);
+  await expect.poll(()=>page.getByRole('region',{name:'Workspace panel',exact:true}).evaluate(node=>node.getAnimations().filter(animation=>animation.playState==='running').length)).toBe(0);
+  const main=await page.locator('main.workspace').boundingBox(),panel=await page.getByRole('region',{name:'Workspace panel',exact:true}).boundingBox();
   expect(panel!.x-(main!.x+main!.width)).toBeCloseTo(6,0);expect(panel!.x+panel!.width).toBeCloseTo(1920,0);
   await page.getByRole('button',{name:'Hide workspace panel',exact:true}).click();await expect.poll(async()=>(await page.locator('main.workspace').boundingBox())!.width).toBeCloseTo(before!.width,0);await centered(page);
   expect(await page.getByRole('textbox',{name:'Review name',exact:true}).evaluate((node,old)=>node===old,input)).toBe(true);
@@ -111,4 +111,36 @@ const captures=process.env.T3_CENTERED_CAPTURE_DIR;
 if(captures)for(const variant of [{name:'dark',width:1920,height:1080,theme:'dark'},{name:'light',width:1920,height:1080,theme:'light'},{name:'narrow',width:390,height:844,theme:'dark'}])test(`capture centered T3 shell ${variant.name}`,async({page})=>{
   await page.setViewportSize(variant);const snapshot=taskFixture(branchGraphSpec('vertical'),{graph:{...branchGraphData,summary:{label:'Review two conflicts',status:'pending'}}});snapshot.settings.theme=variant.theme as 'dark'|'light';snapshot.threads[0].title='Review session refresh';snapshot.threads[0].projectName='Generative Harness';snapshot.artifacts[0].title='Session refresh';snapshot.messages[0].content='Two overlapping changes need review.';await serveTaskFixture(page,snapshot);await page.goto('/');
   await expect(page.getByText('Keep retries ordered',{exact:true})).toBeVisible();await centered(page);await mkdir(captures,{recursive:true});await page.screenshot({path:resolve(captures,`${variant.name}.png`)});
+});
+
+for (const width of [1500, 375]) test(`workspace panel keyboard focus follows the standard shell at ${width}px`, async ({page}) => {
+  await page.setViewportSize({width, height: 900});
+  await page.emulateMedia({reducedMotion: 'reduce'});
+  await page.addInitScript(() => localStorage.setItem('harness:workspace-mode:v3', 'chat'));
+  await serveTaskFixture(page, fixture(false));
+  await page.goto('/');
+  const open = page.getByRole('button', {name: 'Open workspace panel', exact: true});
+  const close = page.getByRole('button', {name: 'Hide workspace panel', exact: true});
+  const panel = page.getByRole('region', {name: 'Workspace panel', exact: true});
+  const composer = page.getByRole('textbox', {name: 'Message', exact: true});
+  await expect(composer).toBeEnabled();
+  await expect(open).toBeVisible();
+  await composer.focus();
+  await page.keyboard.press('Control+Shift+B');
+  await expect(panel).toBeFocused();
+  await expect(panel).toHaveCSS('outline-style', 'none');
+  await test.info().attach(`Workspace panel at ${width}px with synthetic content`, {body: await page.screenshot(), contentType: 'image/png'});
+  await panel.getByRole('tab', {name: 'Artifact', exact: true}).focus();
+  await page.keyboard.press('Control+Shift+B');
+  await expect(open).toBeFocused();
+  await expect(panel).toHaveCount(0);
+  await open.click();
+  await expect(close).toBeFocused();
+  await composer.focus();
+  await page.keyboard.press('Control+Shift+B');
+  await expect(open).toBeVisible();
+  await expect(composer).toBeFocused();
+  await open.click();
+  await close.click();
+  await expect(open).toBeFocused();
 });
