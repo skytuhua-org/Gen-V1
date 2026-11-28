@@ -16,6 +16,7 @@ export interface ProjectPickerProps {
   authority: WorkspaceAuthority;
   projects: readonly ProjectSummary[];
   selectedProjectId?: string;
+  initialActiveProjectId?: string;
   recentProjectIds?: readonly string[];
   colors: Record<string, string>;
   busy?: boolean;
@@ -31,13 +32,13 @@ export function ProjectPicker(props: ProjectPickerProps) {
   return props.open ? <ProjectPickerDialog {...props} /> : null;
 }
 
-function ProjectPickerDialog({ authority, projects, selectedProjectId, recentProjectIds = [], colors, busy = false, error,
+function ProjectPickerDialog({ authority, projects, selectedProjectId, initialActiveProjectId = selectedProjectId, recentProjectIds = [], colors, busy = false, error,
   title = 'Select project', onClose, onSelect, onAddProject, onColorChange }: ProjectPickerProps) {
   const id = useId(), search = useRef<HTMLInputElement>(null), list = useRef<HTMLDivElement>(null);
   const colorAnchor = useRef<HTMLButtonElement>(null), colorInput = useRef<HTMLInputElement>(null);
   const pending = useRef(false);
   const [working, setWorking] = useState(false), [failure, setFailure] = useState('');
-  const [query, setQuery] = useState(''), [activeKey, setActiveKey] = useState(selectedProjectId ? projectColorKey(authority, selectedProjectId) : '');
+  const [query, setQuery] = useState(''), [activeKey, setActiveKey] = useState(initialActiveProjectId ? projectColorKey(authority, initialActiveProjectId) : '');
   const [colorKey, setColorKey] = useState<string | null>(null), [custom, setCustom] = useState(''), [colorError, setColorError] = useState('');
   const locked = busy || working;
   const choices = useMemo(() => {

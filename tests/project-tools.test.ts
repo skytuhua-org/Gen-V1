@@ -1,5 +1,5 @@
 import {afterEach,expect,it} from 'vitest';
-import {mkdir,readdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {mkdir,readdir,mkdtemp,readFile,realpath,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -9,6 +9,17 @@ import {ProjectTools,discardUnboundWorktree} from '../packages/workspace/tools.t
 const cleanup:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 async function fixture(){const root=await mkdtemp(join(tmpdir(),'gen-project-')),path=join(root,'repo'),{mkdir}=await import('node:fs/promises');await mkdir(path);const store=new Store(join(root,'data'));const tools=new ProjectTools(store,{git:'C:/Program Files/Git/cmd/git.exe'});cleanup.push(async()=>{await tools.dispose();store.close();await rm(root,{recursive:true,force:true,maxRetries:5});});const git=(...args:string[])=>execFileSync('git',['-C',path,...args],{windowsHide:true,encoding:'utf8'}).trim();git('init');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid');await writeFile(join(path,'one.txt'),'first\n');git('add','.');git('commit','-m','Initial');return{root,path,store,tools,git};}
+it('returns the exact connected project id and reuses a canonical folder',async()=>{
+ const {root,tools}=await fixture(),folder=join(root,'plain folder');
+ await mkdir(folder);
+ const connect=(id:string,path:string)=>tools.connect({id,type:'workspace.project.connect',payload:{name:'Same project',path}});
+ const first=await connect('connect-folder',folder);
+ expect(first.result).toMatchObject({connectedProjectId:expect.any(String)});
+ const connected=first.result as {connectedProjectId:string;projects:{id:string;rootPath?:string}[]};
+ expect(connected.projects.find(project=>project.id===connected.connectedProjectId)?.rootPath).toBe(await realpath(folder));
+ const repeated=await connect('reconnect-folder',folder);
+ expect(repeated.result).toMatchObject({connectedProjectId:connected.connectedProjectId,projects:[{id:connected.connectedProjectId}]});
+});
 it('enrolls a local project and assigns new agents separate real branches and working copies',async()=>{
  const{path,store,tools}=await fixture();const project=await tools.connect({id:'connect',type:'workspace.project.connect',payload:{name:'Fixture',path}});
  const projectId=(project.result as {projects:{id:string}[]}).projects[0]!.id;
