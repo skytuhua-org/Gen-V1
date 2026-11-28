@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -17,6 +17,36 @@ function run(file: string, args: string[], cwd: string, env: NodeJS.ProcessEnv =
   if (result.error || result.status !== 0) throw Error('Windows control bridge compilation failed.');
 }
 
+const digest = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
+const stampPath = (artifact: string, cache: string) => join(cache, 'bridge-' + digest(resolve(artifact)) + '.json');
+async function controlBridgeInputs(source: string, script: string) {
+  const [sourceBytes, scriptBytes] = await Promise.all([readFile(source), readFile(script)]);
+  return { version: 1, electron: version, platform: process.platform, arch: process.arch,
+    sourceDigest: digest(sourceBytes), scriptDigest: digest(scriptBytes) };
+}
+
+export async function controlBridgeCacheCurrent(artifact: string, source: string, script: string, cache: string): Promise<boolean> {
+  try {
+    const saved: unknown = JSON.parse(await readFile(stampPath(artifact, cache), 'utf8'));
+    const [inputs, bytes] = await Promise.all([controlBridgeInputs(source, script), readFile(artifact)]);
+    const expected = { ...inputs, artifactDigest: digest(bytes) };
+    return saved !== null && typeof saved === 'object' && !Array.isArray(saved)
+      && Object.entries(expected).every(([key, value]) => (saved as Record<string, unknown>)[key] === value);
+  } catch { return false; }
+}
+
+export async function recordControlBridgeBuild(artifact: string, source: string, script: string, cache: string,
+  expectedInputs?: Awaited<ReturnType<typeof controlBridgeInputs>>): Promise<void> {
+  const [inputs, bytes] = await Promise.all([controlBridgeInputs(source, script), readFile(artifact)]);
+  if (expectedInputs && JSON.stringify(inputs) !== JSON.stringify(expectedInputs)) throw Error('Control bridge inputs changed during compilation; rebuild.');
+  const stamp = stampPath(artifact, cache), temporary = stamp + '.' + randomUUID() + '.tmp';
+  await mkdir(cache, { recursive: true });
+  try {
+    await writeFile(temporary, JSON.stringify({ ...inputs, artifactDigest: digest(bytes) }) + '\n', { flag: 'wx' });
+    await rename(temporary, stamp);
+  } finally { await rm(temporary, { force: true }); }
+}
+
 /** Compiles the M16 C4 Windows.Graphics.Capture bridge for the shipped
  * Electron host: Electron's own node headers and node.exe import library are
  * pinned by digest in a dedicated cache (shared caches could silently serve
@@ -24,11 +54,10 @@ function run(file: string, args: string[], cwd: string, env: NodeJS.ProcessEnv =
 export async function buildWindowsControlBridge(outputDirectory = join(root, 'packages/core')) {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw Error('Control bridge build requires Windows x64.');
   const artifact = join(resolve(outputDirectory), 'windows-control-bridge.node'), source = join(root, 'packages/core/windows-control-bridge.cc');
-  // Rebuilding needs pinned Electron headers plus Visual Studio; skip it when
-  // the native module on disk already covers the current source and script.
-  const script = fileURLToPath(import.meta.url);
-  if (existsSync(artifact) && statSync(artifact).mtimeMs >= statSync(source).mtimeMs && statSync(artifact).mtimeMs >= statSync(script).mtimeMs) return artifact;
-  const cache = join(root, '.harness-windows-control-bridge-build');
+  // Reuse only a load-checked artifact bound to these exact source inputs.
+  const script = fileURLToPath(import.meta.url), cache = join(root, '.harness-windows-control-bridge-build');
+  if (await controlBridgeCacheCurrent(artifact, source, script, cache)) return artifact;
+  const compileInputs = await controlBridgeInputs(source, script);
   await mkdir(cache, { recursive: true });
   for (const [name, sha256] of inputs) {
     const target = join(cache, name.split('/').at(-1)!); let bytes: Buffer | undefined;
@@ -62,6 +91,7 @@ export async function buildWindowsControlBridge(outputDirectory = join(root, 'pa
   // Diagnostic only (Node host): developer PATH must not hide unstaged native
   // DLL dependencies. The acceptance load is the installed Electron process.
   run(process.execPath, ['-e', 'if(typeof require(process.argv[1]).pickWindow!=="function")process.exit(1)', output], cache, { ...process.env, PATH: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32') });
+  await recordControlBridgeBuild(output, source, script, cache, compileInputs);
   return output;
 }
 
