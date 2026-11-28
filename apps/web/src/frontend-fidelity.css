@@ -1,10 +1,14 @@
 /* Shared presentation refinements. Task components retain their own state and motion. */
 .artifact[data-artifact-inline=true] { position:relative; border:1px solid var(--border); border-radius:14px; background:var(--surface); overflow:clip; }
-.artifact[data-artifact-inline=true]>.artifact-header { position:relative; inset:auto; min-height:40px; padding:7px 12px 7px 16px; opacity:1; border-bottom:1px solid var(--border); background:transparent; }
+.artifact[data-artifact-inline=true]>.artifact-header { position:sticky; inset-block-start:0; z-index:3; min-height:40px; padding:7px 12px 7px 16px; opacity:1; border-bottom:1px solid var(--border); border-radius:13px 13px 0 0; background:var(--surface); }
+.artifact[data-artifact-inline=true] [data-inline-sticky-views] { position:sticky; inset-block-start:var(--artifact-header-height,40px); z-index:2; background:var(--surface); }
+.artifact[data-artifact-inline=true] :is(.artifact-body,.artifact-source) :where(button,input,select,textarea,a[href],summary,[tabindex]):not([data-inline-sticky-views] *) {
+ scroll-margin-block-start:calc(var(--artifact-header-height,40px) + var(--artifact-views-height,0px) + 2px);
+}
 .artifact[data-artifact-inline=true]>.artifact-body { padding:16px; }
-.artifact[data-artifact-inline=true] :is(pre,.artifact-body,.artifact-source,.surface-tabs,.table-scroll,.task-table-scroll,.task-history,.task-graph-viewport,.review-queue-layout nav,.review-queue-layout ol,.editable-table-scroll,.schedule-slots [role=listbox],.annotation-list,.log-events,.log-event-details pre,.software-list,.software-assertion pre,.software-code pre,.software-patch,.software-table-scroll,.trace-scroll,.evidence pre,.task-status-receipt pre) { max-height:none; overflow:visible; overscroll-behavior:auto; }
+.artifact[data-artifact-inline=true] :is(pre,.artifact-body,.artifact-source,.table-scroll,.task-table-scroll,.task-history,.task-graph-viewport,.review-queue-layout nav,.review-queue-layout ol,.editable-table-scroll,.schedule-slots [role=listbox],.annotation-list,.log-events,.log-event-details pre,.software-list,.software-assertion pre,.software-code pre,.software-patch,.software-table-scroll,.trace-scroll,.evidence pre,.task-status-receipt pre) { max-height:none; overflow:visible; overscroll-behavior:auto; }
 .artifact[data-artifact-inline=true] .task-history { mask-image:none; }
-.artifact[data-artifact-inline=true] :is(.surface-tabs,.schedule-days,.everyday-metric-nav) { flex-wrap:wrap; overflow:visible; }
+.artifact[data-artifact-inline=true] :is(.schedule-days,.everyday-metric-nav) { flex-wrap:wrap; overflow:visible; }
 .artifact[data-artifact-inline=true] :is(pre,code,td,th) { white-space:pre-wrap; overflow-wrap:anywhere; }
 .artifact[data-artifact-inline=true] .artifact-content table { table-layout:fixed; min-width:0; width:100%; }
 .artifact[data-artifact-inline=true] .artifact-content table :is(td,th) { min-width:0; white-space:normal; overflow-wrap:anywhere; }
@@ -49,7 +53,7 @@
 .task-tabs-operation-header>div { display:flex; align-items:baseline; flex-wrap:wrap; gap:10px; }
 .task-tabs-operation-header strong { font-size:14px; font-weight:550; }
 .task-tabs-operation-header span { font-size:12px; color:var(--muted); }
-.task-tabs-operation .surface-tabs { margin:0 0 10px; gap:12px; }
+.task-tabs-operation .surface-tabs { gap:12px; }
 .task-tabs-operation .surface-tabs button { gap:6px; padding:8px 5px; font-size:12px; }
 .task-tabs-operation-footer { display:flex; align-items:baseline; gap:12px; padding:14px 0 0; margin-top:10px; border-top:1px solid var(--border); min-height:43px; }
 .task-tabs-operation-footer>span { font-size:11px; color:var(--muted); }
