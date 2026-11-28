@@ -124,7 +124,13 @@ export function createSidecarControlDriver(channel: ControlSidecarChannel): Cont
     },
     async dispatch(action: ControlActionV1): Promise<{ receipt: string }> {
       const result = await call<{ receipt?: unknown }>('dispatch', { action });
-      return { receipt: typeof result.receipt === 'string' ? result.receipt : `driver-${action.actionId}` };
+      const receipt = result?.receipt;
+      if (typeof receipt !== 'string' || receipt.trim().length === 0) {
+        // Dispatch may already have reached the target. Let the dispatcher
+        // retain UNCERTAIN rather than inventing an effect receipt.
+        throw new HarnessError('DRIVER_ERROR', 'The control driver did not return an effect receipt.');
+      }
+      return { receipt };
     },
     async cancelInput(target: ControlTargetIdentityV1): Promise<void> {
       await call('cancel', { target });

@@ -11,7 +11,6 @@ import {
   GitBranch,
   GitPullRequest,
   ListFilter,
-  LoaderCircle,
   MoreHorizontal,
   PanelLeftClose,
   Pin,
@@ -23,7 +22,7 @@ import {
 import {threadNavigationRevision,type ThreadNavigationRow as Thread} from '../../../packages/contracts/shell-read-models';
 import type { UiPreferences } from '../../../packages/contracts/preferences';
 import type { ShellLayout } from './shell-layout';
-import { ariaKeyShortcuts } from './keyboard-bindings';
+import { ariaKeyShortcuts, shortcutKeys } from './keyboard-bindings';
 import { MotionRegion } from './task-motion';
 import { UpdateControl } from './UpdateControl';
 import { useWorkspace } from './workspace-context';
@@ -55,6 +54,9 @@ export const threadStatus = (thread: Thread) =>
       : thread.status === 'ready'
         ? 'Ready'
         : thread.status.charAt(0).toUpperCase() + thread.status.slice(1);
+
+export const threadRowLabel = (thread: Thread) =>
+  `${thread.title} ${threadStatus(thread)}${thread.presentation?.unread ? ' Unread' : ''}`;
 
 export function projectMonogram(name?: string | null): string {
   const cleaned = (name ?? '').trim();
@@ -259,7 +261,7 @@ export function ShellSidebar({
             if (reorder.key(item, event)) return;
             trigger.onKeyDown?.(event);
           }}
-          aria-label={`${item.title} ${threadStatus(item)}`}
+          aria-label={threadRowLabel(item)}
           aria-current={item.id === selectedId ? 'page' : undefined}
           onClick={() => {
             select(item.id);
@@ -272,24 +274,25 @@ export function ShellSidebar({
                 {projectMonogram(item.projectName)}
               </span>
               <span className="thread-item-title">
-                {item.presentation?.unread && <span className="unread-dot" />}
+                {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
                 {item.title}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
+                {isWorking && <span className="thread-run-badge" aria-hidden="true" />}
                 <time dateTime={item.updatedAt}>{threadAge(item.updatedAt)}</time>
               </span>
             </span>
           ) : (
             <>
               <span className="thread-item-title">
-                {item.presentation?.unread && <span className="unread-dot" />}
+                {item.presentation?.unread && <span className="unread-dot" aria-hidden="true" />}
                 {item.title}
               </span>
               <span className="thread-item-meta" data-thread-state={item.runId ? 'working' : item.status}>
                 {showStatus && (
                   <span className="thread-item-status">
                     {isWorking ? (
-                      <LoaderCircle size={11} className="spinning" />
+                      <span className="thread-run-badge" aria-hidden="true" />
                     ) : item.status === 'awaiting_input' ? (
                       <span className="pending-dot" />
                     ) : null}
@@ -370,6 +373,8 @@ export function ShellSidebar({
           type="button"
           className="icon-button sidebar-close"
           aria-label={mobile ? 'Close navigation' : 'Collapse sidebar'}
+          title={mobile ? 'Close navigation' : `Collapse sidebar (${shortcutKeys(preferences.keybindings.toggleSidebar)})`}
+          aria-keyshortcuts={ariaKeyShortcuts(['toggle-sidebar'], preferences.keybindings)}
           aria-expanded={mobile ? open : !layout.sidebarCollapsed}
           aria-controls="threads-nav"
           onClick={mobile ? close : toggleCollapsed}
@@ -383,6 +388,8 @@ export function ShellSidebar({
           <input
             ref={searchRef}
             aria-label="Search threads"
+            title={`Search threads (${shortcutKeys(preferences.keybindings.search)})`}
+            aria-keyshortcuts={ariaKeyShortcuts(['search'], preferences.keybindings)}
             placeholder="Search"
             value={search}
             onChange={event => setSearch(event.target.value)}
@@ -412,7 +419,8 @@ export function ShellSidebar({
           type="button"
           className="icon-button sidebar-action-btn new-thread"
           aria-label="New thread"
-          title={`New thread (${preferences.keybindings.newThread})`}
+          title={`New thread (${shortcutKeys(preferences.keybindings.newThread)})`}
+          aria-keyshortcuts={ariaKeyShortcuts(['new-thread'], preferences.keybindings)}
           onClick={create}
           disabled={!loaded || creating}
         >
@@ -493,7 +501,7 @@ export function ShellSidebar({
       </nav>
       {navigation}
       <div className="sidebar-footer" aria-label="App controls">
-        <button type="button" onClick={settings} aria-label="Settings" title="Settings">
+        <button type="button" onClick={settings} aria-label="Settings" title={`Settings (${shortcutKeys(preferences.keybindings.openSettings)})`} aria-keyshortcuts={ariaKeyShortcuts(['open-settings'], preferences.keybindings)}>
           <Settings2 size={16} />
           <span>Settings</span>
         </button>

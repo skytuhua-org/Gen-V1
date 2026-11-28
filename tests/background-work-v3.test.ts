@@ -22,13 +22,13 @@ afterEach(async () => {
 const M10_FLAGS = ["jobs.backgroundV1", "jobs.serviceLifetimeV1", "jobs.idleReviewV1", "integrations.intakeV1"] as const;
 function enable(...keys: (typeof M10_FLAGS)[number][]) { for (const key of keys) __setCapabilityFlagForTests(key, true); }
 
-function fixture(options: { idleExecutor?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["idleExecutor"]; gate?: ModelCapacity; executionGate?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["executionGate"]; enqueueFollowUp?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["enqueueFollowUp"] } = {}) {
+function fixture(options: { idleExecutor?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["idleExecutor"]; gate?: ModelCapacity; executionGate?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["executionGate"]; enqueueFollowUp?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["enqueueFollowUp"]; forkApi?: ConstructorParameters<typeof BackgroundWorkCoordinator>[0]["forkApi"] } = {}) {
   const root = mkdtempSync(join(realpathSync(tmpdir()), "m10-background-"));
   const store = new Store(join(root, "state"));
   let clock = 1_700_000_000_000;
   const now = () => clock;
   const advance = (ms: number) => { clock += ms; };
-  const coordinator = new BackgroundWorkCoordinator({ store, now, gate: options.gate, idleExecutor: options.idleExecutor, executionGate: options.executionGate, enqueueFollowUp: options.enqueueFollowUp });
+  const coordinator = new BackgroundWorkCoordinator({ store, now, gate: options.gate, idleExecutor: options.idleExecutor, executionGate: options.executionGate, enqueueFollowUp: options.enqueueFollowUp, forkApi: options.forkApi });
   const thread: Thread = { id: "thread-1", title: "Owner", projectName: null, createdAt: new Date(clock).toISOString(), updatedAt: new Date(clock).toISOString(), status: "ready", epoch: 0, runId: null, modelId: null, sessionPath: null };
   store.internal("fixture.thread", thread.id, () => store.put("thread", thread.id, thread.id, thread));
   cleanups.push(() => { coordinator.dispose(); store.close(); rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }); });
@@ -234,6 +234,19 @@ describe("M10-S07/G01 fork and service gates", () => {
     const review = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "REVIEW", title: "fork" });
     expect(review.state).toBe("BLOCKED");
     expect(review.blockedReason).toBe(BACKGROUND_HOLD_REASONS.forkApi);
+  });
+  it("review forks admit through the callable fork API after the budget check", () => {
+    const calls: { sourceCutDigest: string; toolList: readonly string[]; auxiliaryBudget: { maxCalls: number; maxTokens: number }; parentThreadId: string }[] = [];
+    const f = fixture({ forkApi: request => { calls.push(request); return { forkId: "fork-1" }; } });
+    enable("jobs.backgroundV1");
+    expect(f.coordinator.admitReviewFork({ sourceCutDigest: "a".repeat(64), toolList: ["read"], auxiliaryBudget: null, parentThreadId: "thread-1" })).toEqual({ status: "AUXILIARY_BUDGET_REQUIRED" });
+    expect(calls).toEqual([]);
+    const request = { sourceCutDigest: "a".repeat(64), toolList: ["read"], auxiliaryBudget: { maxCalls: 4, maxTokens: 1000 }, parentThreadId: "thread-1" };
+    expect(f.coordinator.admitReviewFork(request)).toEqual({ status: "ADMITTED", forkId: "fork-1" });
+    expect(calls).toEqual([request]);
+    const review = f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "REVIEW", title: "fork" });
+    expect(review.state).toBe("QUEUED");
+    expect(review.blockedReason).toBeNull();
   });
   it("APPROVED_SERVICE stays blocked without a proven installed supervisor", () => {
     const f = fixture();
@@ -585,6 +598,26 @@ describe("M10-S12/T06 shutdown and clock movement", () => {
     expect(scheduler.schedules()[0]!.lastRunAtMs).toBeNull();
     expect(f.store.all("backgroundAdmission")).toHaveLength(0);
     expect(() => f.coordinator.admit(command("background.work.admit"), { owner: f.owner, kind: "MAINTENANCE", title: "late" })).toThrowError(expect.objectContaining({ code: "HOST_CLOSING" }));
+  });
+  it("clears the lease for a drained uncertain occurrence without replaying it after restart", async () => {
+    const f = fixture();
+    let finish!: () => void;
+    const outcome = new Promise<{ status: "UNCERTAIN"; reason: string }>(resolve => { finish = () => resolve({ status: "UNCERTAIN", reason: "Receipt unavailable" }); });
+    const old = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver: () => outcome });
+    const deliver = vi.fn(async () => ({ status: "DELIVERED" as const }));
+    const reopened = new DurableWakeupScheduler({ store: f.store, now: f.now, deliver });
+    cleanups.push(() => { old.stop(); reopened.stop(); });
+    const { wakeupId } = old.register(command("background.wakeup.register"), { taskId: "task", trigger: { kind: "AT_UTC", dueAtMs: f.now() } });
+    try {
+      await old.tick();
+      expect(old.schedules()[0]).toMatchObject({ state: "CLAIMED" });
+      expect((await old.drain(1)).uncertain).toBe(1);
+      reopened.recover();
+      expect(reopened.schedules()[0]).toMatchObject({ state: "PENDING", occurrenceKey: null, leaseExpiresAtMs: null, nextDueAtMs: null });
+      expect(reopened.occurrences(wakeupId)).toMatchObject([{ state: "UNKNOWN", dispatch: "DISPATCHED_UNCONFIRMED", leaseExpiresAtMs: null }]);
+      expect(await reopened.tick()).toEqual([]);
+      expect(deliver).not.toHaveBeenCalled();
+    } finally { finish(); await waitFor(() => !old.busy); }
   });
   it("wall-clock jumps preserve occurrence identity and timezone stays display metadata", async () => {
     const f = fixture();

@@ -167,11 +167,15 @@ function verifierIntegrationReceipt(value:unknown,iteration:number){
  return value.receipt;
 }
 
-export function assertM16IdentityVerificationReceipt(receipt:Record<string,unknown>,expectedElectronVersion:string){
+export function assertM16IdentityVerificationReceipt(receipt:Record<string,unknown>,expectedElectronVersion:string,singleInstallAcceptance=false){
  if(receipt.passed!==true)throw Error('M16 installed identity verification did not pass.');
  if(!isRecord(receipt.installedIntegration)||receipt.installedIntegration.status!=='bound')throw Error('M16 installed identity verification did not resolve a bound source provenance.');
- if(!Array.isArray(receipt.launches)||receipt.launches.length!==2)throw Error('M16 installed identity verification did not complete exactly two default-off launches.');
- for(const launch of receipt.launches){if(!isRecord(launch)||launch.passed!==true||launch.verifiedOwner!==true)throw Error('M16 installed identity launch did not pass owned verification.');}
+ const expectedModes=singleInstallAcceptance?['default-off','default-off','enabled','enabled',null,null]:[null,null];
+ if(!Array.isArray(receipt.launches)||receipt.launches.length!==expectedModes.length)throw Error(singleInstallAcceptance?'M16 installed acceptance did not complete exactly six launches.':'M16 installed identity verification did not complete exactly two default-off launches.');
+ for(const [index,launch] of receipt.launches.entries()){
+  if(!isRecord(launch)||launch.passed!==true||launch.verifiedOwner!==true)throw Error('M16 installed identity launch did not pass owned verification.');
+  if(singleInstallAcceptance&&launch.memoryMode!==expectedModes[index])throw Error('M16 installed acceptance launch did not use the expected memory mode.');
+ }
  if(!Array.isArray(receipt.integrations)||receipt.integrations.length!==2)throw Error('M16 installed identity verification did not complete both callbacks.');
  const first=verifierIntegrationReceipt(receipt.integrations[0],1),second=verifierIntegrationReceipt(receipt.integrations[1],2);
  if(first.status!=='PASS'||first.kind!=='m16-installed-identity'||!isSourceSha(first.sourceSha))throw Error('M16 installed identity callback receipt is not a pass.');
@@ -185,7 +189,7 @@ export function assertM16IdentityVerificationReceipt(receipt:Record<string,unkno
  return{callbacks:2,launches:2};
 }
 
-export async function runM16InstalledIdentityVerification(input:{setup:string;unpacked:string}){
+export async function runM16InstalledIdentityVerification(input:{setup:string;unpacked:string;singleInstallAcceptance?:boolean}){
  if(process.platform!=='win32'||process.arch!=='x64')throw Error('M16 installed identity verification requires Windows x64.');
  if(!isAbsolute(input.setup)||!isAbsolute(input.unpacked))throw Error('Pass absolute installer and expected unpacked-directory paths.');
  const setup=await realpath(input.setup),unpacked=await realpath(input.unpacked),run=m16RunReference();
@@ -225,8 +229,9 @@ export async function runM16InstalledIdentityVerification(input:{setup:string;un
    actions:{browserOpened:false,flagActivated:false,driverRegistered:false,nativeCapture:false,stop:false}
   };
  };
- const result=await verifyInstalledDesktop(setup,unpacked,{onVerifiedInstalledPage:callback,installedBuildBinding:binding});
- assertM16IdentityVerificationReceipt(result.receipt,manifest.electronVersion);
+ const singleInstallAcceptance=input.singleInstallAcceptance===true;
+ const result=await verifyInstalledDesktop(setup,unpacked,{memoryRetention:singleInstallAcceptance,memoryEnabled:singleInstallAcceptance,singleInstallAcceptance,onVerifiedInstalledPage:callback,installedBuildBinding:binding});
+ assertM16IdentityVerificationReceipt(result.receipt,manifest.electronVersion,singleInstallAcceptance);
  const first=verifierIntegrationReceipt((result.receipt.integrations as unknown[])[0],1);
  const summary={
   version:1,
@@ -240,7 +245,7 @@ export async function runM16InstalledIdentityVerification(input:{setup:string;un
   payload:{files:expected.files.length,bytes:expected.bytes,sha256:expected.sha256},
   expectedRuntime:{electronVersion:manifest.electronVersion,napiMin:M16_NAPI_MIN,exports:[...M16_CONTROL_ADDON_EXPORTS]},
   callbacks:2,
-  launches:(result.receipt.launches as Record<string,unknown>[]).map(launch=>({iteration:launch.iteration,mode:launch.mode,memoryMode:launch.memoryMode,verifiedOwner:launch.verifiedOwner,passed:launch.passed})),
+  launches:(result.receipt.launches as Record<string,unknown>[]).slice(-2).map(launch=>({iteration:launch.iteration,mode:launch.mode,memoryMode:launch.memoryMode,verifiedOwner:launch.verifiedOwner,passed:launch.passed})),
   identity:first.fileIdentity,
   directModuleLoad:first.directModuleLoad,
   applicationProductionRegistration:first.applicationProductionRegistration,
@@ -255,6 +260,6 @@ export async function runM16InstalledIdentityVerification(input:{setup:string;un
 
 if(process.argv[1]&&pathToFileURL(resolve(process.argv[1])).href===import.meta.url){
  const [setup,unpacked,...rest]=process.argv.slice(2);
- if(!setup||!unpacked||rest.length)throw Error('Usage: m16-installed-identity <absolute-setup> <absolute-unpacked>');
- await runM16InstalledIdentityVerification({setup,unpacked});
+ if(!setup||!unpacked||rest.length>1||rest.some(option=>option!=='--single-install-acceptance'))throw Error('Usage: m16-installed-identity <absolute-setup> <absolute-unpacked> [--single-install-acceptance]');
+ await runM16InstalledIdentityVerification({setup,unpacked,singleInstallAcceptance:rest.length===1});
 }

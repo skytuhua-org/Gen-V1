@@ -568,6 +568,11 @@ export class DurableWakeupScheduler {
         const occurrence = this.store.get<BackgroundOccurrenceV1>("backgroundOccurrence", key);
         if (occurrence && occurrence.state === "CLAIMED") {
           this.store.put("backgroundOccurrence", key, null, { ...occurrence, state: "UNKNOWN", leaseExpiresAtMs: null, updatedAt: iso(stamp) });
+          const wakeup = this.store.get<WakeupRecord>("backgroundWakeup", occurrence.wakeupId);
+          // Clear only the lease for this exact firing. A newer interval may
+          // already own the schedule; the retained UNKNOWN receipt never retries.
+          if (wakeup?.state === "CLAIMED" && wakeup.scheduleRevision === occurrence.scheduleRevision && wakeup.occurrenceKey === key)
+            this.store.put("backgroundWakeup", wakeup.wakeupId, null, { ...wakeup, state: "PENDING", occurrenceKey: null, leaseExpiresAtMs: null, updatedAt: iso(stamp) });
           uncertain++;
         }
       }

@@ -1,6 +1,7 @@
 import {useEffect,useId,useMemo,useRef,useState,useImperativeHandle,type Ref,type KeyboardEvent} from 'react';
 import {Popover} from '../../../packages/ui-shell/Popover';
 import {isComposing} from '../../../packages/ui-shell/list-navigation';
+import {workareaBoundary} from './popover-boundary';
 import {Bot,Check,ChevronDown,LayoutGrid,Search,Star} from 'lucide-react';
 import type {ModelInfo} from '../../../packages/contracts';
 import {SUBSCRIPTION_CONNECTIONS} from '../../../packages/contracts/connections';
@@ -14,9 +15,12 @@ export interface ModelPickerProps {
  /** New-task binding note; selecting a profile never rebinds an existing thread. */
  scopeHint?:string;onNewTask?:(modelId:string)=>void;
 }
-const providerLabel=(provider:string)=>SUBSCRIPTION_CONNECTIONS.find(connection=>connection.id===provider)?.label??provider;
+const providerDisplayName=(provider:string)=>provider.trim().split(/[-_\s]+/).filter(Boolean).map(word=>word.charAt(0).toUpperCase()+word.slice(1)).join(' ');
+const providerLabel=(provider:string)=>SUBSCRIPTION_CONNECTIONS.find(connection=>connection.id===provider)?.label||providerDisplayName(provider);
 const effortLabel=(value:string)=>value==='xhigh'?'Extra high':value.replaceAll('_',' ').replaceAll('-',' ').replace(/\b\w/g,letter=>letter.toUpperCase());
 const FAVORITES_KEY='harness:model-favorites:v1';
+/* keep in sync with --ui-motion-popup-exit */
+const POPUP_EXIT_MS=140;
 function readFavorites():string[]{
  try{const value:unknown=JSON.parse(localStorage.getItem(FAVORITES_KEY)??'[]');return Array.isArray(value)?value.filter((id):id is string=>typeof id==='string'):[];}catch{return [];}
 }
@@ -45,7 +49,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
  const optionId=(model:ModelInfo)=>id+'-option-'+models.indexOf(model);
  const name=selected?.name??(modelId||'Select model'),caption=combined&&selectedEffort?effortLabel(selectedEffort):'';
  function close(restoreFocus=false){setOpen(false);if(restoreFocus)trigger.current?.focus();}
- function show(){if(locked)return;setQuery('');setActiveId(modelId);setKeyboard(false);setPresent(true);setOpen(true);}
+ function show(){if(locked)return;setQuery('');setActiveId(modelId);setKeyboard(false);setFilter({kind:'all'});setPresent(true);setOpen(true);}
  useImperativeHandle(ref,()=>({open:show}));
  function choose(model:ModelInfo){if(locked)return;onChange(model.id);if(!combined)close(true);}
  function chooseEffort(level:string){if(locked||!onThinkingChange||level===thinkingLevel||(level!==''&&!levels.includes(level)))return;onThinkingChange(level);}
@@ -58,7 +62,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
  function navigate(event:KeyboardEvent<HTMLInputElement>){
   if(isComposing(event)){if(event.key==='Escape')event.preventDefault();return;}
   if(event.altKey||event.ctrlKey||event.metaKey)return;
-  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close(true);return;}
+  if(event.key==='Escape'&&!event.shiftKey){event.preventDefault();event.stopPropagation();close(true);return;}
   if(event.key==='Tab'&&!combined){close(true);return;}
   if(event.key==='Enter'){event.preventDefault();if(active)choose(active);return;}
   if(!['ArrowDown','ArrowUp','Home','End','PageUp','PageDown'].includes(event.key))return;
@@ -80,7 +84,7 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
   event.preventDefault();chooseEffort(next);
   efforts.current?.querySelector<HTMLElement>(`[data-effort="${CSS.escape(next)}"]`)?.focus();
  }
- useEffect(()=>{if(open||!present)return;const timeout=window.setTimeout(()=>setPresent(false),110);return()=>window.clearTimeout(timeout);},[open,present]);
+ useEffect(()=>{if(open||!present)return;const timeout=window.setTimeout(()=>setPresent(false),POPUP_EXIT_MS);return()=>window.clearTimeout(timeout);},[open,present]);
  useEffect(()=>{if(locked)setOpen(false);},[locked]);
  const wasOpen=useRef(false);
  useEffect(()=>{const opened=open&&!wasOpen.current;wasOpen.current=open;if(!open||!active)return;
@@ -88,10 +92,11 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
   const frame=requestAnimationFrame(()=>requestAnimationFrame(()=>{popover.current?.ownerDocument.getElementById(optionId(active))?.scrollIntoView({block:opened?'center':'nearest'});}));
   return()=>cancelAnimationFrame(frame);},[open,active?.id]);
  return <>
-  <button ref={trigger} type="button" role="combobox" aria-label="Model" aria-expanded={open&&!locked} aria-haspopup={combined?'dialog':'listbox'} aria-controls={open?(combined?id+'-picker':id+'-list'):undefined} disabled={locked} className="composer-tool model-picker-trigger" title={disabled?'Wait for the active run to finish to change models':name+(caption?' · '+caption:'')} onClick={()=>open?close(true):show()} onKeyDown={event=>{if(isComposing(event)||event.altKey||event.ctrlKey||event.metaKey)return;if(['ArrowDown','ArrowUp','Enter',' '].includes(event.key)){event.preventDefault();if(open)search.current?.focus();else show();}}}>
+  <button ref={trigger} type="button" role="combobox" aria-label="Model" aria-expanded={open&&!locked} aria-haspopup={combined?'dialog':'listbox'} aria-controls={open?(combined?id+'-picker':id+'-list'):undefined} disabled={locked} className="composer-tool model-picker-trigger" title={disabled?'Wait for the active run to finish to change models':!models.length?'No models available — check the provider connection':name+(caption?' · '+caption:'')} onClick={()=>open?close(true):show()} onKeyDown={event=>{if(isComposing(event)||event.altKey||event.ctrlKey||event.metaKey)return;if(['ArrowDown','ArrowUp','Enter',' '].includes(event.key)){event.preventDefault();if(open)search.current?.focus();else show();}}}>
    <Bot className="model-picker-trigger-icon" size={16} aria-hidden="true"/><span className="model-picker-trigger-name">{name}</span>{caption&&<span className="model-picker-trigger-effort">{caption}</span>}<ChevronDown size={12} data-open={open}/>
   </button>
   <Popover anchor={trigger} contentRef={popover} initialFocus={search} open={open&&!locked} present={present}
+   getBoundary={()=>workareaBoundary(trigger.current)}
    onReady={()=>{popover.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({block:'nearest'});}}
    width={combined?720:560} height={440}
    onDismiss={()=>close()}
@@ -120,12 +125,12 @@ export function ModelPicker({ref,models,modelId,onChange,disabled=false,thinking
        <button type="button" className="model-picker-favorite" aria-pressed={favorite} aria-label={(favorite?'Remove ':'Add ')+model.id+(favorite?' from favorites':' to favorites')} tabIndex={model.id===active?.id?0:-1} onClick={event=>{event.stopPropagation();toggleFavorite(model);}}><Star size={14} aria-hidden="true" fill={favorite?'currentColor':'none'}/></button>
       </div>;
      })}</div>)}
+     {!visible.length&&(filter.kind==='favorites'&&favoriteCount===0
+      ?<p className="model-picker-empty" role="status">No favorites yet<span>Star a model to keep it here.</span></p>
+      :<p className="model-picker-empty" role="status">No models found<span>Try another model or provider name.</span></p>)}
     </div>
     {scopeHint&&<p className="model-picker-scope" role="note">{scopeHint}</p>}
     {onNewTask&&<button type="button" className="model-picker-new-task" disabled={!modelId} onClick={()=>{onNewTask(modelId);close();}}>Start new task with {name}</button>}
-    {!visible.length&&(filter.kind==='favorites'&&favoriteCount===0
-     ?<p className="model-picker-empty" role="status">No favorites yet<span>Star a model to keep it here.</span></p>
-     :<p className="model-picker-empty" role="status">No models found<span>Try another model or provider name.</span></p>)}
    </div>
    {combined&&<div className="model-picker-reasoning" role="group" aria-label="Reasoning">
     <div className="model-picker-reasoning-head"><span>Reasoning</span><small>{selected?.name??(modelId||'Select model')}</small></div>
