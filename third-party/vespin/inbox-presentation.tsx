@@ -35,7 +35,7 @@ export const InboxItemRow=memo(function InboxItemRow({title,description,lead,met
     <span className="ui-unread-dot" data-unread={unread?'true':undefined}/>
    </span>
    <span className="ui-list-row-text">
-    <span className="ui-list-row-head">{leadMark}{end}</span>
+    <span className="ui-list-row-head">{leadMark}</span>
     {heading}
     <span className="ui-list-row-description"><span className="inbox-row-line">{description}</span></span>
    </span>
@@ -44,6 +44,7 @@ export const InboxItemRow=memo(function InboxItemRow({title,description,lead,met
  return(
   <li className="ui-list-row" data-meta="title" data-lead="above" data-current={current?'true':undefined} data-current-look="tint" data-unread={unread?'true':undefined} data-muted={muted?'true':undefined} data-ink="sidebar">
    <button ref={pressRef} type="button" className="ui-list-row-main" aria-current={current?'true':undefined} aria-label={label} onClick={onPress}>{face}</button>
+   {end}
   </li>
  );
 });
