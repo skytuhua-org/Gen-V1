@@ -1,4 +1,4 @@
-import { createContext, createElement, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, createElement, useContext, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 export const ArtifactTitle = createContext('');
 export const ArtifactInline = createContext(false);
@@ -58,17 +58,55 @@ export function ChoiceValidationProvider({ children }: { children: ReactNode }) 
   return createElement(ChoiceValidationContext.Provider, { value: api.current }, children);
 }
 
-export function useTaskAction() {
+export function useTaskAction(ownerIdentity?: string | null) {
   const action = useContext(ArtifactActions);
   const pending = useRef(false);
+  const owner = useRef(ownerIdentity);
+  const generation = useRef(0);
+  const request = useRef<object | undefined>(undefined);
+  const mounted = useRef(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const guarded = ownerIdentity !== undefined;
+  useLayoutEffect(() => {
+    if (!guarded || owner.current === ownerIdentity) return;
+    owner.current = ownerIdentity;
+    generation.current += 1;
+    request.current = undefined;
+    pending.current = false;
+    setBusy(false);
+    setError('');
+  }, [guarded, ownerIdentity]);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (!guarded) return;
+      generation.current += 1;
+      request.current = undefined;
+      pending.current = false;
+    };
+  }, [guarded]);
   const run = async (actionId: string, payload: unknown) => {
-    if (pending.current) return false;
+    if (ownerIdentity === null || pending.current) return false;
     pending.current = true; setBusy(true); setError('');
-    try { await action(actionId, payload); return true; }
-    catch (error) { setError(error instanceof Error ? error.message : 'The request failed. Try again.'); return false; }
-    finally { pending.current = false; setBusy(false); }
+    if (!guarded) {
+      try { await action(actionId, payload); return true; }
+      catch (error) { setError(error instanceof Error ? error.message : 'The request failed. Try again.'); return false; }
+      finally { pending.current = false; setBusy(false); }
+    }
+    const token = {}, generationAtStart = generation.current;
+    request.current = token;
+    const current = () => mounted.current && owner.current === ownerIdentity && generation.current === generationAtStart && request.current === token;
+    try {
+      await action(actionId, payload);
+      return current();
+    } catch (error) {
+      if (current()) setError(error instanceof Error ? error.message : 'The request failed. Try again.');
+      return false;
+    } finally {
+      if (current()) { pending.current = false; setBusy(false); }
+    }
   };
   return { run, busy, error };
 }

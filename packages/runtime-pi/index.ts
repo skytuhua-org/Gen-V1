@@ -45,6 +45,8 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
     void next.finally(() => { if (locks.get(key) === next) locks.delete(key); }).catch(() => {});
     return next;
   }
+  // An observer cannot change confirmed native teardown or veto the next notification.
+  const notifyLifecycle = (notify: () => void) => { try { notify(); } catch { /* Lifecycle observers are independent. */ } };
   const ownsRun = (worker: Worker) => !disposed && !worker.stopping && !worker.authority?.revoked && (!worker.ctx || runs.get(worker.ctx.threadId) === worker);
   const current = (worker: Worker) => ownsRun(worker) && !worker.transportFailed;
   function emit(worker: Worker, type: string, message: string) {
@@ -123,8 +125,6 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
         );
       }
     });
-    // A lifecycle observer cannot veto worker cleanup or the next notification.
-    const notifyExit = (notify: () => void) => { try { notify(); } catch { /* The native worker still needs to be released. */ } };
     const rejectPending = (error: Error) => {
       for (const pending of worker.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
       worker.pending.clear();
@@ -135,9 +135,9 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       didEnd = true;
       rejectPending(new HarnessError("PI_WORKER_EXITED", "Pi worker exited before completing the request. Run pnpm install if the SDK cannot load; retry or sign in with pnpm agent:login."));
       if (worker.active && !worker.stopping) {
-        notifyExit(() => emit(worker, "error", "Pi worker exited unexpectedly. Persisted history will determine which inputs were delivered."));
+        notifyLifecycle(() => emit(worker, "error", "Pi worker exited unexpectedly. Persisted history will determine which inputs were delivered."));
         const ctx = worker.ctx;
-        if (ctx && ownsRun(worker)) notifyExit(() => callbacks?.onEvent({ ...ctx, type: "settled", aborted: true }));
+        if (ctx && ownsRun(worker)) notifyLifecycle(() => callbacks?.onEvent({ ...ctx, type: "settled", aborted: true }));
       }
       worker.active = false;
       if (worker.authority) { worker.authority.settled = true; worker.authority.revoked = true; }
@@ -153,14 +153,14 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       // IPC can fail while a spawned process is still running. Reject pending
       // replies without treating the transport failure as confirmed native exit.
       if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
-        notifyExit(() => emit(worker, "error", safeError(error)));
+        notifyLifecycle(() => emit(worker, "error", safeError(error)));
         ended();
         return;
       }
       const report = current(worker);
       worker.transportFailed = true;
       rejectPending(failedTransport());
-      if (report && ctx) notifyExit(() => callbacks?.onEvent({ ...ctx, type: "error", message: safeError(error) }));
+      if (report && ctx) notifyLifecycle(() => callbacks?.onEvent({ ...ctx, type: "error", message: safeError(error) }));
     });
     return worker;
   }
@@ -283,8 +283,8 @@ export function createPiRuntime({ dataDir,modelOnly:requestedModelOnly,purpose }
       for (const authority of matching) authority.revoked = true;
       await Promise.all(matching.flatMap(authority => authority.worker ? [terminate(authority.worker)] : []));
       if (!disposed) {
-        callbacks?.onEvent({ ...matching[0].ctx, type: "usage", usage: { activity: "idle" } });
-        callbacks?.onEvent({ ...matching[0].ctx, type: "settled", aborted: true });
+        notifyLifecycle(() => callbacks?.onEvent({ ...matching[0].ctx, type: "usage", usage: { activity: "idle" } }));
+        notifyLifecycle(() => callbacks?.onEvent({ ...matching[0].ctx, type: "settled", aborted: true }));
       }
     },
     compact(ctx, sessionPath, modelId,accountId,memoryCheckpoint) {

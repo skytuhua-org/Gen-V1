@@ -51,6 +51,22 @@ describe('packaged provider custody',()=>{
    expect(await outcome).toEqual({error:expect.objectContaining({message:'Probe stdout is not well-formed UTF-8.'})});
   }finally{vi.mocked(spawn).mockClear();await rm(directory,{recursive:true,force:true});}
  });
+ it('keeps a provider failure diagnostic whose UTF-8 character spans chunks',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'harness-cursor-diagnostic-'));
+  try{
+   await cursorFixture(directory);
+   vi.mocked(spawn).mockImplementationOnce(()=>{
+    const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stderr:new PassThrough()});
+    queueMicrotask(()=>{
+     const bytes=Buffer.from('cannot read 測試.txt');
+     child.stderr.write(bytes.subarray(0,13));child.stderr.end(bytes.subarray(13));
+     child.stdout.end();child.emit('close',2);
+    });
+    return child as unknown as ReturnType<typeof spawn>;
+   });
+   await expect(probeCursorBootstrap(directory,process.execPath,directory)).rejects.toThrow('cannot read 測試.txt');
+  }finally{vi.mocked(spawn).mockClear();await rm(directory,{recursive:true,force:true});}
+ });
  it('validates the bundled probe version captures with a fatal UTF-8 decode',async()=>{
   const source=(await import('node:fs/promises')).readFile(new URL('../scripts/verify-packaged-providers.ts',import.meta.url),'utf8');
   expect(((await source).match(/fatal:\s*true/g)??[]).length).toBeGreaterThanOrEqual(3);
