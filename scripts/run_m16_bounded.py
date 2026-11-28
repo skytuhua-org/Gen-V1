@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run one M16 gate command, write its bounded log with the required
 argv/cwd/exitCode/termination header, and print the command record as JSON."""
-import json, subprocess, sys, time
+import json, locale, subprocess, sys, time
 from datetime import datetime, timezone
 
 LOG_CAP = 60000
@@ -14,12 +14,19 @@ def iso(ms):
 def run(argv, log_path, cap=LOG_CAP):
     started_ms = int(time.time() * 1000)
     exec_argv = ['pnpm.cmd'] + argv[1:] if argv[0] == 'pnpm' else argv
+    encoding = locale.getpreferredencoding(False)
     try:
-        proc = subprocess.run(exec_argv, cwd=CWD, capture_output=True, text=True, timeout=7200, errors='replace')
+        proc = subprocess.run(exec_argv, cwd=CWD, capture_output=True, text=True, timeout=7200, encoding=encoding, errors='replace')
         out = (proc.stdout or '') + (('\n' + proc.stderr) if proc.stderr else '')
         exit_code, termination = proc.returncode, 'NONE'
     except subprocess.TimeoutExpired as exc:
-        out = (exc.stdout or '') + (exc.stderr or '')
+        # TimeoutExpired may carry bytes in text mode, or text after a Windows drain.
+        def decoded(value):
+            return value.decode(encoding, errors='replace') if isinstance(value, bytes) else value or ''
+
+        output = decoded(exc.stdout)
+        stderr = decoded(exc.stderr)
+        out = (output + ('\n' + stderr if stderr else '')).replace('\r\n', '\n').replace('\r', '\n')
         exit_code, termination = 124, 'TIMEOUT'
     ended_ms = int(time.time() * 1000)
     body = out[-cap:] if len(out) > cap else out
