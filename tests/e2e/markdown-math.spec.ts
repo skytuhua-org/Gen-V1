@@ -1,5 +1,6 @@
 import {expect, type Page} from '@playwright/test';
 import {test} from './markdown-math-browser';
+import {HOST_URL, test as productionTest} from '../host-fixture';
 import {mathTrialDefault, mathTrialReply, serveTaskFixture, serveTaskMathCanvas, taskMathFixture} from './task-interface-fixture';
 
 const math = (page: Page) => page.locator('.markdown [data-markdown-math]');
@@ -259,4 +260,151 @@ test('actual App held canvas keeps pending formulas in source until Settings clo
   release();
   await page.getByRole('button', {name:'Close dialog'}).click();
   await expect(assistant.locator('annotation')).toHaveText([String.raw`\frac{a}{b}`, String.raw`\sum_{i=1}^n i`]);
+});
+
+const mathAsset = /\/assets\/(?:math-renderer-[^/]+\.(?:js|css)|KaTeX_[^/]+\.(?:woff2?|ttf))$/i;
+
+async function productionRequests(page: Page) {
+  const requests: string[] = [];
+  const assets: {path: string; status: number}[] = [];
+  const external: string[] = [];
+  const policyViolations: string[] = [];
+  await page.exposeFunction('recordMathPolicyViolation', (directive: string) => policyViolations.push(directive));
+  await page.addInitScript(() => document.addEventListener('securitypolicyviolation', event => {
+    const report = Reflect.get(window,'recordMathPolicyViolation') as (directive: string) => Promise<void>;
+    void report(event.violatedDirective);
+  }));
+  await page.route('**/*', route => {
+    const url = new URL(route.request().url());
+    if (url.origin !== HOST_URL) {
+      external.push(url.origin);
+      return route.abort('blockedbyclient');
+    }
+    return route.fallback();
+  });
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (mathAsset.test(path)) requests.push(path);
+  });
+  page.on('response', response => {
+    const path = new URL(response.url()).pathname;
+    if (mathAsset.test(path)) assets.push({path,status:response.status()});
+  });
+  return {requests,assets,external,policyViolations};
+}
+
+productionTest.describe('production math assets', () => {
+  for (const view of ['main and artifact', 'retained Canvas'] as const) {
+    productionTest(`load local JS, CSS and fonts in the ${view} under the existing CSP`, async ({page,host}, info) => {
+      expect(host.snapshot()).toBeDefined();
+      const observed = await productionRequests(page);
+      if (view === 'retained Canvas') await serveTaskMathCanvas(page,taskMathFixture());
+      else await serveTaskFixture(page,taskMathFixture());
+      const response = await page.goto(HOST_URL);
+      const csp = response?.headers()['content-security-policy'];
+      expect(csp).toContain("object-src 'none'");
+      const {reply,artifact,canvas} = appSurface(page);
+      if (view === 'retained Canvas') {
+        await expect(canvas.locator('[data-message-id="reply"] annotation')).toHaveCount(2);
+      } else {
+        await expect(reply.locator('annotation')).toHaveCount(2);
+        await expect(artifact.locator('annotation')).toHaveCount(1);
+      }
+      const fonts = await page.evaluate(async () => {
+        await document.fonts.ready;
+        return Array.from(document.fonts)
+          .filter(font => font.family.startsWith('KaTeX_') && font.status === 'loaded')
+          .map(font => font.family).sort();
+      });
+      expect(fonts).toContain('KaTeX_Main');
+      for (const extension of [/\.js$/, /\.css$/, /\.woff2$/]) {
+        expect(observed.assets.some(({path,status}) => extension.test(path) && status === 200)).toBe(true);
+      }
+      expect(observed.assets.every(({status}) => status === 200)).toBe(true);
+      expect(observed.external).toEqual([]);
+      expect(observed.policyViolations).toEqual([]);
+      await info.attach('production-assets.json', {body:JSON.stringify({view,csp,fonts,...observed},null,2),contentType:'application/json'});
+    });
+  }
+
+  productionTest('default-off, currency and code issue zero production math requests', async ({page,host}) => {
+    expect(host.snapshot()).toBeDefined();
+    const observed = await productionRequests(page);
+    await serveTaskFixture(page,taskMathFixture({formulas:false}));
+    await page.goto(HOST_URL);
+    const {reply,artifact,user} = appSurface(page);
+    await expect(reply.locator('code')).toHaveText('$code$');
+    await expect(artifact.locator('.document .markdown')).toHaveText(mathTrialDefault);
+    await expect(user).toHaveText(mathTrialDefault);
+    await expect(page.locator('[data-markdown-math]')).toHaveCount(0);
+    expect(observed.requests).toEqual([]);
+    expect(observed.external).toEqual([]);
+  });
+
+  productionTest('a blocked production stylesheet preserves literal source and fails closed', async ({page,host}) => {
+    expect(host.snapshot()).toBeDefined();
+    await productionRequests(page);
+    await page.route('**/assets/math-renderer-*.css', route => route.abort('blockedbyclient'));
+    await serveTaskFixture(page,taskMathFixture());
+    await page.goto(HOST_URL);
+    const {reply} = appSurface(page);
+    await expect(reply.getByText('Math display unavailable. Source shown.')).toBeVisible();
+    await expect(reply.locator('annotation')).toHaveCount(0);
+    await expect(reply).toContainText(String.raw`\frac{a}{b}`);
+  });
+
+  for (const mode of ['cold', 'warm'] as const) {
+    productionTest(`measure five ${mode} input runs during 64 formulas`, async ({browser,host}, info) => {
+      productionTest.skip(process.env.GEN_MATH_MEASURE !== '1','Explicit production timing evidence run.');
+      productionTest.setTimeout(120000);
+      expect(host.snapshot()).toBeDefined();
+      const control = process.env.GEN_MATH_CONTROL === '1';
+      const corpus = Array.from({length:64},(_, index) => 'Formula ' + (index + 1) + ' ' +
+        String.raw`\(\frac{a_{${index}} + b}{c + 1}\)`).join('\n\n');
+      const runs = [];
+      for (let repeat = 0; repeat < 5; repeat++) {
+        const page = await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
+        try {
+          const observed = await productionRequests(page);
+          const snapshot = taskMathFixture({formulas:false});
+          const reply = snapshot.messages.find(message => message.id === 'reply')!;
+          if (mode === 'warm') reply.content = String.raw`Warm \(x+1\)`;
+          const app = await serveTaskFixture(page,snapshot);
+          await page.goto(HOST_URL);
+          const surface = appSurface(page).reply;
+          await expect(surface).toBeVisible();
+          if (mode === 'warm' && !control) {
+            await expect(surface.locator('annotation')).toHaveText('x+1');
+            await page.evaluate(() => document.fonts.ready.then(() => undefined));
+          }
+          await page.evaluate(() => {
+            const sample = {inputMs:[] as number[], longTasks:[] as number[]};
+            Object.defineProperty(window, 'formulaPerformanceSample', {value:sample});
+            const observer = new PerformanceObserver(entries => {
+              for (const entry of entries.getEntries()) sample.longTasks.push(entry.duration);
+            });
+            observer.observe({type:'longtask'});
+            document.addEventListener('input', event => {
+              requestAnimationFrame(() => setTimeout(() => sample.inputMs.push(performance.now() - event.timeStamp),0));
+            }, {once:true, capture:true});
+          });
+          reply.content = corpus;
+          await app.publish();
+          await expect(surface.locator('.markdown p').last()).toContainText('Formula 64');
+          const draft = page.getByRole('textbox',{name:'Message',exact:true});
+          await draft.press('a');
+          await expect(draft).toHaveValue('a');
+          await page.waitForFunction(() => Reflect.get(window,'formulaPerformanceSample').inputMs.length === 1);
+          await expect(surface.locator('annotation')).toHaveCount(control ? 0 : 64);
+          const timing = await page.evaluate(() => Reflect.get(window,'formulaPerformanceSample') as {inputMs:number[];longTasks:number[]});
+          runs.push({repeat:repeat + 1,...timing,mathRequests:observed.requests.length});
+        } finally {
+          await page.close();
+        }
+      }
+      const result = {mode,control,runs};
+      console.log('MATH_TIMING ' + JSON.stringify(result));
+      await info.attach('math-timing.json',{body:JSON.stringify(result,null,2),contentType:'application/json'});
+    });
+  }
 });
