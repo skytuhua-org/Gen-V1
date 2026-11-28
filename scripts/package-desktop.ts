@@ -3,7 +3,7 @@ import {resolve,join,relative,dirname,isAbsolute} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {build,type Configuration} from 'electron-builder';
-import {runtimeSourceAllowed,validateNodeArchive,desktopBuilderConfig,packageManagerInvocation,runtimeInstallArguments,stageRuntimeInstall,stageRepositoryMapParser,readDesktopOutputRoot,reserveDesktopRelease,reserveDesktopStage,writeControlDriverPackageTrust,REQUIRED_RUNTIME_FILES,NODE_ARCHIVE_EXTRACT_COMMAND,NODE_VERSION,NODE_ARCHIVE_SHA256} from './desktop-assets.ts';
+import {runtimeSourceAllowed,validateNodeArchive,desktopBuilderConfig,packageManagerInvocation,runtimeInstallArguments,stageRuntimeInstall,stageRepositoryMapParser,readDesktopOutputRoot,checkDesktopReleaseAvailable,reserveDesktopRelease,reserveDesktopStage,writeControlDriverPackageTrust,REQUIRED_RUNTIME_FILES,NODE_ARCHIVE_EXTRACT_COMMAND,NODE_VERSION,NODE_ARCHIVE_SHA256} from './desktop-assets.ts';
 import {collectHermesPayload,discoverHermesPython,stageHermesPayload,verifyHermesPayload,verifyRelocatedHermesPython} from './hermes-assets.ts';
 import {collectIntegrationPayload,stageIntegrationPayload,verifyIntegrationPayload,verifyRelocatedIntegrations} from './integration-assets.ts';
 import {collectGitTools,stageGitTools} from './git-assets.ts';
@@ -11,11 +11,14 @@ import {buildWindowsCredentialLease} from './build-windows-credential-lease.ts';
 import {buildWindowsControlBridge} from './build-windows-control-bridge.ts';
 
 if(process.platform!=='win32'||process.arch!=='x64')throw Error('This package target requires Windows x64');
-const root=resolve('.'),dist=readDesktopOutputRoot(process.argv.slice(2)),pkg=JSON.parse(await readFile('package.json','utf8')),release=await reserveDesktopRelease(dist,pkg.version),stage=await reserveDesktopStage(dist),host=resolve(stage,'desktop-host'),cache=resolve('.harness-desktop-cache');
-const python=await discoverHermesPython(),hermes=await collectHermesPayload(root,python);
+const root=resolve('.'),dist=readDesktopOutputRoot(process.argv.slice(2)),pkg=JSON.parse(await readFile('package.json','utf8'));
+// Reject occupied output before expensive input checks, without reserving it yet.
+await checkDesktopReleaseAvailable(dist,pkg.version);
 const wheelDirectory=process.env.HARNESS_INTEGRATION_WHEELS;
 if(wheelDirectory!==undefined&&(!wheelDirectory||!isAbsolute(wheelDirectory)))throw Error('HARNESS_INTEGRATION_WHEELS must name an explicit absolute archive directory');
+const python=await discoverHermesPython(),hermes=await collectHermesPayload(root,python);
 const integrations=await collectIntegrationPayload(root,wheelDirectory===undefined?{}:{canonicalPython:{wheelDirectory,pythonExecutable:join(python.directory,'python.exe')}});await collectGitTools(root);
+const release=await reserveDesktopRelease(dist,pkg.version),stage=await reserveDesktopStage(dist),host=resolve(stage,'desktop-host'),cache=resolve('.harness-desktop-cache');
 if(integrations.pythonProjection)console.log('HARNESS_PYTHON_INPUT_DIAGNOSIS='+JSON.stringify(integrations.pythonInputDiagnosis));
 await mkdir(host,{recursive:true});await mkdir(cache,{recursive:true});
 const run=(file:string,args:string[],cwd:string,extraEnv:Record<string,string>={})=>new Promise<void>((accept,reject)=>{const child=spawn(file,args,{cwd,windowsHide:true,stdio:'inherit',env:{...process.env,...extraEnv}});child.on('error',reject);child.on('exit',code=>code===0?accept():reject(Error(file+' exited '+code)));});
