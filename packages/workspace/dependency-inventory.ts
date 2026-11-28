@@ -162,6 +162,15 @@ function stripPnpmPeerSuffix(key: string): {name: string; version: string} | nul
   return name && version ? {name, version} : null;
 }
 
+function isPublicPnpmTarball(tarball: unknown): boolean {
+  if (typeof tarball !== 'string') return false;
+  // Require an explicit HTTPS authority without userinfo. URL would otherwise
+  // normalize some malformed spellings, or discard credentials from its origin.
+  if (!/^https:\/\/[^/?#@\\\s]+(?:[/?#]|$)/i.test(tarball) || /[\s\\]/.test(tarball)) return false;
+  try { return new URL(tarball).origin === REGISTRY_DEFAULT; }
+  catch { return false; }
+}
+
 function parsePnpmLock(rel: string, doc: ReturnType<typeof parseDocument>, sink: OccurrenceSink, limits: InventoryLimits): {ok: boolean; privateRegistry: boolean} {
   const start = sink.occurrences.length;
   const root = doc.toJS() as any;
@@ -195,8 +204,8 @@ function parsePnpmLock(rel: string, doc: ReturnType<typeof parseDocument>, sink:
     if (!parsed) continue;
     const resolution = entry?.resolution;
     const integrity = typeof resolution?.integrity === 'string' ? resolution.integrity : '';
-    const tarball = typeof resolution?.tarball === 'string' ? resolution.tarball : '';
-    if (tarball && !tarball.startsWith(REGISTRY_DEFAULT)) privateRegistry = true;
+    const tarball: unknown = resolution?.tarball;
+    if (tarball !== undefined && !isPublicPnpmTarball(tarball)) { privateRegistry = true; continue; }
     if (resolution?.type && resolution.type !== 'registry') { privateRegistry = true; continue; }
     if (!integrity && !tarball) continue; // no registry provenance
     const id = occurrenceId(rel, undefined, parsed.name, parsed.version);

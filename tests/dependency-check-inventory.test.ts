@@ -95,6 +95,43 @@ packages:
     expect(snap.occurrences.find(o => o.name === 'lodash')!.importerPath).toBe('packages/util');
   });
 
+  it.each([
+    'https://registry.npmjs.org',
+    'https://registry.npmjs.org/',
+    'https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz',
+  ])('accepts a tarball at the exact npm registry origin: %s', async tarball => {
+    await put('pnpm-lock.yaml', pnpmLock + `  pkg@1.0.0:\n    resolution: {tarball: ${JSON.stringify(tarball)}}\n`);
+    const snap = await inventoryDependencies(root);
+    expect(snap.coverage).toContainEqual(expect.objectContaining({relativePath: 'pnpm-lock.yaml', status: 'scanned'}));
+    expect(snap.occurrences.map(o => o.name)).toContain('pkg');
+  });
+
+  it.each([
+    'https://registry.npmjs.org.evil.example/pkg.tgz',
+    'https://registry.npmjs.org:invalid/pkg.tgz',
+    'https://registry.npmjs.org:444/pkg.tgz',
+    'https://registry.npmjs.org@registry.npmjs.org/pkg.tgz',
+    'https://@registry.npmjs.org/pkg.tgz',
+    'https:///registry.npmjs.org/pkg.tgz',
+    '',
+    null,
+    'blob:https://registry.npmjs.org/pkg.tgz',
+    'https:registry.npmjs.org/pkg.tgz',
+    'file:../pkg.tgz',
+  ])('excludes all pins in a lock with a non-public tarball: %s', async tarball => {
+    await put('pnpm-lock.yaml', pnpmLock + `  pkg@1.0.0:\n    resolution: {integrity: sha512-pkg, tarball: ${JSON.stringify(tarball)}}\n`);
+    const snap = await inventoryDependencies(root);
+    expect(snap.coverage).toContainEqual(expect.objectContaining({relativePath: 'pnpm-lock.yaml', status: 'private_registry'}));
+    expect(snap.occurrences).toEqual([]);
+  });
+
+  it('keeps explicitly non-registry resolutions private even with an npm tarball', async () => {
+    await put('pnpm-lock.yaml', pnpmLock + '  pkg@1.0.0:\n    resolution: {type: git, tarball: "https://registry.npmjs.org/pkg.tgz"}\n');
+    const snap = await inventoryDependencies(root);
+    expect(snap.coverage).toContainEqual(expect.objectContaining({relativePath: 'pnpm-lock.yaml', status: 'private_registry'}));
+    expect(snap.occurrences).toEqual([]);
+  });
+
   it('rejects unsupported lockfile versions', async () => {
     await put('pnpm-lock.yaml', "lockfileVersion: '6.0'\n");
     const snap = await inventoryDependencies(root);
