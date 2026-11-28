@@ -374,6 +374,9 @@ export class StdioLspAdapter implements LanguageServerAdapter {
 
 interface PoolEntry {
   key: string;
+  /** Creation ordinal of this physical server; a baseline recorded by a
+   * previous instance under the same key is never comparable to it. */
+  seq: number;
   adapter: LanguageServerAdapter;
   documents: Map<string, LspDocument>;
   lastUsed: number;
@@ -382,7 +385,9 @@ interface PoolEntry {
 export class LanguageServerPool {
   private readonly entries = new Map<string, PoolEntry>();
   private readonly pending = new Map<string, Promise<PoolEntry>>();
+  private readonly retiring = new Set<Promise<void>>();
   private readonly reaper: ReturnType<typeof setInterval>;
+  private seqCounter = 0;
   constructor(
     private readonly factory: LanguageServerFactory,
     private readonly now: () => number = () => Date.now(),
@@ -396,6 +401,12 @@ export class LanguageServerPool {
     return sha([root, descriptor.language, descriptor.configDigest, profileDigest].join("\0"));
   }
 
+  /** The pool key a caller's descriptor resolves to, for provenance-keyed
+   * state kept outside the pool. */
+  keyFor(root: string, descriptor: LanguageServerDescriptor, profileDigest: string): string {
+    return this.poolKey(root, descriptor, profileDigest);
+  }
+
   async acquire(root: string, descriptor: LanguageServerDescriptor, profileDigest: string): Promise<PoolEntry> {
     const key = this.poolKey(root, descriptor, profileDigest);
     const existing = this.entries.get(key);
@@ -404,7 +415,7 @@ export class LanguageServerPool {
     if (!pending) {
       pending = (async () => {
         const adapter = this.factory(descriptor, root);
-        const entry: PoolEntry = { key, adapter, documents: new Map(), lastUsed: this.now() };
+        const entry: PoolEntry = { key, seq: ++this.seqCounter, adapter, documents: new Map(), lastUsed: this.now() };
         return entry;
       })();
       this.pending.set(key, pending);
@@ -438,9 +449,22 @@ export class LanguageServerPool {
     if (entry) { this.entries.delete(key); await entry.adapter.dispose().catch(() => {}); }
   }
 
+  /** Drop an entry immediately and finish its teardown in the background.
+   * `dispose` still awaits in-flight teardowns, so a quitting host cannot
+   * orphan a server whose shutdown is already under way. */
+  retire(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    const teardown = entry.adapter.dispose().catch(() => {});
+    this.retiring.add(teardown);
+    void teardown.then(() => this.retiring.delete(teardown));
+  }
+
   async dispose(): Promise<void> {
     clearInterval(this.reaper);
     for (const [key] of [...this.entries]) await this.release(key);
+    await Promise.all([...this.retiring]);
   }
 
   get size(): number { return this.entries.size; }
@@ -472,7 +496,7 @@ const SEVERITIES: Record<number, CodeDiagnostic["severity"]> = { 1: "error", 2: 
 
 export class CodeIntelligence {
   readonly pool: LanguageServerPool;
-  private readonly baselines = new Map<string, { digest: string; version: number; diagnostics: CodeDiagnostic[] }>();
+  private readonly baselines = new Map<string, { seq: number; digest: string; version: number; diagnostics: CodeDiagnostic[] }>();
   private readonly debounced = new Map<string, { timer: ReturnType<typeof setTimeout>; resolve: () => void }>();
   constructor(factory: LanguageServerFactory, private readonly clock: () => number = () => Date.now()) {
     this.pool = new LanguageServerPool(factory, clock);
@@ -509,29 +533,53 @@ export class CodeIntelligence {
       const remaining = budget - (this.clock() - started);
       if (remaining <= 0) return this.unavailable(input);
       const entry = await this.pool.acquire(input.root, input.descriptor, input.profileDigest);
-      const document = await this.withDeadline(this.syncDocument(entry, input), remaining, input.signal);
-      const raw = await this.withDeadline(entry.adapter.pullDiagnostics(document, input.signal), budget - (this.clock() - started), input.signal);
-      const diagnostics = raw.slice(0, CODE_INTELLIGENCE_LIMITS.diagnostics).map(item => this.normalize(item, input.path));
-      const baseline = this.baselines.get(input.path);
-      const baselineStatus = baseline && input.beforeDigest !== null && baseline.digest === input.beforeDigest ? "AVAILABLE" : "UNAVAILABLE";
-      this.baselines.set(input.path, { digest: input.afterDigest, version: document.version, diagnostics });
-      return diagnosticObservationV1Schema.parse({
-        version: 1, workspaceIdentity: input.workspaceIdentity, language: input.language,
-        serverIdentity: entry.adapter.serverIdentity, editInvocationId: input.editInvocationId,
-        documentVersion: document.version, beforeDigest: input.beforeDigest, afterDigest: input.afterDigest,
-        rangeEncoding: entry.adapter.encoding, baselineStatus, diagnostics,
-        state: "CURRENT", observedAt: new Date().toISOString(),
-      });
+      try {
+        const document = await this.withDeadline(this.syncDocument(entry, input), remaining, input.signal);
+        const raw = await this.withDeadline(entry.adapter.pullDiagnostics(document, input.signal), budget - (this.clock() - started), input.signal);
+        // A newer sync on this document makes the result superseded: report
+        // it STALE instead of CURRENT and leave the newer baseline in place.
+        const superseded = (entry.documents.get(document.uri)?.version ?? document.version) > document.version;
+        const lines = splitLines(input.text);
+        const diagnostics = raw.slice(0, CODE_INTELLIGENCE_LIMITS.diagnostics).map(item => this.normalize(item, input.path, lines, entry.adapter.encoding));
+        const baselineKey = `${entry.key}\0${input.workspaceIdentity}\0${input.path}`;
+        const baseline = this.baselines.get(baselineKey);
+        const baselineStatus = baseline && baseline.seq === entry.seq && input.beforeDigest !== null && baseline.digest === input.beforeDigest ? "AVAILABLE" : "UNAVAILABLE";
+        if (!superseded)
+          this.baselines.set(baselineKey, { seq: entry.seq, digest: input.afterDigest, version: document.version, diagnostics });
+        return diagnosticObservationV1Schema.parse({
+          version: 1, workspaceIdentity: input.workspaceIdentity, language: input.language,
+          serverIdentity: entry.adapter.serverIdentity, editInvocationId: input.editInvocationId,
+          documentVersion: document.version, beforeDigest: input.beforeDigest, afterDigest: input.afterDigest,
+          rangeEncoding: "UTF16", baselineStatus, diagnostics,
+          state: superseded ? "STALE" : "CURRENT", observedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        if (error instanceof HarnessError && error.code === "UNAVAILABLE") {
+          // The server may be wedged; drop it from the pool now and let its
+          // shutdown run in the background — awaiting it could stall the
+          // UNAVAILABLE answer behind a hung server's shutdown timeout.
+          this.pool.retire(entry.key);
+          return this.unavailable(input);
+        }
+        throw error;
+      }
     } catch (error) {
       if (error instanceof HarnessError && error.code === "UNAVAILABLE") return this.unavailable(input);
       throw error;
     }
   }
 
-  private normalize(item: LspDiagnostic, path: string): CodeDiagnostic {
+  /** Server ranges arrive in the negotiated encoding; observations are
+   * stored in canonical UTF-16 units against the synced text. */
+  private normalize(item: LspDiagnostic, path: string, lines: readonly string[], encoding: RangeEncoding): CodeDiagnostic {
+    const line = (index: number) => stripEol(lines[index] ?? "");
+    const convert = (position: CodePosition): CodePosition => ({
+      line: position.line,
+      character: toUtf16Offset(line(position.line), position.character, encoding),
+    });
     return {
       path,
-      range: item.range,
+      range: { start: convert(item.range.start), end: convert(item.range.end) },
       severity: SEVERITIES[item.severity ?? 1] ?? "error",
       ...(item.code !== undefined ? { code: String(item.code).slice(0, 256) } : {}),
       message: String(item.message ?? "").slice(0, 16384),
@@ -551,7 +599,8 @@ export class CodeIntelligence {
 
   /** Mark an observation stale when the document moved on after it. */
   async markStale(input: ObserveInput, observation: DiagnosticObservationV1): Promise<DiagnosticObservationV1> {
-    const current = this.baselines.get(input.path);
+    const key = `${this.pool.keyFor(input.root, input.descriptor, input.profileDigest)}\0${input.workspaceIdentity}\0${input.path}`;
+    const current = this.baselines.get(key);
     if (current && current.digest !== observation.afterDigest)
       return { ...observation, state: "STALE" };
     return observation;

@@ -4015,6 +4015,7 @@
     "tests/hermes-service.test.ts",
     "tests/hermes-settings.test.ts",
     "tests/hermes_atomic_controls.py",
+    "tests/hermes_completed_writes_stale.py",
     "tests/hermes_integration_revocation.py",
     "tests/hermes_shared_library.py",
     "tests/hermes_source_contract.py",
