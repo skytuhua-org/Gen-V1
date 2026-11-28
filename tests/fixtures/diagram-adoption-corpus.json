@@ -1,0 +1,1372 @@
+{
+ "version": 2,
+ "revision": "PARALLEL-RENDERERS-R1/DIA01",
+ "frozen": "2026-11-26",
+ "selectionProcedure": {
+  "useful": "Three scenarios frozen verbatim from the plan (LF exact text) plus CRLF fidelity variants.",
+  "heldout": "Candidate paths in mermaid-js/mermaid@2086904e76c692331e34a45d7cc3bc30860d040e: demos/*flowchart*.html, docs/syntax/flowchart.md, docs/diagrams/*flowchart*.mmd, e2e/diagrams/flowchart/**.mmd; sorted lexicographically by path then opening line; first 20 distinct syntactically valid graph/flowchart examples with 2-12 explicit node ids; exclusions: exact duplicates, empty, oversized; no filtering on Gen grammar. YAML frontmatter does not disqualify an example (the source is retained verbatim including frontmatter). Edge-id syntax (A e1@--> B) endpoints count as explicit node ids."
+ },
+ "skippedCandidates": [
+  {
+   "path": "demos/flowchart.html",
+   "line": 19,
+   "reason": "15 explicit node ids outside 2-12"
+  },
+  {
+   "path": "demos/flowchart.html",
+   "line": 125,
+   "reason": "15 explicit node ids outside 2-12"
+  },
+  {
+   "path": "demos/flowchart.html",
+   "line": 288,
+   "reason": "14 explicit node ids outside 2-12"
+  },
+  {
+   "path": "demos/flowchart.html",
+   "line": 314,
+   "reason": "14 explicit node ids outside 2-12"
+  },
+  {
+   "path": "demos/flowchart.html",
+   "line": 341,
+   "reason": "24 explicit node ids outside 2-12"
+  },
+  {
+   "path": "demos/flowchart.html",
+   "line": 409,
+   "reason": "24 explicit node ids outside 2-12"
+  }
+ ],
+ "entries": [
+  {
+   "id": "useful-01",
+   "purpose": "agent run lifecycle: input, plan, tool, check, done with retry loop",
+   "source": "flowchart TD\nInput[Receive request]\nPlan[Plan work]\nTool[Run tool]\nCheck[Check result]\nDone[Return result]\nInput --> Plan\nPlan --> Tool\nTool --> Check\nCheck -->|Pass| Done\nCheck -->|Retry| Plan\n",
+   "provenance": {
+    "kind": "plan-frozen-useful-scenario",
+    "plan": "PARALLEL-RENDERERS-R1/DIA01",
+    "variant": "lf"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "Input",
+     "Plan",
+     "Tool",
+     "Check",
+     "Done"
+    ],
+    "orderedEdges": [
+     {
+      "source": "Input",
+      "target": "Plan",
+      "label": ""
+     },
+     {
+      "source": "Plan",
+      "target": "Tool",
+      "label": ""
+     },
+     {
+      "source": "Tool",
+      "target": "Check",
+      "label": ""
+     },
+     {
+      "source": "Check",
+      "target": "Done",
+      "label": "Pass"
+     },
+     {
+      "source": "Check",
+      "target": "Plan",
+      "label": "Retry"
+     }
+    ]
+   },
+   "sourceSha256": "ef5349a0dd128278ac23b8015e7bb14195f0085ffa60faf8543fa8dfaaa53ca7"
+  },
+  {
+   "id": "useful-01-crlf",
+   "purpose": "agent run lifecycle: input, plan, tool, check, done with retry loop (CRLF fidelity variant)",
+   "source": "flowchart TD\r\nInput[Receive request]\r\nPlan[Plan work]\r\nTool[Run tool]\r\nCheck[Check result]\r\nDone[Return result]\r\nInput --> Plan\r\nPlan --> Tool\r\nTool --> Check\r\nCheck -->|Pass| Done\r\nCheck -->|Retry| Plan\r\n",
+   "provenance": {
+    "kind": "plan-frozen-useful-scenario",
+    "plan": "PARALLEL-RENDERERS-R1/DIA01",
+    "variant": "crlf"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "Input",
+     "Plan",
+     "Tool",
+     "Check",
+     "Done"
+    ],
+    "orderedEdges": [
+     {
+      "source": "Input",
+      "target": "Plan",
+      "label": ""
+     },
+     {
+      "source": "Plan",
+      "target": "Tool",
+      "label": ""
+     },
+     {
+      "source": "Tool",
+      "target": "Check",
+      "label": ""
+     },
+     {
+      "source": "Check",
+      "target": "Done",
+      "label": "Pass"
+     },
+     {
+      "source": "Check",
+      "target": "Plan",
+      "label": "Retry"
+     }
+    ]
+   },
+   "sourceSha256": "6b4b733940debf02772ac6d35e00c067c38d8162cdab68ac165fd7b2a1a17667"
+  },
+  {
+   "id": "useful-02",
+   "purpose": "request retry policy: success, transient retry, permanent stop",
+   "source": "flowchart LR\nStart[Attempt request]\nResult[Inspect result]\nRetry[Retry request]\nStop[Report failure]\nDone[Return success]\nStart --> Result\nResult -->|Success| Done\nResult -->|Transient| Retry\nRetry --> Result\nResult -->|Permanent| Stop\n",
+   "provenance": {
+    "kind": "plan-frozen-useful-scenario",
+    "plan": "PARALLEL-RENDERERS-R1/DIA01",
+    "variant": "lf"
+   },
+   "expected": {
+    "direction": "LR",
+    "orderedNodes": [
+     "Start",
+     "Result",
+     "Retry",
+     "Stop",
+     "Done"
+    ],
+    "orderedEdges": [
+     {
+      "source": "Start",
+      "target": "Result",
+      "label": ""
+     },
+     {
+      "source": "Result",
+      "target": "Done",
+      "label": "Success"
+     },
+     {
+      "source": "Result",
+      "target": "Retry",
+      "label": "Transient"
+     },
+     {
+      "source": "Retry",
+      "target": "Result",
+      "label": ""
+     },
+     {
+      "source": "Result",
+      "target": "Stop",
+      "label": "Permanent"
+     }
+    ]
+   },
+   "sourceSha256": "a09c0d1b3b211d22f0a4bc4646f9606c51e142ab792be91269a774f65504f94d"
+  },
+  {
+   "id": "useful-02-crlf",
+   "purpose": "request retry policy: success, transient retry, permanent stop (CRLF fidelity variant)",
+   "source": "flowchart LR\r\nStart[Attempt request]\r\nResult[Inspect result]\r\nRetry[Retry request]\r\nStop[Report failure]\r\nDone[Return success]\r\nStart --> Result\r\nResult -->|Success| Done\r\nResult -->|Transient| Retry\r\nRetry --> Result\r\nResult -->|Permanent| Stop\r\n",
+   "provenance": {
+    "kind": "plan-frozen-useful-scenario",
+    "plan": "PARALLEL-RENDERERS-R1/DIA01",
+    "variant": "crlf"
+   },
+   "expected": {
+    "direction": "LR",
+    "orderedNodes": [
+     "Start",
+     "Result",
+     "Retry",
+     "Stop",
+     "Done"
+    ],
+    "orderedEdges": [
+     {
+      "source": "Start",
+      "target": "Result",
+      "label": ""
+     },
+     {
+      "source": "Result",
+      "target": "Done",
+      "label": "Success"
+     },
+     {
+      "source": "Result",
+      "target": "Retry",
+      "label": "Transient"
+     },
+     {
+      "source": "Retry",
+      "target": "Result",
+      "label": ""
+     },
+     {
+      "source": "Result",
+      "target": "Stop",
+      "label": "Permanent"
+     }
+    ]
+   },
+   "sourceSha256": "98a61c2aa1bacabe60d88d281a4a95d09c6ceedbb4f40b361548537a56e7d6a1"
+  },
+  {
+   "id": "useful-03",
+   "purpose": "MCP tool approval flow: approve runs, denial reported, result returned",
+   "source": "flowchart TD\nRequest[MCP tool requested]\nApproval[Ask approval]\nRun[Run approved tool]\nDenied[Report denial]\nResult[Return tool result]\nRequest --> Approval\nApproval -->|Approved| Run\nApproval -->|Denied| Denied\nRun --> Result\n",
+   "provenance": {
+    "kind": "plan-frozen-useful-scenario",
+    "plan": "PARALLEL-RENDERERS-R1/DIA01",
+    "variant": "lf"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "Request",
+     "Approval",
+     "Run",
+     "Denied",
+     "Result"
+    ],
+    "orderedEdges": [
+     {
+      "source": "Request",
+      "target": "Approval",
+      "label": ""
+     },
+     {
+      "source": "Approval",
+      "target": "Run",
+      "label": "Approved"
+     },
+     {
+      "source": "Approval",
+      "target": "Denied",
+      "label": "Denied"
+     },
+     {
+      "source": "Run",
+      "target": "Result",
+      "label": ""
+     }
+    ]
+   },
+   "sourceSha256": "b9defe9a3443de37f5826c5439e787dc0ec1418d99bb3c28c9613365a3cd8ca1"
+  },
+  {
+   "id": "useful-03-crlf",
+   "purpose": "MCP tool approval flow: approve runs, denial reported, result returned (CRLF fidelity variant)",
+   "source": "flowchart TD\r\nRequest[MCP tool requested]\r\nApproval[Ask approval]\r\nRun[Run approved tool]\r\nDenied[Report denial]\r\nResult[Return tool result]\r\nRequest --> Approval\r\nApproval -->|Approved| Run\r\nApproval -->|Denied| Denied\r\nRun --> Result\r\n",
+   "provenance": {
+    "kind": "plan-frozen-useful-scenario",
+    "plan": "PARALLEL-RENDERERS-R1/DIA01",
+    "variant": "crlf"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "Request",
+     "Approval",
+     "Run",
+     "Denied",
+     "Result"
+    ],
+    "orderedEdges": [
+     {
+      "source": "Request",
+      "target": "Approval",
+      "label": ""
+     },
+     {
+      "source": "Approval",
+      "target": "Run",
+      "label": "Approved"
+     },
+     {
+      "source": "Approval",
+      "target": "Denied",
+      "label": "Denied"
+     },
+     {
+      "source": "Run",
+      "target": "Result",
+      "label": ""
+     }
+    ]
+   },
+   "sourceSha256": "a7ca1300d803745b50cbfaf5416fa2bfb9cc0d644b9c59b472fc10ffd035c967"
+  },
+  {
+   "id": "heldout-01",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    flowchart LR\n      accTitle: A simple linear flowchart.\n      accDescr: A Database has input to a circle System has output to a square Customer.\n      DataStore@{shape: datastore, label: \"Datastore\"} -->|input| Process((System)) -->|output| Entity[Customer];\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/dataflowchart.html",
+    "openingLine": 17,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/dataflowchart.html"
+   },
+   "expected": {
+    "direction": "LR",
+    "orderedNodes": [
+     "DataStore",
+     "Process",
+     "Entity"
+    ],
+    "orderedEdges": [
+     {
+      "source": "DataStore",
+      "target": "Process",
+      "label": "input"
+     },
+     {
+      "source": "Process",
+      "target": "Entity",
+      "label": "output"
+     }
+    ]
+   },
+   "sourceSha256": "fa90e22ad1ba0c8b0ce7d670f6fe5a17ca5c9a8994bfd79a8545abb56c6b1597"
+  },
+  {
+   "id": "heldout-02",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "\t\tflowchart-elk TD\n      A([Start]) ==> B[Step 1]\n      B ==> C{Flow 1}\n      C -- Choice 1.1 --> D[Step 2.1]\n      C -- Choice 1.3 --> I[Step 2.3]\n      C == Choice 1.2 ==> E[Step 2.2]\n      D --> F{Flow 2}\n      E ==> F{Flow 2}\n      F{Flow 2} == Choice 2.1 ==> H[Feedback node]\n      H[Feedback node] ==> B[Step 1]\n      F{Flow 2} == Choice 2.2 ==> G((Finish))\n      \n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart-elk.html",
+    "openingLine": 11,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart-elk.html"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "I",
+     "E",
+     "F",
+     "H",
+     "G"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": ""
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": "Choice 1.1"
+     },
+     {
+      "source": "C",
+      "target": "I",
+      "label": "Choice 1.3"
+     },
+     {
+      "source": "C",
+      "target": "E",
+      "label": "Choice 1.2"
+     },
+     {
+      "source": "D",
+      "target": "F",
+      "label": ""
+     },
+     {
+      "source": "E",
+      "target": "F",
+      "label": ""
+     },
+     {
+      "source": "F",
+      "target": "H",
+      "label": "Choice 2.1"
+     },
+     {
+      "source": "H",
+      "target": "B",
+      "label": ""
+     },
+     {
+      "source": "F",
+      "target": "G",
+      "label": "Choice 2.2"
+     }
+    ]
+   },
+   "sourceSha256": "8da2cec584d4be6a583dfc8b61aeac286c36b5282e491e27c225737b7063fa22"
+  },
+  {
+   "id": "heldout-03",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "      flowchart LR\n        Client e1@--> API\n        API e2@--> Cache\n        Cache e3@-->|miss| DB\n        DB e4@--> API\n        API e5@--> Client\n        e1@{ step: 1 }\n        e2@{ step: 2 }\n        e3@{ step: 3 }\n        e4@{ step: 4 }\n        e5@{ step: 5 }\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart-step-animation.html",
+    "openingLine": 11,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart-step-animation.html"
+   },
+   "expected": {
+    "direction": "LR",
+    "orderedNodes": [
+     "Client",
+     "API",
+     "Cache",
+     "DB"
+    ],
+    "orderedEdges": [
+     {
+      "source": "Client",
+      "target": "API",
+      "label": ""
+     },
+     {
+      "source": "API",
+      "target": "Cache",
+      "label": ""
+     },
+     {
+      "source": "Cache",
+      "target": "DB",
+      "label": "miss"
+     },
+     {
+      "source": "DB",
+      "target": "API",
+      "label": ""
+     },
+     {
+      "source": "API",
+      "target": "Client",
+      "label": ""
+     }
+    ]
+   },
+   "sourceSha256": "7269b908e93b15462e3bc48700b09c0d6ea1de01f35a0b0cd13f921e74cdf962"
+  },
+  {
+   "id": "heldout-04",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "      flowchart TD\n        Producer e1@--> Queue\n        Queue e2@--> WorkerA\n        Queue e3@--> WorkerB\n        WorkerA e4@--> Store\n        WorkerB e5@--> Store\n        e1@{ step: 1 }\n        e2@{ step: 2 }\n        e3@{ step: 2 }\n        e4@{ step: 3 }\n        e5@{ step: 3 }\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart-step-animation.html",
+    "openingLine": 26,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart-step-animation.html"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "Producer",
+     "Queue",
+     "WorkerA",
+     "WorkerB",
+     "Store"
+    ],
+    "orderedEdges": [
+     {
+      "source": "Producer",
+      "target": "Queue",
+      "label": ""
+     },
+     {
+      "source": "Queue",
+      "target": "WorkerA",
+      "label": ""
+     },
+     {
+      "source": "Queue",
+      "target": "WorkerB",
+      "label": ""
+     },
+     {
+      "source": "WorkerA",
+      "target": "Store",
+      "label": ""
+     },
+     {
+      "source": "WorkerB",
+      "target": "Store",
+      "label": ""
+     }
+    ]
+   },
+   "sourceSha256": "9ebbe5b01b18a123f9ba7aa710a91e5cfe9d2c4ffdc55b99b702e50bb8788488"
+  },
+  {
+   "id": "heldout-05",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "      flowchart LR\n        A e1@--> B\n        B e2@--> C\n        C --> D\n        e1@{ step: 1, animate: true }\n        e2@{ step: 2 }\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart-step-animation.html",
+    "openingLine": 41,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart-step-animation.html"
+   },
+   "expected": {
+    "direction": "LR",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": ""
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": ""
+     }
+    ]
+   },
+   "sourceSha256": "0fbfa7c5c207ca200f72a0e0cf0929b8b60659118d215b723d488681b29dd90d"
+  },
+  {
+   "id": "heldout-06",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "      flowchart LR\n        A --> B --> C\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart-step-animation.html",
+    "openingLine": 51,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart-step-animation.html"
+   },
+   "expected": {
+    "direction": "LR",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": ""
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     }
+    ]
+   },
+   "sourceSha256": "5854e2daf808f1ce2cd710efcdc98f43f6aa7b71fc4c11dddf44b36510ad1c60"
+  },
+  {
+   "id": "heldout-07",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    ---\n    title: What to buy\n    ---\n    graph TD\n      accTitle: What to buy\n      accDescr: Options of what to buy with Christmas money\n      A[Christmas] -->|Get money| B(Go shopping)\n      B --> C{Let me thinksssssx<br/>sssssssssssssssssssuuu<br />tttsssssssssssssssssssssss}\n      C -->|One| D[Laptop]\n      C -->|Two| E[iPhone]\n      C -->|Three| F[Car]\n  ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 233,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": "Get money"
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": "One"
+     },
+     {
+      "source": "C",
+      "target": "E",
+      "label": "Two"
+     },
+     {
+      "source": "C",
+      "target": "F",
+      "label": "Three"
+     }
+    ]
+   },
+   "sourceSha256": "afbb7ad57614df3fbeb1681743be7addcc549fd1f77d55145aedb6ff19f07bf3"
+  },
+  {
+   "id": "heldout-08",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    flowchart TD\n      accTitle: What to buy\n      accDescr: Options of what to buy with Christmas money\n      A[Christmas] -->|Get money| B(Go shopping)\n      B --> C{Let me thinksssssx<br/>sssssssssssssssssssuuu<br />tttsssssssssssssssssssssss}\n      C -->|One| D[Laptop]\n      C -->|Two| E[iPhone]\n      C -->|Three| F[Car]\n  ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 249,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": "Get money"
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": "One"
+     },
+     {
+      "source": "C",
+      "target": "E",
+      "label": "Two"
+     },
+     {
+      "source": "C",
+      "target": "F",
+      "label": "Three"
+     }
+    ]
+   },
+   "sourceSha256": "65ca86b0cee1edd9cf6ccea01e4ad91bc7776a9010cba1829e07d8bda6786a40"
+  },
+  {
+   "id": "heldout-09",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    graph TD\n    A[/Christmas\\]\n    A -->|Get money| B[\\Go shopping/]\n    B --> C{Let me thinksssss<br/>ssssssssssssssssssssss<br/>sssssssssssssssssssssssssss}\n    C -->|One| D[/Laptop/]\n    C -->|Two| E[\\iPhone\\]\n    C -->|Three| F[Car]\n  ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 263,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": "Get money"
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": "One"
+     },
+     {
+      "source": "C",
+      "target": "E",
+      "label": "Two"
+     },
+     {
+      "source": "C",
+      "target": "F",
+      "label": "Three"
+     }
+    ]
+   },
+   "sourceSha256": "57fea4743b4687a6efbc2219a83e154bcc06312a6d226df0c8ab303deaa41720"
+  },
+  {
+   "id": "heldout-10",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    flowchart TD\n    A[/Christmas\\]\n    A -->|Get money| B[\\Go shopping/]\n    B --> C{Let me thinksssss<br/>ssssssssssssssssssssss<br/>sssssssssssssssssssssssssss}\n    C -->|One| D[/Laptop/]\n    C -->|Two| E[\\iPhone\\]\n    C -->|Three| F[Car]\n  ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 275,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": "Get money"
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": "One"
+     },
+     {
+      "source": "C",
+      "target": "E",
+      "label": "Two"
+     },
+     {
+      "source": "C",
+      "target": "F",
+      "label": "Three"
+     }
+    ]
+   },
+   "sourceSha256": "35358c59f9476d78550168822246388558c73d0285aacb2be11b6287565f59d3"
+  },
+  {
+   "id": "heldout-11",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    graph TB\n    subgraph One\n      a1-->a2\n    end\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 478,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TB",
+    "orderedNodes": [
+     "a1",
+     "a2"
+    ],
+    "orderedEdges": [
+     {
+      "source": "a1",
+      "target": "a2",
+      "label": ""
+     }
+    ],
+    "groupings": [
+     {
+      "id": "One",
+      "label": "One",
+      "members": [
+       "a1",
+       "a2"
+      ]
+     }
+    ]
+   },
+   "sourceSha256": "05e37881ed454c297c6a41cfa90c1c6e59388eb3b30d3d2ab5031251debed790"
+  },
+  {
+   "id": "heldout-12",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    flowchart TB\n    subgraph One\n      a1-->a2\n    end\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 487,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TB",
+    "orderedNodes": [
+     "a1",
+     "a2"
+    ],
+    "orderedEdges": [
+     {
+      "source": "a1",
+      "target": "a2",
+      "label": ""
+     }
+    ],
+    "groupings": [
+     {
+      "id": "One",
+      "label": "One",
+      "members": [
+       "a1",
+       "a2"
+      ]
+     }
+    ]
+   },
+   "sourceSha256": "593c1995f30408e5d45889bedaf58ebc24d20a510c137c1c3b9c33bb3098347a"
+  },
+  {
+   "id": "heldout-13",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    graph TB\n    A\n    B\n    subgraph foo[Foo SubGraph]\n      C\n      D\n    end\n    subgraph bar[Bar SubGraph]\n      E\n      F\n    end\n    G\n\n    A-->B\n    B-->C\n    C-->D\n    B-->D\n    D-->E\n    E-->A\n    E-->F\n    F-->D\n    F-->G\n    B-->G\n    G-->D\n\n    style foo fill:#F99,stroke-width:2px,stroke:#F0F,color:darkred\n    style bar fill:#999,stroke-width:10px,stroke:#0F0,color:blue\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 497,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TB",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F",
+     "G"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": ""
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": ""
+     },
+     {
+      "source": "B",
+      "target": "D",
+      "label": ""
+     },
+     {
+      "source": "D",
+      "target": "E",
+      "label": ""
+     },
+     {
+      "source": "E",
+      "target": "A",
+      "label": ""
+     },
+     {
+      "source": "E",
+      "target": "F",
+      "label": ""
+     },
+     {
+      "source": "F",
+      "target": "D",
+      "label": ""
+     },
+     {
+      "source": "F",
+      "target": "G",
+      "label": ""
+     },
+     {
+      "source": "B",
+      "target": "G",
+      "label": ""
+     },
+     {
+      "source": "G",
+      "target": "D",
+      "label": ""
+     }
+    ],
+    "groupings": [
+     {
+      "id": "foo",
+      "label": "Foo SubGraph",
+      "members": [
+       "C",
+       "D"
+      ]
+     },
+     {
+      "id": "bar",
+      "label": "Bar SubGraph",
+      "members": [
+       "E",
+       "F"
+      ]
+     }
+    ]
+   },
+   "sourceSha256": "038374e0981c194afc1186f7a6186071778d560774944b248a50d85236aa1665"
+  },
+  {
+   "id": "heldout-14",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    flowchart TB\n    A\n    B\n    subgraph foo[Foo SubGraph]\n      C\n      D\n    end\n    subgraph bar[Bar SubGraph]\n      E\n      F\n    end\n    G\n\n    A-->B\n    B-->C\n    C-->D\n    B-->D\n    D-->E\n    E-->A\n    E-->F\n    F-->D\n    F-->G\n    B-->G\n    G-->D\n\n    style foo fill:#F99,stroke-width:2px,stroke:#F0F,color:darkred\n    style bar fill:#999,stroke-width:10px,stroke:#0F0,color:blue\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 529,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TB",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F",
+     "G"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": ""
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": ""
+     },
+     {
+      "source": "B",
+      "target": "D",
+      "label": ""
+     },
+     {
+      "source": "D",
+      "target": "E",
+      "label": ""
+     },
+     {
+      "source": "E",
+      "target": "A",
+      "label": ""
+     },
+     {
+      "source": "E",
+      "target": "F",
+      "label": ""
+     },
+     {
+      "source": "F",
+      "target": "D",
+      "label": ""
+     },
+     {
+      "source": "F",
+      "target": "G",
+      "label": ""
+     },
+     {
+      "source": "B",
+      "target": "G",
+      "label": ""
+     },
+     {
+      "source": "G",
+      "target": "D",
+      "label": ""
+     }
+    ],
+    "groupings": [
+     {
+      "id": "foo",
+      "label": "Foo SubGraph",
+      "members": [
+       "C",
+       "D"
+      ]
+     },
+     {
+      "id": "bar",
+      "label": "Bar SubGraph",
+      "members": [
+       "E",
+       "F"
+      ]
+     }
+    ]
+   },
+   "sourceSha256": "e88b4b4a681898107197322ea68ac5d69d5c3fca28b78108eb892a272edbc777"
+  },
+  {
+   "id": "heldout-15",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    graph LR\n    456ac9b0d15a8b7f1e71073221059886[1051 AAA fa:fa-check]\n    f7f580e11d00a75814d2ded41fe8e8fe[1141 BBB fa:fa-check]\n    81dc9bdb52d04dc20036dbd8313ed055[1234 CCC fa:fa-check]\n    456ac9b0d15a8b7f1e71073221059886 -->|Node| f7f580e11d00a75814d2ded41fe8e8fe\n    f7f580e11d00a75814d2ded41fe8e8fe -->|Node| 81dc9bdb52d04dc20036dbd8313ed055\n    click 456ac9b0d15a8b7f1e71073221059886 \"/admin/user/view?id=1051\" \"AAA\n    6000\"\n    click f7f580e11d00a75814d2ded41fe8e8fe \"/admin/user/view?id=1141\" \"BBB\n    600\"\n    click 81dc9bdb52d04dc20036dbd8313ed055 \"/admin/user/view?id=1234\" \"CCC\n    3000\"\n    style 456ac9b0d15a8b7f1e71073221059886 fill:#f9f,stroke:#333,stroke-width:4px\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 562,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "LR",
+    "orderedNodes": [
+     "456ac9b0d15a8b7f1e71073221059886",
+     "f7f580e11d00a75814d2ded41fe8e8fe",
+     "81dc9bdb52d04dc20036dbd8313ed055"
+    ],
+    "orderedEdges": [
+     {
+      "source": "456ac9b0d15a8b7f1e71073221059886",
+      "target": "f7f580e11d00a75814d2ded41fe8e8fe",
+      "label": "Node"
+     },
+     {
+      "source": "f7f580e11d00a75814d2ded41fe8e8fe",
+      "target": "81dc9bdb52d04dc20036dbd8313ed055",
+      "label": "Node"
+     }
+    ]
+   },
+   "sourceSha256": "57e8ff1187189b8c918831410e7c3682993d16b7116036d8b9c3962d5aa47d36"
+  },
+  {
+   "id": "heldout-16",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    flowchart LR\n    456ac9b0d15a8b7f1e71073221059886[1051 AAA fa:fa-check]\n    f7f580e11d00a75814d2ded41fe8e8fe[1141 BBB fa:fa-check]\n    81dc9bdb52d04dc20036dbd8313ed055[1234 CCC fa:fa-check]\n    456ac9b0d15a8b7f1e71073221059886 -->|Node| f7f580e11d00a75814d2ded41fe8e8fe\n    f7f580e11d00a75814d2ded41fe8e8fe -->|Node| 81dc9bdb52d04dc20036dbd8313ed055\n    click 456ac9b0d15a8b7f1e71073221059886 \"/admin/user/view?id=1051\" \"AAA\n    6000\"\n    click f7f580e11d00a75814d2ded41fe8e8fe \"/admin/user/view?id=1141\" \"BBB\n    600\"\n    click 81dc9bdb52d04dc20036dbd8313ed055 \"/admin/user/view?id=1234\" \"CCC\n    3000\"\n    style 456ac9b0d15a8b7f1e71073221059886 fill:#f9f,stroke:#333,stroke-width:4px\n    ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 580,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "LR",
+    "orderedNodes": [
+     "456ac9b0d15a8b7f1e71073221059886",
+     "f7f580e11d00a75814d2ded41fe8e8fe",
+     "81dc9bdb52d04dc20036dbd8313ed055"
+    ],
+    "orderedEdges": [
+     {
+      "source": "456ac9b0d15a8b7f1e71073221059886",
+      "target": "f7f580e11d00a75814d2ded41fe8e8fe",
+      "label": "Node"
+     },
+     {
+      "source": "f7f580e11d00a75814d2ded41fe8e8fe",
+      "target": "81dc9bdb52d04dc20036dbd8313ed055",
+      "label": "Node"
+     }
+    ]
+   },
+   "sourceSha256": "0c659d530dfbd98bec7a3edd0dedf369ae73f62f01d40dc011759ee9aff385d0"
+  },
+  {
+   "id": "heldout-17",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    graph TD\n    A[Christmas] -->|Get money| B(Go shopping)\n    B --> C{{Let me think...<br />Do I want something for work,<br />something to spend every free second with,<br />or something to get around?}}\n    C -->|One| D[Laptop]\n    C -->|Two| E[iPhone]\n    C -->|Three| F[Car]\n    click A \"flowchart.html#link-clicked\" \"link test\"\n    click B testClick \"click test\"\n    classDef someclass fill:#f96;\n    class A someclass;\n    class C someclass;\n  ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 599,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": "Get money"
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": "One"
+     },
+     {
+      "source": "C",
+      "target": "E",
+      "label": "Two"
+     },
+     {
+      "source": "C",
+      "target": "F",
+      "label": "Three"
+     }
+    ]
+   },
+   "sourceSha256": "6b04969aafac49d9eff5f0508b881e837997dd94e7f75d535a6071adabd020eb"
+  },
+  {
+   "id": "heldout-18",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    flowchart TD\n    A[Christmas] -->|Get money| B(Go shopping)\n    B --> C{{Let me think...<br />Do I want something for work,<br />something to spend every free second with,<br />or something to get around?}}\n    C -->|One| D[Laptop]\n    C -->|Two| E[iPhone]\n    C -->|Three| F[Car]\n    click A \"flowchart.html#link-clicked\" \"link test\"\n    click B testClick \"click test\"\n    classDef someclass fill:#f96;\n    class A someclass;\n    class C someclass;\n  ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 615,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": "Get money"
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": "One"
+     },
+     {
+      "source": "C",
+      "target": "E",
+      "label": "Two"
+     },
+     {
+      "source": "C",
+      "target": "F",
+      "label": "Three"
+     }
+    ]
+   },
+   "sourceSha256": "bd071384adc94ee09fff3bb0c8496c952dc322bf7a665e0fd5c6503db834723f"
+  },
+  {
+   "id": "heldout-19",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    graph TD\n    A([stadium shape test])\n    A -->|Get money| B([Go shopping])\n    B --> C([Let me think...<br />Do I want something for work,<br />something to spend every free second with,<br />or something to get around?])\n    C -->|One| D([Laptop])\n    C -->|Two| E([iPhone])\n    C -->|Three| F([Car<br/>wroom wroom])\n    click A \"flowchart.html#link-clicked\" \"link test\"\n    click B testClick \"click test\"\n    classDef someclass fill:#f96;\n    class A someclass;\n    class C someclass;\n  ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 632,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": "Get money"
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": "One"
+     },
+     {
+      "source": "C",
+      "target": "E",
+      "label": "Two"
+     },
+     {
+      "source": "C",
+      "target": "F",
+      "label": "Three"
+     }
+    ]
+   },
+   "sourceSha256": "5e1a4c8bf00d5d26960dff0852fc508eae70f81d0cd05cd1a854ffd20dc14b7b"
+  },
+  {
+   "id": "heldout-20",
+   "purpose": "held-out ordinary flowchart fidelity check",
+   "source": "    flowchart TD\n    A([stadium shape test])\n    A -->|Get money| B([Go shopping])\n    B --> C([Let me think...<br />Do I want something for work,<br />something to spend every free second with,<br />or something to get around?])\n    C -->|One| D([Laptop])\n    C -->|Two| E([iPhone])\n    C -->|Three| F([Car<br/>wroom wroom])\n    click A \"flowchart.html#link-clicked\" \"link test\"\n    click B testClick \"click test\"\n    classDef someclass fill:#f96;\n    class A someclass;\n    class C someclass;\n  ",
+   "provenance": {
+    "kind": "mermaid-repository-example",
+    "repository": "mermaid-js/mermaid",
+    "commit": "2086904e76c692331e34a45d7cc3bc30860d040e",
+    "path": "demos/flowchart.html",
+    "openingLine": 649,
+    "retrieval": "https://raw.githubusercontent.com/mermaid-js/mermaid/2086904e76c692331e34a45d7cc3bc30860d040e/demos/flowchart.html"
+   },
+   "expected": {
+    "direction": "TD",
+    "orderedNodes": [
+     "A",
+     "B",
+     "C",
+     "D",
+     "E",
+     "F"
+    ],
+    "orderedEdges": [
+     {
+      "source": "A",
+      "target": "B",
+      "label": "Get money"
+     },
+     {
+      "source": "B",
+      "target": "C",
+      "label": ""
+     },
+     {
+      "source": "C",
+      "target": "D",
+      "label": "One"
+     },
+     {
+      "source": "C",
+      "target": "E",
+      "label": "Two"
+     },
+     {
+      "source": "C",
+      "target": "F",
+      "label": "Three"
+     }
+    ]
+   },
+   "sourceSha256": "d02aa74345be1b8247dfd9d24a8f9839c7195f8aa4d6286867bf9fec2571b6ec"
+  }
+ ]
+}

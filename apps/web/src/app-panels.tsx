@@ -16,8 +16,8 @@ export const messageOf = (error: unknown) => error instanceof Error ? error.mess
 type SettingsComponent = typeof import('./Settings').Settings;
 let loadedSettings: SettingsComponent | undefined;
 
-export function Dialog({ title, children, close, initialFocusRef }: { title: string; children: ReactNode; close: () => void; initialFocusRef?: RefObject<HTMLElement | null> }) {
-  return <Modal open title={title} onClose={close} className="dialog" initialFocusRef={initialFocusRef}>{children}</Modal>;
+export function Dialog({ title, children, close, initialFocusRef, closeDisabled }: { title: string; children: ReactNode; close: () => void; initialFocusRef?: RefObject<HTMLElement | null>; closeDisabled?: boolean }) {
+  return <Modal open title={title} onClose={close} className="dialog" initialFocusRef={initialFocusRef} closeDisabled={closeDisabled}>{children}</Modal>;
 }
 
 export function SettingsWindow(props: ComponentProps<SettingsComponent>) {
