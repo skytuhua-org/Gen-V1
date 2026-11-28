@@ -68,7 +68,7 @@ export function ChoiceList({ element: { props } }: ComponentRenderProps) {
       },
       capture: () => {
         const selected = current.current.options.find(option => option.value === current.current.value);
-        return { instanceId, stateKey, label: current.current.label, valueLabel: current.current.customSelected ? String(current.current.customLabel ?? '') : selected?.label ?? String(current.current.value ?? ''), userEditVersion: editVersion.current };
+        return { instanceId, stateKey, label: current.current.label, valueLabel: current.current.customSelected ? String(current.current.customLabel ?? '') : selected?.label ?? '', userEditVersion: editVersion.current };
       },
       setInvalid,
       focusInvalid: () => {
