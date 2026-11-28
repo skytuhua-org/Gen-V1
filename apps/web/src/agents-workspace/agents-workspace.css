@@ -70,7 +70,9 @@
 @media (forced-colors: active) { .agents-agent-state, .agents-project-mark { color: CanvasText; } }
 
 /* M09 agent work surface */
-.agents-work { margin: 4px 12px 0; border-top: 1px solid var(--border); }
+.agents-work { flex: 0 0 auto; margin: 0; }
+.agents-work > .agents-disclosure { width: auto; min-height: 32px; padding: 2px 8px !important; font-size: 12px; white-space: nowrap; }
+.agents-work-modal { overscroll-behavior: contain; }
 .agents-work-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
 .agents-work-progress { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .agents-work-progress progress { flex: 1; height: 6px; }
@@ -90,6 +92,16 @@
 .agents-input-kind { font-weight: 600; font-size: 11px; }
 .agents-input-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .agents-input-delivery { font-size: 11px; color: var(--muted); }
+.agents-work-create { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.agents-work-create summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.agents-work-create-fields { display: flex; flex-direction: column; gap: 8px; padding-top: 6px; }
+.agents-work-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; color: var(--muted); font-size: 11px; }
+.agents-work-field .ui-select, .agents-work-field .ui-select-trigger { width: 100%; }
+.agents-workspace .agents-work-create .agents-work-field :is(.ui-select-trigger,input,textarea) { box-sizing: border-box; min-height: 32px; padding: 6px 8px; border: 1px solid var(--control-border); border-radius: 5px; font-size: 12px; line-height: 1.35; background: transparent; color: var(--text); }
+.agents-workspace .agents-work-create .agents-work-field textarea { width: 100%; min-height: 72px; resize: vertical; }
+.agents-work-budgets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.agents-work-grants { display: flex; flex-direction: column; gap: 4px; }
+.agents-work-create > button { align-self: flex-start; }
 .agents-work-output { max-height: 240px; overflow: auto; font-size: 11px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
 .agents-work-output-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .agents-work-output pre { white-space: pre-wrap; overflow-wrap: anywhere; }

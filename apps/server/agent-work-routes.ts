@@ -88,7 +88,8 @@ export function registerAgentWorkRoutes(app: FastifyInstance, service: Service) 
       enabled: true,
       roles: Object.fromEntries(roles.map(role => [role, service.agentWork.roleAvailability({threadId: taskId, runId: '', epoch: 0}, role)])),
       works: service.agentWork.listForParent(taskId).map(workRow),
-      budget: service.agentWork.budgetLedger(),
+      budget: {...service.agentWork.budgetLedger(), limits: service.agentWork.budgetLimits()},
+      resources: store.all<{id: string; label: string; writable: boolean}>('resource', taskId).map(grant => ({id: grant.id, label: grant.label, writable: grant.writable})),
     };
   });
   app.get('/api/agent-work/output', async (request, reply) => {

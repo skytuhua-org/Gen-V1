@@ -2,10 +2,12 @@ import { once } from 'node:events';
 import { connect } from 'node:net';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
+import { join } from 'node:path';
 import type { Frame, Page, TestInfo } from '@playwright/test';
 import { AFTER, BEFORE, browserCommand, documentSpec, evidence, FIXTURE_LABEL, grantFixtureFile, HOST_URL, openHost, sendFixture, test, expect } from '../host-fixture.ts';
 import { GENERATED_APPS_ENABLED } from '../../packages/core/widgets.ts';
 import type { AgentWorkV1 } from '../../packages/contracts/agent-work.ts';
+import type { DataRecord } from '../../packages/contracts/index.ts';
 
 // Integration verification only. No route interception, mocked fetch/EventSource,
 // real-provider calls, user projects, production setup data, or shell effects.
@@ -94,12 +96,15 @@ test('agent work evidence reaches the supported all-agents UI through the real h
       value: { outcome: 'BLOCKED', summary: 'Missing current proof.', requirementIds: ['r1'], observations: [], evidenceRefs: [{ id: 'ev-current', revision: 1 }, { id: 'ev-stale', revision: 1 }, { id: 'ev-missing', revision: 1 }] } });
     host.store.put('data', 'ev-current', parent.id, { id: 'ev-current', threadId: parent.id, revision: 1, provenance: 'harness:verification', createdAt: now, value: { outcome: 'PASS', requirementId: 'r1' } });
     host.store.put('data', 'ev-stale', parent.id, { id: 'ev-stale', threadId: parent.id, revision: 2, provenance: 'harness:verification', createdAt: now, value: { outcome: 'PASS', requirementId: 'r1' } });
+    host.store.put('agentWorkBudget', 'global', null, { reservedTokens: 0, reservedMs: 0, spentTokens: 10, spentMs: 1000, admitted: 1, completed: 1, failed: 0, cancelled: 0, interrupted: 0 });
   });
   await page.getByRole('button', { name: 'All Agents', exact: true }).click();
   await page.getByRole('button', { name: 'Agent work · 1', exact: true }).click();
-  const panel = page.getByRole('region', { name: 'Agent work', exact: true });
+  const panel = page.getByRole('dialog', { name: 'Agent work · 1', exact: true });
   await expect(panel).toContainText('reported blocked — not verified');
   await expect(panel).toContainText('2/3 refs stale');
+  await expect(panel).toContainText('10tok/1000ms conservatively charged · no reservation remaining');
+  await expect(panel).toContainText('global budget reserved 0tok/0ms · lifetime charged 10tok/1000ms · remaining uncapped');
   const outputRequest = page.waitForResponse(response => response.url().includes('/api/agent-work/output?') && response.url().includes(`workId=${workId}`) && response.ok());
   await panel.getByRole('button', { name: `Open evidence for ${workId}`, exact: true }).click();
   await outputRequest;
@@ -110,6 +115,87 @@ test('agent work evidence reaches the supported all-agents UI through the real h
   await expect(detail).toContainText('Verification remains a separate host decision.');
   await expect(detail).not.toContainText('100% accepted');
   await evidence(page, info, 'agent-work-evidence-real-host');
+});
+
+test.describe('scripted typed agent work', () => {
+  test.use({ scriptedTypedChild: true });
+
+  test('starts one authorized read-only child and reopens its reported result', async ({ page, host }) => {
+    await openHost(page);
+    await sendFixture(page, 'document');
+    const parent = host.runtime.activeRunContext!;
+    expect(host.runtime.deliveries).toHaveLength(1);
+
+    const unselected = join(host.folder, 'unselected.txt');
+    await writeFile(unselected, 'Unselected fixture resource.', { flag: 'wx' });
+    for (const path of [host.sourceFile, unselected]) {
+      const grant = await browserCommand(page, 'resource.grant', { kind: 'file', path, writable: true }, parent.threadId);
+      expect(grant.status).toBe(200);
+    }
+    const selected = host.snapshot().resources.find(resource => resource.label === 'evidence-ledger.md')!;
+    expect(selected).toMatchObject({ threadId: parent.threadId, writable: true });
+
+    await page.getByRole('button', { name: 'All Agents', exact: true }).click();
+    await page.getByRole('button', { name: 'Agent work · 0', exact: true }).click();
+    const panel = page.getByRole('dialog', { name: /^Agent work · / });
+    await panel.getByText('Admit agent work', { exact: true }).click();
+    const resources = panel.getByLabel('Resource access').getByRole('checkbox');
+    await expect(resources).toHaveCount(2);
+    await expect(panel.getByRole('checkbox', { name: /unselected\.txt/ })).not.toBeChecked();
+    await panel.getByRole('checkbox', { name: /evidence-ledger\.md/ }).check();
+    await panel.getByLabel('Token budget').fill('100');
+    await panel.getByLabel('Minute budget').fill('1');
+    await panel.getByLabel('Prompt').fill('Summarize the selected fixture evidence.');
+
+    const admit = panel.getByRole('button', { name: 'Admit work', exact: true });
+    await expect(admit).toBeEnabled();
+    const [response] = await Promise.all([
+      page.waitForResponse(response => response.url() === HOST_URL + '/api/commands'
+        && response.request().method() === 'POST' && response.request().postDataJSON()?.type === 'agentWork.admit'),
+      admit.click(),
+    ]);
+    expect(response.status(), await response.text()).toBe(200);
+    const admissions = host.commands.filter(command => command.type === 'agentWork.admit');
+    expect(admissions).toHaveLength(1);
+    const command = admissions[0]!;
+    expect(command).toMatchObject({ threadId: parent.threadId, payload: {
+      commandId: command.id, role: 'PLAN_READ', grantSubset: [selected.id], budget: { tokens: 100, ms: 60_000 },
+    } });
+    const workId = String(command.payload.workId);
+    const running = host.store.get<AgentWorkV1>('agentWork', workId);
+    expect(running).toMatchObject({ parentOwner: parent, childOwner: {
+      threadId: command.payload.childThreadId, runId: expect.any(String), epoch: 1,
+    }, role: 'PLAN_READ', state: 'RUNNING', budget: { tokens: 100, ms: 60_000 } });
+    await expect(panel).toContainText('100tok/60000ms reserved · used/remaining unknown');
+    expect(host.typedChildStarts).toEqual([{
+      workId, ctx: running!.childOwner, inputId: `start:${workId}`, grants: [{ id: selected.id, writable: false }],
+    }]);
+    const child = host.typedChildStarts[0]!;
+    const output = { outcome: 'COMPLETED', summary: 'Recorded one local planning observation.', evidenceRefs: [], requirementIds: ['fixture-requirement'] };
+    const reported = await host.service.agentWork.invokeTool(workId, child.ctx, { name: 'agent_result', args: { output } }) as AgentWorkV1;
+    expect(reported).toMatchObject({ state: 'COMPLETED_REPORTED', revision: 3, outputRef: { id: expect.any(String), revision: 1 } });
+    const outputRef = reported.outputRef!;
+    await expect(panel).toContainText('reported complete — not verified');
+    await expect(panel).toContainText('100tok/60000ms conservatively charged · no reservation remaining');
+    await panel.getByRole('button', { name: `Open evidence for ${workId}`, exact: true }).click();
+    await expect(panel.getByRole('region', { name: 'Work output evidence', exact: true })).toContainText(output.summary);
+
+    await host.restart();
+    expect(host.store.all<AgentWorkV1>('agentWork', parent.threadId)).toEqual([reported]);
+    expect(host.store.all<DataRecord>('data', parent.threadId).filter(record => record.provenance === 'harness:agent-output'))
+      .toEqual([expect.objectContaining({ ...outputRef, value: output })]);
+    expect(host.service.agentWork.budgetLedger()).toMatchObject({
+      admitted: 1, completed: 1, reservedTokens: 0, reservedMs: 0, spentTokens: 100, spentMs: 60_000,
+    });
+    const bootstrap = await page.request.get(HOST_URL + '/api/bootstrap');
+    expect(bootstrap.ok()).toBe(true);
+    const reopened = await page.request.get(`${HOST_URL}/api/agent-work/output?taskId=${parent.threadId}&workId=${workId}`);
+    expect(reopened.ok()).toBe(true);
+    expect(await reopened.json()).toMatchObject({
+      workId, outputRef, output, reportedOutcome: 'COMPLETED', verification: 'REPORTED_UNVERIFIED', outputStatus: 'current', lateArtifacts: 0,
+    });
+    expect(host.typedChildStarts).toHaveLength(1);
+  });
 });
 
 test('actual create/send, cookies/CSRF/SSE and structured host autosave survive reload', async ({ page, host }, info) => {
