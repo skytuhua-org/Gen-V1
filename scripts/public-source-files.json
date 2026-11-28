@@ -137,6 +137,7 @@
     "apps/web/src/OperationExecutionReview.tsx",
     "apps/web/src/OperationProjectTrust.tsx",
     "apps/web/src/PairedDevicesPanel.tsx",
+    "apps/web/src/PickerGroup.tsx",
     "apps/web/src/PlanStatus.tsx",
     "apps/web/src/PlanningQuestion.tsx",
     "apps/web/src/PluginFloatingWindow.tsx",
