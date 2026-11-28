@@ -283,6 +283,14 @@
   color: var(--text);
 }
 
+.sidebar .thread-completion-muted-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: 6px;
+  vertical-align: middle;
+  color: var(--muted);
+}
 
 .app-shell .sidebar .sidebar-thread-row .thread-item-title,
 .sidebar .sidebar-thread-row .thread-item-title {

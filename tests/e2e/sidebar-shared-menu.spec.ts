@@ -29,6 +29,7 @@ test('options open a shared menu without selecting or detaching its thread', asy
   await expect(menu(page)).toBeVisible();
   await expect(options(page)).toHaveAttribute('aria-haspopup', 'menu');
   await expect(menu(page).getByRole('menuitem')).toHaveText(['Place in workspaceAlt Enter', 'Detach thread', 'Rename thread', 'Pin thread', 'Mark as unread', 'Settle thread', 'Archive thread']);
+  await expect(menu(page).getByRole('menuitemcheckbox', {name: 'Mute completion alerts'})).toHaveAttribute('aria-checked', 'false');
   await expect(menu(page).getByRole('menuitem', {name: 'Place in workspace'}).locator('kbd')).toHaveText('Alt Enter');
   expect(await calls(page)).toEqual([]);
   await expect(page.locator('.thread-item[aria-current="page"]')).toHaveAttribute('aria-label', 'Selected conversation Ready');
@@ -62,6 +63,35 @@ for (const [label, value] of [['Pin thread', {pinned: true}], ['Mark as unread',
     await expect(menu(page)).toHaveCount(0); await expect(options(page)).toBeFocused();
   });
 }
+
+test('Mute completion alerts posts the flag, announces the outcome and shows the indicator', async ({page}) => {
+  await options(page).click();
+  const item = menu(page).getByRole('menuitemcheckbox', {name: 'Mute completion alerts'});
+  await expect(item).toHaveAttribute('aria-checked', 'false');
+  await expect(item).toHaveAttribute('title', 'Silence future completion banners and sounds. Failures and requests still follow notification settings.');
+  await item.click();
+  expect(await calls(page)).toEqual([{presentation: expect.objectContaining({id: 'thread-1', projectId: 'project-1', workspaceId: 'copy-1', runId: 'run-other'}), value: {completionAlertsMuted: true}}]);
+  await expect(page.locator('.ui-toast')).toContainText('Future completion alerts muted for \u201cOther conversation\u201d. Failures and requests still follow notification settings.');
+});
+
+test('a muted row carries the indicator and unmute posts false without replaying', async ({page}) => {
+  await page.goto('/sidebar-shared-menu-check?flags');
+  await expect(page.locator('.sidebar-thread-row').nth(1).locator('.thread-completion-muted-icon')).toBeVisible();
+  await options(page).click();
+  const item = menu(page).getByRole('menuitemcheckbox', {name: 'Mute completion alerts'});
+  await expect(item).toHaveAttribute('aria-checked', 'true');
+  await item.click();
+  expect((await calls(page)).map(call => (call as {value: unknown}).value)).toEqual([{completionAlertsMuted: false}]);
+  await expect(page.locator('.ui-toast')).toContainText('Completion alerts unmuted for \u201cOther conversation\u201d. Earlier completions will not replay.');
+});
+
+test('a rejected mute write raises the failure toast', async ({page}) => {
+  await options(page).waitFor();
+  await page.evaluate(() => { (window as unknown as {sidebarPresentation: {mode: string}}).sidebarPresentation.mode = 'reject'; });
+  await options(page).click();
+  await menu(page).getByRole('menuitemcheckbox', {name: 'Mute completion alerts'}).click();
+  await expect(page.locator('.ui-toast[data-tone="error"]')).toContainText('Could not save completion alert preference. Try again.');
+});
 
 test('inverse flags and fallback ordering preserve existing payloads', async ({page}) => {
   await page.goto('/sidebar-shared-menu-check?flags');

@@ -45,6 +45,7 @@ import type {HermesRuntime} from '../runtime-hermes/index.ts';
 import type {HermesSourceLibrary} from '../runtime-hermes/library.ts';
 import type {ApprovedWriteOrigin,CompletedWriteReceipt,WriteHookDiagnostic} from '../contracts/index.ts';
 import { HarnessError, EMPTY_USAGE, type ArtifactRecord, type DataRecord, type HostCommand, type InputRequest, type Message, type Operation, type ResourceGrant, type RunContext, type CommandReceipt, type RuntimeAdapter, type RuntimeEvent, type RuntimeUsage, type Snapshot, type StartRun, type SurfaceSpec, type Thread, type ToolCall, type UserStateRecord } from "../contracts/index.ts";
+import { AttentionRepository } from "./attention.ts";
 import { hostFlagEnabled } from "./host-flags.ts";
 import { OperationProjectTrustHost } from './operation-project-trust.ts';
 import { OperationExecutionAdviceHost } from './operation-execution-advice.ts';
@@ -1433,7 +1434,9 @@ export class Service {
       }
       case "thread.rename": { const next = { ...thread, title: text(p, "title", 140), updatedAt: now() }; this.store.put("thread", thread.id, thread.id, next); return next; }
       case 'thread.presentation': {
-        if (Object.keys(p).some(key => !['pinned', 'unread', 'settled', 'order'].includes(key)) || Object.entries(p).some(([key, value]) => key === 'order' ? typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1_000_000 : typeof value !== 'boolean')) throw new HarnessError('INVALID_INPUT', 'Invalid thread presentation');
+        if (Object.keys(p).some(key => !['pinned', 'unread', 'settled', 'order', 'completionAlertsMuted'].includes(key)) || Object.entries(p).some(([key, value]) => key === 'order' ? typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1_000_000 : typeof value !== 'boolean')) throw new HarnessError('INVALID_INPUT', 'Invalid thread presentation');
+        // Fence pending completions on every effective mute change, before the flag is stored.
+        if ('completionAlertsMuted' in p && (p.completionAlertsMuted === true) !== (thread.presentation?.completionAlertsMuted === true)) new AttentionRepository(this.store).prepareCompletionMuteChange(thread.id);
         const next = { ...thread, presentation: { ...thread.presentation, ...p } }; this.store.put('thread', thread.id, thread.id, next); return next;
       }
       case "thread.archive": {
