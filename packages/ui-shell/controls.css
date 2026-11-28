@@ -36,13 +36,16 @@
   text-align: start;
   cursor: pointer;
 }
-.ui-control-option > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ui-control-option > span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ui-control-option > svg { flex-shrink: 0; }
 .ui-control-shortcut { flex-shrink: 0; margin-inline-start: auto; color: var(--muted, #a0a0a0); font-size: 11px; white-space: nowrap; }
 .ui-control-popup .ui-control-option:is([aria-selected="true"], [aria-checked="true"]) { background: var(--selection-bg, #1f1f1f); }
-.ui-control-popup .ui-control-option:hover:not(:disabled) { background: var(--hover, #262626); }
+.ui-control-popup .ui-control-option:hover:not(:disabled, [aria-disabled="true"]) { background: var(--hover, #262626); }
 .ui-control-popup .ui-control-option:focus-visible { outline:2px solid var(--ui-focus-ring,#808080); outline-offset: -2px; }
 .ui-control-popup .ui-control-option:disabled { opacity: .45; cursor: not-allowed; }
+.ui-control-popup .ui-control-option[aria-disabled="true"] { color: var(--muted, #a0a0a0); cursor: not-allowed; }
+.ui-control-popup .ui-control-option[aria-disabled="true"] > svg { opacity: .55; }
+.ui-control-reason { display: block; margin-block-start: 2px; white-space: normal; overflow-wrap: anywhere; font-size: 12px; font-weight: 400; }
 .ui-select { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
 .ui-select .ui-select-trigger, .ui-action-trigger {
   display: inline-flex;
@@ -67,10 +70,10 @@
 .ui-control-popup .ui-control-option, .ui-select .ui-select-trigger, .ui-action-trigger {
   transition: background-color var(--ui-motion-hover,120ms) var(--ui-ease-move,cubic-bezier(.4,0,.2,1)), color var(--ui-motion-hover,120ms) var(--ui-ease-move,cubic-bezier(.4,0,.2,1)), transform var(--ui-motion-press,80ms) var(--ui-ease-enter,cubic-bezier(.16,1,.3,1));
 }
-.ui-control-popup .ui-control-option:active:not(:disabled), .ui-select .ui-select-trigger:active:not(:disabled), .ui-action-trigger:active:not(:disabled) { transform: scale(.97); }
+.ui-control-popup .ui-control-option:active:not(:disabled, [aria-disabled="true"]), .ui-select .ui-select-trigger:active:not(:disabled), .ui-action-trigger:active:not(:disabled) { transform: scale(.97); }
 @media (prefers-reduced-motion: reduce) {
   .ui-control-popup .ui-control-option, .ui-select .ui-select-trigger, .ui-action-trigger { transition: none; }
-  .ui-control-popup .ui-control-option:active:not(:disabled), .ui-select .ui-select-trigger:active:not(:disabled), .ui-action-trigger:active:not(:disabled) { transform: none; }
+  .ui-control-popup .ui-control-option:active:not(:disabled, [aria-disabled="true"]), .ui-select .ui-select-trigger:active:not(:disabled), .ui-action-trigger:active:not(:disabled) { transform: none; }
 }
 .ui-modal {
   position: fixed;

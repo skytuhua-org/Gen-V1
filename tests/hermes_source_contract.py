@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 VENDOR = ROOT / 'third-party' / 'hermes-agent'
@@ -32,6 +34,23 @@ class OriginalHermesSource(unittest.TestCase):
             self.assertEqual(len(data), item['bytes'], item['path'])
             self.assertEqual(hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest(), item['gitBlob'], item['path'])
             self.assertEqual(hashlib.sha256(data).hexdigest(), item['sha256'], item['path'])
+
+    def test_original_session_database_retires_a_session(self):
+        from hermes_state import SessionDB
+
+        with TemporaryDirectory() as directory, SessionDB(Path(directory) / 'state.db') as state:
+            session_id = state.create_session('vendor-source-contract', 'cli')
+            self.assertIsNotNone(state.get_session(session_id))
+            self.assertTrue(state.delete_session(session_id))
+            self.assertIsNone(state.get_session(session_id))
+
+    def test_original_session_database_formats_storage_errors(self):
+        import hermes_state
+
+        with patch.object(hermes_state, 'get_last_init_error', return_value='database is locked'):
+            message = hermes_state.format_session_db_unavailable('Cannot load sessions')
+        self.assertIn('Cannot load sessions', message)
+        self.assertIn('locked', message.lower())
 
     def test_learn_executes_the_original_function(self):
         module = importlib.import_module('agent.learn_prompt')

@@ -141,3 +141,17 @@ test('the shortcut reference is revealed by search and follows a saved rebinding
   await expect.poll(() => host.commands.filter(command => command.type === 'settings.update').map(command => command.payload)).toContainEqual({preferences: {keybindings: {search: 'Alt+K'}}});
   await expect(reference.locator('[data-binding-id="search"] kbd')).toHaveText(/^(Alt\+K|⌥K)$/);
 });
+
+test('the Saved chip clears on section switch, search, external refresh and after four seconds', async ({page}) => {
+  const host = await setup(page); await host.open();
+  const chip = host.dialog.locator('.settings-save-state');
+  const save = async () => { await host.nav.getByRole('button', {name: 'General', exact: true}).click(); await host.dialog.getByRole('switch', {name: 'Archive confirmation', exact: true}).click(); };
+  await save(); await expect(chip).toContainText('Saved');
+  await host.nav.getByRole('button', {name: 'Browser', exact: true}).click(); await expect(chip).toBeEmpty();
+  await save(); await expect(chip).toContainText('Saved');
+  await host.dialog.getByRole('searchbox').fill('theme'); await expect(chip).toBeEmpty();
+  await host.dialog.getByRole('searchbox').fill(''); await save(); await expect(chip).toContainText('Saved');
+  await host.dialog.getByRole('button', {name: 'Data & Recovery', exact: true}).click();
+  await host.dialog.getByRole('button', {name: 'Refresh settings', exact: true}).click(); await expect(chip).toBeEmpty();
+  await save(); await expect(chip).toContainText('Saved'); await expect(chip).toBeEmpty({timeout: 8000});
+});

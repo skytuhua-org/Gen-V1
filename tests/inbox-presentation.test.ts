@@ -1,7 +1,7 @@
 import {expect,it,vi} from 'vitest';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {InboxView} from '../apps/web/src/InboxView.tsx';
+import {InboxView,inboxFooterHint} from '../apps/web/src/InboxView.tsx';
 import {InboxItemRow,InboxPane} from '../third-party/vespin/inbox-presentation.tsx';
 import {oneColumn} from '../third-party/vespin/inbox-columns.ts';
 import type {AttentionItem} from '../packages/contracts/attention.ts';
@@ -14,6 +14,18 @@ it('retains the actual Vespin three-line row, unread gutter and above-title meta
  const onPress=vi.fn(),html=renderToStaticMarkup(createElement(InboxItemRow,{title:'Choose the current project',description:'The current request remains in its canonical conversation.',lead:{icon:createElement('span',null,'A'),label:'Current task'},meta:createElement('time',null,'now'),unread:true,current:true,muted:false,onPress,label:'Choose the current project, unread'}));
  expect(html).toContain('class="ui-list-row"');expect(html).toContain('data-meta="title"');expect(html).toContain('data-lead="above"');expect(html).toContain('ui-list-row-leading');expect(html).toContain('ui-unread-dot');expect(html).toContain('ui-list-row-head');expect(html).toContain('ui-list-row-lead-label');expect(html.indexOf('ui-list-row-lead-label')).toBeLessThan(html.indexOf('ui-list-row-title'));expect(html).toContain('data-current="true"');expect(onPress).not.toHaveBeenCalled();
 });
+it('announces only the selected inbox row as current without page-navigation semantics',()=>{
+ const render=(current:boolean)=>renderToStaticMarkup(createElement(InboxItemRow,{title:'Question',description:'Needs input',lead:{icon:createElement('span',null,'Q'),label:'Request'},meta:createElement('time',null,'now'),unread:true,current,muted:false,onPress:vi.fn(),label:'Question, unread'}));
+ const current=render(true),noncurrent=render(false);
+ expect(current.match(/aria-current=/g)).toHaveLength(1);
+ expect(current).toContain('aria-current="true"');
+ expect(current).not.toContain('aria-current="page"');
+ expect(current).toContain('data-current="true"');
+ expect(current).toContain('Unread. ');
+ expect(noncurrent).not.toContain('aria-current=');
+ expect(noncurrent).not.toContain('data-current=');
+});
+
 it('uses the vendored list and reader presentation for canonical Gen items without adding send authority',()=>{
  const item:AttentionItem={id:'request:a:1',threadId:'thread-a',kind:'request',title:'A real conversation',summary:'Choose a destination',state:'needs-input',createdAt:'2026-11-04T00:00:00.000Z',updatedAt:'2026-11-04T00:00:00.000Z',read:false,popupDismissed:false,actionable:true,notificationKey:'request:a:1:needs-input',destination:{threadId:'thread-a'}},mark=vi.fn(async()=>{}),open=vi.fn();
  const html=renderToStaticMarkup(createElement(InboxView,{attention:{items:[item],unread:1,error:'',refresh:async()=>{},markRead:mark,markUnread:mark},onOpenThread:open}));
@@ -22,6 +34,14 @@ it('uses the vendored list and reader presentation for canonical Gen items witho
 it('keeps Vespin subject and message structure while the canonical action remains outside vendored code',()=>{
  const html=renderToStaticMarkup(createElement(InboxPane,{title:'Current question',hidden:false,toolbar:createElement('button',null,'Open conversation'),children:createElement('p',null,'Canonical summary')}));
  expect(html).toContain('inbox-subject');expect(html).toContain('data-inbox-title=""');expect(html).toContain('inbox-board');expect(html).toContain('aria-label="Messages"');expect(html).toContain('Canonical summary');
+});
+it('describes the failure and retry path instead of success copy for failed inbox items',()=>{
+ const base:AttentionItem={id:'item',threadId:'thread',kind:'request',title:'A task',summary:'Outcome',state:'completed',createdAt:'2026-11-04T00:00:00.000Z',updatedAt:'2026-11-04T00:00:00.000Z',read:false,popupDismissed:false,actionable:false,notificationKey:'item:completed',destination:{threadId:'thread'}};
+ expect(inboxFooterHint({...base,state:'failed'})).toBe('Read what went wrong, then open the conversation to retry.');
+ expect(inboxFooterHint({...base,state:'completed'})).toBe('Read the result and its supporting evidence.');
+ expect(inboxFooterHint({...base,state:'needs-review'})).toBe('Read the result and its supporting evidence.');
+ expect(inboxFooterHint({...base,actionable:true,state:'needs-input'})).toBe('Answer or review the current request there.');
+ expect(inboxFooterHint({...base,state:'resolved'})).toBe('This request has already been resolved.');
 });
 it('uses the upstream 860/892 container-width hysteresis instead of a redesigned viewport breakpoint',()=>{
  expect(oneColumn(859,false)).toBe(true);expect(oneColumn(860,false)).toBe(false);expect(oneColumn(880,true)).toBe(true);expect(oneColumn(892,true)).toBe(false);
@@ -92,3 +112,32 @@ it('names the unread badge for assistive tech and announces the error strip asse
  const strip=renderToStaticMarkup(createElement(InboxView,{attention:{items:[],unread:0,error:'Could not reach the inbox',refresh:async()=>{},markRead:mark,markUnread:mark},onOpenThread:()=>{}}));
  expect(strip).toContain('class="agent-inbox-error" role="alert"');expect(strip).toContain('Could not reach the inbox');
 });
+
+it('advances row ages on the mounted tick and clears the interval on unmount',async()=>{
+ const {build}=await import('esbuild'),{chromium}=await import('@playwright/test');
+ const script=(await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:`
+  import React from 'react';import {createRoot} from 'react-dom/client';
+  import {InboxView} from './apps/web/src/InboxView';
+  window.intervals=new Set();
+  const setI=window.setInterval,clearI=window.clearInterval;
+  window.setInterval=(...args)=>{const id=setI(...args);window.intervals.add(id);return id;};
+  window.clearInterval=id=>{window.intervals.delete(id);clearI(id);};
+  const item={id:'item',threadId:'thread',kind:'thread-completed',title:'Completed task',summary:'Synthetic result',state:'completed',read:true,actionable:false,createdAt:new Date(Date.now()-90_000).toISOString(),updatedAt:new Date(Date.now()-90_000).toISOString(),popupDismissed:false,notificationKey:'item:completed',destination:{threadId:'thread'}};
+  function App(){return <InboxView attention={{items:[item],unread:0,error:'',refresh:async()=>{},markRead:async()=>{},markUnread:async()=>{}}} onOpenThread={()=>{}}/>;}
+  const root=createRoot(document.getElementById('root'));root.render(<App/>);window.hide=()=>root.unmount();
+ `},bundle:true,write:false,format:'iife',platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"production"'},plugins:[{name:'stub-css',setup(plugin){plugin.onLoad({filter:/\.css$/},()=>({loader:'js',contents:'export {}'}));}}]})).outputFiles[0]!.text;
+ const browser=await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{})}),page=await browser.newPage();
+ type TickWindow=Window&{intervals:Set<unknown>;hide:()=>void};
+ try{
+  await page.clock.install();
+  await page.setContent('<div id="root"></div>');await page.addScriptTag({content:script});
+  await expect.poll(()=>page.locator('time').first().textContent()).toBe('1m');
+  expect(await page.evaluate(()=>(window as unknown as TickWindow).intervals.size)).toBe(1);
+  await page.clock.runFor(61_000);
+  await expect.poll(()=>page.locator('time').first().textContent()).toBe('2m');
+  await page.evaluate(()=>(window as unknown as TickWindow).hide());
+  expect(await page.evaluate(()=>(window as unknown as TickWindow).intervals.size)).toBe(0);
+  await page.clock.runFor(60_000);
+  expect(await page.evaluate(()=>(window as unknown as TickWindow).intervals.size)).toBe(0);
+ }finally{await browser.close();}
+},30000);

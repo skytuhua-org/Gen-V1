@@ -38,13 +38,19 @@ function Fixture() {
       <button type="submit">Submit choice</button><button type="reset">Reset choice</button>
     </form>
     <fieldset data-testid="action-fieldset" style={{ padding: 0, border: 0 }}><ActionMenu label="Actions" open={menu} onOpenChange={setMenu} items={[
-      { id: 'disabled', label: 'Unavailable', disabled: true, onSelect: () => setAction('wrong') },
-      { id: 'alpha', label: 'Alpha', onSelect: () => setAction('alpha') },
-      { id: 'delta', label: 'Delta', checked: true, onSelect: () => setAction('delta') },
+      { id: 'disabled', label: 'Unavailable', title: 'Connect a project to continue', disabled: true, onSelect: () => setAction('wrong') },
+      { id: 'alpha', label: 'Alpha', disabled: query.has('all-actions-disabled'), onSelect: () => setAction('alpha') },
+      { id: 'delta', label: 'Delta', disabled: query.has('all-actions-disabled'), checked: true, onSelect: () => setAction('delta') },
     ]} /></fieldset>
     <button type="button" onClick={() => setDisabled(!disabled)}>Toggle disabled</button>
     <output aria-label="Result">{action}</output>
   </>;
+  if (query.has('labels')) return <main style={{ padding: '60px 16px' }}>
+    <Select aria-label="Wrap check" value="all" onValueChange={() => {}} options={[
+      { value: 'all', label: 'All' }, { value: 'needs', label: 'Needs you' }, { value: 'unread', label: 'Unread' },
+      { value: 'done', label: 'Completed' }, { value: 'long', label: 'A forty character option label to ellipsize' },
+    ]} />
+  </main>;
   if (query.has('primitives')) return <main style={{ padding: '60px 16px' }}>
     <button type="button" onClick={() => setOpen(true)}>Open controls dialog</button>
     {query.has('modal') ? <Modal title="Controls dialog" open={open} onClose={() => setOpen(false)}>{controls}</Modal> : controls}

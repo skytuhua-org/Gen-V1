@@ -50,6 +50,17 @@ export class PlanExtensionStore {
       throw new HarnessError('STALE_PLAN_REVISION', `Extension revision ${extension.extensionRevision} does not follow stored revision ${existing.extensionRevision}`);
     if (!existing && extension.extensionRevision !== 1)
       throw new HarnessError('STALE_PLAN_REVISION', 'A new plan extension must start at revision 1');
+    if (existing) {
+      // A later revision may re-split or reduce work, never create it: the
+      // total allocation of root nodes (nothing parents them) may not grow.
+      const rootUnits = (ext: PlanExtensionV1) => {
+        const children = new Set(ext.parentRelationships.map(rel => rel.childId));
+        return ext.weights.filter(weight => !children.has(weight.nodeId)).reduce((sum, weight) => sum + weight.units, 0);
+      };
+      const before = rootUnits(existing), after = rootUnits(extension);
+      if (after > before)
+        throw new HarnessError('INVALID_PLAN_EXTENSION', `Extension revision ${extension.extensionRevision} grows the root allocation from ${before} to ${after} units — extra work requires a new plan.`);
+    }
     this.validate(extension, plan);
     this.hooks.store.internal('planExtension.put', record.threadId, () => this.hooks.store.put(KIND, extension.planId, record.threadId, extension));
     return extension;
@@ -128,7 +139,7 @@ export class PlanExtensionStore {
       const units = delegated.has(weight.nodeId) ? residual : weight.units;
       if (units <= 0) continue;
       progress.total += units;
-      const status = statuses[weight.nodeId] ?? 'pending';
+      const status = statuses[weight.nodeId] ?? 'unknown';
       if (status === 'completed') progress.completed += units;
       else if (status === 'unknown') progress.unknown += units;
       else progress.pending += units;

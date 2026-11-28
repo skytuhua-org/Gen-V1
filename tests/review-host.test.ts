@@ -8,7 +8,7 @@ import { PDFDocument } from 'pdf-lib';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Store } from '../packages/storage/store';
 import { openReviewHost, reviewColorStudyPng, type Scenario } from '../scripts/review-host';
-import type { ArtifactRecord, DataRecord, Operation, RunContext, UserStateRecord } from '../packages/contracts';
+import type { ArtifactRecord, DataRecord, Message, Operation, RunContext, UserStateRecord } from '../packages/contracts';
 import { relationshipData, tableChangesData } from '../packages/ui-catalog/workflow';
 
 it('closes the fixture store when initialization fails after allocating the services', async () => {
@@ -58,6 +58,33 @@ describe('isolated actual-host recording fixtures', () => {
     expect(host.store.all('resource', thread('signing').id)).toHaveLength(2);
     expect(host.store.all('resource', thread('migration').id)).toHaveLength(1);
     expect(host.store.all('resource', thread('pr-dark').id)).toHaveLength(0);
+  });
+  it('answers first and subsequent messages in a new conversation with no fixture grants', async () => {
+    const base = 'http://127.0.0.1:4367';
+    const bootstrap = await fetch(base+'/api/bootstrap');
+    const cookie = bootstrap.headers.getSetCookie()[0]!.split(';')[0]!;
+    const {csrfToken} = await bootstrap.json() as {csrfToken:string};
+    const sendCommand = async (type:string,payload:Record<string,unknown>,threadId?:string) => {
+      const response = await fetch(base+'/api/commands', {
+        method:'POST',
+        headers:{cookie,'content-type':'application/json','x-harness-csrf':csrfToken},
+        body:JSON.stringify({id:randomUUID(),type,threadId,payload}),
+      });
+      expect(response.status).toBe(200);
+      return (await response.json() as {result:{id:string}}).result;
+    };
+    const {id} = await sendCommand('thread.create',{});
+    for (const [i,content] of ['Hello fixture','A follow-up message'].entries()) {
+      await sendCommand('message.send',{content,modelId:'review/local-fixture'},id);
+      const replies = () => host.store.all<Message>('message',id).filter(message=>message.role==='assistant');
+      await expect.poll(()=>replies().length,{timeout:5000}).toBe(i+1);
+      await expect.poll(()=>host.service.thread(id).status,{timeout:5000}).toBe('ready');
+      expect(replies().at(-1)?.content).toContain('local review fixture');
+      expect(host.service.thread(id).error).toBeFalsy();
+    }
+    expect(host.store.all('resource',id)).toEqual([]);
+    expect(host.store.all('artifact',id)).toEqual([]);
+    expect(host.store.all('operation',id)).toEqual([]);
   });
   it('provides a decodable 256 by 144 color image with correct PNG chunks', async () => {
     const png = reviewColorStudyPng();

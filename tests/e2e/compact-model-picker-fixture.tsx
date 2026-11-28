@@ -28,7 +28,9 @@ function Fixture() {
     <button type="button" onClick={() => setLocked(value => !value)}>Toggle working</button>
     <div className="composer-toolbar"><ModelPicker models={models} modelId={model} thinkingLevel={effort}
       disabled={locked} onChange={id => { setModel(id); setEffort(''); }}
-      onThinkingChange={params.has('standalone') ? undefined : setEffort} /></div>
+      onThinkingChange={params.has('standalone') ? undefined : setEffort}
+      scopeHint={params.has('short') ? 'Changes apply to the current task.' : undefined}
+      onNewTask={params.has('short') ? setModel : undefined} /></div>
     <output aria-label="Committed choice">{model}|{effort}</output>
   </>;
   return <main style={{ height: '100dvh', display: 'flex', alignItems: 'end', justifyContent: 'end', padding: 16 }}>
