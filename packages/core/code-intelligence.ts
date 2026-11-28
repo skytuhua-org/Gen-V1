@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { constants, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { constants, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { HarnessError } from "../contracts/index.ts";
@@ -20,7 +20,7 @@ import {
   type RenameRecoveryResult,
   type TextEdit,
 } from "../contracts/code-intelligence.ts";
-import { readBoundFile, withPathGuard } from "./file-access.ts";
+import { readBoundFile, replaceOwnedFile } from "./file-access.ts";
 import { inside, canonical } from "./security.ts";
 import { hostFlagEnabled, type RegisteredHostFlag } from "./host-flags.ts";
 
@@ -41,6 +41,20 @@ async function writeDurable(path: string, data: string | Buffer): Promise<void> 
   if (process.platform !== "win32") {
     const directory = await open(dirname(path), constants.O_RDONLY).catch(() => null);
     if (directory) { await directory.sync().catch(() => {}); await directory.close(); }
+  }
+}
+
+/** Replace one leaf through the platform's owned conditional primitive. The
+ * destination digest is verified by the guard at replacement time rather than
+ * only by a host-side read/check/write sequence. */
+async function replaceVerifiedFile(path: string, data: Buffer, expectedDigest: string, signal: AbortSignal): Promise<void> {
+  const temporary = join(dirname(path), `.gen-rename-${randomUUID()}.tmp`);
+  await writeDurable(temporary, data);
+  try {
+    const identity = await lstat(temporary, { bigint: true });
+    await replaceOwnedFile(temporary, path, { dev: identity.dev, ino: identity.ino }, sha(data), signal, expectedDigest);
+  } finally {
+    await unlink(temporary).catch(() => {});
   }
 }
 
@@ -752,13 +766,18 @@ export class CodeIntelligence {
           // still leaves a complete recovery record for this path.
           record.postimage = sha(Buffer.from(postimage, "utf8"));
           await flush();
-          const target_ = join(target.path);
-          await withPathGuard([{ path: dirname(target_), leaf: false }], input.signal, async () => {
-            await writeFile(target_, postimage);
-          });
+          try {
+            await replaceVerifiedFile(target.path, Buffer.from(postimage, "utf8"), record.preimage, input.signal);
+          } catch (error) {
+            if (error instanceof HarnessError && error.code === "CANCELLED") throw error;
+            record.disposition = "Conflict";
+            entries.push({ path: target.path, disposition: "Conflict", detail: "The file changed while its rename edits were being written." });
+            await flush();
+            continue;
+          }
           // A writer that raced the digest check is caught before the apply
           // is recorded: the leaf must still carry the postimage digest.
-          const written = await readBoundFile(target_, 32 * 1024 * 1024).catch(() => null);
+          const written = await readBoundFile(target.path, 32 * 1024 * 1024).catch(() => null);
           if (!written || sha(written) !== record.postimage) {
             record.disposition = "Conflict";
             entries.push({ path: target.path, disposition: "Conflict", detail: "The file changed while its rename edits were being written." });
@@ -836,9 +855,15 @@ export class CodeIntelligence {
             entries.push({ path: record.path, disposition: "Conflict", detail: "The backup is unavailable." });
             continue;
           }
-          await withPathGuard([{ path: dirname(record.path), leaf: false }], input.signal, async () => {
-            await writeFile(record.path, backup);
-          });
+          try {
+            await replaceVerifiedFile(record.path, backup, record.postimage!, input.signal);
+          } catch (error) {
+            if (error instanceof HarnessError && error.code === "CANCELLED") throw error;
+            conflict = true;
+            live.entries[index]!.disposition = "Conflict";
+            entries.push({ path: record.path, disposition: "Conflict", detail: "The file changed while its recovery was being written." });
+            continue;
+          }
           // A writer that raced the postimage check is caught before the
           // restore is recorded: the leaf must still carry the preimage.
           const restored = await readBoundFile(record.path, 32 * 1024 * 1024).catch(() => null);

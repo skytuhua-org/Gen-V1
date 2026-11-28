@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,22 @@ const cleanups: (() => void)[] = [];
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
 function setup() { const dir = mkdtempSync(join(tmpdir(), "harness-store-")); const store = new Store(dir); cleanups.push(() => { store.close(); rmSync(dir, { recursive: true, force: true }); }); return store; }
 describe("durable command storage", () => {
+  it('closes the newly opened database when schema initialization fails', () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-store-init-"));
+    const incomplete = new DatabaseSync(join(dir, "harness.sqlite"));
+    incomplete.exec("CREATE TABLE entities (kind TEXT)");
+    incomplete.close();
+    const close = vi.spyOn(DatabaseSync.prototype, "close"), exec = vi.spyOn(DatabaseSync.prototype, "exec");
+    try {
+      expect(() => new Store(dir)).toThrow(/thread_id/);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      const connection = exec.mock.contexts[0] as DatabaseSync | undefined;
+      if (connection?.isOpen) connection.close();
+      exec.mockRestore(); close.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it('omits archived thread bodies from global snapshots while retaining them for restore',()=>{
     const store=setup(),large='x'.repeat(1024*1024);
     store.internal('fixture.archived',null,()=>{
@@ -225,6 +242,34 @@ describe('bounded transcript paging', () => {
       expect(() => store.messagesFor('a', 'b-0')).toThrow('Unknown message cursor');
       expect(store.messagesFor('missing')).toEqual({ messages: [], truncated: 0 });
     } finally { decode.mockRestore(); }
+  });
+
+  it('reconciles a failed retention batch without masking the original failure', () => {
+    const store = setup();
+    for (let i = 0; i < 8; i++) store.internal('fixture.event', null, () => i);
+    const connection = store.db, exec = connection.exec.bind(connection);
+    const cause = new Error('injected retention batch commit failure');
+    let commits = 0, failRollback = true;
+    const injection = vi.spyOn(connection, 'exec').mockImplementation(sql => {
+      if (sql === 'COMMIT' && ++commits === 2) throw cause;
+      if (sql === 'ROLLBACK' && failRollback) throw new Error('injected rollback failure');
+      return exec(sql);
+    });
+    try {
+      let failure: unknown;
+      try { store.retentionSweep({ keepEvents: 2, batchSize: 2 }); } catch (error) { failure = error; }
+      expect(failure).toBe(cause);
+      expect(connection.isTransaction).toBe(true);
+      expect(() => store.eventsAfter(0)).toThrow(expect.objectContaining({ code: 'STORE_INCONSISTENT' }));
+      failRollback = false;
+      expect(store.eventsAfter(0).map(event => event.seq)).toEqual([3, 4, 5, 6, 7, 8]);
+      expect(connection.isTransaction).toBe(false);
+      expect(store.retentionSweep({ keepEvents: 2, batchSize: 2 }).removedEvents).toBe(4);
+      expect(store.eventsAfter(0).map(event => event.seq)).toEqual([7, 8, 9]);
+    } finally {
+      injection.mockRestore();
+      if (connection.isTransaction) exec('ROLLBACK');
+    }
   });
 
   it('sweeps event history above durable watermarks, keeps live receipts, and records an audit event', () => {

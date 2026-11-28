@@ -1,4 +1,5 @@
 import {describe,it,expect,vi} from 'vitest';
+import {writeFileSync} from 'node:fs';
 import {mkdtemp,mkdir,writeFile,readFile,realpath,rename,symlink,rm,lstat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -26,6 +27,23 @@ describe('installed subscription readiness',()=>{
  });
 });
 
+describe('installed app exit wait',()=>{
+ it('recognizes process exit without requiring diagnostic pipes to close',async()=>{
+  const child=Object.assign(new EventEmitter(),{exitCode:null as number|null,signalCode:null as NodeJS.Signals|null});
+  const result=installedVerification.waitForOwnedExit(child,20);
+  child.exitCode=0;
+  child.emit('exit',0,null);
+  await expect(result).resolves.toBeUndefined();
+  expect(child.listenerCount('exit')).toBe(0);
+  expect(child.listenerCount('close')).toBe(0);
+ });
+ it('retains the timeout and detaches its waiter when the process does not exit',async()=>{
+  const child=Object.assign(new EventEmitter(),{exitCode:null,signalCode:null});
+  await expect(installedVerification.waitForOwnedExit(child,10)).rejects.toThrow('Installed application did not exit');
+  expect(child.listenerCount('exit')).toBe(0);
+  expect(child.listenerCount('close')).toBe(0);
+ });
+});
 describe('installed desktop verification custody',()=>{
  it('creates a separate ordinary ownership receipt for the enabled phase before its native Save lease',async()=>{
   const root=await realpath(await mkdtemp(join(tmpdir(),'installed-memory-phase-owner-')));
@@ -46,6 +64,25 @@ describe('installed desktop verification custody',()=>{
    expect(JSON.parse(await readFile(receipt,'utf8'))).toEqual(owner);
    expect(JSON.parse(await readFile(join(root,'owner.json'),'utf8'))).toEqual(owner);
   }finally{await rm(root,{recursive:true,force:true});}
+ });
+ it('preserves split UTF-8 in the owned subprocess report and progress text',async()=>{
+  const cwd=await mkdtemp(join(tmpdir(),'installed-stream-fixture-'));
+  const script=`const fs=require('node:fs');const out=Buffer.from(JSON.stringify({path:'é漢'})),err=Buffer.from('first=é漢');
+  process.stdout.write(out.subarray(0,out.indexOf(195)+1),()=>process.stderr.write(err.subarray(0,err.indexOf(195)+1),()=>{
+   const poll=setInterval(()=>{if(!fs.existsSync('continue'))return;clearInterval(poll);
+    setTimeout(()=>{process.stdout.end(out.subarray(out.indexOf(195)+1));process.stderr.end(Buffer.concat([err.subarray(err.indexOf(195)+1),Buffer.from([195])]));},65);
+   },5);
+  }));`;
+  const logs:string[]=[];
+  try{
+   const result=await installedVerification.runOwned(process.execPath,['-e',script],{cwd,env:{},timeoutMs:5000,onStderr:stderr=>{
+    logs.push(stderr);
+    if(logs.length===1)writeFileSync(join(cwd,'continue'),'ready');
+   }});
+   expect(JSON.parse(result.stdout)).toEqual({path:'é漢'});
+   expect(logs[0]).toBe('first=');
+   expect(result.stderr).toBe('first=é漢�');
+  }finally{await rm(cwd,{recursive:true,force:true});}
  });
  it('uses six launches with one executable and stable, disjoint port sets across three profiles',async()=>{
   const root=await realpath(await mkdtemp(join(tmpdir(),'installed-acceptance-launches-')));

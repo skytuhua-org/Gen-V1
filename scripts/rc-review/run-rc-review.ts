@@ -1,5 +1,5 @@
 import {spawn,type ChildProcess} from 'node:child_process';
-import {mkdir,readFile,writeFile,copyFile,readdir} from 'node:fs/promises';
+import {mkdir,readFile,writeFile,copyFile,readdir,rename} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {args,hash,json,main,output,pnpm,required,windows} from './common.ts';
 import {compare,snapshot} from './profile-manifest.ts';
@@ -35,11 +35,14 @@ export function waitForSetupProcess(child:ChildProcess,interruptMs?:number,termi
   });
  });
 }
-main(import.meta.url,async()=>{
- windows();const {options}=args(),phase=required(options,'phase'),out=output(options);if(!phases.includes(phase))throw Error('Phases: '+phases.join(', '));await mkdir(out,{recursive:true});
+export async function runRcReview(options:Record<string,string>){
+ const phase=required(options,'phase'),out=output(options);if(!phases.includes(phase))throw Error('Phases: '+phases.join(', '));await mkdir(out,{recursive:true});
  const capture=async(argv:string[],name:string)=>{try{const log=await pnpm(argv,true);await writeFile(join(out,name+'.log'),log+'\n');return log;}catch(error){await writeFile(join(out,name+'.log'),((error as {stdout?:string}).stdout??'')+'\n'+String(error)+'\n');throw error;}};
  const script=async(name:string,argv:string[])=>{console.log(await capture(['exec','tsx','scripts/rc-review/'+name+'.ts',...argv],name));};
  if(phase==='build'){await script('build-candidate',['--commit',required(options,'commit'),'--label',required(options,'label'),'--out',out,...(options.worktree?['--worktree',options.worktree]:[])]);return;}
+ const phaseReceipt=join(out,phase+'-phase.json');
+ // The canonical marker belongs to this attempt; preserve prior success separately.
+ await rename(phaseReceipt,join(out,phase+'-last-success.json')).catch(error=>{if(error.code!=='ENOENT')throw error;});
  const receiptPath=resolve(options.build??join(out,'rc-build.json')),build=JSON.parse(await readFile(receiptPath,'utf8'));if(await hash(build.setup.path)!==build.setup.sha256||await hash(build.buildManifest.path)!==build.buildManifest.sha256)throw Error('Candidate custody mismatch.');
  const install=resolve(options.install??join(out,'installed')),exe=join(install,'Gen V1.exe'),profile=join(process.env.APPDATA!,'GenerativeHarnessDesktop'),host=join(process.env.LOCALAPPDATA!,'GenerativeHarness');
  const authorize=()=>{if(options['allow-install']!=='disposable-vm')throw Error('Installation requires --allow-install disposable-vm. Back up profiles; setup may not be atomic.');};
@@ -66,5 +69,6 @@ main(import.meta.url,async()=>{
   authorize();if(await installedVersion()!=='0.6.1')throw Error('Restore a separate VM checkpoint with installed and seeded 0.6.1 before interrupted setup.');const milliseconds=parseInterruptMs(required(options,'interrupt-ms'));let passed=false,error:string|undefined;
   try{await setup(build.setup.path,milliseconds);if(await installedVersion()!=='0.6.1')throw Error('Interrupted setup did not retain 0.6.1. No rollback is promised.');await installedSession(exe,async page=>{await page.screenshot({path:join(out,'failed-setup-v061-launch.png')});});passed=true;}catch(cause){error=String(cause);}await json(join(out,'failed-setup.json'),{passed,error,interruptMs:milliseconds,scope:'One interrupted setup timing only; not proof of atomic installation or rollback.'});if(!passed)throw Error(error);
  }
- await json(join(out,phase+'-phase.json'),{phase,passed:true,timestamp:new Date().toISOString(),candidate:build.commit,receiptPath});console.log('Completed phase: '+phase);
-});
+ await json(phaseReceipt,{phase,passed:true,timestamp:new Date().toISOString(),candidate:build.commit,receiptPath});console.log('Completed phase: '+phase);
+}
+main(import.meta.url,async()=>{windows();await runRcReview(args().options);});
