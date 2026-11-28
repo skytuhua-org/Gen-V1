@@ -118,6 +118,60 @@ it("refuses a commit when the branch moved since the preview, even at equal HEAD
   expect(git(f.worktree, "log", "-1", "--format=%s", "feature")).toContain("base");
 });
 
+it("preserves an unrelated staged hunk inside a partly selected file", async () => {
+  const f = await fixture();
+  const baseLines = Array.from({ length: 30 }, (_, i) => `line-${i + 1}`);
+  await writeFile(join(f.worktree, "chosen.txt"), `${baseLines.join("\n")}\n`);
+  git(f.worktree, "add", "chosen.txt");
+  git(f.worktree, "commit", "-qm", "chosen base");
+  const stagedLines = [...baseLines];
+  stagedLines[2] = "staged-top";
+  await writeFile(join(f.worktree, "chosen.txt"), `${stagedLines.join("\n")}\n`);
+  git(f.worktree, "add", "chosen.txt");
+  const worktreeLines = [...stagedLines];
+  worktreeLines[27] = "selected-bottom";
+  await writeFile(join(f.worktree, "chosen.txt"), `${worktreeLines.join("\n")}\n`);
+
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const hunks = preview.candidates.filter((c) => c.path === "chosen.txt");
+  const selected = hunks.filter((c) => c.patch.includes("+selected-bottom")).map(({ path, index, digest }) => ({ path, index, digest }));
+  expect(selected).toHaveLength(1);
+  expect(hunks.some((c) => c.patch.includes("+staged-top"))).toBe(true);
+  await f.service.commit("project", "thread", {
+    expectedHead: preview.expectedHead,
+    selectedHunks: selected,
+    message: "commit only selected bottom hunk",
+    approvalId: "approval-partial-file",
+  });
+
+  const committed = git(f.worktree, "show", "HEAD:chosen.txt");
+  expect(committed).toContain("selected-bottom");
+  expect(committed).not.toContain("staged-top");
+  const cached = git(f.worktree, "diff", "--cached", "--", "chosen.txt");
+  expect(cached).toContain("+staged-top");
+  expect(cached).not.toContain("+selected-bottom");
+  expect(git(f.worktree, "diff", "--", "chosen.txt")).toBe("");
+  expect(git(f.worktree, "show", ":chosen.txt")).toContain("staged-top");
+});
+
+it("refuses a commit when only the caller index changed after preview", async () => {
+  const f = await fixture();
+  await writeFile(join(f.worktree, "chosen.txt"), "chosen-1\n");
+  const preview = await f.service.preview("project", "thread", f.scope);
+  const chosen = preview.candidates.filter((c) => c.path === "chosen.txt").map(({ path, index, digest }) => ({ path, index, digest }));
+  await writeFile(join(f.worktree, "index-only.txt"), "index mutation\n");
+  git(f.worktree, "add", "index-only.txt");
+  await expect(
+    f.service.commit("project", "thread", {
+      expectedHead: preview.expectedHead,
+      selectedHunks: chosen,
+      message: "index moved commit",
+      approvalId: "approval-index-moved",
+    }),
+  ).rejects.toMatchObject({ code: "REVISION_CHANGED" });
+  expect(git(f.worktree, "log", "-1", "--format=%s")).toContain("base");
+});
+
 it("still commits cleanly for the unambiguous single-branch flow (control)", async () => {
   const f = await fixture();
   await writeFile(join(f.worktree, "chosen.txt"), "chosen-1\n");

@@ -58,6 +58,7 @@ interface SelectivePreviewBinding {
   managedWorktreeId: string;
   branch: string;
   expectedHead: string;
+  indexDigest: string;
   createdAt: string;
 }
 
@@ -106,6 +107,8 @@ const newFilePatch = (path: string, text: string): FileSection => {
 
 const repositoryIdentity = (binding: WorkspaceBinding) =>
   sha256hex(JSON.stringify(["repository", binding.commonDirectory, binding.commonDirectoryIdentity.dev, binding.commonDirectoryIdentity.ino]));
+
+const callerIndexDigest = async (git: (args: string[]) => Promise<string>) => sha256hex(await git(["ls-files", "-s", "-z"]));
 
 export class SelectiveCommitService {
   constructor(private readonly projects: ProjectTools, private readonly journal?: EditJournal) {}
@@ -171,13 +174,15 @@ export class SelectiveCommitService {
           candidates.push({ path: section.path, index, digest: sha256hex(section.header + patch), patch: section.header + patch, ...this.attributionFor(scope, section.path, section.postDigest ?? null) });
         });
       }
-      // Bind any later approval to this exact branch and head: a checkout
-      // elsewhere at the same commit must not redirect the commit.
+      // Bind any later approval to this exact branch, head and semantic
+      // caller index: a checkout or index edit elsewhere is not the approval
+      // the user took.
       this.storePreview(binding, {
         version: 1,
         managedWorktreeId: binding.id,
         branch,
         expectedHead: head,
+        indexDigest: await callerIndexDigest(git),
         createdAt: new Date().toISOString(),
       });
       return { repositoryIdentity: repositoryIdentity(binding), managedWorktreeId: binding.id, branch, expectedHead: head, candidates };
@@ -200,6 +205,9 @@ export class SelectiveCommitService {
       const previewed = this.projects.store.get<SelectivePreviewBinding>(SELECTIVE_PREVIEW_KIND, binding.id);
       if (!previewed || previewed.expectedHead !== input.expectedHead || previewed.branch !== branch)
         throw new HarnessError("REVISION_CHANGED", "The approved selection is not bound to the current branch. Refresh the preview before committing.");
+      const indexDigest = await callerIndexDigest(git);
+      if (previewed.indexDigest !== indexDigest)
+        throw new HarnessError("REVISION_CHANGED", "The approved selection is not bound to the current index. Refresh the preview before committing.");
 
       // Rebuild the candidate set from live proven images and match the approved selection exactly.
       const sections = await this.candidates(git, binding.path, input.scope);
@@ -213,6 +221,9 @@ export class SelectiveCommitService {
         patchParts.push(patch);
       }
 
+      // Materialize the exact approved caller index as a tree before any
+      // mutation. This also refuses an unmerged index instead of overwriting it.
+      const callerTree = (await git(["write-tree"])).trim();
       const privateIndex = join(binding.gitDirectory, `gen-selective-${randomUUID()}.index`);
       const patchFile = join(binding.gitDirectory, `gen-selective-${randomUUID()}.patch`);
       const environment = { GIT_INDEX_FILE: privateIndex };
@@ -238,6 +249,19 @@ export class SelectiveCommitService {
         }
         await git(["apply", "--cached", "--whitespace=nowarn", "--verbose", patchFile], environment);
         const tree = (await git(["write-tree"], environment)).trim();
+        // Merge the caller's staged tree with the approved commit tree before
+        // publication. Git reports overlapping staged/selected edits as a
+        // conflict here, before the branch or caller index is mutated.
+        let mergedIndexTree: string;
+        try {
+          mergedIndexTree = (await git(["merge-tree", "--write-tree", "--merge-base", input.expectedHead, callerTree, tree])).split(/\r?\n/, 1)[0].trim();
+        } catch (error) {
+          const details = error instanceof HarnessError ? error.details as {exitCode?: number} | undefined : undefined;
+          if (error instanceof HarnessError && error.code === "GIT_ERROR" && details?.exitCode === 1)
+            throw new HarnessError("REVISION_CHANGED", "The approved hunks conflict with staged content. Refresh the selection before committing.");
+          throw error;
+        }
+        if (!/^[0-9a-f]{40}$/.test(mergedIndexTree)) throw new HarnessError("CAPABILITY_DENIED", "Git could not reconcile the approved caller index.");
         const author = input.author ?? { name: "Gen V1", email: "gen-v1@localhost" };
         commitOid = (
           await git(
@@ -258,11 +282,14 @@ export class SelectiveCommitService {
         // Compare-and-swap the branch reference; a stale ref refuses the update.
         await git(["update-ref", `refs/heads/${branch}`, commitOid, input.expectedHead]);
         applied = true;
-        // Reconcile the managed worktree index only for the selected paths:
-        // their bytes already equal the committed postimage, so their index
-        // entries become HEAD. Unrelated staged content for other paths must
-        // survive; a whole-index read-tree would silently unstage it.
-        await git(["reset", "-q", "HEAD", "--", ...new Set(selected.map((hunk) => hunk.path))]);
+        // Publish the precomputed merge of the exact caller index and the
+        // approved commit tree. Although read-tree replaces index metadata,
+        // the merged tree preserves unrelated staged content, including hunks
+        // in partly selected files; the digest recheck fences external index
+        // movement before this conditional publication.
+        if (await callerIndexDigest(git) !== indexDigest)
+          throw new HarnessError("REVISION_CHANGED", "The caller index changed while the commit was published. Inspect the index before retrying.");
+        await git(["read-tree", mergedIndexTree]);
         record = selectiveCommitV1Schema.parse({
           version: 1,
           repositoryIdentity: repositoryIdentity(binding),
