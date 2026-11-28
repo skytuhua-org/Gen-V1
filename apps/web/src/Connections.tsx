@@ -1,3 +1,4 @@
+import {PickerGroup} from './PickerGroup';
 import {settingsOperation} from './settings-operations';
 /*
  * Account picker selection and row composition adapted from T3 Code
@@ -124,7 +125,9 @@ export function Connections({ snapshot, refresh, loadModels, onAuthChanged, prov
     finally { pending.current = false; setBusy(''); }
   };
   return <section className="connection-list" aria-label="AI subscription connections">
-    <nav className="connection-providers" aria-label="Subscription providers">{rows.map(row=><button type="button" key={row.id} aria-pressed={row.id===connection?.id} onClick={()=>{onProviderChange(row.id);setError('');setNotice('');}}>{row.label}</button>)}</nav>
+    <PickerGroup className="connection-providers" label="Subscription providers" value={connection?.id}
+      options={rows.map(row=>({id:row.id,label:row.label,content:row.label}))}
+      onChange={id=>{const row=rows.find(candidate=>candidate.id===id);if(row){onProviderChange(row.id);setError('');setNotice('');}}}/>
     {otherFlow&&<p role="status">A sign-in still owns {SUBSCRIPTION_CONNECTIONS.find(row=>row.id===ownedFlow.providerId)?.label}. <button className="quiet" onClick={()=>{onProviderChange(ownedFlow.providerId);setChoices(current=>({...current,[ownedFlow.providerId]:ownedFlow.accountId??LEGACY}));setError('');setNotice('');}}>View sign-in</button></p>}
     {notice && <p role="status">{notice}</p>}{error && <p role="status" className="error-text">{error}</p>}
     {connection&&<article className="connection-row" data-provider={connection.id} data-setting-id={`provider-${connection.id}`}><header><strong>{connection.label}</strong></header>

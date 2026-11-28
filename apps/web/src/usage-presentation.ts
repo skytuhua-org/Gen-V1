@@ -1,4 +1,5 @@
 import type { RuntimeUsage, Thread } from '../../../packages/contracts';
+import {displayThreadTitle} from './thread-title';
 
 interface UsageLimitReport { id: string; label: string; usedPercent?: number | null; reset?: string | null }
 export interface UsageProviderReport {
@@ -34,7 +35,7 @@ export function usageCost(value: UsageProviderReport['cost']) {
 export function runtimeUsageReport(thread: Pick<Thread, 'id' | 'title' | 'modelId'> | undefined, usage: RuntimeUsage | undefined): UsageProviderReport | undefined {
   if (!thread || !usage) return;
   const providerId = thread.modelId?.split('/')[0] || 'unreported-provider';
-  return { id: thread.id, scopeId: thread.id, scopeLabel: thread.title, providerId,
+  return { id: thread.id, scopeId: thread.id, scopeLabel: displayThreadTitle(thread), providerId,
     providerLabel: thread.modelId?.split('/')[0] || 'Provider not reported',
     cost: usage.cost == null ? undefined : { amount: usage.cost }, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
     cacheReadTokens: usage.cacheReadTokens, cacheWriteTokens: usage.cacheWriteTokens,

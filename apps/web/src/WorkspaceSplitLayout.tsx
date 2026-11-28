@@ -1,12 +1,14 @@
+import {isComposing} from '../../../packages/ui-shell/list-navigation';
 import {useCallback,useEffect,useLayoutEffect,useRef,useState,type CSSProperties,type DragEvent,type KeyboardEvent,type PointerEvent as ReactPointerEvent,type ReactNode} from 'react';
 import type {SurfaceRef} from '../../../packages/contracts/workspace.ts';
 import type {SplitDropEdge,SplitWorkspaceLayout,SplitWorkspaceNode} from '../../../packages/contracts/split-workspace.ts';
 import {minimumSplitSize,minimumViewSize,splitDropEdge,splitPaneIds} from '../../../packages/core/split-workspace-layout.ts';
-import {chatBounds,clampChatRect,type ChatRect,type ChatViewport} from '../../../packages/ui-shell/chat-layout.ts';
+import {chatBounds,clampChatRect,resizeChatRect,type ChatRect,type ChatViewport} from '../../../packages/ui-shell/chat-layout.ts';
 import {GripVertical,MoreHorizontal} from 'lucide-react';
 import {ActionMenu} from '../../../packages/ui-shell/ActionMenu';
 import {Popover} from '../../../packages/ui-shell/Popover';
 import {Select} from '../../../packages/ui-shell/Select';
+import {readMotionPolicy} from './motion-policy';
 import './workspace-split.css';
 
 export const GEN_THREAD_DRAG_TYPE='application/x-gen-thread';
@@ -37,6 +39,14 @@ interface CornerGesture {pointerId:number;paneId:string;x:number;y:number;elemen
 const edgeLabel:Record<SplitDropEdge,string>={left:'Left',right:'Side by side',top:'Above',bottom:'Below',center:'Open as tab'};
 const defaultTitle=(view:SurfaceRef)=>view.kind==='thread'?'Conversation':view.kind.replaceAll('-',' ');
 
+/** Clamp bounds a divider accepts along its axis: 5% floors, raised by each subtree's minimum size. */
+export function splitBounds(layout:SplitWorkspaceLayout,node:Extract<SplitWorkspaceNode,{kind:'split'}>,span:number):{low:number;high:number}{
+ const horizontal=node.axis==='horizontal',first=minimumSplitSize(layout,node.first),second=minimumSplitSize(layout,node.second);
+ return{low:Math.max(.05,(horizontal?first.width:first.height)/span),high:Math.min(.95,1-(horizontal?second.width:second.height)/span)};
+}
+
+const percent=(value:number)=>Math.round(value*10000)/100;
+
 function keepFloatVisible(rect:ChatRect,viewport:ChatViewport):ChatRect{
  if(viewport.width<=0||viewport.height<=0)return rect;const bounds=chatBounds(viewport);
  return rect.x>=bounds.left&&rect.y>=bounds.top&&rect.x+rect.width<=bounds.right&&rect.y+rect.height<=bounds.bottom?rect:clampChatRect(rect,viewport);
@@ -44,9 +54,11 @@ function keepFloatVisible(rect:ChatRect,viewport:ChatViewport):ChatRect{
 
 /** View bodies keep one stable DOM parent; layout changes only reposition their slots. */
 export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsChange,title=defaultTitle,onDropThread,editorOptions=[],onSelectEditor,prepare,toolDock=false,className='',floating,onReturnFloat,onDetachView,onMoveFloat,onDockFloat,emptyMainPaneId}:WorkspaceSplitLayoutProps){
- const root=useRef<HTMLDivElement>(null),slots=useRef(new Map<string,HTMLDivElement>()),resize=useRef<ResizeGesture|null>(null),corner=useRef<CornerGesture|null>(null),pending=useRef(false),draggingView=useRef<SurfaceRef|null>(null);
+ const root=useRef<HTMLDivElement>(null),slots=useRef(new Map<string,HTMLDivElement>()),splitEls=useRef(new Map<string,HTMLDivElement>()),resize=useRef<ResizeGesture|null>(null),corner=useRef<CornerGesture|null>(null),pending=useRef(false),draggingView=useRef<SurfaceRef|null>(null);
+ const splitHeaderAnimation=useRef<Animation|null>(null),cancelHeaderMotion=useRef<(()=>void)|null>(null);
+ useEffect(()=>()=>{cancelHeaderMotion.current?.();splitHeaderAnimation.current?.cancel();},[]);
  const keyPreview=useRef<{splitId:string;ratio:number}|null>(null),keyTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
- const[rects,setRects]=useState<Record<string,SlotRect>>({}),[size,setSize]=useState({width:0,height:0}),[previewRatio,setPreviewRatio]=useState<{id:string;ratio:number}|null>(null),[drop,setDrop]=useState<{paneId:string;edge:SplitDropEdge;outer?:boolean;joinFrom?:string}|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[menuPane,setMenuPane]=useState<string|null>(null);
+ const[rects,setRects]=useState<Record<string,SlotRect>>({}),[splitRects,setSplitRects]=useState<Record<string,SlotRect>>({}),[size,setSize]=useState({width:0,height:0}),[previewRatio,setPreviewRatio]=useState<{id:string;ratio:number}|null>(null),[drop,setDrop]=useState<{paneId:string;edge:SplitDropEdge;outer?:boolean;joinFrom?:string}|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[menuPane,setMenuPane]=useState<string|null>(null);
  const[floatRects,setFloatRects]=useState<Record<string,ChatRect>>({});
  const[floatMenu,setFloatMenu]=useState<string|null>(null),[dockedPreview,setDockedPreview]=useState<string|null>(null);
  const floatDragged=useRef(false);
@@ -72,16 +84,33 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
   if(g.el&&moved)paintFloatRect(g.el,rect);setFloatRects(current=>({...current,[g.viewId]:rect}));onMoveFloat?.(g.viewId,rect);
  };
  const keyFloat=(event:KeyboardEvent<HTMLElement>,viewId:string)=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;const rect=floatRectOf(viewId);if(!rect)return;event.preventDefault();const step=event.shiftKey?24:8,dx=event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0,dy=event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0;const next=clampChatRect({...rect,x:rect.x+dx,y:rect.y+dy},{width:size.width,height:size.height});setFloatRects(current=>({...current,[viewId]:next}));onMoveFloat?.(viewId,next);};
+ const keyFloatResize=(event:KeyboardEvent<HTMLElement>,viewId:string)=>{
+  if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)||isComposing(event)||event.altKey||event.ctrlKey||event.metaKey)return;
+  const rect=floatRectOf(viewId);
+  if(!rect||!size.width||!size.height)return;
+  event.preventDefault();event.stopPropagation();
+  if(busy||pending.current||floatGesture.current||resize.current||corner.current)return;
+  const step=event.shiftKey?24:8;
+  const dx=event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0;
+  const dy=event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0;
+  const next=resizeChatRect(rect,'se',dx,dy,size);
+  if(next.width===rect.width&&next.height===rect.height)return;
+  setFloatRects(current=>({...current,[viewId]:next}));
+  onMoveFloat?.(viewId,next);
+ };
  useEffect(()=>{const escape=(event:globalThis.KeyboardEvent)=>{if(event.key==='Escape'){if(floatGesture.current){event.preventDefault();cancelFloat();}setFloatMenu(null);}};const blur=()=>{cancelFloat();setFloatMenu(null);};window.addEventListener('keydown',escape);window.addEventListener('blur',blur);return()=>{window.removeEventListener('keydown',escape);window.removeEventListener('blur',blur);cancelFloat();};},[cancelFloat]);
  const minimum=minimumSplitSize(layout),narrow=size.width>0&&(size.width<minimum.width||(toolDock?size.height<minimum.height:size.width<700)),topBar=narrow?30:0;
  useEffect(()=>{if(menuPane&&(!layout.panes[menuPane]||layout.panes[menuPane].collapsed||narrow&&layout.focusedPaneId!==menuPane))setMenuPane(null);},[menuPane,layout.panes,layout.focusedPaneId,narrow]);
  const measure=useCallback(()=>{
   const host=root.current;if(!host)return;const basis=host.getBoundingClientRect(),next:Record<string,SlotRect>={};
   for(const[id,slot]of slots.current){const rect=slot.getBoundingClientRect();next[id]={left:rect.left-basis.left,top:rect.top-basis.top,width:rect.width,height:rect.height};}
+  const splits:Record<string,SlotRect>={};
+  for(const[id,el]of splitEls.current){const rect=el.getBoundingClientRect();splits[id]={left:rect.left-basis.left,top:rect.top-basis.top,width:rect.width,height:rect.height};}
   setSize(current=>current.width===basis.width&&current.height===basis.height?current:{width:basis.width,height:basis.height});
   setRects(current=>JSON.stringify(current)===JSON.stringify(next)?current:next);
+  setSplitRects(current=>JSON.stringify(current)===JSON.stringify(splits)?current:splits);
  },[]);
- useLayoutEffect(()=>{measure();const observer=new ResizeObserver(measure);if(root.current)observer.observe(root.current);for(const slot of slots.current.values())observer.observe(slot);return()=>observer.disconnect();},[layout.root,layout.panes,narrow,previewRatio,measure]);
+ useLayoutEffect(()=>{measure();const observer=new ResizeObserver(measure);if(root.current)observer.observe(root.current);for(const slot of slots.current.values())observer.observe(slot);for(const el of splitEls.current.values())observer.observe(el);return()=>observer.disconnect();},[layout.root,layout.panes,narrow,previewRatio,measure]);
  const run=useCallback(async(action:()=>Promise<unknown>,flush=true)=>{
   if(pending.current)return;pending.current=true;
   // Busy controls go :disabled, which drops their focus to <body>; restore it
@@ -102,7 +131,30 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  };
  const splitPane=(paneId:string,edge:SplitDropEdge='right',view?:SurfaceRef,outer=false)=>{
   if(!fitSplit(paneId,edge,outer,view)){setError('Make this area larger before splitting it.');return Promise.resolve();}
-  return send('pane.split',{paneId,newPaneId:'pane-'+crypto.randomUUID(),splitId:'split-'+crypto.randomUUID(),axis:edge==='left'||edge==='right'?'horizontal':'vertical',before:edge==='left'||edge==='top',...(view?{view}:{}),...(outer?{outer:true}:{})});
+  const viewId=layout.panes[paneId]?.activeViewId;
+  const findHeader=()=>viewId?root.current?.querySelector<HTMLElement>(`[data-split-view="${CSS.escape(viewId)}"] .chat-view-header[aria-label]`):null;
+  const previousWidth=findHeader()?.getBoundingClientRect().width??0;
+  return run(async()=>{
+   await onCommand('pane.split',{paneId,newPaneId:'pane-'+crypto.randomUUID(),splitId:'split-'+crypto.randomUUID(),axis:edge==='left'||edge==='right'?'horizontal':'vertical',before:edge==='left'||edge==='top',...(view?{view}:{}),...(outer?{outer:true}:{}),baseRevision:layout.revision});
+   if(!previousWidth||(edge!=='left'&&edge!=='right')||readMotionPolicy()!=='full')return;
+   const header=findHeader();
+   if(!header)return;
+   cancelHeaderMotion.current?.();
+   // The command settles before the slot observer applies the new pane width.
+   const observer=new ResizeObserver(()=>{
+    if(!header.isConnected||resize.current||readMotionPolicy()!=='full'){cancel();return;}
+    const width=header.getBoundingClientRect().width;
+    if(!width||width>=previousWidth)return;
+    cancel();
+    if(![440,520].some(threshold=>previousWidth>=threshold&&width<threshold))return;
+    splitHeaderAnimation.current?.cancel();
+    splitHeaderAnimation.current=header.querySelector('.breadcrumb')?.animate([{opacity:.78},{opacity:1}],{duration:150,easing:'ease-out'})??null;
+   });
+   const timer=setTimeout(()=>cancel(),1500);
+   const cancel=()=>{clearTimeout(timer);observer.disconnect();cancelHeaderMotion.current=null;};
+   cancelHeaderMotion.current=cancel;
+   observer.observe(header);
+  });
  };
  const locateDropAt=(clientX:number,clientY:number)=>{
   const host=root.current;if(!host)return null;const box=host.getBoundingClientRect(),x=clientX-box.left,y=clientY-box.top;
@@ -129,8 +181,9 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
   }catch(cause){setError(cause instanceof Error?cause.message:'This view could not be placed.');}
  };
  const beginResize=(event:ReactPointerEvent<HTMLDivElement>,node:Extract<SplitWorkspaceNode,{kind:'split'}>)=>{
-  if(event.button!==0||busy||resize.current||corner.current||floatGesture.current)return;const region=event.currentTarget.parentElement?.getBoundingClientRect();if(!region)return;const horizontal=node.axis==='horizontal',span=(horizontal?region.width:region.height)-6,first=minimumSplitSize(layout,node.first),second=minimumSplitSize(layout,node.second),low=(horizontal?first.width:first.height)/span,high=1-(horizontal?second.width:second.height)/span;if(low>high)return;
-  event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);resize.current={pointerId:event.pointerId,splitId:node.id,axis:node.axis,start:horizontal?event.clientX:event.clientY,span,ratio:node.ratio,minimum:Math.max(.05,low),maximum:Math.min(.95,high),revision:layout.revision,element:event.currentTarget};setPreviewRatio({id:node.id,ratio:node.ratio});
+  if(event.button!==0||busy||resize.current||corner.current||floatGesture.current)return;event.preventDefault();const region=event.currentTarget.parentElement?.getBoundingClientRect();if(!region)return;const horizontal=node.axis==='horizontal',span=(horizontal?region.width:region.height)-6,{low,high}=splitBounds(layout,node,span);if(low>high)return;
+  cancelHeaderMotion.current?.();splitHeaderAnimation.current?.cancel();
+  event.currentTarget.setPointerCapture(event.pointerId);resize.current={pointerId:event.pointerId,splitId:node.id,axis:node.axis,start:horizontal?event.clientX:event.clientY,span,ratio:node.ratio,minimum:low,maximum:high,revision:layout.revision,element:event.currentTarget};setPreviewRatio({id:node.id,ratio:node.ratio});
  };
  const moveResize=(event:ReactPointerEvent<HTMLDivElement>)=>{const gesture=resize.current;if(!gesture||gesture.pointerId!==event.pointerId)return;const delta=((gesture.axis==='horizontal'?event.clientX:event.clientY)-gesture.start)/gesture.span;setPreviewRatio({id:gesture.splitId,ratio:Math.max(gesture.minimum,Math.min(gesture.maximum,gesture.ratio+delta))});};
  const endResize=(event:ReactPointerEvent<HTMLDivElement>)=>{const gesture=resize.current;if(!gesture||gesture.pointerId!==event.pointerId)return;resize.current=null;const ratio=previewRatio?.id===gesture.splitId?previewRatio.ratio:gesture.ratio;setPreviewRatio(null);void run(()=>onCommand('pane.resize',{splitId:gesture.splitId,ratio,span:gesture.span,baseRevision:gesture.revision}),false);};
@@ -140,7 +193,7 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  // the press. Escape/blur cancels without sending; a settled commit clears
  // the preview only when no newer press arrived.
  const keyResize=(event:KeyboardEvent<HTMLDivElement>,node:Extract<SplitWorkspaceNode,{kind:'split'}>)=>{
-  const direction=node.axis==='horizontal'?event.key==='ArrowLeft'?-1:event.key==='ArrowRight'?1:0:event.key==='ArrowUp'?-1:event.key==='ArrowDown'?1:0;if(!direction&&event.key!=='Home'&&event.key!=='End')return;event.preventDefault();const rect=event.currentTarget.parentElement?.getBoundingClientRect();if(!rect)return;const span=(node.axis==='horizontal'?rect.width:rect.height)-6,first=minimumSplitSize(layout,node.first),second=minimumSplitSize(layout,node.second),low=Math.max(.05,(node.axis==='horizontal'?first.width:first.height)/span),high=Math.min(.95,1-(node.axis==='horizontal'?second.width:second.height)/span);if(low>high)return;
+  const direction=node.axis==='horizontal'?event.key==='ArrowLeft'?-1:event.key==='ArrowRight'?1:0:event.key==='ArrowUp'?-1:event.key==='ArrowDown'?1:0;if(!direction&&event.key!=='Home'&&event.key!=='End')return;event.preventDefault();const rect=event.currentTarget.parentElement?.getBoundingClientRect();if(!rect)return;const span=(node.axis==='horizontal'?rect.width:rect.height)-6,{low,high}=splitBounds(layout,node,span);if(low>high)return;
   const base=keyPreview.current?.splitId===node.id?keyPreview.current.ratio:node.ratio,ratio=event.key==='Home'?low:event.key==='End'?high:Math.max(low,Math.min(high,base+direction*(event.shiftKey?.05:.01)));
   keyPreview.current={splitId:node.id,ratio};setPreviewRatio({id:node.id,ratio});
   const commit=()=>{const sent=keyPreview.current?.ratio;if(sent===undefined||keyPreview.current?.splitId!==node.id)return;void run(()=>onCommand('pane.resize',{splitId:node.id,ratio:sent,span,baseRevision:layout.revision}),false).then(()=>{if(keyPreview.current?.splitId===node.id&&keyPreview.current.ratio===sent){keyPreview.current=null;setPreviewRatio(current=>current?.id===node.id&&current.ratio===sent?null:current);}});};
@@ -151,9 +204,10 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  const beginCorner=(event:ReactPointerEvent<HTMLButtonElement>,paneId:string)=>{if(event.button!==0||busy||corner.current||resize.current||floatGesture.current)return;event.preventDefault();event.currentTarget.setPointerCapture(event.pointerId);corner.current={pointerId:event.pointerId,paneId,x:event.clientX,y:event.clientY,element:event.currentTarget,revision:layout.revision};};
  const moveCorner=(event:ReactPointerEvent<HTMLButtonElement>)=>{const gesture=corner.current;if(!gesture||gesture.pointerId!==event.pointerId)return;const dx=event.clientX-gesture.x,dy=event.clientY-gesture.y;if(Math.hypot(dx,dy)<16)return;const basis=root.current?.getBoundingClientRect(),other=basis&&Object.entries(rects).find(([paneId,rect])=>paneId!==gesture.paneId&&event.clientX>=basis.left+rect.left&&event.clientX<=basis.left+rect.left+rect.width&&event.clientY>=basis.top+rect.top&&event.clientY<=basis.top+rect.top+rect.height);if(other){setDrop({paneId:other[0],edge:'center',joinFrom:gesture.paneId});return;}const edge=Math.abs(dx)>Math.abs(dy)?dx>0?'right':'left':dy>0?'bottom':'top';setDrop(fitSplit(gesture.paneId,edge,false,undefined)?{paneId:gesture.paneId,edge}:null);};
  const endCorner=(event:ReactPointerEvent<HTMLButtonElement>)=>{const gesture=corner.current;if(!gesture||gesture.pointerId!==event.pointerId)return;corner.current=null;const target=drop;setDrop(null);if(target&&gesture.revision===layout.revision){if(target.joinFrom)void send('pane.join',{paneId:target.joinFrom,targetPaneId:target.paneId});else void splitPane(gesture.paneId,target.edge);}};
+ const paneTitle=(view?:SurfaceRef)=>view?title(view):'Empty area';
  const renderPane=(paneId:string)=>{
   const pane=layout.panes[paneId]!,current=pane.activeViewId?layout.views[pane.activeViewId]:undefined;
-  return <section key={paneId} className={`split-pane${pane.collapsed?' is-collapsed':''}${layout.focusedPaneId===paneId?' is-focused':''}`} data-split-pane={paneId} aria-label={current?title(current):'Empty area'}>
+  return <section key={paneId} className={`split-pane${pane.collapsed?' is-collapsed':''}${layout.focusedPaneId===paneId?' is-focused':''}`} data-split-pane={paneId} aria-label={paneTitle(current)}>
     <header className="split-pane-header" onPointerDown={event=>{if(!(event.target as HTMLElement).closest('button,summary,select')&&!busy&&layout.focusedPaneId!==paneId)void send('pane.focus',{paneId},false);}}>
     <button className="split-corner" aria-label="Split this area" title="Drag to split. Use the area menu for keyboard actions." disabled={busy} onPointerDown={event=>beginCorner(event,paneId)} onPointerMove={moveCorner} onPointerUp={endCorner} onPointerCancel={event=>{if(corner.current?.pointerId===event.pointerId)cancel();}} onLostPointerCapture={event=>{if(corner.current?.pointerId===event.pointerId)cancel();}} onContextMenu={event=>{event.preventDefault();cancel();}}>◩</button>
     <div className="split-tab-strip" role="tablist" aria-label="Area views">{pane.viewIds.map(viewId=><button key={viewId} role="tab" aria-selected={pane.activeViewId===viewId} draggable={!busy} onDragStart={event=>{draggingView.current=layout.views[viewId]??null;event.dataTransfer.setData(GEN_VIEW_DRAG_TYPE,JSON.stringify({workspaceId:layout.id,viewId,revision:layout.revision}));event.dataTransfer.effectAllowed='move';}} onDragEnd={()=>{draggingView.current=null;}} onClick={()=>{void send('view.activate',{paneId,viewId},false);}} title={title(layout.views[viewId]!)}><span className="split-tab-label">{title(layout.views[viewId]!)}</span></button>)}</div>
@@ -161,6 +215,12 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
      {id:'split-columns',label:'Split left / right',disabled:busy||narrow,onSelect:()=>{void splitPane(paneId,'right');}},
      {id:'split-rows',label:'Split above / below',disabled:busy||narrow,onSelect:()=>{void splitPane(paneId,'bottom');}},
      {id:'join',label:'Join adjacent area',disabled:busy||Object.keys(layout.panes).length<2,onSelect:()=>{void send('pane.join',{paneId});}},
+     ...(current?splitPaneIds(layout.root).filter(targetId=>targetId!==paneId).map(targetId=>{
+      const targetViewId=layout.panes[targetId]!.activeViewId;
+      return {id:`move-to:${targetId}`,label:`Move to ${paneTitle(targetViewId?layout.views[targetViewId]:undefined)}`,disabled:busy,onSelect:()=>{
+       void send('view.move',{viewId:current.id,paneId:targetId});
+      }};
+     }):[]),
      ...(current?[{id:'park',label:'Park current view',disabled:busy,onSelect:()=>{void send('view.park',{viewId:current.id});}}]:[]),
      ...(current&&onDetachView&&current.kind==='thread'?[{id:'detach',label:'Detach conversation',disabled:busy,onSelect:()=>{onDetachView(current);}}]:[]),
 
@@ -174,7 +234,8 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
  };
  const renderNode=(node:SplitWorkspaceNode):ReactNode=>{
   if(node.kind==='pane')return renderPane(node.paneId);const ratio=previewRatio?.id===node.id?previewRatio.ratio:node.ratio,firstCollapsed=splitPaneIds(node.first).every(id=>layout.panes[id]!.collapsed),secondCollapsed=splitPaneIds(node.second).every(id=>layout.panes[id]!.collapsed),style={'--split-ratio':ratio,...(firstCollapsed!==secondCollapsed?{[node.axis==='horizontal'?'gridTemplateColumns':'gridTemplateRows']:firstCollapsed?'36px 6px minmax(0,1fr)':'minmax(0,1fr) 6px 36px'}:{})} as CSSProperties;
-  return <div key={node.id} className={`split-node split-${node.axis}`} style={style}>{renderNode(node.first)}<div role="separator" tabIndex={0} aria-label={`Resize ${node.axis==='horizontal'?'columns':'rows'}`} aria-orientation={node.axis==='horizontal'?'vertical':'horizontal'} aria-valuenow={Math.round(ratio*100)} aria-valuemin={5} aria-valuemax={95} className={`split-divider${previewRatio?.id===node.id?' is-dragging':''}`} onPointerDown={event=>beginResize(event,node)} onPointerMove={moveResize} onPointerUp={endResize} onPointerCancel={event=>{if(resize.current?.pointerId===event.pointerId)cancel();}} onLostPointerCapture={event=>{if(resize.current?.pointerId===event.pointerId)cancel();}} onContextMenu={event=>{event.preventDefault();cancel();}} onKeyDown={event=>keyResize(event,node)}>{previewRatio?.id===node.id&&<span>{Math.round(ratio*100)}% {node.axis==='horizontal'?'width':'height'}</span>}</div>{renderNode(node.second)}</div>;
+  const region=splitRects[node.id],span=region?(node.axis==='horizontal'?region.width:region.height)-6:0,bounds=span>0?splitBounds(layout,node,span):undefined,splittable=!bounds||bounds.low<=bounds.high,announcedRatio=bounds&&splittable?Math.max(bounds.low,Math.min(bounds.high,ratio)):ratio;
+  return <div key={node.id} ref={el=>{if(el)splitEls.current.set(node.id,el);else splitEls.current.delete(node.id);}} className={`split-node split-${node.axis}`} style={style}>{renderNode(node.first)}<div role="separator" tabIndex={splittable?0:-1} aria-label={`Resize ${node.axis==='horizontal'?'columns':'rows'}`} aria-orientation={node.axis==='horizontal'?'vertical':'horizontal'} aria-valuenow={splittable?percent(announcedRatio):undefined} aria-valuemin={bounds&&splittable?percent(bounds.low):undefined} aria-valuemax={bounds&&splittable?percent(bounds.high):undefined} className={`split-divider${previewRatio?.id===node.id?' is-dragging':''}`} onPointerDown={event=>beginResize(event,node)} onPointerMove={moveResize} onPointerUp={endResize} onPointerCancel={event=>{if(resize.current?.pointerId===event.pointerId)cancel();}} onLostPointerCapture={event=>{if(resize.current?.pointerId===event.pointerId)cancel();}} onContextMenu={event=>{event.preventDefault();cancel();}} onKeyDown={event=>keyResize(event,node)}>{previewRatio?.id===node.id&&<span>{Math.round(ratio*100)}% {node.axis==='horizontal'?'width':'height'}</span>}</div>{renderNode(node.second)}</div>;
  };
  const visibleOwner=new Map<string,string>();for(const pane of Object.values(layout.panes)){const active=pane.activeViewId?layout.views[pane.activeViewId]:undefined;if(!pane.collapsed&&active&&(pane.id!==emptyMainPaneId||active.kind!=='thread')&&(!narrow||pane.id===layout.focusedPaneId))visibleOwner.set(active.id,pane.id);}
  const viewPlacements=Object.values(layout.views).map(view=>{
@@ -193,7 +254,7 @@ export function WorkspaceSplitLayout({layout,onCommand,renderView,onActiveViewsC
   {narrow&&<div className="split-workspace-tools"><label>Area<Select aria-label="Active workspace area" value={layout.focusedPaneId} disabled={busy} onValueChange={paneId=>{void send('pane.focus',{paneId},false);}} options={splitPaneIds(layout.root).map(paneId=>{const viewId=layout.panes[paneId]!.activeViewId;return{value:paneId,label:viewId?title(layout.views[viewId]!):'Empty area'};})}/></label></div>}
   {error&&<p role="alert" className="split-layout-error">{error}<button onClick={()=>setError('')}>Dismiss</button></p>}
   <div className="split-tree">{narrow?renderPane(layout.focusedPaneId):renderNode(layout.root)}</div>
-  <div className="split-surface-plane">{viewPlacements.map(({view,paneId,floatRect,active,style})=><div key={view.id} className={`split-surface${floatRect?' split-surface-float':''}`} data-split-view={view.id} data-pane-id={paneId} data-floating={floatRect?true:undefined} style={style} inert={!active} aria-hidden={!active}>{renderView(view,active)}{floatRect&&<div className="split-float-header"><strong ref={node=>{if(floatMenu===view.id)floatGripAnchor.current=node;}} className="split-float-grip" role="button" tabIndex={0} aria-label={`Placement and move for ${title(view)}`} aria-haspopup="menu" aria-expanded={floatMenu===view.id} onPointerDown={event=>beginFloat(event,view.id,'move')} onPointerMove={moveFloat} onPointerUp={endFloat} onPointerCancel={event=>{if(floatGesture.current?.pointerId===event.pointerId)cancelFloat();}} onLostPointerCapture={event=>{if(floatGesture.current?.pointerId===event.pointerId)cancelFloat();}} onClick={()=>{if(floatDragged.current)return;setFloatMenu(current=>current===view.id?null:view.id);}} onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();setFloatMenu(current=>current===view.id?null:view.id);}else keyFloat(event,view.id);}}>{title(view)}</strong></div>}{floatRect&&<button type="button" className="split-float-resize" aria-label={`Resize ${title(view)}`} onPointerDown={event=>beginFloat(event,view.id,'resize')} onPointerMove={moveFloat} onPointerUp={endFloat} onPointerCancel={event=>{if(floatGesture.current?.pointerId===event.pointerId)cancelFloat();}} onLostPointerCapture={event=>{if(floatGesture.current?.pointerId===event.pointerId)cancelFloat();}}/>}</div>)}</div>
+  <div className="split-surface-plane">{viewPlacements.map(({view,paneId,floatRect,active,style})=><div key={view.id} className={`split-surface${floatRect?' split-surface-float':''}`} data-split-view={view.id} data-pane-id={paneId} data-floating={floatRect?true:undefined} style={style} inert={!active} aria-hidden={!active}>{renderView(view,active)}{floatRect&&<div className="split-float-header"><strong ref={node=>{if(floatMenu===view.id)floatGripAnchor.current=node;}} className="split-float-grip" role="button" tabIndex={0} aria-label={`Placement and move for ${title(view)}`} aria-haspopup="menu" aria-expanded={floatMenu===view.id} onPointerDown={event=>beginFloat(event,view.id,'move')} onPointerMove={moveFloat} onPointerUp={endFloat} onPointerCancel={event=>{if(floatGesture.current?.pointerId===event.pointerId)cancelFloat();}} onLostPointerCapture={event=>{if(floatGesture.current?.pointerId===event.pointerId)cancelFloat();}} onClick={()=>{if(floatDragged.current)return;setFloatMenu(current=>current===view.id?null:view.id);}} onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();setFloatMenu(current=>current===view.id?null:view.id);}else keyFloat(event,view.id);}}>{title(view)}</strong></div>}{floatRect&&<button type="button" className="split-float-resize" aria-label={`Resize ${title(view)}`} title="Resize. Arrow keys adjust size; Shift for larger steps." onKeyDown={event=>keyFloatResize(event,view.id)} onPointerDown={event=>beginFloat(event,view.id,'resize')} onPointerMove={moveFloat} onPointerUp={endFloat} onPointerCancel={event=>{if(floatGesture.current?.pointerId===event.pointerId)cancelFloat();}} onLostPointerCapture={event=>{if(floatGesture.current?.pointerId===event.pointerId)cancelFloat();}}/>}</div>)}</div>
   {drop&&overlay&&<div className={`split-drop-preview edge-${drop.edge}`} style={drop.outer?{left:0,top:topBar,width:size.width,height:size.height-topBar}:{left:overlay.left,top:overlay.top,width:overlay.width,height:overlay.height}}><span>{drop.joinFrom?'Join into this area':edgeLabel[drop.edge]}</span></div>}
   {floatMenu&&layout.views[floatMenu]&&(layout.parkedViewIds.includes(floatMenu)?onReturnFloat:onDetachView)&&<Popover anchor={floatGripAnchor} contentRef={floatMenuContent} initialFocus={floatMenuItem} open width={220} height={46} preferredSide="below" align="start" role="menu" aria-label={`Placement for ${title(layout.views[floatMenu]!)}`} className="ui-control-popup" onDismiss={()=>setFloatMenu(null)}><button ref={floatMenuItem} type="button" role="menuitem" className="ui-control-option" onClick={()=>{const view=layout.views[floatMenu];setFloatMenu(null);if(view){if(layout.parkedViewIds.includes(view.id))onReturnFloat?.(view);else void run(()=>Promise.resolve(onDetachView?.(view)),false);}}}>{layout.parkedViewIds.includes(floatMenu)?'Return to main':'Detach conversation'}</button></Popover>}
  </div>;

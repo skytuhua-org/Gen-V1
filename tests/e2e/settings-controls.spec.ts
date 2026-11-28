@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { resolve } from 'node:path';
 import type { HostCommand } from '../../packages/contracts';
-import { getPreferences, type UiPreferences } from '../../packages/contracts/preferences';
+import { getPreferences, PROJECT_PALETTE, type UiPreferences } from '../../packages/contracts/preferences';
 import { serveTaskFixture, taskFixture } from './task-interface-fixture';
 
 async function openSettings(page: Page, theme: 'dark' | 'light' = 'dark') {
@@ -26,7 +26,7 @@ async function openSettings(page: Page, theme: 'dark' | 'light' = 'dark') {
   else await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
   await expect(dialog).toBeVisible();
-  return { ...host, dialog, composer, nav: dialog.getByRole('navigation', { name: 'Settings sections' }), search: dialog.getByRole('searchbox', { name: 'Search all settings' }) };
+  return { ...host, dialog, composer, nav: dialog.getByRole('tablist', { name: 'Settings sections' }), search: dialog.getByRole('searchbox', { name: 'Search all settings' }) };
 }
 
 async function scalarText(content: Locator) {
@@ -39,7 +39,7 @@ async function scalarText(content: Locator) {
 }
 
 test('font sizes accept individual keystrokes and commit only bounded values',async({page})=>{
-  const {dialog,nav,commands}=await openSettings(page);await nav.getByRole('button',{name:'Appearance',exact:true}).click();
+  const {dialog,nav,commands}=await openSettings(page);await nav.getByRole('tab',{name:'Appearance',exact:true}).click();
   const size=dialog.getByRole('spinbutton',{name:'Chat size',exact:true});await size.focus();await size.press('Control+a');await size.pressSequentially('20');
   await expect(size).toHaveValue('20');await dialog.getByRole('button',{name:'Apply',exact:true}).click();
   await expect.poll(()=>commands.filter(command=>command.type==='settings.update').at(-1)?.payload.preferences).toMatchObject({chatFontSize:20});
@@ -47,9 +47,52 @@ test('font sizes accept individual keystrokes and commit only bounded values',as
   await size.focus();await size.press('Control+a');await size.pressSequentially('99');await size.press('Tab');await expect(size).toHaveValue('20');
 });
 
+test('provider, accent and project pickers each have one keyboard stop and move selection',async({page})=>{
+ const host=await openSettings(page);
+ const {dialog,nav}=host;
+ const oneStop=(group:Locator)=>expect(group.locator('button[tabindex="0"]')).toHaveCount(1);
+ await nav.getByRole('tab',{name:'Models & Accounts',exact:true}).click();
+ const providers=dialog.getByRole('radiogroup',{name:'Subscription providers',exact:true});
+ await oneStop(providers);
+ const firstProvider=providers.getByRole('radio').first(),lastProvider=providers.getByRole('radio').last();
+ await providers.getByRole('radio',{checked:true}).focus();
+ await page.keyboard.press('End');
+ await expect(lastProvider).toBeFocused();await expect(lastProvider).toBeChecked();
+ await page.keyboard.press('ArrowRight');
+ await expect(firstProvider).toBeFocused();await expect(firstProvider).toBeChecked();
+ await page.keyboard.press('Tab');
+ expect(await providers.evaluate(node=>node.contains(document.activeElement))).toBe(false);
+
+ host.snapshot.threads[0].projectId='keyboard-project';
+ host.snapshot.threads[0].projectName='Keyboard project';
+ host.snapshot.settings.preferences={projectColors:{'["local","keyboard-project"]':'#123abc'}};
+ await host.publish();
+ await nav.getByRole('tab',{name:'Appearance',exact:true}).click();
+ const accent=dialog.getByRole('radiogroup',{name:'Accent',exact:true});
+ await oneStop(accent);
+ const accentFirst=accent.getByRole('radio').first(),accentLast=accent.getByRole('radio').last();
+ await accent.getByRole('radio',{checked:true}).focus();
+ await page.keyboard.press('Home');
+ await expect(accentFirst).toBeFocused();await expect(accentFirst).toBeChecked();
+ await page.keyboard.press('ArrowUp');
+ await expect(accentLast).toBeFocused();await expect(accentLast).toBeChecked();
+
+ const project=dialog.getByRole('radiogroup',{name:'Keyboard project',exact:true});
+ await oneStop(project);
+ await expect(project.getByRole('radio',{checked:true})).toHaveCount(0);
+ await project.getByRole('radio').first().focus();
+ await page.keyboard.press('ArrowDown');
+ const next=project.getByRole('radio').nth(1);
+ await expect(next).toBeChecked();await expect(next).toBeFocused();
+ await expect.poll(()=>getPreferences(host.snapshot.settings).projectColors['["local","keyboard-project"]']).toBe(Object.values(PROJECT_PALETTE)[1]);
+ await oneStop(project);
+ await page.keyboard.press('Tab');
+ await expect(dialog.getByRole('textbox',{name:'Custom color for Keyboard project',exact:true})).toBeFocused();
+});
+
 test('saving a project color preserves the active appearance preview',async({page})=>{
   const host=await openSettings(page);host.snapshot.threads[0].projectId='preview-project';host.snapshot.threads[0].projectName='Preview project';await host.publish();
-  await host.nav.getByRole('button',{name:'Appearance',exact:true}).click();await host.dialog.getByRole('combobox',{name:'Density',exact:true}).click();await page.getByRole('option',{name:/^Touch/}).click();
+  await host.nav.getByRole('tab',{name:'Appearance',exact:true}).click();await host.dialog.getByRole('combobox',{name:'Density',exact:true}).click();await page.getByRole('option',{name:/^Touch/}).click();
   await host.dialog.getByRole('button',{name:'Preview',exact:true}).click();await expect(page.locator('html')).toHaveAttribute('data-density','touch');
   await host.dialog.getByRole('textbox',{name:'Custom color for Preview project',exact:true}).fill('#123abc');await host.dialog.getByRole('button',{name:'Save color',exact:true}).click();
   await expect(host.dialog.getByRole('button',{name:'Reset color for Preview project',exact:true})).toBeVisible();
@@ -70,7 +113,7 @@ async function installManualBrowserFixture(page:Page){
 test('browser launch leaves the draft and owning modal intact when its save guard rejects',async({page})=>{
   await installManualBrowserFixture(page);const {dialog,nav}=await openSettings(page);
   await page.evaluate(async()=>{const path='/src/editor-handoff.ts';const module=await import(path);module.registerEditorHandoff('synthetic-browser-block',async()=>{throw Error('Keep this draft safe');});});
-  await nav.getByRole('button',{name:'Browser',exact:true}).click();await dialog.getByRole('button',{name:'Open browser',exact:true}).click();
+  await nav.getByRole('tab',{name:'Browser',exact:true}).click();await dialog.getByRole('button',{name:'Open browser',exact:true}).click();
   await expect(dialog.getByRole('status').filter({hasText:'Keep this draft safe'})).toBeVisible();await expect(dialog).toBeVisible();
   expect(await page.evaluate(()=>(window as unknown as {manualBrowserCalls:unknown[]}).manualBrowserCalls)).toEqual([]);
   await expect(page.locator('textarea[aria-label="Message"]')).toHaveValue('Retain this conversation draft');
@@ -78,7 +121,7 @@ test('browser launch leaves the draft and owning modal intact when its save guar
 
 test('desktop browser opens from the default anchored workspace after the save guard',async({page})=>{
   await installManualBrowserFixture(page);
-  const {dialog,nav,commands}=await openSettings(page);await nav.getByRole('button',{name:'Browser',exact:true}).click();
+  const {dialog,nav,commands}=await openSettings(page);await nav.getByRole('tab',{name:'Browser',exact:true}).click();
   await dialog.getByRole('button',{name:'Open browser',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as unknown as {manualBrowserCalls:unknown[]}).manualBrowserCalls)).toContainEqual({type:'open'});
   await expect(dialog).toHaveCount(0);expect(commands.filter(command=>command.type==='thread.create')).toHaveLength(0);
@@ -86,13 +129,13 @@ test('desktop browser opens from the default anchored workspace after the save g
 
 test('Environments and every section stay free of stray scalars through blank, matching, empty and reset search', async ({ page }, info) => {
   const { dialog, nav, search, composer } = await openSettings(page);
-  await nav.getByRole('button', { name: 'Models & Accounts', exact: true }).click();
+  await nav.getByRole('tab', { name: 'Models & Accounts', exact: true }).click();
   await dialog.getByText('Environment variables and advanced runtime settings',{exact:true}).click();
   await expect(dialog.getByText('No variables configured.', { exact: true })).toBeVisible();
   await dialog.screenshot({ path: info.outputPath('environments.png') });
   expect(await scalarText(dialog.locator('main'))).toEqual([]);
-  for (const label of await nav.getByRole('button').allTextContents()) {
-    await nav.getByRole('button', { name: label, exact: true }).click();
+  for (const label of await nav.getByRole('tab').allTextContents()) {
+    await nav.getByRole('tab', { name: label, exact: true }).click();
     await expect(nav.locator('[aria-current="page"]')).toHaveCount(1);
     await expect(dialog.getByRole('heading', { level: 1, name: label, exact: true })).toBeVisible();
     expect(await scalarText(dialog.locator('main')), `${label}: blank`).toEqual([]);
@@ -103,15 +146,15 @@ test('Environments and every section stay free of stray scalars through blank, m
     expect(await scalarText(dialog.locator('main')), `${label}: matching`).toEqual([]);
     await chatWidthResult.click();
     await expect(dialog.getByRole('combobox', { name: 'Chat width', exact: true })).toBeVisible();
-    await nav.getByRole('button', { name: label, exact: true }).click();
+    await nav.getByRole('tab', { name: label, exact: true }).click();
     await search.fill('no-match-9f8c7b6a');
     await expect(dialog.getByText('No matching settings.', { exact: true })).toBeVisible();
     expect(await scalarText(dialog.locator('main')), `${label}: empty results`).toEqual([]);
     await search.fill('   ');
-    await expect(nav.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(nav.getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-current', 'page');
     expect(await scalarText(dialog.locator('main')), `${label}: reset`).toEqual([]);
   }
-  await nav.getByRole('button', { name: 'About & Licenses', exact: true }).click();
+  await nav.getByRole('tab', { name: 'About & Licenses', exact: true }).click();
   await expect(dialog.getByRole('region', { name: 'Gen updates' })).toBeVisible();
   await search.fill('update');
   await dialog.getByRole('button', { name: /^Version & updates/ }).click();
@@ -126,7 +169,7 @@ test('search results navigate to the real target with reveal and focus; Escape c
   await expect(dialog.getByRole('heading', { name: 'Search results (2)', exact: true })).toBeVisible();
   await expect(dialog.getByRole('combobox', { name: 'Density', exact: true })).toHaveCount(0);
   await dialog.getByRole('button', { name: /^Theme/ }).click();
-  await expect(nav.getByRole('button', { name: 'Appearance', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(nav.getByRole('tab', { name: 'Appearance', exact: true })).toHaveAttribute('aria-current', 'page');
   const scheme = dialog.getByRole('combobox', { name: 'Color scheme', exact: true });
   await expect(scheme).toBeVisible();
   await expect(scheme).toBeFocused();
@@ -150,7 +193,7 @@ test('provider search selects its detail and repeats without probing unrelated p
     await search.fill(provider.query);await dialog.getByRole('button',{name:new RegExp('^'+provider.query)}).click();
     const target=dialog.locator(`[data-setting-id="provider-${provider.id}"]`);await expect(target).toBeVisible();
     await expect(target.locator('.connection-account-auth')).toHaveAttribute('data-state','unknown');await expect(target.locator('.connection-auth-summary strong')).toHaveText('Status unknown');await expect(dialog.locator('.connection-row')).toHaveCount(1);
-    await expect(dialog.getByRole('navigation',{name:'Subscription providers'}).getByRole('button',{name:provider.query,exact:true})).toHaveAttribute('aria-pressed','true');
+    await expect(dialog.getByRole('radiogroup',{name:'Subscription providers'}).getByRole('radio',{name:provider.query,exact:true})).toBeChecked();
     await expect.poll(()=>target.evaluate(node=>node===document.activeElement||node.contains(document.activeElement))).toBe(true);
   }
   expect(reads).toEqual(['gemini-cli','cursor-sdk','gemini-cli']);
@@ -175,7 +218,7 @@ test('browser task-notification preference saves without permission requests and
     (window as unknown as { __notifRequests: number }).__notifRequests = 0;
     Object.defineProperty(window, 'Notification', { configurable: true, value: { requestPermission: async () => { (window as unknown as { __notifRequests: number }).__notifRequests++; return 'denied'; } } });
   });
-  await nav.getByRole('button', { name: 'Notifications & Usage', exact: true }).click();
+  await nav.getByRole('tab', { name: 'Notifications & Usage', exact: true }).click();
   await expect(dialog.getByText(/System popups and sound are unavailable in this browser build/)).toBeVisible();
   await expect(dialog.getByText('System notifications and sound require the Windows app.')).toBeVisible();
   await dialog.getByRole('combobox', { name: 'Task notifications', exact: true }).click();
@@ -232,7 +275,7 @@ test('preferences and supported environment actions remain usable after search r
   await expect.poll(() => commands.filter(command => command.type === 'settings.update').map(command => command.payload.preferences)).toContainEqual(expect.objectContaining({ chatWidth: 'full' }));
   await expect(dialog.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
   await expect(dialog.getByRole('combobox', { name: 'Chat width', exact: true })).toContainText('Full available width');
-  await nav.getByRole('button', { name: 'Models & Accounts', exact: true }).click();
+  await nav.getByRole('tab', { name: 'Models & Accounts', exact: true }).click();
   await dialog.getByText('Environment variables and advanced runtime settings',{exact:true}).click();
   await expect(search).toHaveValue('');
   const entry = { scope: 'device', name: 'EXAMPLE_VALUE', secret: false, updatedAt: '2026-11-05T00:00:00.000Z' };
@@ -258,23 +301,35 @@ test('preferences and supported environment actions remain usable after search r
 });
 
 for (const theme of ['dark', 'light'] as const) for (const zoom of [1, 1.25, 1.5]) {
-  test(`${theme} navigation keeps selection, hover and keyboard focus separate at ${zoom * 100}% CSS zoom`, async ({ page }, info) => {
-    const { dialog, nav } = await openSettings(page, theme);
+  test(`${theme} navigation separates hover from selection and shows keyboard focus at ${zoom * 100}% CSS zoom`, async ({ page }, info) => {
+    const { dialog, nav, search } = await openSettings(page, theme);
     await page.evaluate(value => { document.documentElement.style.zoom = String(value); }, zoom);
-    const labs = nav.getByRole('button', { name: 'Projects & Working Copies', exact: true }), about = nav.getByRole('button', { name: 'Source Control & Reviews', exact: true });
-    await labs.click();
-    await about.hover();
+    const projects = nav.getByRole('tab', { name: 'Projects & Working Copies', exact: true }), sourceControl = nav.getByRole('tab', { name: 'Source Control & Reviews', exact: true });
+    await projects.click();
+    const restingBackground = await sourceControl.evaluate(node => getComputedStyle(node).backgroundColor);
+    await sourceControl.hover();
+    await expect.poll(() => sourceControl.evaluate(node => getComputedStyle(node).backgroundColor)).not.toBe(restingBackground);
     await dialog.screenshot({ path: info.outputPath('navigation.png') });
-    const selected = await labs.boundingBox(), hovered = await about.boundingBox();
+    const selected = await projects.boundingBox(), hovered = await sourceControl.boundingBox();
     expect(hovered!.y - selected!.y - selected!.height).toBeGreaterThanOrEqual(4 * zoom - 0.1);
     await expect(nav.locator('[aria-current]')).toHaveCount(1);
-    await expect(labs).toHaveAttribute('aria-current', 'page');
-    await expect(about).not.toHaveAttribute('aria-current');
-    const selectedStyle = await labs.evaluate(node => { const style = getComputedStyle(node); return [style.backgroundColor, style.boxShadow]; });
-    await expect.poll(() => about.evaluate(node => { const style = getComputedStyle(node); return [style.backgroundColor, style.boxShadow]; })).not.toEqual(selectedStyle);
+    await expect(projects).toHaveAttribute('aria-current', 'page');
+    await expect(sourceControl).not.toHaveAttribute('aria-current');
+    const selectedStyle = await projects.evaluate(node => { const style = getComputedStyle(node); return [style.backgroundColor, style.color, style.fontWeight]; });
+    await expect.poll(() => sourceControl.evaluate(node => { const style = getComputedStyle(node); return [style.backgroundColor, style.color, style.fontWeight]; })).not.toEqual(selectedStyle);
+    await search.focus();
     await page.keyboard.press('Tab');
-    await expect(about).toBeFocused();
-    const focus = await about.evaluate(node => { const style = getComputedStyle(node); return { visible: node.matches(':focus-visible'), width: style.outlineWidth, offset: style.outlineOffset, style: style.outlineStyle, pixelRatio: devicePixelRatio }; });
+    await expect(projects).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(nav.locator(':focus')).toHaveCount(0);
+    await page.keyboard.press('Shift+Tab');
+    await expect(projects).toBeFocused();
+    await page.keyboard.press('ArrowDown');
+    await expect(sourceControl).toBeFocused();
+    await expect(sourceControl).toHaveAttribute('aria-current', 'page');
+    await expect(projects).not.toHaveAttribute('aria-current');
+    await expect(dialog.getByRole('tabpanel', { name: 'Source Control & Reviews', exact: true })).toBeVisible();
+    const focus = await sourceControl.evaluate(node => { const style = getComputedStyle(node); return { visible: node.matches(':focus-visible'), width: style.outlineWidth, offset: style.outlineOffset, style: style.outlineStyle, pixelRatio: devicePixelRatio }; });
     expect(focus.visible).toBe(true);
     expect(focus.style).toBe('solid');
     expect(parseFloat(focus.width) * zoom).toBeGreaterThanOrEqual(1.9);
@@ -282,20 +337,19 @@ for (const theme of ['dark', 'light'] as const) for (const zoom of [1, 1.25, 1.5
     const inset = -(parseFloat(focus.offset) + parseFloat(focus.width)) * zoom * focus.pixelRatio;
     expect(inset).toBeGreaterThanOrEqual(0);
     expect(inset).toBeLessThanOrEqual(1);
-    await expect(labs).toHaveAttribute('aria-current', 'page');
-    const geometry = await nav.getByRole('button').evaluateAll(nodes => nodes.map(node => {
+    const geometry = await nav.getByRole('tab').evaluateAll(nodes => nodes.map(node => {
       const rect = node.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(node);
       const text = range.getBoundingClientRect();
       return { label: node.textContent, height: rect.height, width: rect.width, unclipped: text.left >= rect.left && text.right <= rect.right && text.top >= rect.top && text.bottom <= rect.bottom, overflow: node.scrollWidth > node.clientWidth };
     }));
     expect(geometry.filter(row => row.height < 32 * zoom - 0.1 || row.width < 32 * zoom - 0.1 || !row.unclipped || row.overflow)).toEqual([]);
-    const longLabel = nav.getByRole('button', { name: 'Skills & Integrations' });
-    await longLabel.evaluate(node => { node.textContent = 'Skills & Integrations with a longer localized label'; });
+    const localizedLabel = 'Skills & Integrations with a longer localized label';
+    await nav.getByRole('tab', { name: 'Skills & Integrations', exact: true }).evaluate((node, label) => { node.textContent = label; }, localizedLabel);
+    const longLabel = nav.getByRole('tab', { name: localizedLabel, exact: true });
     await longLabel.scrollIntoViewIfNeeded();
     expect(await longLabel.evaluate(node => { const range = document.createRange(); range.selectNodeContents(node); const text = range.getBoundingClientRect(), rect = node.getBoundingClientRect(); return text.right <= rect.right && text.bottom <= rect.bottom && node.scrollWidth <= node.clientWidth; })).toBe(true);
     await dialog.screenshot({ path: info.outputPath('long-label.png') });
     await page.setViewportSize({width:1440,height:520});
-    const search=dialog.getByRole('searchbox',{name:'Search all settings'});
     for(const label of ['Composer font','Code font','Chat width']){
       await search.fill(label);await dialog.getByRole('button',{name:new RegExp('^'+label)}).click();
       const field=dialog.getByRole('combobox',{name:label,exact:true});await expect(field).toBeFocused();
@@ -307,7 +361,7 @@ for (const theme of ['dark', 'light'] as const) for (const zoom of [1, 1.25, 1.5
 
 test('appearance preview, cancel, failed apply and retry preserve accepted preferences', async ({ page }) => {
   const { dialog, nav, snapshot, commands } = await openSettings(page);
-  await nav.getByRole('button', { name: 'Appearance', exact: true }).click();
+  await nav.getByRole('tab', { name: 'Appearance', exact: true }).click();
   await dialog.getByRole('combobox', {name:'Density',exact:true}).click();
   await dialog.getByRole('option', {name:'Touch · 44 px',exact:true}).click();
   await dialog.getByRole('spinbutton', {name:'Chat size',exact:true}).fill('18');
@@ -345,7 +399,7 @@ test('appearance preview, cancel, failed apply and retry preserve accepted prefe
 
 test('a pending post-save refresh does not hold closing or reopening Settings', async ({ page }) => {
   const { dialog, nav, commands, snapshot } = await openSettings(page);
-  await nav.getByRole('button', { name: 'Appearance', exact: true }).click();
+  await nav.getByRole('tab', { name: 'Appearance', exact: true }).click();
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   await page.route('**/api/snapshot', async route => { await gate; await route.fallback(); });
@@ -358,13 +412,13 @@ test('a pending post-save refresh does not hold closing or reopening Settings', 
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Settings', exact: true })).toBeVisible();
   release();
-  await nav.getByRole('button', { name: 'Appearance', exact: true }).click();
+  await nav.getByRole('tab', { name: 'Appearance', exact: true }).click();
   await expect(dialog.getByRole('spinbutton', { name: 'Chat size', exact: true })).toHaveValue('19');
 });
 
 test('a transient post-save refresh failure retries and recovers the accepted settings view', async ({ page }) => {
   const { dialog, nav } = await openSettings(page);
-  await nav.getByRole('button', { name: 'Appearance', exact: true }).click();
+  await nav.getByRole('tab', { name: 'Appearance', exact: true }).click();
   let reads = 0;
   await page.route('**/api/snapshot', async route => {
     reads++;
@@ -424,11 +478,11 @@ for (const [theme, width] of [['dark', 1440], ['light', 1440], ['dark', 390], ['
   if (width < 700) await expect(picker).toBeVisible(); else await expect(host.nav).toBeVisible();
   for (const [index, label] of sections.entries()) {
     if (width < 700) { await picker.click(); await host.dialog.getByRole('option', {name: label, exact: true}).click(); }
-    else await host.nav.getByRole('button', {name: label, exact: true}).click();
+    else await host.nav.getByRole('tab', {name: label, exact: true}).click();
     await expect(host.dialog.getByRole('heading', {level: 1})).toHaveText(label);
     if (width >= 700 && label === 'General') {
       expect((await host.dialog.boundingBox())!.width).toBeLessThanOrEqual(960);
-      expect((await host.nav.getByRole('button',{name:'General',exact:true}).boundingBox())!.height).toBeLessThanOrEqual(36);
+      expect((await host.nav.getByRole('tab',{name:'General',exact:true}).boundingBox())!.height).toBeLessThanOrEqual(36);
       expect((await host.dialog.locator('.settings-row').first().boundingBox())!.height).toBeLessThanOrEqual(66);
     }
     const tones = await host.dialog.evaluate((node, narrow) => {
@@ -453,7 +507,7 @@ for (const theme of ['dark','light'] as const) test(`keyboard focus stays neutra
   await host.search.focus();await page.keyboard.press('Tab');await host.search.focus();
   const search=await host.search.evaluate(node=>{const label=node.closest('label')!,probe=document.createElement('span');probe.style.color='var(--ui-focus-ring)';label.append(probe);const neutral=getComputedStyle(probe).color;probe.remove();const style=getComputedStyle(label);return{neutral,color:style.outlineColor,style:style.outlineStyle,width:style.outlineWidth};});
   expect(search.color).toBe(search.neutral);expect(search.style).toBe('solid');expect(search.width).toBe('2px');
-  const button=host.nav.getByRole('button',{name:'General',exact:true});await button.focus();
+  const button=host.nav.getByRole('tab',{name:'General',exact:true});await button.focus();
   expect(await button.evaluate(node=>getComputedStyle(node).outlineColor)).toBe(search.neutral);
   await page.keyboard.press('Escape');await expect(host.dialog).toHaveCount(0);await host.composer.focus();
   const composer=await host.composer.evaluate(node=>{const style=getComputedStyle(node.closest('.composer')!);return{border:style.borderColor,shadow:style.boxShadow};});
@@ -477,7 +531,7 @@ test.describe('touch Settings targets',()=>{
   });
   test('advanced runtime disclosure keeps a full touch target on wide layouts',async({page})=>{
     await page.setViewportSize({width:1440,height:1000});const host=await openSettings(page);
-    await host.nav.getByRole('button',{name:'Models & Accounts',exact:true}).tap();
+    await host.nav.getByRole('tab',{name:'Models & Accounts',exact:true}).tap();
     const summary=host.dialog.locator('.settings-runtime-details>summary');await expect(summary).toBeVisible();
     expect((await summary.boundingBox())!.height).toBeGreaterThanOrEqual(44);await summary.tap();
     await expect(host.dialog.getByText('No variables configured.',{exact:true})).toBeVisible();

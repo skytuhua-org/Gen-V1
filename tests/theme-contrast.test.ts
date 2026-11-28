@@ -343,7 +343,7 @@ describe('appearance theme contrast audit', () => {
       'apps/web/src/exploration-tools.css': ['.schedule-interval[aria-selected=true]'],
       'apps/web/src/software-development.css': ['.software-response-tabs button[aria-selected=true]'],
       'apps/web/src/planning-question.css': ['.planning-option.is-selected'],
-      'apps/web/src/connections.css': ['.connection-providers button[aria-pressed="true"]', '.connection-account-row[data-chosen="true"]'],
+      'apps/web/src/connections.css': ['.connection-providers button[aria-checked="true"]', '.connection-account-row[data-chosen="true"]'],
       'apps/web/src/context-inspector.css': ['.context-request-tabs>button[aria-selected="true"]'],
     })) {
       const rules = [...source(path).matchAll(/([^{}]+)\{([^{}]*)\}/g)];
