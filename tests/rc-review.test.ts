@@ -11,7 +11,7 @@ import {flagsOff} from '../scripts/rc-review/flags-off.ts';
 import {hash,pnpm,run,sha} from '../scripts/rc-review/common.ts';
 import {archiveProfile,restoreProfile} from '../scripts/rc-review/profile-archive.ts';
 import {assertCleanLifecycle,parseInterruptMs,runRcReview} from '../scripts/rc-review/run-rc-review.ts';
-import {compareNativeGeometry} from '../scripts/rc-review/upgrade-check.ts';
+import {compareNativeGeometry,reattachNotes} from '../scripts/rc-review/upgrade-check.ts';
 import {closeInstalledSession,withInstalledSessionCleanup} from '../scripts/rc-review/installed-session.ts';
 import type {ChildProcess} from 'node:child_process';
 
@@ -32,6 +32,7 @@ it('keeps the installed RC action and teardown failures together',async()=>{
 it('still runs owned child cleanup when the browser session close rejects',async()=>{let terminated=false;await expect(closeInstalledSession(true,{close:()=>Promise.reject(Error('close failed'))},runningChild(),async()=>{terminated=true;})).rejects.toThrow('close failed');expect(terminated).toBe(true);});
 it('keeps close and termination failures observable together',async()=>{let terminated=false;const failure=await closeInstalledSession(true,{close:()=>Promise.reject(Error('close failed'))},runningChild(),async()=>{terminated=true;throw Error('terminate failed');}).catch(error=>error);expect(terminated).toBe(true);expect(failure).toBeInstanceOf(AggregateError);expect((failure as AggregateError).errors.map(String)).toEqual([expect.stringContaining('close failed'),expect.stringContaining('terminate failed')]);});
 it('skips termination once the child already exited and leaves an unverified browser session untouched',async()=>{let terminated=false,closed=false;const browser={close:()=>{closed=true;return Promise.reject(Error('must not run'));}};await closeInstalledSession(false,browser,{exitCode:0,signalCode:null} as ChildProcess,async()=>{terminated=true;});expect(terminated).toBe(false);expect(closed).toBe(false);});
+it('accepts notes reattachment with an empty reply or destroyed sender but propagates live-window errors',async()=>{await reattachNotes(async()=>undefined,()=>true);const closed=Error('Target page, context or browser has been closed');await reattachNotes(async()=>{throw closed;},()=>true);await expect(reattachNotes(async()=>{throw closed;},()=>false)).rejects.toBe(closed);});
 it('compares native geometry in one API space without throwing on a mismatch',()=>{const expected={left:80,top:80,width:1100,height:780};expect(compareNativeGeometry(expected,expected).status).toBe('passed');expect(compareNativeGeometry(expected,{left:72,top:80,width:1116,height:788}).status).toBe('passed');expect(compareNativeGeometry(expected,{...expected,left:113}).status).toBe('failed');expect(compareNativeGeometry(expected,undefined).status).toBe('failed');expect(compareNativeGeometry({},expected).status).toBe('failed');});
 it('removes a previous phase success before a failed retry can reuse it',async()=>{
  const {root}=await fixture(),current=join(root,'flags-phase.json'),other=join(root,'upgrade-phase.json'),attempt=JSON.stringify({phase:'flags',passed:true,candidate:'old'});
