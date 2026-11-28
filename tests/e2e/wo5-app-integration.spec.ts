@@ -5,9 +5,10 @@ import {shellInit,shellRoute,shellSnapshot} from '../../scripts/capture-ui/shell
 import {projectContext} from '../../scripts/capture-ui/browser-data';
 import {serveTaskSplitLayout} from './task-interface-fixture';
 
-async function host(page:Page){
+async function host(page:Page,legacyTitle?:string){
  const snapshot=shellSnapshot(),commands:{type:string;threadId:string;payload:{content?:string}}[]=[],unexpected:string[]=[];
  const workingCopy={id:'copy-one',path:'/synthetic/copy-one'};
+ if(legacyTitle!==undefined)snapshot.threads[0].title=legacyTitle;
  snapshot.threads[0].projectId='capture-project';snapshot.threads[0].projectName='Audit project';
  snapshot.messages=Array.from({length:125},(_,i)=>({...snapshot.messages[0],id:'message-'+i,content:'Workspace integration evidence '+i}));
  snapshot.memory=[{id:'note',threadId:'one',key:'decision',content:'Keep this owner note.',revision:1,author:'user',updatedAt:'2026-11-10T00:00:00Z'}];
@@ -50,10 +51,10 @@ async function host(page:Page){
 async function panel(page:Page,name:string){
  const open=page.getByRole('button',{name:'Open workspace panel',exact:true});if(await open.count())await open.click();
  const target=page.getByRole('tab',{name,exact:true});
- if(!await target.count()){await page.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitem',{name,exact:true}).click();}
+ if(!await target.count()){await page.getByRole('button',{name:'Add surface',exact:true}).click();await page.getByRole('menuitemcheckbox',{name,exact:true}).click();}
  await target.click();
 }
-for(const width of [1440,1024,768])test(`actual App keeps Files, find, Changes and Notes owners at ${width}`,async({page},info)=>{
+for(const width of [1440,1024,768])test(`actual App keeps Files, find, Changes and Memory owners at ${width}`,async({page},info)=>{
  await page.setViewportSize({width,height:1000});const h=await host(page);
  const draft=page.getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep my unsent integration draft');await draft.focus();await page.keyboard.press('Control+f');
  await page.getByRole('textbox',{name:'Find phrase'}).fill('workspace');await expect(page.getByRole('search')).toContainText('1 of 100');
@@ -64,9 +65,9 @@ for(const width of [1440,1024,768])test(`actual App keeps Files, find, Changes a
  await page.getByRole('tab',{name:'Recorded',exact:true}).click();await expect(page.locator('.workspace-diffs')).toContainText('Recorded comparison');
  await page.getByRole('tab',{name:'History',exact:true}).click();await expect(page.getByRole('tabpanel').last()).toContainText('Checkpoint history unavailable.');
  await expect(page.getByRole('button',{name:'Restore selected files'})).toHaveCount(0);
- await panel(page,'Notes');const note=page.getByRole('textbox',{name:'Note decision',exact:true});await expect(note).toBeEnabled();await note.fill('Retain this unsaved owner note.');
- await panel(page,'Output');await expect(page.getByRole('region',{name:'Thread memory'})).toHaveCount(0);
- await panel(page,'Notes');await expect(note).toHaveValue('Retain this unsaved owner note.');
+ await panel(page,'Memory');const note=page.getByRole('textbox',{name:'Note decision',exact:true});await expect(note).toBeEnabled();await note.fill('Retain this unsaved owner note.');
+ await panel(page,'Executor output');await expect(page.getByRole('region',{name:'Thread memory'})).toHaveCount(0);
+ await panel(page,'Memory');await expect(note).toHaveValue('Retain this unsaved owner note.');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);expect(h.unexpected).toEqual([]);expect(h.commands.filter(c=>c.type==='message.send')).toEqual([]);
  const out=info.outputPath('screenshots');await mkdir(out,{recursive:true});await page.screenshot({path:`${out}/notes-${width}.png`,fullPage:true});
 });
@@ -111,6 +112,20 @@ test('QA r1 actual App fences named libraries by thread account and working copy
  h.workingCopy.id='copy-one';h.snapshot.threads[0].accountId='other-account';await page.reload();await expect(drafts).toBeEnabled();await drafts.click();await expect(page.getByRole('dialog',{name:'Saved drafts',exact:true})).toContainText('No saved drafts yet.');await page.keyboard.press('Escape');
  h.snapshot.threads[0].accountId=null;await page.reload();await expect(drafts).toBeEnabled();await drafts.click();await expect(page.getByRole('dialog',{name:'Saved drafts',exact:true})).toContainText('Owner library');await page.keyboard.press('Escape');
  await page.getByRole('button',{name:'Review keyboard navigation Ready',exact:true}).click();await expect(drafts).toBeEnabled();await drafts.click();await expect(page.getByRole('dialog',{name:'Saved drafts',exact:true})).toContainText('No saved drafts yet.');expect(h.commands.filter(command=>command.type==='message.send')).toEqual([]);expect(h.unexpected).toEqual([]);
+});
+
+test('legacy thread title is a single line in navigation, the conversation and Rename',async({page})=>{
+ const title='Legacy conversation with a multiline title';
+ await host(page,'  Legacy conversation\nwith a\t multiline   title  ');
+ const row=page.getByRole('button',{name:new RegExp('^'+title)});
+ await expect(row).toHaveAttribute('aria-label',new RegExp('^'+title));
+ const header=page.locator('.breadcrumb strong').first();
+ await expect(header).toHaveText(title);
+ expect(await header.textContent()).toBe(title);
+ await expect(page.locator('.split-tab-strip [role=tab]').first()).toHaveAttribute('title',title);
+ await page.getByRole('button',{name:'Options for '+title,exact:true}).click();
+ await page.getByRole('menuitem',{name:'Rename thread',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'Rename thread'}).getByRole('textbox')).toHaveValue(title);
 });
 
 test('fixture blocks foreign canonical workspace requests',async({page})=>{
