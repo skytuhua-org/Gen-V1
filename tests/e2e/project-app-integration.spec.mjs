@@ -101,6 +101,9 @@ test('project tools Undo last commit confirms the reviewed subject and restores 
  const actions=[];
  await page.route('**/api/projects/project-a/actions',route=>{const body=route.request().postDataJSON();actions.push(body);return route.fulfill({json:{commandId:body.id,result:{undoneHead:tip,head:parent,message:'Undoable subject\n\nRestored body.'}}});});
  await page.goto('/');
+ await page.getByRole('button',{name:'Source-bound task fixture Ready',exact:true}).click();
+ await expect(page.getByRole('tab',{name:'Source-bound task fixture',exact:true,selected:true})).toBeVisible();
+ await page.getByRole('button',{name:'Expand Project overview',exact:true}).click();
  const card=page.locator('.project-context-card');
  await expect(card.getByText('Project tools')).toBeVisible({timeout:15000});
  await card.getByText('Project tools').click();
@@ -130,7 +133,7 @@ test('shows project connection errors inside the active dialog and lets the user
  const folder=dialog.getByRole('textbox',{name:'Local folder',exact:true});
  await folder.fill('C:/Synthetic/Missing');
  await dialog.getByRole('button',{name:'Connect project',exact:true}).click();
- await expect(dialog.getByRole('alert')).toHaveText('Choose an existing project folder.');
+ await expect(dialog.getByRole('alert')).toHaveText("Couldn't connect that folder: Choose an existing project folder.");
  await expect(folder).toHaveValue('C:/Synthetic/Missing');
  await folder.fill('C:/Synthetic/Gamma');
  await dialog.getByRole('button',{name:'Connect project',exact:true}).click();
