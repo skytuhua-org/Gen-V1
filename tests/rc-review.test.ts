@@ -11,7 +11,7 @@ import {snapshot,compare} from '../scripts/rc-review/profile-manifest.ts';
 import {flagsOff} from '../scripts/rc-review/flags-off.ts';
 import {hash,pnpm,run,sha} from '../scripts/rc-review/common.ts';
 import {archiveProfile,restoreProfile} from '../scripts/rc-review/profile-archive.ts';
-import {assertCleanLifecycle,parseInterruptMs} from '../scripts/rc-review/run-rc-review.ts';
+import {assertCleanLifecycle,parseInterruptMs,runRcReview} from '../scripts/rc-review/run-rc-review.ts';
 import {compareNativeGeometry} from '../scripts/rc-review/upgrade-check.ts';
 import {closeInstalledSession,withInstalledSessionCleanup} from '../scripts/rc-review/installed-session.ts';
 import type {ChildProcess} from 'node:child_process';
@@ -47,7 +47,37 @@ it('keeps the installed RC action and teardown failures together',async()=>{
 it('still runs owned child cleanup when the browser session close rejects',async()=>{let terminated=false;await expect(closeInstalledSession(true,{close:()=>Promise.reject(Error('close failed'))},runningChild(),async()=>{terminated=true;})).rejects.toThrow('close failed');expect(terminated).toBe(true);});
 it('keeps close and termination failures observable together',async()=>{let terminated=false;const failure=await closeInstalledSession(true,{close:()=>Promise.reject(Error('close failed'))},runningChild(),async()=>{terminated=true;throw Error('terminate failed');}).catch(error=>error);expect(terminated).toBe(true);expect(failure).toBeInstanceOf(AggregateError);expect((failure as AggregateError).errors.map(String)).toEqual([expect.stringContaining('close failed'),expect.stringContaining('terminate failed')]);});
 it('skips termination once the child already exited and leaves an unverified browser session untouched',async()=>{let terminated=false,closed=false;const browser={close:()=>{closed=true;return Promise.reject(Error('must not run'));}};await closeInstalledSession(false,browser,{exitCode:0,signalCode:null} as ChildProcess,async()=>{terminated=true;});expect(terminated).toBe(false);expect(closed).toBe(false);});
+it('bounds RC profile file lookups and preserves first matches within each exact root',()=>{
+ const base={version:2 as const,identifiers:{appId:null,profile:'profile',host:'host',accounts:[]},entities:{},counts:{}};
+ const file=(root:string,path:string,sha256='same')=>({root,path,bytes:1,sha256});
+ const before=Array.from({length:1200},(_,i)=>file('profile','projects/file-'+i));
+ let reads=0;
+ const after=before.map(({root,path,bytes,sha256})=>({root,get path(){reads++;return path;},bytes,sha256}));
+ const owner=before[0]!;
+ const result=compare({...base,files:[...before,file('host',owner.path,'old')]},
+  {...base,files:[file('host',owner.path,'new'),...after,file('profile',owner.path,'duplicate')]});
+ expect(result.changedFiles).toEqual([{...file('host',owner.path,'old'),afterBytes:1,afterSha256:'new'}]);
+ expect(result.missingFiles).toEqual([]);
+ expect(reads).toBeLessThanOrEqual(2400);
+});
 it('compares native geometry in one API space without throwing on a mismatch',()=>{const expected={left:80,top:80,width:1100,height:780};expect(compareNativeGeometry(expected,expected).status).toBe('passed');expect(compareNativeGeometry(expected,{left:72,top:80,width:1116,height:788}).status).toBe('passed');expect(compareNativeGeometry(expected,{...expected,left:113}).status).toBe('failed');expect(compareNativeGeometry(expected,undefined).status).toBe('failed');expect(compareNativeGeometry({},expected).status).toBe('failed');});
+it('removes a previous phase success before a failed retry can reuse it',async()=>{
+ const {root}=await fixture(),current=join(root,'flags-phase.json'),other=join(root,'upgrade-phase.json'),attempt=JSON.stringify({phase:'flags',passed:true,candidate:'old'});
+ await writeFile(current,attempt);await writeFile(other,'other phase evidence');
+ await expect(runRcReview({phase:'flags',out:root,build:join(root,'missing-build.json')})).rejects.toMatchObject({code:'ENOENT'});
+ await expect(readFile(current,'utf8')).rejects.toMatchObject({code:'ENOENT'});
+ expect(await readFile(join(root,'flags-last-success.json'),'utf8')).toBe(attempt);
+ expect(await readFile(other,'utf8')).toBe('other phase evidence');
+ const install=join(root,'install'),core=join(install,'resources/host/packages/core'),build=join(root,'build.json'),fixtureFile=join(root,'build-input');
+ await mkdir(core,{recursive:true});for(const file of ['capability-flags.ts','host-flags.ts'])await copyFile(join('packages/core',file),join(core,file));
+ await writeFile(fixtureFile,'synthetic candidate descriptor');const descriptor={path:fixtureFile,sha256:await hash(fixtureFile)};
+ await writeFile(build,JSON.stringify({commit:'retry',setup:descriptor,buildManifest:descriptor}));
+ const quiet=vi.spyOn(console,'log').mockImplementation(()=>{});
+ vi.stubEnv('APPDATA',root);vi.stubEnv('LOCALAPPDATA',root);
+ try{await runRcReview({phase:'flags',out:root,build,install});}finally{vi.unstubAllEnvs();quiet.mockRestore();}
+ expect(JSON.parse(await readFile(current,'utf8'))).toMatchObject({phase:'flags',passed:true,candidate:'retry'});
+ expect(await readFile(join(root,'flags-last-success.json'),'utf8')).toBe(attempt);
+});
 it('requires candidate-bound completed cleanup and explicit opt-in after a failed clean lifecycle',()=>{const receipt={passed:true,setupSha256:'candidate',memoryRetentionRequested:true,cleanup:{status:'uninstalled-owned-installation'}};expect(()=>assertCleanLifecycle(receipt,'candidate')).not.toThrow();expect(()=>assertCleanLifecycle({...receipt,passed:false},'candidate')).toThrow('explicit');expect(()=>assertCleanLifecycle({...receipt,passed:false},'candidate',true)).not.toThrow();for(const invalid of [{},{...receipt,setupSha256:'other'},{...receipt,cleanup:{status:'preserved-for-inspection'}}])expect(()=>assertCleanLifecycle(invalid,'candidate',true)).toThrow('candidate-bound');});
 it('retains captured failure output for review evidence',async()=>{await expect(run(process.execPath,['-e',"console.log('failure evidence');process.exit(3)"],{capture:true})).rejects.toMatchObject({stdout:'failure evidence',exitCode:3});});
 it('keeps an early child stdin closure in the RC subprocess result',async()=>{
@@ -81,7 +111,40 @@ it('compares every SQLite row without rescanning the whole current table',()=>{
 it('inventories empty profiles without inventing a database or app identity',async()=>{const {profile,host}=await fixture();const value=await snapshot(profile,host);expect(value.files).toEqual([]);expect(value.entities).toEqual({});expect(value.identifiers.appId).toBeNull();expect(compare(value,value).passed).toBe(true);});
 it('rejects a snapshot when a submitted root is missing, a file or a symlink instead of silently inventorying empty',async()=>{const {root,profile,host}=await fixture(),missing=join(root,'missing'),mistyped=join(root,'mistyped'),linked=join(root,'linked'),real=join(root,'real');await mkdir(real);await writeFile(mistyped,'file');await symlink(real,linked);for(const [rootLabel,bad]of [['profile',missing],['profile',mistyped],['profile',linked]]as const)await expect(snapshot(bad,host)).rejects.toThrow('snapshot root is not a directory: '+rootLabel);for(const bad of [missing,mistyped,linked])await expect(snapshot(profile,bad)).rejects.toThrow('snapshot root is not a directory: host');const value=await snapshot(profile,host);expect(value.files).toEqual([]);expect(value.entities).toEqual({});});
 it('includes IndexedDB/Local Storage, excludes cache and detects entity removal/change and additive kinds',async()=>{const {profile,host}=await fixture();await mkdir(join(profile,'session/IndexedDB'),{recursive:true});await mkdir(join(profile,'session/Local Storage'),{recursive:true});await mkdir(join(profile,'session/Cache'),{recursive:true});await writeFile(join(profile,'session/IndexedDB/draft'),'draft');await writeFile(join(profile,'session/Local Storage/layout'),'layout');await writeFile(join(profile,'session/Cache/ignored'),'cache');const db=new DatabaseSync(join(host,'harness.sqlite'));db.exec("CREATE TABLE entities(kind TEXT,id TEXT,body TEXT);INSERT INTO entities VALUES ('thread','one','{}'),('thread','two','{}')");db.close();const before=await snapshot(profile,host);expect(before.files.some(file=>file.path.endsWith('ignored'))).toBe(false);expect(before.files.some(file=>file.path.includes('IndexedDB'))).toBe(true);const update=new DatabaseSync(join(host,'harness.sqlite'));update.exec("DELETE FROM entities WHERE id='one';UPDATE entities SET body='null' WHERE id='two';INSERT INTO entities VALUES ('projectMemoryItem','new','{}')");update.close();const value=compare(before,await snapshot(profile,host));expect(value.passed).toBe(false);expect(value.missingEntities).toEqual([{kind:'thread',id:'one'}]);expect(value.changedEntities).toEqual([{kind:'thread',id:'two'}]);expect(value.additiveKinds).toEqual(['projectMemoryItem']);});
+
+it('inventories host cache-named data without reclassifying desktop caches',async()=>{
+ const {profile,host}=await fixture();
+ await mkdir(join(profile,'session','Cache'),{recursive:true});
+ await mkdir(join(host,'Cache'));await mkdir(join(host,'GPUCache'));
+ await writeFile(join(profile,'session','Cache','ignored.txt'),'chromium');
+ await writeFile(join(host,'Cache','kept.txt'),'ordinary host data');
+ await writeFile(join(host,'GPUCache','kept.txt'),'other host data');
+ const before=await snapshot(profile,host);
+ expect(before.files.map(file=>[file.root,file.path])).toEqual([['host','Cache/kept.txt'],['host','GPUCache/kept.txt']]);
+ await writeFile(join(host,'Cache','kept.txt'),'changed');await rm(join(host,'GPUCache','kept.txt'));
+ const result=compare(before,await snapshot(profile,host));
+ expect(result.passed).toBe(false);
+ expect(result.changedFiles.map(file=>file.path)).toEqual(['Cache/kept.txt']);
+ expect(result.missingFiles.map(file=>file.path)).toEqual(['GPUCache/kept.txt']);
+});
+it('does not ignore host cache-named entries already present in a profile manifest',()=>{
+ const before=emptySnapshot({});
+ before.files.push({root:'host',path:'Cache/kept.txt',bytes:7,sha256:'old'});
+ const result=compare(before,emptySnapshot({}));
+ expect(result.passed).toBe(false);
+ expect(result.missingFiles).toEqual(before.files);
+});
 it('fails missing files and identifier changes and refuses malformed databases',async()=>{const {profile,host}=await fixture();await writeFile(join(profile,'kept'),'value');const before=await snapshot(profile,host);await rm(join(profile,'kept'));const after=await snapshot(profile,host);after.identifiers.profile='renamed';const result=compare(before,after);expect(result.passed).toBe(false);expect(result.missingFiles).toHaveLength(1);expect(result.identifierChanges).toEqual(['profile']);await writeFile(join(host,'harness.sqlite'),'not sqlite');await expect(snapshot(profile,host)).rejects.toThrow();});
+it('counts loss of host data even when its filenames resemble Chromium diagnostics', async () => {
+ const {profile,host}=await fixture();
+ await writeFile(join(host,'LOG'),'host history');await writeFile(join(host,'LOCK'),'host record');
+ const before=await snapshot(profile,host);
+ await writeFile(join(host,'LOG'),'changed');await rm(join(host,'LOCK'));
+ const result=compare(before,await snapshot(profile,host));
+ expect(result.passed).toBe(false);
+ expect(result.changedFiles.map(file=>[file.root,file.path])).toEqual([['host','LOG']]);
+ expect(result.missingFiles.map(file=>[file.root,file.path])).toEqual([['host','LOCK']]);
+});
 it('fails truncated non-SQLite user files, including LevelDB data logs, but classifies SQLite/diagnostic churn',async()=>{const {profile,host}=await fixture();await mkdir(join(profile,'IndexedDB'));for(const name of ['draft','000001.log','LOG','LOCK'])await writeFile(join(profile,'IndexedDB',name),'retained data');const before=await snapshot(profile,host);for(const name of ['draft','000001.log','LOG','LOCK'])await writeFile(join(profile,'IndexedDB',name),'');const after=await snapshot(profile,host),result=compare(before,after);expect(result.passed).toBe(false);expect(result.changedFiles.map(file=>file.path)).toEqual(['IndexedDB/000001.log','IndexedDB/draft']);expect(result.ignoredFileChanges).toHaveLength(2);const unchanged=structuredClone(before);unchanged.files=unchanged.files.filter(file=>!['LOG','LOCK'].includes(file.path.split('/').at(-1)!));expect(compare(before,unchanged).passed).toBe(true);before.files.push({root:'host',path:'harness.sqlite-wal',bytes:1,sha256:'before'});expect(compare(before,unchanged).passed).toBe(true);});
 it('checks installed registry custody, rejects ambient activation and registry drift, and fails missing registries',async()=>{const {root}=await fixture(),install=join(root,'install'),core=join(install,'resources/host/packages/core');await mkdir(core,{recursive:true});for(const file of ['capability-flags.ts','host-flags.ts'])await copyFile(join('packages/core',file),join(core,file));const quiet=vi.spyOn(console,'log').mockImplementation(()=>{});try{expect((await flagsOff(install,join(root,'normal'))).passed).toBe(true);process.env.HARNESS_FLAG_RC_TEST='true';try{await expect(flagsOff(install,join(root,'ambient'))).rejects.toThrow('Flags-off');}finally{delete process.env.HARNESS_FLAG_RC_TEST;}const path=join(core,'host-flags.ts');await writeFile(path,(await readFile(path,'utf8')).replace("'coding.debuggerV1'","'coding.unknownV1'"));await expect(flagsOff(install,join(root,'drift'))).rejects.toThrow('Flags-off');await rm(path);await expect(flagsOff(install,join(root,'missing'))).rejects.toThrow();}finally{quiet.mockRestore();}},60000);
 it('runs Windows corepack without shell interpolation and handles stdin/empty/error exits',async()=>{expect(await pnpm(['--version'],true)).toMatch(/^\d+\.\d+\.\d+$/);expect(await run(process.execPath,[],{capture:true,input:"console.log('stdin probe')"})).toBe('stdin probe');expect(await run(process.execPath,['-e',''],{capture:true})).toBe('');await expect(run(process.execPath,['-e','process.exit(2)'],{capture:true})).rejects.toThrow('exited 2');});

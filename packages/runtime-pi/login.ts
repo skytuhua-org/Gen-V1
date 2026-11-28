@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, link, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, open, readFile, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,12 +19,21 @@ export async function getOrCreateDeviceId(dataDir: string): Promise<string> {
   try { return validateDeviceId(await readFile(path, "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   const id = randomUUID(), temporary = join(agentDir, `.device-id-${id}.tmp`);
-  await writeFile(temporary, id, { flag: "wx", mode: 0o600 });
+  const handle = await open(temporary, "wx", 0o600);
+  let stored: string;
   try {
+    try { await handle.writeFile(id); }
+    catch (error) { await handle.close().catch(() => {}); throw error; }
+    await handle.close();
     try { await link(temporary, path); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
-    return validateDeviceId(await readFile(path, "utf8"));
-  } finally { await unlink(temporary); }
+    stored = validateDeviceId(await readFile(path, "utf8"));
+  } catch (error) {
+    await unlink(temporary).catch(() => {});
+    throw error;
+  }
+  await unlink(temporary);
+  return stored;
 }
 function validateDeviceId(id: string) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)) throw new Error("The Pi installation device ID is invalid. Restore dataDir/pi/device-id before signing in.");

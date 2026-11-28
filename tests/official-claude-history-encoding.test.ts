@@ -27,3 +27,15 @@ it('rejects a completed receipt transcript beyond the byte limit',async()=>{
  const manifest={path:'fixture/manifest.json',value:{threadId:'test-thread',sessionId:'fixture-session'}} as ManifestState;
  await expect(claudeHistory('fixture',manifest,start)).rejects.toMatchObject({code:'OFFICIAL_HISTORY_LIMIT'});
 });
+
+it('rejects a native receipt containing malformed UTF-8 instead of substituting text',async()=>{
+ const stdout=new PassThrough(),child=new ChildProcess();
+ Object.defineProperty(child,'stdout',{value:stdout});
+ const before=Buffer.from('[{"uuid":"fixture-session","inputIds":["follow-');
+ const after=Buffer.from('"]}]');
+ const start=(()=>{queueMicrotask(()=>{
+  stdout.end(Buffer.concat([before,Buffer.from([0xff]),after]));child.emit('close',0);
+ });return child;}) as typeof spawn;
+ const manifest={path:'fixture/manifest.json',value:{threadId:'test-thread',sessionId:'fixture-session'}} as ManifestState;
+ await expect(claudeHistory('fixture',manifest,start)).rejects.toMatchObject({code:'OFFICIAL_HISTORY_ENCODING'});
+});

@@ -47,11 +47,13 @@ export function createControlSidecarChannel(deps: { send: SidecarSend; token: st
           reject(new HarnessError('DRIVER_UNAVAILABLE', `The control driver did not acknowledge ${op}.`));
         }, timeoutMs);
         pending.set(requestId, { resolve, reject, timer });
-        Promise.resolve(deps.send({ type: 'harness.control.call', token: deps.token, requestId, op, payload })).catch(error => {
-          pending.delete(requestId);
+        const failSend = (error: unknown) => {
+          if (!pending.delete(requestId)) return;
           clearTimeout(timer);
           reject(error instanceof Error ? error : new HarnessError('DRIVER_UNAVAILABLE', String(error)));
-        });
+        };
+        try { Promise.resolve(deps.send({ type: 'harness.control.call', token: deps.token, requestId, op, payload })).catch(failSend); }
+        catch (error) { failSend(error); }
       });
     },
     handleReply(value) {

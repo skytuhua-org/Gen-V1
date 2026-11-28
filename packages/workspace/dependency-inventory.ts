@@ -168,9 +168,8 @@ function parsePnpmLock(rel: string, doc: ReturnType<typeof parseDocument>, sink:
   if (root?.lockfileVersion !== 9 && String(root?.lockfileVersion) !== '9.0') return {ok: false, privateRegistry: false};
   let privateRegistry = false;
   const importers = root.importers && typeof root.importers === 'object' ? root.importers : {};
-  const directByImporter = new Map<string, {specifier: string; version: string}[]>();
+  const directIds = new Set<string>();
   for (const [importerPath, imp] of Object.entries<any>(importers)) {
-    const list: {specifier: string; version: string}[] = [];
     for (const section of ['dependencies', 'devDependencies', 'optionalDependencies'] as const) {
       const deps = imp?.[section];
       if (!deps || typeof deps !== 'object') continue;
@@ -179,9 +178,9 @@ function parsePnpmLock(rel: string, doc: ReturnType<typeof parseDocument>, sink:
         const specifier = typeof record?.specifier === 'string' ? record.specifier : '';
         if (!version) continue;
         if (specifier.startsWith('link:') || specifier.startsWith('file:') || specifier.startsWith('workspace:')) continue;
-        list.push({specifier, version});
         const clean = stripPnpmPeerSuffix(`${name}@${version}`);
         if (!clean) continue;
+        directIds.add(occurrenceId(rel, undefined, name, clean.version));
         push(sink, {
           occurrenceId: occurrenceId(rel, importerPath, name, clean.version),
           ecosystem: 'npm', name, installedVersion: clean.version,
@@ -189,11 +188,8 @@ function parsePnpmLock(rel: string, doc: ReturnType<typeof parseDocument>, sink:
         }, limits);
       }
     }
-    directByImporter.set(importerPath, list);
   }
   const packages = root.packages && typeof root.packages === 'object' ? root.packages : {};
-  const directIds = new Set<string>();
-  for (const list of directByImporter.values()) for (const d of list) directIds.add(d.version.split('(')[0]);
   for (const [key, entry] of Object.entries<any>(packages)) {
     const parsed = stripPnpmPeerSuffix(key);
     if (!parsed) continue;
@@ -207,7 +203,7 @@ function parsePnpmLock(rel: string, doc: ReturnType<typeof parseDocument>, sink:
     if (sink.occurrences.some(o => o.occurrenceId === id)) continue;
     push(sink, {
       occurrenceId: id, ecosystem: 'npm', name: parsed.name, installedVersion: parsed.version,
-      directness: directIds.has(parsed.version) ? 'direct' : 'transitive',
+      directness: directIds.has(id) ? 'direct' : 'transitive',
       lockPath: rel,
     }, limits);
   }
