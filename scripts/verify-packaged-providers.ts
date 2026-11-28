@@ -167,6 +167,8 @@ async function runProbe(host:string,node:string,directory:string,cursorRequired:
  const output=await new Promise<string>((accept,reject)=>{
   const stdout:Buffer[]=[],stderr:Buffer[]=[];let bytes=0,failed=false;
   const fail=(error:Error)=>{if(failed)return;failed=true;clearTimeout(timer);void terminateProcessTree(child).then(()=>reject(error),reject);};
+  child.stdout.on('error',cause=>fail(new Error('Packaged runtime verification could not read stdout.',{cause})));
+  child.stderr.on('error',cause=>fail(new Error('Packaged runtime verification could not read stderr.',{cause})));
   const timer=setTimeout(()=>fail(Error('Packaged runtime verification exceeded its deadline.')),90000);
   child.once('error',fail);
   for(const stream of [child.stdout,child.stderr])stream.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>256*1024){fail(Error('Packaged verification output exceeded its bound.'));return;}if(stream===child.stdout)stdout.push(chunk);else stderr.push(chunk);});
