@@ -166,11 +166,26 @@ describe('feedback primitives', () => {
     const page = await open();
     await page.emulateMedia({reducedMotion: 'reduce'});
     for (const m of ['r1', 'r2', 'r3']) await page.evaluate(`window.toast('${m}', {durationMs: 60000})`);
-    await page.evaluate(`window.toast('r4', {durationMs: 60000})`);
-    const evicted = page.locator('.ui-toast[data-state="closed"]', {hasText: 'r1'});
-    await evicted.waitFor();
-    expect(await evicted.evaluate(el => getComputedStyle(el).animationDuration)).toBe('0.08s');
-    expect(await evicted.evaluate(el => getComputedStyle(el).transform)).toBe('none');
+    const fade = await page.evaluate(() => new Promise<{duration: string; transform: string}>((resolve, reject) => {
+      // The reduced exit lasts 80 ms. Sample both values on the DOM change, before removal.
+      const observer = new MutationObserver(() => {
+        const evicted = [...document.querySelectorAll('.ui-toast[data-state="closed"]')]
+          .find(element => element.querySelector('span')?.textContent === 'r1');
+        if (!evicted) return;
+        observer.disconnect();
+        clearTimeout(deadline);
+        const style = getComputedStyle(evicted);
+        resolve({duration: style.animationDuration, transform: style.transform});
+      });
+      const deadline = setTimeout(() => {
+        observer.disconnect();
+        reject(new Error('Expected the oldest toast to enter its exit animation'));
+      }, 5000);
+      observer.observe(document.body, {subtree: true, childList: true, attributeFilter: ['data-state']});
+      const fixture = window as unknown as {toast(message: string, options: {durationMs: number}): void};
+      fixture.toast('r4', {durationMs: 60000});
+    }));
+    expect(fade).toEqual({duration: '0.08s', transform: 'none'});
     await expect.poll(() => page.locator('.ui-toast').count()).toBe(3);
     await page.close();
   });
@@ -252,21 +267,23 @@ describe('feedback primitives', () => {
 
   it('delays the busy spinner for 150ms and cancels it on settle', async () => {
     const page = await open();
-    await page.clock.install();
+    await page.clock.install({time: new Date(0)});
+    await page.clock.pauseAt(new Date(1000));
     const spinner = page.locator('#probe .ui-action-indicator-busy[data-current="true"]');
-    await page.locator('#probe-busy').click();
+    const click = (selector: string) => page.locator(selector).evaluate((button: HTMLButtonElement) => button.click());
+    await click('#probe-busy');
     await page.clock.runFor(149);
     expect(await spinner.count()).toBe(0);
     await page.clock.runFor(1);
     expect(await spinner.count()).toBe(1);
-    await page.locator('#probe-ack').click();
+    await click('#probe-ack');
     await page.clock.runFor(300);
     expect(await spinner.count()).toBe(0);
     expect(await page.locator('#probe .ui-action-indicator-acknowledged[data-current="true"]').count()).toBe(1);
-    await page.locator('#probe-idle').click();
-    await page.locator('#probe-busy').click();
+    await click('#probe-idle');
+    await click('#probe-busy');
     await page.clock.runFor(100);
-    await page.locator('#probe-idle').click();
+    await click('#probe-idle');
     await page.clock.runFor(300);
     expect(await spinner.count()).toBe(0);
     await page.close();
