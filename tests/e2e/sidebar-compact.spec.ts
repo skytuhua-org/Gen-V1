@@ -8,7 +8,7 @@ test.beforeEach(async({page})=>{
 });
 test('compact rows show project monogram chip, readable title and metadata, and preserve detail access',async({page})=>{
  const searchBox=await page.getByRole('textbox',{name:'Search threads',exact:true}).boundingBox();
- const filterBox=await page.getByRole('button',{name:'Filter threads',exact:true}).boundingBox();
+ const filterBox=await page.getByRole('button',{name:'Thread filter: all',exact:true}).boundingBox();
  const newThreadBox=await page.getByRole('button',{name:'New thread',exact:true}).boundingBox();
  expect(Math.abs(searchBox!.y-filterBox!.y)).toBeLessThanOrEqual(4);
  expect(Math.abs(searchBox!.y-newThreadBox!.y)).toBeLessThanOrEqual(4);
@@ -34,7 +34,7 @@ test('compact rows show project monogram chip, readable title and metadata, and 
  expect(await page.evaluate(()=>(window as unknown as {sidebarCompactCalls:string[]}).sidebarCompactCalls)).toContain('presentation:{"pinned":true}');
 });
 test('active filter shows a visible chip that clears back to all',async({page})=>{
- await page.getByRole('button',{name:'Filter threads',exact:true}).click();
+ await page.getByRole('button',{name:'Thread filter: all',exact:true}).click();
  const chip=page.locator('.sidebar-filter-chip');
  await expect(chip).toContainText('Showing working threads');
  await chip.getByRole('button',{name:'Clear thread filter'}).click();
@@ -45,7 +45,7 @@ test('footer invokes supplied actions and the single updater while plug-in navig
  await page.getByRole('button',{name:'Settings',exact:true}).click();
  await page.getByRole('button',{name:'Pull requests',exact:true}).click();
  await page.getByRole('button',{name:'Usage',exact:true}).click();
- await page.getByRole('button',{name:'Update',exact:true}).click();
+ await page.getByRole('button',{name:'Update Up to date',exact:true}).click();
  await page.getByRole('navigation',{name:'Installed plug-ins'}).getByRole('button').click();
  expect(await page.evaluate(()=>(window as unknown as {sidebarCompactCalls:string[]}).sidebarCompactCalls)).toEqual(['settings','pull-requests','usage','update:check','plugin']);
 });
@@ -87,4 +87,32 @@ test('detach callbacks expose no entrypoints and ordinary thread menus still wor
  await page.getByRole('menuitem',{name:'Archive thread',exact:true}).click();
  expect(await page.evaluate(()=>(window as unknown as {sidebarCompactCalls:string[]}).sidebarCompactCalls)).toEqual(['rename','archive']);
  await expect(page.getByRole('navigation',{name:'Installed plug-ins'})).toBeVisible();
+});
+
+test('project sections fold independently and persist without selecting a thread',async({page})=>{
+ await page.emulateMedia({reducedMotion:'reduce'});
+ await page.goto('/sidebar-compact-check?groups');
+ const first=page.getByRole('button',{name:'Example project, 1 thread',exact:true});
+ const second=page.getByRole('button',{name:'Another project with a long name for the narrow sidebar, 2 threads',exact:true});
+ await expect(first).toHaveAttribute('aria-expanded','true');
+ await expect(second).toHaveAttribute('aria-expanded','true');
+ await first.focus();
+ await page.keyboard.press('Enter');
+ await expect(first).toHaveAttribute('aria-expanded','false');
+ await expect(first).toBeFocused();
+ await expect(page.getByRole('button',{name:'Research question 1 Working',exact:true})).toHaveCount(0);
+ await expect(second).toHaveAttribute('aria-expanded','true');
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('harness:shell-layout:v1')??'{}').folded?.['project:id:project-one'])).toBe(true);
+ await page.reload();
+ await expect(first).toHaveAttribute('aria-expanded','false');
+ await expect(second).toHaveAttribute('aria-expanded','true');
+ await first.focus();
+ await page.keyboard.press('Space');
+ await expect(first).toHaveAttribute('aria-expanded','true');
+ await expect(page.getByRole('button',{name:'Research question 1 Working',exact:true})).toBeVisible();
+ await expect(first.locator('svg').last()).toHaveCSS('transition-property','none');
+ expect(await page.evaluate(()=>(window as unknown as {sidebarCompactCalls:string[]}).sidebarCompactCalls.filter(call=>call.startsWith('select:')))).toEqual([]);
+ await page.getByRole('button',{name:/^Thread filter:/}).click();
+ await expect(first).toHaveAttribute('aria-expanded','true');
+ await expect(second).toHaveCount(0);
 });
