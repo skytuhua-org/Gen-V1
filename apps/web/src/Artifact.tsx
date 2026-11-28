@@ -1,9 +1,9 @@
 import {SecureArtifactProvider} from './secure-artifact-context';
 import {ArtifactInline} from './task-context';
-import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode, type RefObject } from 'react';
 import { StateProvider } from '@json-render/react';
 import {ArtifactPresentation} from './ArtifactPresentation';
-import { Archive, Check, CircleDot, LoaderCircle, TriangleAlert, Code2, Maximize2, Minimize2, Pin, RotateCcw, X, PanelRightOpen } from 'lucide-react';
+import { Archive, Check, CircleDot, Info, LoaderCircle, TriangleAlert, Code2, Maximize2, Minimize2, Pin, RotateCcw, X, PanelRightOpen } from 'lucide-react';
 import { validateSchema } from './schema-validator';
 import type { ArtifactRecord, Snapshot, UserStateRecord } from '../../../packages/contracts';
 import { command } from './api';
@@ -19,6 +19,7 @@ import { animateTask, useArtifactEntrance } from './task-motion';
 import { PendingStatus } from './LoadingState';
 import {useDesktop,useDesktopCloseGuard,useDetachedSurface,usePendingSurface} from './desktop-context';
 import {journalFlush} from './journal';
+import {ARTIFACT_STATUS_FLASH, type ArtifactStatusFlash} from './task-status';
 
 class ArtifactBoundary extends Component<{ children: ReactNode; resetKey: string }, { error: string }> {
   state = { error: '' };
@@ -27,6 +28,43 @@ class ArtifactBoundary extends Component<{ children: ReactNode; resetKey: string
   componentDidUpdate(previous: { resetKey: string }) { if (previous.resetKey !== this.props.resetKey && this.state.error) this.setState({ error: '' }); }
   render() { return this.state.error ? <div className="notice" role="alert">This artifact could not be displayed. Your conversation and saved state are retained.<details><summary>Error details</summary>{this.state.error}</details><button className="secondary" onClick={() => this.setState({ error: '' })}><RotateCcw size={14} />Retry rendering</button></div> : this.props.children; }
 }
+function ArtifactStatusNotice({owner, enabled}: {owner: RefObject<HTMLElement | null>; enabled: boolean}) {
+  const [notice, setNotice] = useState<(ArtifactStatusFlash & {source: HTMLElement; sequence: number}) | null>(null);
+  const sequence = useRef(0);
+  useLayoutEffect(() => {
+    const root = owner.current;
+    if (!root || !enabled) { setNotice(null); return; }
+    const receive = (event: Event) => {
+      const source = event.target;
+      if (!(source instanceof HTMLElement) || source.closest('.artifact') !== root || root.closest('[hidden],[inert]')) return;
+      const detail = (event as CustomEvent<ArtifactStatusFlash>).detail;
+      setNotice({ ...detail, source, sequence: ++sequence.current });
+    };
+    root.addEventListener(ARTIFACT_STATUS_FLASH, receive);
+    return () => root.removeEventListener(ARTIFACT_STATUS_FLASH, receive);
+  }, [owner, enabled]);
+  useLayoutEffect(() => {
+    const root = owner.current;
+    if (!notice || !root) return;
+    const clear = () => setNotice(current => current === notice ? null : current);
+    const clearIfRevealed = () => {
+      if (!root.contains(notice.source) || !notice.source.closest('.task-tab-panel[hidden]')) clear();
+    };
+    clearIfRevealed();
+    const timeout = setTimeout(clear, 4000);
+    const observer = new MutationObserver(clearIfRevealed);
+    observer.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden'] });
+    return () => { clearTimeout(timeout); observer.disconnect(); };
+  }, [owner, notice]);
+  const status = notice?.status;
+  const Icon = status === 'success' ? Check : status === 'error' ? TriangleAlert : status === 'running' || status === 'pending' ? LoaderCircle : Info;
+  return <span className="artifact-flash-live" role="status" aria-atomic="true">
+    {enabled && notice && <span key={notice.sequence} className={`artifact-flash status-${notice.status}`} title={notice.label}>
+      <Icon size={11} aria-hidden="true" className={Icon === LoaderCircle ? 'spinning' : undefined}/><span>{notice.label}</span>
+    </span>}
+  </span>;
+}
+
 export function Artifact({ artifact: incoming, snapshot, theme, refresh, onDirtyWidget, animateEntry = false,active=true,suspended=false,embedded=false }: { artifact: ArtifactRecord; snapshot: Snapshot; theme: 'light' | 'dark'; refresh: (snapshot?: Snapshot) => Promise<void>; onDirtyWidget?: (id: string, threadId: string, dirty: boolean, discard?: () => Promise<void>) => void; animateEntry?: boolean;active?:boolean;suspended?:boolean;embedded?:boolean }) {
   const workspace = useWorkspace();
   const desktop=useDesktop(),surface={kind:'artifact' as const,threadId:incoming.threadId,artifactId:incoming.id};
@@ -168,6 +206,7 @@ export function Artifact({ artifact: incoming, snapshot, theme, refresh, onDirty
   const saveState = state.status === 'Saved' ? 'saved' : state.status.startsWith('Saving') ? 'saving' : state.status === 'Unsaved changes' || state.status.startsWith('Recovered draft') ? 'pending' : 'attention';
   return <ArtifactInline value={inline}><section ref={section} className={`artifact artifact-width-${artifact.presentation?.width ?? 'standard'} artifact-frame-${artifact.presentation?.frame ?? 'card'} ${expanded ? 'artifact-expanded' : ''} ${inWorkspace ? 'artifact-in-workspace' : ''} ${incoming.lifecycle === 'archived' ? 'artifact-archived' : ''}`} aria-label={artifact.title} role={expanded ? 'dialog' : undefined} aria-modal={expanded || undefined} data-artifact-id={artifact.id} data-artifact-inline={inline} data-artifact-measuring={!restored || undefined} data-artifact-pending={!ready || undefined} data-document-handoff={documentHandoff}>
     <header ref={chromeHeader} className="artifact-header"><span className="artifact-title"><strong>{artifact.title}</strong></span><div className="artifact-tools">
+      <ArtifactStatusNotice owner={section} enabled={ready && active && !editorHeld}/>
       
       {artifact.kind === 'structured' ? <button disabled={editorHeld || !ready} className={`save-state ${state.status === 'Saved' ? 'is-saved' : ''}`} data-save-state={saveState} title={state.status === 'Saved' ? 'Saved state · save now' : state.status} onClick={() => void state.flush().catch(error => setError(error.message))}>{saveState === 'saved' ? <Check size={12} aria-hidden="true"/> : saveState === 'saving' ? <LoaderCircle size={12} aria-hidden="true"/> : saveState === 'pending' ? <CircleDot size={12} aria-hidden="true"/> : <TriangleAlert size={12} aria-hidden="true"/>}<span>{state.status}</span></button> : <span className={`artifact-state ${widgetDirty ? 'is-dirty' : ''}`}>{widgetDirty ? 'Uncheckpointed edits' : 'Checkpointed state'}</span>}
       <div className="artifact-secondary-tools" data-tooltip-group={JSON.stringify([artifact.threadId,artifact.id,artifact.revision])} inert={editorHeld || !ready}><button className="icon-button" aria-label="View artifact source" aria-expanded={sourceOpen} title="View source" onClick={() => setSourceOpen(value => !value)}><Code2 size={14} /></button><button className={`icon-button ${incoming.pinned ? 'selected' : ''}`} aria-label={incoming.pinned ? 'Unpin artifact' : 'Pin artifact'} aria-pressed={incoming.pinned} title={incoming.pinned ? 'Unpin artifact' : 'Pin artifact'} onClick={() => void act('artifact.pin', { pinned: !incoming.pinned })}><Pin size={13} /></button><button className="icon-button" aria-label="Archive artifact" title="Archive artifact" onClick={() => void act('artifact.archive', {})}><Archive size={13} /></button></div>
@@ -177,7 +216,7 @@ export function Artifact({ artifact: incoming, snapshot, theme, refresh, onDirty
     {error && <div role="alert" className="notice">{error}<button className="icon-button" aria-label="Dismiss artifact error" onClick={() => setError('')}><X size={14} /></button></div>}
     {archiveGuard && <div className="notice" role="alert"><div>Checkpoint your widget edits before archiving, or explicitly discard them.<div className="decision-actions"><button className="secondary" onClick={() => { setArchiveGuard(false); section.current?.querySelector<HTMLElement>('.widget-container button, .widget-container iframe')?.focus(); }}>Return to checkpoint</button><button className="quiet" disabled={archiving} onClick={() => void discardAndArchive()}>Discard edits and archive</button></div></div></div>}
     {blockedRevision !== null && noticeRevision === blockedRevision && <p className="notice">An updated interface is ready. Save your edits to load it; this version remains open.</p>}
-    {detached&&<p className="notice">Editing in a detached window.</p>}<div ref={entranceBody} className="artifact-body" inert={editorHeld} aria-busy={!ready || undefined}><div className="artifact-content" inert={!ready} aria-hidden={!ready || undefined}><ArtifactTitle value={artifact.title}><ArtifactBoundary resetKey={`${artifact.id}:${artifact.revision}`}><ArtifactActions value={submit}>{artifact.kind === 'widget' ? <Widget key={widgetGeneration} ref={widget} onEscape={() => { if (expanded) void act('artifact.expand', { expanded: false }); }} artifact={artifact} inputs={inputs} values={effectiveRecord?.values ?? {}} stateRevision={effectiveRecord?.revision ?? 0} theme={theme} onAction={submit} onDirty={dirtyChanged} onAccepted={(values, revision) => { setWidgetRecord({ id: artifact.stateId, threadId: artifact.threadId, revision, schemaVersion: artifact.widget?.stateSchemaVersion ?? 1, values }); void refresh(); }} /> : <StateProvider store={state.store}><DocumentAssetProvider threadId={artifact.threadId} stateId={artifact.stateId} active={ready}><DocumentEvidenceProvider value={documentEvidence}><SecureArtifactProvider value={{artifactId:artifact.id,threadId:artifact.threadId,revision:artifact.revision,active:active&&ready,editable:!editorHeld&&ready,saveStatus:state.status}}><ArtifactPresentation spec={artifact.spec}/></SecureArtifactProvider></DocumentEvidenceProvider></DocumentAssetProvider></StateProvider>}</ArtifactActions></ArtifactBoundary></ArtifactTitle></div>{!ready && <div className="artifact-restoring"><PendingStatus pending label={`Restoring ${artifact.title}…`} /></div>}</div>
+    {detached&&<p className="notice">Editing in a detached window.</p>}<div ref={entranceBody} className="artifact-body" inert={editorHeld} aria-busy={!ready || undefined}><div className="artifact-content" data-conversation-text={`artifact:${artifact.id}`} inert={!ready} aria-hidden={!ready || undefined}><ArtifactTitle value={artifact.title}><ArtifactBoundary resetKey={`${artifact.id}:${artifact.revision}`}><ArtifactActions value={submit}>{artifact.kind === 'widget' ? <Widget key={widgetGeneration} ref={widget} onEscape={() => { if (expanded) void act('artifact.expand', { expanded: false }); }} artifact={artifact} inputs={inputs} values={effectiveRecord?.values ?? {}} stateRevision={effectiveRecord?.revision ?? 0} theme={theme} onAction={submit} onDirty={dirtyChanged} onAccepted={(values, revision) => { setWidgetRecord({ id: artifact.stateId, threadId: artifact.threadId, revision, schemaVersion: artifact.widget?.stateSchemaVersion ?? 1, values }); void refresh(); }} /> : <StateProvider store={state.store}><DocumentAssetProvider threadId={artifact.threadId} stateId={artifact.stateId} active={ready}><DocumentEvidenceProvider value={documentEvidence}><SecureArtifactProvider value={{artifactId:artifact.id,threadId:artifact.threadId,revision:artifact.revision,active:active&&ready,editable:!editorHeld&&ready,saveStatus:state.status}}><ArtifactPresentation spec={artifact.spec}/></SecureArtifactProvider></DocumentEvidenceProvider></DocumentAssetProvider></StateProvider>}</ArtifactActions></ArtifactBoundary></ArtifactTitle></div>{!ready && <div className="artifact-restoring"><PendingStatus pending label={`Restoring ${artifact.title}…`} /></div>}</div>
     {sourceOpen && <div className="artifact-source"><div>Immutable source · revision {artifact.revision}<button className="icon-button" aria-label="Close source" onClick={() => setSourceOpen(false)}><X size={14} /></button></div>{artifact.purpose && <p>{artifact.purpose}</p>}<pre>{artifact.widget?.html ?? JSON.stringify(artifact.spec, null, 2)}</pre></div>}
   </section></ArtifactInline>;
 }

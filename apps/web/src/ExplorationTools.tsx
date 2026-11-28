@@ -102,7 +102,7 @@ export function SchedulePicker({element:{props}}:ComponentRenderProps){
   })}</div>}
   {Boolean(saved.selectedId)&&!selected&&<p role="status" className="schedule-change-notice">The selected window is no longer supplied. Choose another.</p>}
   {selected?.availability==='unavailable'&&<p role="status" className="schedule-change-notice">This window is no longer available. Choose another.</p>}
-  {p.actionId&&<footer className="exploration-footer schedule-proposal"><span className="schedule-proposal-selection">{action.busy?'':selected&&selected.availability!=='unavailable'?`${dateFormat.format(new Date(selected.start))} · ${slotTime(selected,timeFormat,rangeDateFormat)}`:'Select a time above'}</span><button type="button" className="primary" disabled={action.busy||!selected||selected.availability==='unavailable'} onClick={submit}>{action.busy?'Sending…':p.actionLabel??'Propose this time'}</button></footer>}{(selectionError||action.error)&&<p role="status" className="error-text">{selectionError||action.error}</p>}<Source text={data.source}/>
+  {p.actionId&&<footer className="exploration-footer schedule-proposal"><span className="schedule-proposal-selection">{action.busy?'':selected&&selected.availability!=='unavailable'?`${dateFormat.format(new Date(selected.start))} · ${slotTime(selected,timeFormat,rangeDateFormat)}`:'Select a time above'}</span>{' '}<button type="button" className="primary" disabled={action.busy||!selected||selected.availability==='unavailable'} onClick={submit}>{action.busy?'Sending…':p.actionLabel??'Propose this time'}</button></footer>}{(selectionError||action.error)&&<p role="status" className="error-text">{selectionError||action.error}</p>}<Source text={data.source}/>
  </section>;
 }
 

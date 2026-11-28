@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import type { ArtifactRecord, HostCommand, Snapshot } from '../../packages/contracts';
 import { validateSurface } from '../../packages/ui-catalog';
+import { catalogSpec } from '../../scripts/review-fixtures';
 import { createSigningPdfFixture, SIGNING_FIELD_STATE_KEYS, SIGNING_SIGNATURE_BOX } from './document-preview-fixture';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { serveTaskSplitLayout } from './task-interface-fixture';
@@ -309,6 +310,15 @@ test('status reads actual host operation states and keeps receipt details availa
   await expect(page.getByRole('status').filter({ hasText: 'Fixture checks' })).toContainText('Exit code 0');
   record.value = { operationId: 'fixture-operation', kind: 'command.run', approved: true, result: { exitCode: 0 } };
   await reloadApp(page); await expect(page.getByText('Status is unavailable from the connected source.')).toBeVisible();
+});
+
+test('catalog Delivery heading and choice group have distinct accessible names',async({page})=>{
+  await host(page,fixture(catalogSpec('catalog-pdf','catalog-image'),'Component catalog'));
+  await openApp(page);
+  await expect(page.getByRole('heading',{name:'Delivery',exact:true})).toBeVisible();
+  const options=page.getByRole('group',{name:'Delivery options',exact:true});
+  await expect(options.getByRole('radio',{name:/^Download/})).toBeVisible();
+  await expect(page.getByRole('group',{name:'Delivery',exact:true})).toHaveCount(0);
 });
 
 test('connected FAQ branches and follow-up draft retain independent state', async ({ page }) => {

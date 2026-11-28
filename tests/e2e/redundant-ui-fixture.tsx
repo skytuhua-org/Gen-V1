@@ -47,7 +47,7 @@ function Fixture(){
   <header><strong>Gen V1</strong><span>Workspace</span></header>
   <div className="wo5-redundant-workarea"><section className="wo5-redundant-conversation" aria-label="Conversation">
    <strong>{thread.title}</strong><p className="panel-note">Synthetic example · bound to thread-a; active snapshot thread-b</p>
-   <nav aria-label="Workspace tools"><button onClick={()=>setTool('notes')}>Notes</button><button onClick={()=>setTool('usage')}>Usage panel</button><button onClick={()=>setTool('diff')}>Current changes</button><button onClick={()=>setTool('output')}>Recorded changes</button></nav>
+   <nav aria-label="Workspace tools"><button onClick={()=>setTool('notes')}>Memory</button><button onClick={()=>setTool('usage')}>Usage panel</button><button onClick={()=>setTool('diff')}>Current changes</button><button onClick={()=>setTool('output')}>Recorded changes</button></nav>
    <section className="wo5-redundant-tool" aria-label="Tool destination">
     {tool==='output'?<RecordedDiffPanel snapshot={snapshot} threadId="thread-a" preferences={{...DEFAULT_PREFERENCES,diffDefaultExpanded:true}}/>:<WorkspaceSurfaceBody kind={tool} binding={{authority:{kind:'local'},threadId:'thread-a',projectId:'project-one'}} snapshot={snapshot} refresh={async()=>{}}/>}
    </section>

@@ -44,7 +44,7 @@ import type {HermesEvent} from '../runtime-hermes/client.ts';
 import type {HermesRuntime} from '../runtime-hermes/index.ts';
 import type {HermesSourceLibrary} from '../runtime-hermes/library.ts';
 import type {ApprovedWriteOrigin,CompletedWriteReceipt,WriteHookDiagnostic} from '../contracts/index.ts';
-import { HarnessError, EMPTY_USAGE, type ArtifactRecord, type DataRecord, type HostCommand, type InputRequest, type Message, type Operation, type ResourceGrant, type RunContext, type CommandReceipt, type RuntimeAdapter, type RuntimeEvent, type RuntimeUsage, type Snapshot, type StartRun, type SurfaceSpec, type Thread, type ToolCall, type UserStateRecord } from "../contracts/index.ts";
+import { HarnessError, EMPTY_USAGE, normalizeThreadTitle, type ArtifactRecord, type DataRecord, type HostCommand, type InputRequest, type Message, type Operation, type ResourceGrant, type RunContext, type CommandReceipt, type RuntimeAdapter, type RuntimeEvent, type RuntimeUsage, type Snapshot, type StartRun, type SurfaceSpec, type Thread, type ToolCall, type UserStateRecord } from "../contracts/index.ts";
 import { hostFlagEnabled } from "./host-flags.ts";
 import { OperationProjectTrustHost } from './operation-project-trust.ts';
 import { OperationExecutionAdviceHost } from './operation-execution-advice.ts';
@@ -1203,7 +1203,7 @@ export class Service {
       if(projectId&&!/^[\w:.-]+$/.test(projectId))throw new HarnessError('INVALID_INPUT','Choose a valid connected project.');
       const project=projectId?this.store.get<{name:string;authority:{kind:string}}>('workspaceProject',projectId):null;
       if(projectId&&(!project||project.authority?.kind!=='local'))throw new HarnessError('CAPABILITY_DENIED','Choose a connected personal project.');
-      const thread: Thread = { id: randomUUID(),kind:parent?'side':'main',...(projectId?{projectId}:{}),...(parent?.workspaceId?{workspaceId:parent.workspaceId}:{}), title: typeof p.title === "string" ? p.title.slice(0, 140) || "New thread" : parent?'Side question':"New thread", projectName:project?.name??(typeof p.projectName === "string" ? p.projectName : parent?.projectName??null), createdAt: now(), updatedAt: now(), status: "ready", epoch: 0, runId: null, modelId: null, sessionPath: null,...(parent?{sideParentId:parent.id,parentThreadId:parent.id,mode:'plan' as const,...(this.isAccountBound(parent)?{accountId:parent.accountId??null,modelId:parent.modelId}:{})}:{}) };
+      const thread: Thread = { id: randomUUID(),kind:parent?'side':'main',...(projectId?{projectId}:{}),...(parent?.workspaceId?{workspaceId:parent.workspaceId}:{}), title: typeof p.title === "string" ? normalizeThreadTitle(p.title).slice(0, 140).trimEnd() || "New thread" : parent?'Side question':"New thread", projectName:project?.name??(typeof p.projectName === "string" ? p.projectName : parent?.projectName??null), createdAt: now(), updatedAt: now(), status: "ready", epoch: 0, runId: null, modelId: null, sessionPath: null,...(parent?{sideParentId:parent.id,parentThreadId:parent.id,mode:'plan' as const,...(this.isAccountBound(parent)?{accountId:parent.accountId??null,modelId:parent.modelId}:{})}:{}) };
       this.store.put("thread", thread.id, thread.id, thread);
       if(parent)this.store.put('sideContext',thread.id,thread.id,{parentId:parent.id,title:parent.title,capturedAt:now(),messages:this.store.all<Message>('message',parent.id).filter(message=>message.role!=='activity').slice(-8).map(message=>({id:message.id,role:message.role,content:message.content.slice(0,1500)}))});
       return thread;
@@ -1431,7 +1431,7 @@ export class Service {
         if(!['plan','build'].includes(String(p.mode)))throw new HarnessError('INVALID_INPUT','Unknown task mode');
         const next={...thread,mode:p.mode as 'plan'|'build'};this.store.put('thread',thread.id,thread.id,next);return next;
       }
-      case "thread.rename": { const next = { ...thread, title: text(p, "title", 140), updatedAt: now() }; this.store.put("thread", thread.id, thread.id, next); return next; }
+      case "thread.rename": { const next = { ...thread, title: normalizeThreadTitle(text(p, "title", 140)), updatedAt: now() }; this.store.put("thread", thread.id, thread.id, next); return next; }
       case 'thread.presentation': {
         if (Object.keys(p).some(key => !['pinned', 'unread', 'settled', 'order'].includes(key)) || Object.entries(p).some(([key, value]) => key === 'order' ? typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1_000_000 : typeof value !== 'boolean')) throw new HarnessError('INVALID_INPUT', 'Invalid thread presentation');
         const next = { ...thread, presentation: { ...thread.presentation, ...p } }; this.store.put('thread', thread.id, thread.id, next); return next;
@@ -1646,7 +1646,7 @@ export class Service {
       const message: Message = { id: randomUUID(), threadId: thread.id, role: "user", content, createdAt: now(), runId: current.runId, ...sourceFields };
       const input: Outbox = { id: command.id, threadId: thread.id, content, status: "persisted", runId: null,messageId:message.id,...(requestContextId?{requestContextId}:{}), ...sourceFields };
       this.store.put("message", message.id, thread.id, message); this.enqueueInput(input);
-      this.store.put("thread", thread.id, thread.id, { ...current, accountId:binding.accountId,modelId, thinkingLevel, error: null, ...(["completed", "failed"].includes(current.status) ? { status: "ready" } : {}), updatedAt: now(), ...(current.title === "New thread" ? { title: content.slice(0, 65) } : {}) });
+      this.store.put("thread", thread.id, thread.id, { ...current, accountId:binding.accountId,modelId, thinkingLevel, error: null, ...(["completed", "failed"].includes(current.status) ? { status: "ready" } : {}), updatedAt: now(), ...(current.title === "New thread" ? { title: normalizeThreadTitle(content).slice(0, 65).trimEnd() || "New thread" } : {}) });
       bindCapturedAccount?.();
       preparedSources?.assertCurrent();
       if(before)rollbackAdmission=this.requestCustody.advanceAdmission(before,this.requestBasis(this.thread(thread.id),modelId,thinkingLevel));

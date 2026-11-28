@@ -184,6 +184,6 @@ export function useTableControls(sourceColumns: TableColumn[], rows: unknown[], 
     {gesture?.line !== null && gesture?.line !== undefined && <i aria-hidden="true" className={gesture.kind === 'resize' ? 'task-table-resize-guide' : 'task-table-drop-line'} style={{ left: gesture.line, ...(gesture.kind === 'resize' ? { height: scroll.current?.querySelector('table')?.offsetHeight } : { top: ((scroll.current?.querySelector('thead')?.getBoundingClientRect().top ?? 0) - (scroll.current?.getBoundingClientRect().top ?? 0)) / gesture.scale + (scroll.current?.scrollTop ?? 0) + 3 }) }} />}
     {gesture?.kind === 'move' && gesture.moved && <div aria-hidden="true" className="task-table-drag-preview" style={{ left: (gesture.x - (scroll.current?.getBoundingClientRect().left ?? 0)) / gesture.scale + (scroll.current?.scrollLeft ?? 0) + 12, top: (gesture.y - (scroll.current?.getBoundingClientRect().top ?? 0)) / gesture.scale + (scroll.current?.scrollTop ?? 0) + 12 }}><GripVertical size={12} />{label(gesture.key)}</div>}
   </>;
-  const live = <><span id={helpId} className="sr-only">Drag or use Alt+Left/Right to move</span><span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span></>;
+  const live = <><span id={helpId} className="sr-only">Drag or use Alt+Left/Right to move</span>{' '}<span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span></>;
   return { columns, view, widths: columns.map(column => width(column.key)), headers, filter, decorations, live, clear, skipMotion };
 }
