@@ -44,7 +44,7 @@ function Fixture() {
           if(mode==='hold')await new Promise<void>((resolve,reject)=>{window.sidebarPresentation.accept=resolve;window.sidebarPresentation.reject=()=>reject(Error('Presentation was rejected.'));});
           if(mode==='hold')setRows(current=>current.map(row=>row.id===thread.id?{...row,presentation:{...row.presentation,...value}}:row));return true;
         }} rename={thread => calls.push({rename: thread})}
-        archive={id => calls.push({archive: id})} detachThread={() => calls.push({detach: true})}
+        archive={id => calls.push({archive: id})} detachThread={() => {calls.push({detach:true});return true;}}
         {...(!query.has('custom') ? {onPlaceThread: (thread: ThreadNavigationRow) => calls.push({place: thread})} : {})}/>
       <Toaster/><main><p>Synthetic sidebar menu fixture</p><button onClick={() => setVisible(false)}>Hide mobile sidebar</button>
         <button onClick={() => setLayout(value => ({...value, sidebarCollapsed: true}))}>Collapse sidebar</button>

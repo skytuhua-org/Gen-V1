@@ -173,7 +173,10 @@ for(const settled of [false,true])for(const outcome of ['accepted','rejected'] a
    await expect(settledRow).toHaveCount(settled?1:0);
   }else{
    await page.evaluate(()=>window.sidebarPresentation.accept!());
-   await expect(page.getByRole('status').filter({hasText:settled?'returned to your threads':'settled'})).toHaveCount(1);
+   await expect(page.getByRole('complementary',{name:'Thread navigation',exact:true}).getByRole('status')).toHaveText(settled?'Selected conversation restored to working':'Selected conversation settled');
+   const feedback=page.locator('.ui-toast').filter({hasText:settled?'returned to your threads':'settled — find it under Settled'});
+   await expect(feedback).toHaveCount(1);
+   await expect(feedback).not.toHaveAttribute('role','status');
    await expect(settledRow).toHaveCount(settled?0:1);
   }
  });
@@ -221,4 +224,40 @@ test('paused reorder explains search and filter locks while leaving row selectio
  await expect(status).toHaveText(paused);
  await sidebar.getByRole('button',{name:'Clear thread filter',exact:true}).click();
  await expect(row).toHaveAttribute('draggable','true');
+});
+
+test('sidebar confirms only accepted changes in a persistent status region',async({page})=>{
+ const sidebar=page.getByRole('complementary',{name:'Thread navigation',exact:true});
+ const status=sidebar.getByRole('status');
+ await expect(status).toHaveText('Showing all threads');
+ await page.evaluate(()=>{window.sidebarPresentation.mode='hold';});
+ await options(page).click();
+ await menu(page).getByRole('menuitem',{name:'Pin thread',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>typeof window.sidebarPresentation.accept)).toBe('function');
+ await expect(status).toHaveText('Showing all threads');
+ await page.evaluate(()=>window.sidebarPresentation.accept?.());
+ await expect(status).toHaveText('Other conversation pinned');
+ await page.evaluate(()=>{window.sidebarPresentation.mode='reject';});
+ await options(page).click();
+ await menu(page).getByRole('menuitem',{name:'Mark as unread',exact:true}).click();
+ await expect(page.getByText('Presentation was rejected.',{exact:true})).toBeVisible();
+ await expect(status).toHaveText('Other conversation pinned');
+ await page.evaluate(()=>{window.sidebarPresentation.mode='success';});
+ await options(page).click();
+ await menu(page).getByRole('menuitem',{name:'Mark as unread',exact:true}).click();
+ await expect(status).toHaveText('Other conversation marked unread');
+ await options(page).click();
+ await menu(page).getByRole('menuitem',{name:'Settle thread',exact:true}).click();
+ await expect(status).toHaveText('Other conversation settled');
+ const toast=page.locator('.ui-toast',{hasText:'settled — find it under Settled'});
+ await expect(toast).toBeVisible();
+ await expect(toast).not.toHaveAttribute('role','status');
+});
+
+test('sidebar announces detach once the owning action resolves',async({page})=>{
+ const sidebar=page.getByRole('complementary',{name:'Thread navigation',exact:true});
+ await options(page).click();
+ await menu(page).getByRole('menuitem',{name:'Detach thread',exact:true}).click();
+ await expect(sidebar.getByRole('status')).toHaveText('Other conversation detached');
+ expect(await calls(page)).toEqual([{detach:true}]);
 });

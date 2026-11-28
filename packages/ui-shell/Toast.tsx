@@ -8,7 +8,7 @@ import './tokens.css';
 import './feedback.css';
 
 type ToastTone = 'info' | 'success' | 'error';
-export interface ToastOptions { tone?: ToastTone; dedupeKey?: string; action?: { label: string; onClick: () => void }; durationMs?: number }
+export interface ToastOptions { tone?: ToastTone; dedupeKey?: string; action?: { label: string; onClick: () => void }; durationMs?: number; announce?: boolean }
 interface ToastEntry extends ToastOptions { id: number; message: string; leaving: boolean }
 
 const VISIBLE_MS = 6000, MAX_VISIBLE = 3;
@@ -51,7 +51,7 @@ function ToastItem({ entry, paused }: { entry: ToastEntry; paused: boolean }) {
     return () => { cancelled = true; };
   }, [entry.leaving, entry.id]);
   const tone = entry.tone ?? 'info', Icon = icons[tone];
-  return <div ref={element} className="ui-toast" data-toast-id={entry.id} data-tone={tone} data-state={entry.leaving ? 'closed' : 'open'} role={tone === 'error' ? 'alert' : 'status'}>
+  return <div ref={element} className="ui-toast" data-toast-id={entry.id} data-tone={tone} data-state={entry.leaving ? 'closed' : 'open'} role={entry.announce === false ? undefined : tone === 'error' ? 'alert' : 'status'}>
     <Icon size={15} aria-hidden="true" /><span>{entry.message}</span>
     {entry.action && <button type="button" className="ui-toast-action" onClick={() => { entry.action?.onClick(); dismissToast(entry.id); }}>{entry.action.label}</button>}
     <button type="button" className="ui-toast-close" aria-label="Dismiss notification" onClick={() => dismissToast(entry.id)}><X size={14} /></button>
