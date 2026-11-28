@@ -13,6 +13,7 @@ import {gitExecutable} from '../capabilities/process.ts';
 import {readBoundFile,withPathGuard} from '../core/file-access.ts';
 import {directoryIdentity,importGitFamily,nativeGit,privateFamilyForBinding,sameIdentity,statusBranch,withLegacyGitView,withPrivateGitFamily} from './git-storage.ts';
 import {ComparisonFileRequestSchema,ComparisonScopeSchema,type ComparisonRead,type GitHistoryCommitDetail,type GitHistoryPage,type GitHistoryPatch} from '../contracts/code-review.ts';
+import {undoneCommitResultSchema} from '../contracts/workspace-action-outcomes.ts';
 import {ComparisonSnapshots,comparisonError,comparisonResult,readLocalComparison,readLocalComparisonFile} from './code-review.ts';
 import {GitHistorySnapshots,readHistoryCommit,readHistoryFile,readHistoryPage} from './git-history.ts';
 
@@ -247,21 +248,23 @@ export class ProjectTools{
    return readHistoryFile({git:args=>nativeGit(this.gitExecutable(),metadata,path,args,signal),signal,owner},this.historySnapshots,input.comparisonId,input.path);
   }));
  }
- async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string}){
+ async gitAction(projectId:string,threadId:string|undefined,input:{type:string;revision:string;paths?:string[];message?:string;name?:string},beforeWrite?:()=>void){
   const binding=await this.binding(projectId,threadId);
   return this.exclusive(projectId,()=>this.withGitOperation(projectId,threadId,true,async(metadata,path,signal,managed)=>{
    const current=await this.status(metadata,path,signal,managed);if(input.revision!==current.revision)throw new HarnessError('REVISION_CHANGED','The worktree changed. Refresh the review before applying this action.');const paths=z.array(pathName).min(1).max(1000).optional().parse(input.paths),git=(args:string[])=>nativeGit(this.gitExecutable(),metadata,path,args,signal);
-   if(input.type==='stage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to stage.');await git(['add','--',...paths]);}
-   else if(input.type==='unstage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to unstage.');await git(['restore','--staged','--',...paths]);}
-   else if(input.type==='commit')await git(['-c','commit.gpgsign=false','commit','-m',z.string().trim().min(1).max(4000).parse(input.message)]);
-   else if(input.type==='branch'){const branch=z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]{0,150}$/).refine(value=>!value.endsWith('/')&&!value.includes('//')).parse(input.name);await git(['switch','-c',branch]);}
+   if(input.type==='stage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to stage.');beforeWrite?.();await git(['add','--',...paths]);}
+   else if(input.type==='unstage'){if(!paths)throw new HarnessError('INVALID_INPUT','Choose files to unstage.');beforeWrite?.();await git(['restore','--staged','--',...paths]);}
+   else if(input.type==='commit'){const message=z.string().trim().min(1).max(4000).parse(input.message);beforeWrite?.();await git(['-c','commit.gpgsign=false','commit','-m',message]);}
+   else if(input.type==='branch'){const branch=z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9/_-]{0,150}$/).refine(value=>!value.endsWith('/')&&!value.includes('//')).parse(input.name);beforeWrite?.();await git(['switch','-c',branch]);}
    else if(input.type==='undo'){
     const eligibility=await this.undoEligibility(git,managed,this.workspaceBusy(binding));
     if(!eligibility.eligible)throw new HarnessError('CAPABILITY_DENIED',eligibility.reason??'The last commit cannot be undone.');
     const message=(await git(['log','-1','--format=%B',eligibility.head!])).trim();
+    if(!undoneCommitResultSchema.shape.message.safeParse(message).success)throw new HarnessError('INVALID_INPUT','The commit message is too large to restore here.');
     // Runs are admitted without this lock, so re-fence right before and right
     // after the reset; a run that landed in between rolls the pointer back.
     if(this.workspaceBusy(binding))throw new HarnessError('RUN_ACTIVE','Wait for the run to finish.');
+    beforeWrite?.();
     await git(['reset','--soft','HEAD^']);
     if(this.workspaceBusy(binding)){await git(['reset','--soft',eligibility.head!]).catch(()=>{});throw new HarnessError('RUN_ACTIVE','Wait for the run to finish.');}
     // A patch larger than the read cap would fail status after the write;

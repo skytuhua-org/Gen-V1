@@ -248,11 +248,11 @@ export class WorkspaceActionOutcomes {
           started = true;
           if (!this.current(fence)) throw denied(); // Store subscribers run before internal() returns.
         };
-        if (input.type !== 'create-pr') beginWrite();
+        if (input.type !== 'create-pr' && input.type !== 'undo') beginWrite();
         let result: unknown;
         if (input.type === 'review-pr') result = await this.github.review(projectId, input.threadId, input.payload);
         else if (input.type === 'create-pr') result = await this.github.create(projectId, input.threadId, input.payload, beginWrite);
-        else result = await this.projects.gitAction(projectId, input.threadId, { type: input.type, ...payload });
+        else result = await this.projects.gitAction(projectId, input.threadId, { type: input.type, ...payload }, input.type === 'undo' ? beginWrite : undefined);
         let fresh: Fence | undefined;
         try {
           fresh = await this.fence(projectId, input);
