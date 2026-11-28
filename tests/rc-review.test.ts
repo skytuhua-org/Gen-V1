@@ -1,3 +1,4 @@
+import * as fsPromises from 'node:fs/promises';
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtemp,mkdir,writeFile,rm,copyFile,readFile,readdir,truncate,symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -15,7 +16,21 @@ import {compareNativeGeometry} from '../scripts/rc-review/upgrade-check.ts';
 import {closeInstalledSession,withInstalledSessionCleanup} from '../scripts/rc-review/installed-session.ts';
 import type {ChildProcess} from 'node:child_process';
 
+vi.mock('node:fs/promises',async importOriginal=>({...await importOriginal<typeof import('node:fs/promises')>()}));
+
 const roots:string[]=[];
+it.each([1,2])('does not publish a profile snapshot if a listed directory disappears on pass %s',async(pass)=>{
+ const root=await mkdtemp(join(tmpdir(),'rc-snapshot-race-'));roots.push(root);
+ const profile=join(root,'profile'),host=join(root,'host'),sub=join(host,'captured');
+ await mkdir(profile);await mkdir(sub,{recursive:true});await writeFile(join(sub,'note.txt'),'fixture');
+ const original=fsPromises.readdir;let visits=0;
+ const spy=vi.spyOn(fsPromises,'readdir').mockImplementation(((...args:Parameters<typeof fsPromises.readdir>)=>{
+  if(args[0]===sub&&++visits===pass)return Promise.reject(Object.assign(new Error('Listed directory disappeared'),{code:'ENOENT'}));
+  return original(...args);
+ }) as typeof fsPromises.readdir);
+ try{await expect(snapshot(profile,host)).rejects.toMatchObject({code:'ENOENT'});}
+ finally{spy.mockRestore();}
+});
 it('rejects overflowed interruption delays before scheduling and keeps supported positive integers',()=>{for(const value of ['2147483648','999999999999','0','-5','1.5','abc'])expect(()=>parseInterruptMs(value)).toThrow('Invalid --interrupt-ms');for(const value of ['1','500','2147483647'])expect(parseInterruptMs(value)).toBe(Number(value));});
 it('proves Node coerces an overflowed timer delay to 1 ms with a synthetic timer-only probe',async()=>{const started=Date.now(),output=await run(process.execPath,['-e','setTimeout(()=>console.log("fired"),2147483648)'],{capture:true});expect(output).toBe('fired');expect(Date.now()-started).toBeLessThan(15000);});
 const runningChild=()=>({exitCode:null,signalCode:null}) as ChildProcess;
@@ -32,6 +47,19 @@ it('keeps the installed RC action and teardown failures together',async()=>{
 it('still runs owned child cleanup when the browser session close rejects',async()=>{let terminated=false;await expect(closeInstalledSession(true,{close:()=>Promise.reject(Error('close failed'))},runningChild(),async()=>{terminated=true;})).rejects.toThrow('close failed');expect(terminated).toBe(true);});
 it('keeps close and termination failures observable together',async()=>{let terminated=false;const failure=await closeInstalledSession(true,{close:()=>Promise.reject(Error('close failed'))},runningChild(),async()=>{terminated=true;throw Error('terminate failed');}).catch(error=>error);expect(terminated).toBe(true);expect(failure).toBeInstanceOf(AggregateError);expect((failure as AggregateError).errors.map(String)).toEqual([expect.stringContaining('close failed'),expect.stringContaining('terminate failed')]);});
 it('skips termination once the child already exited and leaves an unverified browser session untouched',async()=>{let terminated=false,closed=false;const browser={close:()=>{closed=true;return Promise.reject(Error('must not run'));}};await closeInstalledSession(false,browser,{exitCode:0,signalCode:null} as ChildProcess,async()=>{terminated=true;});expect(terminated).toBe(false);expect(closed).toBe(false);});
+it('bounds RC profile file lookups and preserves first matches within each exact root',()=>{
+ const base={version:2 as const,identifiers:{appId:null,profile:'profile',host:'host',accounts:[]},entities:{},counts:{}};
+ const file=(root:string,path:string,sha256='same')=>({root,path,bytes:1,sha256});
+ const before=Array.from({length:1200},(_,i)=>file('profile','projects/file-'+i));
+ let reads=0;
+ const after=before.map(({root,path,bytes,sha256})=>({root,get path(){reads++;return path;},bytes,sha256}));
+ const owner=before[0]!;
+ const result=compare({...base,files:[...before,file('host',owner.path,'old')]},
+  {...base,files:[file('host',owner.path,'new'),...after,file('profile',owner.path,'duplicate')]});
+ expect(result.changedFiles).toEqual([{...file('host',owner.path,'old'),afterBytes:1,afterSha256:'new'}]);
+ expect(result.missingFiles).toEqual([]);
+ expect(reads).toBeLessThanOrEqual(2400);
+});
 it('compares native geometry in one API space without throwing on a mismatch',()=>{const expected={left:80,top:80,width:1100,height:780};expect(compareNativeGeometry(expected,expected).status).toBe('passed');expect(compareNativeGeometry(expected,{left:72,top:80,width:1116,height:788}).status).toBe('passed');expect(compareNativeGeometry(expected,{...expected,left:113}).status).toBe('failed');expect(compareNativeGeometry(expected,undefined).status).toBe('failed');expect(compareNativeGeometry({},expected).status).toBe('failed');});
 it('removes a previous phase success before a failed retry can reuse it',async()=>{
  const {root}=await fixture(),current=join(root,'flags-phase.json'),other=join(root,'upgrade-phase.json'),attempt=JSON.stringify({phase:'flags',passed:true,candidate:'old'});
@@ -83,6 +111,29 @@ it('compares every SQLite row without rescanning the whole current table',()=>{
 it('inventories empty profiles without inventing a database or app identity',async()=>{const {profile,host}=await fixture();const value=await snapshot(profile,host);expect(value.files).toEqual([]);expect(value.entities).toEqual({});expect(value.identifiers.appId).toBeNull();expect(compare(value,value).passed).toBe(true);});
 it('rejects a snapshot when a submitted root is missing, a file or a symlink instead of silently inventorying empty',async()=>{const {root,profile,host}=await fixture(),missing=join(root,'missing'),mistyped=join(root,'mistyped'),linked=join(root,'linked'),real=join(root,'real');await mkdir(real);await writeFile(mistyped,'file');await symlink(real,linked);for(const [rootLabel,bad]of [['profile',missing],['profile',mistyped],['profile',linked]]as const)await expect(snapshot(bad,host)).rejects.toThrow('snapshot root is not a directory: '+rootLabel);for(const bad of [missing,mistyped,linked])await expect(snapshot(profile,bad)).rejects.toThrow('snapshot root is not a directory: host');const value=await snapshot(profile,host);expect(value.files).toEqual([]);expect(value.entities).toEqual({});});
 it('includes IndexedDB/Local Storage, excludes cache and detects entity removal/change and additive kinds',async()=>{const {profile,host}=await fixture();await mkdir(join(profile,'session/IndexedDB'),{recursive:true});await mkdir(join(profile,'session/Local Storage'),{recursive:true});await mkdir(join(profile,'session/Cache'),{recursive:true});await writeFile(join(profile,'session/IndexedDB/draft'),'draft');await writeFile(join(profile,'session/Local Storage/layout'),'layout');await writeFile(join(profile,'session/Cache/ignored'),'cache');const db=new DatabaseSync(join(host,'harness.sqlite'));db.exec("CREATE TABLE entities(kind TEXT,id TEXT,body TEXT);INSERT INTO entities VALUES ('thread','one','{}'),('thread','two','{}')");db.close();const before=await snapshot(profile,host);expect(before.files.some(file=>file.path.endsWith('ignored'))).toBe(false);expect(before.files.some(file=>file.path.includes('IndexedDB'))).toBe(true);const update=new DatabaseSync(join(host,'harness.sqlite'));update.exec("DELETE FROM entities WHERE id='one';UPDATE entities SET body='null' WHERE id='two';INSERT INTO entities VALUES ('projectMemoryItem','new','{}')");update.close();const value=compare(before,await snapshot(profile,host));expect(value.passed).toBe(false);expect(value.missingEntities).toEqual([{kind:'thread',id:'one'}]);expect(value.changedEntities).toEqual([{kind:'thread',id:'two'}]);expect(value.additiveKinds).toEqual(['projectMemoryItem']);});
+
+it('inventories host cache-named data without reclassifying desktop caches',async()=>{
+ const {profile,host}=await fixture();
+ await mkdir(join(profile,'session','Cache'),{recursive:true});
+ await mkdir(join(host,'Cache'));await mkdir(join(host,'GPUCache'));
+ await writeFile(join(profile,'session','Cache','ignored.txt'),'chromium');
+ await writeFile(join(host,'Cache','kept.txt'),'ordinary host data');
+ await writeFile(join(host,'GPUCache','kept.txt'),'other host data');
+ const before=await snapshot(profile,host);
+ expect(before.files.map(file=>[file.root,file.path])).toEqual([['host','Cache/kept.txt'],['host','GPUCache/kept.txt']]);
+ await writeFile(join(host,'Cache','kept.txt'),'changed');await rm(join(host,'GPUCache','kept.txt'));
+ const result=compare(before,await snapshot(profile,host));
+ expect(result.passed).toBe(false);
+ expect(result.changedFiles.map(file=>file.path)).toEqual(['Cache/kept.txt']);
+ expect(result.missingFiles.map(file=>file.path)).toEqual(['GPUCache/kept.txt']);
+});
+it('does not ignore host cache-named entries already present in a profile manifest',()=>{
+ const before=emptySnapshot({});
+ before.files.push({root:'host',path:'Cache/kept.txt',bytes:7,sha256:'old'});
+ const result=compare(before,emptySnapshot({}));
+ expect(result.passed).toBe(false);
+ expect(result.missingFiles).toEqual(before.files);
+});
 it('fails missing files and identifier changes and refuses malformed databases',async()=>{const {profile,host}=await fixture();await writeFile(join(profile,'kept'),'value');const before=await snapshot(profile,host);await rm(join(profile,'kept'));const after=await snapshot(profile,host);after.identifiers.profile='renamed';const result=compare(before,after);expect(result.passed).toBe(false);expect(result.missingFiles).toHaveLength(1);expect(result.identifierChanges).toEqual(['profile']);await writeFile(join(host,'harness.sqlite'),'not sqlite');await expect(snapshot(profile,host)).rejects.toThrow();});
 it('counts loss of host data even when its filenames resemble Chromium diagnostics', async () => {
  const {profile,host}=await fixture();
