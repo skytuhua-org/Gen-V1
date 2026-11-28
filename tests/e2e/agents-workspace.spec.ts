@@ -257,6 +257,32 @@ test('agent evidence separates reported outcome from verification and explains u
  } finally {fixtureHost.release();}
 });
 
+for (const fixture of [
+ {status: 'missing', label: 'reported output missing — not verified', detail: 'Reported output missing — not verified.'},
+ {status: 'changed', label: 'reported output changed — not verified', detail: 'Reported output changed — not verified.'},
+ {status: 'current', label: 'reported outcome unavailable — not verified', detail: 'Reported outcome unavailable — not verified.'},
+] as const) test(`an unreliable ${fixture.status} reported output cannot be described as a completed report`, async ({page}) => {
+ const fixtureHost = await setup(page, false, false, true);
+ await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {enabled: true, roles: {}, budget: {reservedTokens: 0}, works: [{
+  workId: fixture.status + '-output', role: 'QA', state: 'COMPLETED_REPORTED', reportedOutcome: null, verification: 'REPORTED_UNVERIFIED', outputStatus: fixture.status,
+  owner: {threadId: 'child-active'}, budget: {tokens: null}, evidence: {refs: 0, stale: 0}, blockedReason: null,
+ }]}}));
+ await page.route('**/api/agent-work/output?*', route => route.fulfill({json: {
+  workId: fixture.status + '-output', output: null, reportedOutcome: null, verification: 'REPORTED_UNVERIFIED', outputStatus: fixture.status, evidence: [], lateArtifacts: 0,
+ }}));
+ try {
+  fixtureHost.release();
+  const panel = page.getByRole('region', {name: 'Agent work', exact: true});
+  await page.getByRole('button', {name: 'Agent work · 1', exact: true}).click();
+  await expect(panel).toContainText(fixture.label);
+  await expect(panel).not.toContainText('reported complete — not verified');
+  await panel.getByRole('button', {name: `Open evidence for ${fixture.status}-output`, exact: true}).click();
+  const evidence = page.getByRole('region', {name: 'Work output evidence', exact: true});
+  await expect(evidence).toContainText(fixture.detail);
+  await expect(evidence).not.toContainText('Reported complete — not verified.');
+ } finally {fixtureHost.release();}
+});
+
 test('agent task progress exposes its name and unknown share to assistive technology', async ({page}) => {
  const fixtureHost = await setup(page, false, false, true);
  await page.route('**/api/agent-work?taskId=parent-00', route => route.fulfill({json: {
