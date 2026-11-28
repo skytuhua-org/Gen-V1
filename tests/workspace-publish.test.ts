@@ -139,6 +139,19 @@ it('rejects a changed revision before any write step or operation record',async(
  await expect(publish.execute('project',validRequest)).rejects.toMatchObject({code:'REVISION_CHANGED'});
  expect(outcomes.execute).not.toHaveBeenCalled();expect(store.all('workspacePublish')).toHaveLength(0);
 });
+it('refuses a proper subset of the reviewed draft before recording or dispatching publish',async()=>{
+ const{publish,outcomes,store}=await serviceFixture();
+ const draft=await publish.draft('project','thread');
+ expect(draft.files.map(({path})=>path)).toEqual(['src/app.ts','notes.txt']);
+ await expect(publish.execute('project',{
+  ...validRequest,head:draft.head,revision:draft.revision,selectedPaths:['src/app.ts'],
+ })).rejects.toMatchObject({
+  code:'REVISION_CHANGED',message:'The reviewed file selection does not match the working copy.',
+ });
+ expect(outcomes.execute).not.toHaveBeenCalled();
+ expect(store.all('workspacePublish')).toHaveLength(0);
+ expect(store.all('linkedPullRequest')).toHaveLength(0);
+});
 it('durably stops before commit when HEAD moves after staging confirms',async()=>{
  const{publish,outcomes,store,details}=await serviceFixture({status:[status(),status({head:next,revision:stagedRevision})]});
  const operation=publishOperationV1Schema.parse(await publish.execute('project',validRequest));
